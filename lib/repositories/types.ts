@@ -553,11 +553,14 @@ export interface BusinessOsInvite {
 
 /**
  * One invite as the PUBLIC page's lookup reads it: only what the page may show
- * or needs to decide the state. No email, no issuer, no reasons, no hash.
+ * or needs to decide the state. No email, no issuer id, no reasons, no hash.
  * `id` is read so `markFirstViewed` can target the row; it is never returned.
+ * `issuer_kind` (Slice 5a, F5a-10) is read only to branch an account-issued
+ * invite away from the existing-account check; it is never returned either.
  */
 export interface BusinessOsInvitePublicView {
   id: string;
+  issuer_kind: 'admin' | 'account';
   grant_kind: BusinessOsInviteGrantKind;
   grant_id: string;
   access_open_ended: boolean | null;
@@ -616,6 +619,60 @@ export interface RecordInviteEmailOutcomeInput {
     | { kind: 'problem'; problem: string; detail: string | null };
 }
 
+/**
+ * Slice 5a (F5a-6, F5a-7): what `business_os_create_friend_invite` is called
+ * with. The explicit allow-list: the issuer comes from the session, and the
+ * cohort, type, grant, allowance, limits, expiry and reason from config. Only
+ * the email, note and language come from the champion's (validated) request.
+ */
+export interface CreateFriendInviteInput {
+  issuerAccountId: string;
+  issuerCohort: string;
+  inviteType: string;
+  grantId: string;
+  allowance: number;
+  dailyLimit: number;
+  dailyWindowHours: number;
+  tokenHash: string;
+  email: string;
+  inviterDisplayName: string;
+  inviterReplyTo: string | null;
+  language: string;
+  personalNote: string | null;
+  internalReason: string;
+  linkExpiryDays: number;
+}
+
+/** How the send function answered (T-17). `created` carries the new id and the stamped expiry. */
+export type CreateFriendInviteResult =
+  | { outcome: 'created'; inviteId: string; linkExpiresAt: string }
+  | { outcome: 'not_eligible' | 'allowance_reached' | 'daily_limit' | 'already_invited' };
+
+/**
+ * Slice 5a (F5a-9): one invite as the CHAMPION's list reads it. The last three
+ * columns are read only to derive the status and the allowance; the route never
+ * returns them.
+ */
+export interface BusinessOsFriendInviteListRow {
+  id: string;
+  email: string;
+  created_at: string;
+  link_expires_at: string;
+  revoked_at: string | null;
+  redeemed_at: string | null;
+  claimed_account_id: string | null;
+}
+
+/** Slice 5a (F5a-8): a champion's revoke of their own invite. */
+export interface RevokeFriendInviteInput {
+  id: string;
+  issuerAccountId: string;
+  reason: string;
+  now: Date;
+  /** A claim made at or after this instant is LIVE, and blocks the revoke (I-2). */
+  claimLeaseCutoff: Date;
+}
+
 /** A revoke, as the conditional UPDATE needs it. */
 export interface RevokeBusinessOsInviteInput {
   id: string;
@@ -642,6 +699,8 @@ export interface BusinessOsInviteRedemptionView {
   email: string;
   invite_type: string;
   issuer_kind: 'admin' | 'account';
+  /** Slice 5b: the champion who sent a friend invite (NULL on an admin invite). */
+  issuer_account_id: string | null;
   grant_kind: BusinessOsInviteGrantKind;
   grant_id: string;
   access_open_ended: boolean | null;
@@ -702,6 +761,13 @@ export interface ClaimInviteForSignupInput {
   claimLeaseCutoff: Date;
 }
 
+/**
+ * Claim the invite for a server-generated account id after a verified Google
+ * ID token proved the mailbox (Slice 3b, D-3). Every condition of the code
+ * claim except the code hash; any outstanding code is cleared with the claim.
+ */
+export type ClaimInviteForGoogleSignupInput = Omit<ClaimInviteForSignupInput, 'codeHash'>;
+
 /** The FR-12a record (SA D-2). Every value already scrubbed by the caller. */
 export interface RecordRedemptionFailureInput {
   id: string;
@@ -713,9 +779,36 @@ export interface RecordRedemptionFailureInput {
   now: Date;
 }
 
-/** One lineage row, as the admin list reads it (Slice 1b). */
+/** One lineage row, as the admin list reads it (Slice 1b; parent from Slice 5b). */
 export interface BusinessOsAccountLineageLevel {
   account_id: string;
   invite_id: string | null;
   level: number;
+  /** NULL for an L1 champion (`admin_invite`); the inviting account for L2+ (FR-36). */
+  parent_account_id: string | null;
 }
+
+/**
+ * Slice 5b (T-13 layer 2): what the payment hold reads about ONE account's own
+ * lineage row. Nothing about its parent or its tree.
+ */
+export interface BusinessOsAccountHoldFacts {
+  invite_id: string | null;
+  source: 'admin_invite' | 'account_invite' | 'organic';
+  first_paid_at: string | null;
+}
+
+/** Slice 5b: the two invite facts the payment hold and its screen need. */
+export interface BusinessOsInviteHoldFacts {
+  grant_kind: BusinessOsInviteGrantKind;
+  language: string;
+}
+
+/**
+ * Slice 5b (T-19): what `business_os_finalise_friend_invite_redemption`
+ * answered. `finalised` and `already_finalised` carry the invite id and the
+ * level written; the refusals carry neither.
+ */
+export type FriendFinaliseOutcome =
+  | { outcome: 'finalised' | 'already_finalised'; inviteId: string; level: number }
+  | { outcome: 'issuer_not_eligible' | 'not_matched' };

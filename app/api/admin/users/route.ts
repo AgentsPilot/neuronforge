@@ -9,6 +9,13 @@
 // longer interpolated into a PostgREST `.or()` filter string (it could inject
 // filter syntax). Reads go through repositories; the business names come from
 // ONE batched read, never one per row.
+//
+// Credit deduction slice 8a (FR-48, SA SQ-42): each row with a Business OS
+// business also carries `creditsLeft` — the percentage of credits left, as the
+// owner's card shows it — from ONE batched, read-only pass
+// (`readAdminCreditsLeft`) that runs in parallel with the auth enrichment
+// under a 2 s budget. A failed or slow pass never fails or empties the list:
+// every Business OS row then reads "unknown". No credit count, token or cost.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
@@ -17,6 +24,8 @@ import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
 import { businessProfileRepository, BUSINESS_SEARCH_MAX_LIMIT } from '@/lib/repositories/BusinessProfileRepository';
+import { readAdminCreditsLeft, type AdminCreditsLeft } from '@/lib/business-os/credits/adminCreditPercent';
+import { adminCreditPercentDeps } from '@/lib/business-os/credits/adminCreditPercentDeps';
 
 const logger = createLogger({ module: 'UsersAdminAPI' });
 
@@ -160,17 +169,36 @@ export async function GET(request: NextRequest) {
     }
 
     // Enrich with auth metadata (email, last sign-in, etc.)
-    let authUsersMap = new Map<string, AuthUser>();
-    try {
-      const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers();
-      if (authError) {
-        requestLogger.warn({ err: authError }, 'Auth user enrichment failed; continuing with profile data');
-      } else if (authUsers) {
-        authUsersMap = new Map((authUsers.users as AuthUser[]).map((u) => [u.id, u]));
+    const enrichFromAuth = async (): Promise<Map<string, AuthUser>> => {
+      try {
+        const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers();
+        if (authError) {
+          requestLogger.warn({ err: authError }, 'Auth user enrichment failed; continuing with profile data');
+        } else if (authUsers) {
+          return new Map((authUsers.users as AuthUser[]).map((u) => [u.id, u]));
+        }
+      } catch (enrichError) {
+        requestLogger.warn({ err: enrichError }, 'Auth user enrichment threw; continuing with profile data');
       }
-    } catch (enrichError) {
-      requestLogger.warn({ err: enrichError }, 'Auth user enrichment threw; continuing with profile data');
-    }
+      return new Map<string, AuthUser>();
+    };
+
+    // Credits left (slice 8a): only for rows that HAVE a business, and only when
+    // the business lookup worked. The ids are this list's own rows, never
+    // request input. Runs alongside the auth enrichment; it never throws.
+    const idsWithBusiness = businessLookup === 'ok' ? [...businesses.keys()] : [];
+    const enrichStarted = Date.now();
+    const [authUsersMap, credits] = await Promise.all([
+      enrichFromAuth(),
+      businessLookup === 'ok'
+        ? readAdminCreditsLeft(idsWithBusiness, adminCreditPercentDeps(), requestLogger)
+        : Promise.resolve(null),
+    ]);
+    const creditsPass: 'ok' | 'failed' | 'timeout' | 'skipped' = credits ? credits.outcome : 'skipped';
+    // Times the whole Promise.all (the slower of the auth enrichment and the
+    // credits pass), so it is named for that; the credits pass logs its own `ms`.
+    const enrichMs = Date.now() - enrichStarted;
+    const UNKNOWN_CREDITS: AdminCreditsLeft = { kind: 'unknown' };
 
     const enrichedUsers = profiles.map((profile) => {
       const authUser = authUsersMap.get(profile.id);
@@ -187,6 +215,10 @@ export async function GET(request: NextRequest) {
         // null = no Business OS business for this login. Undefined when the
         // lookup itself failed, so the page can say "unknown", not "none".
         business: businessLookup === 'ok' ? (businesses.get(profile.id) ?? null) : undefined,
+        // Only on rows with a business: "—" and "unknown business" carry none.
+        ...(credits && businesses.has(profile.id)
+          ? { creditsLeft: credits.byUserId.get(profile.id) ?? UNKNOWN_CREDITS }
+          : {}),
       };
     });
 
@@ -217,6 +249,8 @@ export async function GET(request: NextRequest) {
         businessLookup,
         businessSearch,
         businessMatchesCapped,
+        creditsPass,
+        enrichMs,
       },
       'Admin user list served'
     );

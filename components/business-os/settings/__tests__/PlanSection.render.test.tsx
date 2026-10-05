@@ -30,61 +30,54 @@ import { buildCustomerPlanView } from '@/lib/business-os/entitlements/customerPl
 import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
+import { CREDIT_EXPLANATION } from '@/lib/i18n/creditExplanation';
+import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
 
 /*
- * The dictionary, for the handful of keys this file asserts on.
+ * The REAL dictionary, in the language a test asks for.
  *
  * The section names its sentences with keys and the component renders them, so a
  * `t` that echoed the key would turn every assertion here into a check that the
- * key is spelled right — which `planCopy.i18n.test.ts` already does, across all
- * three languages. What THIS file is for is what a customer sees, so it renders
- * the real English and keeps asserting the words.
+ * key is spelled right. What THIS file is for is what a customer sees, so it
+ * renders the real words — and, since the user decision of 2026-10-02 that a
+ * Hebrew or Spanish owner reads no English on this screen, in all three
+ * languages rather than a hand-copied English subset.
  *
  * `language` matters as much as `t`: the date in "ends on {date}" is formatted
  * by the component in the reader's locale, so without it there is no date to
  * find.
  */
-const COPY: Record<string, string> = {
-  'plan.includes': 'What your plan includes',
-  'plan.loading': 'Loading your plan…',
-  'plan.price.free_no_end': 'Free — no end date',
-  'plan.price.free': 'Free',
-  'plan.price.per_month': '{amount} a month',
-  'plan.ends_on': 'Your free access ends on {date}.',
-  'plan.ends_on_or_actions': 'Ends on {date}, or when the AI actions run out, whichever comes first.',
-  'plan.ends.while_paid': 'While the plan is paid for. An admin can set an end date on one account.',
-  'plan.changes.no_end_date':
-    'Your access has no end date. Business OS is normally a paid monthly plan, so if that ever changes for your account we will tell you first and you will be able to choose a plan.',
-  'plan.changes.on_end':
-    'When this ends you will be able to choose a paid monthly plan. Nothing is charged before you choose one.',
-  'plan.problem.unavailable':
-    'We could not load your plan just now. Nothing has changed about your account — please try again shortly.',
-  'plan.problem.no_record':
-    'We do not have a plan record for this account yet. Everything keeps working; get in touch if this stays here.',
-  'plan.move_before_then': 'Get in touch if you would like to move plan before then.',
-  'plan.category.crm': 'Clients (CRM)',
-  'plan.category.website_intake': 'Website and enquiries',
-  'plan.category.payments': 'Payments',
-  'plan.category.ai_chat': 'AI assistant',
-  'plan.category.marketing': 'Marketing',
-  'plan.category.insights': 'Insights',
-  'plan.category.support': 'Support',
-  'plan.category.platform': 'Platform',
-  'plan.category.addon': 'Add-ons',
-};
+type Lang = 'en' | 'he' | 'es';
+const mockLang: { language: Lang } = { language: 'en' };
 
-jest.mock('@/lib/business-os/LanguageContext', () => ({
-  useLanguage: () => ({
-    t: (key: string) => COPY[key] ?? key,
-    isRTL: false,
-    language: 'en',
-  }),
-}));
+jest.mock('@/lib/business-os/LanguageContext', () => {
+  const { translations } = jest.requireActual('@/lib/business-os/LanguageContext');
+  return {
+    useLanguage: () => ({
+      language: mockLang.language,
+      isRTL: mockLang.language === 'he',
+      t: (key: string, vars?: Record<string, string | number>) => {
+        let text: string = translations[mockLang.language][key] || key;
+        for (const [name, value] of Object.entries(vars ?? {})) text = text.replace(new RegExp(`\\{${name}\\}`, 'g'), String(value));
+        return text;
+      },
+    }),
+  };
+});
+// The dictionary module creates a browser Supabase client at import; only its
+// `translations` are used here.
+jest.mock('@/lib/supabaseClient', () => ({ supabase: {} }));
+
+const { translations } = jest.requireActual('@/lib/business-os/LanguageContext') as {
+  translations: Record<Lang, Record<string, string>>;
+};
+/** The English words, for the assertions written against them. */
+const COPY = translations.en;
 
 const NOW = new Date('2026-09-27T00:00:00.000Z');
 
 /** The payload the route would send for an account on this plan. */
-function payloadFor(planId: string) {
+function payloadFor(planId: string, locale: Lang = 'en') {
   const config = readCodeConfig();
   const resolution = resolveEntitlements({
     config,
@@ -94,7 +87,8 @@ function payloadFor(planId: string) {
     now: NOW,
   });
 
-  return buildCustomerPlanView({ resolution, unavailable: false, now: NOW, config });
+  // `locale` as the route passes the reader's stored language (OI-10).
+  return buildCustomerPlanView({ resolution, unavailable: false, now: NOW, config, locale });
 }
 
 function serve(body: unknown) {
@@ -103,13 +97,21 @@ function serve(body: unknown) {
   }) as unknown as typeof fetch;
 }
 
-async function renderFor(planId: string) {
-  serve({ success: true, data: payloadFor(planId) });
+async function renderFor(planId: string, language: Lang = 'en') {
+  mockLang.language = language;
+  serve({ success: true, data: payloadFor(planId, language) });
   render(<PlanSection />);
-  await waitFor(() => expect(screen.queryByText(/Loading your plan/i)).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByText(translations[language]['plan.loading'])).not.toBeInTheDocument());
+}
+
+/** A row's text without the explanation sentence under it — the heading and the line. */
+function headingAndLine(row: HTMLElement): string {
+  const note = row.querySelector('[data-testid^="plan-category-note-"]');
+  return (row.textContent ?? '').replace(note?.textContent ?? '', '');
 }
 
 afterEach(() => {
+  mockLang.language = 'en';
   jest.restoreAllMocks();
 });
 
@@ -215,7 +217,7 @@ describe('a paying customer on Essentials', () => {
     // accessible name — since R2-1 gave the lists visible headings. Asserted on
     // the heading, which is the element a sighted reader actually sees.
     expect(screen.getByRole('heading', { name: /What Autopilot would add/i })).toBeInTheDocument();
-    expect(screen.getByText(/500 per month becomes 2,000 per month/)).toBeInTheDocument();
+    expect(screen.getByText(/19,750 per month becomes 32,250 per month/)).toBeInTheDocument();
   });
 
   it('has nothing to click, and the unavailability is VISIBLE — not a dead button', async () => {
@@ -243,11 +245,43 @@ describe('a paying customer on Essentials', () => {
     // (`getAllByRole('list')[0]`) passed when the included list was empty,
     // because it then found the next-plan list, which carries the same number.
     //
-    // The number now sits inside the AI assistant row's summary, as
-    // "AI actions (500 per month)" — grouping put the value in brackets beside
-    // its own name rather than on a line of its own.
+    // A value sits inside its row's summary, in brackets beside its own name,
+    // as "Email volume 10,000 per month (alerts, never blocks)".
     const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
-    expect(included.getByText(/AI actions \(500 per month\)/)).toBeInTheDocument();
+    expect(included.getByText(/Email volume 10,000 per month/)).toBeInTheDocument();
+  });
+});
+
+describe('the credit allowance is shown with its number, under its own heading (slice 6, D-g / D-h)', () => {
+  it.each([
+    // The line is the value alone: the heading already says "Credits" (user
+    // decision, 2026-10-02 — no "Credits" over "Credits (…)").
+    ['champion', '32,250 per month', CREDIT_EXPLANATION.en.monthly],
+    ['pro', '32,250 per month', CREDIT_EXPLANATION.en.monthly],
+    ['basic', '19,750 per month', CREDIT_EXPLANATION.en.monthly],
+    ['trial', '2,000 in total', CREDIT_EXPLANATION.en.trial],
+  ])('%s: a first "Credits" row reads %s, with the sentence under it', async (planId, line, sentence) => {
+    await renderFor(planId);
+
+    const included = screen.getByRole('list', { name: /What your plan includes/i });
+    const firstRow = within(included).getAllByRole('listitem')[0];
+
+    // The heading, the line with its number, and the sentence — all in the FIRST
+    // row, which is the point of D-g.
+    expect(within(firstRow).getByText('Credits')).toBeInTheDocument();
+    expect(within(firstRow).getByText(line)).toBeInTheDocument();
+    // "Credits" once in the heading and line: never repeated in the line. (The
+    // sentence under it says "credits" in passing, so it is left out.)
+    expect(headingAndLine(firstRow).match(/Credits/g)).toHaveLength(1);
+    expect(within(firstRow).getByTestId('plan-category-note-credits')).toHaveTextContent(sentence);
+    // Once on the page, not repeated under other rows.
+    expect(screen.getAllByText(sentence)).toHaveLength(1);
+  });
+
+  it('no row but the credits one carries a sentence', async () => {
+    await renderFor('champion');
+
+    expect(screen.queryAllByTestId(/^plan-category-note-/)).toHaveLength(1);
   });
 });
 
@@ -258,6 +292,12 @@ describe('a trial', () => {
     expect(screen.getByText('Test Flight')).toBeInTheDocument();
     expect(screen.getByText(/ends on \w+ \d+, \d{4}/i)).toBeInTheDocument();
     expect(screen.getByText(/Nothing is charged before you choose one/i)).toBeInTheDocument();
+  });
+
+  it('still reads that it ends when the credits run out', async () => {
+    await renderFor('trial');
+
+    expect(screen.getByText(/or when the credits run out/i)).toBeInTheDocument();
   });
 });
 
@@ -299,7 +339,7 @@ describe('a cross-unit difference is shown as a CHANGE, not a gain (SA R2-1, QA-
     await renderFor('trial');
 
     const changes = within(screen.getByRole('list', { name: /What changes on Essentials/i }));
-    expect(changes.getByText(/AI actions/)).toBeInTheDocument();
+    expect(changes.getByText(/Credits/)).toBeInTheDocument();
 
     // And it is a DIFFERENT list from the additions one, not the same node found
     // twice.
@@ -315,7 +355,7 @@ describe('a cross-unit difference is shown as a CHANGE, not a gain (SA R2-1, QA-
     await renderFor('trial');
 
     expect(
-      screen.getByText(/from 250 in total to 500 per month, which is different rather than larger/)
+      screen.getByText(/from 2,000 in total to 19,750 per month, which is different rather than larger/)
     ).toBeInTheDocument();
   });
 
@@ -329,8 +369,9 @@ describe('a cross-unit difference is shown as a CHANGE, not a gain (SA R2-1, QA-
   });
 
   it('a plan with no cross-unit difference renders no changes list at all', async () => {
-    // Essentials → Autopilot differs only in chat (an addition) and the allowance
-    // (a same-unit improvement), so there is nothing to report as a change.
+    // Essentials → Autopilot differs only in chat (an addition) and the credit
+    // allowance (a same-unit improvement), so there is nothing to report as a
+    // change.
     await renderFor('basic');
 
     expect(screen.queryByRole('list', { name: /What changes on/i })).not.toBeInTheDocument();
@@ -388,12 +429,19 @@ describe('the contract with the server', () => {
     expect(screen.getByText(payload.name!)).toBeInTheDocument();
 
     // Grouped rows since 2026-09-27: each row prints its category label and the
-    // server-built `summary`. Both are asserted, because a component that printed
-    // the label and dropped the summary would still look like a list.
+    // server-built `summary` — or, for a row whose only feature is named like
+    // its heading, that feature's value (2026-10-02). Both halves are asserted,
+    // because a component that printed the label and dropped the line would
+    // still look like a list.
     for (const row of payload.included.slice(0, 3)) {
-      expect(included.getByText(COPY[row.labelKey] ?? row.labelKey)).toBeInTheDocument();
-      expect(included.getByText(row.summary)).toBeInTheDocument();
+      const heading = COPY[row.labelKey] ?? row.labelKey;
+      expect(included.getByText(heading)).toBeInTheDocument();
+      expect(included.getByText(planCategoryLine(heading, row)!)).toBeInTheDocument();
     }
+    // Non-vacuity for the rule: the first row (credits) took the short form, and
+    // the others kept the summary.
+    expect(planCategoryLine(COPY['plan.category.credits'], payload.included[0])).toBe(payload.included[0].features[0].value);
+    expect(planCategoryLine(COPY[payload.included[1].labelKey], payload.included[1])).toBe(payload.included[1].summary);
   });
 
   it('an emptied `included` fails this suite in more than one place', () => {
@@ -410,5 +458,86 @@ describe('the contract with the server', () => {
     expect(payload.included.map((row) => row.category)).not.toEqual(
       payload.nextPlanUp!.improves.map((entry) => entry.capability)
     );
+  });
+});
+
+describe('a Hebrew or Spanish owner reads no English, and no repeated "Credits" (user decision, 2026-10-02)', () => {
+  /*
+   * Every English phrase this screen has ever printed around the values, plus
+   * the English value phrases. Before 2026-10-02 the next-plan-up block mixed
+   * them with localised values in one line (QA-6b-E1).
+   */
+  const ENGLISH = [
+    /becomes/i,
+    /would add/i,
+    /What changes on/i,
+    /different rather than larger/i,
+    /a month/i,
+    /Coming soon/i,
+    /Available to choose/i,
+    /could not list your features/i,
+    /per month/i,
+    /in total/i,
+    /What your plan includes/i,
+  ];
+  const PLANS = ['champion', 'pro', 'basic', 'trial'];
+
+  it.each((['he', 'es'] as const).flatMap((language) => PLANS.map((planId) => [language, planId] as const)))(
+    '%s, %s: no English phrase anywhere on the screen',
+    async (language, planId) => {
+      await renderFor(planId, language);
+
+      const text = document.body.textContent ?? '';
+      // Non-vacuity: the screen really rendered, in that language.
+      expect(text).toContain(translations[language]['plan.includes']);
+      expect(ENGLISH.filter((phrase) => phrase.test(text)).map(String)).toEqual([]);
+    }
+  );
+
+  it.each((['en', 'he', 'es'] as const).flatMap((language) => PLANS.map((planId) => [language, planId] as const)))(
+    '%s, %s: the credits heading appears once in its row, over the value alone',
+    async (language, planId) => {
+      await renderFor(planId, language);
+
+      const heading = translations[language]['plan.category.credits'];
+      const included = screen.getByRole('list', { name: translations[language]['plan.includes'] });
+      const firstRow = within(included).getAllByRole('listitem')[0];
+      const credits = payloadFor(planId, language).included[0];
+
+      expect(credits.category).toBe('credits');
+      // The rule fires in every language: the capability's own label matches the
+      // heading word for word, so the line is just the value.
+      expect(within(firstRow).getByText(credits.features[0].value)).toBeInTheDocument();
+      expect(headingAndLine(firstRow).split(heading)).toHaveLength(2);
+      // And the summary (which repeats the name) is not on the screen at all.
+      expect(document.body.textContent ?? '').not.toContain(credits.summary);
+    }
+  );
+
+  it.each(['he', 'es'] as const)('%s: the next plan up is worded from the dictionary, with localised values', async (language) => {
+    await renderFor('basic', language);
+    const upgrade = payloadFor('basic', language).nextPlanUp!;
+    const dictionary = translations[language];
+
+    const addsHeading = dictionary['plan.next.adds_heading'].replace('{plan}', upgrade.name);
+    expect(screen.getByRole('heading', { name: addsHeading })).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: addsHeading })).toBeInTheDocument();
+
+    const improvement = upgrade.improves.find((entry) => entry.capability === 'credits.allowance')!;
+    const line = dictionary['plan.next.improves_line'].replace('{from}', improvement.from).replace('{to}', improvement.to);
+    expect(screen.getByText(line, { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(dictionary['plan.next.coming_soon'])).toBeInTheDocument();
+  });
+
+  it.each(['he', 'es'] as const)('%s: the cross-unit change on a trial is worded from the dictionary too', async (language) => {
+    await renderFor('trial', language);
+    const upgrade = payloadFor('trial', language).nextPlanUp!;
+    const dictionary = translations[language];
+
+    const changesHeading = dictionary['plan.next.changes_heading'].replace('{plan}', upgrade.name);
+    expect(screen.getByRole('list', { name: changesHeading })).toBeInTheDocument();
+    const change = upgrade.changes.find((entry) => entry.capability === 'credits.allowance')!;
+    const line = dictionary['plan.next.changes_line'].replace('{from}', change.from).replace('{to}', change.to);
+    expect(screen.getByText(line, { exact: false })).toBeInTheDocument();
   });
 });

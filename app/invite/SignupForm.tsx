@@ -29,6 +29,7 @@ import { useRouter } from 'next/navigation';
 import { signInWithPassword } from '@/lib/client/auth-actions';
 import { marketingUrl } from '@/lib/utils/origins';
 
+import { INVITE_PRIMARY_BUTTON } from './InviteShell';
 import type { SignupCopy } from './invitePageCopy';
 
 /** bcrypt reads at most 72 bytes (R-13). The server checks the same. */
@@ -170,10 +171,29 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
   };
 
   return (
-    <section data-testid="invite-signup" className="space-y-4 border-t border-slate-200 pt-5">
-      <h2 className="text-lg font-semibold">{step === 'ready' ? copy.readyHeading : copy.heading}</h2>
+    <section data-testid="invite-signup" className="space-y-4">
+      <div className="space-y-2">
+        {/* Layout only: where the visitor is in the two steps (code, then password). */}
+        {step !== 'ready' && (
+          <div data-testid="invite-signup-step" className="flex items-center gap-2 text-xs font-semibold text-indigo-700">
+            <span className="flex gap-1" aria-hidden="true">
+              <span className="h-1.5 w-6 rounded-full bg-indigo-600" />
+              <span className={`h-1.5 w-6 rounded-full ${step === 'code' ? 'bg-indigo-600' : 'bg-indigo-100'}`} />
+            </span>
+            {copy.stepOf(step === 'start' ? 1 : 2, 2)}
+          </div>
+        )}
+        <h2 className="text-lg font-semibold text-slate-900">{step === 'ready' ? copy.readyHeading : copy.heading}</h2>
+      </div>
 
-      <p data-testid="invite-signup-error" role="alert" aria-live="polite" className="min-h-[1.25rem] text-sm text-rose-700">
+      {/* Always mounted (a live region must exist before its text does); visually
+          hidden while empty so it does not leave a gap under the heading. */}
+      <p
+        data-testid="invite-signup-error"
+        role="alert"
+        aria-live="polite"
+        className={error ? 'rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700' : 'sr-only'}
+      >
         {error}
       </p>
 
@@ -184,7 +204,7 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
             type="button"
             onClick={() => void requestCode()}
             disabled={busy}
-            className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
+            className={INVITE_PRIMARY_BUTTON}
           >
             {busy ? copy.sending : copy.sendCode}
           </button>
@@ -195,7 +215,7 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
         <form data-testid="invite-signup-form" onSubmit={(event) => void submit(event)} className="space-y-3" noValidate>
           <p className="text-sm text-slate-600">{copy.codeSentTo(maskedEmail)}</p>
 
-          <label className="block text-sm font-medium">
+          <label className="block text-sm font-medium text-slate-800">
             {copy.codeLabel}
             <input
               name="signupCode"
@@ -204,12 +224,12 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
               inputMode="numeric"
               autoComplete="one-time-code"
               dir="ltr"
-              className="mt-1 block w-full rounded border border-slate-300 px-3 py-2 font-mono tracking-widest"
+              className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 font-mono text-lg tracking-[0.4em]"
             />
           </label>
 
           <div>
-            <label className="block text-sm font-medium">
+            <label className="block text-sm font-medium text-slate-800">
               {copy.passwordLabel}
               <input
                 type="password"
@@ -218,7 +238,7 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
                 onChange={(event) => setPassword(event.target.value)}
                 autoComplete="new-password"
                 aria-describedby="invite-signup-password-hint"
-                className="mt-1 block w-full rounded border border-slate-300 px-3 py-2"
+                className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
               />
             </label>
             <p id="invite-signup-password-hint" className="mt-1 text-xs text-slate-500">
@@ -226,7 +246,7 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
             </p>
           </div>
 
-          <label className="block text-sm font-medium">
+          <label className="block text-sm font-medium text-slate-800">
             {copy.confirmLabel}
             <input
               type="password"
@@ -234,7 +254,7 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
               value={confirm}
               onChange={(event) => setConfirm(event.target.value)}
               autoComplete="new-password"
-              className="mt-1 block w-full rounded border border-slate-300 px-3 py-2"
+              className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
             />
           </label>
 
@@ -242,7 +262,7 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
             <button
               type="submit"
               disabled={busy}
-              className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
+              className={INVITE_PRIMARY_BUTTON}
             >
               {busy ? copy.creating : copy.create}
             </button>
@@ -250,7 +270,7 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
               type="button"
               onClick={() => void requestCode()}
               disabled={busy}
-              className="text-sm text-slate-600 underline disabled:opacity-60"
+              className="text-sm font-medium text-indigo-700 underline-offset-2 hover:underline disabled:opacity-60"
             >
               {copy.resend}
             </button>
@@ -264,7 +284,7 @@ export function SignupForm({ token, maskedEmail, copy, signInLabel }: SignupForm
           <a
             href={marketingUrl('/login')}
             rel="noreferrer"
-            className="inline-block rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            className={INVITE_PRIMARY_BUTTON}
           >
             {signInLabel}
           </a>

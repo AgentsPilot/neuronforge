@@ -9,8 +9,14 @@
  */
 
 import { AUDIT_EVENTS } from '@/lib/audit/events';
-import { adminOpSchema, executeAdminOp, isBusinessOsTenant } from '@/lib/business-os/entitlements/adminOps';
+import {
+  OWN_ACCOUNT_GUARDED_OPS,
+  adminOpSchema,
+  executeAdminOp,
+  isBusinessOsTenant,
+} from '@/lib/business-os/entitlements/adminOps';
 import type { AdminOp, AdminOpContext } from '@/lib/business-os/entitlements/adminOps';
+import { currentCreditValue } from '@/lib/business-os/entitlements/config/creditValue';
 import { fixtureConfig } from '@/lib/business-os/entitlements/__fixtures__/fixtureSource';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
@@ -69,6 +75,36 @@ interface Calls {
   createOverride: Array<Record<string, unknown>>;
   endOverride: unknown[][];
   resetPlanState: Array<Record<string, unknown>>;
+  /** Slice 11b: the credit ops' writes. */
+  recordLot: Array<Record<string, unknown>>;
+  reverseLot: Array<Record<string, unknown>>;
+  /** Slice 11b: EVERY repository method called, read or write, in order. */
+  all: string[];
+}
+
+/** Slice 11b: a lot of the test account, as the lot repository returns it. */
+const LOT_ID = '77777777-7777-4777-8777-777777777777';
+/** An admin id with hex letters, for the upper-case cases (OP-15). */
+const HEX_ADMIN = 'fedcba98-7654-4321-8fed-cba987654321';
+const REQUEST_ID = '88888888-8888-4888-8888-888888888888';
+function creditLot() {
+  return {
+    id: LOT_ID,
+    accountId: ACCOUNT,
+    source: 'admin_grant' as const,
+    creditsGranted: 100,
+    creditsBase: 100,
+    creditsBonus: 0,
+    creditValueVersion: 1,
+    expiresAt: null,
+    idempotencyKey: `admin_grant:${REQUEST_ID}`,
+    sourceRef: null,
+    actorKind: 'admin' as const,
+    actorAdminId: ADMIN,
+    reason: 'earlier grant',
+    createdAt: '2026-09-01T00:00:00.000Z',
+    draws: [],
+  };
 }
 
 function context(options: {
@@ -78,7 +114,16 @@ function context(options: {
   config?: EntitlementConfig;
 } = {}): { ctx: AdminOpContext; calls: Calls } {
   const plan = options.plan === undefined ? planRow() : options.plan;
-  const calls: Calls = { updatePlan: [], ensurePlanRow: [], createOverride: [], endOverride: [], resetPlanState: [] };
+  const calls: Calls = {
+    updatePlan: [],
+    ensurePlanRow: [],
+    createOverride: [],
+    endOverride: [],
+    resetPlanState: [],
+    recordLot: [],
+    reverseLot: [],
+    all: [],
+  };
   const isTenant = options.isTenant !== false;
 
   const ctx: AdminOpContext = {
@@ -127,10 +172,80 @@ function context(options: {
         return { data: isTenant ? '2026-03-01T00:00:00.000Z' : null, error: null };
       },
     } as unknown as AdminOpContext['onboardingRepository'],
+    // Slice 11b: the credit ops' dependencies.
+    credit: {
+      lotRepository: {
+        async listLotsWithDraws() {
+          return { data: [creditLot()], error: null };
+        },
+        async findLotForAccount() {
+          const { draws: _draws, ...lot } = creditLot();
+          void _draws;
+          return { data: lot, error: null };
+        },
+        async recordLot(input: Record<string, unknown>) {
+          calls.recordLot.push(input);
+          return { data: { outcome: 'recorded', lotId: '99999999-9999-4999-8999-999999999999' }, error: null };
+        },
+        async reverseLot(input: Record<string, unknown>) {
+          calls.reverseLot.push(input);
+          return { data: { status: 'recorded', drawId: '12121212-1212-4212-8212-121212121212', credits: 40, remainingBefore: 100, remainingAfter: 60 }, error: null };
+        },
+      } as unknown as AdminOpContext['credit']['lotRepository'],
+      holdReaders: {
+        lineage: {
+          async findHoldFactsForAccount() {
+            return { data: null, error: null };
+          },
+        },
+        invites: {
+          async findHoldFactsById() {
+            return { data: null, error: null };
+          },
+        },
+      } as unknown as AdminOpContext['credit']['holdReaders'],
+    },
   };
+
+  // Record every repository method called, read or write (slice 11b: the
+  // own-account refusal must come before ANY of them).
+  const record = (repository: object, prefix: string) => {
+    const target = repository as Record<string, unknown>;
+    for (const key of Object.keys(target)) {
+      const original = target[key];
+      if (typeof original !== 'function') continue;
+      target[key] = (...args: unknown[]) => {
+        calls.all.push(`${prefix}.${key}`);
+        return (original as (...a: unknown[]) => unknown)(...args);
+      };
+    }
+  };
+  record(ctx.planRepository, 'plan');
+  record(ctx.profileRepository, 'profile');
+  record(ctx.onboardingRepository, 'onboarding');
+  record(ctx.credit.lotRepository, 'lots');
+  record(ctx.credit.holdReaders.lineage, 'lineage');
+  record(ctx.credit.holdReaders.invites, 'invites');
 
   return { ctx, calls };
 }
+
+/** Slice 11b: one valid body per op of the union (nine), for the per-op cases. */
+const ONE_OF_EACH: Array<[string, AdminOp, Parameters<typeof context>[0]]> = [
+  ['ensure_plan_row', { op: 'ensure_plan_row', cohort: 'champion', expiresAt: null, reason: 'trigger failed' } as AdminOp, { plan: null }],
+  ['set_cohort', { op: 'set_cohort', cohort: 'trial', reason: 'support case' } as AdminOp, {}],
+  ['set_expiry', { op: 'set_expiry', field: 'grace_ends_at', value: null, reason: 'support case' } as AdminOp, {}],
+  ['assign_tier', { op: 'assign_tier', tier: 'growth', expiresAt: null, reason: 'support case' } as AdminOp, {}],
+  ['add_override', { op: 'add_override', capability: 'chat.search', overrideOp: 'set', value: true, reason: 'support case' } as AdminOp, {}],
+  ['end_override', { op: 'end_override', overrideId: '33333333-3333-4333-8333-333333333333', reason: 'support case' } as AdminOp, { overrides: [] }],
+  [
+    'reset_plan_state',
+    { op: 'reset_plan_state', confirm: 'reset_plan_state', accountId: ACCOUNT, cohort: 'champion', expiresAt: null, reason: 'support case' } as AdminOp,
+    {},
+  ],
+  ['grant_credits', { op: 'grant_credits', amount: 50, expiresAt: null, requestId: REQUEST_ID, reason: 'goodwill' } as AdminOp, {}],
+  ['reduce_credit_lot', { op: 'reduce_credit_lot', lotId: LOT_ID, amount: 40, requestId: REQUEST_ID, reason: 'mistaken grant' } as AdminOp, {}],
+];
 
 const parse = (body: unknown, config: EntitlementConfig = fixtureConfig()) => adminOpSchema(config).safeParse(body);
 
@@ -166,6 +281,22 @@ describe('every audit action the executor can emit is registered (SA C5-2 / QA-2
     expect(actions.filter((action) => !(action in AUDIT_EVENTS))).toEqual([]);
   });
 
+  it('source sweep, slice 11b: every action literal in creditAdminOps.ts is an AUDIT_EVENTS key', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { readFileSync } = require('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { join } = require('path');
+    const source: string = readFileSync(
+      join(process.cwd(), 'lib', 'business-os', 'credits', 'creditAdminOps.ts'),
+      'utf8'
+    );
+    const actions = [...source.matchAll(/'(BOS_CREDIT_LOT_[A-Z0-9_]+)'/g)].map((match) => match[1]);
+
+    // Non-vacuity: the two credit op outcomes.
+    expect(new Set(actions).size).toBe(2);
+    expect(actions.filter((action) => !(action in AUDIT_EVENTS))).toEqual([]);
+  });
+
   it('executed: the action every successful op returns is registered', async () => {
     const cases: Array<[string, AdminOp, Parameters<typeof context>[0]]> = [
       ['ensure_plan_row', { op: 'ensure_plan_row', cohort: 'champion', expiresAt: null, reason: 'trigger failed' } as AdminOp, { plan: null }],
@@ -179,11 +310,15 @@ describe('every audit action the executor can emit is registered (SA C5-2 / QA-2
         { op: 'reset_plan_state', confirm: 'reset_plan_state', accountId: ACCOUNT, cohort: 'champion', expiresAt: null, reason: 'support case' } as AdminOp,
         {},
       ],
+      // Slice 11b: the two credit ops.
+      ['grant_credits', { op: 'grant_credits', amount: 50, expiresAt: null, requestId: REQUEST_ID, reason: 'goodwill' } as AdminOp, {}],
+      ['reduce_credit_lot', { op: 'reduce_credit_lot', lotId: LOT_ID, amount: 40, requestId: REQUEST_ID, reason: 'mistaken grant' } as AdminOp, {}],
     ];
 
     // Every variant of the union is covered, so a new op cannot be added
     // without either appearing here or failing the count.
-    expect(cases).toHaveLength(7);
+    expect(cases).toHaveLength(9);
+    expect(cases).toHaveLength(adminOpSchema(fixtureConfig()).options.length);
 
     for (const [name, op, options] of cases) {
       const { ctx } = context(options);
@@ -529,17 +664,34 @@ describe('add_override (C3-2)', () => {
   it('validates the value against the capability\'s own shape', async () => {
     const { ctx } = context();
     const result = await executeAdminOp(
-      { op: 'add_override', capability: 'ai.actions', overrideOp: 'set', value: true, reason: 'support case' } as AdminOp,
+      { op: 'add_override', capability: 'credits.allowance', overrideOp: 'set', value: true, reason: 'support case' } as AdminOp,
       ctx
     );
 
     expect(result).toMatchObject({ ok: false, status: 400, error: 'value_shape_invalid' });
   });
 
+  it('refuses an override on the retired id `ai.actions` at the boundary (slice 5, SQ-17)', () => {
+    // Renamed to `credits.allowance`, with no alias: the old id is no longer a
+    // catalog key, so the schema's capability enum refuses it before anything
+    // is written — an action-count override cannot be set on the credit pool.
+    const production = adminOpSchema(readCodeConfig());
+    const body = (capability: string) => ({
+      op: 'add_override',
+      capability,
+      overrideOp: 'set',
+      value: { perMonth: 5000 },
+      reason: 'support case',
+    });
+
+    expect(production.safeParse(body('ai.actions')).success).toBe(false);
+    expect(production.safeParse(body('credits.allowance')).success).toBe(true);
+  });
+
   it('accepts the right shape for the same capability', async () => {
     const { ctx } = context();
     const result = await executeAdminOp(
-      { op: 'add_override', capability: 'ai.actions', overrideOp: 'set', value: { perMonth: 5000 }, reason: 'support case' } as AdminOp,
+      { op: 'add_override', capability: 'credits.allowance', overrideOp: 'set', value: { perMonth: 5000 }, reason: 'support case' } as AdminOp,
       ctx
     );
 
@@ -652,3 +804,133 @@ describe('reset_plan_state (A-3) — the destructive one', () => {
     expect(ended.map((row) => row.capability).sort()).toEqual(['chat.bulk', 'chat.search']);
   });
 });
+
+describe('slice 11b — the own-account guard, all nine ops (S11-BQ-1, OP-15)', () => {
+  it('OWN_ACCOUNT_GUARDED_OPS equals the union\'s op literals, so a tenth op cannot be added without deciding', () => {
+    const literals = adminOpSchema(fixtureConfig()).options.map((variant) => variant.shape.op.value);
+    expect(literals).toHaveLength(9);
+    expect(new Set(literals)).toEqual(new Set(OWN_ACCOUNT_GUARDED_OPS));
+    expect(ONE_OF_EACH.map(([name]) => name).sort()).toEqual([...literals].sort());
+  });
+
+  it.each(ONE_OF_EACH)('%s on the admin\'s own account: 403 own_account and NO repository method at all', async (_name, sharedOp, options) => {
+    const { ctx, calls } = context(options);
+    ctx.accountId = ADMIN;
+    // A copy: the shared fixture must not change for the later cases.
+    const op = (sharedOp.op === 'reset_plan_state' ? { ...sharedOp, accountId: ADMIN } : sharedOp) as AdminOp;
+
+    expect(await executeAdminOp(op, ctx)).toEqual({ ok: false, status: 403, error: 'own_account' });
+    expect(calls.all).toEqual([]);
+  });
+
+  it.each(ONE_OF_EACH)('%s with the admin\'s own id UPPER-cased in the path: still 403, nothing read', async (_name, op, options) => {
+    const { ctx, calls } = context(options);
+    // Hex letters on purpose: the all-digit ADMIN reads the same in upper case.
+    ctx.adminId = HEX_ADMIN;
+    ctx.accountId = HEX_ADMIN.toUpperCase();
+    expect(ctx.accountId).not.toBe(ctx.adminId);
+
+    expect(await executeAdminOp(op, ctx)).toEqual({ ok: false, status: 403, error: 'own_account' });
+    expect(calls.all).toEqual([]);
+  });
+
+  it('…and the admin id upper-cased against a lower-case path is refused too', async () => {
+    const { ctx, calls } = context();
+    ctx.accountId = HEX_ADMIN;
+    ctx.adminId = HEX_ADMIN.toUpperCase();
+    expect(await executeAdminOp({ op: 'set_cohort', cohort: 'trial', reason: 'support case' } as AdminOp, ctx)).toMatchObject({ status: 403, error: 'own_account' });
+    expect(calls.all).toEqual([]);
+  });
+
+  it('a different account is not refused (the control)', async () => {
+    const { ctx } = context();
+    expect(await executeAdminOp({ op: 'set_cohort', cohort: 'trial', reason: 'support case' } as AdminOp, ctx)).toMatchObject({ ok: true });
+  });
+});
+
+describe('slice 11b — the credit ops inside executeAdminOp', () => {
+  const grant = { op: 'grant_credits', amount: 50, expiresAt: null, requestId: REQUEST_ID, reason: 'goodwill' } as AdminOp;
+  const reduce = { op: 'reduce_credit_lot', lotId: LOT_ID, amount: 40, requestId: REQUEST_ID, reason: 'mistaken grant' } as AdminOp;
+  const originalSystemId = process.env.SYSTEM_ADMIN_USER_ID;
+
+  afterEach(() => {
+    if (originalSystemId === undefined) delete process.env.SYSTEM_ADMIN_USER_ID;
+    else process.env.SYSTEM_ADMIN_USER_ID = originalSystemId;
+  });
+
+  it('OP-9: the credit value version passed to recordLot is currentCreditValue().version', async () => {
+    const { ctx, calls } = context();
+    await executeAdminOp(grant, ctx);
+    expect(calls.recordLot[0].creditValueVersion).toBe(currentCreditValue().version);
+  });
+
+  it.each([
+    ['grant_credits', grant],
+    ['reduce_credit_lot', reduce],
+  ])('%s: the platform account is 409 platform_account BEFORE the tenant check (S11-CR-1)', async (_name, op) => {
+    process.env.SYSTEM_ADMIN_USER_ID = '10101010-1010-4010-8010-101010101010';
+    const { ctx, calls } = context();
+    ctx.accountId = '10101010-1010-4010-8010-101010101010';
+    expect(await executeAdminOp(op, ctx)).toEqual({ ok: false, status: 409, error: 'platform_account' });
+    expect(calls.all).toEqual([]);
+  });
+
+  it('OP-21: the seven plan ops keep today\'s behaviour on the platform account (no platform check)', async () => {
+    process.env.SYSTEM_ADMIN_USER_ID = '10101010-1010-4010-8010-101010101010';
+    const { ctx } = context();
+    ctx.accountId = '10101010-1010-4010-8010-101010101010';
+    expect(await executeAdminOp({ op: 'set_cohort', cohort: 'trial', reason: 'support case' } as AdminOp, ctx)).toMatchObject({ ok: true });
+  });
+
+  it.each([
+    ['grant_credits', grant],
+    ['reduce_credit_lot', reduce],
+  ])('%s: a non-tenant is 404 and a missing plan row is 409, nothing written', async (_name, op) => {
+    const notTenant = context({ isTenant: false, plan: null });
+    expect(await executeAdminOp(op, notTenant.ctx)).toMatchObject({ status: 404, error: 'not_a_business_os_account' });
+    expect(notTenant.calls.recordLot).toEqual([]);
+    expect(notTenant.calls.reverseLot).toEqual([]);
+
+    const noRow = context({ plan: null });
+    expect(await executeAdminOp(op, noRow.ctx)).toMatchObject({ status: 409, error: 'plan_row_missing' });
+    expect(noRow.calls.recordLot).toEqual([]);
+    expect(noRow.calls.reverseLot).toEqual([]);
+  });
+
+  it.each([
+    ['grant_credits', grant],
+    ['reduce_credit_lot', reduce],
+  ])('%s: G11b-2, no plan, override or reset write; the outcome carries the audit override and no cache invalidation', async (_name, op) => {
+    const { ctx, calls } = context({ plan: planRow({ cohort: 'trial', trial_started_at: '2026-09-01T00:00:00.000Z' }) });
+    const result = await executeAdminOp(op, ctx);
+
+    expect(result).toMatchObject({ ok: true, invalidatesEntitlements: false, audit: { entityType: 'business_os_credit_lot' } });
+    expect((result as { before: unknown }).before).toEqual((result as { after: unknown }).after);
+    expect(calls.updatePlan).toEqual([]);
+    expect(calls.ensurePlanRow).toEqual([]);
+    expect(calls.createOverride).toEqual([]);
+    expect(calls.endOverride).toEqual([]);
+    expect(calls.resetPlanState).toEqual([]);
+  });
+
+  it('the seven plan ops set no audit override, no replayed flag and no invalidation opt-out (G11b-1)', async () => {
+    for (const [name, op, options] of ONE_OF_EACH.slice(0, 7)) {
+      const { ctx } = context(name === 'end_override' ? { overrides: [override()] } : options);
+      const result = await executeAdminOp(name === 'end_override' ? ({ ...op, overrideId: override().id } as AdminOp) : op, ctx);
+      expect({ name, ok: result.ok }).toEqual({ name, ok: true });
+      expect(result).not.toHaveProperty('audit');
+      expect(result).not.toHaveProperty('replayed');
+      expect(result).not.toHaveProperty('invalidatesEntitlements');
+    }
+  });
+
+  it('the union parses both credit bodies, and refuses an injected account or user id', () => {
+    expect(parse({ op: 'grant_credits', amount: 50, expiresAt: null, requestId: REQUEST_ID, reason: 'goodwill' }).success).toBe(true);
+    expect(parse({ op: 'reduce_credit_lot', lotId: LOT_ID, amount: 'rest', requestId: REQUEST_ID, reason: 'mistaken grant' }).success).toBe(true);
+    expect(parse({ op: 'grant_credits', amount: 50, expiresAt: null, requestId: REQUEST_ID, reason: 'goodwill', accountId: ACCOUNT }).success).toBe(false);
+    expect(parse({ op: 'reduce_credit_lot', lotId: LOT_ID, amount: 1, requestId: REQUEST_ID, reason: 'mistaken grant', userId: ACCOUNT }).success).toBe(false);
+    // The expiresAt key is required for a grant (S11-D-2 C).
+    expect(parse({ op: 'grant_credits', amount: 50, requestId: REQUEST_ID, reason: 'goodwill' }).success).toBe(false);
+  });
+});
+

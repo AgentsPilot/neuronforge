@@ -67,6 +67,37 @@ export type PurgeScope =
  */
 export type PurgeSnapshotMode = 'rows' | 'ids';
 
+/**
+ * The business area a deletable table belongs to (AD-1a, D-5).
+ *
+ * Lets a preview say "Payments: 412 rows" instead of listing 70 table names
+ * (admin delete FR-A2). A CLOSED union on purpose (SA D-5): a free string would
+ * let two spellings of one area split a count in half without any test
+ * noticing. Plain-language labels live in UI copy, keyed by these ids — this
+ * is a grouping key, not display text.
+ *
+ * Required on every non-`never` descriptor (enforced by the invariant suite,
+ * not by the type, so `never` rows — which are never counted as deleted — do
+ * not have to invent one).
+ */
+export type PurgeArea =
+  | 'business_profile'
+  | 'crm'
+  | 'website'
+  | 'scheduling'
+  | 'payments'
+  | 'email_marketing'
+  | 'intake'
+  | 'onboarding_chat'
+  | 'capabilities'
+  | 'smart_links'
+  | 'channels'
+  | 'insights'
+  | 'briefings'
+  | 'integrations'
+  | 'agents'
+  | 'activity_history';
+
 export interface PurgeDescriptor {
   table: string;
   level: PurgeDescriptorLevel;
@@ -76,6 +107,8 @@ export interface PurgeDescriptor {
   snapshot: PurgeSnapshotMode;
   /** Why this row is classified as it is. Comment the *why*, per CLAUDE.md. */
   notes?: string;
+  /** Business area for grouped counts (D-5). Required unless `level` is `never`. */
+  area?: PurgeArea;
 }
 
 /**

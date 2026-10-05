@@ -16,6 +16,11 @@ import userEvent from '@testing-library/user-event';
 import BusinessOsInvitesPage from '../page';
 import type { InviteRow, InvitesPayload } from '../types';
 
+// Timeout only, no assertion changes. These cases type into the form character
+// by character with userEvent.type, so the file takes ~29s on its own and some
+// cases ran past Jest's 5s default when the full suite loaded every worker.
+jest.setTimeout(30_000);
+
 const LINK = 'http://localhost:3000/invite#t=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 function row(overrides: Partial<InviteRow> = {}): InviteRow {
@@ -140,6 +145,36 @@ describe('the list', () => {
     expect(accepted).toHaveTextContent('acct-123');
     expect(accepted).toHaveTextContent('2026-10-03');
     expect(accepted).toHaveTextContent('L1');
+    // An L1 champion has no parent, so nothing is shown for it.
+    expect(within(list).queryByTestId('invite-parent-account')).not.toBeInTheDocument();
+  });
+
+  it('Slice 5b (FR-36): an accepted friend invite shows L2 and its parent account', async () => {
+    responder = () => ({
+      status: 200,
+      body: {
+        success: true,
+        data: payload({
+          invites: [
+            row({
+              state: 'accepted',
+              redeemedAt: '2026-10-03T09:00:00.000Z',
+              redeemedAccountId: 'friend-456',
+              level: 2,
+              parentAccountId: 'champion-789',
+              issuerKind: 'account',
+              issuerAccountId: 'champion-789',
+            }),
+          ],
+        }),
+      },
+    });
+    render(<BusinessOsInvitesPage />);
+    const list = await screen.findByTestId('invite-list');
+    const accepted = within(list).getByTestId('invite-accepted-account');
+    expect(accepted).toHaveTextContent('friend-456');
+    expect(accepted).toHaveTextContent('L2');
+    expect(within(accepted).getByTestId('invite-parent-account')).toHaveTextContent('parent champion-789');
   });
 
   it('T-16: the banner counts signups that stopped halfway, and each row shows the step, code, message and account', async () => {
@@ -653,5 +688,94 @@ describe('Slice 2a: the invitation email', () => {
     render(<BusinessOsInvitesPage />);
     const list = await screen.findByTestId('invite-list');
     expect(within(list).queryByTestId('invite-email-status')).toBeNull();
+  });
+});
+
+describe('Slice 5a (F5a-11): a champion friend invite in the admin list', () => {
+  const CHAMPION = '44444444-4444-4444-8444-444444444444';
+  const friend = row({
+    id: 'f',
+    email: 'friend@example.com',
+    inviteType: 'fixture-paid',
+    grantLabel: 'Tier A',
+    inviterDisplayName: 'Dana Champion',
+    issuerKind: 'account',
+    issuerAccountId: CHAMPION,
+  });
+  const friendRevoked = row({
+    id: 'fr',
+    email: 'gone@example.com',
+    issuerKind: 'account',
+    issuerAccountId: CHAMPION,
+    state: 'revoked',
+    revokedAt: '2026-10-02T09:00:00.000Z',
+    revokeReason: 'Revoked by the inviting champion',
+    revokedByInviter: true,
+  });
+  const admin = row({ id: 'adm', email: 'admin-issued@example.com', issuerKind: 'admin', issuerAccountId: null });
+
+  const shownIds = () =>
+    screen
+      .queryAllByTestId(/^invite-row-/)
+      .map((element) => element.getAttribute('data-testid')?.replace('invite-row-', ''));
+
+  async function renderWith(invites: InviteRow[]) {
+    responder = () => ({ status: 200, body: { success: true, data: payload({ invites }) } });
+    render(<BusinessOsInvitesPage />);
+    return screen.findByTestId('invite-list');
+  }
+
+  it('shows the champion as issuer, with their account id; an admin row shows none', async () => {
+    const list = await renderWith([friend, admin]);
+    const friendRow = within(list).getByTestId('invite-row-f');
+    expect(friendRow).toHaveTextContent('Dana Champion');
+    expect(within(friendRow).getByTestId('invite-issuer-account')).toHaveTextContent(CHAMPION);
+    expect(within(within(list).getByTestId('invite-row-adm')).queryByTestId('invite-issuer-account')).not.toBeInTheDocument();
+  });
+
+  it('says a friend invite was revoked by the inviter', async () => {
+    const list = await renderWith([friendRevoked]);
+    expect(within(list).getByTestId('invite-revoked-by-inviter')).toHaveTextContent('Revoked by the inviter');
+  });
+
+  it('the issuer filter separates friend invites from admin invites; a row from an older server reads as admin', async () => {
+    const legacy = row({ id: 'old', email: 'old@example.com' });
+    await renderWith([friend, friendRevoked, admin, legacy]);
+    const select = screen.getByTestId('invite-issuer-filter');
+    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'All issuers',
+      'Issued by an admin',
+      'Friend invites (champions)',
+    ]);
+    fireEvent.change(select, { target: { value: 'account' } });
+    expect(shownIds()).toEqual(['f', 'fr']);
+    fireEvent.change(select, { target: { value: 'admin' } });
+    expect(shownIds()).toEqual(['adm', 'old']);
+    fireEvent.change(select, { target: { value: 'all' } });
+    expect(shownIds()).toEqual(['f', 'fr', 'adm', 'old']);
+  });
+
+  it('an admin can revoke a champion\u2019s pending friend invite (FR-6), through the admin revoke route', async () => {
+    const user = userEvent.setup();
+    const list = await renderWith([friend]);
+    responder = (call) =>
+      call.init?.method === 'POST'
+        ? {
+            status: 200,
+            body: {
+              success: true,
+              data: { invite: { ...friend, state: 'revoked', revokedAt: '2026-10-02T00:00:00.000Z', revokeReason: 'Admin clean-up', revokedByInviter: false } },
+            },
+          }
+        : { status: 200, body: { success: true, data: payload({ invites: [friend] }) } };
+
+    await user.click(within(list).getByRole('button', { name: 'Revoke' }));
+    const dialog = screen.getByTestId('revoke-dialog');
+    await user.type(within(dialog).getByRole('textbox'), 'Admin clean-up');
+    await user.click(within(dialog).getByRole('button', { name: 'Revoke invite' }));
+
+    await waitFor(() => expect(within(list).getByTestId('invite-state')).toHaveTextContent('Revoked'));
+    expect(calls.find((call) => call.init?.method === 'POST')?.url).toBe('/api/admin/business-os/invites/f/revoke');
+    expect(within(list).queryByTestId('invite-revoked-by-inviter')).not.toBeInTheDocument();
   });
 });

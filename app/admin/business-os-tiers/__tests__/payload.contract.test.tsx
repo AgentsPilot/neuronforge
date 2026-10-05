@@ -61,7 +61,7 @@ describe('the page renders what the server sends', () => {
     for (const plan of payload.plans) {
       const card = screen.getByTestId(`plan-${plan.id}`);
       expect(card).toHaveTextContent(plan.name);
-      expect(within(card).getByTestId(`plan-${plan.id}-ai`)).toHaveTextContent(plan.aiActions);
+      expect(within(card).getByTestId(`plan-${plan.id}-credits`)).toHaveTextContent(plan.credits);
       expect(within(card).getByTestId(`plan-${plan.id}-ends`)).toHaveTextContent(plan.endsWhen);
     }
   });
@@ -148,12 +148,14 @@ describe('the fixture in the render suite still matches the server', () => {
     for (const plan of payload.plans) {
       expect(keysOf(plan)).toEqual(
         [
-          'aiActions',
+          // FYI-only marker (2026-09-29), on every plan including the cohorts.
+          'active',
           // The two commercial flags (2026-09-27). Listed explicitly, like every
           // other field: this test exists so a field added server-side and never
           // rendered — or rendered and never sent — fails here.
           'availableToBuy',
           'basis',
+          'credits',
           'endsWhen',
           'id',
           'includes',

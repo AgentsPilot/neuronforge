@@ -109,14 +109,79 @@ const ALLOWED = new Set(
     // (SA R-8). An admin route, gated by `requireAdmin`.
     'app/api/admin/business-os/accounts/[accountId]/summary/route.ts',
     'app/api/admin/business-os/accounts/[accountId]/summary/__tests__/route.test.ts',
-    // The redemption's production wiring. It may call exactly ONE plan-state
-    // write, `provisionFromInvite` (the finalise function), after mailbox
-    // proof, the invite claim and the account creation; the test below pins
-    // that it calls no other write method (F-8).
+    // The redemption's production wiring. It may call exactly TWO plan-state
+    // writes, `provisionFromInvite` (the champion finalise) and, from Slice 5b,
+    // `provisionFromFriendInvite` (the friend finalise, T-19), each after
+    // mailbox proof, the invite claim and the account creation; the test below
+    // pins that it calls no other write method (F-8). Slice 5b also hands it the
+    // plan repository as the friend issuer's READ-ONLY plan reader
+    // (`findEntitlementInputs`, the TypeScript in-force re-check).
     'lib/business-os/invites/redemptionDeps.ts',
     'lib/business-os/invites/__tests__/redemptionDeps.test.ts',
+    // Slice 5b (QA-1): the friend code route's end-to-end test. It replaces the
+    // plan repository with a fake that only answers `findEntitlementInputs`.
+    'app/api/public/invites/signup/__tests__/code.friend.route.test.ts',
+    // ── Credit deduction slice 4b, 2026-09-29 — the leak check ─────────────
+    // The leak check walks every Business OS account (plan rows, SA S-1) and
+    // needs each one's `period_anchor` to name the billing period of a leak
+    // (SA S-4). READ ONLY: `pagePlans` and `findEntitlementInputs`, nothing
+    // else; listed in NO_STATE_WRITE_REFERRERS below, which pins it. Its callers
+    // are an admin route (`requireAdmin` first) and a fail-closed cron.
+    'lib/business-os/credits/creditLeakCheckDeps.ts',
+    // ── Invite-only signup Slice 5a, 2026-09-30 — friend invites ───────────
+    // The friend-invite routes' production wiring. READ ONLY: the operations
+    // call `findEntitlementInputs` to ask whether the signed-in account is an
+    // in-force champion (T-17 mode: the plan row, never the resolver), and
+    // nothing else; listed in NO_STATE_WRITE_REFERRERS below, which pins it.
+    // The operations themselves name no plan repository (a structural type).
+    'lib/business-os/invites/friendInviteDeps.ts',
+    // ── Credit deduction slice 6a, 2026-09-30 — the owner credits card ──────
+    // Credit deduction slice 6a: the owner card's period — READ ONLY,
+    // `findPeriodAnchor` and nothing else (SA W6-1). The one file that wires the
+    // plan repository for `GET /api/business-os/usage`; the account id is the
+    // session's, through the account seam. Listed in NO_STATE_WRITE_REFERRERS
+    // below, which pins it, and the slice 6a test below pins the one method.
+    'lib/business-os/credits/ownerCreditUsageDeps.ts',
+    // ── Credit deduction slice 11c, 2026-10-03 — the admin per-account credit view ──
+    // The route passes the plan repository to the tenant check (as the summary
+    // route does): READ ONLY through `isBusinessOsTenant`. An admin route, gated
+    // by `requireAdmin`. Its test replaces the repository with a fake.
+    'app/api/admin/business-os/credits/accounts/[accountId]/route.ts',
+    'app/api/admin/business-os/credits/accounts/[accountId]/__tests__/route.test.ts',
+    // The view's service-role wiring: READ ONLY, `findPeriodAnchor` and nothing
+    // else (the slice 11c test below pins the one method). Listed in
+    // NO_STATE_WRITE_REFERRERS below.
+    'lib/business-os/credits/adminCreditPositionDeps.ts',
+    // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
+    // READ ONLY, `findPeriodAnchorsBatch` and nothing else (SA SQ-43). The one
+    // file that wires the plan repository for the admin Businesses list's
+    // credits pass; the ids are that admin route's own rows, behind
+    // requireAdmin. Listed in NO_STATE_WRITE_REFERRERS below, and the slice 8a
+    // test below pins the one method.
+    'lib/business-os/credits/adminCreditPercentDeps.ts',
+    // ── Credit deduction slice 8b, 2026-10-04 — the low-line audit record ─
+    // READ ONLY, `findPeriodAnchor` and nothing else (SA SQ-44). The one file
+    // that wires the plan repository for the low-line check inside the AI
+    // charge recorder (a trial's anchor); the account is the charge record's,
+    // validated by runAiAction. Listed in NO_STATE_WRITE_REFERRERS below, and
+    // the slice 8b test below pins the one method.
+    'lib/business-os/credits/creditLowLineDeps.ts',
   ].map((p) => p.split('/').join(sep))
 );
+
+/** Slice 6a: the owner card's wiring, and the ONE plan-repository method it may call. */
+const OWNER_CREDIT_CARD_WIRING = 'lib/business-os/credits/ownerCreditUsageDeps.ts';
+const OWNER_CREDIT_CARD_METHOD = 'findPeriodAnchor';
+
+/** Slice 11c: the admin credit view's wiring, and the ONE plan-repository method it may call. */
+const ADMIN_CREDIT_VIEW_WIRING = 'lib/business-os/credits/adminCreditPositionDeps.ts';
+/** Slice 8a: the admin "Credits left" wiring, and the ONE plan-repository method it may call. */
+const ADMIN_CREDITS_LEFT_WIRING = 'lib/business-os/credits/adminCreditPercentDeps.ts';
+const ADMIN_CREDITS_LEFT_METHOD = 'findPeriodAnchorsBatch';
+
+/** Slice 8b: the low-line check's wiring, and the ONE plan-repository method it may call. */
+const LOW_LINE_WIRING = 'lib/business-os/credits/creditLowLineDeps.ts';
+const LOW_LINE_METHOD = 'findPeriodAnchor';
 
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
 const WRITE_METHODS = [
@@ -127,11 +192,13 @@ const WRITE_METHODS = [
   'resetPlanState',
   // Invite-only signup Slice 1b (F-8): the finalise function writes a plan row.
   'provisionFromInvite',
+  // Invite-only signup Slice 5b (T-19): the friend finalise writes a no-basis plan row.
+  'provisionFromFriendInvite',
 ];
 
-/** The one invite-redemption file allowed to name the plan repository, and the one write it may call. */
+/** The one invite-redemption file allowed to name the plan repository, and the writes it may call. */
 const INVITE_REDEMPTION_WIRING = 'lib/business-os/invites/redemptionDeps.ts';
-const INVITE_REDEMPTION_WRITE = 'provisionFromInvite';
+const INVITE_REDEMPTION_WRITES = ['provisionFromInvite', 'provisionFromFriendInvite'];
 
 /**
  * Allowed files that are NOT the repository layer and NOT an admin route.
@@ -152,6 +219,18 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/entitlements/account.ts',
   'lib/business-os/entitlements/shadow.ts',
   'lib/business-os/entitlements/report.ts',
+  // Credit deduction slice 4b: the leak check's wiring reads plan rows only.
+  'lib/business-os/credits/creditLeakCheckDeps.ts',
+  // Invite-only signup Slice 5a: the friend-invite wiring reads plan rows only.
+  'lib/business-os/invites/friendInviteDeps.ts',
+  // Credit deduction slice 6a: the owner card's period — READ ONLY, `findPeriodAnchor` and nothing else.
+  'lib/business-os/credits/ownerCreditUsageDeps.ts',
+  // Credit deduction slice 11c: the admin credit view's wiring — READ ONLY, `findPeriodAnchor` and nothing else.
+  'lib/business-os/credits/adminCreditPositionDeps.ts',
+  // Credit deduction slice 8a: the admin "Credits left" column — READ ONLY, `findPeriodAnchorsBatch` and nothing else.
+  'lib/business-os/credits/adminCreditPercentDeps.ts',
+  // Credit deduction slice 8b: the low-line check — READ ONLY, `findPeriodAnchor` and nothing else.
+  'lib/business-os/credits/creditLowLineDeps.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -257,12 +336,57 @@ describe('RC-15 — entitlement repository referrers', () => {
     expect(misclassified).toEqual([]);
   });
 
-  it('Slice 1b (F-8): the invite redemption wiring calls provisionFromInvite and NO other plan-state write', () => {
+  it('Slices 1b/5b (F-8, T-19): the invite redemption wiring calls the two finalise writes and NO other plan-state write', () => {
     const source = readFileSync(join(ROOT, ...INVITE_REDEMPTION_WIRING.split('/')), 'utf8');
-    expect(source).toMatch(new RegExp(`\\.${INVITE_REDEMPTION_WRITE}\\s*\\(`));
-    for (const method of WRITE_METHODS.filter((name) => name !== INVITE_REDEMPTION_WRITE)) {
+    for (const write of INVITE_REDEMPTION_WRITES) {
+      expect(source).toMatch(new RegExp(`\\.${write}\\s*\\(`));
+    }
+    for (const method of WRITE_METHODS.filter((name) => !INVITE_REDEMPTION_WRITES.includes(name))) {
       expect(source).not.toMatch(new RegExp(`\\.${method}\\s*\\(`));
     }
+  });
+
+  it('Slice 6a (W6-1): the owner credit card wiring calls findPeriodAnchor on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...OWNER_CREDIT_CARD_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([OWNER_CREDIT_CARD_METHOD]);
+    // The rule is not vacuous: it would see a second method.
+    const planted = 'businessOsAccountPlanRepository.findPeriodAnchor(a); businessOsAccountPlanRepository.updatePlan(b)';
+    expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
+      'findPeriodAnchor',
+      'updatePlan',
+    ]);
+  });
+
+  it('Slice 11c: the admin credit view wiring calls findPeriodAnchor on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...ADMIN_CREDIT_VIEW_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([OWNER_CREDIT_CARD_METHOD]);
+  });
+
+  it('Slice 8a (SQ-43): the admin "Credits left" wiring calls findPeriodAnchorsBatch on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...ADMIN_CREDITS_LEFT_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([ADMIN_CREDITS_LEFT_METHOD]);
+    // The rule is not vacuous: it would see a second method.
+    const planted =
+      'businessOsAccountPlanRepository.findPeriodAnchorsBatch(a); businessOsAccountPlanRepository.ensurePlanRow(b)';
+    expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
+      'findPeriodAnchorsBatch',
+      'ensurePlanRow',
+    ]);
+  });
+
+  it('Slice 8b (SQ-44): the low-line check wiring calls findPeriodAnchor on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...LOW_LINE_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([LOW_LINE_METHOD]);
+    // The rule is not vacuous: it would see a second method.
+    const planted = 'businessOsAccountPlanRepository.findPeriodAnchor(a); businessOsAccountPlanRepository.resetPlanState(b)';
+    expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
+      'findPeriodAnchor',
+      'resetPlanState',
+    ]);
   });
 
   it('the allowed list names files that exist', () => {

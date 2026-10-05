@@ -125,7 +125,14 @@ describe('readJobsQueues', () => {
 });
 
 describe('lib/admin/** never names an admin repository (slice 4 C-6, F-10)', () => {
-  it.each(['lib/admin/jobs/readJobsQueues.ts', 'lib/admin/jobs/buildJobsQueuesView.ts', 'lib/admin/readUnderDeadline.ts'])(
+  it.each([
+    'lib/admin/jobs/readJobsQueues.ts',
+    'lib/admin/jobs/buildJobsQueuesView.ts',
+    'lib/admin/readUnderDeadline.ts',
+    // ADMIN_BOS_CLEANUP slice 7a (workplan §2.8): the item list's pure modules.
+    'lib/admin/jobs/queueItemEligibility.ts',
+    'lib/admin/jobs/buildQueueItemsView.ts',
+  ])(
     '%s',
     (file) => {
       const code = fs

@@ -35,6 +35,13 @@ const state = {
   snapshot: null as unknown,
   unavailable: false,
   throws: false,
+  /** Which user id the preferences repository was asked about. */
+  prefsAskedFor: [] as string[],
+  /** What `findLocale` returns — the repository's own `{ data, error }` shape. */
+  locale: { data: null, error: null } as {
+    data: { preferredLanguage: string | null; timezone: string | null } | null;
+    error: Error | null;
+  },
 };
 
 jest.mock('@/lib/auth', () => ({
@@ -51,10 +58,23 @@ jest.mock('@/lib/business-os/entitlements/EntitlementService', () => ({
   }),
 }));
 
+// The language read goes through the repository (CLAUDE.md rule 1). Stubbed at
+// the repository, not at Supabase: the repository's own suite covers its query
+// and its `user_id` scope; this one covers what the route does with the answer.
+jest.mock('@/lib/repositories/UserPreferencesRepository', () => ({
+  userPreferencesRepository: {
+    findLocale: async (userId: string) => {
+      state.prefsAskedFor.push(userId);
+      return state.locale;
+    },
+  },
+}));
+
 // The view builder is `server-only` and real here: this suite is about the
 // route, and stubbing the thing that decides what a customer is told would make
 // a green test say nothing about the endpoint.
 import { GET } from '@/app/api/business-os/entitlements/my-plan/route';
+import { buildCustomerPlanView } from '@/lib/business-os/entitlements/customerPlanView';
 import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
@@ -87,6 +107,8 @@ beforeEach(() => {
   state.snapshot = resolutionFor('basic');
   state.unavailable = false;
   state.throws = false;
+  state.prefsAskedFor = [];
+  state.locale = { data: null, error: null };
 });
 
 describe('the gate', () => {
@@ -101,6 +123,7 @@ describe('the gate', () => {
     // Nothing was looked up. A 401 issued after the read has leaked the data and
     // satisfied its status code.
     expect(state.askedFor).toEqual([]);
+    expect(state.prefsAskedFor).toEqual([]);
   });
 
   it('does not require an admin — this is a customer route', async () => {
@@ -122,6 +145,8 @@ describe('tenant isolation', () => {
     expect(response.status).toBe(200);
     expect(state.askedFor).toEqual([CUSTOMER]);
     expect(state.askedFor).not.toContain(SOMEBODY_ELSE);
+    // The language is the session user's too.
+    expect(state.prefsAskedFor).toEqual([CUSTOMER]);
   });
 
   it('ignores a body too, including on a GET that should not have one', async () => {
@@ -134,6 +159,16 @@ describe('tenant isolation', () => {
     await GET(withBody);
 
     expect(state.askedFor).toEqual([CUSTOMER]);
+  });
+
+  it('the language read goes through the repository, not Supabase (CLAUDE.md rule 1)', () => {
+    const code = codeOnly(
+      readFileSync(join(process.cwd(), 'app/api/business-os/entitlements/my-plan/route.ts'), 'utf8')
+    );
+
+    expect(code).not.toMatch(/supabase/i);
+    expect(code).not.toMatch(/\.from\(/);
+    expect(code).toMatch(/userPreferencesRepository\.findLocale\(user\.id\)/);
   });
 
   it('the SOURCE never reads a parameter — so the day somebody adds one, this fails', async () => {
@@ -315,6 +350,66 @@ describe('tenant isolation', () => {
     // Non-vacuity: the GET it DOES export is there, so this is not asserting
     // about an empty object.
     expect(handlers).toHaveProperty('GET');
+  });
+});
+
+describe("the reader's language", () => {
+  // The plan NAME is a brand and is not translated; the feature rows are. The
+  // real view builder is the oracle, so these compare what the route chose.
+  const includedIn = (locale: 'en' | 'he') =>
+    JSON.parse(
+      JSON.stringify(
+        buildCustomerPlanView({ resolution: resolutionFor('basic'), unavailable: false, locale }).included
+      )
+    );
+  const ENGLISH = includedIn('en');
+  const HEBREW = includedIn('he');
+
+  it('labels the plan in the stored language', async () => {
+    // Non-vacuity: the two labels differ, or this would pass on an English-only route.
+    expect(HEBREW).not.toEqual(ENGLISH);
+    state.locale = { data: { preferredLanguage: 'he', timezone: null }, error: null };
+
+    const response = await GET(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(state.prefsAskedFor).toEqual([CUSTOMER]);
+    expect(body.data.included).toEqual(HEBREW);
+  });
+
+  it('no preferences row is English, not an error', async () => {
+    state.locale = { data: { preferredLanguage: null, timezone: null }, error: null };
+
+    const response = await GET(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.included).toEqual(ENGLISH);
+  });
+
+  it('an unreadable preference is English, not a broken screen', async () => {
+    state.locale = { data: null, error: new Error('relation does not exist') };
+
+    const response = await GET(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.included).toEqual(ENGLISH);
+  });
+
+  it('a stored value the product does not speak, or not exactly, is English', async () => {
+    // Exact match, as before the repository move: `findLocale` returns the raw
+    // value and the route checks it with `isValidLocale`, no trimming or casing.
+    for (const preferredLanguage of ['fr', ' he ', 'HE', '']) {
+      state.locale = { data: { preferredLanguage, timezone: null }, error: null };
+
+      const response = await GET(request());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.included).toEqual(ENGLISH);
+    }
   });
 });
 

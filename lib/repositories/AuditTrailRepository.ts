@@ -9,7 +9,8 @@
 // the rows, but the audit routes have always read with the service role, and
 // this repository makes the scoping explicit instead of relying on RLS:
 // `.eq('user_id', userId)` on every query. For the owner method `userId` is
-// always the authenticated caller (never a client-supplied value).
+// always the authenticated caller (never a client-supplied value). The same
+// holds for `listOwnerEntriesForExport`, the GDPR data export's audit read.
 //
 // THE FIRST ADMIN EXCEPTION (admin reorganisation slice 2b, SA C-7):
 // `listAdminAiFailures` reads an ADMIN-SELECTED account's failed Business OS AI
@@ -29,14 +30,36 @@
 // request), and its only caller is `app/api/admin/health-summary/route.ts`,
 // behind `requireAdmin` (pinned by adminReadMethods.guard.test.ts).
 //
-// AI audit entries (entity type `ai_action`, events `BUSINESS_AI_ACTION_*`) are
-// operator-only until the charging decision (Layer 3 D-6). They are excluded
-// IN THE QUERY, so the page, its counts and its CSV export can never see one.
+// THE THIRD ADMIN EXCEPTION, AND THE FIRST UNSCOPED READ OF ENTRY CONTENT
+// (admin AI Activity view, Gap B slice B1b, NFR-4.4, SA-RC-12):
+// `listAiActionEntriesAllAccountsByGroupIds` reads Business OS AI action entries
+// of EVERY account whose grouping id is one of at most 100 ids, inside a
+// bounded window. It returns ONLY AI entries: it filters by entity type
+// `ai_action` and the two `BUSINESS_AI_ACTION_*` events, never by severity
+// (severity is decided at write or registration, not an outcome signal). It is
+// not `.eq('user_id')`-scoped, because a chat turn id comes from a client
+// header and two accounts can share one (F-28): the CALLER matches each entry to
+// its charge on `details.actionId` AND `user_id`, and discards every other
+// entry before anything is serialised. It requires an admin read context, its
+// group ids come from charge rows (never from a request), it selects only
+// `ADMIN_AI_ACTION_ENTRY_COLUMNS` (no hash, no email, no ip, no user agent), and
+// its only caller is `app/api/admin/business-os/ai-activity/route.ts`, behind
+// `requireAdmin` (pinned by adminReadMethods.guard.test.ts).
+//
+// Owner-hidden entries are excluded IN THE QUERY, so the page, its counts and
+// its CSV export can never see one: every entity type in
+// OWNER_HIDDEN_ENTITY_TYPES (lib/audit/ownerVisibility.ts — `ai_action`, the
+// admin plan and credit-lot entries, slice 8b's credit-period entry; BD-26;
+// and the admin queue-item cancel, ADMIN_BOS_CLEANUP slice 7b), plus any
+// `BUSINESS_AI_ACTION_*` event whatever its type (Layer 3 D-6). The owner RLS
+// policy (migration 20261018, then 20261035) mirrors the same list.
+// Only the admin exceptions above read AI entries.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
-import { AI_ACTION_ENTITY_TYPE, AI_ACTION_EVENT_PREFIX, isAiAuditFilter } from '@/lib/audit/requestSchemas';
+import { AI_ACTION_ENTITY_TYPE, AI_ACTION_EVENT_PREFIX } from '@/lib/audit/requestSchemas';
+import { OWNER_HIDDEN_ENTITY_TYPES, isOwnerHiddenFilter } from '@/lib/audit/ownerVisibility';
 import type { AuditSeverity } from '@/lib/audit/types';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
@@ -102,6 +125,43 @@ export interface AdminAuditCountFilter {
 
 const AUDIT_SEVERITIES: readonly AuditSeverity[] = ['info', 'warning', 'critical'];
 
+/**
+ * The only columns the admin AI-entry join selects (B1b). No `hash`, no
+ * `user_email`, no `ip_address`, no `user_agent`. `details` is projected to an
+ * allow-list by the caller.
+ */
+export const ADMIN_AI_ACTION_ENTRY_COLUMNS = 'id, user_id, created_at, entity_id, details';
+
+export const ADMIN_AI_ENTRY_LIMITS = {
+  /** Distinct group ids per call, BEFORE the case variants are added (so at most 200 in the IN). */
+  MAX_GROUP_IDS: 100,
+  /**
+   * Rows per call; reaching it means the read was CUT. This is PostgREST's
+   * max-rows on this project (every `PAGE_SIZE: 1000` in the credits module
+   * relies on the same setting). If max-rows is ever lowered, this cap must
+   * follow it, or a silently truncated response would read as complete.
+   */
+  MAX_ROWS: 1000,
+} as const;
+
+const GROUP_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export interface AdminAiActionEntryRow {
+  id: string;
+  user_id: string | null;
+  created_at: string;
+  /** The action's grouping id, as written (case preserved: `entity_id` is text). */
+  entity_id: string | null;
+  /** AiAuditDetails as stored. Projected to an allow-list by the caller. */
+  details: unknown;
+}
+
+export interface AdminAiActionEntriesPage {
+  rows: AdminAiActionEntryRow[];
+  /** `rows.length >= MAX_ROWS`: more may match, so the read is incomplete. */
+  reachedLimit: boolean;
+}
+
 export interface OwnerAuditQuery {
   action?: string;
   entityType?: string;
@@ -129,13 +189,14 @@ export class AuditTrailRepository {
 
   /**
    * One page of the owner's own audit entries, newest first, never including an
-   * AI audit entry. `total` counts the same filtered rows.
+   * owner-hidden entry (an OWNER_HIDDEN_ENTITY_TYPES type or an AI action
+   * event; BD-26). `total` counts the same filtered rows.
    */
   async listOwnerEntries(userId: string, q: OwnerAuditQuery): Promise<RepositoryResult<OwnerAuditPage>> {
     const empty: OwnerAuditPage = { logs: [], total: 0, page: q.page, limit: q.limit, hasMore: false };
 
-    // Asking for AI entries is answered without a query: there are none for an owner.
-    if (isAiAuditFilter(q)) {
+    // Asking for hidden entries is answered without a query: there are none for an owner.
+    if (isOwnerHiddenFilter(q)) {
       return { data: empty, error: null };
     }
 
@@ -146,8 +207,9 @@ export class AuditTrailRepository {
         .from('audit_trail')
         .select(OWNER_COLUMNS, { count: 'exact' })
         .eq('user_id', userId)
-        // The primary guard. entity_type is NOT NULL, so no ordinary row is lost.
-        .neq('entity_type', AI_ACTION_ENTITY_TYPE)
+        // The primary guard (BD-26). entity_type is NOT NULL, so no ordinary row
+        // is lost. The values are fixed identifiers, so no quoting is needed.
+        .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
         // Defence in depth, should an AI event ever be written under another type.
         .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`);
 
@@ -174,6 +236,41 @@ export class AuditTrailRepository {
       };
     } catch (error) {
       this.logger.error({ err: error, userId, page: q.page, limit: q.limit }, 'Failed to list owner audit entries');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's own
+   * audit entries since `since` (an ISO timestamp the route computes), newest
+   * first, at most 10000, every column, with the same two BD-26 owner exclusions
+   * as listOwnerEntries (a source guard, lib/audit/__tests__/
+   * ownerAuditReads.guard.test.ts, keeps both here). The column set is fixed;
+   * changing it changes what the export holds, which is a privacy decision.
+   *
+   * Known and deliberately unchanged (FU-1 in
+   * BUSINESS_OS_BD26_OWNER_AUDIT_HIDING_WORKPLAN.md): it filters and orders on
+   * `timestamp`, a column that does not exist, so PostgREST answers 42703 and
+   * the export holds no audit rows today. The error is logged on every export
+   * until FU-1 lands. Fixing it changes what the export holds.
+   */
+  async listOwnerEntriesForExport(userId: string, since: string): Promise<RepositoryResult<Record<string, unknown>[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('audit_trail')
+        .select('*')
+        .eq('user_id', userId)
+        // BD-26, written as in listOwnerEntries. The values are fixed identifiers, so no quoting.
+        .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
+        .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)
+        .gte('timestamp', since)
+        .order('timestamp', { ascending: false })
+        .limit(10000);
+
+      if (error) throw error;
+      return { data: (data ?? []) as Record<string, unknown>[], error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to list owner audit entries for the data export');
       return { data: null, error: error as Error };
     }
   }
@@ -261,6 +358,79 @@ export class AuditTrailRepository {
       this.logger.warn(
         { err: error, correlationId: context?.correlationId, method: 'countAdminEventsAllAccountsInWindow' },
         'Admin audit count read failed'
+      );
+      return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+
+  /**
+   * ADMIN ONLY, ALL ACCOUNTS — see the header (third exception). Business OS AI
+   * action entries whose grouping id is one of `groupIds`, created in
+   * `[window.start, window.end)`, newest first, at most `MAX_ROWS`.
+   *
+   * Filtered by ENTITY TYPE and the two AI ACTIONS, never by severity. Each
+   * group id is queried in lower AND upper case: `entity_id` is text and keeps
+   * the case of a client-supplied chat turn id, while a charge's `group_id`
+   * reads back lower-case (V-14, OQ-6). Never `lower(entity_id)`, which would
+   * defeat `idx_audit_trail_entity_id`. A mixed-case id is a known gap (R-6).
+   */
+  async listAiActionEntriesAllAccountsByGroupIds(
+    context: AdminAuditReadContext,
+    groupIds: readonly string[],
+    window: { start: string; end: string }
+  ): Promise<RepositoryResult<AdminAiActionEntriesPage>> {
+    try {
+      if (!context?.correlationId || !context?.adminId) {
+        throw new Error('An admin read context (correlationId, adminId) is required');
+      }
+      if (!Array.isArray(groupIds) || groupIds.length === 0 || groupIds.length > ADMIN_AI_ENTRY_LIMITS.MAX_GROUP_IDS) {
+        throw new Error(`Between 1 and ${ADMIN_AI_ENTRY_LIMITS.MAX_GROUP_IDS} group ids are required`);
+      }
+      if (!groupIds.every((id) => typeof id === 'string' && GROUP_ID_PATTERN.test(id))) {
+        throw new Error('Every group id must be a UUID');
+      }
+      const startMs = window ? Date.parse(window.start) : NaN;
+      const endMs = window ? Date.parse(window.end) : NaN;
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !(startMs < endMs)) {
+        throw new Error('A valid half-open window (start < end) is required');
+      }
+
+      const variants = [...new Set(groupIds.flatMap((id) => [id.toLowerCase(), id.toUpperCase()]))];
+
+      const { data, error } = await this.supabase
+        .from('audit_trail')
+        .select(ADMIN_AI_ACTION_ENTRY_COLUMNS)
+        .eq('entity_type', AI_ACTION_ENTITY_TYPE)
+        .in('action', [AUDIT_EVENTS.BUSINESS_AI_ACTION_COMPLETED, AUDIT_EVENTS.BUSINESS_AI_ACTION_FAILED])
+        .in('entity_id', variants)
+        .gte('created_at', window.start)
+        .lt('created_at', window.end)
+        .order('created_at', { ascending: false })
+        .limit(ADMIN_AI_ENTRY_LIMITS.MAX_ROWS);
+
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as AdminAiActionEntryRow[];
+      const reachedLimit = rows.length >= ADMIN_AI_ENTRY_LIMITS.MAX_ROWS;
+
+      // info: a cross-tenant read. Counts only: no id list, no details.
+      this.logger.info(
+        {
+          correlationId: context.correlationId,
+          adminId: context.adminId,
+          method: 'listAiActionEntriesAllAccountsByGroupIds',
+          groupIds: groupIds.length,
+          rows: rows.length,
+          reachedLimit,
+        },
+        'Admin AI action entries read across all accounts'
+      );
+      return { data: { rows, reachedLimit }, error: null };
+    } catch (error) {
+      // warn, like the sibling admin count: the caller marks every undecided
+      // row "unknown" and records the failure in its own log line.
+      this.logger.warn(
+        { err: error, correlationId: context?.correlationId, method: 'listAiActionEntriesAllAccountsByGroupIds' },
+        'Admin AI action entries read failed'
       );
       return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
     }

@@ -1,0 +1,554 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`getOrCreateCustomer: agent-platform behaviour (recorded before the Q-T8 split) 1. a row with a valid customer: retrieve, then return it 1`] = `
+{
+  "calls": [
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "stripe_customer_id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "cus_existing",
+      ],
+      "method": "customers.retrieve",
+      "target": "stripe",
+    },
+  ],
+  "outcome": {
+    "resolved": "cus_existing",
+  },
+}
+`;
+
+exports[`getOrCreateCustomer: agent-platform behaviour (recorded before the Q-T8 split) 2. a row whose retrieve throws: create with metadata.user_id, then UPDATE 1`] = `
+{
+  "calls": [
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "stripe_customer_id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "cus_gone",
+      ],
+      "method": "customers.retrieve",
+      "target": "stripe",
+    },
+    {
+      "args": [
+        {
+          "email": "a@example.com",
+          "metadata": {
+            "user_id": "11111111-1111-4111-8111-111111111111",
+          },
+          "name": "Ann",
+        },
+      ],
+      "method": "customers.create",
+      "target": "stripe",
+    },
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        {
+          "stripe_customer_id": "cus_new",
+        },
+      ],
+      "method": "update",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+  ],
+  "outcome": {
+    "resolved": "cus_new",
+  },
+}
+`;
+
+exports[`getOrCreateCustomer: agent-platform behaviour (recorded before the Q-T8 split) 3. a row whose customer is deleted at Stripe: reused (the kept quirk, Q-6) 1`] = `
+{
+  "calls": [
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "stripe_customer_id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "cus_deleted",
+      ],
+      "method": "customers.retrieve",
+      "target": "stripe",
+    },
+  ],
+  "outcome": {
+    "resolved": "cus_deleted",
+  },
+}
+`;
+
+exports[`getOrCreateCustomer: agent-platform behaviour (recorded before the Q-T8 split) 4. no row: create, then INSERT with the hard-coded seed 1`] = `
+{
+  "calls": [
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "stripe_customer_id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        {
+          "email": "a@example.com",
+          "metadata": {
+            "user_id": "11111111-1111-4111-8111-111111111111",
+          },
+          "name": undefined,
+        },
+      ],
+      "method": "customers.create",
+      "target": "stripe",
+    },
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        {
+          "monthly_amount_usd": 10,
+          "monthly_credits": 20833,
+          "stripe_customer_id": "cus_new",
+          "user_id": "11111111-1111-4111-8111-111111111111",
+        },
+      ],
+      "method": "insert",
+      "target": "supabase",
+    },
+  ],
+  "outcome": {
+    "resolved": "cus_new",
+  },
+}
+`;
+
+exports[`getOrCreateCustomer: agent-platform behaviour (recorded before the Q-T8 split) 5. a row with a null customer id: create, then UPDATE 1`] = `
+{
+  "calls": [
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "stripe_customer_id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        {
+          "email": "a@example.com",
+          "metadata": {
+            "user_id": "11111111-1111-4111-8111-111111111111",
+          },
+          "name": "Ann",
+        },
+      ],
+      "method": "customers.create",
+      "target": "stripe",
+    },
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        {
+          "stripe_customer_id": "cus_new",
+        },
+      ],
+      "method": "update",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+  ],
+  "outcome": {
+    "resolved": "cus_new",
+  },
+}
+`;
+
+exports[`getOrCreateCustomer: agent-platform behaviour (recorded before the Q-T8 split) 6. a Stripe create error: rejects, and nothing is written 1`] = `
+{
+  "calls": [
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "stripe_customer_id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        {
+          "email": "a@example.com",
+          "metadata": {
+            "user_id": "11111111-1111-4111-8111-111111111111",
+          },
+          "name": "Ann",
+        },
+      ],
+      "method": "customers.create",
+      "target": "stripe",
+    },
+  ],
+  "outcome": {
+    "rejected": "stripe create failed",
+  },
+}
+`;
+
+exports[`getOrCreateCustomer: agent-platform behaviour (recorded before the Q-T8 split) 7. createBoostPackCheckout end to end: the same customer id lands on the session 1`] = `
+{
+  "calls": [
+    {
+      "args": [
+        "boost_packs",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "*",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "id",
+        "pack-1",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_subscriptions",
+      ],
+      "method": "from",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "stripe_customer_id",
+      ],
+      "method": "select",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "user_id",
+        "11111111-1111-4111-8111-111111111111",
+      ],
+      "method": "eq",
+      "target": "supabase",
+    },
+    {
+      "args": [],
+      "method": "single",
+      "target": "supabase",
+    },
+    {
+      "args": [
+        "cus_existing",
+      ],
+      "method": "customers.retrieve",
+      "target": "stripe",
+    },
+    {
+      "args": [
+        {
+          "customer": "cus_existing",
+          "line_items": [
+            {
+              "price_data": {
+                "currency": "usd",
+                "product_data": {
+                  "description": "1,100 Pilot Credits (includes 100 bonus)",
+                  "metadata": {
+                    "bonus_credits": "100",
+                    "boost_pack_id": "pack-1",
+                    "credits": "1100",
+                  },
+                  "name": "Boost",
+                },
+                "unit_amount": 1000,
+              },
+              "quantity": 1,
+            },
+          ],
+          "metadata": {
+            "boost_pack_id": "pack-1",
+            "credits": "1100",
+            "purchase_type": "boost_pack",
+            "user_id": "11111111-1111-4111-8111-111111111111",
+          },
+          "mode": "payment",
+          "return_url": "https://example.com/ok",
+          "ui_mode": "embedded",
+        },
+      ],
+      "method": "checkout.sessions.create",
+      "target": "stripe",
+    },
+  ],
+  "outcome": {
+    "resolved": {
+      "customer": "cus_existing",
+      "id": "cs_test_1",
+    },
+  },
+}
+`;

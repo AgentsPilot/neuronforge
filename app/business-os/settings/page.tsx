@@ -37,6 +37,7 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { PlanSection } from '@/components/business-os/settings/PlanSection';
+import { InviteFriendsSection } from '@/components/business-os/settings/InviteFriendsSection';
 import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -908,9 +909,17 @@ function BusinessOSSettingsContent() {
                          * history, not convert it. `setCurrency` has already
                          * put the old value back; this says why, rather than
                          * leaving the picker to snap back unexplained.
+                         *
+                         * Only for that refusal. Any other failure (network,
+                         * server) is worth retrying, so it must not claim the
+                         * owner has invoices in this currency.
                          */
                         if (!result.ok) {
-                          setErrorMessage(t('settings.profile.currency_locked'));
+                          setErrorMessage(
+                            result.code === 'CURRENCY_LOCKED'
+                              ? t('settings.profile.currency_locked')
+                              : t('settings.business.error')
+                          );
                           setTimeout(() => setErrorMessage(''), 6000);
                         }
                       }}
@@ -1018,6 +1027,9 @@ function BusinessOSSettingsContent() {
               </div>
             )}
           </div>
+
+          {/* Slice 5a: renders nothing unless the server says this account may invite friends. */}
+          <InviteFriendsSection />
 
           {/*
             The enquiry notification section used to be here.

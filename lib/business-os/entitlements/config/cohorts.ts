@@ -21,9 +21,8 @@
 // the drift would be invisible until a customer noticed.
 //
 // So a trial shows you exactly what Essentials is — including NO CHAT, which is
-// the point of a trial. And a champion gets Essentials until chat is ready for
-// design partners, at which point `champion.base` becomes `{ tier: 'pro' }` and
-// every champion has chat on the next resolve. One line, no migration.
+// the point of a trial. And a champion gets Autopilot, chat included, since
+// `champion.base` became `{ tier: 'pro' }` on 2026-09-27. One line, no migration.
 //
 // ── WHY THE DURATIONS ARE HISTORIES, NOT NUMBERS ────────────────────────────
 // A trial uses the entry in force when it STARTED (SA S-7). Shortening the trial
@@ -38,13 +37,19 @@ import { TIER_MATRIX } from './tierMatrix';
 /**
  * The tier Founding Partner resolves through — named once.
  *
- * Used for `champion.base` AND for the AI allowance below, so the two cannot
+ * Used for `champion.base` AND for the credit allowance below, so the two cannot
  * disagree. Changing which tier champions get is still one line; it is now one
  * line that moves the allowance with it.
  *
  * (No import cycle: `tierMatrix.ts` imports only `../types` and `./catalog`.)
  */
 const CHAMPION_BASE_TIER = 'pro' as const;
+
+/**
+ * Test Flight's one-off credit total — BD-16, decided by the user on 2026-09-30
+ * (revision-log row in docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §7).
+ */
+const TRIAL_CREDIT_TOTAL = 2000;
 
 /**
  * A cohort's configuration, with the explicit values this catalog demands.
@@ -64,19 +69,11 @@ export type CohortConfig = CohortConfigShape<CohortExplicitValues>;
  * compile error rather than a discovery — so adding a new metered capability to
  * the catalog fails the build until someone decides what champions get.
  *
- * ⚠️ **EVERY NUMBER BELOW IS A PLACEHOLDER THAT NOBODY HAS CHOSEN.**
- *
- * The 14 / 7 / 30-day durations further down ARE the user's decisions (D-2,
- * D-4). The allowances and ceilings are not: they were invented to make the
- * config valid, and they are marked here so they cannot quietly become policy
- * by sitting in a file long enough.
- *
- * They are harmless today — nothing meters anything until Slice 3, and no
- * account is blocked by a number that nothing counts. **Slice 3 sets them from
- * evidence**: the shadow report's setup-AI measurement (task S1-T15) gives the
- * trial total the size a real setup needs with headroom (B-12), and observed
- * usage gives the champion rate. Until then, treat every `PLACEHOLDER` below as
- * "we have not decided", not as "the current policy".
+ * The 14 / 7 / 30-day durations further down are the user's decisions (D-2,
+ * D-4), and so is the credit allowance (D1–D3 and BD-16, 2026-09-30; numbers and
+ * reasons in docs/architecture/BUSINESS_OS_CREDIT_PRICING.md). The `email.volume`
+ * ceilings are still a named FIRST PASS (OI-2), invented to make the config
+ * valid and marked so they cannot quietly become policy.
  */
 const CHAMPION_VALUES: CohortExplicitValues = {
   // PARITY WITH THE INHERITED TIER (user decision, 2026-09-27).
@@ -97,7 +94,7 @@ const CHAMPION_VALUES: CohortExplicitValues = {
   // champions rise with it.
   //
   // Champions who run out ask an admin for more; they never buy boosts (D-7).
-  'ai.actions': TIER_MATRIX.tiers[CHAMPION_BASE_TIER]['ai.actions'],
+  'credits.allowance': TIER_MATRIX.tiers[CHAMPION_BASE_TIER]['credits.allowance'],
   // Zero because SMS is `not_built`. This one is NOT a placeholder: a feature
   // that does not exist cannot be allocated, and the loader enforces it.
   'sms.messages': { perMonth: 0 },
@@ -122,20 +119,15 @@ const CHAMPION_VALUES: CohortExplicitValues = {
   // So they are duplicates of the inherited values rather than overrides. They
   // cannot be deleted — `CohortExplicitValues` requires every metered capability
   // — but if any tier ever changes one of these, THIS is where the champion would
-  // silently stop matching. `ai.actions` reads the row for exactly that reason.
+  // silently stop matching. `credits.allowance` reads the row for exactly that reason.
 };
 
 const TRIAL_VALUES: CohortExplicitValues = {
-  // FIRST PASS (user decision, 2026-09-23): 250 actions, and it is the number
-  // that matters most here. A one-off TOTAL, not a monthly rate — using it up
-  // ENDS THE TRIAL (D-2, FR-27), which is the second of the two ways Test
-  // Flight can end.
-  //
-  // Setup AI counts against it (B-12), so too small a number ends a trial on
-  // the customer's first day. **Slice 3 resets this from the S1-T15 measurement
-  // of what a real setup actually costs** — that is the whole reason the shadow
-  // report measures it, and 250 is a starting point rather than an answer.
-  'ai.actions': { total: 250 },
+  // A one-off TOTAL, never a monthly rate — using it up ENDS THE TRIAL (D-2,
+  // FR-27), the second of the two ways Test Flight can end. Setup AI counts
+  // against it (B-12); `trialAllowance.invariant.test.ts` guards the shape and
+  // the floor.
+  'credits.allowance': { total: TRIAL_CREDIT_TOTAL },
   'sms.messages': { perMonth: 0 }, // not_built, as above
   'email.volume': { ceilingPerMonth: 2000 }, // FIRST PASS
   'team.seats': { included: 1, purchasable: false },
@@ -167,6 +159,12 @@ export const COHORTS = {
     // Present rather than optional so a missing translation shows up as a
     // visible duplicate on a pricing page instead of an `undefined`.
     labels: { en: 'Test Flight', he: 'Test Flight', es: 'Test Flight' },
+    // FYI ONLY — NOT A SWITCH (user decision, 2026-09-29). Shown on the admin
+    // Tiers card and read by nothing else. Open question before it does
+    // anything: what should inactive DO — stop new assignments? hide the plan
+    // from customers? affect accounts already on it?
+    // Marked inactive by the user 2026-09-30 (FYI only).
+    active: false,
     // Beta capabilities are included on top of the tier row. Setting this to []
     // keeps beta for champions only — one value, no code.
     includeLifecycle: ['beta'],
@@ -191,10 +189,10 @@ export const COHORTS = {
      * **Reversing it is the same one line**: `base: { tier: 'basic' }`. Nothing
      * else in the module knows which tier a cohort inherits from.
      *
-     * **The AI allowance moves with it** (user decision, 2026-09-27). It briefly
+     * **The credit allowance moves with it** (user decision, 2026-09-27). It briefly
      * did not: `CHAMPION_VALUES` pinned 1,000 a month, and an explicit cohort
      * value beats the tier row, so a Founding Partner had Autopilot's features
-     * with half its allowance. `CHAMPION_VALUES['ai.actions']` now READS this
+     * with half its allowance. `CHAMPION_VALUES['credits.allowance']` now READS this
      * tier's value, so "Founding Partners get the top plan, free" is true without
      * an exception — and none of the other cohort values disagree with the
      * inherited row (see `CHAMPION_VALUES`).
@@ -204,6 +202,8 @@ export const COHORTS = {
      */
     base: { tier: CHAMPION_BASE_TIER },
     labels: { en: 'Founding Partner', he: 'Founding Partner', es: 'Founding Partner' },
+    // FYI only, like the trial's — see the note there.
+    active: true,
     includeLifecycle: ['beta'],
     values: CHAMPION_VALUES,
     // D-4: a longer runway than a trial, because a champion who lapses is a

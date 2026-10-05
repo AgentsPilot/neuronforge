@@ -30,13 +30,30 @@ import 'server-only';
  * read is `{ ok: false }` (the route says "try again"): "no account" is never
  * the answer by default, or signup would be offered to an existing customer.
  *
+ * ── A champion's friend invite (Slice 5a F5a-10, SA R-5; Slice 5b F5b-3) ────
+ * Keyed on `issuer_kind = 'account'`, whatever the grant, and decided BEFORE
+ * the existing-account check, which an account-issued invite NEVER reaches:
+ * the champion holds the link (FR-30), so asking would tell them whether any
+ * address they typed has an AgentPilot account. From Slice 5b, a pending
+ * account-issued TIER invite with friend invites switched on gets `valid`,
+ * with the signup form (the champion's name and note, the offer with its
+ * price, and the masked address, which the champion typed anyway). The page
+ * adds ONE payment statement for it, "payment opens soon", never "payment
+ * required at signup" (SA CR-1, until 5c). Whether the address already has an account is decided only
+ * after mailbox proof, by the signup routes (`inviteRedemption.ts`). With the
+ * switch off, or any other grant, it is `unavailable` (T-18). The issuer's
+ * cohort is re-checked at redemption (T-19), not here (5a Q-6). The 5a state
+ * `signup_opens_soon` is gone (SA Q-8): the switch now means friends may be
+ * invited AND may sign up.
+ *
  * ── Nothing sensitive is logged ─────────────────────────────────────────────
  * This module logs nothing itself except a failed first-view stamp, keyed by the
  * invite id. The route logs the outcome. Neither ever sees the token again after
  * hashing, and neither logs the hash.
  */
 
-import { defaultLocale, isValidLocale } from '@/lib/i18n/config';
+import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
+import { INVITE_ISSUANCE_POLICY } from '@/lib/business-os/entitlements/config/invites';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { AuthAccountRepository } from '@/lib/repositories/AuthAccountRepository';
 import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
@@ -110,7 +127,7 @@ export type ViewInviteOutcome =
   | { ok: false };
 
 /** A stored language the page can render, or the default. */
-function pageLanguage(stored: string): string {
+function pageLanguage(stored: string): Locale {
   return isValidLocale(stored) ? stored : defaultLocale;
 }
 
@@ -156,6 +173,30 @@ export async function viewInviteByToken(
   // cleanly rather than described as something that no longer exists.
   if (!isInviteGrantAvailable(deps.config, row)) return narrow('unavailable');
 
+  // Slice 5a (F5a-10, SA R-5) and 5b (F5b-3): an account-issued invite NEVER
+  // reaches the existing-account check below. With the switch on it gets the
+  // signup form; the account question waits for mailbox proof.
+  if (row.issuer_kind === 'account') {
+    if (row.grant_kind !== 'tier' || !INVITE_ISSUANCE_POLICY.accountInvitesAvailable) return narrow('unavailable');
+    const friend = await deps.repository.findInviteeEmailForPublicCheck(row.id);
+    if (friend.error || !friend.data) return { ok: false };
+    const friendOffer = describeInviteOffer(row, deps.config, deps.now, language);
+    await markFirstView(row, deps);
+    return {
+      ok: true,
+      inviteId: row.id,
+      response: {
+        state: 'valid',
+        language,
+        inviterDisplayName,
+        personalNote: row.personal_note,
+        linkExpiresAt: row.link_expires_at,
+        offer: friendOffer,
+        maskedEmail: maskEmail(friend.data),
+      },
+    };
+  }
+
   // FR-8a / L-3: does the invited email already have an account? Asked only
   // here, only about THIS row's email (D-12, R-4). Either read failing is "try
   // again", never "no account".
@@ -175,16 +216,9 @@ export async function viewInviteByToken(
     return marked.data === true && outcome.ok ? { ...outcome, firstOpenByExistingAccount: true } : outcome;
   }
 
-  const offer = describeInviteOffer(row, deps.config, deps.now);
-
-  // FR-10: the first successful load. Conditional in the repository, so a reload
-  // never moves it; a failure here must not cost the visitor the page.
-  if (row.first_viewed_at === null) {
-    const marked = await deps.repository.markFirstViewed(row.id, deps.now);
-    if (marked.error) {
-      deps.logger.warn({ err: marked.error, inviteId: row.id }, 'Could not record the invite\'s first view');
-    }
-  }
+  // In the invite's own language (OI-10), the same one the page renders in.
+  const offer = describeInviteOffer(row, deps.config, deps.now, language);
+  await markFirstView(row, deps);
 
   return {
     ok: true,
@@ -199,4 +233,19 @@ export async function viewInviteByToken(
       maskedEmail: maskEmail(invitee.data),
     },
   };
+}
+
+/**
+ * FR-10: the first successful load. Conditional in the repository, so a reload
+ * never moves it; a failure here must not cost the visitor the page.
+ */
+async function markFirstView(
+  row: { id: string; first_viewed_at: string | null },
+  deps: { repository: PublicInviteRepository; now: Date; logger: PublicInviteLogger }
+): Promise<void> {
+  if (row.first_viewed_at !== null) return;
+  const marked = await deps.repository.markFirstViewed(row.id, deps.now);
+  if (marked.error) {
+    deps.logger.warn({ err: marked.error, inviteId: row.id }, "Could not record the invite's first view");
+  }
 }

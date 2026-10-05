@@ -1,0 +1,17 @@
+{
+  "id": "evt_connect_subscription_deleted",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "customer.subscription.deleted",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790001000,
+  "data": {
+    "object": {
+      "id": "sub_plan_1",
+      "object": "subscription",
+      "status": "canceled",
+      "metadata": { "user_id": "someone-else" }
+    }
+  }
+}

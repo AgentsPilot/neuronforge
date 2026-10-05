@@ -42,6 +42,10 @@ import {
   type BrandingData,
 } from './base-template';
 import { emailTranslations } from './translations';
+// Public-form text is escaped before it goes into the HTML. The subject line
+// is deliberately NOT escaped: a mail subject is not HTML, and `&amp;` there
+// would be shown literally to the reader.
+import { escapeHtml } from '@/lib/email/escapeHtml';
 
 export interface NewEnquiryEmailData {
   /** Which event this is. Decides the subject and the lead-in, nothing else. */
@@ -245,21 +249,6 @@ export function generateNewEnquiryEmail(data: NewEnquiryEmailData): {
     subject,
     html: wrapInBrandedTemplate(content, brandingWithLocale),
   };
-}
-
-/**
- * Public-form text going into an HTML document. Escaped rather than trusted.
- *
- * Note the subject line is deliberately NOT escaped: a mail subject is not
- * HTML, and `&amp;` there would be shown literally to the reader.
- */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 /**

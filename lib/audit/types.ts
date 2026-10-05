@@ -79,6 +79,27 @@ export const AUDIT_ENTITY_TYPES = [
   // admin invite routes under /api/admin/business-os/invites; the entity id is
   // the invite id.
   'business_os_invite',
+  // One Business OS credit lot (a row in business_os_credit_lots). Written only
+  // by the admin give / take back credit ops on the entitlements accounts route
+  // (credit deduction slice 11b); the entity id is the lot id.
+  'business_os_credit_lot',
+  // One account's credit period (a monthly period, or a whole trial). Written
+  // only by the low-line check (credit deduction slice 8b,
+  // lib/business-os/credits/creditLowLine.ts); the entity id is the account id,
+  // the period key is in the details. Hidden from owners (BD-26,
+  // lib/audit/ownerVisibility.ts).
+  'business_os_credit_period',
+  // One Business OS queue (one of the five in lib/cron/bosCronJobs.ts
+  // BOS_QUEUES). Written only by the admin Drain now route,
+  // POST /api/admin/jobs-queues/drain (ADMIN_BOS_CLEANUP slice 7d); the entity
+  // id is the queue id, e.g. 'payment_reminders' (audit_trail.entity_id is
+  // TEXT, as for 'ais_config').
+  'bos_queue',
+  // POST /api/admin/jobs-queues/items/action (ADMIN_BOS_CLEANUP slice 7b): one
+  // queue row, id = the row's own uuid. Written against the item's account and
+  // classified 'operator' (lib/audit/ownerVisibility.ts). Slice 7c's re-send
+  // uses the same type.
+  'bos_queue_item',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

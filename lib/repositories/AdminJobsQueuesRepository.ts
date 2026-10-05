@@ -13,14 +13,21 @@
 //   - "AllAccounts" / "AllJobs" is in every method name.
 //   - Every method takes an AdminReadContext FIRST and REQUIRED, and logs
 //     `adminUserId` and counts only (SA SC-9(a)).
-//   - COLUMNS: every select is a head count (`id`, head: true) or one of the
-//     timestamps `scheduled_at`, `next_attempt_at`, `created_at` (SC-9(b)). No
-//     payload, recommendation, error message, skip reason, contact, invoice,
-//     booking or user column is ever read. `error_message` appears ONLY inside
-//     filters, compared with fixed markers (SC-9(d)).
+//   - COLUMNS: the FIGURES read selects only a head count (`id`, head: true)
+//     or one of the timestamps `scheduled_at`, `next_attempt_at`, `created_at`
+//     (SC-9(b), ADMIN_QUEUE_FIGURE_COLUMNS). The ITEM LIST (ADMIN_BOS_CLEANUP
+//     slice 7a) selects the exact per-table list in ADMIN_QUEUE_ITEM_COLUMNS,
+//     widened on purpose by SA C7-12 (and OP-2 for the briefing's `timezone`):
+//     `user_id` is read ONLY to look up business names and never leaves the
+//     server. No payload, recommendation, error message, skip reason, contact,
+//     invoice, booking or claimer column is ever read. `error_message` appears
+//     ONLY inside filters, compared with fixed markers (SC-9(d)).
 //   - Methods never throw: they return `{ data, error }`.
 //
 // The five queue tables are READ ONLY here; nothing about them changes (A-6).
+// One single-item read for the slice 7b action route
+// (`readQueueItemAllAccounts`); this repository still writes nothing. The one
+// write to a queue row lives in AdminQueueActionsRepository.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -46,8 +53,8 @@ export const GUARDRAIL_SKIP_MARKERS = ['max executions reached', 'cooldown activ
 /** Every lease is 90 s; "stuck" allows 10 minutes more (requirement §S5.7). */
 export const STUCK_AFTER_SECONDS = 90 + 10 * 60;
 
-/** The only columns this repository ever selects (SC-9(b)). */
-export const ADMIN_QUEUE_SELECTABLE_COLUMNS = ['id', 'scheduled_at', 'next_attempt_at', 'created_at'] as const;
+/** The only columns the FIGURES read may select (SC-9(b)); pinned by the figures tests. */
+export const ADMIN_QUEUE_FIGURE_COLUMNS = ['id', 'scheduled_at', 'next_attempt_at', 'created_at'] as const;
 
 interface QueueSpec {
   table: string;
@@ -132,6 +139,64 @@ export const ADMIN_QUEUE_SPECS: Readonly<Record<AdminQueueId, QueueSpec>> = {
   },
 };
 
+/**
+ * The exact select of the item list, per table (ADMIN_BOS_CLEANUP slice 7a,
+ * SA C7-12; workplan section 6). Never `*`. The briefing's `timezone` is OP-2:
+ * read on the server for "today in the row's zone", never returned.
+ */
+export const ADMIN_QUEUE_ITEM_COLUMNS: Readonly<Record<AdminQueueId, readonly string[]>> = {
+  payment_reminders: ['id', 'user_id', 'status', 'attempts', 'claimed_at', 'created_at', 'scheduled_at', 'next_attempt_at', 'reminder_type'],
+  payment_automations: ['id', 'user_id', 'status', 'attempts', 'claimed_at', 'created_at', 'scheduled_at', 'next_attempt_at'],
+  daily_briefing_sends: ['id', 'user_id', 'status', 'attempts', 'claimed_at', 'created_at', 'next_attempt_at', 'briefing_date', 'timezone'],
+  lead_responses: ['id', 'user_id', 'status', 'attempts', 'claimed_at', 'created_at', 'next_attempt_at', 'kind'],
+  insight_actions: ['id', 'user_id', 'status', 'attempts', 'claimed_at', 'created_at', 'next_attempt_at', 'kind'],
+};
+
+/**
+ * Every column this repository ever selects: the figures' four plus the item
+ * list's, widened deliberately by slice 7a (C7-12). Pinned by exact equality in
+ * AdminJobsQueuesRepository.items.test.ts; the figures read is pinned to
+ * ADMIN_QUEUE_FIGURE_COLUMNS alone, so this widening cannot loosen it.
+ */
+export const ADMIN_QUEUE_SELECTABLE_COLUMNS: readonly string[] = [
+  ...new Set<string>([...ADMIN_QUEUE_FIGURE_COLUMNS, ...Object.values(ADMIN_QUEUE_ITEM_COLUMNS).flat()]),
+];
+
+/** Which rows the item list shows (slice 7a workplan §2.1). */
+export type AdminQueueItemState = 'stuck' | 'failed' | 'dead_lettered' | 'waiting';
+export const ADMIN_QUEUE_ITEM_STATES: readonly AdminQueueItemState[] = ['stuck', 'failed', 'dead_lettered', 'waiting'];
+
+/** SA §M: at most 50 rows a page. */
+export const ADMIN_QUEUE_ITEMS_PAGE_SIZE = 50;
+/** At most 1,000 rows deep (OP-8). */
+export const ADMIN_QUEUE_ITEMS_MAX_PAGE = 20;
+
+/** PostgREST "Requested range not satisfiable" (HTTP 416): a page past the end (W7A-2, measured live by SA). */
+const PAST_THE_END_CODE = 'PGRST103';
+
+/**
+ * One queue row of the item list, mapped field by field (never a spread).
+ * `userId` and `timezone` are SERVER-ONLY: the route uses them for the name
+ * lookup and the briefing's "today", and never returns them (C7-13).
+ */
+export interface RawQueueItem {
+  id: string;
+  userId: string;
+  status: string;
+  attempts: number;
+  claimedAt: string | null;
+  createdAt: string;
+  /** Payment tables only; else null. */
+  scheduledAt: string | null;
+  nextAttemptAt: string | null;
+  /** lead_responses.kind, insight_actions.kind or payment_reminders.reminder_type; else null. */
+  kind: string | null;
+  /** daily_briefing_sends only; else null. */
+  briefingDate: string | null;
+  /** daily_briefing_sends only; else null. */
+  timezone: string | null;
+}
+
 /** One queue's figures, exactly as counted. */
 export interface RawQueueFigures {
   dueNow: number;
@@ -173,8 +238,9 @@ interface Query extends PromiseLike<{ data: unknown; error: unknown; count?: num
   in(column: string, values: readonly unknown[]): Query;
   not(column: string, operator: string, value: unknown): Query;
   or(filters: string): Query;
-  order(column: string, options: { ascending: boolean }): Query;
+  order(column: string, options: { ascending: boolean; nullsFirst?: boolean }): Query;
   limit(count: number): Query;
+  range(from: number, to: number): Query;
   abortSignal(signal: AbortSignal): Query;
 }
 
@@ -184,6 +250,103 @@ function asError(error: unknown): Error {
   const wrapped = new Error(e.message ?? 'Supabase error') as Error & { code?: string };
   if (e.code) wrapped.code = e.code;
   return wrapped;
+}
+
+// ── State filters shared by the figures and the item list (slice 7a, W7A-6) ──
+// Lifted out of readQueueFiguresAllAccounts unchanged (same calls, same
+// order), so the list can never disagree with the count on the card.
+
+/** In progress with no claim, or a claim older than the stuck threshold. */
+function stuckFilter(query: Query, spec: QueueSpec, stuckBefore: string): Query {
+  return query.eq('status', spec.inProgress).or(`claimed_at.is.null,claimed_at.lt.${quoteFilterValue(stuckBefore)}`);
+}
+
+/** Failed and NOT dead-lettered and NOT a guardrail skip. Null-safe on error_message. */
+function failedNotDeadFilter(query: Query, spec: QueueSpec): Query {
+  const excluded = [...(spec.deadLetterByMarker ? [DEAD_LETTER_MARKER] : []), ...spec.guardrailMarkers];
+  const filtered = query.eq('status', 'failed');
+  if (excluded.length === 0) return filtered;
+  return filtered.or(`error_message.is.null,error_message.not.in.(${excluded.map(quoteFilterValue).join(',')})`);
+}
+
+/** Dead-lettered: status `failed` plus the fixed marker, or the `dead_letter` status. */
+function deadLetteredFilter(query: Query, spec: QueueSpec): Query {
+  return spec.deadLetterByMarker
+    ? query.eq('status', 'failed').eq('error_message', DEAD_LETTER_MARKER)
+    : query.eq('status', spec.deadLetterStatus);
+}
+
+const stuckBeforeOf = (now: Date): string => new Date(now.getTime() - STUCK_AFTER_SECONDS * 1000).toISOString();
+
+const isTimestamp = (value: unknown): value is string => typeof value === 'string' && !Number.isNaN(Date.parse(value));
+const isOptionalTimestamp = (value: unknown): value is string | null | undefined =>
+  value === null || value === undefined || isTimestamp(value);
+const isOptionalString = (value: unknown): value is string | null | undefined =>
+  value === null || value === undefined || typeof value === 'string';
+
+/** Which column holds a row's kind, per table (OP-4: payment automations have none). */
+const KIND_COLUMN: Readonly<Record<AdminQueueId, 'reminder_type' | 'kind' | null>> = {
+  payment_reminders: 'reminder_type',
+  payment_automations: null,
+  daily_briefing_sends: null,
+  lead_responses: 'kind',
+  insight_actions: 'kind',
+};
+
+/**
+ * Field-by-field mapping of one item row (C7-13). A column outside the table's
+ * allow-list is never read, even if a client returned it. Null for a malformed
+ * row: the read then fails rather than showing a half-understood row (the
+ * readJobsQueues precedent, SC-5).
+ */
+function mapItemRow(queue: AdminQueueId, raw: unknown): RawQueueItem | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const spec = ADMIN_QUEUE_SPECS[queue];
+  if (typeof r.id !== 'string' || r.id.length === 0) return null;
+  if (typeof r.user_id !== 'string' || r.user_id.length === 0) return null;
+  if (typeof r.status !== 'string') return null;
+  if (typeof r.attempts !== 'number' || !Number.isInteger(r.attempts) || r.attempts < 0) return null;
+  if (!isTimestamp(r.created_at)) return null;
+  const claimedAt = r.claimed_at;
+  const nextAttemptAt = r.next_attempt_at;
+  if (!isOptionalTimestamp(claimedAt) || !isOptionalTimestamp(nextAttemptAt)) return null;
+
+  let scheduledAt: string | null = null;
+  if (spec.hasScheduledAt) {
+    const value = r.scheduled_at;
+    if (!isOptionalTimestamp(value)) return null;
+    scheduledAt = value ?? null;
+  }
+  let kind: string | null = null;
+  const kindColumn = KIND_COLUMN[queue];
+  if (kindColumn) {
+    const value = r[kindColumn];
+    if (!isOptionalString(value)) return null;
+    kind = value ?? null;
+  }
+  let briefingDate: string | null = null;
+  let timezone: string | null = null;
+  if (queue === 'daily_briefing_sends') {
+    const date = r.briefing_date;
+    const zone = r.timezone;
+    if (!isOptionalString(date) || !isOptionalString(zone)) return null;
+    briefingDate = date ?? null;
+    timezone = zone ?? null;
+  }
+  return {
+    id: r.id,
+    userId: r.user_id,
+    status: r.status,
+    attempts: r.attempts,
+    claimedAt: claimedAt ?? null,
+    createdAt: r.created_at,
+    scheduledAt,
+    nextAttemptAt: nextAttemptAt ?? null,
+    kind,
+    briefingDate,
+    timezone,
+  };
 }
 
 const later = (a: string | null, b: string | null): string | null => {
@@ -270,7 +433,7 @@ export class AdminJobsQueuesRepository {
     const q = quoteFilterValue;
     const day = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
     const week = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString();
-    const stuckBefore = new Date(now.getTime() - STUCK_AFTER_SECONDS * 1000).toISOString();
+    const stuckBefore = stuckBeforeOf(now);
 
     const base = (columns: string, head: boolean): Query => {
       let query = (head
@@ -294,17 +457,9 @@ export class AdminJobsQueuesRepository {
     };
     const inWindow = (query: Query, since: string): Query =>
       query.gte(spec.windowColumn, since).lte(spec.windowColumn, nowIso);
-    /** Failed and NOT dead-lettered and NOT a guardrail skip. Null-safe on error_message. */
-    const failedNotDead = (query: Query): Query => {
-      const excluded = [...(spec.deadLetterByMarker ? [DEAD_LETTER_MARKER] : []), ...spec.guardrailMarkers];
-      const filtered = query.eq('status', 'failed');
-      if (excluded.length === 0) return filtered;
-      return filtered.or(`error_message.is.null,error_message.not.in.(${excluded.map(q).join(',')})`);
-    };
-    const deadLettered = (query: Query): Query =>
-      spec.deadLetterByMarker
-        ? query.eq('status', 'failed').eq('error_message', DEAD_LETTER_MARKER)
-        : query.eq('status', spec.deadLetterStatus);
+    // Shared with the item list (slice 7a, W7A-6): the same calls in the same order.
+    const failedNotDead = (query: Query): Query => failedNotDeadFilter(query, spec);
+    const deadLettered = (query: Query): Query => deadLetteredFilter(query, spec);
 
     const count = async (query: Query): Promise<number> => {
       const { error, count: n } = await query;
@@ -355,7 +510,7 @@ export class AdminJobsQueuesRepository {
           ? count(head().eq('status', 'pending').is('scheduled_at', null))
           : Promise.resolve(null),
         count(head().eq('status', spec.inProgress)),
-        count(head().eq('status', spec.inProgress).or(`claimed_at.is.null,claimed_at.lt.${q(stuckBefore)}`)),
+        count(stuckFilter(head(), spec, stuckBefore)),
         count(inWindow(failedNotDead(head()), day)),
         count(inWindow(failedNotDead(head()), week)),
         count(inWindow(deadLettered(head()), day)),
@@ -408,6 +563,159 @@ export class AdminJobsQueuesRepository {
         { correlationId: context.correlationId, adminUserId: context.adminId, queue, code: (error as { code?: string }).code },
         'Queue figures read failed'
       );
+      return { data: null, error: asError(error) };
+    }
+  }
+
+  /**
+   * One page of a queue's items in one state, across all accounts
+   * (ADMIN_BOS_CLEANUP slice 7a; SA C7-12, workplan §2.3).
+   *
+   * SERVICE ROLE, ON PURPOSE: "which lead replies are dead-lettered,
+   * platform-wide" has no per-tenant answer. CLAUDE.md rule 4 is replaced by
+   * the caller's `requireAdmin` gate; the only caller is
+   * app/api/admin/jobs-queues/items/route.ts (the isolation guard in this
+   * repository's test enforces "only app/api/admin/**").
+   *
+   * One request: the exact column list, the state filter (the figures' own
+   * helpers, without their 24 h / 7 d window), explicit NULL ordering with
+   * `id` as the tie-breaker, and a 50-row range. `count: 'exact'` comes back on
+   * the same request. A page past the end (PostgREST 416 PGRST103) is an empty
+   * page with `total: null`, never an error (W7A-2). Read-only: nothing is
+   * written, and no row value is logged.
+   */
+  async listQueueItemsAllAccounts(
+    context: AdminReadContext,
+    queue: AdminQueueId,
+    state: AdminQueueItemState,
+    now: Date,
+    page: { page: number },
+    options: AdminReadOptions = {}
+  ): Promise<RepositoryResult<{ rows: RawQueueItem[]; total: number | null }>> {
+    const missing = this.requireContext(context);
+    if (missing) return { data: null, error: missing };
+    const spec = ADMIN_QUEUE_SPECS[queue];
+    if (!spec) return { data: null, error: new Error('Unknown queue') };
+    if (!ADMIN_QUEUE_ITEM_STATES.includes(state)) return { data: null, error: new Error('Unknown item state') };
+    const pageNumber = page?.page;
+    // Defence in depth: the route has already refused this with a 400.
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > ADMIN_QUEUE_ITEMS_MAX_PAGE) {
+      return { data: null, error: new Error('Page out of range') };
+    }
+    const logContext = { correlationId: context.correlationId, adminUserId: context.adminId, queue, state, page: pageNumber };
+
+    try {
+      let query = this.supabase
+        .from(spec.table)
+        .select(ADMIN_QUEUE_ITEM_COLUMNS[queue].join(', '), { count: 'exact' }) as unknown as Query;
+      if (options.signal) query = query.abortSignal(options.signal);
+
+      // Explicit NULL ordering (W7A-3): Postgres puts NULLs last on ASC and
+      // first on DESC by default, which is the opposite of what each list wants.
+      if (state === 'stuck') {
+        // Orphans (no claim, the only cancellable stuck rows) first.
+        query = stuckFilter(query, spec, stuckBeforeOf(now)).order('claimed_at', { ascending: true, nullsFirst: true });
+      } else if (state === 'failed' || state === 'dead_lettered') {
+        // Newest first, so items still inside the 72 h window lead; an
+        // automation with no scheduled_at must not lead.
+        query = (state === 'failed' ? failedNotDeadFilter(query, spec) : deadLetteredFilter(query, spec)).order(
+          spec.windowColumn,
+          { ascending: false, nullsFirst: false }
+        );
+      } else {
+        query = query
+          .eq('status', 'pending')
+          .order(spec.hasScheduledAt ? 'scheduled_at' : 'created_at', { ascending: true, nullsFirst: false });
+      }
+      const from = (pageNumber - 1) * ADMIN_QUEUE_ITEMS_PAGE_SIZE;
+      query = query.order('id', { ascending: true }).range(from, from + ADMIN_QUEUE_ITEMS_PAGE_SIZE - 1);
+
+      const { data, error, count } = await query;
+      if (error) {
+        const code = (error as { code?: string }).code;
+        if (code === PAST_THE_END_CODE) {
+          this.logger.info(logContext, 'Queue items page is past the end of the list');
+          return { data: { rows: [], total: null }, error: null };
+        }
+        this.logger.warn({ ...logContext, code }, 'Queue items read failed');
+        return { data: null, error: asError(error) };
+      }
+
+      // Defensive: never more than one page, even if a client ignored the range.
+      const raw = (Array.isArray(data) ? data : []).slice(0, ADMIN_QUEUE_ITEMS_PAGE_SIZE);
+      const rows: RawQueueItem[] = [];
+      for (const value of raw) {
+        const mapped = mapItemRow(queue, value);
+        if (!mapped) {
+          this.logger.warn({ ...logContext, code: 'malformed_row' }, 'Queue items read failed');
+          return { data: null, error: new Error('A queue item row was not in the expected shape') };
+        }
+        rows.push(mapped);
+      }
+      const total = count ?? 0;
+      this.logger.info({ ...logContext, returned: rows.length, total }, 'Queue items read (all accounts)');
+      return { data: { rows, total }, error: null };
+    } catch (error) {
+      this.logger.warn({ ...logContext, code: (error as { code?: string }).code }, 'Queue items read failed');
+      return { data: null, error: asError(error) };
+    }
+  }
+
+  /**
+   * ONE queue row by id, across all accounts (ADMIN_BOS_CLEANUP slice 7b; SA
+   * C7-12 "reads extend AdminJobsQueuesRepository", workplan §2.2, OP-7).
+   *
+   * The action route re-reads the row on the server before its
+   * compare-and-set, to check it is still what the admin saw and to take the
+   * row's OWN `user_id` for the write. SERVICE ROLE, ON PURPOSE, as the list:
+   * the only caller is app/api/admin/jobs-queues/items/action/route.ts, after
+   * `requireAdmin` (the isolation guard enforces "only app/api/admin/**").
+   *
+   * The same column allow-list and field-by-field mapper as the list: no new
+   * column, no error text, skip reason, payload or claimer. `null` means no
+   * such row in THIS queue's table (never `.single()`, so a missing row is not
+   * a PGRST116 error). Read-only; logs ids and `found` only, never a row value.
+   */
+  async readQueueItemAllAccounts(
+    context: AdminReadContext,
+    queue: AdminQueueId,
+    itemId: string,
+    options: AdminReadOptions = {}
+  ): Promise<RepositoryResult<RawQueueItem | null>> {
+    const missing = this.requireContext(context);
+    if (missing) return { data: null, error: missing };
+    if (!Object.prototype.hasOwnProperty.call(ADMIN_QUEUE_SPECS, queue)) return { data: null, error: new Error('Unknown queue') };
+    if (typeof itemId !== 'string' || itemId.length === 0) return { data: null, error: new Error('An item id is required') };
+    const spec = ADMIN_QUEUE_SPECS[queue];
+    const logContext = { correlationId: context.correlationId, adminUserId: context.adminId, queue };
+
+    try {
+      let query = (this.supabase
+        .from(spec.table)
+        .select(ADMIN_QUEUE_ITEM_COLUMNS[queue].join(', ')) as unknown as Query)
+        .eq('id', itemId)
+        .limit(1);
+      if (options.signal) query = query.abortSignal(options.signal);
+
+      const { data, error } = await query;
+      if (error) {
+        this.logger.warn({ ...logContext, code: (error as { code?: string }).code }, 'Queue item read failed');
+        return { data: null, error: asError(error) };
+      }
+      const raw = Array.isArray(data) ? data : [];
+      if (raw.length === 0) {
+        this.logger.info({ ...logContext, found: false }, 'Queue item read (all accounts)');
+        return { data: null, error: null };
+      }
+      const mapped = mapItemRow(queue, raw[0]);
+      if (!mapped) {
+        this.logger.warn({ ...logContext, code: 'malformed_row' }, 'Queue item read failed');
+        return { data: null, error: new Error('The queue item row was not in the expected shape') };
+      }
+      this.logger.info({ ...logContext, found: true }, 'Queue item read (all accounts)');
+      return { data: mapped, error: null };
+    } catch (error) {
+      this.logger.warn({ ...logContext, code: (error as { code?: string }).code }, 'Queue item read failed');
       return { data: null, error: asError(error) };
     }
   }

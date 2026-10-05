@@ -8,14 +8,18 @@
  * and the admin's explicit choice on the invite is the answer.
  *
  * Plan and capability names are NOT here. They arrive from the server, from the
- * entitlements config, and are English placeholders in every locale today
- * (SA ruling F-4), exactly as on the customer "Your plan" section.
+ * entitlements config, already in the invite's language (credit deduction
+ * slice 6, OI-10), with the value phrases ("per month", "in total") and the
+ * numbers grouped the same way. Neither are any credit figures: those come from
+ * config through the resolver, never from this file.
  *
  * Hebrew is written gender-neutrally, because the page cannot know who is
  * reading it or who sent it.
  *
  * Client-safe: plain data and pure functions, no server import.
  */
+
+import { CREDIT_EXPLANATION } from '@/lib/i18n/creditExplanation';
 
 export type InviteLocale = 'en' | 'he' | 'es';
 
@@ -27,12 +31,20 @@ export const INVITE_LOCALES: readonly InviteLocale[] = ['en', 'he', 'es'];
 
 export interface InvitePageCopy {
   loading: string;
+  /** The small label above a valid invite's heading. Layout only. */
+  eyebrow: string;
   validHeading: (name: string) => string;
   noteHeading: (name: string) => string;
   offerHeading: string;
   free: string;
   perMonth: (priceUsd: number) => string;
+  /** Not rendered in 5b (SA CR-1): kept for 5c, when payment at signup is live. */
   paymentRequired: string;
+  /**
+   * Slice 5b (workplan D-11): under a PAID offer's signup form, while payment is
+   * not live. Honest before signup: the account waits, with no trial.
+   */
+  paymentOpensLater: string;
   accessOpenEnded: string;
   accessMonths: (months: number) => string;
   accessWhilePaid: string;
@@ -49,6 +61,15 @@ export interface InvitePageCopy {
    * `plan.category.*` entries there.
    */
   planCategory: Record<string, string>;
+  /**
+   * The sentence under a row, keyed by the `noteKey` that `describePlanOffer`
+   * returns (credit deduction slice 6, D-h). Today only the credits row has one.
+   *
+   * The wording is NOT repeated here: it is the shared `CREDIT_EXPLANATION`,
+   * which the dashboard card and the plan screen read through `LanguageContext`
+   * under the same keys — so the three surfaces cannot say different things.
+   */
+  planCategoryNote: Record<string, string>;
   linkExpires: (date: string) => string;
   /** Slice 1b: the signup form (FR-11). */
   signup: SignupCopy;
@@ -79,6 +100,8 @@ export interface InvitePageCopy {
  */
 export interface SignupCopy {
   heading: string;
+  /** "Step 1 of 2" above the form's heading. Layout only. */
+  stepOf: (step: number, total: number) => string;
   codeWillGoTo: (maskedEmail: string) => string;
   sendCode: string;
   sending: string;
@@ -92,6 +115,8 @@ export interface SignupCopy {
   resend: string;
   readyHeading: string;
   readyBody: string;
+  /** Slice 3b: "Continue with Google" (FR-11). Shown only when it is configured. */
+  google: GoogleSignupCopy;
   errors: {
     code_format: string;
     password_short: string;
@@ -112,20 +137,43 @@ export interface SignupCopy {
   };
 }
 
+/**
+ * The Google button's words (Slice 3b). The button's own label ("Continue with
+ * Google") is drawn by Google in the invite's language, so it is not here.
+ * Every refusal points to the path that works: the emailed code (SA R-8).
+ */
+export interface GoogleSignupCopy {
+  /** Between the Google button and the code form. */
+  divider: string;
+  creating: string;
+  readyHeading: string;
+  readyBody: string;
+  errors: {
+    google_email_mismatch: (maskedEmail: string) => string;
+    google_email_unverified: string;
+    /** SA R-2: Google is not authoritative for this address. */
+    google_use_code: string;
+    google_token_invalid: string;
+  };
+}
+
 export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
   en: {
     loading: 'Checking your invitation…',
+    eyebrow: 'Your invitation',
     validHeading: (name) => `${name} invited you`,
     noteHeading: (name) => `A note from ${name}`,
     offerHeading: 'What you are offered',
     free: 'Free',
     perMonth: (price) => `$${price} per month`,
     paymentRequired: 'Payment is required at signup.',
+    paymentOpensLater: "You can create your account now. Payment opens soon, and you'll be able to use AgentPilot once you've paid.",
     accessOpenEnded: 'No end date',
     accessMonths: (months) => (months === 1 ? '1 month from signup' : `${months} months from signup`),
     accessWhilePaid: 'While the plan is paid for',
     includedHeading: 'What it includes',
     planCategory: {
+      'plan.category.credits': 'Credits',
       'plan.category.crm': 'Clients (CRM)',
       'plan.category.website_intake': 'Website and enquiries',
       'plan.category.payments': 'Payments',
@@ -136,9 +184,14 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       'plan.category.platform': 'Platform',
       'plan.category.addon': 'Add-ons',
     },
+    planCategoryNote: {
+      'usage.explain.monthly': CREDIT_EXPLANATION.en.monthly,
+      'usage.explain.trial': CREDIT_EXPLANATION.en.trial,
+    },
     linkExpires: (date) => `You can accept this invitation until ${date}.`,
     signup: {
       heading: 'Create your account',
+      stepOf: (step, total) => `Step ${step} of ${total}`,
       codeWillGoTo: (masked) => `We'll email a 6-digit code to ${masked} to confirm it's you.`,
       sendCode: 'Send me a code',
       sending: 'Sending…',
@@ -152,6 +205,19 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       resend: 'Send a new code',
       readyHeading: 'Your account is ready',
       readyBody: 'Sign in with your email and the password you just chose.',
+      google: {
+        divider: 'or',
+        creating: 'Creating your account…',
+        readyHeading: 'Your account is ready',
+        readyBody: 'Sign in with Google to continue.',
+        errors: {
+          google_email_mismatch: (masked) =>
+            `This invitation is for ${masked}, and the Google account you chose uses a different address. Choose the Google account for ${masked}, or use the emailed code below.`,
+          google_email_unverified: 'Google has not confirmed the address on that account. Please use the emailed code below.',
+          google_use_code: 'For this address, please use the emailed code below.',
+          google_token_invalid: 'Google sign-in did not complete. Please try again, or use the emailed code below.',
+        },
+      },
       errors: {
         code_format: 'Enter the 6 digits from the email.',
         password_short: 'The password needs at least 8 characters.',
@@ -194,17 +260,20 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
   },
   he: {
     loading: 'בודקים את ההזמנה…',
+    eyebrow: 'ההזמנה שלך',
     validHeading: (name) => `קיבלת הזמנה מאת ${name}`,
     noteHeading: (name) => `הודעה מאת ${name}`,
     offerHeading: 'מה מוצע לך',
     free: 'חינם',
     perMonth: (price) => `$${price} לחודש`,
     paymentRequired: 'נדרש תשלום בעת ההרשמה.',
+    paymentOpensLater: 'אפשר ליצור את החשבון עכשיו. התשלום ייפתח בקרוב, ואחרי התשלום אפשר יהיה להשתמש ב־AgentPilot.',
     accessOpenEnded: 'ללא תאריך סיום',
     accessMonths: (months) => (months === 1 ? 'חודש אחד מההרשמה' : `${months} חודשים מההרשמה`),
     accessWhilePaid: 'כל עוד התוכנית בתשלום',
     includedHeading: 'מה כלול',
     planCategory: {
+      'plan.category.credits': 'קרדיטים',
       'plan.category.crm': 'לקוחות (CRM)',
       'plan.category.website_intake': 'אתר ופניות',
       'plan.category.payments': 'תשלומים',
@@ -215,9 +284,14 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       'plan.category.platform': 'פלטפורמה',
       'plan.category.addon': 'תוספות',
     },
+    planCategoryNote: {
+      'usage.explain.monthly': CREDIT_EXPLANATION.he.monthly,
+      'usage.explain.trial': CREDIT_EXPLANATION.he.trial,
+    },
     linkExpires: (date) => `אפשר לקבל את ההזמנה עד ${date}.`,
     signup: {
       heading: 'יצירת החשבון',
+      stepOf: (step, total) => `שלב ${step} מתוך ${total}`,
       codeWillGoTo: (masked) => `נשלח קוד בן 6 ספרות אל ${LTR_ISOLATE}${masked}${POP_ISOLATE} כדי לוודא שזו הכתובת שלך.`,
       sendCode: 'שליחת קוד',
       sending: 'שולחים…',
@@ -231,6 +305,19 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       resend: 'שליחת קוד חדש',
       readyHeading: 'החשבון מוכן',
       readyBody: 'אפשר להתחבר עם כתובת המייל והסיסמה שנבחרה עכשיו.',
+      google: {
+        divider: 'או',
+        creating: 'יוצרים את החשבון…',
+        readyHeading: 'החשבון מוכן',
+        readyBody: 'אפשר להתחבר עם Google כדי להמשיך.',
+        errors: {
+          google_email_mismatch: (masked) =>
+            `ההזמנה הזו מיועדת ל־${LTR_ISOLATE}${masked}${POP_ISOLATE}, וחשבון Google שנבחר משתמש בכתובת אחרת. אפשר לבחור את חשבון Google של ${LTR_ISOLATE}${masked}${POP_ISOLATE}, או להשתמש בקוד שנשלח במייל, למטה.`,
+          google_email_unverified: 'Google לא אישרה את הכתובת בחשבון הזה. אפשר להשתמש בקוד שנשלח במייל, למטה.',
+          google_use_code: 'לכתובת הזו יש להשתמש בקוד שנשלח במייל, למטה.',
+          google_token_invalid: 'ההתחברות עם Google לא הושלמה. אפשר לנסות שוב, או להשתמש בקוד שנשלח במייל, למטה.',
+        },
+      },
       errors: {
         code_format: 'יש להזין את 6 הספרות מהמייל.',
         password_short: 'הסיסמה צריכה להכיל 8 תווים לפחות.',
@@ -274,17 +361,20 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
   },
   es: {
     loading: 'Comprobando tu invitación…',
+    eyebrow: 'Tu invitación',
     validHeading: (name) => `${name} te ha invitado`,
     noteHeading: (name) => `Un mensaje de ${name}`,
     offerHeading: 'Lo que se te ofrece',
     free: 'Gratis',
     perMonth: (price) => `$${price} al mes`,
     paymentRequired: 'Se requiere el pago al registrarte.',
+    paymentOpensLater: 'Puedes crear tu cuenta ahora. El pago estará disponible pronto y podrás usar AgentPilot cuando hayas pagado.',
     accessOpenEnded: 'Sin fecha de fin',
     accessMonths: (months) => (months === 1 ? '1 mes desde el registro' : `${months} meses desde el registro`),
     accessWhilePaid: 'Mientras el plan esté pagado',
     includedHeading: 'Qué incluye',
     planCategory: {
+      'plan.category.credits': 'Créditos',
       'plan.category.crm': 'Clientes (CRM)',
       'plan.category.website_intake': 'Web y consultas',
       'plan.category.payments': 'Pagos',
@@ -295,9 +385,14 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       'plan.category.platform': 'Plataforma',
       'plan.category.addon': 'Complementos',
     },
+    planCategoryNote: {
+      'usage.explain.monthly': CREDIT_EXPLANATION.es.monthly,
+      'usage.explain.trial': CREDIT_EXPLANATION.es.trial,
+    },
     linkExpires: (date) => `Puedes aceptar esta invitación hasta el ${date}.`,
     signup: {
       heading: 'Crea tu cuenta',
+      stepOf: (step, total) => `Paso ${step} de ${total}`,
       codeWillGoTo: (masked) => `Te enviaremos un código de 6 dígitos a ${masked} para confirmar que eres tú.`,
       sendCode: 'Enviarme un código',
       sending: 'Enviando…',
@@ -311,6 +406,19 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       resend: 'Enviar un código nuevo',
       readyHeading: 'Tu cuenta está lista',
       readyBody: 'Inicia sesión con tu correo y la contraseña que acabas de elegir.',
+      google: {
+        divider: 'o',
+        creating: 'Creando tu cuenta…',
+        readyHeading: 'Tu cuenta está lista',
+        readyBody: 'Inicia sesión con Google para continuar.',
+        errors: {
+          google_email_mismatch: (masked) =>
+            `Esta invitación es para ${masked} y la cuenta de Google que elegiste usa otra dirección. Elige la cuenta de Google de ${masked} o usa el código por correo que aparece más abajo.`,
+          google_email_unverified: 'Google no ha confirmado la dirección de esa cuenta. Usa el código por correo que aparece más abajo.',
+          google_use_code: 'Para esta dirección, usa el código por correo que aparece más abajo.',
+          google_token_invalid: 'No se completó el inicio de sesión con Google. Inténtalo de nuevo o usa el código por correo que aparece más abajo.',
+        },
+      },
       errors: {
         code_format: 'Introduce los 6 dígitos del correo.',
         password_short: 'La contraseña necesita al menos 8 caracteres.',

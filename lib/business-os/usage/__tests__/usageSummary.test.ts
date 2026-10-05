@@ -1,9 +1,10 @@
 /**
- * usageSummary.ts — Layer 1.1 FR-23 / AC-23.
+ * usageSummary.ts — Layer 1.1 FR-23.
  *
- * Proves the extracted module on its own, before the usage route depends on it
- * (WC-2). The route's byte-for-byte response is pinned separately by
- * `app/api/business-os/usage/__tests__/route.test.ts`.
+ * Proves the module the admin LLM usage report's Check 5 reads. Since credit
+ * deduction slice 6a it no longer backs the owner card (which reads the credit
+ * ledger), and the Layer 1.1 route characterization suites were retired with
+ * the old route; this suite is the admin side's pin.
  */
 
 jest.mock('@/lib/logger', () => {
@@ -15,7 +16,6 @@ jest.mock('@/lib/logger', () => {
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   DEFAULT_TOKENS_PER_CREDIT,
-  buildCardBreakdown,
   parseTokensPerCredit,
   readTokensPerCredit,
   readUsageSummary,
@@ -23,7 +23,6 @@ import {
   toCredits,
   type UsageSummaryDeps,
 } from '../usageSummary';
-import { summariseUsageByCategory } from '../usageCategories';
 import { ConfigRepository } from '@/lib/repositories/ConfigRepository';
 import type { LedgerSummaryRow, UsageSummaryRpcRow } from '@/lib/repositories/TokenUsageRepository';
 import { createFakeSupabase, type Row } from '@/tests/helpers/fakePostgrest';
@@ -183,36 +182,11 @@ describe('tokens per Pilot Credit', () => {
   });
 });
 
-describe('credits and the card breakdown', () => {
-  it('rounds tokens to credits the way the card does', () => {
+describe('the legacy token-credit measure (Check 5)', () => {
+  it('rounds tokens to whole token-credits', () => {
     expect(toCredits(129496, 25)).toBe(5180);
     expect(toCredits(12, 25)).toBe(0);
     expect(toCredits(13, 25)).toBe(1);
   });
 
-  it('keeps categories with tokens, sorted by credits, with 4-decimal shares', () => {
-    const byFeature = new Map([
-      ['business-os-chat', { tokens: 1000, calls: 4 }],
-      ['landing-page-generation', { tokens: 3000, calls: 1 }],
-      ['business-os-leads', { tokens: 0, calls: 2 }],
-      ['mystery', { tokens: 7, calls: 1 }],
-    ]);
-    const usage = { totalTokens: 4007, totalCalls: 8, byFeature, byDay: new Map() };
-
-    const breakdown = buildCardBreakdown(usage, 10);
-
-    expect(breakdown).toEqual([
-      { key: 'website', credits: 300, calls: 1, share: 0.7487 },
-      { key: 'chat', credits: 100, calls: 4, share: 0.2496 },
-      { key: 'other', credits: 1, calls: 1, share: 0.0017 },
-    ]);
-    expect(breakdown.map((b) => b.key).sort()).toEqual(
-      [...summariseUsageByCategory(byFeature).entries()].filter(([, v]) => v.tokens > 0).map(([k]) => k).sort()
-    );
-  });
-
-  it('gives a zero share when there are no tokens', () => {
-    const usage = { totalTokens: 0, totalCalls: 0, byFeature: new Map(), byDay: new Map() };
-    expect(buildCardBreakdown(usage, 10)).toEqual([]);
-  });
 });

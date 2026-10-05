@@ -130,7 +130,7 @@ export async function buildLlmUsageReport(
     deps.tokenUsage.countInWindow([accountId], ledgerWindow, helperMatch),
     deps.tokenUsage.countInWindow(platformIds, ledgerWindow, helperMatch),
     deps.tokenUsage.listLabelsInWindow(platformIds, ledgerWindow, helperMatch, LLM_USAGE_LIMITS.HELPER_TIMESTAMPS),
-    // Check 5: the card's own computation, from the start with no end bound (M-1).
+    // Check 5: token usage by feature, from the start with no end bound (M-1).
     deps.readUsageSummary(accountId, window.start, log),
     deps.readTokensPerCredit(),
     // The business name is display data, looked up on manual refreshes only:

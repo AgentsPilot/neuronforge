@@ -47,9 +47,16 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +1 Business OS (BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT): invite-only signup, Slice 1a.
   // +4 Business OS (BOS_INVITE_REDEEMED, _PLAN_PROVISIONED, _REDEMPTION_REFUSED, _REDEMPTION_INCOMPLETE): Slice 1b.
   // +2 Business OS (BOS_INVITE_EMAIL_SENT, BOS_INVITE_EMAIL_NOT_SENT): Slice 2a.
-  it('pins the split: 24 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(169);
-    expect(eventsTagged('bos')).toHaveLength(24);
+  // +3 Business OS (BOS_FRIEND_INVITE_CREATED, _REVOKED, _REFUSED): Slice 5a.
+  // +1 Business OS (PAYMENT_PLAN_CANCELLED): registered so its severity has one
+  //    owner; it was written only by its call site, hence "Unknown event" rows.
+  // +2 Business OS (BOS_CREDIT_LOT_GRANTED, BOS_CREDIT_LOT_REDUCED): credit deduction slice 11b.
+  // +1 Business OS (BOS_CREDIT_LOW_LINE_CROSSED): credit deduction slice 8b.
+  // +1 Business OS (BOS_QUEUE_DRAIN_STARTED): ADMIN_BOS_CLEANUP slice 7d, Drain now.
+  // +1 Business OS (BOS_QUEUE_ITEM_CANCELLED): ADMIN_BOS_CLEANUP slice 7b, cancel one queue item (2026-10-04).
+  it('pins the split: 33 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(178);
+    expect(eventsTagged('bos')).toHaveLength(33);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

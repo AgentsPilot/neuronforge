@@ -43,7 +43,12 @@ export function PlanCard({ plan }: Props) {
   return (
     <article
       data-testid={`plan-${plan.id}`}
-      className="flex flex-col rounded-lg border border-slate-700 bg-slate-800/40 p-4"
+      // An inactive plan is dimmed and dashed so it is unmistakable at a glance
+      // on a row of four cards — the badge below says it in words as well, so
+      // the state is never carried by styling alone.
+      className={`flex flex-col rounded-lg border bg-slate-800/40 p-4 ${
+        plan.active ? 'border-slate-700' : 'border-dashed border-rose-500/60 opacity-70'
+      }`}
     >
       <header className="border-b border-slate-700 pb-3">
         <div className="flex items-baseline justify-between gap-2">
@@ -97,14 +102,26 @@ export function PlanCard({ plan }: Props) {
           >
             {plan.availableToBuy ? 'available to buy' : 'not available to buy'}
           </span>
+          {/* FYI only (2026-09-29): an operator's marker. It changes nothing about
+              what an account on this plan can do, and the tooltip says so, because
+              "inactive" otherwise reads as a switch. */}
+          <span
+            data-testid={`plan-${plan.id}-active`}
+            title="FYI only: this marker changes nothing about the plan or the accounts on it yet."
+            className={`rounded px-1.5 py-0.5 text-xs ${
+              plan.active ? 'bg-slate-600/40 text-slate-300' : 'bg-rose-500/25 text-rose-200 font-semibold'
+            }`}
+          >
+            {plan.active ? 'active' : 'INACTIVE'}
+          </span>
         </div>
       </header>
 
       <dl className="space-y-2 border-b border-slate-700 py-3 text-sm">
         <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">AI actions</dt>
-          <dd data-testid={`plan-${plan.id}-ai`} className="text-slate-200">
-            {plan.aiActions}
+          <dt className="text-xs uppercase tracking-wide text-slate-500">Credits</dt>
+          <dd data-testid={`plan-${plan.id}-credits`} className="text-slate-200">
+            {plan.credits}
           </dd>
         </div>
         <div>

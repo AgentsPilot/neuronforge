@@ -56,6 +56,12 @@ jest.mock('@/lib/logger', () => {
 });
 
 // Loaded after the fetch stub, on purpose.
+// Credit deduction slice 8a: the route's credits-left pass is not under test here
+// (route.creditsLeft.test.ts covers it). Setup only; no assertion changes.
+jest.mock('@/lib/business-os/credits/adminCreditPercent', () => ({
+  readAdminCreditsLeft: async () => ({ outcome: 'ok', byUserId: new Map() }),
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GET } = require('../route') as typeof import('../route');
 
@@ -167,10 +173,23 @@ describe('validation before any read', () => {
     expect(mockRequests).toHaveLength(0);
   });
 
-  it('403 for a non-admin with a hostile search: no request of any kind is sent', async () => {
+  it('403 for a non-admin with a hostile search: no read of any kind is sent', async () => {
     mockGetUser.mockResolvedValue(OWNER);
     mockIsAdmin.mockResolvedValue(false);
     expect((await call('acme,id.neq.0')).status).toBe(403);
-    expect(mockRequests).toHaveLength(0);
+    /*
+     * One POST to `audit_trail`, and nothing else.
+     *
+     * This asserted `toHaveLength(0)`. Since 2026-10-01 `requireAdmin` records
+     * the refusal before answering 403. The claim that matters — the hostile
+     * search term never reached PostgREST — is asserted positively: the only
+     * request is the audit INSERT, it is a POST not a GET, and no URL carries
+     * the search term.
+     */
+    expect(mockRequests).toHaveLength(1);
+    expect(mockRequests[0].method).toBe('POST');
+    expect(mockRequests[0].url.pathname).toBe('/rest/v1/audit_trail');
+    expect(mockRequests.some((r) => r.url.href.includes('acme'))).toBe(false);
+    expect(mockRequests.some((r) => r.url.href.includes('neq'))).toBe(false);
   });
 });

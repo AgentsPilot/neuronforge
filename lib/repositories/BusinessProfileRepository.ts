@@ -1112,6 +1112,80 @@ export class BusinessProfileRepository {
   }
 
   /**
+   * Save the business's language.
+   *
+   * Always written together with `user_preferences.preferred_language` (see
+   * `lib/business-os/userLanguage.ts`). No `.single()`: a user with no business
+   * row yet updates nothing, which is not an error.
+   */
+  async updateLanguage(userId: string, language: string): Promise<BusinessProfileRepositoryResult<true>> {
+    try {
+      const { error } = await this.supabase
+        .from('business_profiles')
+        .update({ language, updated_at: new Date().toISOString() })
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info({ userId, language }, 'Business language updated');
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to update business language');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The business's DEFAULT currency as stored, or `null` when it has none or
+   * has no business row. Not validated here: the caller decides what counts.
+   */
+  async findDefaultCurrency(userId: string): Promise<BusinessProfileRepositoryResult<string | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('currency')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const currency = (data as { currency?: unknown } | null)?.currency;
+      return { data: typeof currency === 'string' ? currency : null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read business default currency');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Save the business's DEFAULT currency.
+   *
+   * A default, not a constraint: `scheduling_services.currency` stays the
+   * authority for what a client is charged. The `business_currency_lock`
+   * trigger (20261008_currency_locks.sql) refuses a change once money exists in
+   * the old currency, with SQLSTATE `23514`. The error is returned unchanged so
+   * the caller can tell that refusal apart from a failure.
+   *
+   * No `.single()`: a user with no business row yet updates nothing.
+   */
+  async updateDefaultCurrency(userId: string, currency: string): Promise<BusinessProfileRepositoryResult<true>> {
+    try {
+      const { error } = await this.supabase
+        .from('business_profiles')
+        .update({ currency, updated_at: new Date().toISOString() })
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info({ userId, currency }, 'Business default currency updated');
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to update business default currency');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * What the platform is allowed to send the owner, unprompted.
    *
    * Its own method for the same reason as the two beside it — one save must not

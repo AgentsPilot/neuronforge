@@ -1,0 +1,203 @@
+# Jest PR Gate
+#
+# Runs the whole Jest suite on every PR, minus a committed quarantine baseline,
+# and fails on any new failure. Until this workflow existed no CI job ran the
+# full suite, and 29 suites rotted red on main, 8 of them importing modules
+# deleted months earlier. Plan and SA rulings:
+# docs/workplans/TEST_STRATEGY_AND_CI_TIERING_WORKPLAN.md section 0.
+#
+# ── WHAT IS IN SCOPE ──────────────────────────────────────────────────────
+# jest.gate.config.js: everything `npm test` collects, minus
+# .github/ci/jest-quarantine.json (removals only) and the credential-gated
+# tests/plugins/integration-tests/. .github/ci/jest-gate-check.mjs proves that
+# partition on every run, proves every listed suite executed exactly once, and
+# refuses any quarantine addition. A green Jest exit alone proves none of that.
+#
+# ── LAYOUT: SHARDS PLUS ONE VERDICT JOB ───────────────────────────────────
+# The suite is split across a matrix so the gate finishes before
+# `Build (next build)` rather than after it. Only the verdict job,
+# `Gate tests (jest)`, may be a required status check. Never require a shard:
+# GitHub counts a SKIPPED required check as passing, and matrix legs are named
+# per index, so requiring them is both unsafe and brittle.
+#
+# The verdict job is `if: always()` (never the default and never !cancelled(),
+# either of which lets it be skipped, which would read as a green gate). It
+# passes only on an exact `needs.shard.result == 'success'` and only when every
+# shard's result file is present. The shard count N is written ONCE, in the
+# matrix below; the result file names carry it, and the check script reads it
+# from them.
+#
+# ── NO `paths:` FILTER, ON PURPOSE ────────────────────────────────────────
+# Same reasoning as build.yml. The scope step inside each job is the shared
+# "could this change matter?" rule plus one Jest-specific condition: any
+# non-markdown scripts/ change runs the gate, because gate suites test sources
+# under scripts/. See .github/ci/jest-gate-scope.sh.
+#
+# ── NO JEST CACHE, ON PURPOSE ─────────────────────────────────────────────
+# Jest here is transpile-only (isolatedModules), so its transform cache saves
+# about 1% (measured 308s cold vs 304s warm) and would only compete with the
+# npm caches for the repo's 10 GB budget (SA SC-4).
+#
+# ── NO SECRETS, NO SNAPSHOT WRITES ────────────────────────────────────────
+# tests/plugins/jest-setup.ts stubs the module-load env vars, so this file
+# needs no secret and must never gain one: it is public. Snapshots are never
+# written in CI: --ci refuses to, and the snapshot-update flag never appears
+# here or in the test:gate script (SA SC-10).
+#
+# ── ⚠️ NOT A GATE UNTIL IT IS A REQUIRED STATUS CHECK ─────────────────────
+# Settings → Branches → `main` → "Require status checks": add exactly
+#   Gate tests (jest)
+# Renaming the verdict job silently un-gates main. If you rename it, update
+# the protection rule in the same change.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shard:
+    # Must never contain the verdict job's name.
+    name: Gate tests shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Every shard reports, so one red shard does not hide another.
+      fail-fast: false
+      matrix:
+        # N is defined here and nowhere else.
+        shard: [1, 2, 3]
+    steps:
+      # fetch-depth 2 so HEAD^ resolves for the scope rule.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Can this change affect the Jest gate?
+        id: scope
+        env:
+          # Measure the whole push, not just its last commit (see build.yml).
+          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: bash .github/ci/jest-gate-scope.sh "$BASE"
+
+      - name: Setup Node.js
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.scope.outputs.skip != 'true'
+        run: npm ci
+
+      # The verdict job compares these against the shards' results (G1, G5).
+      # One shard writes them; every shard would write the same thing.
+      - name: List the full suite and the gate
+        if: steps.scope.outputs.skip != 'true' && matrix.shard == 1
+        run: |
+          mkdir -p gate-out
+          npx jest --listTests > gate-out/jest-list-full.txt
+          npx jest --config jest.gate.config.js --listTests > gate-out/jest-list-gate.txt
+          echo "Full: $(wc -l < gate-out/jest-list-full.txt) suites. Gate: $(wc -l < gate-out/jest-list-gate.txt) suites."
+
+      # Runs bare: no `|| true`, no continue-on-error. A failing test fails
+      # this job, and through it the verdict.
+      - name: Run the gate (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+        if: steps.scope.outputs.skip != 'true'
+        run: |
+          mkdir -p gate-out
+          npm run test:gate -- --maxWorkers=4 \
+            --shard=${{ matrix.shard }}/${{ strategy.job-total }} \
+            --json --outputFile=gate-out/gate-results-${{ matrix.shard }}-of-${{ strategy.job-total }}.json
+
+      # always(), so a red shard still hands its counts to the verdict job.
+      - name: Upload results
+        if: always() && steps.scope.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-results-${{ matrix.shard }}
+          path: gate-out/
+          if-no-files-found: error
+          # "Re-run failed jobs" uploads gate-results-<n> again under the same name.
+          overwrite: true
+          retention-days: 7
+
+      - name: Note the skip in the run summary
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "Skipped shard ${{ matrix.shard }}. See the verdict job." >> "$GITHUB_STEP_SUMMARY"
+
+  gate:
+    # ⚠️ The required status check. Renaming it un-gates main.
+    name: Gate tests (jest)
+    needs: [shard]
+    # Mandatory. A skipped required check counts as passing.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # fetch-depth 2: the scope rule and the quarantine ratchet (G3) both read HEAD^1.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Can this change affect the Jest gate?
+        id: scope
+        env:
+          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: bash .github/ci/jest-gate-scope.sh "$BASE"
+
+      # No npm ci: the check script uses Node built-ins only.
+      - name: Setup Node.js
+        if: always() && steps.scope.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Download shard results
+        if: always() && steps.scope.outputs.skip != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gate-results-*
+          path: gate-out
+          merge-multiple: true
+
+      # Prints the counts and the step summary even when a shard is red.
+      - name: Check the gate ran in full (G1-G7)
+        if: always() && steps.scope.outputs.skip != 'true'
+        run: |
+          node .github/ci/jest-gate-check.mjs \
+            --full-list gate-out/jest-list-full.txt \
+            --gate-list gate-out/jest-list-gate.txt \
+            --results-dir gate-out
+
+      # An exact string: `cancelled`, `skipped` and `failure` are all red.
+      # Applies in skip mode too, where every shard skipped its work and
+      # succeeded.
+      - name: Require every shard to have succeeded
+        if: always()
+        env:
+          SHARD_RESULT: ${{ needs.shard.result }}
+        run: |
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "::error::Shard result is '$SHARD_RESULT', not 'success'."
+            exit 1
+          fi
+
+      - name: Note the skip in the run summary
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "Skipped: every changed file is documentation or Claude Code config," >> "$GITHUB_STEP_SUMMARY"
+          echo "so it cannot change a test result. Rule: .github/ci/jest-gate-scope.sh" >> "$GITHUB_STEP_SUMMARY"

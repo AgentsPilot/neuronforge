@@ -19,8 +19,12 @@
 //   - NEVER throws and never rejects. Every failure is one `error` log
 //     (`bos_ai_charge_write_failed` or `bos_ai_charge_not_written`), never an
 //     exception into the action. It cannot change the action's value or error,
-//     and cannot delay it beyond the budget (proofs NI-1 to NI-5 in
-//     `__tests__/aiActionAudit.test.ts`).
+//     and cannot delay it beyond the write budget, plus — after a RECORDED
+//     charge into a plan period — at most `CREDIT_LOW_LINE_READ_BUDGET_MS`
+//     for the low-line check, plus the audit flush bound on the one charge per
+//     period that crosses the low line (slice 8b; proofs NI-1 to NI-5 in
+//     `__tests__/aiActionAudit.test.ts`, NI-6 to NI-8 in
+//     `__tests__/aiChargeRecorder.test.ts`).
 //
 // Import graph (SA C-5): only TYPES come from `aiActionAudit.ts`, so the two
 // modules form no runtime cycle. A source guard in the tests pins it.
@@ -31,6 +35,7 @@
 // Standard 5).
 
 import type { UsageCallRecord } from '@/lib/ai/usageScope';
+import { checkCreditLowLine } from '@/lib/business-os/credits/creditLowLine';
 import { createLogger } from '@/lib/logger';
 import {
   businessOsCreditChargeRepository,
@@ -259,6 +264,31 @@ async function write(
   }
 
   logger.debug({ event: 'bos_ai_charge_recorded', credits: record.credits, ...ids }, 'AI charge recorded');
+
+  // Slice 8b (SA SQ-44): did this recorded charge take the account below the
+  // low line? Only for a charge into a plan period that carries credits — a
+  // calendar-month charge has no plan row, so no allowance (NI-8). Awaited and
+  // bounded inside the hook (reads ≤ CREDIT_LOW_LINE_READ_BUDGET_MS, then the
+  // audit flush on a crossing); it never throws, and the catch is defence in depth.
+  if (data.anchorSource === 'plan' && record.credits > 0) {
+    try {
+      await checkCreditLowLine({
+        accountId: record.accountId,
+        credits: record.credits,
+        periodStart: data.periodStart,
+        anchorSource: data.anchorSource,
+        actionId: record.actionId,
+        actionType: record.actionType,
+        trigger: record.trigger,
+        chargeService: AI_CHARGE_SERVICE,
+      });
+    } catch (err) {
+      logger.error(
+        { event: 'bos_credit_low_line_check_failed', reason: 'exception', errCode: errCodeOf(err) ?? null, ...ids },
+        'Credit low-line check threw; the AI action continues'
+      );
+    }
+  }
 }
 
 function notWritten(ids: Record<string, unknown>, reason: NotWrittenReason): void {

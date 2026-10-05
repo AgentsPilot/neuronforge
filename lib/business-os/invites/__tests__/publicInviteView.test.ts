@@ -4,12 +4,13 @@
  * `first_viewed_at` stamped only for a valid invite that has not been seen.
  */
 
-import { CHAMPION_INVITE_TYPE, INVITE_TYPES } from '@/lib/business-os/entitlements/config/invites';
+import { CHAMPION_INVITE_TYPE, INVITE_ISSUANCE_POLICY, INVITE_TYPES } from '@/lib/business-os/entitlements/config/invites';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { BusinessOsInvitePublicView } from '@/lib/repositories/types';
 
 import { generateInviteToken, hashInviteToken } from '../inviteToken';
 import { NOT_RECOGNISED, viewInviteByToken, type PublicInviteRepository } from '../publicInviteView';
+import { describeInviteOffer } from '../inviteOffer';
 
 const NOW = new Date('2026-10-10T00:00:00.000Z');
 const config = getEntitlementConfig();
@@ -19,6 +20,7 @@ const INVITE_ID = '11111111-1111-4111-8111-111111111111';
 function stored(overrides: Partial<BusinessOsInvitePublicView> = {}): BusinessOsInvitePublicView {
   return {
     id: INVITE_ID,
+    issuer_kind: 'admin',
     grant_kind: 'cohort',
     grant_id: INVITE_TYPES[CHAMPION_INVITE_TYPE].defaultGrantId,
     access_open_ended: true,
@@ -175,6 +177,26 @@ describe('the valid state', () => {
     const outcome = await viewInviteByToken(TOKEN, deps);
     expect(outcome.ok && (outcome.response as { language: string }).language).toBe('en');
   });
+
+  it.each(['en', 'he', 'es'] as const)(
+    "OI-10 (%s): the offer is described in the invite's own language — the same one the page renders in",
+    async (language) => {
+      const row = stored({ language });
+      const { deps } = harness(row);
+      const outcome = await viewInviteByToken(TOKEN, deps);
+      if (!outcome.ok) throw new Error('expected ok');
+      const offer = (outcome.response as { offer: unknown }).offer;
+      expect(offer).toEqual(describeInviteOffer(row, config, NOW, language));
+    }
+  );
+
+  it('OI-10: an unknown stored language describes the offer in English, like the page', async () => {
+    const row = stored({ language: 'fr' });
+    const { deps } = harness(row);
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    if (!outcome.ok) throw new Error('expected ok');
+    expect((outcome.response as { offer: unknown }).offer).toEqual(describeInviteOffer(row, config, NOW, 'en'));
+  });
 });
 
 describe('matched but not valid: the narrow allow-list', () => {
@@ -267,5 +289,125 @@ describe('FR-8a / L-3: the invited email already has an account (Slice 1a)', () 
     expect(accountQuestions).toEqual([INVITEE_EMAIL]);
     expect(repository.markOpenedByExistingAccount).not.toHaveBeenCalled();
     expect(JSON.stringify(outcome.ok && outcome.response)).not.toContain(INVITEE_EMAIL);
+  });
+});
+
+describe('Slices 5a/5b (F5a-10, F5b-3, SA R-5, Q-8): a champion friend invite', () => {
+  const policy = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
+  // Restore the value the config shipped with, not a hardcoded one: the switch
+  // has been on in production since Slice 5b, and a hook that forced `false`
+  // leaked a state the real config no longer has into every later test.
+  const shippedSwitch = INVITE_ISSUANCE_POLICY.accountInvitesAvailable;
+  const friendRow = (overrides: Partial<BusinessOsInvitePublicView> = {}) =>
+    stored({
+      issuer_kind: 'account',
+      grant_kind: 'tier',
+      grant_id: INVITE_ISSUANCE_POLICY.account.grantId,
+      access_open_ended: null,
+      access_months: null,
+      ...overrides,
+    });
+
+  afterEach(() => {
+    policy.accountInvitesAvailable = shippedSwitch;
+  });
+
+  it('with the switch on (5b): valid, with the offer and the masked email, and NO existing-account check (F5b-3)', async () => {
+    policy.accountInvitesAvailable = true;
+    // The address HAS an account: the page must still say nothing about it.
+    const { deps, repository, accounts } = harness(friendRow(), { hasAccount: true });
+    const outcome = await viewInviteByToken(TOKEN, deps);
+
+    expect(outcome.ok).toBe(true);
+    const response = outcome.ok ? (outcome.response as Record<string, unknown>) : {};
+    expect(response.state).toBe('valid');
+    expect(Object.keys(response).sort()).toEqual([
+      'inviterDisplayName',
+      'language',
+      'linkExpiresAt',
+      'maskedEmail',
+      'offer',
+      'personalNote',
+      'state',
+    ]);
+    expect((response.offer as { free: boolean }).free).toBe(false);
+    expect(response.maskedEmail).not.toBe(INVITEE_EMAIL);
+    expect(String(response.maskedEmail)).toContain('•');
+    // The champion holds the link: never ask whether the typed address has an account.
+    expect(accounts.emailHasAccount).not.toHaveBeenCalled();
+    expect(repository.markOpenedByExistingAccount).not.toHaveBeenCalled();
+    expect(repository.markFirstViewed).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['en', 'he', 'es'] as const)(
+    "OI-10 / QA-6b-E4 (%s): the friend's offer is described in the invite's own language, like the admin path",
+    async (language) => {
+      policy.accountInvitesAvailable = true;
+      const row = friendRow({ language });
+      const outcome = await viewInviteByToken(TOKEN, harness(row).deps);
+      if (!outcome.ok) throw new Error('expected ok');
+
+      const response = outcome.response as { state: string; language: string; offer: unknown };
+      expect(response.state).toBe('valid');
+      expect(response.language).toBe(language);
+      expect(response.offer).toEqual(describeInviteOffer(row, config, NOW, language));
+      // Non-vacuity: the languages really differ, so the equality above could
+      // not pass on one English offer handed to every invite.
+      if (language !== 'en') {
+        expect(response.offer).not.toEqual(describeInviteOffer(row, config, NOW, 'en'));
+      }
+    }
+  );
+
+  it('with the switch on and a failed email read: try again, never a form without a masked address', async () => {
+    policy.accountInvitesAvailable = true;
+    const { deps, accounts } = harness(friendRow(), { emailError: true });
+    expect(await viewInviteByToken(TOKEN, deps)).toEqual({ ok: false });
+    expect(accounts.emailHasAccount).not.toHaveBeenCalled();
+  });
+
+  it('whether or not the address has an account, the answer is identical (F5b-3)', async () => {
+    policy.accountInvitesAvailable = true;
+    const withAccount = await viewInviteByToken(TOKEN, harness(friendRow(), { hasAccount: true }).deps);
+    const withoutAccount = await viewInviteByToken(TOKEN, harness(friendRow(), { hasAccount: false }).deps);
+    expect(withAccount).toEqual(withoutAccount);
+  });
+
+  it('with the switch off (the rollback state): unavailable, and nothing is stamped or asked', async () => {
+    // Ships ON since 2026-10-01; set off explicitly rather than rely on test order.
+    policy.accountInvitesAvailable = false;
+    const { deps, repository, accounts } = harness(friendRow(), { hasAccount: true });
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome.ok && outcome.response.state).toBe('unavailable');
+    expect(accounts.emailHasAccount).not.toHaveBeenCalled();
+    expect(repository.findInviteeEmailForPublicCheck).not.toHaveBeenCalled();
+    expect(repository.markFirstViewed).not.toHaveBeenCalled();
+  });
+
+  it('keyed on issuer_kind, whatever the grant (R-5): an account row with a cohort grant is unavailable, never valid', async () => {
+    policy.accountInvitesAvailable = true;
+    const { deps, accounts } = harness(stored({ issuer_kind: 'account' }), { hasAccount: false });
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome.ok && outcome.response.state).toBe('unavailable');
+    expect(accounts.emailHasAccount).not.toHaveBeenCalled();
+  });
+
+  it('expired, revoked and used friend invites answer as any other invite', async () => {
+    policy.accountInvitesAvailable = true;
+    for (const [overrides, state] of [
+      [{ link_expires_at: '2026-10-01T00:00:00.000Z' }, 'expired'],
+      [{ revoked_at: '2026-10-05T00:00:00.000Z' }, 'revoked'],
+    ] as const) {
+      const { deps } = harness(friendRow(overrides));
+      const outcome = await viewInviteByToken(TOKEN, deps);
+      expect(outcome.ok && outcome.response.state).toBe(state);
+    }
+  });
+
+  it('an admin invite still takes the existing-account check (unchanged)', async () => {
+    const { deps, accounts } = harness(stored(), { hasAccount: true });
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome.ok && outcome.response.state).toBe('existing_account');
+    expect(accounts.emailHasAccount).toHaveBeenCalledTimes(1);
   });
 });

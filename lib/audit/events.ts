@@ -152,6 +152,8 @@ export const AUDIT_EVENTS = {
   // Every one of these is an admin changing what an account is entitled to, so
   // each carries the actor, the reason and the before/after plan row. They are
   // the only write path to the entitlement tables (workplan §4.12, WC-7).
+  // Those written against an account (entity 'business_os_account_plan') are
+  // hidden from that account's owner (BD-26, lib/audit/ownerVisibility.ts).
   BOS_ENTITLEMENT_PLAN_ROW_ENSURED: 'BOS_ENTITLEMENT_PLAN_ROW_ENSURED',
   BOS_ENTITLEMENT_COHORT_SET: 'BOS_ENTITLEMENT_COHORT_SET',
   BOS_ENTITLEMENT_EXPIRY_SET: 'BOS_ENTITLEMENT_EXPIRY_SET',
@@ -166,6 +168,27 @@ export const AUDIT_EVENTS = {
   BOS_ENTITLEMENT_PLAN_STATE_RESET: 'BOS_ENTITLEMENT_PLAN_STATE_RESET',
   // R2-1: the multi-account launch operation. Slice 1 ships the dry run.
   BOS_ENTITLEMENT_LAUNCH_DRY_RUN: 'BOS_ENTITLEMENT_LAUNCH_DRY_RUN',
+  // Credit deduction slice 11b: an admin gave extra credits to an account, or
+  // took credits back out of one of its credit lots. Entity type
+  // 'business_os_credit_lot', id = the lot id. The details carry the reason, the
+  // credits, the lot's source and the idempotency key; the changes carry the
+  // account's extra credits before / after (read before the write, labelled
+  // `extraCreditsBasis: 'read_before_write'`) and, for a reduction, the lot's
+  // remaining before / after as the reversal function returned them under its
+  // lock. A replay of the same request writes no entry (S11-CR-2): the lot or
+  // draw row is itself the append-only record. Hidden from the account's owner
+  // (BD-26, lib/audit/ownerVisibility.ts): the reason is internal.
+  BOS_CREDIT_LOT_GRANTED: 'BOS_CREDIT_LOT_GRANTED',
+  BOS_CREDIT_LOT_REDUCED: 'BOS_CREDIT_LOT_REDUCED',
+  // Credit deduction slice 8b: a recorded AI charge took the account's shown
+  // percentage of PLAN credits left from at or above the low line (10) to
+  // below it. Written only by lib/business-os/credits/creditLowLine.ts, with
+  // `logAndFlush`. Entity type 'business_os_credit_period', id = the account.
+  // The details carry the period key and kind, the plan allowance, the shown
+  // percentage before / after, the line and the crossing action's id, type and
+  // trigger; never owner text, tokens or dollars. "Once per period" is derived,
+  // not stored (KI-21, KI-22): count distinct (account, periodStart).
+  BOS_CREDIT_LOW_LINE_CROSSED: 'BOS_CREDIT_LOW_LINE_CROSSED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -199,6 +222,37 @@ export const AUDIT_EVENTS = {
   // invitee email, the link, the token, its hash or a provider's error text.
   BOS_INVITE_EMAIL_SENT: 'BOS_INVITE_EMAIL_SENT',
   BOS_INVITE_EMAIL_NOT_SENT: 'BOS_INVITE_EMAIL_NOT_SENT',
+  // Slice 5a (F5a-13): a champion's friend invites. Actor = the champion
+  // account. CREATED carries the language; REVOKED nothing beyond the invite
+  // id; REFUSED the reason class only (`own_email`, `allowance_reached`,
+  // `daily_limit`, `already_invited`). `not_eligible` is logged, never audited
+  // (Slice 5b, N-4: any signed-in account can trigger it). Never the friend's
+  // email, the note, the link, the token or its hash. The email outcome reuses
+  // BOS_INVITE_EMAIL_SENT / BOS_INVITE_EMAIL_NOT_SENT with the champion as actor.
+  BOS_FRIEND_INVITE_CREATED: 'BOS_FRIEND_INVITE_CREATED',
+  BOS_FRIEND_INVITE_REVOKED: 'BOS_FRIEND_INVITE_REVOKED',
+  BOS_FRIEND_INVITE_REFUSED: 'BOS_FRIEND_INVITE_REFUSED',
+
+  // ==========================================
+  // BUSINESS OS QUEUES (admin-only, server-written)
+  // ==========================================
+  // ADMIN_BOS_CLEANUP slice 7d: an admin pressed "Drain now" on one Business OS
+  // queue (POST /api/admin/jobs-queues/drain). Entity type 'bos_queue', id = the
+  // queue id. Written BEFORE the drain runs (a write-ahead record, SA W7D-1), so
+  // a drain the platform kills at its time limit is still on record; hence
+  // "STARTED", not "DRAINED". The details carry exactly the admin's reason, the
+  // queue and the correlation id. The outcome, counts and duration are in the
+  // response and the server log under the same correlation id, never here.
+  BOS_QUEUE_DRAIN_STARTED: 'BOS_QUEUE_DRAIN_STARTED',
+  // ADMIN_BOS_CLEANUP slice 7b: an admin cancelled ONE queue item
+  // (POST /api/admin/jobs-queues/items/action). Entity type 'bos_queue_item',
+  // id = the queue row's own id; written against the item's ACCOUNT (user_id)
+  // with the admin as actor, and classified 'operator' so the owner never reads
+  // the admin's reason (SA OP-2 option 1, migration 20261035). Written only
+  // AFTER the compare-and-set won (OP-1): a refused or lost cancel writes
+  // nothing. The details carry exactly the reason, the queue, the action, the
+  // correlation id and the due anchor; never content, error text or a name.
+  BOS_QUEUE_ITEM_CANCELLED: 'BOS_QUEUE_ITEM_CANCELLED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -291,6 +345,7 @@ export const AUDIT_EVENTS = {
   PAYMENT_REFUNDED: 'PAYMENT_REFUNDED',
   PAYMENT_BLOCK_EXECUTED: 'PAYMENT_BLOCK_EXECUTED',
   INVOICE_MARKED_PAID: 'INVOICE_MARKED_PAID',
+  PAYMENT_PLAN_CANCELLED: 'PAYMENT_PLAN_CANCELLED',
 
   // Per-Step Intelligent Routing events
   PILOT_ROUTING_DECISION: 'PILOT_ROUTING_DECISION', // Model selected for step
@@ -486,8 +541,28 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'Failed login attempt',
   },
+  /*
+   * A password change is RECORDED, not ALERTED (user decision, 2026-10-01).
+   *
+   * It was 'critical', which is the severity the admin Health "Critical audit
+   * events" tile counts action-blind and the /monitoring page shows as a
+   * security incident — so a customer following security advice raised an
+   * operational alarm. Same reasoning as PAYMENT_REFUNDED (#157) and
+   * PAYMENT_PLAN_CANCELLED (#160): the event is fully auditable and
+   * compliance-flagged, it is simply not an incident.
+   *
+   * Compliance flags are UNCHANGED, and this registration is now the single
+   * owner of both: /api/user/change-password used to pass severity 'warning'
+   * and complianceFlags ['SOC2'] of its own, and both overrides are deleted.
+   * That means future rows gain GDPR, which is correct for a credential change.
+   *
+   * Stored rows keep the severity they were written with: this is a
+   * write-forward change, not a rewrite of a compliance table.
+   *
+   * Pinned by lib/audit/__tests__/passwordChangeSeverity.guard.test.ts.
+   */
   [AUDIT_EVENTS.USER_PASSWORD_CHANGED]: {
-    severity: 'critical',
+    severity: 'warning',
     complianceFlags: ['SOC2', 'GDPR'],
     description: 'User password changed',
   },
@@ -533,8 +608,17 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['GDPR'],
     description: 'Notification preferences updated',
   },
+  /*
+   * Changing your own security preferences is RECORDED, not ALERTED — the same
+   * decision and the same reasoning as USER_PASSWORD_CHANGED above.
+   *
+   * Its only writer is the V1 settings Security tab, which posts a severity in
+   * its body that the write route has always ignored (AuditWriteBodySchema
+   * accepts `severity` and drops it), so this registration has always been the
+   * only thing that decided. Flags unchanged; write-forward only.
+   */
   [AUDIT_EVENTS.SETTINGS_SECURITY_UPDATED]: {
-    severity: 'critical',
+    severity: 'warning',
     complianceFlags: ['SOC2', 'GDPR'],
     description: 'Security settings modified',
   },
@@ -669,6 +753,57 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'A Business OS invitation email was not sent, or not confirmed in time; the admin was shown the link to copy (reason class only)',
   },
+  // Credit deduction slice 11b. 'warning': an admin changed what an account can
+  // spend. SOC2 and not FINANCIAL: FINANCIAL is reserved for AgentsPilot's own
+  // platform-billing events (see PAYMENT_PLAN_CANCELLED below); every Business
+  // OS money event carries SOC2 alone (SA W11b-3).
+  [AUDIT_EVENTS.BOS_CREDIT_LOT_GRANTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin gave extra credits to a Business OS account (credits, expiry and reason recorded)',
+  },
+  [AUDIT_EVENTS.BOS_CREDIT_LOT_REDUCED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin took credits back from a Business OS credit lot (credits, lot remaining and reason recorded)',
+  },
+  // Credit deduction slice 8b (SA SQ-46): 'info', no compliance flags — an
+  // observation for admins, not an operator alert. The writer passes NO
+  // severity, so this registration is the only source (pinned by test).
+  [AUDIT_EVENTS.BOS_CREDIT_LOW_LINE_CROSSED]: {
+    severity: 'info',
+    description: "A Business OS account's plan credits dropped below the low line (percentage before / after recorded)",
+  },
+  // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
+  // (and possibly send) queued items across every account, outside the schedule.
+  [AUDIT_EVENTS.BOS_QUEUE_DRAIN_STARTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin started a Business OS queue drain now',
+  },
+  // ADMIN_BOS_CLEANUP slice 7b. 'warning': an admin closed a real client's
+  // queued message for good; it will not be sent.
+  [AUDIT_EVENTS.BOS_QUEUE_ITEM_CANCELLED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin cancelled one Business OS queue item; it will not be sent',
+  },
+  // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
+  [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A champion sent a Business OS friend invite to Essentials (language recorded)',
+  },
+  [AUDIT_EVENTS.BOS_FRIEND_INVITE_REVOKED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A champion revoked one of their own Business OS friend invites; its slot returned to their allowance',
+  },
+  [AUDIT_EVENTS.BOS_FRIEND_INVITE_REFUSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS friend invite send was refused (reason class only)',
+  },
   [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
     severity: 'warning',
     complianceFlags: ['SOC2'],
@@ -718,6 +853,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'Anomalous activity detected',
   },
+  /*
+   * The one event in this family anything writes: lib/audit/recordRefusedAccess.ts,
+   * from the two admin gates and the refused act-as. Stays 'critical' — a
+   * signed-in account being told no on an admin surface is worth an alert.
+   *
+   * Severity and flags live here and nowhere else: no call site may pass them.
+   */
   [AUDIT_EVENTS.SECURITY_UNAUTHORIZED_ACCESS]: {
     severity: 'critical',
     complianceFlags: ['SOC2', 'GDPR'],
@@ -1007,9 +1149,24 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
 
   // Money leaving the business. Registered because an unregistered event falls
   // through getEventMetadata to severity 'info' and the description
-  // "Unknown event" — which is how refunds were being recorded until now.
+  // "Unknown event" — which is how refunds were being recorded until then.
+  //
+  // 'warning', not 'critical'. A refund is a business owner doing normal
+  // business with their own client: it belongs in the record, and the SOC2 flag
+  // says so, but nothing about it needs a platform admin. At 'critical' it was
+  // counted by the admin health tile, which counts severity and ignores the
+  // action (app/api/admin/health-summary/route.ts), and by the owner's own
+  // /monitoring page, so one refund read as "critical security event, immediate
+  // review recommended". Not 'info' either: money left the business and will not
+  // come back, which is more than a routine read. This matches the money events
+  // either side of it — PAYMENT_BLOCK_EXECUTED and INVOICE_MARKED_PAID.
+  //
+  // The refund route deliberately passes NO severity (buildLogEntry prefers the
+  // caller's value over this one, which is how the two came to disagree), so
+  // this entry is the only place the classification lives. A guard test pins
+  // both halves: lib/audit/__tests__/paymentRefundSeverity.guard.test.ts.
   [AUDIT_EVENTS.PAYMENT_REFUNDED]: {
-    severity: 'critical',
+    severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'A payment was refunded to a client',
   },
@@ -1023,6 +1180,37 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An invoice was marked paid manually',
+  },
+  // Future charges to a client stopped, and possibly collected money returned.
+  //
+  // Registered here for the first time: it was written only by its call site, so
+  // every row it has ever produced fell through getEventMetadata to the
+  // description "Unknown event: PAYMENT_PLAN_CANCELLED" and to no compliance
+  // flags at all. Registering it fixes the record quality as well as the label.
+  //
+  // 'warning', for the same reason as PAYMENT_REFUNDED directly above. The call
+  // site used to say 'critical' and its comment said why — "audited at the same
+  // level as money moving", i.e. deliberately matched to the refund. The refund
+  // is now 'warning', so keeping this at 'critical' would break that stated
+  // intent and leave the two contradicting each other. A business owner stopping
+  // a plan they sold to their own client is normal business: it belongs in the
+  // record, but it is not something a platform admin needs to review, and at
+  // 'critical' it was counted by the admin health tile (which counts severity
+  // and ignores the action) and shown on the owner's own /monitoring page as a
+  // security event needing immediate review. Not 'info' either: it changes what
+  // a client will be charged and can return money already collected.
+  //
+  // SOC2 and not FINANCIAL, matching all three money events above. FINANCIAL is
+  // carried only by AgentsPilot's own platform-billing events, and there to keep
+  // their pre-existing stored rows unchanged (Layer 3 step 0, WC-12).
+  //
+  // The cancel route deliberately passes NO severity (buildLogEntry prefers the
+  // caller's value over this one), so this entry is the only place the
+  // classification lives. Guard: paymentPlanCancelledSeverity.guard.test.ts.
+  [AUDIT_EVENTS.PAYMENT_PLAN_CANCELLED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: "A client's payment plan was cancelled",
   },
 
   // Subscription billing. Registered for Layer 3 step 0 (WC-12) with exactly the

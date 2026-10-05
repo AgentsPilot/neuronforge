@@ -22,7 +22,9 @@
 // The two exceptions are deliberate and are account-wide by definition:
 // `findEntitlementInputsBatch` (a cron's claimed batch, scoped by an explicit
 // `IN` list built server-side) and `pagePlans` (the admin report walking every
-// account). Neither takes an id from request input.
+// account). Neither takes an id from request input. `findPeriodAnchorsBatch`
+// (credit deduction slice 8a) is a third of the first kind: an explicit `IN`
+// list the admin Businesses list builds from its own rows.
 //
 // ── WHAT THIS REPOSITORY DOES NOT DO ────────────────────────────────────────
 // It contains no entitlement logic. Resolution is a pure function over the rows
@@ -33,7 +35,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import { safeDbError } from './BusinessOsInviteRepository';
-import type { AgentRepositoryResult as RepositoryResult } from './types';
+import type { AgentRepositoryResult as RepositoryResult, FriendFinaliseOutcome } from './types';
 
 /** A row of `business_os_account_plans`. */
 export interface BusinessOsAccountPlan {
@@ -158,6 +160,9 @@ const OVERRIDE_COLUMNS =
  */
 export const BOS_ENTITLEMENT_BATCH_LIMIT = 100;
 
+/** An account id is an auth user id (a UUID). */
+const ACCOUNT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * The answer from `business_os_tenants_missing_plan_row`.
  *
@@ -243,7 +248,90 @@ export class BusinessOsAccountPlanRepository {
   }
 
   /**
-   * The same, for a batch of accounts — one query for a cron's claimed batch or
+   * The account's `period_anchor` ONLY — for the owner credit card's billing
+   * period (credit deduction slice 6a, SQ-20).
+   *
+   * Returns the string PostgREST returned, UNTOUCHED: `period_anchor` is a
+   * microsecond `timestamptz`, and the period key the charge recorder writes is
+   * derived from it, so a value re-serialised through a `Date` would name a
+   * period no charge sits in. `null` means the account has no plan row; a read
+   * error is returned as an error, never as "no row". Uncached, like the
+   * recorder's own read.
+   */
+  async findPeriodAnchor(accountId: string): Promise<RepositoryResult<string | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_os_account_plans')
+        .select('period_anchor')
+        .eq('user_id', accountId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const anchor = (data as { period_anchor?: unknown } | null)?.period_anchor;
+      if (data !== null && typeof anchor !== 'string') {
+        throw new Error('The plan row has no readable period anchor');
+      }
+      return { data: data === null ? null : (anchor as string), error: null };
+    } catch (error) {
+      this.logger.error({ err: error, accountId }, 'Failed to read the plan period anchor');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * `period_anchor` for a batch of accounts — the admin Businesses list's
+   * "Credits left" column (credit deduction slice 8a, SA SQ-42): one query per
+   * 100 accounts instead of one per row.
+   *
+   * Scoped by an explicit `IN` list of account ids (the multi-account form of
+   * CLAUDE.md rule 4); the caller builds it server-side from the admin list's
+   * own profile rows, behind `requireAdmin` — never from request input.
+   *
+   * Anchors come back VERBATIM (microsecond strings, never through a `Date`,
+   * as `findPeriodAnchor`). An account missing from the result has no plan
+   * row. An empty, oversized (> 100) or malformed id list is REFUSED with no
+   * query; a row with no readable anchor is an error. Never throws.
+   */
+  async findPeriodAnchorsBatch(accountIds: readonly string[]): Promise<RepositoryResult<Record<string, string>>> {
+    try {
+      if (!Array.isArray(accountIds) || accountIds.length === 0) {
+        throw new Error('findPeriodAnchorsBatch needs at least one account id');
+      }
+      if (accountIds.length > BOS_ENTITLEMENT_BATCH_LIMIT) {
+        throw new Error(
+          `findPeriodAnchorsBatch accepts at most ${BOS_ENTITLEMENT_BATCH_LIMIT} ids, received ${accountIds.length}`
+        );
+      }
+      if (!accountIds.every((id) => typeof id === 'string' && ACCOUNT_ID_PATTERN.test(id))) {
+        throw new Error('findPeriodAnchorsBatch accepts account ids (UUIDs) only');
+      }
+
+      const { data, error } = await this.supabase
+        .from('business_os_account_plans')
+        .select('user_id, period_anchor')
+        .in('user_id', [...accountIds]);
+
+      if (error) throw error;
+
+      const anchors: Record<string, string> = {};
+      for (const row of (data ?? []) as Array<{ user_id?: unknown; period_anchor?: unknown }>) {
+        if (typeof row.user_id !== 'string' || typeof row.period_anchor !== 'string') {
+          throw new Error('A plan row has no readable period anchor');
+        }
+        anchors[row.user_id] = row.period_anchor;
+      }
+      return { data: anchors, error: null };
+    } catch (error) {
+      this.logger.error(
+        { err: error, count: Array.isArray(accountIds) ? accountIds.length : 0 },
+        'Failed to read plan period anchors'
+      );
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * `findEntitlementInputs`, for a batch of accounts — one query for a cron's claimed batch or
    * a page of the report.
    *
    * An oversized batch is REFUSED — returned as an error, and no query is sent
@@ -784,6 +872,77 @@ export class BusinessOsAccountPlanRepository {
     } catch (error) {
       const safe = safeDbError(error);
       methodLogger.error({ dbError: safe }, 'Failed to finalise an invite redemption');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * Finish a FRIEND's redemption (invite-only signup Slice 5b; T-19, T-13).
+   * The invite's redeemed stamp, the friend's plan row and the lineage row, in
+   * ONE transaction, through `business_os_finalise_friend_invite_redemption`.
+   *
+   * A plan-state WRITE, so it lives here and is listed in the entitlements
+   * imports guard's `WRITE_METHODS`, beside `provisionFromInvite`. Reached only
+   * by the public signup routes (code and Google), after mailbox proof, the
+   * claim and the account creation.
+   *
+   * ── The documented exception to R2-3 (T-13 layer 1) ────────────────────────
+   * The plan row is written with NO basis: `cohort` and `tier` NULL,
+   * `origin = 'invite'`. R2-3 ("every row has a basis") governs admin
+   * operations; this row is deliberately basis-less so the onboarding and
+   * profile triggers, whose `ON CONFLICT` can then only fill a fact, can never
+   * mint a trial for a friend who has not paid (BQ-13). Under enforcement it
+   * resolves to `no_assignment` and fails closed, which is correct.
+   *
+   * `tierId` and `issuerCohort` come from config (`INVITE_ISSUANCE_POLICY.account`),
+   * so the SQL holds no plan name (L-5). `accountId` is the server-generated id
+   * the invite was claimed for (I-3); `email` is the row's own email. Outcomes:
+   * `finalised` / `already_finalised` (re-run safe) with the invite id and the
+   * level written; `issuer_not_eligible` (the champion lost the cohort mid-request);
+   * `not_matched`. A database error is scrubbed to `{ code, message }` (M-1).
+   */
+  async provisionFromFriendInvite(input: {
+    inviteId: string;
+    accountId: string;
+    email: string;
+    tierId: string;
+    issuerCohort: string;
+  }): Promise<RepositoryResult<FriendFinaliseOutcome>> {
+    const methodLogger = this.logger.child({ method: 'provisionFromFriendInvite', inviteId: input.inviteId, accountId: input.accountId });
+    try {
+      const { data, error } = await this.supabase.rpc('business_os_finalise_friend_invite_redemption', {
+        p_invite_id: input.inviteId,
+        p_account_id: input.accountId,
+        p_email: input.email,
+        p_tier: input.tierId,
+        p_issuer_cohort: input.issuerCohort,
+      });
+
+      if (error) throw error;
+      const row = (Array.isArray(data) ? data[0] : data) as
+        | { result_outcome?: unknown; result_invite_id?: unknown; result_level?: unknown }
+        | null
+        | undefined;
+      const outcome = row?.result_outcome;
+      if (
+        (outcome === 'finalised' || outcome === 'already_finalised') &&
+        typeof row?.result_invite_id === 'string' &&
+        typeof row?.result_level === 'number'
+      ) {
+        methodLogger.info({ outcome, level: row.result_level }, 'Friend invite redemption finalised (plan row and lineage written)');
+        return { data: { outcome, inviteId: row.result_invite_id, level: row.result_level }, error: null };
+      }
+      if (outcome === 'issuer_not_eligible' || outcome === 'not_matched') {
+        methodLogger.warn({ outcome }, 'Friend invite redemption not finalised');
+        return { data: { outcome }, error: null };
+      }
+      methodLogger.error({ outcome: typeof outcome === 'string' ? outcome : null }, 'Friend finalise returned an unknown answer');
+      return { data: null, error: new Error('friend finalise returned an unknown answer') };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to finalise a friend invite redemption');
       const out = new Error(safe.message) as Error & { code?: string };
       if (safe.code) out.code = safe.code;
       return { data: null, error: out };

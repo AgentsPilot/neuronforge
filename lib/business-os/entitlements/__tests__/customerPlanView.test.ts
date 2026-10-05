@@ -105,7 +105,7 @@ describe('a Founding Partner (champion)', () => {
   it('is offered NOTHING above it, because it already has the top plan in full', () => {
     // This assertion inverted with parity (user decision, 2026-09-27). It briefly
     // read "is offered Autopilot for the ONE thing it adds": champions inherited
-    // Autopilot's features but `CHAMPION_VALUES` pinned `ai.actions` at 1,000
+    // Autopilot's features but `CHAMPION_VALUES` pinned the allowance (then `ai.actions`) at 1,000
     // against the tier's 2,000, so the screen offered a design partner an upgrade
     // on exactly the axis where they were behind.
     //
@@ -195,11 +195,11 @@ describe('a trial (Test Flight)', () => {
 
     // The date, which is what `accessEndsAt` holds and what nothing rendered
     // before (SA R3-1). It leads, because a date needs no arithmetic.
-    expect(view.endsWhen?.key).toBe('plan.ends_on_or_actions');
+    expect(view.endsWhen?.key).toBe('plan.ends_on_or_credits');
     expect(view.endsWhen?.date).toBeTruthy();
     // And the reason it can end sooner, which the date alone cannot carry — read
     // off config, so shortening the trial changes what the customer is told.
-    expect(view.endsWhen?.key).toBe('plan.ends_on_or_actions');
+    expect(view.endsWhen?.key).toBe('plan.ends_on_or_credits');
   });
 
   it('is shown the paid plan and what it would actually add', () => {
@@ -213,24 +213,24 @@ describe('a trial (Test Flight)', () => {
     expect(improved).toContain('email.volume');
   });
 
-  it('IS told the AI allowance changes, as a change rather than an improvement', () => {
-    // User decision 4. The trial has `{ total: 250 }` and Essentials
-    // `{ perMonth: 500 }` — different quantities with no honest exchange rate. So
+  it('IS told the credit allowance changes, as a change rather than an improvement', () => {
+    // User decision 4. The trial has a one-off `{ total }` and Essentials a
+    // `{ perMonth }` rate — different quantities with no honest exchange rate. So
     // it is neither claimed as an improvement nor suppressed: it is stated, with
     // both numbers, and the customer judges.
     const changed = view.nextPlanUp?.changes ?? [];
 
-    expect(changed.map((entry) => entry.capability)).toContain('ai.actions');
+    expect(changed.map((entry) => entry.capability)).toContain('credits.allowance');
 
-    const aiChange = changed.find((entry) => entry.capability === 'ai.actions')!;
-    expect(aiChange.from).toContain('in total');
-    expect(aiChange.to).toContain('per month');
+    const creditChange = changed.find((entry) => entry.capability === 'credits.allowance')!;
+    expect(creditChange.from).toBe('2,000 in total');
+    expect(creditChange.to).toBe('19,750 per month');
 
     // And NOT in `improves`, which is the list that asserts a direction.
-    expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).not.toContain('ai.actions');
+    expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).not.toContain('credits.allowance');
   });
 
-  it('is NOT told the AI allowance IMPROVES — the units do not match (SA P-2)', () => {
+  it('is NOT told the credit allowance IMPROVES — the units do not match (SA P-2)', () => {
     // ⚠️ A product-visible consequence of P-2, recorded here rather than left to
     // be noticed. The trial gives `{ total: 250 }` and Essentials gives
     // `{ perMonth: 500 }`. Those are different quantities with no honest
@@ -244,7 +244,7 @@ describe('a trial (Test Flight)', () => {
     // at all depended on one same-unit capability happening to exist.
     const improved = view.nextPlanUp?.improves.map((entry) => entry.capability) ?? [];
 
-    expect(improved).not.toContain('ai.actions');
+    expect(improved).not.toContain('credits.allowance');
   });
 
   it('is promised nothing is charged before they choose', () => {
@@ -263,10 +263,12 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
     expect(view.whenThisChanges).toBeNull();
 
     expect(view.nextPlanUp?.name).toBe('Autopilot');
-    // The two paid tiers differ in exactly two things, and since 2026-09-27 the
-    // customer is told about both: the chat capabilities Autopilot adds, and the
-    // larger AI allowance.
-    expect(view.nextPlanUp?.improves.map((entry) => entry.capability)).toEqual(['ai.actions']);
+    // The two paid tiers differ in exactly two things, and the customer is told
+    // about both: the chat capabilities Autopilot adds, and the larger credit
+    // allowance.
+    expect(view.nextPlanUp?.improves.map((entry) => entry.capability)).toEqual(['credits.allowance']);
+    const credits = view.nextPlanUp!.improves[0];
+    expect(`${credits.from} → ${credits.to}`).toBe('19,750 per month → 32,250 per month');
     expect(capabilityIdsOf(view.nextPlanUp?.adds)).toContain('chat.access');
     expect(capabilityIdsOf(view.nextPlanUp?.adds).length).toBeGreaterThanOrEqual(9);
     // And the nine arrive as ONE row, which is the point of grouping them.
@@ -291,22 +293,22 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
   });
 
   it('never compares a one-off total against a monthly rate (SA P-2)', () => {
-    // The trial gives `{ total: 250 }` AI actions and Essentials gives
-    // `{ perMonth: 500 }`. Those are different quantities with no honest
+    // When this was written, the trial gave `{ total: 250 }` AI actions and
+    // Essentials `{ perMonth: 500 }` (slice 5 later made them 2,000 and 19,750 credits). Those are different quantities with no honest
     // exchange rate, so the first version compared 250 against 500 and got the
     // right answer by luck. Invert them and it would have announced a reduction
     // as a step up — the defect one level deeper.
     //
     // Asserted through a fixture whose numbers are the wrong way round: a
     // 2,000-action one-off trial against a 500-a-month plan. The rule must stay
-    // SILENT about `ai.actions` rather than claim either direction.
+    // SILENT about `credits.allowance` rather than claim either direction.
     const invertedTrial = {
       ...config,
       matrix: {
         ...config.matrix,
         tiers: {
           ...config.matrix.tiers,
-          basic: { ...config.matrix.tiers.basic, 'ai.actions': { perMonth: 500 } },
+          basic: { ...config.matrix.tiers.basic, 'credits.allowance': { perMonth: 500 } },
         },
       },
       cohorts: {
@@ -317,7 +319,7 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
         // two assertions below the fixture now come AFTER proving it took.
         trial: {
           ...config.cohorts.trial,
-          values: { ...config.cohorts.trial.values, 'ai.actions': { total: 2000 } },
+          values: { ...config.cohorts.trial.values, 'credits.allowance': { total: 2000 } },
         },
       },
     } as typeof config;
@@ -332,14 +334,14 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
 
     // The fixture really is inverted: MORE one-off actions than the monthly plan
     // gives. Without this, silence proves nothing.
-    expect(resolution.values['ai.actions'].value).toEqual({ total: 2000 });
+    expect(resolution.values['credits.allowance'].value).toEqual({ total: 2000 });
 
     const view = buildCustomerPlanView({ resolution, unavailable: false, now: NOW, config: invertedTrial });
 
     // Silence about the one capability whose units do not match, rather than a
     // confident wrong claim in either direction.
-    expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).not.toContain('ai.actions');
-    expect(capabilityIdsOf(view.nextPlanUp?.adds)).not.toContain('ai.actions');
+    expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).not.toContain('credits.allowance');
+    expect(capabilityIdsOf(view.nextPlanUp?.adds)).not.toContain('credits.allowance');
 
     // And the comparison is not simply broken: a capability whose units DO match
     // is still ranked in the same view.
@@ -435,7 +437,14 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
           ...config.matrix,
           tiers: {
             ...config.matrix.tiers,
-            pro: { ...config.matrix.tiers.pro, 'team.seats': { included: 1, purchasable: true } },
+            pro: {
+              ...config.matrix.tiers.pro,
+              'team.seats': { included: 1, purchasable: true },
+              // The positive control below: an amount that genuinely increases.
+              // (Kept on `email.volume` after slice 6 restored the credit number:
+              // a control that depends on no display rule is the better control.)
+              'email.volume': { ceilingPerMonth: 20000 },
+            },
           },
         },
       } as typeof config;
@@ -470,7 +479,7 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
       expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).not.toContain('team.seats');
       // While a capability whose amount genuinely increases still is — so the
       // silence above is about equality, not about the comparison being broken.
-      expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).toContain('ai.actions');
+      expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).toContain('email.volume');
     });
 
     it('booleans rank, so a capability gained is still an addition', () => {
@@ -724,9 +733,9 @@ describe('a plan is not told when it ends twice', () => {
     });
 
     // The trial's allowance is a one-off total, so it says both ways it can end.
-    expect(trial.endsWhen?.key).toBe('plan.ends_on_or_actions');
+    expect(trial.endsWhen?.key).toBe('plan.ends_on_or_credits');
     // The champion's is monthly, so there is only the date.
-    expect(champion.endsWhen?.key).not.toBe('plan.ends_on_or_actions');
+    expect(champion.endsWhen?.key).not.toBe('plan.ends_on_or_credits');
     expect(champion.endsWhen?.key).toBe('plan.ends_on');
   });
 
@@ -767,20 +776,23 @@ describe('a plan is not told when it ends twice', () => {
  * The grouped list (refinement 3).
  */
 describe('the included list is grouped by category', () => {
-  it('a champion reads nine rows rather than twenty-eight lines', () => {
+  it('a champion reads ten rows rather than twenty-eight lines', () => {
     const view = viewFor('champion');
 
     expect(capabilityIdsOf(view.included).length).toBeGreaterThan(20);
-    expect(view.included.length).toBeLessThanOrEqual(9);
+    // Nine categories, plus the credits row slice 6 put first (D-g).
+    expect(view.included.length).toBeLessThanOrEqual(10);
   });
 
   it('AI chat is ONE long row, not an expander', () => {
-    // The user's 3–4-per-row rule of thumb, explicitly broken here: ten entries on
-    // one line beats hiding six of them behind "+N more", which would be a new
-    // interaction on a read-only screen.
+    // The user's 3–4-per-row rule of thumb, explicitly broken here: nine entries
+    // on one line beats hiding five of them behind "+N more", which would be a new
+    // interaction on a read-only screen. (Ten until slice 6 moved the credit
+    // allowance to its own row, D-g.)
     const row = viewFor('champion').included.find((entry) => entry.category === 'ai_chat')!;
 
-    expect(row.features.length).toBeGreaterThanOrEqual(10);
+    expect(row.features.length).toBeGreaterThanOrEqual(9);
+    expect(row.features.map((feature) => feature.capability)).not.toContain('credits.allowance');
     expect(row.labelKey).toBe('plan.category.ai_chat');
     // One string, joined server-side — the component prints it and composes
     // nothing.
@@ -791,7 +803,7 @@ describe('the included list is grouped by category', () => {
     const rows = viewFor('basic').included;
     const summaries = rows.map((row) => row.summary).join(' | ');
 
-    expect(summaries).toMatch(/AI actions \(500 per month\)/);
+    expect(summaries).toMatch(/Credits \(19,750 per month\)/);
     expect(summaries).not.toMatch(/\(yes\)/);
     // And a value that already carries brackets is not wrapped in more of them:
     // "Email volume (10,000 per month (alerts, never blocks))" was the first thing
@@ -805,10 +817,13 @@ describe('the included list is grouped by category', () => {
     // opens on add-ons). Clients first because that is why the product exists.
     const order = viewFor('champion').included.map((row) => row.category);
 
-    expect(order[0]).toBe('crm');
+    // Credits first (slice 6, D-g / SQ-25), then the clients.
+    expect(order[0]).toBe('credits');
+    expect(viewFor('champion').included[0].labelKey).toBe('plan.category.credits');
+    expect(order[1]).toBe('crm');
     // The plain word AND the acronym (user decision, 2026-09-27) — pinned because
     // it is a wording choice somebody made, not a default.
-    expect(viewFor('champion').included[0].labelKey).toBe('plan.category.crm');
+    expect(viewFor('champion').included[1].labelKey).toBe('plan.category.crm');
     expect(order.indexOf('website_intake')).toBeLessThan(order.indexOf('payments'));
     expect(order.indexOf('payments')).toBeLessThan(order.indexOf('ai_chat'));
     expect(order.indexOf('insights')).toBeLessThan(order.indexOf('support'));

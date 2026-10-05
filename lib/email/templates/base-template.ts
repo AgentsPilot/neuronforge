@@ -4,10 +4,26 @@
 import type { Locale } from '@/lib/i18n/config';
 import { isRTL } from '@/lib/i18n/config';
 import { isDarkColor, mix } from '@/lib/branding/color';
+import { stripHtmlComments } from '@/lib/email/htmlComments';
+import { escapeHrefAttribute, escapeHtml } from '@/lib/email/escapeHtml';
+import { safeCssColor, safeCssLength, safeFontName } from '@/lib/email/cssValues';
 
 export interface BrandingData {
   businessName: string;
   logoUrl?: string;
+  /**
+   * The logo's display size in CSS pixels, for a logo whose real dimensions
+   * are known (the platform wordmark, `lib/email/platformBranding.ts`).
+   *
+   * Optional, and only used when BOTH are set and `logoUrl` is too. A business
+   * logo is an upload of unknown shape, so it has neither and keeps the
+   * max-height/max-width markup it always had. With both, the image carries
+   * `width`/`height` attributes (Outlook ignores CSS sizes) and alt-text
+   * styling, so a client that blocks images shows the name as a styled text
+   * wordmark in the same place.
+   */
+  logoWidth?: number;
+  logoHeight?: number;
   primaryColor: string;
   secondaryColor: string;
   websiteUrl?: string;
@@ -56,12 +72,18 @@ export interface BrandingData {
 const FALLBACK_FONT_STACK =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
 
-/** Quote a font name for CSS only when it needs it, then append the fallbacks. */
+/**
+ * Quote a font name for CSS only when it needs it, then append the fallbacks.
+ *
+ * The name comes from the business's theme and lands in a `style` attribute,
+ * so `safeFontName` first drops quotes (both kinds: a `"` used to close the
+ * attribute) and anything outside letters, digits, spaces and hyphens. A real
+ * family name is unchanged by that.
+ */
 function fontStack(name?: string): string {
-  if (!name) return FALLBACK_FONT_STACK;
-  const trimmed = name.trim();
+  const trimmed = safeFontName(name);
   if (!trimmed) return FALLBACK_FONT_STACK;
-  const quoted = /^[A-Za-z0-9-]+$/.test(trimmed) ? trimmed : `'${trimmed.replace(/'/g, '')}'`;
+  const quoted = /^[A-Za-z0-9-]+$/.test(trimmed) ? trimmed : `'${trimmed}'`;
   return `${quoted}, ${FALLBACK_FONT_STACK}`;
 }
 
@@ -123,22 +145,26 @@ export interface EmailPalette {
 }
 
 export function emailPalette(branding?: BrandingData): EmailPalette {
-  const surface = branding?.surfaceColor || '#ffffff';
-  const inkMuted = branding?.mutedTextColor || '#666666';
+  // Every value here ends up in a `style` attribute, so each one is checked
+  // (`lib/email/cssValues`); one that is not a plain colour or length gets the
+  // same default a missing value gets.
+  const surface = safeCssColor(branding?.surfaceColor, '#ffffff');
+  const mutedText = safeCssColor(branding?.mutedTextColor, '');
+  const inkMuted = mutedText || '#666666';
 
   return {
-    brand: branding?.primaryColor || '#4F46E5',
-    onBrand: branding?.onBrand || '#ffffff',
-    ink: branding?.textColor || '#1a1a1a',
+    brand: safeCssColor(branding?.primaryColor, '#4F46E5'),
+    onBrand: safeCssColor(branding?.onBrand, '#ffffff'),
+    ink: safeCssColor(branding?.textColor, '#1a1a1a'),
     inkMuted,
     // A quarter of the way back toward the card, which is the same relationship
     // #888888 had to #666666 on white.
-    inkFaint: branding?.mutedTextColor ? mix(inkMuted, surface, 0.25) : '#888888',
+    inkFaint: mutedText ? mix(inkMuted, surface, 0.25) : '#888888',
     surface,
-    mutedSurface: branding?.mutedSurfaceColor || '#fafafa',
-    line: branding?.borderColor || '#e5e5e5',
-    radius: branding?.radius || '12px',
-    buttonRadius: branding?.buttonRadius || '8px',
+    mutedSurface: safeCssColor(branding?.mutedSurfaceColor, '#fafafa'),
+    line: safeCssColor(branding?.borderColor, '#e5e5e5'),
+    radius: safeCssLength(branding?.radius, '12px'),
+    buttonRadius: safeCssLength(branding?.buttonRadius, '8px'),
     dark: isDarkColor(surface),
   };
 }
@@ -184,14 +210,67 @@ export function emailTone(
 }
 
 /**
+ * The branding with every style value checked: colours must be hex or `rgb()`,
+ * radii plain lengths, font names free of quotes and markup.
+ *
+ * For a producer of `BrandingData` whose values come from outside (the
+ * business's theme, `resolveEmailBranding`). The helpers in this file check
+ * the values they read themselves. Templates also read `branding.primaryColor`
+ * and the neutrals directly, so the values need checking where the branding is
+ * built as well.
+ *
+ * A value that fails falls back: the two required colours to the defaults
+ * passed in, every optional field to `undefined`, which each reader already
+ * turns into its own default. Valid values are returned unchanged.
+ */
+export function withSafeStyleValues(
+  branding: BrandingData,
+  defaults: { primaryColor: string; secondaryColor: string }
+): BrandingData {
+  const optionalColor = (value?: string) => safeCssColor(value, '') || undefined;
+  const optionalLength = (value?: string) => safeCssLength(value, '') || undefined;
+  const optionalFont = (value?: string) => safeFontName(value) || undefined;
+  return {
+    ...branding,
+    primaryColor: safeCssColor(branding.primaryColor, defaults.primaryColor),
+    secondaryColor: safeCssColor(branding.secondaryColor, defaults.secondaryColor),
+    headingFont: optionalFont(branding.headingFont),
+    bodyFont: optionalFont(branding.bodyFont),
+    onBrand: optionalColor(branding.onBrand),
+    pageColor: optionalColor(branding.pageColor),
+    surfaceColor: optionalColor(branding.surfaceColor),
+    mutedSurfaceColor: optionalColor(branding.mutedSurfaceColor),
+    borderColor: optionalColor(branding.borderColor),
+    textColor: optionalColor(branding.textColor),
+    mutedTextColor: optionalColor(branding.mutedTextColor),
+    radius: optionalLength(branding.radius),
+    buttonRadius: optionalLength(branding.buttonRadius),
+  };
+}
+
+/**
  * Wrap email content in a branded HTML template
  * Uses inline styles for maximum email client compatibility
+ *
+ * Every email this returns has had its HTML comments removed
+ * (`stripHtmlComments`): the layout's and those of the content it wraps. Only
+ * the Outlook conditional comments survive. That is why the design notes on
+ * the layout live in TypeScript comments below and not in the markup.
  */
 export function wrapInBrandedTemplate(
   content: string,
   branding: BrandingData
 ): string {
-  const { businessName, logoUrl, primaryColor, websiteUrl, locale = 'en' } = branding;
+  const { locale = 'en' } = branding;
+  /*
+   * Business-entered text and URLs, escaped once here for every place below
+   * that writes them into the markup (attribute or text). A `"`, `<` or `&` in
+   * a business name otherwise broke that business's emails. `&` in a URL is
+   * correctly written `&amp;` inside an attribute; clients decode it back.
+   */
+  const businessName = escapeHtml(branding.businessName);
+  const logoUrl = branding.logoUrl ? escapeHtml(branding.logoUrl) : undefined;
+  const websiteUrl = branding.websiteUrl ? escapeHtml(branding.websiteUrl) : undefined;
 
   // Determine text direction based on locale
   const rtl = isRTL(locale);
@@ -203,18 +282,66 @@ export function wrapInBrandedTemplate(
 
   /*
    * Every fallback is the value this file used to hardcode, so an email sent
-   * for a business with no theme is unchanged to the byte.
+   * for a business with no theme is unchanged to the byte. A value that is not
+   * a plain colour or length (it would be written into a `style` attribute
+   * as-is) gets the same fallback.
    */
-  const onBrand = branding.onBrand || '#ffffff';
-  const page = branding.pageColor || '#f5f5f5';
-  const surface = branding.surfaceColor || '#ffffff';
-  const mutedSurface = branding.mutedSurfaceColor || '#fafafa';
-  const line = branding.borderColor || '#e5e5e5';
-  const ink = branding.textColor || '#1a1a1a';
-  const inkMuted = branding.mutedTextColor || '#666666';
-  const radius = branding.radius || '12px';
+  const onBrand = safeCssColor(branding.onBrand, '#ffffff');
+  const page = safeCssColor(branding.pageColor, '#f5f5f5');
+  const surface = safeCssColor(branding.surfaceColor, '#ffffff');
+  const mutedSurface = safeCssColor(branding.mutedSurfaceColor, '#fafafa');
+  const line = safeCssColor(branding.borderColor, '#e5e5e5');
+  const ink = safeCssColor(branding.textColor, '#1a1a1a');
+  const inkMuted = safeCssColor(branding.mutedTextColor, '#666666');
+  const radius = safeCssLength(branding.radius, '12px');
 
-  return `<!DOCTYPE html>
+  /*
+   * The header logo.
+   *
+   * With known dimensions (the platform wordmark), sized by attributes as well
+   * as inline CSS, and with the alt text styled like the text wordmark below, so
+   * a reader whose client blocks images still sees the name, set in the heading
+   * face, where the logo would be. `inline-block`, not `block`, so the cell's
+   * `text-align` still places it on the right in a right-to-left email.
+   *
+   * Without them (every business logo), exactly the markup it always had.
+   */
+  const { logoWidth, logoHeight } = branding;
+  const logoImg =
+    logoWidth && logoHeight
+      ? `<img src="${logoUrl}" alt="${businessName}" width="${logoWidth}" height="${logoHeight}" style="display: inline-block; width: ${logoWidth}px; height: ${logoHeight}px; max-width: 100%; border: 0; outline: none; text-decoration: none; vertical-align: middle; font-family: ${headingStack}; font-size: 16px; font-weight: 600; color: ${ink}; letter-spacing: -0.02em;" />`
+      : `<img src="${logoUrl}" alt="${businessName}" style="max-height: 34px; max-width: 180px; display: inline-block;" />`;
+
+  /*
+   * Design notes on the layout below.
+   *
+   * THE WORDMARK, QUIET, ON THE PAGE GROUND. This was a full-bleed block filled
+   * with the brand colour and the business name reversed out of it — the
+   * standard transactional-SaaS header, and the one thing none of the six
+   * templates does. Every one of them opens with a small wordmark on the page's
+   * own ground and keeps the brand colour for the single thing the reader is
+   * meant to do. Stone has no accent colour at all, so an indigo or flame
+   * banner above its receipt contradicted the design outright. The logo where
+   * there is one, the name set in the heading face where there is not, and a
+   * hairline under it instead of a fill.
+   *
+   * THE MESSAGE ITSELF, on one panel with a hairline round it. The colour is
+   * set on that cell, not only on the body element: Gmail rewrites <body> into
+   * a <div> and several clients drop its styles outright, so content that sets
+   * no colour of its own — a plain paragraph composed in the chat, say — fell
+   * back to the client's default black on whatever ground this card paints. On
+   * a dark theme that is black on near-black. Declaring it on the cell the
+   * content actually sits in survives that rewrite.
+   *
+   * THE FOOTER, outside the panel rather than welded to it. A second filled
+   * block under the first made the whole message read as three stacked bars.
+   * Every template ends the same way: one rule, the name, the address, nothing
+   * else.
+   *
+   * The `[if mso]` block in the head stays: it fixes Outlook for Windows at
+   * 96 DPI, which otherwise rescales the whole layout.
+   */
+  const html = `<!DOCTYPE html>
 <html lang="${locale}" dir="${dir}">
 <head>
   <meta charset="UTF-8">
@@ -237,24 +364,10 @@ export function wrapInBrandedTemplate(
       <td style="padding: 24px 16px;">
         <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 600px; margin: 0 auto;">
 
-          <!--
-            THE WORDMARK, QUIET, ON THE PAGE GROUND.
-
-            This was a full-bleed block filled with the brand colour and the
-            business name reversed out of it — the standard transactional-SaaS
-            header, and the one thing none of the six templates does. Every one
-            of them opens with a small wordmark on the page's own ground and
-            keeps the brand colour for the single thing the reader is meant to
-            do. Stone has no accent colour at all, so an indigo or flame banner
-            above its receipt contradicted the design outright.
-
-            The logo where there is one, the name set in the heading face where
-            there is not, and a hairline under it instead of a fill.
-          -->
           <tr>
             <td style="padding: 4px 4px 18px; text-align: ${textAlign}; direction: ${dir};">
               ${logoUrl ? `
-              <img src="${logoUrl}" alt="${businessName}" style="max-height: 34px; max-width: 180px; display: inline-block;" />
+              ${logoImg}
               ` : `
               <span style="font-family: ${headingStack}; font-size: 16px; font-weight: 600; color: ${ink}; letter-spacing: -0.02em;">
                 ${businessName}
@@ -263,30 +376,12 @@ export function wrapInBrandedTemplate(
             </td>
           </tr>
 
-          <!-- The message itself, on one panel with a hairline round it. -->
           <tr>
-            <!--
-              The colour here, not only on the body element.
-
-              Gmail rewrites <body> into a <div> and several clients drop its
-              styles outright, so content that sets no colour of its own — a
-              plain paragraph composed in the chat, say — fell back to the
-              client's default black on whatever ground this card paints. On a
-              dark theme that is black on near-black. Declaring it on the cell
-              the content actually sits in survives that rewrite.
-            -->
             <td style="padding: 34px 32px; background-color: ${surface}; border: 1px solid ${line}; border-radius: ${radius}; color: ${ink}; text-align: ${textAlign}; direction: ${dir};">
               ${content}
             </td>
           </tr>
 
-          <!--
-            The footer, outside the panel rather than welded to it.
-
-            A second filled block under the first made the whole message read as
-            three stacked bars. Every template ends the same way: one rule, the
-            name, the address, nothing else.
-          -->
           <tr>
             <td style="padding: 18px 4px 4px; text-align: ${textAlign}; direction: ${dir};">
               <p style="margin: 0 0 4px; font-size: 13px; color: ${inkMuted};">
@@ -306,6 +401,8 @@ export function wrapInBrandedTemplate(
   </table>
 </body>
 </html>`;
+
+  return stripHtmlComments(html);
 }
 
 /**
@@ -321,18 +418,41 @@ export function wrapInBrandedTemplate(
  */
 function helperTokens(branding?: BrandingData) {
   return {
-    brand: branding?.primaryColor || '#4F46E5',
-    onBrand: branding?.onBrand || '#ffffff',
-    line: branding?.borderColor || '#f0f0f0',
-    ink: branding?.textColor || '#1a1a1a',
-    inkMuted: branding?.mutedTextColor || '#666666',
-    mutedSurface: branding?.mutedSurfaceColor || '#fafafa',
-    radius: branding?.buttonRadius || '8px',
+    brand: safeCssColor(branding?.primaryColor, '#4F46E5'),
+    onBrand: safeCssColor(branding?.onBrand, '#ffffff'),
+    line: safeCssColor(branding?.borderColor, '#f0f0f0'),
+    ink: safeCssColor(branding?.textColor, '#1a1a1a'),
+    inkMuted: safeCssColor(branding?.mutedTextColor, '#666666'),
+    mutedSurface: safeCssColor(branding?.mutedSurfaceColor, '#fafafa'),
+    radius: safeCssLength(branding?.buttonRadius, '8px'),
   };
 }
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THE HELPERS BELOW ESCAPE, AND WHAT THEY LEAVE TO THE CALLER
+ *
+ * TEXT (a button's `text`, a row's `label` and `value`, a box's `content`):
+ * the CALLER escapes it. The helpers write it as HTML. Escaping inside the
+ * helper would double-escape: `invite-invitation`, `new-enquiry` and `proposal`
+ * already pass `escapeHtml(...)` output, and some callers pass markup on
+ * purpose (`emailDetailsTable` takes rendered rows, `emailNoticeBox` and
+ * `emailHighlightPanel` take HTML content). A caller passing business- or
+ * client-entered text must wrap it in `escapeHtml` from `@/lib/email/escapeHtml`.
+ *
+ * URL (a button's `url`): the helper passes it through `escapeHrefAttribute`,
+ * which only removes what could close the `href` attribute and leaves any valid
+ * or already-escaped URL unchanged. It does NOT check the scheme: callers that
+ * take a URL from outside keep their own check (`safeHref`, `safeExternalUrl`).
+ *
+ * COLOURS AND RADII: checked here (`lib/email/cssValues`); a value that is not
+ * a plain colour or length gets the default.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 /**
- * Generate a styled button for email templates
+ * Generate a styled button for email templates.
+ * `text` is HTML the caller has escaped; `url` is made attribute-safe here.
  */
 export function emailButton(
   text: string,
@@ -345,17 +465,15 @@ export function emailButton(
   } = {}
 ): string {
   const tokens = helperTokens(options.branding);
-  const {
-    color = tokens.onBrand,
-    backgroundColor = tokens.brand,
-    fullWidth = false
-  } = options;
+  const color = safeCssColor(options.color, tokens.onBrand);
+  const backgroundColor = safeCssColor(options.backgroundColor, tokens.brand);
+  const { fullWidth = false } = options;
 
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" ${fullWidth ? 'width="100%"' : ''} style="margin: 16px 0;">
       <tr>
         <td style="border-radius: ${tokens.radius}; background-color: ${backgroundColor};">
-          <a href="${url}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 15px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
+          <a href="${escapeHrefAttribute(url)}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 15px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
             ${text}
           </a>
         </td>
@@ -365,7 +483,8 @@ export function emailButton(
 }
 
 /**
- * Generate a secondary/outline button for email templates
+ * Generate a secondary/outline button for email templates.
+ * `text` is HTML the caller has escaped; `url` is made attribute-safe here.
  */
 export function emailOutlineButton(
   text: string,
@@ -377,13 +496,14 @@ export function emailOutlineButton(
   } = {}
 ): string {
   const tokens = helperTokens(options.branding);
-  const { color = tokens.brand, fullWidth = false } = options;
+  const color = safeCssColor(options.color, tokens.brand);
+  const { fullWidth = false } = options;
 
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" ${fullWidth ? 'width="100%"' : ''} style="margin: 8px 0;">
       <tr>
         <td style="border-radius: ${tokens.radius}; border: 2px solid ${color}; background-color: transparent;">
-          <a href="${url}" target="_blank" style="display: inline-block; padding: 12px 24px; font-size: 14px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
+          <a href="${escapeHrefAttribute(url)}" target="_blank" style="display: inline-block; padding: 12px 24px; font-size: 14px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
             ${text}
           </a>
         </td>
@@ -393,7 +513,8 @@ export function emailOutlineButton(
 }
 
 /**
- * Generate a detail row (label: value format)
+ * Generate a detail row (label: value format).
+ * `label` and `value` are HTML the caller has escaped.
  */
 export function emailDetailRow(label: string, value: string, branding?: BrandingData): string {
   const tokens = helperTokens(branding);
@@ -562,6 +683,86 @@ export function emailNoticeBox(
           <p style="margin: 0; font-size: 14px; color: ${c.text};">
             ${content}
           </p>
+        </td>
+      </tr>
+    </table>
+  `;
+}
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * BRAND-TINTED BLOCKS: an eyebrow label, a highlight panel, a quote.
+ *
+ * Added for the platform's invite emails (invitation, sign-up code), which read
+ * as a plain column of grey text. They are general helpers, like the ones
+ * above, and every colour is DERIVED from the branding passed in (a wash of the
+ * brand colour over the card, never a literal hue), so a business email could
+ * use them and stay on its own colours, dark cards included.
+ *
+ * Two differences from `emailNoticeBox`, both on purpose:
+ *   - the accent side follows the reading direction (`branding.locale`), so a
+ *     Hebrew quote has its rule on the right, where the text starts;
+ *   - `bgcolor` is written as an attribute as well as CSS, for Outlook.
+ *
+ * Every helper takes HTML that the CALLER has already escaped.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/** The brand's tints for those blocks, computed against the card they sit on. */
+function brandTints(branding?: BrandingData) {
+  const palette = emailPalette(branding);
+  return {
+    palette,
+    // A light wash of the brand on the card: 8% on light, 18% on dark.
+    wash: mix(palette.surface, palette.brand, palette.dark ? 0.18 : 0.08),
+    // The panel's hairline, a little stronger than the wash.
+    edge: mix(palette.surface, palette.brand, palette.dark ? 0.4 : 0.22),
+    // Brand-coloured text that stays legible on that wash.
+    accentInk: palette.dark ? mix(palette.brand, '#ffffff', 0.6) : mix(palette.brand, '#000000', 0.15),
+    startSide: isRTL(branding?.locale ?? 'en') ? 'right' : 'left',
+  };
+}
+
+/** A small rounded label above a heading ("Invitation"). */
+export function emailEyebrow(text: string, branding?: BrandingData): string {
+  const t = brandTints(branding);
+  return `<p style="margin: 0 0 14px;"><span style="display: inline-block; padding: 4px 12px; border-radius: 999px; background-color: ${t.wash}; color: ${t.accentInk}; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;">${text}</span></p>`;
+}
+
+/** A tinted, outlined panel that sets one block apart (the plan, a code). */
+export function emailHighlightPanel(
+  content: string,
+  branding?: BrandingData,
+  options: { padding?: string; dashed?: boolean } = {}
+): string {
+  const t = brandTints(branding);
+  const padding = options.padding ?? '20px';
+  return `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 20px;">
+      <tr>
+        <td bgcolor="${t.wash}" style="padding: ${padding}; background-color: ${t.wash}; border: 1px ${options.dashed ? 'dashed' : 'solid'} ${t.edge}; border-radius: ${t.palette.radius}; color: ${t.palette.ink};">
+          ${content}
+        </td>
+      </tr>
+    </table>
+  `;
+}
+
+/** The small brand-coloured label at the top of a highlight panel. */
+export function emailPanelLabel(text: string, branding?: BrandingData): string {
+  const t = brandTints(branding);
+  return `<p style="margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; color: ${t.accentInk};">${text}</p>`;
+}
+
+/** Someone's own words, set as a quote: a caption, then the text, with a brand rule on the reading-start side. */
+export function emailQuote(caption: string, body: string, branding?: BrandingData): string {
+  const t = brandTints(branding);
+  return `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 20px;">
+      <tr>
+        <td bgcolor="${t.palette.mutedSurface}" style="padding: 16px 20px; background-color: ${t.palette.mutedSurface}; border-${t.startSide}: 4px solid ${t.palette.brand}; border-radius: 6px;">
+          <p style="margin: 0 0 6px; font-size: 13px; font-weight: 600; color: ${t.palette.inkMuted};">${caption}</p>
+          <p style="margin: 0; font-size: 15px; line-height: 1.6; color: ${t.palette.ink};">${body}</p>
         </td>
       </tr>
     </table>

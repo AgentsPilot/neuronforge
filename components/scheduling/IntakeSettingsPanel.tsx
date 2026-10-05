@@ -41,6 +41,7 @@ import {
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
 import { createLogger } from '@/lib/logger';
+import { notifyCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
 import type { IntakeForm, IntakeQuestion } from '@/lib/business-os/intake/types';
 import {
   DndContext,
@@ -237,6 +238,8 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
       setError(t('config.intake.generate_failed'));
     } finally {
       setGenerating(false);
+      // An owner AI action finished, success or failure: the credits card may re-read (S-6).
+      notifyCreditUsageChanged();
     }
   };
 

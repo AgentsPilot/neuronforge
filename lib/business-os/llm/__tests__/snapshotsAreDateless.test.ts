@@ -32,7 +32,7 @@
  * the whole class is pinning the clock per suite - see the follow-up doc.
  *
  * Elsewhere in the repo the problem is already solved that stronger way: suites
- * that legitimately snapshot dates (`app/api/business-os/usage`, `lib/analytics`)
+ * that legitimately snapshot dates (`lib/analytics`; the old owner usage-route suite did too)
  * call `jest.setSystemTime` first, which asserts the date verbatim and therefore
  * also catches a *wrong* or missing one. Either approach is fine; what is not
  * fine is a snapshot whose value depends on the day it was recorded.

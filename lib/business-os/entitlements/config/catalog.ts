@@ -296,10 +296,14 @@ export const CAPABILITIES = {
     sellableAsAddon: false,
     note: 'Every for_each step needs this on top of the capability its action needs.',
   },
-  'ai.actions': {
-    labels: { en: 'AI actions', he: 'פעולות AI', es: 'Acciones de IA' },
-    category: 'ai_chat',
-    shape: { kind: 'metered', unit: 'ai_action', period: 'month' },
+  'credits.allowance': {
+    // Working neutral labels (G-10); the final owner wording is slices 6 / 7 (BD-15).
+    labels: { en: 'Credits', he: 'קרדיטים', es: 'Créditos' },
+    // Its own 'credits' category, shown first to customers (credit deduction
+    // slice 6, D-g / SQ-25): one pool spent by every chargeable action, not an
+    // AI-chat feature — the N-12 placeholder under 'ai_chat' is gone.
+    category: 'credits',
+    shape: { kind: 'metered', unit: 'credit', period: 'month' },
     lifecycle: 'available',
     // The only `mixed` entry: the same allowance is spent by owner-facing AI and
     // by client-facing automations, and D-12 treats them differently at the
@@ -307,7 +311,7 @@ export const CAPABILITIES = {
     audience: 'mixed',
     atLimit: 'by_call_site_audience',
     sellableAsAddon: false,
-    note: 'Counted as a flat count of customer-visible actions (B-4). Metering is Slice 3.',
+    note: 'One credit pool for every chargeable action, charged at measured cost (BD-1, BD-12). Values: docs/architecture/BUSINESS_OS_CREDIT_PRICING.md.',
   },
 
   // ── Marketing ─────────────────────────────────────────────────────────────

@@ -65,8 +65,50 @@ describe('describeInviteOffer', () => {
     const joined = offer.included.map((row) => row.summary).join(' | ');
     for (const label of hiddenLabels) expect(joined).not.toContain(label);
     for (const row of offer.included) {
-      expect(Object.keys(row).sort()).toEqual(['category', 'labelKey', 'summary']);
+      expect(Object.keys(row).sort()).toEqual(['category', 'features', 'labelKey', 'noteKey', 'summary']);
     }
+  });
+
+  it('names the credits first, with the allowance from config and the sentence key (slice 6, D-g / D-h)', () => {
+    // The public invite page is the first place a prospect sees a credit figure.
+    // The number is read from the tier matrix here, not written: the test fails
+    // if the offer stops reading config, and does not need editing when a
+    // figure is re-priced.
+    const allowance = (config.matrix.tiers as Record<string, Record<string, unknown>>)[firstTier][
+      'credits.allowance'
+    ] as { perMonth: number };
+    const offer = describeInviteOffer(tier(), config, NOW);
+    const first = offer.included[0];
+
+    expect(first.category).toBe('credits');
+    expect(first.labelKey).toBe('plan.category.credits');
+    expect(first.noteKey).toBe('usage.explain.monthly');
+    expect(first.summary).toBe(`Credits (${allowance.perMonth.toLocaleString('en-US')} per month)`);
+    // Only the credits row carries a sentence.
+    expect(offer.included.filter((row) => row.noteKey !== null)).toHaveLength(1);
+  });
+
+  it.each([
+    ['he', 'קרדיטים', 'לחודש'],
+    ['es', 'Créditos', 'al mes'],
+  ] as const)("in the invite's language (%s): names, per month and grouping are localised (OI-10)", (locale, label, perMonth) => {
+    const allowance = (config.matrix.tiers as Record<string, Record<string, unknown>>)[firstTier][
+      'credits.allowance'
+    ] as { perMonth: number };
+    const offer = describeInviteOffer(tier(), config, NOW, locale);
+    const presentation = (config.matrix.presentation as Record<string, { labels: Record<string, string> }>)[firstTier];
+
+    expect(offer.planName).toBe(presentation.labels[locale]);
+    // Grouping by the same `Intl` call the module makes — never a hand-typed separator (SA Q-10).
+    const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(allowance.perMonth);
+    expect(offer.included[0].summary).toBe(`${label} (${number} ${perMonth})`);
+    // No English value phrase left anywhere in the offer.
+    const joined = offer.included.map((row) => row.summary).join(' | ');
+    expect(joined).not.toMatch(/per month|in total/);
+    // Ids are not translated: the keys stay the same in every language.
+    expect(offer.included.map((row) => row.labelKey)).toEqual(
+      describeInviteOffer(tier(), config, NOW).included.map((row) => row.labelKey)
+    );
   });
 
   it('a months grant is described as data', () => {

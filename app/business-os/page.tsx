@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
 import { createLogger } from '@/lib/logger';
+import { notifyCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
 import { LiveDashboard, GapView, OperationalItem, SetupItem, FunnelStats, WeeklyStats, MilestoneData, PipelineStage, ChannelPerformance } from '@/components/business-os/insight';
 import { shapeFromProfile, UNKNOWN_SHAPE, type BusinessShape } from '@/lib/business-os/setup/setupGraph';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
@@ -173,7 +174,9 @@ function BusinessOSContent() {
       // Fetch My Day data, stats, and pipeline stages in parallel
       // Use cache: 'no-store' to ensure fresh data on each load
       const [myDayResponse, statsResponse, stagesResponse, channelsResponse, weekChannelsResponse] = await Promise.all([
-        fetch('/api/business-os/my-day', { cache: 'no-store' }),
+        // The briefing may have been narrated (an owner AI action): once this
+        // response settles, resolved or not, the credits card may re-read (S-5).
+        fetch('/api/business-os/my-day', { cache: 'no-store' }).finally(notifyCreditUsageChanged),
         fetch('/api/business-os/stats', { cache: 'no-store' }),
         fetch('/api/crm/pipeline-stages', { cache: 'no-store' }),
         fetch('/api/business-os/channel-insights?period=month', { cache: 'no-store' }),

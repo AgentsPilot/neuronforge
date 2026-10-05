@@ -18,7 +18,7 @@
       "anomaly": "no_plan_row"
     },
     "anomaly": "no_plan_row",
-    "matrixVersion": 1,
+    "matrixVersion": 2,
     "capabilities": {
       "crm.core": {
         "value": false,
@@ -300,7 +300,7 @@
         "granting": false,
         "display": "no"
       },
-      "ai.actions": {
+      "credits.allowance": {
         "value": {
           "perMonth": 0
         },

@@ -7,14 +7,17 @@
  * request. Anyone on the internet who knew a URL could rewrite platform-wide
  * pricing tiers, credit rewards, model-routing weights and system limits;
  * trigger a bulk background job; mutate stored agent memory; and re-send
- * platform communications. The 22nd (`settings/admin-users`) accepted any
- * signed-in customer — and one of its two handlers is a GET that WRITES.
+ * platform communications. The 22nd (the admin-users settings route, since
+ * deleted) accepted any signed-in customer — and one of its two handlers was a
+ * GET that WROTE.
  *
  * A happy-path test would have passed on all of that. So the load-bearing
  * assertions here are the four denial cases, and in particular the one that
  * checks **nothing happened before the gate**: `mockTablesTouched` must be
- * empty on every denial. A route that returns 403 *after* running its query has
- * satisfied its status code and leaked its data anyway.
+ * empty on every denial, bar the one refusal row `requireAdmin` itself records
+ * on the 403 (see the note above the 403 case). A route that returns 403
+ * *after* running its query has satisfied its status code and leaked its data
+ * anyway.
  *
  * ── The four denial cases, and why each exists ─────────────────────────────
  *   1. signed out                → 401  (FR-4)
@@ -150,6 +153,45 @@ jest.mock('@/lib/services/EmbeddingService', () => ({
   },
 }));
 
+// ADMIN_BOS_CLEANUP slice 7d: the five queue drains behind `jobs-queues/drain`.
+// Factories only (SA W7D-6), never automock, so no real service module, and not
+// the PDF chain behind the lead drain, is loaded. Each records a touch, so a
+// drain that ran before the gate fails the strict denial assertions.
+jest.mock('@/lib/services/PaymentReminderService', () => ({
+  paymentReminderService: {
+    processDueReminders: () => {
+      mockTablesTouched.push('drain:payment_reminders');
+      return Promise.resolve({ processed: 0, sent: 0, failed: 0 });
+    },
+  },
+}));
+jest.mock('@/lib/services/PaymentAutomationEngine', () => ({
+  paymentAutomationEngine: {
+    processScheduledExecutions: () => {
+      mockTablesTouched.push('drain:payment_automations');
+      return Promise.resolve();
+    },
+  },
+}));
+jest.mock('@/lib/services/DailyBriefingDispatchService', () => ({
+  processDueBriefings: () => {
+    mockTablesTouched.push('drain:daily_briefing_sends');
+    return Promise.resolve({ enqueued: 0, sent: 0, skipped: 0, failed: 0 });
+  },
+}));
+jest.mock('@/lib/services/LeadResponseDispatchService', () => ({
+  dispatchLeadResponses: () => {
+    mockTablesTouched.push('drain:lead_responses');
+    return Promise.resolve({ reaped: 0, enqueued: 0, claimed: 0, sent: 0, skipped: 0 });
+  },
+}));
+jest.mock('@/lib/services/InsightActionDispatchService', () => ({
+  drainInsightActions: () => {
+    mockTablesTouched.push('drain:insight_actions');
+    return Promise.resolve({ reaped: 0, claimed: 0, sent: 0, skipped: 0, failed: 0 });
+  },
+}));
+
 // ───────────────────────────────────────────────────────────────────────────
 
 import * as agentGenerationConfig from '../agent-generation-config/route';
@@ -170,7 +212,6 @@ import * as migrateLabels from '../migrate-labels/route';
 import * as onboardingConfig from '../onboarding-config/route';
 import * as orchestrationConfig from '../orchestration-config/route';
 import * as rewardConfig from '../reward-config/route';
-import * as adminUsersSettings from '../settings/admin-users/route';
 import * as storageTiers from '../storage-tiers/route';
 import * as systemLimits from '../system-limits/route';
 import * as uiConfig from '../ui-config/route';
@@ -180,7 +221,6 @@ import * as userEmails from '../user-emails/route';
 import * as adminUsersList from '../users/route';
 import * as userStats from '../users/[id]/stats/route';
 import * as onboardingUsers from '../onboarding-users/route';
-import * as platformUsers from '../settings/platform-users/route';
 import * as tokenUsage from '../token-usage/route';
 import * as tokenUsageDrill from '../token-usage/drill-down/route';
 import * as tokenUsageStats from '../token-usage/stats/route';
@@ -191,6 +231,15 @@ import * as adminMessages from '../messages/route';
 
 // ── Admin Archiving slice 2b (2026-09-26) — gated from birth ─────────────────
 import * as archivingRuns from '../archiving/runs/route';
+
+// ── ADMIN_BOS_CLEANUP slice 1 (2026-10-02) — gated from birth ───────────────
+import * as adminsList from '../admins/route';
+
+// ── ADMIN_BOS_CLEANUP slice 7d (2026-10-04) — gated from birth ──────────────
+import * as jobsQueuesDrain from '../jobs-queues/drain/route';
+
+// ── ADMIN_BOS_CLEANUP slice 7b (2026-10-04) — gated from birth ──────────────
+import * as jobsQueuesItemAction from '../jobs-queues/items/action/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -245,10 +294,9 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   { name: 'POST /api/admin/migrate-labels', call: () => migrateLabels.POST(req('/api/admin/migrate-labels', 'POST')) },
 
   // ── Category C — the write hidden behind a GET (finding N-1) ─────────────
-  // Its GET upserts the caller in as `super_admin` with the service role when
-  // the list is empty. It is gated in the WRITE slice because it is a write.
-  { name: 'GET /api/admin/settings/admin-users (writes!)', call: () => adminUsersSettings.GET(req('/api/admin/settings/admin-users', 'GET')) },
-  { name: 'POST /api/admin/settings/admin-users', call: () => adminUsersSettings.POST(req('/api/admin/settings/admin-users', 'POST', { action: 'add', email: 'x@y.z' })) },
+  // Its two cases (the admin-users settings GET that upserted the caller as
+  // `super_admin`, and its POST) left with the route itself: deleted by
+  // ADMIN_BOS_CLEANUP slice 1 (2026-10-02), folding in admin-authz slice 7.
 
   // ── Gated ahead of slice 2, on its own branch ────────────────────────────
   // `user-emails` is a READ shaped as a POST, so it was sorted into the read
@@ -267,7 +315,6 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   { name: 'HEAD /api/admin/users', call: () => adminUsersList.HEAD() },
   { name: 'GET /api/admin/users/[id]/stats', call: () => userStats.GET(req(`/api/admin/users/${TARGET_USER}/stats`, 'GET'), { params: Promise.resolve({ id: TARGET_USER }) }) },
   { name: 'GET /api/admin/onboarding-users', call: () => onboardingUsers.GET(req('/api/admin/onboarding-users?filter=all', 'GET')) },
-  { name: 'GET /api/admin/settings/platform-users', call: () => platformUsers.GET(req('/api/admin/settings/platform-users?search=', 'GET')) },
   { name: 'GET /api/admin/token-usage', call: () => tokenUsage.GET(req('/api/admin/token-usage', 'GET')) },
   { name: 'HEAD /api/admin/token-usage', call: () => tokenUsage.HEAD() },
   { name: 'GET /api/admin/token-usage/drill-down', call: () => tokenUsageDrill.GET(req('/api/admin/token-usage/drill-down?period=30d', 'GET')) },
@@ -307,6 +354,39 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   // Gated from birth; proven here like the rest. With runs switched off it
   // would touch nothing even for an admin, but the denial must come first.
   { name: 'POST /api/admin/archiving/runs', call: () => archivingRuns.POST(req('/api/admin/archiving/runs', 'POST', { action: 'start', source: 'audit_trail', retentionDays: 365 })) },
+
+  // ── ADMIN_BOS_CLEANUP slice 1 (2026-10-02) ──────────────────────────────
+  // The read-only list of who can open admin (`admin_users` rows plus
+  // ADMIN_EMAILS-only addresses). Gated from birth; the list must never be
+  // read before the gate answers.
+  { name: 'GET /api/admin/admins', call: () => adminsList.GET(req('/api/admin/admins', 'GET')) },
+
+  // ── ADMIN_BOS_CLEANUP slice 7d (2026-10-04) ─────────────────────────────
+  // "Drain now": runs one Business OS queue's drain, which sends to real
+  // recipients across every account. Gated from birth; the drain (each mocked
+  // above with a recorded touch) and the write-ahead audit row must never
+  // happen before the gate answers.
+  { name: 'POST /api/admin/jobs-queues/drain', call: () => jobsQueuesDrain.POST(req('/api/admin/jobs-queues/drain', 'POST', { queue: 'insight_actions', reason: 'gate test' })) },
+
+  // ── ADMIN_BOS_CLEANUP slice 7b (2026-10-04) ─────────────────────────────
+  // "Cancel item": the first write to a live queue row (one compare-and-set
+  // UPDATE through AdminQueueActionsRepository). Gated from birth; the item
+  // read, the update and the audit row must never happen before the gate. The
+  // body is well-formed (a uuid and a valid `expected`), so the admin case
+  // reaches the handler and gets a 404 from the empty fake client, not a 400.
+  {
+    name: 'POST /api/admin/jobs-queues/items/action',
+    call: () =>
+      jobsQueuesItemAction.POST(
+        req('/api/admin/jobs-queues/items/action', 'POST', {
+          queue: 'insight_actions',
+          itemId: '00000000-0000-4000-8000-000000000000',
+          action: 'cancel',
+          expected: { status: 'pending', attempts: 0 },
+          reason: 'gate test',
+        })
+      ),
+  },
 ];
 
 beforeEach(() => {
@@ -326,6 +406,14 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  + 23 slice 2 (14 cross-tenant reads incl. 3 HEAD probes, 9 internal-config GETs)
     //  + 4  slice 3 catalogue GETs
     //  + 1  `archiving/runs#POST`, Admin Archiving slice 2b, gated from birth
+    //  = 59
+    //  - 3  deleted with admin-authz slice 7's routes (ADMIN_BOS_CLEANUP slice 1:
+    //       the admin-users settings GET and POST, the platform-users GET)
+    //  + 1  `admins#GET`, gated from birth
+    //  = 57
+    //  + 1  `jobs-queues/drain#POST` (ADMIN_BOS_CLEANUP slice 7d), gated from birth
+    //  = 58
+    //  + 1  `jobs-queues/items/action#POST` (ADMIN_BOS_CLEANUP slice 7b), gated from birth
     //  = 59, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
@@ -343,14 +431,38 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
       expect(mockIsAdmin).not.toHaveBeenCalled();
     });
 
-    it('403 for a signed-in non-admin, and touches nothing', async () => {
+    /*
+     * What a 403 is allowed to touch, and why it is an exact list.
+     *
+     * Since 2026-10-01 `requireAdmin` RECORDS a refusal — one INSERT into
+     * `audit_trail` — before answering 403, so "touches nothing" is no longer
+     * literally true of the refused case. So this case asserts the exact list
+     * `['audit_trail']` rather than filtering that table name out: one refusal
+     * is exactly one `from('audit_trail')`, so equality pins the recording AND
+     * keeps the original strictness in both directions — an extra touch of the
+     * audit trail fails, and a missing refusal row fails too.
+     *
+     * Filtering would not be safe here, and not hypothetically: among the 59
+     * cases `archiving/runs#POST` reaches `ArchiveRepository`, which reads
+     * `audit_trail` platform-wide and cross-account (`ArchiveRepository.ts:51`,
+     * `:106-141`). A filter would make "did this handler read the audit trail
+     * before the gate?" unanswerable for exactly the handler where it is a live
+     * question.
+     *
+     * The 401 and both fail-closed cases stay at strict `[]`, because an
+     * anonymous caller has no identity to refuse and an admin check that could
+     * not answer is not a probe (OQ-3). If a future change started writing on
+     * either path, those three assertions catch it.
+     */
+    it('403 for a signed-in non-admin, and touches nothing but the audit trail', async () => {
       mockGetUser.mockResolvedValue(CUSTOMER);
       mockIsAdmin.mockResolvedValue(false);
 
       const res = await call();
 
       expect(res.status).toBe(403);
-      expect(mockTablesTouched).toEqual([]);
+      // Exactly the refusal record, and nothing of the handler's own work.
+      expect(mockTablesTouched).toEqual(['audit_trail']);
     });
 
     it('403 (not 500) when the admin check throws — fails closed', async () => {

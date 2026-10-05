@@ -112,7 +112,7 @@ export function previewAccountFor(
 export function describePlanEnding(
   config: EntitlementConfig,
   planId: string,
-  aiActionsValue: CapabilityValue
+  allowanceValue: CapabilityValue
 ): string {
   if (config.tierOrder.includes(planId)) {
     return 'While the plan is paid for. An admin can set an end date on one account.';
@@ -128,13 +128,13 @@ export function describePlanEnding(
   // A one-off TOTAL is what makes running out an ENDING (FR-27); a monthly rate
   // simply resets. The difference is in the value, so the sentence reads it.
   const isOneOffAllowance =
-    !!aiActionsValue && typeof aiActionsValue === 'object' && 'total' in (aiActionsValue as object);
+    !!allowanceValue && typeof allowanceValue === 'object' && 'total' in (allowanceValue as object);
 
   const clock =
     cohort.clockStartsAt === 'profile_created' ? 'the business profile is created' : 'the first onboarding message';
 
   return isOneOffAllowance
-    ? `${duration.days} days from ${clock}, or when the AI actions run out — whichever comes first.`
+    ? `${duration.days} days from ${clock}, or when the credits run out — whichever comes first.`
     : `${duration.days} days from ${clock}.`;
 }
 
@@ -160,7 +160,9 @@ export function describePlanCapabilities(
       // English feature list in front of a Hebrew business.
       label: labelIn(definition.labels, locale, capability),
       category: definition.category,
-      display: describeCapabilityValue(resolved.value, definition),
+      // In the reader's language too (OI-10): "per month" / "in total" and the
+      // number's grouping. Admin callers pass no locale and stay English.
+      display: describeCapabilityValue(resolved.value, definition, locale),
       granting: isGrantingValue(resolved.value, definition),
       // A `not_built` capability needs no gate: there is nothing to refuse.
       // Marking it "nothing in the product refuses it yet" reads as "a customer
@@ -254,6 +256,25 @@ export function planCommercialFlags(
     shownToCustomers: presentation?.shownToCustomers ?? false,
     availableToBuy: presentation?.availableToBuy ?? false,
   };
+}
+
+/**
+ * Is this plan active? The ONE reader, for tiers and cohorts alike.
+ *
+ * The flag lives in two places because the plans do — a tier's `presentation`
+ * block, a cohort's own config beside its `labels` — and this is the only
+ * function that knows which, the way `planCommercialFlags` is for the tier flags.
+ *
+ * **FYI only (2026-09-29).** Read by the admin Tiers page and by nothing that
+ * decides anything; `planActive.noEffect.test.ts` holds that. `false` for an
+ * unknown id, which cannot happen for a validated config.
+ */
+export function planActive(config: EntitlementConfig, planId: string): boolean {
+  if (config.tierOrder.includes(planId)) {
+    return config.matrix.presentation[planId as keyof typeof config.matrix.presentation]?.active ?? false;
+  }
+
+  return config.cohorts[planId as keyof typeof config.cohorts]?.active ?? false;
 }
 
 /** For a cohort, the tier it resolves through. `null` for a tier. */

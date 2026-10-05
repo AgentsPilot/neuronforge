@@ -14,7 +14,7 @@
  * states: an invite in either is still pending, expired or revoked as well.
  */
 
-import type { InviteRow, InviteState } from './types';
+import type { InviteIssuerKind, InviteRow, InviteState } from './types';
 
 export type InviteStateFilter = 'all' | InviteState | 'opened_by_existing_account' | 'stopped_halfway';
 
@@ -29,14 +29,30 @@ export const INVITE_STATE_FILTERS: ReadonlyArray<{ value: InviteStateFilter; lab
   { value: 'stopped_halfway', label: 'Signup stopped halfway' },
 ];
 
-/** `'all'` for the type means no type filter. */
+/** Slice 5a (F5a-11): admin-issued, champion-issued (friend invites), or both. */
+export type InviteIssuerFilter = 'all' | InviteIssuerKind;
+
+/** The issuer options, in the order the select shows them. */
+export const INVITE_ISSUER_FILTERS: ReadonlyArray<{ value: InviteIssuerFilter; label: string }> = [
+  { value: 'all', label: 'All issuers' },
+  { value: 'admin', label: 'Issued by an admin' },
+  { value: 'account', label: 'Friend invites (champions)' },
+];
+
+/** `'all'` for the type or the issuer means no filter on it. */
 export interface InviteListFilter {
   state: InviteStateFilter;
   inviteType: string;
+  issuer: InviteIssuerFilter;
   query: string;
 }
 
-export const EMPTY_INVITE_FILTER: InviteListFilter = { state: 'all', inviteType: 'all', query: '' };
+export const EMPTY_INVITE_FILTER: InviteListFilter = { state: 'all', inviteType: 'all', issuer: 'all', query: '' };
+
+/** A row from an older server has no issuer: it was an admin invite. */
+function issuerOf(invite: InviteRow): InviteIssuerKind {
+  return invite.issuerKind ?? 'admin';
+}
 
 function matchesState(invite: InviteRow, state: InviteStateFilter): boolean {
   switch (state) {
@@ -63,11 +79,12 @@ export function filterInvites(invites: InviteRow[], filter: InviteListFilter): I
     (invite) =>
       matchesState(invite, filter.state) &&
       (filter.inviteType === 'all' || invite.inviteType === filter.inviteType) &&
+      (filter.issuer === 'all' || issuerOf(invite) === filter.issuer) &&
       (needle.length === 0 || invite.email.toLowerCase().includes(needle))
   );
 }
 
 /** True when any condition narrows the list. */
 export function isFilterActive(filter: InviteListFilter): boolean {
-  return filter.state !== 'all' || filter.inviteType !== 'all' || filter.query.trim().length > 0;
+  return filter.state !== 'all' || filter.inviteType !== 'all' || filter.issuer !== 'all' || filter.query.trim().length > 0;
 }

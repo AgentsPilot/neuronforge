@@ -10,7 +10,7 @@ jest.mock('@/lib/logger', () => ({
   createLogger: () => ({ error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() }),
 }));
 
-import { ALL_ZERO_UUID, platformAccountId } from '../platformAccount';
+import { ALL_ZERO_UUID, platformAccountId, platformActorUuid } from '../platformAccount';
 import {
   isPlatformAccount,
   isPlatformAccountEnvIgnored,
@@ -58,6 +58,30 @@ describe('platformAccountId', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'platformAccount.ts'), 'utf8');
     expect(source).not.toMatch(/^\s*import\s/m);
     expect(source).not.toMatch(/\brequire\(/);
+  });
+});
+
+describe('platformActorUuid (credit deduction slice 8b, SA C-B1)', () => {
+  it('is SYSTEM_ADMIN_USER_ID when it is a UUID', () => {
+    process.env.SYSTEM_ADMIN_USER_ID = SYS;
+    expect(platformActorUuid()).toBe(SYS);
+  });
+
+  it('is the all-zero id when SYSTEM_ADMIN_USER_ID is not a UUID (never the raw value)', () => {
+    process.env.SYSTEM_ADMIN_USER_ID = 'not-a-uuid';
+    expect(platformActorUuid()).toBe(ALL_ZERO_UUID);
+  });
+
+  it('is the all-zero id when SYSTEM_ADMIN_USER_ID is unset or empty', () => {
+    expect(platformActorUuid()).toBe(ALL_ZERO_UUID);
+    process.env.SYSTEM_ADMIN_USER_ID = '';
+    expect(platformActorUuid()).toBe(ALL_ZERO_UUID);
+  });
+
+  it('reads the environment at call time', () => {
+    expect(platformActorUuid()).toBe(ALL_ZERO_UUID);
+    process.env.SYSTEM_ADMIN_USER_ID = SYS;
+    expect(platformActorUuid()).toBe(SYS);
   });
 });
 

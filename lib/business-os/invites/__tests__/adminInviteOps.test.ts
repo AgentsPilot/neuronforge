@@ -41,6 +41,7 @@ import {
   listInvitesForAdmin,
   resolveInviteFormLanguage,
   revokeInviteForAdmin,
+  inviterNameFromProfile,
   toInviteListView,
   type CreateInviteDeps,
 } from '../adminInviteOps';
@@ -442,6 +443,31 @@ describe('toInviteListView (R-7)', () => {
     email_attempted_at: null,
   };
 
+  it('Slice 5a (F5a-11): an admin invite reads as admin-issued, with no account id and no inviter revoke', () => {
+    const view = toInviteListView(rowFrom(input), config, NOW);
+    expect(view).toMatchObject({ issuerKind: 'admin', issuerAccountId: null, revokedByInviter: false });
+  });
+
+  it('Slice 5a (F5a-11, F5a-8): a champion friend invite shows the champion account, and a revoke with no admin id is by the inviter', () => {
+    const CHAMPION = '44444444-4444-4444-8444-444444444444';
+    const friend = rowFrom(input, {
+      issuer_kind: 'account',
+      issuer_admin_id: null,
+      issuer_account_id: CHAMPION,
+      invite_type: PAID_INVITE_TYPE,
+      grant_kind: 'tier',
+      grant_id: TIER_ORDER[0],
+      access_open_ended: null,
+    });
+    expect(toInviteListView(friend, config, NOW)).toMatchObject({ issuerKind: 'account', issuerAccountId: CHAMPION, revokedByInviter: false });
+
+    const byInviter = { ...friend, revoked_at: '2026-10-01T00:00:00.000Z', revoked_by_admin_id: null, revoke_reason: 'Revoked by the inviting champion' };
+    expect(toInviteListView(byInviter, config, NOW)).toMatchObject({ state: 'revoked', revokedByInviter: true });
+
+    const byAdmin = { ...byInviter, revoked_by_admin_id: ADMIN };
+    expect(toInviteListView(byAdmin, config, NOW).revokedByInviter).toBe(false);
+  });
+
   it('Slice 2a: carries the derived email status, never the message id or the Reply-To', () => {
     expect(toInviteListView(rowFrom(input), config, NOW)).toMatchObject({ emailStatus: 'not_emailed', emailStatusAt: null });
     const sent = toInviteListView(
@@ -588,8 +614,76 @@ describe('listInvitesForAdmin', () => {
       logger: { warn: (...args: unknown[]) => warnings.push(args) },
     });
     expect(outcome.ok).toBe(true);
-    if (outcome.ok) expect(outcome.invites[0].level).toBeNull();
+    if (outcome.ok) {
+      expect(outcome.invites[0].level).toBeNull();
+      expect(outcome.invites[0].parentAccountId).toBeNull();
+    }
     expect(warnings).toHaveLength(1);
+  });
+
+  it('Slice 5b (FR-36): an accepted friend invite carries L2 and the parent from LINEAGE, not from the issuer', async () => {
+    const CHAMPION = '77777777-7777-4777-8777-777777777777';
+    const LINEAGE_PARENT = '88888888-8888-4888-8888-888888888888';
+    const accepted = rowFrom(
+      {
+        token_hash: 'a'.repeat(64),
+        email: 'x@example.com',
+        invite_type: CHAMPION_INVITE_TYPE,
+        grant_kind: 'cohort',
+        grant_id: championGrant,
+        access_open_ended: true,
+        access_months: null,
+        issuer_admin_id: ADMIN,
+        inviter_display_name: 'Dana',
+        language: 'en',
+        personal_note: null,
+        internal_reason: 'Reason',
+        link_expiry_days: 30,
+        link_expires_at: '2026-10-31T12:00:00.000Z',
+      },
+      { redeemed_at: NOW.toISOString(), redeemed_account_id: 'friend-1', issuer_kind: 'account', issuer_admin_id: null, issuer_account_id: CHAMPION }
+    );
+    const champion = { ...accepted, id: '99999999-9999-4999-8999-999999999999', redeemed_account_id: CHAMPION };
+    const outcome = await listInvitesForAdmin({
+      repository: { listRecentForAdmin: async () => ({ data: [accepted, champion], error: null }) },
+      lineage: {
+        findByInviteIdsForAdmin: async () => ({
+          data: [
+            // Deliberately a parent that differs from the invite's issuer: the view must take lineage's word.
+            { account_id: 'friend-1', invite_id: accepted.id, level: 2, parent_account_id: LINEAGE_PARENT },
+            { account_id: CHAMPION, invite_id: champion.id, level: 1, parent_account_id: null },
+          ],
+          error: null,
+        }),
+      },
+      config,
+      now: NOW,
+    });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.invites[0]).toMatchObject({ level: 2, parentAccountId: LINEAGE_PARENT });
+      expect(outcome.invites[1]).toMatchObject({ level: 1, parentAccountId: null });
+    }
+  });
+
+  it('a pending invite has no parent, and the mapper defaults it to null', () => {
+    const pending = rowFrom({
+      token_hash: 'a'.repeat(64),
+      email: 'x@example.com',
+      invite_type: CHAMPION_INVITE_TYPE,
+      grant_kind: 'cohort',
+      grant_id: championGrant,
+      access_open_ended: true,
+      access_months: null,
+      issuer_admin_id: ADMIN,
+      inviter_display_name: 'Dana',
+      language: 'en',
+      personal_note: null,
+      internal_reason: 'Reason',
+      link_expiry_days: 30,
+      link_expires_at: '2026-10-31T12:00:00.000Z',
+    });
+    expect(toInviteListView(pending, config, NOW).parentAccountId).toBeNull();
   });
 
   describe('Slice 1c: the 500 ceiling and `truncated` (SA F-9)', () => {
@@ -655,7 +749,7 @@ describe('listInvitesForAdmin', () => {
           findByInviteIdsForAdmin: async (ids: string[]) => {
             batches.push(ids.length);
             if (ids.length > LINEAGE_LOOKUP_LIMIT) return { data: null, error: new Error('too many ids') };
-            return { data: ids.map((id) => ({ account_id: 'acct-1', invite_id: id, level: 1 })), error: null };
+            return { data: ids.map((id) => ({ account_id: 'acct-1', invite_id: id, level: 1, parent_account_id: null })), error: null };
           },
         },
         config,
@@ -752,5 +846,21 @@ describe('revokeInviteForAdmin', () => {
     expect(
       await revokeInviteForAdmin(INVITE_ID, { reason: 'Wrong person' }, deps({ data: null, error: null }, { data: null, error: new Error('x') }))
     ).toEqual({ ok: false, status: 500, error: 'could_not_revoke_invite' });
+  });
+});
+
+describe('inviterNameFromProfile (C-9; Slice 5a SA R-1: one fallback for admins and champions)', () => {
+  it.each([
+    ['Dana Champion', 'Dana Champion'],
+    ['  Dana  ', 'Dana'],
+    [null, INVITER_NAME_FALLBACK],
+    ['   ', INVITER_NAME_FALLBACK],
+    [42, INVITER_NAME_FALLBACK],
+  ])('%p → %p', (input, expected) => {
+    expect(inviterNameFromProfile(input)).toBe(expected);
+  });
+
+  it('caps at the database limit, cut on a whole code point', () => {
+    expect(Array.from(inviterNameFromProfile('😀'.repeat(250)))).toHaveLength(200);
   });
 });

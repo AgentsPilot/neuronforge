@@ -1,0 +1,21 @@
+{
+  "id": "evt_connect_checkout_booking",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "checkout.session.completed",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000300,
+  "data": {
+    "object": {
+      "id": "cs_booking_1",
+      "object": "checkout.session",
+      "mode": "payment",
+      "amount_total": 8000,
+      "payment_intent": "pi_checkout_booking_1",
+      "customer": null,
+      "subscription": null,
+      "metadata": { "booking_id": "bk-0001" }
+    }
+  }
+}

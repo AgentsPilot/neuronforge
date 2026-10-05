@@ -266,7 +266,9 @@ describe('a trialling plan is bounded before its first charge', () => {
 
   it('refuses a plan whose metadata claims an owner the account does not own', () => {
     const fn = webhook.slice(webhook.indexOf('async function handleConnectPlanSubscriptionCreated'));
-    expect(fn.slice(0, 1600)).toMatch(/await accountOwns\(connectAccountId, planMeta\.owner_id\)/);
+    // The trailing `log` is main's: `accountOwns` takes a logger, so the
+    // ownership check is matched on its arguments rather than on an exact call.
+    expect(fn.slice(0, 1600)).toMatch(/await accountOwns\(connectAccountId, planMeta\.owner_id[,)]/);
   });
 
   it('rethrows, so Stripe retries rather than leaving it unbounded', () => {

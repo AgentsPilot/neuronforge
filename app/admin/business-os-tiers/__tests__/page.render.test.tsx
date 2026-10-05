@@ -30,8 +30,9 @@ function plan(overrides: Partial<Plan> = {}): Plan {
     // one of them would pass by luck.
     shownToCustomers: true,
     availableToBuy: false,
+    active: true,
     inheritsFrom: null,
-    aiActions: '500 per month',
+    credits: '19,750 per month',
     endsWhen: 'While the plan is paid for.',
     state: 'active',
     basis: 'tier',
@@ -45,10 +46,10 @@ function plan(overrides: Partial<Plan> = {}): Plan {
         gateBuilt: false,
       },
       {
-        capability: 'ai.actions',
-        label: 'AI actions',
+        capability: 'credits.allowance',
+        label: 'Credits',
         category: 'ai_chat',
-        display: '500 per month',
+        display: '19,750 per month',
         granting: true,
         gateBuilt: false,
       },
@@ -116,6 +117,25 @@ describe('which plans are public, and which are sellable', () => {
     expect(screen.getByTestId('plan-paid-plan-buyable')).toHaveTextContent(/not available to buy/i);
   });
 
+  it('an INACTIVE plan is unmistakable, and says it is FYI only (2026-09-29)', async () => {
+    // Words AND styling: the badge reads INACTIVE and the card is dashed and
+    // dimmed, so the state is never carried by styling alone. The tooltip says it
+    // changes nothing, because "inactive" otherwise reads as a switch.
+    await renderPage(payload({ plans: [plan({ active: false })] }));
+
+    const badge = screen.getByTestId('plan-paid-plan-active');
+    expect(badge).toHaveTextContent('INACTIVE');
+    expect(badge).toHaveAttribute('title', expect.stringMatching(/FYI only/i));
+    expect(screen.getByTestId('plan-paid-plan').className).toMatch(/border-dashed/);
+  });
+
+  it('an active plan says "active" quietly and is not dashed', async () => {
+    await renderPage();
+
+    expect(screen.getByTestId('plan-paid-plan-active')).toHaveTextContent(/^active$/);
+    expect(screen.getByTestId('plan-paid-plan').className).not.toMatch(/border-dashed/);
+  });
+
 });
 
 describe('the enforcement banner', () => {
@@ -170,7 +190,7 @@ describe('the plan cards', () => {
     // needs the mapping in front of them.
     expect(card).toHaveTextContent('paid-plan');
     expect(card).toHaveTextContent('$42');
-    expect(within(card).getByTestId('plan-paid-plan-ai')).toHaveTextContent('500 per month');
+    expect(within(card).getByTestId('plan-paid-plan-credits')).toHaveTextContent('19,750 per month');
     expect(within(card).getByTestId('plan-paid-plan-ends')).toHaveTextContent(/paid for/i);
   });
 

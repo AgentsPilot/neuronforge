@@ -19,6 +19,8 @@
  * Methods the product offers, and therefore this module:
  *   • email + password   (`signInWithPassword`)
  *   • Google OAuth       (`signInWithOAuth`, PKCE, via /auth/callback)
+ *   • Google ID token    (`signInWithIdToken`; only after an invite was redeemed
+ *                         with that token, Slice 3b)
  *   • password reset     (`resetPasswordForEmail`)
  *   • sign-out           (local or global)
  *
@@ -108,7 +110,8 @@ export async function signInWithPassword(
       details: { email, error: error.message, login_method: 'password' },
       severity: 'warning',
     });
-    logger.warn({ email }, 'Password sign-in rejected');
+    // No address in the log line (PII); the audit row above is where the attempt is recorded.
+    logger.warn({ authStatus: error.status ?? null, authCode: error.code ?? null }, 'Password sign-in rejected');
     return { ok: false, error: error.message };
   }
 
@@ -152,6 +155,49 @@ export async function signInWithGoogle(
     return { ok: false, error: error.message };
   }
   return { ok: true };
+}
+
+/**
+ * Sign in with a Google ID token the page already holds (invite-only signup,
+ * Slice 3b, D-1). Used only after the server has redeemed an invite with that
+ * same token: Supabase verifies the token again itself, finds the confirmed
+ * account by Google's verified email, LINKS the Google identity to it, and
+ * writes the session cookies. The server minted no session.
+ *
+ * `nonce` is the RAW nonce; Google was given its SHA-256, which is what the
+ * token carries, and Supabase hashes this value to compare (its documented
+ * contract).
+ *
+ * Neither the token nor the nonce is logged or audited. The failure audit has
+ * no address: the browser never decodes the token, so it does not know one.
+ */
+export async function signInWithGoogleIdToken(
+  idToken: string,
+  nonce: string
+): Promise<AuthActionResult> {
+  const { data, error } = await supabase.auth.signInWithIdToken({ provider: 'google', token: idToken, nonce });
+
+  if (error) {
+    await auditAuthEvent({
+      action: 'USER_LOGIN_FAILED',
+      userId: null,
+      resourceName: 'google_id_token',
+      details: { error: error.message, login_method: 'google_id_token' },
+      severity: 'warning',
+    });
+    logger.warn({ authStatus: error.status ?? null }, 'Google ID-token sign-in rejected');
+    return { ok: false, error: error.message };
+  }
+
+  await auditAuthEvent({
+    action: 'USER_LOGIN',
+    userId: data.user?.id ?? null,
+    resourceName: data.user?.email || 'google_id_token',
+    details: { email: data.user?.email, login_method: 'google_id_token' },
+    severity: 'info',
+  });
+  logger.info({ userId: data.user?.id }, 'Google ID-token sign-in succeeded');
+  return { ok: true, user: data.user };
 }
 
 /** Send the password-reset email. `redirectPath` is where the emailed link lands. */

@@ -26,8 +26,10 @@
  *
  * ── Read-only (S-4a step 1) ─────────────────────────────────────────────────
  * There is no POST. No buying, no upgrading, no Stripe — steps 2 to 4. Nothing
- * here writes, and the one read goes through `EntitlementService`, which is the
- * only module that talks to the entitlement repository.
+ * here writes. The plan read goes through `EntitlementService`, the only module
+ * that talks to the entitlement repository; the reader's language is read
+ * through `userPreferencesRepository.findLocale(user.id)`, the session user's
+ * own row, never a caller-named one.
  *
  * @see docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md §6.5 WS-2
  */
@@ -40,7 +42,7 @@ import { buildCustomerPlanView } from '@/lib/business-os/entitlements/customerPl
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
 import { getEntitlementService } from '@/lib/business-os/entitlements/EntitlementService';
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
+import { userPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -85,15 +87,19 @@ export async function GET(request: NextRequest) {
      *
      * Unreadable means English. A plan section in the wrong language is a
      * nuisance; one that fails is a broken screen.
+     *
+     * `findLocale`, not `findPreferredLanguage`: this route has always matched
+     * the stored value exactly against `isValidLocale`, and the latter trims and
+     * lowercases first. The repository scopes by `user_id` and never throws, so
+     * a failed read lands on the English fallback below.
      * ─────────────────────────────────────────────────────────────────────────
      */
-    const { data: prefs } = await supabaseServer
-      .from('user_preferences')
-      .select('preferred_language')
-      .eq('user_id', user.id)
-      .maybeSingle();
+    const { data: prefs, error: prefsError } = await userPreferencesRepository.findLocale(user.id);
+    if (prefsError) {
+      requestLogger.warn({ err: prefsError }, 'Preferred language unreadable; using the default');
+    }
 
-    const stored = prefs?.preferred_language;
+    const stored = prefs?.preferredLanguage;
     const locale: Locale = stored && isValidLocale(stored) ? stored : defaultLocale;
 
     const view = buildCustomerPlanView({

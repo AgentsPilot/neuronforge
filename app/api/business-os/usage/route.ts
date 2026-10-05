@@ -1,141 +1,58 @@
 /**
- * What this business has used — one number, and what made it up.
+ * The owner's own credits — the read behind the dashboard's "Credits" card.
  *
- * ─────────────────────────────────────────────────────────────────────────────
- * The unit is Pilot Credits, which the product already meters in
- * (`formatPilotCredits`, `tokensPerCredit` in system config). Deliberately NOT
- * dollars: that is our cost, not the user's, and every LLM call is only part of
- * the picture anyway — a plugin call consumes no LLM tokens at all and is
- * recorded with a synthetic token count precisely so that plugin work still
- * counts. Summing cost would value all of that at zero.
+ *   GET /api/business-os/usage
  *
- * This is the user's OWN usage, always scoped to the caller.
+ * Credit deduction slice 6a (workplan §4.5, SA SQ-28): replaced in place. It
+ * answers from the credit ledger — credits used and left of the owner's own
+ * plan allowance, for their own billing period, split "by you" / "automatic".
+ * The payload shape is `OwnerCreditUsage`
+ * (`lib/business-os/credits/ownerCreditUsageTypes.ts`); it carries no tokens,
+ * no dollars, no cost and no account id (FR-28).
  *
- * ─────────────────────────────────────────────────────────────────────────────
- * THE ANSWER, NOT THE EVIDENCE
+ * Since credit deduction slice 11d it also carries `extraCredits`: credits
+ * added on top of the plan, a SEPARATE figure that never enters `remaining`
+ * or the percentage (boost R-5 (c)). The lots behind it are read with the
+ * same RLS client; nothing about where they came from is in the payload.
  *
- * This read `getUsageAnalytics` — the admin analytics aggregation — which pages
- * every matching `token_usage` row into Node and sums it there. On the busiest
- * real account that was 1,991 rows, 1.77 MB and two sequential round trips,
- * about 1.2 seconds, for one number and five lines. And it grows with what it
- * reports: Business OS chat writes a row on every turn.
+ * ── THE TENANT ISOLATION PROPERTY, AND WHY IT IS STRUCTURAL ────────────────
+ * **This handler accepts no input at all.** No path parameter, no query string,
+ * no body. The account is `user.id` from the verified session, resolved through
+ * the account seam, and there is no code path by which a caller can name a
+ * different one. That is also why there is no Zod schema: Zod validates input,
+ * and the absence of input is the property being protected (the `my-plan`
+ * precedent). The route test asserts the handler reads no `searchParams`, no
+ * body and no params, and that `?accountId=` and `?range=` are ignored.
  *
- * `business_os_usage_summary` does the same sums in Postgres and returns a
- * handful of rows. The shape below is unchanged — the card, its ring and its
- * breakdown were not touched.
+ * ── CLIENTS ──────────────────────────────────────────────────────────────────
+ * The ledger is read with the caller's RLS client
+ * (`createAuthenticatedServerClient`). This file imports no service-role client
+ * and nothing from the entitlements module; the service-role reads (the plan
+ * anchor and the pure period function) live in `ownerCreditUsageDeps.ts`.
  *
- * The old path survives as a FALLBACK, narrowed to the three columns that are
- * actually read, for the window between this code deploying and the migration
- * running. It is not dead code waiting to rot: it is what keeps the card
- * working on an environment whose migration is still pending, and it says so in
- * the log when it runs.
- * ─────────────────────────────────────────────────────────────────────────────
+ * ── NEVER CACHED ─────────────────────────────────────────────────────────────
+ * `force-dynamic`, and `Cache-Control: private, no-store` on every answer: the
+ * card re-reads after each owner action and must see the new figure.
  *
- *   GET /api/business-os/usage?range=last_30d
+ * Read-only: no write, no audit entry (a read of one's own figures).
  *
  * @module app/api/business-os/usage
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { getUser } from '@/lib/auth';
-import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
-import { ConfigRepository } from '@/lib/repositories/ConfigRepository';
-import {
-  buildCardBreakdown,
-  readTokensPerCredit,
-  readUsageSummary,
-  toCredits as creditsAt,
-} from '@/lib/business-os/usage/usageSummary';
 
+import { getUser } from '@/lib/auth';
+import { readOwnerCreditUsage } from '@/lib/business-os/credits/ownerCreditUsage';
+import { ownerCreditUsageDeps } from '@/lib/business-os/credits/ownerCreditUsageDeps';
+import { createLogger } from '@/lib/logger';
+import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 const logger = createLogger({ module: 'BusinessOsUsageAPI' });
 
-const QuerySchema = z.object({
-  range: z.enum(['last_24h', 'last_7d', 'last_30d', 'last_90d']).default('last_30d'),
-});
-
-// Category mapping lives in lib/business-os/usage/usageCategories.ts, and the
-// totals (database function first, rows as fallback, tokens per credit) in
-// lib/business-os/usage/usageSummary.ts, so both can be tested and the admin
-// LLM usage report computes exactly what this card shows (a route module may
-// only export handlers and route config).
-//
-// The label is NOT resolved here. The client owns the translation dictionary,
-// and a label written server-side ships in one language — which is how
-// "Assistant" and "Website & pages" appeared untranslated on a Hebrew dashboard.
-// Same rule as `choice` and `needs` in the chat route: the server sends facts.
-
-const RANGE_DAYS: Record<string, number> = {
-  last_24h: 1,
-  last_7d: 7,
-  last_30d: 30,
-  last_90d: 90,
-};
-
-/**
- * One point per day across the whole window, zero where nothing happened.
- *
- * Plotting only the days that have rows would draw a continuous line through
- * gaps — three scattered days of use would look like three days of steady use.
- */
-function fillGaps(
-  points: Array<{ date: string; credits: number }>,
-  range: string
-): Array<{ date: string; credits: number }> {
-  const byDate = new Map(points.map((p) => [p.date, p.credits]));
-  const days = RANGE_DAYS[range] ?? 30;
-  const filled: Array<{ date: string; credits: number }> = [];
-
-  for (let i = days - 1; i >= 0; i--) {
-    const day = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    filled.push({ date: day, credits: byDate.get(day) ?? 0 });
-  }
-
-  return filled;
-}
-
-/**
- * The monthly allowance, in Pilot Credits.
- *
- * Stored as dollars — that is the figure a human decides — and converted here
- * using `pilot_credit_cost_usd`, the same rate Stripe bills against. Deriving
- * rather than storing the credit figure keeps the two from forking the first
- * time the credit price moves.
- *
- * Both keys are read in ONE round trip. Two `.eq('config_key', ...)` queries
- * would be two, and this runs on every dashboard load.
- *
- * Returns null when no ceiling applies — the key absent, deliberately set to 0,
- * or a credit price of 0 that would make the division meaningless. The card
- * reads null as "show consumption, draw no gauge", which is what it did before
- * an allowance existed.
- */
-async function readAllowanceCredits(): Promise<number | null> {
-  try {
-    // Through the repository (Layer 1.5 F-6). Built with the SERVER client on
-    // purpose: ConfigRepository defaults to the browser client, which fails
-    // from a route (see readTokensPerCredit in usageSummary.ts).
-    const { data } = await new ConfigRepository(supabaseServer).getSystemConfigs([
-      'monthly_ai_allowance_usd',
-      'pilot_credit_cost_usd',
-    ]);
-
-    const byKey = new Map(Object.entries(data ?? {}));
-
-    const allowanceUsd = parseFloat(String(byKey.get('monthly_ai_allowance_usd') ?? '10'));
-    // Same documented fallback the Stripe routes use.
-    const creditCostUsd = parseFloat(String(byKey.get('pilot_credit_cost_usd') ?? '')) || 0.00048;
-
-    if (!Number.isFinite(allowanceUsd) || allowanceUsd <= 0) return null;
-    if (!Number.isFinite(creditCostUsd) || creditCostUsd <= 0) return null;
-
-    return Math.round(allowanceUsd / creditCostUsd);
-  } catch {
-    return null;
-  }
-}
+const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -144,103 +61,51 @@ export async function GET(request: NextRequest) {
   try {
     const user = await getUser();
     if (!user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401, headers: NO_STORE });
     }
 
-    const parsed = QuerySchema.safeParse({
-      range: new URL(request.url).searchParams.get('range') ?? undefined,
-    });
+    // The caller's own RLS client: the ledger's owner policies apply to every read.
+    const ownerClient = await createAuthenticatedServerClient();
+    const result = await readOwnerCreditUsage(user.id, ownerCreditUsageDeps(ownerClient), requestLogger);
 
-    if (!parsed.success) {
-      return NextResponse.json({ success: false, error: 'Invalid range' }, { status: 400 });
+    if (result.error || !result.data) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Could not load your credits',
+          details: process.env.NODE_ENV === 'development' ? result.error?.message : undefined,
+        },
+        { status: 500, headers: NO_STORE }
+      );
     }
-
-    /*
-     * The window, computed once and shared.
-     *
-     * It used to be derived inside `getUsageAnalytics` from the range string.
-     * Now the same Date goes to the database function and to the fallback, so
-     * the two cannot disagree about where the 30 days start.
-     */
-    const since = new Date(
-      Date.now() - (RANGE_DAYS[parsed.data.range] ?? 30) * 24 * 60 * 60 * 1000
-    );
-
-    const [{ summary: usage, summedBy }, tokensPerCredit, allowanceCredits] = await Promise.all([
-      // userId is the caller's, never a parameter — there is no way to ask for
-      // somebody else's usage.
-      readUsageSummary(user.id, since, requestLogger),
-      // The SAME key the admin analytics reads (`tokens_per_pilot_credit` in
-      // ais_system_config), fetched here with the SERVER client.
-      //
-      // Not `getPilotCreditConfig()` from analyticsHelpers: that module imports
-      // the BROWSER Supabase client, so calling it from a route throws a 500 —
-      // which is exactly what happened.
-      readTokensPerCredit(),
-      readAllowanceCredits(),
-    ]);
-
-    const toCredits = (tokens: number) => creditsAt(tokens, tokensPerCredit);
-
-    const breakdown = buildCardBreakdown(usage, tokensPerCredit);
 
     requestLogger.info(
       {
         userId: user.id,
-        range: parsed.data.range,
-        credits: toCredits(usage.totalTokens),
-        summedBy,
+        periodKind: result.data.period.kind,
+        gauged: result.data.allowance !== null,
+        used: result.data.used,
+        // Whether the account has extra credits, never the figure (slice 11d, SA W11d-8).
+        hasExtra: result.data.extraCredits > 0,
       },
-      'Usage reported'
+      'Owner credits read'
     );
 
-    // Daily series for the chart. Gaps are filled with zero rather than left
-    // out: a line that skips quiet days compresses time and implies usage was
-    // continuous when it was not.
-    const daily = fillGaps(
-      [...usage.byDay.entries()].map(([date, tokens]) => ({
-        date,
-        credits: toCredits(tokens),
-      })),
-      parsed.data.range
-    );
-
-    return NextResponse.json({
-      success: true,
-      data: {
-        range: parsed.data.range,
-        // THE number: what was actually consumed, from token_usage.
-        //
-        // Deliberately NOT user_subscriptions.balance/total_spent. That ledger is
-        // only written by CreditService.deduct(), which is called from
-        // /api/run-agent alone — so it misses the chat, landing pages, insights
-        // and agent creation entirely. On a real account it was last touched
-        // three months ago and understates lifetime consumption by 13x
-        // (202,414 credits recorded against 2,637,147 actually consumed).
-        //
-        // token_usage is written by every AI call through the provider factory,
-        // so it needs no per-feature wiring and cannot drift.
-        credits: toCredits(usage.totalTokens),
-        /*
-         * The ceiling the card counts down from, in Pilot Credits, or null
-         * when no ceiling applies.
-         *
-         * `remaining` is computed here rather than in the card so that the
-         * clamp lives in one place: consumption can exceed the allowance, and
-         * a negative remainder would draw the gauge backwards.
-         */
-        allowance: allowanceCredits,
-        remaining:
-          allowanceCredits === null
-            ? null
-            : Math.max(0, allowanceCredits - toCredits(usage.totalTokens)),
-        breakdown,
-        daily,
-        calls: usage.totalCalls,
-      },
-    });
+    return NextResponse.json({ success: true, data: result.data }, { headers: NO_STORE });
   } catch (error) {
-    requestLogger.error({ err: error }, 'Failed to report usage');
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+    requestLogger.error({ err: error }, 'Failed to read the owner credits');
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Could not load your credits',
+        details:
+          process.env.NODE_ENV === 'development'
+            ? error instanceof Error
+              ? error.message
+              : String(error)
+            : undefined,
+      },
+      { status: 500, headers: NO_STORE }
+    );
   }
 }

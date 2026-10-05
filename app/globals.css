@@ -1,6 +1,33 @@
 @import "tailwindcss";
 
 /*
+ * Tailwind scans only files that can render. Paths are relative to this file.
+ *
+ * Tailwind 4 detects sources automatically and reads every non-gitignored file
+ * in the repo for class candidates, prose included. It also decodes CSS escapes
+ * inside them, so a Windows path in a doc with a folder named 9e5eba32-... read
+ * as a backslash escape for code point 0x9E5EBA, past U+10FFFF, and `next build`
+ * died with "tailwindcss: app/globals.css Invalid code point 10378938". The
+ * error names this file, not the doc, which is what makes it so hard to trace.
+ *
+ * The first four lines mirror what .github/ci/non-deploying-change.sh calls
+ * non-deploying. That matters more than it looks: a PR touching only those
+ * paths SKIPS the Build check, so a bad escape there merged green and broke the
+ * NEXT code PR's build instead. If that rule grows a path, add it here too -
+ * app/__tests__/tailwind-css-escape.guard.test.ts fails until you do. The same
+ * test catches a bad escape in the files still scanned here.
+ *
+ * Nothing under these paths is imported by app/, lib/ or components/. Nested
+ * markdown is NOT excluded: V6 prompts under lib/ are .md and stay scanned.
+ */
+@source not "../docs";
+@source not "../scripts";
+@source not "../.claude";
+@source not "../*.md";
+@source not "../archive";
+@source not "../supabase";
+
+/*
  * Dark mode follows the `.dark` class, not the operating system.
  *
  * `tailwind.config.js` has said `darkMode: 'class'` for as long as it has

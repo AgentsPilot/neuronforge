@@ -37,6 +37,7 @@ import { describeCapabilityValue } from './capabilityDisplay';
 import {
   describePlanCapabilities,
   describePlanEnding,
+  planActive,
   planCommercialFlags,
   planInheritsFrom,
   planLabel,
@@ -74,7 +75,8 @@ export interface AdminPlanView {
   monthlyPriceUsd: number;
   /** For a cohort, the tier it inherits from — `null` for a tier. */
   inheritsFrom: string | null;
-  aiActions: string;
+  /** The credit allowance, described (`credits.allowance`). */
+  credits: string;
   endsWhen: string;
   /**
    * Is this plan public, and is it sellable? (user decision, 2026-09-27)
@@ -90,6 +92,12 @@ export interface AdminPlanView {
    */
   shownToCustomers: boolean;
   availableToBuy: boolean;
+  /**
+   * Is the plan active? **FYI only** (2026-09-29) — a marker for an operator,
+   * read through `planActive`, and read by nothing that decides anything. Unlike
+   * the two flags above it exists for cohorts too.
+   */
+  active: boolean;
   /** What the resolver calls an account on this plan today. */
   state: string;
   /** Which layer the resolution stands on: a tier, a cohort, or nothing. */
@@ -160,7 +168,7 @@ export function buildAdminPlansView(now: Date = new Date()): AdminPlansPayload {
     });
 
     const capabilities = describePlanCapabilities(resolution, catalog);
-    const aiActions = resolution.values['ai.actions'];
+    const credits = resolution.values['credits.allowance'];
 
     return {
       id: planId,
@@ -168,9 +176,10 @@ export function buildAdminPlansView(now: Date = new Date()): AdminPlansPayload {
       name: planLabel(config, planId),
       monthlyPriceUsd: planMonthlyPriceUsd(config, planId),
       inheritsFrom: planInheritsFrom(config, planId),
-      aiActions: aiActions ? describeCapabilityValue(aiActions.value, catalog['ai.actions']) : 'not configured',
-      endsWhen: describePlanEnding(config, planId, aiActions?.value as CapabilityValue),
+      credits: credits ? describeCapabilityValue(credits.value, catalog['credits.allowance']) : 'not configured',
+      endsWhen: describePlanEnding(config, planId, credits?.value as CapabilityValue),
       ...planCommercialFlags(config, planId),
+      active: planActive(config, planId),
       state: resolution.state,
       basis: resolution.basis.kind,
       includes: capabilities.filter((entry) => entry.granting),

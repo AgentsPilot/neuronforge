@@ -9,7 +9,7 @@ import { IRFormalizer } from '../lib/agentkit/v6/semantic-plan/IRFormalizer.js'
 import type { EnhancedPrompt } from '../lib/agentkit/v6/semantic-plan/SemanticPlanGenerator.js'
 import type { SemanticSkeleton } from '../lib/agentkit/v6/semantic-plan/types/semantic-skeleton-types.js'
 import type { HardRequirements } from '../lib/agentkit/v6/requirements/HardRequirementsExtractor.js'
-import { createLogger } from '../lib/logger/index.js'
+import { createLogger } from '../lib/logger'
 import { readFileSync, writeFileSync } from 'fs'
 
 const logger = createLogger({ module: 'TEST', service: 'IRAutoFixOnly' })

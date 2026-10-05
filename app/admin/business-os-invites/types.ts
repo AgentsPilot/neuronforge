@@ -42,6 +42,11 @@ export interface InviteRow {
   redeemedAccountId: string | null;
   /** Slice 1b: the invitation circle (1 for an admin invite), or null. */
   level: number | null;
+  /**
+   * Slice 5b (FR-36): the account the new account was invited under (its
+   * lineage parent). Null for an L1 champion; absent from an older server.
+   */
+  parentAccountId?: string | null;
   /** Slice 1b (FR-12a, T-16): the signup stopped halfway (derived on the server). */
   redemptionStoppedHalfway: boolean;
   /** Slice 1b (SA D-2): the last recorded failure. Never an email. */
@@ -55,7 +60,19 @@ export interface InviteRow {
   /** Slice 2a: the invitation email. Absent from an older server: nothing is shown. */
   emailStatus?: InviteEmailStatus;
   emailStatusAt?: string | null;
+  /**
+   * Slice 5a (F5a-11): who issued it. `account` is a champion's friend invite;
+   * `issuerAccountId` is then that champion's account id. Absent from an older
+   * server: the row reads as an admin invite.
+   */
+  issuerKind?: InviteIssuerKind;
+  issuerAccountId?: string | null;
+  /** Slice 5a (F5a-8): revoked by the champion who sent it, not by an admin. */
+  revokedByInviter?: boolean;
 }
+
+/** Slice 5a: who issued an invite. */
+export type InviteIssuerKind = 'admin' | 'account';
 
 /** T-16: the banner summary (counts and invite ids only). */
 export interface StoppedHalfwaySummary {

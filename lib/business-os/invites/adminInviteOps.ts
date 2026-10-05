@@ -104,6 +104,12 @@ export interface InviteListView {
   /** Slice 1b: the invitation circle of that account (1 for every admin invite), or `null`. */
   level: number | null;
   /**
+   * Slice 5b (FR-36): the account that account was invited under, read from
+   * its lineage row. `null` for an L1 champion, a pending invite, or a failed
+   * lineage read.
+   */
+  parentAccountId: string | null;
+  /**
    * Slice 1b (FR-12a, SA D-3, T-16): a signup that stopped halfway, derived
    * from data: not redeemed AND (a failure is recorded OR a claim is older than
    * the lease). The second half catches a function killed by its timeout, which
@@ -116,6 +122,16 @@ export interface InviteListView {
   emailStatus: InviteEmailStatus;
   /** Slice 2a: when that status was reached, or `null` for "not emailed". */
   emailStatusAt: string | null;
+  /** Slice 5a (F5a-11): who issued it. `account` is a champion's friend invite. */
+  issuerKind: 'admin' | 'account';
+  /** Slice 5a (F5a-11): the issuing champion's account id, or `null` for an admin invite. */
+  issuerAccountId: string | null;
+  /**
+   * Slice 5a (F5a-8): revoked by the champion who sent it. An account-issued
+   * invite revoked with no admin id was revoked by its inviter; an admin's
+   * revoke always stamps the admin's id.
+   */
+  revokedByInviter: boolean;
 }
 
 /** The FR-12a record as the admin row shows it (SA D-2, T-16). */
@@ -147,10 +163,14 @@ export const INVITE_LIST_VIEW_KEYS: ReadonlyArray<keyof InviteListView> = [
   'openedByExistingAccountAt',
   'redeemedAccountId',
   'level',
+  'parentAccountId',
   'redemptionStoppedHalfway',
   'redemptionFailure',
   'emailStatus',
   'emailStatusAt',
+  'issuerKind',
+  'issuerAccountId',
+  'revokedByInviter',
 ];
 
 /** The D-3 derivation, in one place (the C-11 one-derivation rule). */
@@ -165,7 +185,8 @@ export function toInviteListView(
   row: BusinessOsInvite,
   config: EntitlementConfig,
   now: Date,
-  level: number | null = null
+  level: number | null = null,
+  parentAccountId: string | null = null
 ): InviteListView {
   const email = deriveInviteEmailStatus(row);
   return {
@@ -187,6 +208,7 @@ export function toInviteListView(
     openedByExistingAccountAt: row.opened_by_existing_account_at,
     redeemedAccountId: row.redeemed_account_id,
     level,
+    parentAccountId,
     redemptionStoppedHalfway: isRedemptionStoppedHalfway(row, now),
     redemptionFailure: row.redemption_failed_at
       ? {
@@ -199,6 +221,9 @@ export function toInviteListView(
       : null,
     emailStatus: email.status,
     emailStatusAt: email.at,
+    issuerKind: row.issuer_kind,
+    issuerAccountId: row.issuer_kind === 'account' ? row.issuer_account_id : null,
+    revokedByInviter: row.issuer_kind === 'account' && row.revoked_at !== null && row.revoked_by_admin_id === null,
   };
 }
 
@@ -332,9 +357,22 @@ export interface CreateInviteDeps {
 }
 
 /**
+ * The inviter's name as it is snapshotted (C-9): `profiles.full_name`, trimmed
+ * and capped at `INVITER_NAME_MAX` code points; otherwise "AgentPilot".
+ *
+ * Shared by admin invites and, from Slice 5a, a champion's friend invites (SA
+ * R-1): a nameless champion is "AgentPilot" too, NEVER their email, because the
+ * snapshot is shown on the public page to anyone holding the link and an
+ * address in a From display name is a phishing pattern.
+ */
+export function inviterNameFromProfile(fullName: unknown): string {
+  const name = typeof fullName === 'string' ? Array.from(fullName.trim()).slice(0, INVITER_NAME_MAX).join('').trim() : '';
+  return name.length > 0 ? name : INVITER_NAME_FALLBACK;
+}
+
+/**
  * The inviter's name, snapshotted onto the invite (C-9), so the public page
- * never reads admin data. `profiles.full_name`, trimmed and capped; otherwise
- * "AgentPilot". A failed read is a warning, not a failed invite.
+ * never reads admin data. A failed read is a warning, not a failed invite.
  */
 async function inviterDisplayNameFor(deps: CreateInviteDeps): Promise<string> {
   const { data, error } = await deps.profileRepository.findById(deps.adminId);
@@ -343,8 +381,7 @@ async function inviterDisplayNameFor(deps: CreateInviteDeps): Promise<string> {
     return INVITER_NAME_FALLBACK;
   }
 
-  const name = typeof data?.full_name === 'string' ? Array.from(data.full_name.trim()).slice(0, INVITER_NAME_MAX).join('').trim() : '';
-  return name.length > 0 ? name : INVITER_NAME_FALLBACK;
+  return inviterNameFromProfile(data?.full_name);
 }
 
 /**
@@ -471,7 +508,8 @@ export type ListInvitesOutcome =
 
 /**
  * The newest invites (up to `INVITE_LIST_CEILING`), each with its derived
- * state, the lineage level of accepted ones (Slice 1b), the T-16 banner summary,
+ * state, the lineage level of accepted ones (Slice 1b) and their parent account
+ * (Slice 5b, FR-36), the T-16 banner summary,
  * and `truncated` (Slice 1c): the ceiling was reached, so older invites may
  * exist that the list, and therefore its filters and search, cannot see.
  *
@@ -491,7 +529,7 @@ export async function listInvitesForAdmin(deps: {
   const { data, error } = await deps.repository.listRecentForAdmin({ limit: INVITE_LIST_CEILING });
   if (error || !data) return { ok: false };
 
-  const levels = new Map<string, number>();
+  const lineageByInvite = new Map<string, { level: number; parentAccountId: string | null }>();
   const redeemedIds = data.filter((row) => row.redeemed_at).map((row) => row.id);
   if (deps.lineage) {
     for (let start = 0; start < redeemedIds.length; start += INVITE_LINEAGE_BATCH) {
@@ -502,12 +540,17 @@ export async function listInvitesForAdmin(deps: {
         deps.logger?.warn({ err: lineage.error, invites: batch.length }, 'Could not read lineage levels for the invite list');
       }
       for (const entry of lineage.data ?? []) {
-        if (entry.invite_id) levels.set(entry.invite_id, entry.level);
+        if (entry.invite_id) {
+          lineageByInvite.set(entry.invite_id, { level: entry.level, parentAccountId: entry.parent_account_id ?? null });
+        }
       }
     }
   }
 
-  const invites = data.map((row) => toInviteListView(row, deps.config, deps.now, levels.get(row.id) ?? null));
+  const invites = data.map((row) => {
+    const lineage = lineageByInvite.get(row.id);
+    return toInviteListView(row, deps.config, deps.now, lineage?.level ?? null, lineage?.parentAccountId ?? null);
+  });
   const stopped = invites.filter((invite) => invite.redemptionStoppedHalfway).map((invite) => invite.id);
   return {
     ok: true,

@@ -7,6 +7,20 @@ import { createLogger, Logger } from '@/lib/logger';
 import type { UserConnection } from '@/lib/types/plugin-types';
 import type { AgentRepositoryResult, UpsertPluginConnectionInput } from './types';
 
+/**
+ * The only columns the GDPR export reads. Credentials and tokens are never
+ * selected, so they cannot reach the export by accident.
+ */
+const USER_DATA_EXPORT_COLUMNS = 'user_id, plugin_key, created_at, updated_at, metadata';
+
+export interface PluginConnectionExportRow {
+  user_id: string;
+  plugin_key: string;
+  created_at: string | null;
+  updated_at: string | null;
+  metadata: unknown;
+}
+
 export class PluginConnectionRepository {
   private supabase: SupabaseClient;
   private logger: Logger;
@@ -262,6 +276,28 @@ export class PluginConnectionRepository {
       if (error) throw error;
       return { data: data?.length || 0, error: null };
     } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). Every plugin
+   * connection of the caller, any status, unordered, with the five
+   * USER_DATA_EXPORT_COLUMNS only: credentials are never read. The column set is
+   * fixed; changing it changes what the export holds, which is a privacy
+   * decision.
+   */
+  async listForUserDataExport(userId: string): Promise<AgentRepositoryResult<PluginConnectionExportRow[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('plugin_connections')
+        .select(USER_DATA_EXPORT_COLUMNS)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+      return { data: (data ?? []) as PluginConnectionExportRow[], error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to list plugin connections for the data export');
       return { data: null, error: error as Error };
     }
   }

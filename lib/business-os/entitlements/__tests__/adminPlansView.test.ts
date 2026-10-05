@@ -349,9 +349,9 @@ describe('the sentences the page shows without computing them', () => {
 
     // A one-off total and a monthly rate read differently, because they ARE
     // different: running out of a total ends the trial.
-    expect(byId.trial.aiActions).toMatch(/in total$/);
-    expect(byId.basic.aiActions).toMatch(/per month$/);
-    for (const plan of view.plans) expect(plan.aiActions).not.toContain('{');
+    expect(byId.trial.credits).toMatch(/in total$/);
+    expect(byId.basic.credits).toMatch(/per month$/);
+    for (const plan of view.plans) expect(plan.credits).not.toContain('{');
   });
 
   it('says when a trial ends, in the numbers the config holds', () => {

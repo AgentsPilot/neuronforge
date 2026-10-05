@@ -11,8 +11,9 @@
 //
 // CHARGE (deduction layer slice 3b-ii): after the entry is queued, the action's
 // credit charge is written by `recordAiCharge` (aiChargeRecorder.ts). It is the
-// ONE awaited write here, time-boxed at `BOS_AI_CHARGE_WRITE_BUDGET_MS`, and it
-// never throws, so it cannot change the action's value or error. The entry and
+// ONE awaited write here, time-boxed at `BOS_AI_CHARGE_WRITE_BUDGET_MS` (plus,
+// after a recorded charge, the recorder's bounded low-line check — slice 8b),
+// and it never throws, so it cannot change the action's value or error. The entry and
 // the charge take the SAME decision (identities and failure, SA N-7). Charges
 // are recorded in every entitlements mode: a charge measures, it decides
 // nothing (SA Q-4).
@@ -22,7 +23,8 @@
 // production trigger yet. What each type is (its area, who it faces, whether it
 // is setup AI, whether it is charged, its diary label, whether a template
 // fallback exists) is declared once, in `AI_ACTION_DECLARATIONS` below the
-// union (deduction layer FR-4, slice 1). Nothing reads those facts yet.
+// union (deduction layer FR-4, slice 1). Read by the credit ledger's effective-
+// fields resolver (area) and the owner's credit history (diary label).
 //
 // What an entry may hold is fixed (D-2, FR-4, FR-5): ids, counts, tokens, the
 // estimated cost, catalog call names, model names, the outcome and an error
@@ -79,7 +81,8 @@ export type AiActionAudience = 'owner' | 'client';
 
 /**
  * What the charge, the diary and the limit need to know about one action type
- * (deduction layer FR-4). Nothing reads it yet: later slices do.
+ * (deduction layer FR-4). The area and the diary label are read by
+ * `lib/business-os/credits/effectiveFields.ts` (the credit history, slice 7).
  *
  * Audience and template fallback travel together, so the type itself refuses
  * an owner-facing action with a fallback status, or a client-facing one without.
@@ -95,8 +98,9 @@ export type AiActionDeclaration = {
   isCharged: boolean;
   /**
    * Plain-language diary label; the area is shown beside it, so it says what
-   * the action did. DRAFT wording: BA/user (and native he/es) review before
-   * anything renders it.
+   * the action did. Rendered in the owner's credit history since slice 7
+   * (English approved by the user, D-q); he / es pending native review before
+   * release.
    */
   diaryLabels: Labels;
   /** Declared and labelled, but no production trigger yet (KI-4). */
@@ -180,7 +184,7 @@ export const AI_ACTION_DECLARATIONS = {
   },
   onboarding_turn: {
     area: 'onboarding', audience: 'owner', templateFallback: 'n/a', isSetup: true, isCharged: true,
-    diaryLabels: { en: 'Setup conversation', he: 'שיחת הקמה', es: 'Conversación de configuración' },
+    diaryLabels: { en: 'Replied in your setup conversation', he: 'מענה בשיחת ההקמה', es: 'Respuesta en tu conversación de configuración' },
   },
   image_generation: {
     area: 'images', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
@@ -445,7 +449,9 @@ interface AiActionDecision {
  * not wrapped. Writing the entry can never fail, change or delay the action: it
  * is queued without waiting, and any fault in building it is logged and dropped.
  * The charge (slice 3b-ii) is awaited, but can never fail or change the action,
- * and delays it by at most `BOS_AI_CHARGE_WRITE_BUDGET_MS`. An action that made
+ * and delays it by at most `BOS_AI_CHARGE_WRITE_BUDGET_MS`, plus the low-line
+ * check's bound after a recorded charge (slice 8b: ≤ 0.5 s, ≤ 2.5 s on the one
+ * charge per period that crosses the low line). An action that made
  * no LLM call writes no entry and no charge, and awaits nothing (FR-7).
  */
 export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHandle) => Promise<T>): Promise<T> {

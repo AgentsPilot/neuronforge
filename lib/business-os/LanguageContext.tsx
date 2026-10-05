@@ -3,6 +3,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
+import { clientLogger } from '@/lib/logger/client';
+import { CREDIT_EXPLANATION } from '@/lib/i18n/creditExplanation';
+
+const logger = clientLogger.child({ module: 'LanguageContext' });
 
 type Language = 'en' | 'es' | 'he';
 export type CurrencyCode = 'USD' | 'EUR' | 'ILS' | 'GBP';
@@ -54,11 +58,12 @@ interface LanguageContextType {
   /**
    * Save the business's default currency.
    *
-   * Resolves `{ ok: false, error }` when the database refuses — which it does
-   * once money exists in the current currency. The local value is put back, so
-   * the screen never shows a setting that was not stored.
+   * Resolves `{ ok: false, error }` when the save fails. The local value is put
+   * back, so the screen never shows a setting that was not stored. `code` is
+   * `'CURRENCY_LOCKED'` only when the database refused because money exists in
+   * the current currency; any other failure (network, server) has no code.
    */
-  setCurrency: (code: CurrencyCode) => Promise<{ ok: boolean; error?: string }>;
+  setCurrency: (code: CurrencyCode) => Promise<{ ok: boolean; code?: string; error?: string }>;
   availableCurrencies: typeof CURRENCY_CONFIGS;
   formatCurrency: (amount: number | null, options?: { showFree?: boolean; currencyOverride?: CurrencyCode }) => string;
 
@@ -323,12 +328,13 @@ export const translations = {
     'plan.problem.unavailable': 'We could not load your plan just now. Nothing has changed about your account — please try again shortly.',
     'plan.problem.no_record': 'We do not have a plan record for this account yet. Everything keeps working; get in touch if this stays here.',
     'plan.ends_on': 'Your free access ends on {date}.',
-    'plan.ends_on_or_actions': 'Ends on {date}, or when the AI actions run out, whichever comes first.',
+    'plan.ends_on_or_credits': 'Ends on {date}, or when the credits run out, whichever comes first.',
     'plan.move_before_then': 'Get in touch if you would like to move plan before then.',
     'plan.changes.no_end_date': 'Your access has no end date. Business OS is normally a paid monthly plan, so if that ever changes for your account we will tell you first and you will be able to choose a plan.',
     'plan.changes.on_end': 'When this ends you will be able to choose a paid monthly plan. Nothing is charged before you choose one.',
     'plan.badge.no_end': 'Everything included, free, with no end date. See your plan.',
     'plan.badge.ends': 'Everything included and free for now, with an end date set. See your plan.',
+    'plan.category.credits': 'Credits',
     'plan.category.crm': 'Clients (CRM)',
     'plan.category.website_intake': 'Website and enquiries',
     'plan.category.payments': 'Payments',
@@ -338,6 +344,16 @@ export const translations = {
     'plan.category.support': 'Support',
     'plan.category.platform': 'Platform',
     'plan.category.addon': 'Add-ons',
+    // The plan screen's remaining words, so a Hebrew or Spanish owner reads no
+    // English there (user decision, 2026-10-02). {plan}, {from}, {to} are filled
+    // by the component; the values arrive already in the reader's language.
+    'plan.features_unavailable': 'We could not list your features just now. Nothing has been removed from your account.',
+    'plan.next.adds_heading': 'What {plan} would add',
+    'plan.next.improves_line': '{from} becomes {to}',
+    'plan.next.changes_heading': 'What changes on {plan}',
+    'plan.next.changes_line': 'from {from} to {to}, which is different rather than larger',
+    'plan.next.available': 'Available to choose.',
+    'plan.next.coming_soon': 'Coming soon',
     'gaps.kind.enquiry_unanswered': 'Waiting for a reply',
     'gaps.kind.quote_unwritten': 'Waiting for a price',
     'gaps.kind.quote_unsent': 'Quote written, not sent',
@@ -1291,20 +1307,57 @@ export const translations = {
     // treated as the answer — so the way out has to be visible, not guessed.
     'chat.need_fields_cancel': "(or say 'cancel' to drop it)",
     'chat.budget.warn': 'You have {remaining} of {limit} questions left today.',
-    'usage.title': 'AI credits',
-    'usage.available': 'available',
-    'usage.of': 'of',
-    'usage.category.chat': 'Assistant',
-    'usage.category.automations_built': 'Building automations',
-    'usage.category.automations_run': 'Running automations',
-    'usage.category.website': 'Website & pages',
-    'usage.category.insights': 'Insights',
-    'usage.category.documents': 'Documents',
-    'usage.category.help': 'Help',
-    'usage.category.other': 'Other',
-    'usage.credits': 'credits',
-    'usage.last30days': 'Last 30 days',
-    'usage.none': 'Nothing used yet.',
+    // Credits card (credit deduction slice 6a, D-a / D-b / D-c). Never 'AI': the pool pays for any service (BD-15).
+    'usage.title': 'Credits',
+    'usage.resets_on': 'Resets {date}',
+    'usage.for_trial': 'For your trial',
+    'usage.this_month': 'This month',
+    'usage.left': 'left',
+    // Slice 8a (FR-46, SQ-47): the card shows a percentage left; {percent} is always Intl's own format.
+    'usage.less_than_percent': 'less than {percent}',
+    'usage.sr.monthly': '{percent} of your credits left, resets {date}',
+    'usage.sr.trial': '{percent} of your credits left for your trial',
+    'usage.sr.plain': '{percent} of your credits left',
+    'usage.used': 'used',
+    'usage.less_than_one': 'less than 1',
+    'usage.explain.monthly': CREDIT_EXPLANATION.en.monthly,
+    'usage.explain.trial': CREDIT_EXPLANATION.en.trial,
+    'usage.refresh': 'Refresh credits',
+    'usage.error': "We couldn't load your credits just now. Please try again.",
+    'usage.extra.label': 'Extra credits',
+    'usage.extra.explain': "Extra credits are used after your plan's credits and do not reset monthly.",
+    // Credit history (credit deduction slice 7a, D-i to D-q). Neutral wording, never 'AI' (BD-15).
+    'credits.history.link': 'Credit history',
+    'credits.history.title': 'Credit history',
+    'credits.history.period.this': 'This period · {from} – {to}',
+    'credits.history.period.since': 'This period · since {from}',
+    'credits.history.period.trial': 'Since your trial began',
+    'credits.history.period.month': 'This month',
+    'credits.history.used': '{n} credits used',
+    'credits.history.used_one': '{n} credit used',
+    'credits.history.split': '{owner} by you · {automatic} automatic',
+    'credits.history.who.you': 'You',
+    'credits.history.who.automatic': 'Automatic',
+    'credits.history.did_not_complete': "Didn't complete",
+    'credits.history.correction': 'Correction to: {label}',
+    'credits.history.other': 'Other activity',
+    'credits.history.footnote': 'Each line is rounded; the total is exact.',
+    'credits.history.empty': 'Nothing has used credits yet this period.',
+    'credits.history.empty_trial': 'Nothing has used credits yet.',
+    'credits.history.error': 'Could not load your credit history',
+    'credits.history.loading': 'Loading…',
+    'credits.history.show_more': 'Show more',
+    'credits.history.less_than_tenth': 'less than 0.1',
+    'credits.history.today': 'Today {time}',
+    'credits.history.yesterday': 'Yesterday {time}',
+    'credits.area.chat': 'Chat',
+    'credits.area.insights': 'Insights',
+    'credits.area.briefing': 'Briefing',
+    'credits.area.website': 'Website',
+    'credits.area.intake': 'Forms',
+    'credits.area.leads': 'Enquiries',
+    'credits.area.onboarding': 'Setup',
+    'credits.area.images': 'Images',
     'chat.budget.spent': "That's all your questions for today — you've used {limit}. They reset at midnight UTC.",
     'chat.which_one_many': 'More than one matches. Which did you mean?',
     'chat.no_match': "I couldn't find one matching that.",
@@ -4270,12 +4323,13 @@ export const translations = {
     'plan.problem.unavailable': 'No pudimos cargar tu plan ahora mismo. Nada ha cambiado en tu cuenta: inténtalo de nuevo en un momento.',
     'plan.problem.no_record': 'Todavía no tenemos un registro de plan para esta cuenta. Todo sigue funcionando; escríbenos si esto no desaparece.',
     'plan.ends_on': 'Tu acceso gratuito termina el {date}.',
-    'plan.ends_on_or_actions': 'Termina el {date}, o cuando se agoten las acciones de IA, lo que ocurra primero.',
+    'plan.ends_on_or_credits': 'Termina el {date}, o cuando se agoten los créditos, lo que ocurra primero.',
     'plan.move_before_then': 'Escríbenos si quieres cambiar de plan antes.',
     'plan.changes.no_end_date': 'Tu acceso no tiene fecha de fin. Business OS es normalmente un plan mensual de pago, así que si eso cambiara para tu cuenta te lo diríamos primero y podrías elegir un plan.',
     'plan.changes.on_end': 'Cuando esto termine podrás elegir un plan mensual de pago. No se cobra nada antes de que elijas uno.',
     'plan.badge.no_end': 'Todo incluido, gratis y sin fecha de fin. Ver tu plan.',
     'plan.badge.ends': 'Todo incluido y gratis por ahora, con una fecha de fin fijada. Ver tu plan.',
+    'plan.category.credits': 'Créditos',
     'plan.category.crm': 'Clientes (CRM)',
     'plan.category.website_intake': 'Web y consultas',
     'plan.category.payments': 'Pagos',
@@ -4285,6 +4339,13 @@ export const translations = {
     'plan.category.support': 'Soporte',
     'plan.category.platform': 'Plataforma',
     'plan.category.addon': 'Complementos',
+    'plan.features_unavailable': 'No hemos podido mostrar tus funciones en este momento. No se ha quitado nada de tu cuenta.',
+    'plan.next.adds_heading': 'Qué añadiría {plan}',
+    'plan.next.improves_line': '{from} pasa a {to}',
+    'plan.next.changes_heading': 'Qué cambia en {plan}',
+    'plan.next.changes_line': 'de {from} a {to}, que es distinto, no mayor',
+    'plan.next.available': 'Disponible para elegir.',
+    'plan.next.coming_soon': 'Próximamente',
     'gaps.kind.enquiry_unanswered': 'Esperan respuesta',
     'gaps.kind.quote_unwritten': 'Esperan un precio',
     'gaps.kind.quote_unsent': 'Presupuesto sin enviar',
@@ -5181,20 +5242,58 @@ export const translations = {
     'chat.unclassified': 'Algunos registros usan un valor que esta configuración ya no incluye ({values}), así que no se cuentan arriba.',
     'chat.need_fields_cancel': '(o di "cancelar" para descartarlo)',
     'chat.budget.warn': 'Te quedan {remaining} de {limit} preguntas hoy.',
-    'usage.title': 'Créditos de IA',
-    'usage.available': 'disponibles',
-    'usage.of': 'de',
-    'usage.category.chat': 'Asistente',
-    'usage.category.automations_built': 'Crear automatizaciones',
-    'usage.category.automations_run': 'Ejecutar automatizaciones',
-    'usage.category.website': 'Web y páginas',
-    'usage.category.insights': 'Hallazgos',
-    'usage.category.documents': 'Documentos',
-    'usage.category.help': 'Ayuda',
-    'usage.category.other': 'Otros',
-    'usage.credits': 'créditos',
-    'usage.last30days': 'Últimos 30 días',
-    'usage.none': 'Aún no has usado nada.',
+    // Credits card (credit deduction slice 6a, D-a / D-b / D-c). Never 'AI': the pool pays for any service (BD-15). NATIVE REVIEW before release (D-b).
+    'usage.title': 'Créditos',
+    'usage.resets_on': 'Se renueva el {date}',
+    'usage.for_trial': 'Para tu prueba',
+    'usage.this_month': 'Este mes',
+    'usage.left': 'restantes',
+    // Slice 8a (FR-46, SQ-47): needs native review.
+    'usage.less_than_percent': 'menos del {percent}',
+    'usage.sr.monthly': 'Te queda el {percent} de tus créditos; se renueva el {date}',
+    'usage.sr.trial': 'Te queda el {percent} de tus créditos de tu prueba',
+    'usage.sr.plain': 'Te queda el {percent} de tus créditos',
+    'usage.used': 'usados',
+    'usage.less_than_one': 'menos de 1',
+    'usage.explain.monthly': CREDIT_EXPLANATION.es.monthly,
+    'usage.explain.trial': CREDIT_EXPLANATION.es.trial,
+    'usage.refresh': 'Actualizar créditos',
+    'usage.error': 'No pudimos cargar tus créditos en este momento. Inténtalo de nuevo.',
+    // Slice 11d (S11-D-1): needs native review.
+    'usage.extra.label': 'Créditos extra',
+    'usage.extra.explain': 'Los créditos extra se usan después de los créditos de tu plan y no se renuevan cada mes.',
+    // Credit history (credit deduction slice 7a, D-i to D-q). Neutral wording, never 'AI' (BD-15). Draft — native review before release.
+    'credits.history.link': 'Historial de créditos',
+    'credits.history.title': 'Historial de créditos',
+    'credits.history.period.this': 'Este periodo · {from} – {to}',
+    'credits.history.period.since': 'Este periodo · desde el {from}',
+    'credits.history.period.trial': 'Desde que empezó tu prueba',
+    'credits.history.period.month': 'Este mes',
+    'credits.history.used': '{n} créditos usados',
+    'credits.history.used_one': '{n} crédito usado',
+    'credits.history.split': '{owner} por ti · {automatic} automático',
+    'credits.history.who.you': 'Por ti',
+    'credits.history.who.automatic': 'Automático',
+    'credits.history.did_not_complete': 'No se completó',
+    'credits.history.correction': 'Corrección de: {label}',
+    'credits.history.other': 'Otra actividad',
+    'credits.history.footnote': 'Cada línea está redondeada; el total es exacto.',
+    'credits.history.empty': 'Todavía no se han usado créditos en este periodo.',
+    'credits.history.empty_trial': 'Todavía no se han usado créditos.',
+    'credits.history.error': 'No pudimos cargar tu historial de créditos',
+    'credits.history.loading': 'Cargando…',
+    'credits.history.show_more': 'Mostrar más',
+    'credits.history.less_than_tenth': 'menos de 0,1',
+    'credits.history.today': 'Hoy {time}',
+    'credits.history.yesterday': 'Ayer {time}',
+    'credits.area.chat': 'Chat',
+    'credits.area.insights': 'Novedades',
+    'credits.area.briefing': 'Resumen',
+    'credits.area.website': 'Sitio web',
+    'credits.area.intake': 'Formularios',
+    'credits.area.leads': 'Consultas',
+    'credits.area.onboarding': 'Configuración',
+    'credits.area.images': 'Imágenes',
     'chat.budget.spent': 'Has usado tus {limit} preguntas de hoy. Se renuevan a medianoche UTC.',
     'chat.which_one_many': 'Coincide más de uno. ¿A cuál te referías?',
     'chat.no_match': 'No encontré ninguno que coincida.',
@@ -10275,12 +10374,13 @@ export const translations = {
     'plan.problem.unavailable': 'לא הצלחנו לטעון את התוכנית כרגע. שום דבר בחשבון לא השתנה, אפשר לנסות שוב בעוד רגע.',
     'plan.problem.no_record': 'עוד אין רשומת תוכנית לחשבון הזה. הכול ממשיך לעבוד; אם ההודעה נשארת, אפשר ליצור קשר.',
     'plan.ends_on': 'הגישה החינמית מסתיימת ב־{date}.',
-    'plan.ends_on_or_actions': 'מסתיים ב־{date}, או כשייגמרו פעולות ה־AI, המוקדם מביניהם.',
+    'plan.ends_on_or_credits': 'מסתיים ב־{date}, או כשייגמרו הקרדיטים, המוקדם מביניהם.',
     'plan.move_before_then': 'אם רוצים לעבור תוכנית לפני כן, אפשר ליצור קשר.',
     'plan.changes.no_end_date': 'לגישה שלך אין תאריך סיום. Business OS היא בדרך כלל תוכנית חודשית בתשלום, ואם זה ישתנה לחשבון שלך נעדכן אותך קודם ותהיה לך אפשרות לבחור תוכנית.',
     'plan.changes.on_end': 'בסיום תוכלו לבחור תוכנית חודשית בתשלום. לא נגבה דבר לפני שתבחרו.',
     'plan.badge.no_end': 'הכול כלול, בחינם, בלי תאריך סיום. לצפייה בתוכנית.',
     'plan.badge.ends': 'הכול כלול ובחינם בשלב הזה, עם תאריך סיום שנקבע. לצפייה בתוכנית.',
+    'plan.category.credits': 'קרדיטים',
     'plan.category.crm': 'לקוחות (CRM)',
     'plan.category.website_intake': 'אתר ופניות',
     'plan.category.payments': 'תשלומים',
@@ -10290,6 +10390,13 @@ export const translations = {
     'plan.category.support': 'תמיכה',
     'plan.category.platform': 'פלטפורמה',
     'plan.category.addon': 'תוספות',
+    'plan.features_unavailable': 'לא הצלחנו להציג את התכונות שלך כרגע. שום דבר לא הוסר מהחשבון שלך.',
+    'plan.next.adds_heading': 'מה נוסף ב־{plan}',
+    'plan.next.improves_line': '{to} במקום {from}',
+    'plan.next.changes_heading': 'מה משתנה ב־{plan}',
+    'plan.next.changes_line': 'מ־{from} ל־{to}, שינוי ולא הגדלה',
+    'plan.next.available': 'זמינה לבחירה.',
+    'plan.next.coming_soon': 'בקרוב',
     'gaps.kind.enquiry_unanswered': 'מחכים לתשובה',
     'gaps.kind.quote_unwritten': 'מחכים להצעת מחיר',
     'gaps.kind.quote_unsent': 'הצעה נכתבה ולא נשלחה',
@@ -11186,20 +11293,58 @@ export const translations = {
     'chat.unclassified': 'חלק מהרשומות מכילות ערך שההגדרות כבר לא כוללות ({values}), ולכן הן לא נספרות למעלה.',
     'chat.need_fields_cancel': '(או כתוב "ביטול" כדי לבטל)',
     'chat.budget.warn': 'נשארו לך {remaining} שאלות מתוך {limit} להיום.',
-    'usage.title': 'קרדיטים של AI',
-    'usage.available': 'זמינים',
-    'usage.of': 'מתוך',
-    'usage.category.chat': 'עוזר אישי',
-    'usage.category.automations_built': 'בניית אוטומציות',
-    'usage.category.automations_run': 'הרצת אוטומציות',
-    'usage.category.website': 'אתר ודפים',
-    'usage.category.insights': 'תובנות',
-    'usage.category.documents': 'מסמכים',
-    'usage.category.help': 'עזרה',
-    'usage.category.other': 'אחר',
-    'usage.credits': 'קרדיטים',
-    'usage.last30days': '30 הימים האחרונים',
-    'usage.none': 'עדיין לא נעשה שימוש.',
+    // Credits card (credit deduction slice 6a, D-a / D-b / D-c). Never 'AI': the pool pays for any service (BD-15). NATIVE REVIEW before release (D-b).
+    'usage.title': 'קרדיטים',
+    'usage.resets_on': 'מתאפס ב־{date}',
+    'usage.for_trial': 'לתקופת הניסיון',
+    'usage.this_month': 'החודש',
+    'usage.left': 'נותרו',
+    // Slice 8a (FR-46, SQ-47): needs native review.
+    'usage.less_than_percent': 'פחות מ־{percent}',
+    'usage.sr.monthly': 'נותרו {percent} מהקרדיטים שלך, מתאפס ב־{date}',
+    'usage.sr.trial': 'נותרו {percent} מהקרדיטים שלך לתקופת הניסיון',
+    'usage.sr.plain': 'נותרו {percent} מהקרדיטים שלך',
+    'usage.used': 'נוצלו',
+    'usage.less_than_one': 'פחות מ־1',
+    'usage.explain.monthly': CREDIT_EXPLANATION.he.monthly,
+    'usage.explain.trial': CREDIT_EXPLANATION.he.trial,
+    'usage.refresh': 'רענון קרדיטים',
+    'usage.error': 'לא הצלחנו לטעון את הקרדיטים כרגע. נסו שוב.',
+    // Slice 11d (S11-D-1): needs native review.
+    'usage.extra.label': 'קרדיטים נוספים',
+    'usage.extra.explain': 'קרדיטים נוספים מנוצלים אחרי הקרדיטים של התוכנית שלך ואינם מתאפסים מדי חודש.',
+    // Credit history (credit deduction slice 7a, D-i to D-q). Neutral wording, never 'AI' (BD-15). Draft — native review before release.
+    'credits.history.link': 'היסטוריית קרדיטים',
+    'credits.history.title': 'היסטוריית קרדיטים',
+    'credits.history.period.this': 'התקופה הנוכחית · {from} – {to}',
+    'credits.history.period.since': 'התקופה הנוכחית · מאז {from}',
+    'credits.history.period.trial': 'מאז תחילת תקופת הניסיון',
+    'credits.history.period.month': 'החודש',
+    'credits.history.used': 'נוצלו {n} קרדיטים',
+    'credits.history.used_one': 'נוצל {n} קרדיט',
+    'credits.history.split': '{owner} על ידך · {automatic} אוטומטי',
+    'credits.history.who.you': 'על ידך',
+    'credits.history.who.automatic': 'אוטומטי',
+    'credits.history.did_not_complete': 'לא הושלם',
+    'credits.history.correction': 'תיקון ל: {label}',
+    'credits.history.other': 'פעילות אחרת',
+    'credits.history.footnote': 'כל שורה מעוגלת; הסכום הכולל מדויק.',
+    'credits.history.empty': 'עדיין לא נעשה שימוש בקרדיטים בתקופה זו.',
+    'credits.history.empty_trial': 'עדיין לא נעשה שימוש בקרדיטים.',
+    'credits.history.error': 'לא הצלחנו לטעון את היסטוריית הקרדיטים',
+    'credits.history.loading': 'טוען…',
+    'credits.history.show_more': 'הצג עוד',
+    'credits.history.less_than_tenth': 'פחות מ־0.1',
+    'credits.history.today': 'היום {time}',
+    'credits.history.yesterday': 'אתמול {time}',
+    'credits.area.chat': 'צ׳אט',
+    'credits.area.insights': 'תובנות',
+    'credits.area.briefing': 'תדריך',
+    'credits.area.website': 'אתר',
+    'credits.area.intake': 'טפסים',
+    'credits.area.leads': 'פניות',
+    'credits.area.onboarding': 'הקמה',
+    'credits.area.images': 'תמונות',
     'chat.budget.spent': 'ניצלת את {limit} השאלות שלך להיום. הן מתחדשות בחצות UTC.',
     'chat.which_one_many': 'יותר מאחד מתאים. לאיזה התכוונת?',
     'chat.no_match': 'לא מצאתי כזה.',
@@ -11681,6 +11826,57 @@ export const translations = {
   },
 };
 
+/**
+ * What the server has stored for this user, raw, validated by the caller.
+ *
+ * A value is `null` when unset. A HALF is `null` when that read failed, so the
+ * caller can tell "nothing stored" from "unknown". The whole result is `null`
+ * when nothing could be read.
+ */
+interface StoredPreferences {
+  locale: { preferredLanguage: string | null; timezone: string | null } | null;
+  currency: { businessCurrency: string | null } | null;
+}
+
+async function loadPreferencesFromServer(): Promise<StoredPreferences | null> {
+  try {
+    const res = await fetch('/api/business-os/preferences', { method: 'GET' });
+    if (!res.ok) {
+      logger.debug({ status: res.status }, 'Failed to load preferences from the server');
+      return null;
+    }
+    const payload = (await res.json()) as { data?: StoredPreferences };
+    return payload.data ?? null;
+  } catch (err) {
+    logger.debug({ err }, 'Failed to load preferences from the server');
+    return null;
+  }
+}
+
+/**
+ * Save the language or the business currency through the server.
+ *
+ * The browser does not write these tables itself (CLAUDE.md rule 1). The route
+ * validates the value and scopes the write to the session user. Never throws:
+ * a network failure comes back as `{ ok: false }` like any other.
+ */
+async function savePreference(
+  body: { language: Language } | { currency: CurrencyCode }
+): Promise<{ ok: boolean; code?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/business-os/preferences', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return { ok: true };
+    const payload = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+    return { ok: false, code: payload?.code, error: payload?.error ?? `HTTP ${res.status}` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>('en');
   const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('USD');
@@ -11724,28 +11920,28 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
       // Then check if user is authenticated and load from database
       try {
+        // Auth only, no table access: who is signed in decides whether the
+        // pickers save, independently of whether the read below succeeds.
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           setUserId(user.id);
 
-          // Language AND clock off one row: both are business-level facts that
-          // every screen needs, and fetching them separately is what let the
-          // two drift apart per surface.
-          const { data: prefs } = await supabase
-            .from('user_preferences')
-            .select('preferred_language, timezone')
-            .eq('user_id', user.id)
-            .single();
+          // Language AND clock off one row, plus the business's own default
+          // currency, in one request through the server (CLAUDE.md rule 1).
+          // Both are business-level facts that every screen needs; fetching
+          // them separately is what let the two drift apart per surface.
+          //
+          // A half that could not be read is `null` and is skipped, keeping the
+          // localStorage values for it. Deliberately no language backfill then:
+          // a failed read is not "nothing stored", and writing this browser's
+          // language over a real stored one would be wrong.
+          const prefs = await loadPreferencesFromServer();
+          const businessCurrencyValue = prefs?.currency?.businessCurrency;
+          const locale = prefs?.locale;
 
           // The business's own default, for anything that WRITES a currency.
-          const { data: businessRow } = await supabase
-            .from('business_profiles')
-            .select('currency')
-            .eq('user_id', user.id)
-            .maybeSingle();
-
-          if (businessRow?.currency && businessRow.currency in CURRENCY_CONFIGS) {
-            setBusinessCurrency(businessRow.currency as CurrencyCode);
+          if (businessCurrencyValue && businessCurrencyValue in CURRENCY_CONFIGS) {
+            setBusinessCurrency(businessCurrencyValue as CurrencyCode);
 
             /*
              * The business's own currency also seeds the DISPLAY currency.
@@ -11761,40 +11957,33 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
              * this is a default.
              */
             if (!localStorage.getItem('business-os-currency')) {
-              setCurrencyCode(businessRow.currency as CurrencyCode);
+              setCurrencyCode(businessCurrencyValue as CurrencyCode);
             }
           }
 
-          if (prefs?.timezone) {
-            setTimezone(safeTimezone(prefs.timezone));
+          if (!locale) return;
+
+          if (locale.timezone) {
+            setTimezone(safeTimezone(locale.timezone));
           }
 
-          if (prefs?.preferred_language && (prefs.preferred_language === 'en' || prefs.preferred_language === 'es' || prefs.preferred_language === 'he')) {
-            setLanguageState(prefs.preferred_language);
-            localStorage.setItem('business-os-language', prefs.preferred_language);
-          } else if (savedLang) {
+          if (locale.preferredLanguage && (locale.preferredLanguage === 'en' || locale.preferredLanguage === 'es' || locale.preferredLanguage === 'he')) {
+            setLanguageState(locale.preferredLanguage);
+            localStorage.setItem('business-os-language', locale.preferredLanguage);
+          } else if (savedLang === 'en' || savedLang === 'es' || savedLang === 'he') {
             // No stored preference, but this browser knows what the user picked.
-            // Writes BOTH columns, the same pair syncLanguageToDatabase writes:
-            // filling only one leaves the two disagreeing, and server-side
-            // features have to pick a winner between them.
-            await Promise.all([
-              supabase
-                .from('user_preferences')
-                .upsert({
-                  user_id: user.id,
-                  preferred_language: savedLang,
-                  updated_at: new Date().toISOString()
-                }, { onConflict: 'user_id' }),
-              supabase
-                .from('business_profiles')
-                .update({ language: savedLang, updated_at: new Date().toISOString() })
-                .eq('user_id', user.id),
-            ]);
+            // The route writes BOTH columns, the same pair syncLanguageToDatabase
+            // writes: filling only one leaves the two disagreeing, and
+            // server-side features have to pick a winner between them.
+            const result = await savePreference({ language: savedLang });
+            if (!result.ok) {
+              logger.debug({ error: result.error }, 'Failed to backfill the language to the database');
+            }
           }
         }
       } catch (err) {
         // Silently fail - localStorage will be used as fallback
-        console.debug('Failed to load language from database:', err);
+        logger.debug({ err }, 'Failed to load language from database');
       }
     };
 
@@ -11811,41 +12000,15 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   // Sync language to database when it changes
   const syncLanguageToDatabase = useCallback(async (lang: Language) => {
     if (!userId) {
-      console.debug('syncLanguageToDatabase: No userId, skipping');
+      logger.debug('syncLanguageToDatabase: no userId, skipping');
       return;
     }
 
-    console.debug('syncLanguageToDatabase: Syncing language', { userId, lang });
-
-    try {
-      // Update user_preferences (for emails and insights)
-      const { error: prefError } = await supabase
-        .from('user_preferences')
-        .upsert({
-          user_id: userId,
-          preferred_language: lang,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'user_id' });
-
-      if (prefError) {
-        console.error('Failed to update user_preferences:', prefError);
-      } else {
-        console.debug('user_preferences updated successfully');
-      }
-
-      // Also update business_profiles.language for consistency
-      const { error: profileError } = await supabase
-        .from('business_profiles')
-        .update({ language: lang, updated_at: new Date().toISOString() })
-        .eq('user_id', userId);
-
-      if (profileError) {
-        console.error('Failed to update business_profiles:', profileError);
-      } else {
-        console.debug('business_profiles updated successfully');
-      }
-    } catch (err) {
-      console.error('Failed to sync language to database:', err);
+    // user_preferences (for emails and insights) and business_profiles.language,
+    // together, by the route.
+    const result = await savePreference({ language: lang });
+    if (!result.ok) {
+      logger.error({ error: result.error }, 'Failed to sync language to database');
     }
   }, [userId]);
 
@@ -11900,8 +12063,20 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
    * ───────────────────────────────────────────────────────────────────────────
    */
   const setCurrency = useCallback(
-    async (code: CurrencyCode): Promise<{ ok: boolean; error?: string }> => {
-      const previous = currencyCode;
+    async (code: CurrencyCode): Promise<{ ok: boolean; code?: string; error?: string }> => {
+      /*
+       * Three separate things to restore, each from its OWN previous value.
+       *
+       * The business currency used to be restored from `currencyCode`, the
+       * display currency. The two can differ (a device pin, or a business that
+       * never chose), so a refused save could leave `businessCurrency` holding
+       * the display value, and `businessCurrency` is what the invoice modals
+       * WRITE. That is the per-device-value-becomes-client-data bug the CLAUDE.md
+       * Currency rules exist to prevent.
+       */
+      const previousDisplay = currencyCode;
+      const previousBusiness = businessCurrency;
+      const previousPinned = localStorage.getItem('business-os-currency');
 
       // Optimistic, because the picker has always been instant.
       setCurrencyCode(code);
@@ -11910,33 +12085,36 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
       if (!userId) return { ok: true };
 
-      const { error } = await supabase
-        .from('business_profiles')
-        .update({ currency: code, updated_at: new Date().toISOString() })
-        .eq('user_id', userId);
+      // `code` is the owner's pick from the picker, never `currencyCode`.
+      const result = await savePreference({ currency: code });
 
-      if (error) {
+      if (!result.ok) {
         /*
          * PUT IT BACK.
          *
          * The database refuses a currency change once money exists in the old
          * one (`business_currency_lock`, 20261008), because changing it
-         * relabels history rather than converting it. Leaving the optimistic
-         * value on screen would show a setting that was not saved — the same
-         * "looks saved, isn't" failure this control had for its whole life,
-         * arrived at from the other direction.
+         * relabels history rather than converting it. The route reports that
+         * as `CURRENCY_LOCKED`. Leaving the optimistic value on screen would
+         * show a setting that was not saved — the same "looks saved, isn't"
+         * failure this control had for its whole life, arrived at from the
+         * other direction.
          */
-        setCurrencyCode(previous);
-        setBusinessCurrency(previous);
-        localStorage.setItem('business-os-currency', previous);
+        setCurrencyCode(previousDisplay);
+        setBusinessCurrency(previousBusiness);
+        if (previousPinned === null) {
+          localStorage.removeItem('business-os-currency');
+        } else {
+          localStorage.setItem('business-os-currency', previousPinned);
+        }
 
-        console.error('Failed to save the business currency:', error);
-        return { ok: false, error: error.message };
+        logger.error({ code: result.code, error: result.error }, 'Failed to save the business currency');
+        return { ok: false, code: result.code, error: result.error };
       }
 
       return { ok: true };
     },
-    [userId, currencyCode]
+    [userId, currencyCode, businessCurrency]
   );
 
   const t = (key: string, vars?: Record<string, string | number>): string => {

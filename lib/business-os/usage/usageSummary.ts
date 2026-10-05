@@ -1,11 +1,14 @@
 /**
- * What an account has used — per-feature and per-day token totals — computed
- * exactly the way the owner's usage card computes them.
+ * What an account has used in TOKENS — per-feature and per-day token totals,
+ * from `token_usage` — for the admin LLM usage report's Check 5 ("Token usage
+ * by feature").
  *
- * Extracted from `app/api/business-os/usage/route.ts` (Layer 1.1 FR-23) so the
- * admin LLM usage report's Check 5 uses the SAME computation as the card, not a
- * copy of it. No behaviour change: the route's response is pinned by
- * `app/api/business-os/usage/__tests__/route.test.ts`.
+ * History: extracted from the owner usage route in Layer 1.1 (FR-23). Since
+ * credit deduction slice 6a the owner card reads the credit ledger instead
+ * (`lib/business-os/credits/ownerCreditUsage.ts`), so nothing here describes
+ * what an owner sees any more; this module serves the admin check only. Its
+ * "credits" are the legacy token measure (tokens ÷ `tokens_per_pilot_credit`),
+ * not the ledger's credits.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * DATABASE FIRST, ROWS AS FALLBACK
@@ -32,9 +35,8 @@ import {
   type TokenUsageRepository,
   type UsageSummaryRpcRow,
 } from '@/lib/repositories/TokenUsageRepository';
-import { summariseUsageByCategory } from '@/lib/business-os/usage/usageCategories';
 
-/** What the card needs, however it was obtained. */
+/** What Check 5 needs, however it was obtained. */
 export interface UsageSummary {
   totalTokens: number;
   totalCalls: number;
@@ -199,29 +201,7 @@ export async function readTokensPerCredit(
   }
 }
 
-/** Tokens → Pilot Credits, rounded the way the card rounds. */
+/** Tokens → the legacy token-credit measure, rounded to a whole number (Check 5 only). */
 export function toCredits(tokens: number, tokensPerCredit: number): number {
   return Math.round(tokens / tokensPerCredit);
-}
-
-export interface CardBreakdownLine {
-  key: string;
-  credits: number;
-  calls: number;
-  share: number;
-}
-
-/** The card's category breakdown: categories with tokens, by credits, largest first. */
-export function buildCardBreakdown(usage: UsageSummary, tokensPerCredit: number): CardBreakdownLine[] {
-  const byCategory = summariseUsageByCategory(usage.byFeature);
-
-  return [...byCategory.entries()]
-    .filter(([, v]) => v.tokens > 0)
-    .map(([key, v]) => ({
-      key,
-      credits: toCredits(v.tokens, tokensPerCredit),
-      calls: v.calls,
-      share: usage.totalTokens ? Number((v.tokens / usage.totalTokens).toFixed(4)) : 0,
-    }))
-    .sort((a, b) => b.credits - a.credits);
 }

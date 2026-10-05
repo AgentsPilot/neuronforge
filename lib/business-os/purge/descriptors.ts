@@ -126,68 +126,68 @@ export const TRIGGER_ORDERING: ReadonlyArray<{ before: string; after: string; wh
 
 const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.1 Business profile ────────────────────────────────────────────────
-  { table: 'business_profiles', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
     notes: '1:1 with auth.users — THIS is the "business" row. Kept by Reset so tests re-run without onboarding. No DELETE RLS policy.' },
 
   // ── §3.2 CRM ─────────────────────────────────────────────────────────────
-  { table: 'crm_contacts', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
+  { table: 'crm_contacts', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
     notes: 'CRM hub. BEFORE DELETE trigger T1 deletes future bookings — see TRIGGER_ORDERING (B4).' },
-  { table: 'crm_activities', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LAST, snapshot: 'rows',
+  { table: 'crm_activities', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LAST, snapshot: 'rows',
     notes: 'DELETED LAST. The single live T5 residue path writes here mid-purge; ordering is the only available mitigation.' },
-  { table: 'crm_pipeline_stages', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
     notes: 'Seeded by /api/onboarding/build; Reset keeps them so the board still works.' },
-  { table: 'crm_tasks', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'contact_documents', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'crm_tasks', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'contact_documents', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Rows index objects in the contact-documents bucket. NOTE: ContactDocumentsRepository soft-deletes, which is why the snapshot must NOT read through it (B-4).' },
 
   // ── §3.3 Website ─────────────────────────────────────────────────────────
-  { table: 'website_pages', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'website_blocks', level: 'reset', scope: { kind: 'via', parent: 'website_pages', fk: 'page_id' }, order: ORDER.LEAF, snapshot: 'ids',
+  { table: 'website_pages', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'website_blocks', level: 'reset', area: 'website', scope: { kind: 'via', parent: 'website_pages', fk: 'page_id' }, order: ORDER.LEAF, snapshot: 'ids',
     notes: 'No user_id column. Child ids captured pre-delete so AC-5 has an oracle (C-13).' },
-  { table: 'website_content', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'website_content', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: '1:1. No DELETE RLS policy.' },
-  { table: 'website_page_views', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids',
+  { table: 'website_page_views', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids',
     notes: 'IDS ONLY (DEV-Q6). Unbounded, publicly writable (WITH CHECK true), append-only, forensically worthless row-by-row. A row ceiling here would make a busy business undeletable.' },
 
   // ── §3.4 Scheduling ──────────────────────────────────────────────────────
-  { table: 'scheduling_services', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'scheduling_bookings', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
+  { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
     notes: 'Blocked by B2; also reached by trigger T1.' },
-  { table: 'scheduling_availability_exceptions', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'external_calendar_events', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'calendar-sync repopulates within ~5 min after a Reset (business_profiles is kept and drives its enumeration) — FR-26.' },
 
   // ── §3.5 Payments ────────────────────────────────────────────────────────
-  { table: 'payment_refunds', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
+  { table: 'payment_refunds', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
     notes: 'B1 — RESTRICT onto payment_transactions, so this goes first. Deleting it fires T2, the single T5 residue path.' },
-  { table: 'payment_plan_subscriptions', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
+  { table: 'payment_plan_subscriptions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
     notes: 'B2 (RESTRICT onto scheduling_bookings) and B4 (must also precede crm_contacts). SELECT-only RLS.' },
-  { table: 'payment_transactions', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'payment_invoices', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'payment_plans', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'payment_plan_installments', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'payment_events', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'payment_automation_rules', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'payment_automation_executions', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'payment_reminders', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'saved_payment_methods', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'payment_methods', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'payment_transactions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'payment_invoices', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'payment_plans', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'payment_plan_installments', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'payment_events', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'payment_automation_rules', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'payment_automation_executions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'payment_reminders', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'saved_payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Live — 2026-08-14_drop_payment_methods.sql was never applied. Measured, not assumed.' },
-  { table: 'payment_processors', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'payment_processors', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
     notes: 'Holds credentials JSONB. Kept by Reset so test payments work immediately.' },
-  { table: 'stripe_connect_accounts', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'stripe_connect_accounts', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
     notes: 'The pre-flight gate READS this in phase 1, long before phase 2 deletes it.' },
 
   // ── §3.6 Email automation ────────────────────────────────────────────────
-  { table: 'email_sequences', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'email_sequence_steps', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'email_campaigns', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'email_sends', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'email_sequence_enrollments', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'email_sequences', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'email_sequence_steps', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'email_campaigns', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'email_sends', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'email_sequence_enrollments', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
   { table: 'email_unsubscribes', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'K* — RETAINED BY BOTH LEVELS (D8). A third party withdrew consent. auth.users survives, so the same user_id can re-onboard; deleting this would resume emailing people who opted out. FR-23 requires the copy to say so. Now DERIVED from marketing_consent_events by trigger, and kept because this promise is made to users in two places.' },
 
-  { table: 'business_subscribers', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'business_subscribers', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'The newsletter audience. Reset clears it with the rest of the business data — unlike the consent ledger, which records what each person AGREED to and is retained forever. A rebuilt business starts with an empty list and has to earn it again.' },
 
   // ── §3.6b Marketing consent ──────────────────────────────────────────────
@@ -195,73 +195,76 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'Same reasoning as email_unsubscribes, in both directions. A withdrawal must outlive the business, or a reset resumes mailing people who opted out. A GRANT must outlive it too: the evidence of what someone agreed to is what answers a complaint or a subject access request years later, and it cannot be reconstructed.' },
   { table: 'marketing_consent_state', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'The projection the send gate reads. Deleting it would read as "no decision recorded", which fails closed for grants but would also lose every suppression. Derived, but not disposable.' },
-  { table: 'marketing_consent_settings', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'marketing_consent_settings', level: 'purge', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
     notes: 'Business configuration — the tenant\'s own consent wording, privacy notice and postal address. Unlike the decisions above, this is theirs, not their clients\'.' },
 
   // ── §3.7 Intake ──────────────────────────────────────────────────────────
-  { table: 'user_intake_settings', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows' },
-  { table: 'business_intake_forms', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'user_intake_settings', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows' },
+  { table: 'business_intake_forms', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
     notes: 'Confirmed live by T1, so §10.2 para 2 is firm and AC-3 asserts it unconditionally.' },
 
   // ── §3.8 Onboarding & chat ───────────────────────────────────────────────
-  { table: 'onboarding_conversations', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'onboarding_conversations', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Append-only RLS; /api/onboarding/chat/reset already hard-deletes these.' },
-  { table: 'onboarding_prompt_ideas', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'command_sessions', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'business_chat_conversation', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'onboarding_prompt_ideas', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'command_sessions', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'business_chat_conversation', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'user_id is the PRIMARY KEY, so at most one row per business. A low count here is correct, not a broken query.' },
-  { table: 'business_chat_action_log', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'business_chat_action_log', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Deleted, and the idempotency keys are NOT retained — FR-24 accepts the plan-level re-arm deliberately.' },
-  { table: 'business_chat_saved_plans', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'business_chat_verified_questions', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'business_chat_saved_plans', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'business_chat_verified_questions', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'user_id is NOT NULL (measured) — so §8.2\'s portable-row shape does NOT apply here, unlike business_chat_plan_cache. Plain scoped delete.' },
-  { table: 'business_chat_plan_cache', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'business_chat_plan_cache', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'user_id is NULLABLE (measured). Rows WHERE user_id IS NULL are PORTABLE and shared by every tenant. The predicate is `user_id = p_user_id` and must stay equality — `<>`, `IS DISTINCT FROM` and `NOT IN` are FORBIDDEN here (§8.2). Those surviving rows are also why a planId can recur post-purge (FR-24).' },
 
   // ── §3.9 Capabilities ────────────────────────────────────────────────────
-  { table: 'user_capabilities', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows' },
-  { table: 'user_capability_blocks', level: 'purge', scope: { kind: 'via', parent: 'user_capabilities', fk: 'user_capability_id' }, order: ORDER.CONFIG - 1, snapshot: 'ids',
+  { table: 'user_capabilities', level: 'purge', area: 'capabilities', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows' },
+  { table: 'user_capability_blocks', level: 'purge', area: 'capabilities', scope: { kind: 'via', parent: 'user_capabilities', fk: 'user_capability_id' }, order: ORDER.CONFIG - 1, snapshot: 'ids',
     notes: 'No user_id. Child ids captured pre-delete for AC-5. Ordered one ahead of its parent so the reported count is the rows this delete actually removed, rather than 0 because the parent CASCADE got there first.' },
 
   // ── §3.10 Conversion / attribution ───────────────────────────────────────
-  { table: 'smart_links', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'smart_link_clicks', level: 'reset', scope: { kind: 'via', parent: 'smart_links', fk: 'smart_link_id' }, order: ORDER.LEAF, snapshot: 'ids',
+  { table: 'smart_links', level: 'reset', area: 'smart_links', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'smart_link_clicks', level: 'reset', area: 'smart_links', scope: { kind: 'via', parent: 'smart_links', fk: 'smart_link_id' }, order: ORDER.LEAF, snapshot: 'ids',
     notes: 'IDS ONLY (DEV-Q6) and no user_id. Publicly writable (WITH CHECK true). Ids-only still satisfies AC-5, which needs the ids and not the rows.' },
 
   // ── §3.11 Channel insights ───────────────────────────────────────────────
-  { table: 'channel_connections', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'channel_connections', level: 'purge', area: 'channels', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
     notes: 'Holds account_token. ALWAYS deleted by Purge regardless of the integrations checkbox — the UI must not imply otherwise (AC-32).' },
-  { table: 'channel_metrics_daily', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'channel_metrics_daily', level: 'reset', area: 'channels', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'After a Reset, channel_connections and its last_synced_at both survive, so this returns on the connection\'s NEXT SCHEDULED sync — up to ~20h, not within the hour (FR-26 as amended).' },
 
   // ── §3.12 Insights ───────────────────────────────────────────────────────
-  { table: 'insight_automations', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
+  { table: 'insight_automations', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
     notes: 'B3 — NO ACTION onto kernel_executions, so this goes first.' },
-  { table: 'insights', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
+  { table: 'insights', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
     notes: 'Self-FK correlation_parent_id is SET NULL — cosmetic, needs no ordering.' },
-  { table: 'owner_insight_history', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'business_events', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  // Admin delete AD-1a (SC-8, SA-1(a)): found unclassified on prod 2026-10-04.
+  { table: 'insight_actions', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+    notes: 'Chase-invoice / follow-up actions the insights engine proposes to the owner about their clients — business data. Its FK to business_profiles is CASCADE, so before AD-1a a Purge emptied it with no snapshot and no count (the only uncounted cascade child of business_profiles, SA-1(a)). Measured live 2026-10-04: no inbound FK; outbound insight_id -> insights SET NULL, contact/booking/invoice CASCADE — no blocking edge, so LEAF.' },
+  { table: 'owner_insight_history', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'business_events', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Hazard H1 — no emitters; likely empty. Also one of insight-detect\'s four tenant-enumeration sources, all of which Reset deletes (FR-26).' },
-  { table: 'derived_metrics', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'business_health_summaries', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'derived_metrics', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'business_health_summaries', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
 
   // ── §3.13 Kernel (insight-triggered) ─────────────────────────────────────
-  { table: 'kernel_executions', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'kernel_action_log', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'kernel_executions', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'kernel_action_log', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
 
   // ── §3.14 Owner configuration ────────────────────────────────────────────
   { table: 'user_preferences', level: 'never', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
     notes: 'K* — RETAINED BY BOTH LEVELS. Holds preferred_language and currency. Deleting it resets the owner\'s language while they are reading the result screen, and renders their NEXT sign-in wrong — on a login that survives every level (D3).' },
 
   // ── §3.15 Newly classified in scope (T1 pass) ────────────────────────────
-  { table: 'proposals', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
+  { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
     notes: 'Business content the owner authored and sent to their clients. Self-FK supersedes_id is SET NULL — no ordering needed.' },
-  { table: 'lead_responses', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Lead data is customer data.' },
-  { table: 'daily_briefings', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'daily_briefing_sends', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'daily_briefings', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'daily_briefing_sends', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'A send log. It has the email_unsubscribes flavour but not its substance: a send history is the business\'s own activity record, not a third party\'s withdrawal of consent, so D8\'s retention reasoning does not extend to it.' },
-  { table: 'user_media', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'user_media', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'CONFIRMED at T4: storage_path points at the EXISTING website-images bucket (GeneratedImageService and StockImageService both write BUCKET = website-images and record here). So NO fourth StorageDescriptor is needed and AC-4 does not extend to a new bucket.' },
 ];
 
@@ -270,30 +273,30 @@ const IN_SCOPE: PurgeDescriptor[] = [
 // ────────────────────────────────────────────────────────────────────────────
 
 const OPT_IN: PurgeDescriptor[] = [
-  { table: 'plugin_connections', level: 'optional:integrations', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'plugin_connections', level: 'optional:integrations', area: 'integrations', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
     notes: 'READ during phase 1 for Stripe account resolution, deleted in phase 2 — the phase split is what makes AC-33 true, and T9 asserts the order rather than assuming it.' },
 
   // "Also delete my agents". B6 and B7 both live here, and both are invisible
   // to a default T28 run because the option is off by default (C-28).
-  { table: 'agent_logs', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
+  { table: 'agent_logs', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
     notes: 'B6 — NO ACTION onto agents, so this must precede it.' },
-  { table: 'agent_scheduler_state', level: 'optional:agents', scope: { kind: 'via', parent: 'agents', fk: 'agent_id' }, order: ORDER.BLOCKING_CHILD + 1, snapshot: 'ids',
+  { table: 'agent_scheduler_state', level: 'optional:agents', area: 'agents', scope: { kind: 'via', parent: 'agents', fk: 'agent_id' }, order: ORDER.BLOCKING_CHILD + 1, snapshot: 'ids',
     notes: 'B7 (C-30). NO tenancy column at all, so FR-1\'s predicate cannot see it by construction — it is reachable only through the blocking-edge check. last_execution_id -> agent_executions is NO ACTION. agent_id -> agents is CASCADE, so deleting agents would clear it incidentally, but relying on that would make the order depend on an FK action someone can later change to SET NULL.' },
-  { table: 'agents', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'agent_executions', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.ROOT + 1, snapshot: 'rows' },
-  { table: 'agent_memory', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'agents', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
+  { table: 'agent_executions', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.ROOT + 1, snapshot: 'rows' },
+  { table: 'agent_memory', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Confirmed live at T4 — it was not a migration-file phantom.' },
-  { table: 'agent_memories', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'agent_memories', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Distinct from agent_memory (singular). Both exist; see also run_memories and user_memory — four memory tables in total.' },
-  { table: 'run_memories', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'user_memory', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'run_memories', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'user_memory', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'The user\'s own remembered preferences — leaving it after "delete my agents" is the same defect that added the prompt threads.' },
-  { table: 'agent_prompt_threads', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'agent_prompt_workflow_generation_sessions', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'data_decision_requests', level: 'optional:agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'agent_prompt_threads', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'agent_prompt_workflow_generation_sessions', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'data_decision_requests', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'PENDING a requirement amendment — §8.10 still lists this as provisional `never`, awaiting the identification T4 was asked for. Supplied: written by lib/pilot/shadow/DataDecisionHandler.ts, keyed to agent_id/execution_id, and decision_context/user_decision hold the data the decision was about. SA ruled optional:agents (N11). Both its FKs are CASCADE, so it adds NO ordering constraint (B5 does not exist).' },
 
-  { table: 'audit_trail', level: 'optional:activityHistory', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'audit_trail', level: 'optional:activityHistory', area: 'activity_history', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'user_id is SET NULL on the auth FK. With this option ticked, the audit record of THIS purge is still written afterwards.' },
   // Admin Archiving (Slice 2, condition C-4): the audit rows that have been moved
   // out of audit_trail. Same classification, scope and band as their source, so
@@ -301,7 +304,7 @@ const OPT_IN: PurgeDescriptor[] = [
   // `snapshot: 'ids'`, unlike audit_trail: archived history is the long tail by
   // definition, and a full-row snapshot above the 250,000-row SNAPSHOT_ROW_CEILING
   // would make a business with years of history impossible to purge.
-  { table: 'archived_records', level: 'optional:activityHistory', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids',
+  { table: 'archived_records', level: 'optional:activityHistory', area: 'activity_history', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids',
     notes: 'Archived audit_trail rows (Admin Archiving). No FK to auth.users on purpose (Slice 2 SA R-1), so the user_id survives account deletion and this scope still finds the rows. Its archive_run_id FK points at archive_runs, which is never, so it constrains no purge.' },
 ];
 
@@ -398,6 +401,17 @@ const EXCLUDED: PurgeDescriptor[] = [
   never('business_os_credit_totals', U,
     'The running total of business_os_credit_charges per billing period. Derived from the bill and rebuilt from it; never purged. Keyed to auth.users (ON DELETE CASCADE), not business_profiles.'),
 
+  // Credit deduction slice 11a (S11-SQ-12): credit lots. Financial records,
+  // like the bill: never purged and never archived.
+  never('business_os_credit_lots', U,
+    'Credits added to the account: one row per admin grant, later per boost purchase. A financial record: never purged and never archived — a Reset that removed it would erase credits the account was given or paid for. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+  never('business_os_credit_lot_draws', U,
+    'Credits taken back out of a lot (admin reversals; consumption from slice 9). A financial record that what is left of a lot is rebuilt from; never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+
+  // Plan payments P-2a (PF-14, SA-P1): the Business OS billing record.
+  never('business_os_billing_accounts', U,
+    'The Business OS billing record: the Stripe customer and subscription of the plan, one row per account per Stripe mode. A Reset that removed it would orphan a live Stripe subscription that keeps charging, and lose the customer link. A retained financial record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+
   // Admin Archiving (Slice 2, condition C-4)
   never('archive_runs', G,
     'The platform run log of archiving: who ran it, when, which cutoff, how many rows. No user_id and no business content, counts only. Never archived and never purged.'),
@@ -414,6 +428,30 @@ const EXCLUDED: PurgeDescriptor[] = [
   // Invite-only signup, Slice 1b (L-6, C-10).
   never('business_os_account_lineage', G,
     'Platform record of who invited whom (the invitation circle, level, parent, root). Keyed on account_id, deliberately no user_id: not tenant data, and a Reset or Purge that removed it would let an owner re-enter as the referral of someone else. Not in USER_OWNED_TABLES for the same reason as business_os_invites; it holds no email, and keeps its pseudonymous ids after erasure (SA F-12).'),
+
+  // Admin delete AD-1a (SC-8). Found by the SchemaReconciler on prod 2026-10-04.
+  never('auth_handoff_codes', U,
+    'Ephemeral sign-in handoff codes: identity-level, not business data. Short-lived by design and CASCADE-deleted with the auth user, which survives every purge level (D14).'),
+  //
+  // Actor references on PLATFORM data. None has a tenancy column: each is a
+  // platform/config table whose only link to auth.users records which person
+  // changed or acknowledged a row. FR-1(iv)'s union predicate (any FK to
+  // auth.users) sees them; they are not this business's data and a purge must
+  // not delete them. Scope `global` for documentation: there is no user_id.
+  never('ais_scoring_weights', G,
+    'Actor reference on platform data: updated_by -> auth.users (SET NULL). Platform AIS scoring config.'),
+  never('ais_system_config', G,
+    'Actor reference on platform data: updated_by -> auth.users (SET NULL). Platform AIS config.'),
+  never('shared_agent_imports', G,
+    'Actor reference on platform data: imported_by_user_id -> auth.users (SET NULL). Agent-platform sharing record; created_agent_id -> agents is SET NULL, so the agents option does not block on it.'),
+  never('exchange_rates', G,
+    'Actor reference on platform data: updated_by -> auth.users is NO ACTION. FU-9: a hard delete of the auth user is BLOCKED while any row names them — the FU-9 hard-delete design must null or reassign this column first.'),
+  never('exchange_rate_history', G,
+    'Actor reference on platform data: changed_by -> auth.users is NO ACTION. FU-9: blocks a hard delete of the auth user, as exchange_rates.'),
+  never('system_settings_config', G,
+    'Actor reference on platform data: updated_by -> auth.users is NO ACTION. Platform-wide settings. FU-9: blocks a hard delete of the auth user, as exchange_rates.'),
+  never('sla_events', G,
+    'Actor reference on platform data: acknowledged_by -> auth.users is NO ACTION (sla_id -> automation_slas is CASCADE; automation_slas is never). FU-9: blocks a hard delete of the auth user, as exchange_rates.'),
 
   // §8.12 Account configuration and unowned tables
   never('notification_settings', U, 'Account configuration that survives the business.'),

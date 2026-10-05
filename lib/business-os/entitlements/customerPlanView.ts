@@ -64,10 +64,9 @@ import 'server-only';
  * holds that, so a future matrix that withheld something real would fail in CI
  * rather than in front of a customer.
  *
- * Their AI allowance is the one thing Autopilot has more of — 1,000 a month
- * against 2,000 — because `CHAMPION_VALUES` sets it explicitly and an explicit
- * cohort value wins over the tier row. So Autopilot is shown to them as the plan
- * above, honestly, with that single difference.
+ * Their credit allowance is Autopilot's too: `CHAMPION_VALUES` READS Autopilot's
+ * tier row (2026-09-27), so there is no plan above them with more of anything, and no
+ * "next plan up" is shown.
  *
  * The transition is written in now rather than later (`whenThisChanges`): a
  * champion is told their access has no end date **and** that a paid plan is what
@@ -79,7 +78,6 @@ import 'server-only';
 
 import {
   describePlanCapabilities,
-  describePlanEnding,
   planCommercialFlags,
   planLabel,
   planMonthlyPriceUsd,
@@ -189,6 +187,18 @@ export interface CustomerPlanCategory {
    * see `groupByCategory`.
    */
   labelKey: string;
+  /**
+   * A dictionary key for a sentence shown under the row, or `null`.
+   *
+   * Category-level and capability-agnostic (SA Q-9): a presentation entry may
+   * carry a note, and its variant follows the SHAPE of the category's metered
+   * value — `{ perMonth }` → the monthly sentence, `{ total }` → the one-off
+   * one. It changes no value and names no capability, so it is not a display
+   * exception of the kind slice 6 removed. Today only `credits` has one: the
+   * sentence explaining what a credit is (D-h), the same keys the dashboard
+   * card's tooltip reads, so the wording exists once.
+   */
+  noteKey: string | null;
   features: CustomerPlanFeature[];
   /** The feature names, joined — the one string a row prints. */
   summary: string;
@@ -223,12 +233,12 @@ export interface CustomerPlanUpgrade {
   /**
    * Granted in both, DIFFERENT there, and not rankable — stated as a change.
    *
-   * The trial's AI allowance is `{ total: 250 }` and Essentials' is
-   * `{ perMonth: 500 }`. Those are different quantities with no honest exchange
+   * The trial's credit allowance is a one-off `{ total }` and Essentials' a
+   * `{ perMonth }` rate. Those are different quantities with no honest exchange
    * rate, so calling it an improvement would be a claim we cannot support and
    * suppressing it hides the most important line on the page. It is reported as
-   * a **change** — "250 in total becomes 500 per month" — which is exactly what
-   * is true, and lets the customer judge.
+   * a **change** — "2,000 in total becomes 19,750 per month" — which is exactly
+   * what is true, and lets the customer judge.
    *
    * It also removes a hazard: whether a trial customer sees a paid plan at all
    * used to depend on at least one same-unit improvement happening to exist.
@@ -320,7 +330,7 @@ export interface CustomerPlanView {
    * **The condition is narrow on purpose:** a note AND no end date. It survives
    * wherever it carries information of its own — a paid plan's "While the plan is
    * paid for", and a TRIAL's "14 days from the first onboarding message, or when
-   * the AI actions run out", which is the only place that deadline appears. A
+   * the credits run out", which is the only place that deadline appears. A
    * first pass dropped it whenever the note existed and silently cost the trial
    * its countdown.
    */
@@ -352,8 +362,12 @@ export interface CustomerPlanView {
  * Not alphabetical (which would open on "Add-ons") and not catalog order (which
  * is grouped for the people who maintain the catalog, and opens on add-ons too).
  * It follows **the order a business meets these things**, which is also roughly
- * how much they care:
+ * how much they care — after one row that frames everything below it:
  *
+ *   0. Credits            — the one allowance every chargeable action draws on
+ *                           (credit deduction slice 6, D-g / SQ-25). First,
+ *                           because it is the number a plan is sized by, and it
+ *                           carries the sentence saying what a credit is.
  *   1. CRM                — the clients. The reason the product exists.
  *   2. Website & intake    — how those clients arrive.
  *   3. Payments            — getting paid by them.
@@ -377,7 +391,23 @@ export interface CustomerPlanView {
  * paired in the copy itself (user decision, 2026-09-27) — "Clients" is what it
  * is, "CRM" is what somebody has been calling it for twenty years.
  */
-const CATEGORY_PRESENTATION: ReadonlyArray<{ category: string; labelKey: string }> = [
+/**
+ * `note` (SA Q-9): the sentence under a category, as a key per allowance shape.
+ * Reuses the dashboard card's `usage.explain.*` keys, so the plan screen, the
+ * invite page and the card cannot say different things about what a credit is.
+ */
+interface CategoryPresentation {
+  category: string;
+  labelKey: string;
+  note?: { monthly: string; total: string };
+}
+
+const CATEGORY_PRESENTATION: ReadonlyArray<CategoryPresentation> = [
+  {
+    category: 'credits',
+    labelKey: 'plan.category.credits',
+    note: { monthly: 'usage.explain.monthly', total: 'usage.explain.trial' },
+  },
   { category: 'crm', labelKey: 'plan.category.crm' },
   { category: 'website_intake', labelKey: 'plan.category.website_intake' },
   { category: 'payments', labelKey: 'plan.category.payments' },
@@ -389,10 +419,45 @@ const CATEGORY_PRESENTATION: ReadonlyArray<{ category: string; labelKey: string 
   { category: 'addon', labelKey: 'plan.category.addon' },
 ];
 
-/** Features grouped into rows, in the order above. Empty categories are dropped. */
+/**
+ * Which note variant a category takes, from the shape of its metered value.
+ *
+ * Generic (SA Q-9): the first feature in the row whose catalog shape is
+ * `metered` decides — a one-off `{ total }` reads the `total` sentence, anything
+ * else the monthly one. No capability id and no plan name is consulted; the
+ * trial is recognised by its `{ total }` value, as everywhere else. With no
+ * metered value in the row (or no value lookup) there is no note: a sentence
+ * about an allowance must not appear beside something that is not one.
+ */
+function noteKeyFor(
+  note: CategoryPresentation['note'],
+  features: readonly CustomerPlanFeature[],
+  catalog: Record<string, CapabilityDef>,
+  valueOf: ((capability: string) => CapabilityValue | undefined) | undefined
+): string | null {
+  if (!note || !valueOf) return null;
+
+  for (const feature of features) {
+    if (catalog[feature.capability]?.shape.kind !== 'metered') continue;
+    const value = valueOf(feature.capability);
+    if (!value || typeof value !== 'object') continue;
+    return 'total' in (value as object) ? note.total : note.monthly;
+  }
+
+  return null;
+}
+
+/**
+ * Features grouped into rows, in the order above. Empty categories are dropped.
+ *
+ * `valueOf` reads a capability's resolved value, for the category note only
+ * (`noteKeyFor`). Optional, so a caller with no resolution gets rows without
+ * notes rather than a guess.
+ */
 export function groupByCategory(
   features: readonly CustomerPlanFeature[],
-  catalog: Record<string, CapabilityDef>
+  catalog: Record<string, CapabilityDef>,
+  valueOf?: (capability: string) => CapabilityValue | undefined
 ): CustomerPlanCategory[] {
   const known = new Map(CATEGORY_PRESENTATION.map((entry, index) => [entry.category, { ...entry, index }]));
   const buckets = new Map<string, CustomerPlanFeature[]>();
@@ -413,10 +478,13 @@ export function groupByCategory(
         // An unnamed category shows its raw id rather than disappearing. It is
         // not a key, so the component prints it as-is — which is the point.
         labelKey: presentation?.labelKey ?? category,
+        // Only for a row that renders at least one line — every row here does,
+        // since an empty category never gets a bucket (SA Q-9).
+        noteKey: noteKeyFor(presentation?.note, bucketFeatures, catalog, valueOf),
         index: presentation?.index ?? CATEGORY_PRESENTATION.length,
         features: bucketFeatures,
         // Joined here, not in the component. A value worth printing is appended
-        // to its own name, so "AI actions (2,000 per month)" reads as one item.
+        // to its own name, so "Email volume (10,000 per month)" reads as one item.
         //
         // `yes` is dropped: "Client documents (yes)" in a list of what you HAVE is
         // noise. And a value that already carries brackets is not wrapped in more
@@ -438,6 +506,7 @@ export function groupByCategory(
     .map((row) => ({
       category: row.category,
       labelKey: row.labelKey,
+      noteKey: row.noteKey,
       features: row.features,
       summary: row.summary,
     }));
@@ -516,11 +585,11 @@ function describeFreePlanEnding(
   // out an ending (FR-27), and that is the same fact `describePlanEnding` reads to
   // decide its own wording. Matching its English coupled this sentence to
   // somebody else's copy-editing.
-  const allowance = resolution.values['ai.actions']?.value;
+  const allowance = resolution.values['credits.allowance']?.value;
   const runsOut = !!allowance && typeof allowance === 'object' && 'total' in (allowance as object);
 
   return runsOut
-    ? { key: 'plan.ends_on_or_actions', date: endsAt }
+    ? { key: 'plan.ends_on_or_credits', date: endsAt }
     : { key: 'plan.ends_on', date: endsAt };
 }
 
@@ -592,7 +661,7 @@ function buildUpgrade(
     if (mine.display === row.display) continue;
 
     // Granted on both and written differently — which is NOT the same as
-    // better. A Founding Partner gets a larger AI allowance than Essentials
+    // better. A Founding Partner gets a larger credit allowance than Essentials
     // does, so comparing the rendered strings alone offered them a $79 plan
     // whose headline was "1,000 per month becomes 500 per month". Rank the
     // amounts, and say nothing when there is nothing to rank.
@@ -632,7 +701,7 @@ function buildUpgrade(
       // badge, and a sentence restating it is noise — it also made the two
       // indistinguishable to a reader looking for either.
       : { key: 'plan.move_before_then' },
-    adds: groupByCategory(adds, catalog),
+    adds: groupByCategory(adds, catalog, (capability) => nextResolution.values[capability]?.value),
     improves,
     changes,
   };
@@ -748,8 +817,8 @@ export function buildCustomerPlanView(input: {
     // `null` only when the note below ALREADY SAYS IT.
     //
     // First pass suppressed it whenever the note existed, and that was too broad:
-    // a trial's line ("14 days from the first onboarding message, or when the AI
-    // actions run out") and its note ("when this ends you will be able to choose a
+    // a trial's line ("14 days from the first onboarding message, or when the
+    // credits run out") and its note ("when this ends you will be able to choose a
     // paid plan") are not duplicates — one says WHEN, the other says WHAT NEXT.
     // Dropping the first lost the only place the 14 days appears.
     //
@@ -771,7 +840,7 @@ export function buildCustomerPlanView(input: {
         { key: 'plan.ends.while_paid' }
       : describeFreePlanEnding(config, planId, resolution),
     whenThisChanges,
-    included: groupByCategory(included, catalog),
+    included: groupByCategory(included, catalog, (capability) => resolution.values[capability]?.value),
     // Shown only when the plan above genuinely gives this customer something.
     //
     // A Founding Partner already has more than Essentials, so for them the

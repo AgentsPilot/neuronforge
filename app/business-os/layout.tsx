@@ -12,6 +12,12 @@ import { CapabilitiesProvider } from '@/components/business-os/CapabilitiesProvi
 import { Space_Grotesk, Inter } from 'next/font/google';
 
 import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
+import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';
+
+// SA N-2: the payment hold reads the session on every request, so this segment
+// is never prerendered (a static render would skip the gate, or swallow the
+// dynamic-usage signal inside the gate's session read).
+export const dynamic = 'force-dynamic';
 
 // Load Space Grotesk for display text (headlines)
 const spaceGrotesk = Space_Grotesk({
@@ -50,6 +56,11 @@ export default async function BusinessOSLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // Slice 5b (T-13 layer 2, F5b-4): the payment hold runs FIRST, before any
+  // plan read. A friend who has not paid never reaches Business OS. It keys on
+  // lineage, not on the entitlements mode, so `shadow` cannot open it.
+  await redirectIfAwaitingPayment();
+
   const planBadge = await readPlanBadge();
 
   return (

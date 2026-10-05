@@ -125,7 +125,7 @@ describe('an empty search under Active (U-4)', () => {
 });
 
 describe('no status or role column (U-9; C-23 satisfied by removal)', () => {
-  it('has no "Auth role" or "Status" header, six columns in all', async () => {
+  it('has no "Auth role" or "Status" header, seven columns in all', async () => {
     mockList(() => [DANA]);
     render(<UsersPage />);
     await screen.findByTestId('row-activity');
@@ -133,6 +133,8 @@ describe('no status or role column (U-9; C-23 satisfied by removal)', () => {
     expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull();
     expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual([
       'Business / user',
+      // Credit deduction slice 8a (FR-48).
+      'Credits left',
       'Contact',
       'Login Activity',
       'Last Sign In',
@@ -159,10 +161,10 @@ describe('no status or role column (U-9; C-23 satisfied by removal)', () => {
     expect(row.querySelector('svg.lucide-shield')).toBeNull();
   });
 
-  it('the empty state spans all six columns', async () => {
+  it('the empty state spans all seven columns (slice 8a)', async () => {
     mockList(() => []);
     render(<UsersPage />);
     const cell = (await screen.findByText('No users found')).closest('td') as HTMLTableCellElement;
-    expect(cell.getAttribute('colspan')).toBe('6');
+    expect(cell.getAttribute('colspan')).toBe('7');
   });
 });

@@ -21,6 +21,18 @@ const mockInsert = jest.fn();
 /** Table-scoped updates, so the booking's plan link can be asserted. */
 const mockUpdate = jest.fn();
 
+const mockLogError = jest.fn();
+
+// Spied on, so the missing-plan branch can be shown to log rather than throw.
+jest.mock('@/lib/logger', () => ({
+  createLogger: () => ({
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: mockLogError,
+    debug: jest.fn(),
+  }),
+}));
+
 jest.mock('@/lib/repositories/PaymentPlanSubscriptionRepository', () => ({
   PaymentPlanSubscriptionRepository: jest.fn().mockImplementation(() => ({
     create: mockCreate,
@@ -337,6 +349,51 @@ describe('bindPlanSubscription', () => {
     expect(mockInsert).toHaveBeenCalled();
     const projected = mockInsert.mock.calls[0][0] as Array<unknown>;
     expect(projected).toHaveLength(3);
+  });
+
+  /*
+   * No `payment_plans` row for the sale: the periods cannot be written, because
+   * `payment_plan_id` is NOT NULL. That is meant to be a log line and a return.
+   *
+   * It used to throw a ReferenceError instead — the log named a `serviceId`
+   * that was not in scope. The webhook rethrows, answers 500 and Stripe
+   * retries; every retry takes the "recorded but never projected" path, reaches
+   * the same line and throws again, until Stripe gives up on the event. On
+   * `invoice.paid` the period's payment is never recorded either, because that
+   * happens after the bind.
+   */
+  it('logs and returns when the sale has no payment_plans row, on first bind', async () => {
+    mockState.planRowId = null;
+
+    const { stripe } = fakeStripe();
+    const result = await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    expect(result).toEqual({ scheduleId: 'sched_1', planId: 'plan_1', alreadyBound: false });
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockLogError).toHaveBeenCalledWith(
+      { planId: 'plan_1', serviceId: 'svc_1', ownerId: 'user_1' },
+      'No payment_plans row for this sale — periods cannot be projected',
+    );
+  });
+
+  it('logs and returns when a redelivery finds no payment_plans row to repair with', async () => {
+    mockFindBySubscriptionId.mockResolvedValue({
+      data: { id: 'plan_1', stripe_schedule_id: 'sched_1' },
+      error: null,
+    });
+    mockState.installmentCount = 0;
+    mockState.planRowId = null;
+
+    const { stripe } = fakeStripe();
+    const result = await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    // The path every Stripe retry takes — it must settle, not loop.
+    expect(result).toEqual({ scheduleId: 'sched_1', planId: 'plan_1', alreadyBound: true });
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockLogError).toHaveBeenCalledWith(
+      { planId: 'plan_1', serviceId: 'svc_1', ownerId: 'user_1' },
+      'No payment_plans row for this sale — periods cannot be projected',
+    );
   });
 
   it('carries the remainder correctly for an uneven biweekly plan', async () => {

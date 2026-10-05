@@ -4,8 +4,9 @@
 // INTENTIONAL SERVICE-ROLE CLIENT (RLS bypass). CLAUDE.md Rule 4 is enforced by
 // SIGNATURE instead: every method REQUIRES an account id or a non-empty list of
 // account ids — with ONE deliberate, named exception below. Callers:
-//   - the owner usage card (`lib/business-os/usage/usageSummary.ts`), which
-//     passes the session user's own id;
+//   - the admin LLM usage report's token-usage check (Check 5, through
+//     `lib/business-os/usage/usageSummary.ts`), which passes the selected
+//     account's id (the owner card reads the credit ledger since slice 6a);
 //   - the admin LLM usage report (`lib/business-os/usage/llmUsageReport.ts`),
 //     whose routes are admin-gated through AdminAccessService before any read;
 //   - the admin chat usage report (`lib/business-os/bizql/telemetry/usageReport.ts`).

@@ -258,6 +258,9 @@ export function tierMatrixSchema(
             // selling. Adding a tier must make somebody answer both.
             shownToCustomers: z.boolean(),
             availableToBuy: z.boolean(),
+            // FYI only today (2026-09-29) — see `TierPresentation.active`. Required
+            // for the same reason as the two above.
+            active: z.boolean(),
           })
           .strict()
           .superRefine((entry, ctx) => {
@@ -370,6 +373,9 @@ export function cohortsSchema(tierOrder: readonly string[], catalog: CatalogLike
       // nothing else may appear here.
       values: z.object(valuesShape).strict(),
       graceHistory: historySchema,
+      // FYI only today (2026-09-29) — see `CohortConfigShape.active`. Required,
+      // so a new cohort must say whether it is active rather than inherit an answer.
+      active: z.boolean(),
       durationHistory: historySchema.optional(),
       clockStartsAt: z.enum(['first_onboarding_message', 'profile_created']).optional(),
     })
@@ -517,7 +523,7 @@ export function catalogSchema(): z.ZodTypeAny {
         variants: z.array(z.string().min(1)).min(2, 'a variant capability needs at least two options'),
       })
       .strict(),
-    z.object({ kind: z.literal('metered'), unit: z.enum(['ai_action', 'sms']), period: z.literal('month') }).strict(),
+    z.object({ kind: z.literal('metered'), unit: z.enum(['credit', 'sms']), period: z.literal('month') }).strict(),
     z.object({ kind: z.literal('quantity'), unit: z.enum(['seat', 'location']) }).strict(),
     z.object({ kind: z.literal('fair_use'), unit: z.literal('email'), period: z.literal('month') }).strict(),
     z.object({ kind: z.literal('group') }).strict(),
@@ -528,6 +534,7 @@ export function catalogSchema(): z.ZodTypeAny {
     .object({
       labels,
       category: z.enum([
+        'credits',
         'crm',
         'website_intake',
         'payments',

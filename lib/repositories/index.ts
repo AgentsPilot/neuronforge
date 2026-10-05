@@ -61,6 +61,80 @@ export type {
   BusinessOsCreditChargeTrigger,
   BusinessOsCreditChargeAnchorSource,
 } from './BusinessOsCreditChargeRepository';
+// Business OS credit ledger, READ-ONLY (credit deduction slice 4a): the operator
+// cost report's reads. Server-only, service role, no write method.
+export {
+  BusinessOsCreditLedgerReadRepository,
+  businessOsCreditLedgerReadRepository,
+  CREDIT_LEDGER_ROW_COLUMNS,
+  CREDIT_TOTALS_COLUMNS,
+  CREDIT_LEDGER_READ_LIMITS,
+  CHARGE_LIST_LIMITS,
+} from './BusinessOsCreditLedgerReadRepository';
+export type {
+  CreditLedgerRow,
+  CreditTotalsRow,
+  CreditPeriodStartRange,
+  CreditLedgerPageOptions,
+  CreditLedgerPagedResult,
+  ChargeListSort,
+  ChargeListFilter,
+  ChargeListOptions,
+  ChargeListPage,
+} from './BusinessOsCreditLedgerReadRepository';
+// Business OS credit ledger, the OWNER'S OWN read (credit deduction slice 6a):
+// the dashboard card. Takes the caller's RLS client (required, so no singleton);
+// owner-granted columns only; no write method.
+export {
+  BusinessOsCreditOwnerReadRepository,
+  OWNER_TOTALS_COLUMNS,
+  OWNER_CHARGE_COLUMNS,
+  OWNER_CREDIT_READ_LIMITS,
+} from './BusinessOsCreditOwnerReadRepository';
+export type { OwnerCreditTotalsRow, OwnerCreditChargeRow, OwnerCeilingResult } from './BusinessOsCreditOwnerReadRepository';
+// The credit period key from the database's own rule (slice 6a). Service role:
+// the function's EXECUTE is service_role only, and it reads no table.
+export { BusinessOsCreditPeriodRepository, businessOsCreditPeriodRepository } from './BusinessOsCreditPeriodRepository';
+// Business OS credit lots (credit deduction slice 11a): credits added to an
+// account and taken back. Server-only, service role, append-only through two
+// RPCs; no caller until 11b — a source guard enforces that, barrel included.
+export {
+  BusinessOsCreditLotRepository,
+  businessOsCreditLotRepository,
+  BOS_RECORD_CREDIT_LOT_RPC,
+  BOS_REVERSE_CREDIT_LOT_RPC,
+  CREDIT_LOT_COLUMNS,
+  CREDIT_LOT_DRAW_COLUMNS,
+  CREDIT_LOT_READ_LIMITS,
+} from './BusinessOsCreditLotRepository';
+export type {
+  BusinessOsCreditLot,
+  BusinessOsCreditLotRow,
+  BusinessOsCreditLotDrawRow,
+  BusinessOsCreditLotInput,
+  BusinessOsCreditLotRecordResult,
+  BusinessOsCreditLotReverseInput,
+  BusinessOsCreditLotReverseResult,
+  BusinessOsCreditLotReverseStatus,
+  BusinessOsCreditLotSource,
+  BusinessOsCreditLotActorKind,
+} from './BusinessOsCreditLotRepository';
+// Business OS billing record (plan payments P-2a): the Business OS Stripe
+// customer per account per mode. Server-only, service role, no client grant;
+// one caller (businessOsStripeCustomer.ts) — a source guard enforces that,
+// barrel included.
+export {
+  BusinessOsBillingAccountRepository,
+  businessOsBillingAccountRepository,
+  BILLING_ACCOUNT_COLUMNS,
+  BOS_BILLING_ACCOUNTS_TABLE,
+} from './BusinessOsBillingAccountRepository';
+export type {
+  BusinessOsBillingAccount,
+  BusinessOsBillingCustomerInput,
+  BusinessOsBillingCustomerRecordResult,
+  BusinessOsSubscriptionStatus,
+} from './BusinessOsBillingAccountRepository';
 export {
   OrganizationRepository,
   organizationRepository,
@@ -96,6 +170,10 @@ export {
 // Source guards enforce both, barrel included.
 export { BosCronRunRepository, bosCronRunRepository } from './BosCronRunRepository';
 export { AdminJobsQueuesRepository, adminJobsQueuesRepository } from './AdminJobsQueuesRepository';
+// ADMIN_BOS_CLEANUP slice 7b: the one admin write to a live queue row (cancel one
+// item). Its ONLY permitted caller is app/api/admin/jobs-queues/items/action/route.ts;
+// a source guard enforces it, barrel exempt (AdminQueueActionsRepository.test.ts R-9).
+export { AdminQueueActionsRepository, adminQueueActionsRepository } from './AdminQueueActionsRepository';
 // Admin Archiving, read-only in Slice 1 (docs/workplans/ADMIN_ARCHIVING_SLICE_1_UI_WORKPLAN.md)
 export { ArchiveRepository, archiveRepository } from './ArchiveRepository';
 export type {

@@ -5,8 +5,16 @@
  * part C). Renders only what `GET /api/admin/jobs-queues` sent; it imports no
  * registry, rule or read code (the C-21 pattern: `import type` only).
  *
- * READ-ONLY: there is a Refresh button and nothing else (no retry, requeue,
- * cancel or drain; roadmap R-18). No auto-refresh (A-11).
+ * READ-ONLY apart from two actions: a Refresh button, per queue the "Drain
+ * now" dialog (ADMIN_BOS_CLEANUP slice 7d, DrainNowDialog.tsx), and per
+ * cancellable item the "Cancel item" dialog (slice 7b, CancelQueueItemDialog.tsx,
+ * rendered by the item list). Each dialog owns its one POST; this file makes
+ * none. No retry or requeue here (slice 7c, later). No auto-refresh (A-11).
+ *
+ * Slice 7a: each queue card has a "View items" toggle that opens the read-only
+ * QueueItemsPanel, which owns the list's only request (a GET). The view bumps
+ * `refreshKey` after every load, so Refresh and a finished drain also reload
+ * an open list (FR-Q7).
  *
  * Green appears only on a job the computation called Healthy (a recorded
  * Vercel cron run and a good read) or a queue called Clear (a good read), and
@@ -18,6 +26,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 
 import { createLogger } from '@/lib/logger';
+import { DrainNowDialog, isDrainQueueId } from './DrainNowDialog';
+import { QueueItemsPanel } from './QueueItemsPanel';
+import { ageWords, formatUtc } from './jobsFormat';
 import type {
   JobStatus,
   JobView,
@@ -63,32 +74,15 @@ export const QUEUE_TONE: Record<QueueStatus, Tone> = {
   clear: 'green',
 };
 
-/**
- * "YYYY-MM-DD HH:mm UTC" for any ISO timestamp, whatever its offset (QA-L2).
- * The value is converted to UTC through Date, never sliced as text, so a
- * database that answers in another timezone (e.g. "+02:00") can never show a
- * local time labelled "UTC".
- */
-export function formatUtc(iso: string | null): string {
-  if (!iso) return '—';
-  const time = new Date(iso);
-  if (Number.isNaN(time.getTime())) return '—';
-  const utcIso = time.toISOString();
-  return `${utcIso.slice(0, 10)} ${utcIso.slice(11, 16)} UTC`;
-}
+// formatUtc and ageWords live in jobsFormat.ts (slice 7a, OP-13), shared with
+// the item list; formatUtc is re-exported for the existing render tests.
+export { formatUtc };
 
 const utc = formatUtc;
 
 function duration(msValue: number | null): string {
   if (msValue === null) return '—';
   return msValue < 1000 ? `${msValue} ms` : `${(msValue / 1000).toFixed(1)} s`;
-}
-
-function ageWords(minutes: number | null): string {
-  if (minutes === null) return 'none';
-  if (minutes < 60) return `${minutes} min`;
-  if (minutes < 1440) return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
-  return `${Math.floor(minutes / 1440)} d ${Math.floor((minutes % 1440) / 60)} h`;
 }
 
 function Badge({ tone, children }: { tone: Tone; children: string }) {
@@ -181,7 +175,8 @@ function JobRow({ job }: { job: JobView }) {
   );
 }
 
-function QueueCard({ queue }: { queue: QueueView }) {
+function QueueCard({ queue, onDrained, refreshKey }: { queue: QueueView; onDrained: () => void; refreshKey: number }) {
+  const [itemsOpen, setItemsOpen] = useState(false);
   const f = queue.figures;
   const rows: Array<[string, string]> = f
     ? [
@@ -215,7 +210,18 @@ function QueueCard({ queue }: { queue: QueueView }) {
           </h3>
           <p className="text-xs text-slate-500">Drained by {queue.drainedByLabel}</p>
         </div>
-        <Badge tone={QUEUE_TONE[queue.status]}>{queue.statusWords}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge tone={QUEUE_TONE[queue.status]}>{queue.statusWords}</Badge>
+          {/* Shown even when the figures could not be read: recovery is the point. */}
+          {isDrainQueueId(queue.id) && (
+            <DrainNowDialog
+              queueId={queue.id}
+              queueLabel={queue.label}
+              drainedByLabel={queue.drainedByLabel}
+              onDrained={onDrained}
+            />
+          )}
+        </div>
       </header>
       {f ? (
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -231,6 +237,23 @@ function QueueCard({ queue }: { queue: QueueView }) {
       )}
       <p className="text-xs text-slate-500">Failures are {queue.windowWords}.</p>
       {queue.note && <p className="text-xs text-slate-500">{queue.note}</p>}
+      {/* Shown even when the figures could not be read (slice 7a). */}
+      {isDrainQueueId(queue.id) && (
+        <>
+          <button
+            type="button"
+            aria-expanded={itemsOpen}
+            aria-controls={`queue-items-${queue.id}`}
+            onClick={() => setItemsOpen((open) => !open)}
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-200 transition-colors hover:bg-slate-700"
+          >
+            {itemsOpen ? 'Hide items' : 'View items'}
+          </button>
+          {itemsOpen && (
+            <QueueItemsPanel queueId={queue.id} queueLabel={queue.label} refreshKey={refreshKey} onChanged={onDrained} />
+          )}
+        </>
+      )}
     </section>
   );
 }
@@ -239,6 +262,8 @@ export function JobsQueuesView() {
   const [view, setView] = useState<JobsQueuesViewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Bumped after every load, so an open item list reloads with the figures (FR-Q7).
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -258,6 +283,7 @@ export function JobsQueuesView() {
       setError(err instanceof Error ? err.message : 'The jobs and queues could not be loaded');
     } finally {
       setLoading(false);
+      setRefreshKey((key) => key + 1);
     }
   }, []);
 
@@ -273,7 +299,8 @@ export function JobsQueuesView() {
           <p className="mt-1 max-w-3xl text-sm text-slate-400">
             The Business OS scheduled jobs and the queues they drain. Red needs action, amber needs a look, and
             the green label Healthy or Clear means checked and clear. Grey means no run recorded yet or could not
-            check. Read-only.
+            check.{' '}
+            {"Each queue has a Drain now button, and a waiting, failed or orphaned item can be cancelled from its queue's list; everything else here is read-only."}
           </p>
           {view && (
             <p data-testid="as-of" className="mt-1 text-xs text-slate-500">
@@ -347,7 +374,7 @@ export function JobsQueuesView() {
             </p>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {view.queues.map((queue) => (
-                <QueueCard key={queue.id} queue={queue} />
+                <QueueCard key={queue.id} queue={queue} onDrained={() => void load()} refreshKey={refreshKey} />
               ))}
             </div>
           </section>

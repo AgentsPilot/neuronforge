@@ -51,6 +51,9 @@ const ALLOWED = new Set(
     'lib/business-os/invites/inviteRedemption.ts',
     'lib/business-os/invites/redemptionDeps.ts',
     'lib/business-os/invites/__tests__/redemptionDeps.test.ts',
+    // Slice 5b (QA-1): the friend code route's end-to-end test replaces the
+    // instance with a fake, to prove both kinds of address get one answer.
+    'app/api/public/invites/signup/__tests__/code.friend.route.test.ts',
   ].map((file) => file.split('/').join(sep))
 );
 

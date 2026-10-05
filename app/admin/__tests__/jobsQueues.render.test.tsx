@@ -4,7 +4,8 @@
 
 /**
  * The "Scheduled jobs & queues" page (admin reorganisation slice 5, part C):
- * renders what the route sends; read-only (Refresh only); "Due now" and
+ * renders what the route sends; read-only apart from one Drain now per queue
+ * (slice 7d); "Due now" and
  * "Scheduled for later" are separate; green only on Healthy / Clear, with a
  * text label; the "not installed" sentence; no forbidden field names.
  */
@@ -73,11 +74,12 @@ describe('the Scheduled jobs & queues page', () => {
     expect(fetchMock.mock.calls[0]).toEqual(['/api/admin/jobs-queues', { cache: 'no-store' }]);
   });
 
-  it('lists all 12 jobs and all 5 queues, with a text status label each', async () => {
+  it('lists all 13 jobs and all 5 queues, with a text status label each', async () => {
     mockRoute();
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('job-calendar-sync');
-    expect(document.querySelectorAll('[data-testid^="job-"]')).toHaveLength(12);
+    // 13 since credit deduction slice 4b added the nightly credit leak check.
+    expect(document.querySelectorAll('[data-testid^="job-"]')).toHaveLength(13);
     expect(document.querySelectorAll('[data-testid^="queue-"]')).toHaveLength(5);
     expect(within(screen.getByTestId('job-lead-response')).getByTestId('status-badge').textContent).toBe('Last run failed');
     expect(within(screen.getByTestId('job-calendar-sync')).getByTestId('status-badge').textContent).toBe('Healthy');
@@ -92,13 +94,24 @@ describe('the Scheduled jobs & queues page', () => {
     expect(within(queue).getByText('Scheduled for later (not a backlog)').nextSibling?.textContent).toBe('7');
   });
 
-  it('is read-only: the only button is Refresh', async () => {
+  // Amended deliberately by ADMIN_BOS_CLEANUP slice 7d (SA W7D-2, OP-3): the
+  // page was "Refresh only"; it is now Refresh plus one Drain now per queue.
+  // Amended again by slice 7a (SA OP-11): plus one "View items" per queue
+  // (a read-only toggle), with every item list closed, and nothing else.
+  it('the only buttons are Refresh, one Drain now and one View items per queue', async () => {
     mockRoute();
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('job-calendar-sync');
     const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0].textContent).toContain('Refresh');
+    expect(buttons).toHaveLength(1 + 5 + 5);
+    expect(buttons.filter((b) => b.textContent?.includes('Refresh'))).toHaveLength(1);
+    const drains = buttons.filter((b) => b.textContent === 'Drain now');
+    expect(drains).toHaveLength(5);
+    expect(buttons.filter((b) => b.textContent === 'View items')).toHaveLength(5);
+    for (const queue of BOS_QUEUES) {
+      const inCard = within(screen.getByTestId(`queue-${queue.id}`)).getAllByRole('button');
+      expect(inCard.map((b) => b.textContent)).toEqual(['Drain now', 'View items']);
+    }
   });
 
   it('green only on a Healthy or Clear badge', async () => {

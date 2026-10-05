@@ -26,15 +26,29 @@
 //      then change it only through compare-and-swap methods keyed by that
 //      row's id and a value observed on it: the send count, the attempt count,
 //      the live code hash, the claimant. A lost race changes nothing and the
-//      route answers "try again" (workplan D-4, R-1, D-dev-1).
+//      route answers "try again" (workplan D-4, R-1, D-dev-1). Slice 3b adds
+//      `claimForGoogleSignup`, the same claim for a mailbox proven by a
+//      verified Google ID token; both claims share one builder.
 //
-// FUTURE: champion-issued invites (requirement §14) must get their OWN methods,
-// scoped by `issuer_account_id` (for example `listForIssuerAccount`,
-// `revokeForIssuerAccount`). They must never reuse the `ForAdmin` methods,
-// which would hand one champion every invite on the platform.
+//   4. A CHAMPION account (Slice 5a, SA C-13, T-20), through
+//      `app/api/business-os/friend-invites/**`, signed in with `getUser()`. Its
+//      three methods end in `ForIssuerAccount` and are scoped by the
+//      `issuer_account_id` the ROUTE resolved from the session, never by a
+//      value from the request: `createForIssuerAccount` (the atomic SQL send
+//      function, T-17), `listForIssuerAccount` (a narrow column list, F5a-9)
+//      and `revokeForIssuerAccount` (ownership INSIDE the UPDATE, F5a-8). They
+//      never reuse a `ForAdmin` method, which would hand one champion every
+//      invite on the platform. Slice 5b adds `findRedeemedForIssuerAccount`,
+//      a read with the same two issuer filters, so a revoke of an accepted
+//      invite can answer "already used" (409) without widening the 404.
+//   5. The PAYMENT HOLD (Slice 5b, T-13 layer 2), for the signed-in account
+//      itself. `findHoldFactsById` reads two facts (`grant_kind`, `language`)
+//      of the ONE invite named by that account's own lineage row, which the
+//      caller read with the session's account id. Never a caller-supplied id.
 //
-// `token_hash` is written once, by `createForAdmin`, and never selected by any
-// method. `recordInviteEmailOutcome` (Slice 2a) FILTERS on it, so an outcome
+// `token_hash` is written once per invite, by `createForAdmin` or (Slice 5a)
+// by the SQL send function behind `createForIssuerAccount`, and never selected
+// by any method. `recordInviteEmailOutcome` (Slice 2a) FILTERS on it, so an outcome
 // lands only on the link that was emailed. No method logs a token, a hash or an
 // email.
 //
@@ -52,16 +66,22 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, type Logger } from '@/lib/logger';
 import type {
   AgentRepositoryResult as RepositoryResult,
+  BusinessOsFriendInviteListRow,
   BusinessOsInvite,
+  BusinessOsInviteHoldFacts,
   BusinessOsInvitePublicView,
   BusinessOsInviteRedemptionView,
+  ClaimInviteForGoogleSignupInput,
   ClaimInviteForSignupInput,
   CountSignupCodeAttemptInput,
   CreateBusinessOsInviteInput,
+  CreateFriendInviteInput,
+  CreateFriendInviteResult,
   IssueSignupCodeInput,
   RecordInviteEmailOutcomeInput,
   RecordRedemptionFailureInput,
   RevokeBusinessOsInviteInput,
+  RevokeFriendInviteInput,
 } from './types';
 
 const INVITES = 'business_os_invites';
@@ -82,7 +102,7 @@ export const BUSINESS_OS_INVITE_ADMIN_COLUMNS =
  * mailbox proof. Never `token_hash`.
  */
 export const BUSINESS_OS_INVITE_REDEMPTION_COLUMNS =
-  'id, email, invite_type, issuer_kind, grant_kind, grant_id, access_open_ended, access_months, language, ' +
+  'id, email, invite_type, issuer_kind, issuer_account_id, grant_kind, grant_id, access_open_ended, access_months, language, ' +
   'link_expires_at, revoked_at, redeemed_at, signup_code_hash, signup_code_expires_at, signup_code_attempts, ' +
   'signup_code_sent_count, signup_code_window_started_at, signup_code_last_sent_at, claimed_at, claimed_account_id';
 
@@ -116,10 +136,96 @@ function casWon(count: number | null): boolean {
   });
 }
 
-/** What the public page's lookup reads (C-4): no email, no issuer, no reasons, no hash. */
+/**
+ * How the mailbox was proven before a signup claim (Slice 3b, D-3, SA R-7).
+ * `code`: the emailed code, whose hash must still be the live one. `google`: a
+ * verified Google ID token for the invite's own address, checked by the caller.
+ */
+type SignupClaimProof = { kind: 'code'; codeHash: string } | { kind: 'google' };
+
+/**
+ * The ONE signup-claim compare-and-swap, shared by `claimForSignup` and
+ * `claimForGoogleSignup` so their conditions cannot drift apart (D-3).
+ *
+ * A module function rather than a private method, so the repository's public
+ * surface (pinned by its test) gains no unscoped-looking name.
+ *
+ * The proof `switch` is exhaustive with a `never` default (SA R-7): a third
+ * kind added to `SignupClaimProof` without a case here fails to compile rather
+ * than silently skipping the code-hash filter. Count-only, no `.select`
+ * (see `casWon`).
+ */
+function signupClaimUpdate(
+  supabase: SupabaseClient,
+  input: ClaimInviteForGoogleSignupInput,
+  proof: SignupClaimProof
+) {
+  const at = input.now.toISOString();
+  let query = supabase
+    .from(INVITES)
+    .update(
+      {
+        signup_code_hash: null,
+        signup_code_expires_at: null,
+        claimed_at: at,
+        claimed_account_id: input.accountId,
+        updated_at: at,
+      },
+      // A count, not the rows: see `casWon` for why `.select` is not used here.
+      { count: 'exact' }
+    )
+    .eq('id', input.id);
+
+  switch (proof.kind) {
+    case 'code':
+      query = query.eq('signup_code_hash', proof.codeHash);
+      break;
+    case 'google':
+      // No code condition: Google's verified token is the mailbox proof, and
+      // the update above clears any outstanding code together with its expiry.
+      break;
+    default: {
+      const unhandled: never = proof;
+      throw new Error(`Unknown signup claim proof: ${String((unhandled as { kind?: unknown }).kind)}`);
+    }
+  }
+
+  query = query
+    .is('redeemed_at', null)
+    .is('revoked_at', null)
+    .gt('link_expires_at', at)
+    .or(noLiveClaim(input.claimLeaseCutoff));
+
+  return input.observedClaimedAccountId === null
+    ? query.is('claimed_account_id', null)
+    : query.eq('claimed_account_id', input.observedClaimedAccountId);
+}
+
+/** What the public page's lookup reads (C-4): no email, no issuer id, no reasons, no hash.
+ *
+ * `issuer_kind` (Slice 5a, F5a-10, SA R-5) is read only so an account-issued
+ * invite never reaches the existing-account check; the view never returns it.
+ */
 export const BUSINESS_OS_INVITE_PUBLIC_COLUMNS =
-  'id, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
+  'id, issuer_kind, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
   'personal_note, link_expires_at, first_viewed_at, revoked_at, redeemed_at';
+
+/**
+ * What a champion's own list reads (Slice 5a, F5a-9). Never `token_hash`, the
+ * redeemed account id, `first_viewed_at`, `opened_by_existing_account_at`,
+ * `inviter_reply_to`, `internal_reason`, `signup_code_*`, `redemption_*` or
+ * `email_problem_detail`: the two timestamps would tell a champion whether the
+ * friend looked, and whether the typed address has an account. The last three
+ * columns only derive the status and the allowance; the route never returns them.
+ */
+export const BUSINESS_OS_FRIEND_INVITE_LIST_COLUMNS =
+  'id, email, created_at, link_expires_at, revoked_at, redeemed_at, claimed_account_id';
+
+/** The most invites a champion's list reads, newest first (workplan D-7, SA Q-7). */
+export const BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT = 200;
+
+/** The refusal classes the send function returns (T-17). */
+const FRIEND_INVITE_REFUSALS: ReadonlySet<string> = new Set(['not_eligible', 'allowance_reached', 'daily_limit', 'already_invited']);
 
 /**
  * The admin list shows at most this many invites, newest first. Slice 1c
@@ -318,6 +424,178 @@ export class BusinessOsInviteRepository {
     }
   }
 
+  // ============ Champion (behind getUser; scoped by the issuing account) ============
+
+  /**
+   * CHAMPION: issue one friend invite through `business_os_create_friend_invite`
+   * (migration 20261023, T-17, T-21). The function takes a per-issuer advisory
+   * lock, re-checks the in-force cohort, counts against the allowance and the
+   * daily limit, refuses a duplicate live invite, and inserts, in ONE
+   * transaction. Nothing here counts or inserts on its own.
+   *
+   * The arguments are mapped field by field from the allow-list type; nothing
+   * is spread. They are never logged (the email and note are in them), and a
+   * database error is reduced by `safeDbError` (SA R-6): a CHECK failure inside
+   * the function carries "Failing row contains ..." in `details`.
+   */
+  async createForIssuerAccount(input: CreateFriendInviteInput): Promise<RepositoryResult<CreateFriendInviteResult>> {
+    const methodLogger = this.logger.child({ method: 'createForIssuerAccount', accountId: input.issuerAccountId });
+    try {
+      const { data, error } = await this.supabase.rpc('business_os_create_friend_invite', {
+        p_issuer_account_id: input.issuerAccountId,
+        p_issuer_cohort: input.issuerCohort,
+        p_invite_type: input.inviteType,
+        p_grant_id: input.grantId,
+        p_allowance: input.allowance,
+        p_daily_limit: input.dailyLimit,
+        p_daily_window_hours: input.dailyWindowHours,
+        p_token_hash: input.tokenHash,
+        p_email: input.email,
+        p_inviter_display_name: input.inviterDisplayName,
+        p_inviter_reply_to: input.inviterReplyTo,
+        p_language: input.language,
+        p_personal_note: input.personalNote,
+        p_internal_reason: input.internalReason,
+        p_link_expiry_days: input.linkExpiryDays,
+      });
+
+      if (error) throw error;
+      const row = (Array.isArray(data) ? data[0] : data) as
+        | { result_outcome?: unknown; result_invite_id?: unknown; result_link_expires_at?: unknown }
+        | null
+        | undefined;
+      const outcome = row?.result_outcome;
+      if (outcome === 'created' && typeof row?.result_invite_id === 'string' && typeof row.result_link_expires_at === 'string') {
+        methodLogger.info({ inviteId: row.result_invite_id }, 'Friend invite created');
+        return {
+          data: { outcome: 'created', inviteId: row.result_invite_id, linkExpiresAt: row.result_link_expires_at },
+          error: null,
+        };
+      }
+      if (typeof outcome === 'string' && FRIEND_INVITE_REFUSALS.has(outcome)) {
+        return { data: { outcome: outcome as Exclude<CreateFriendInviteResult['outcome'], 'created'> }, error: null };
+      }
+      throw Object.assign(new Error('The friend invite function returned an unexpected shape'), { code: 'FRIEND_INVITE_SHAPE' });
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to create friend invite');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * CHAMPION: the invites THIS account issued, newest first, capped at
+   * `BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT` (F5a-9). Both issuer filters are
+   * here, so no argument can widen it.
+   */
+  async listForIssuerAccount(
+    issuerAccountId: string,
+    options: { limit?: number } = {}
+  ): Promise<RepositoryResult<BusinessOsFriendInviteListRow[]>> {
+    const methodLogger = this.logger.child({ method: 'listForIssuerAccount', accountId: issuerAccountId });
+    const requested = Math.trunc(options.limit ?? BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT) || 1;
+    const limit = Math.min(Math.max(requested, 1), BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT);
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .select(BUSINESS_OS_FRIEND_INVITE_LIST_COLUMNS)
+        .eq('issuer_kind', 'account')
+        .eq('issuer_account_id', issuerAccountId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return { data: (data ?? []) as unknown as BusinessOsFriendInviteListRow[], error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to list friend invites');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * CHAMPION: revoke one of THIS account's invites that is neither accepted nor
+   * already revoked, and has no live signup claim (F5a-8, T-20).
+   *
+   * Ownership lives INSIDE the UPDATE (`issuer_kind` + `issuer_account_id`), so
+   * there is no gap between checking and writing, and "not found", "not yours"
+   * and "no longer revocable" are all `false` (the route's one 404).
+   * `revoked_by_admin_id` stays NULL: on an account-issued invite that MEANS
+   * "revoked by the inviter" (the admin list derives `revokedByInviter` from it).
+   *
+   * Counted with `{ count: 'exact' }` and NO `.select()` (see `casWon`):
+   * `mutationOrSelect.guard.test.ts` keeps its single exemption.
+   */
+  async revokeForIssuerAccount(input: RevokeFriendInviteInput): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({
+      method: 'revokeForIssuerAccount',
+      inviteId: input.id,
+      accountId: input.issuerAccountId,
+    });
+    const at = input.now.toISOString();
+    try {
+      const { error, count } = await this.supabase
+        .from(INVITES)
+        .update(
+          {
+            revoked_at: at,
+            revoke_reason: input.reason,
+            updated_at: at,
+          },
+          // A count, not the rows: see `casWon` for why `.select` is not used here.
+          { count: 'exact' }
+        )
+        .eq('id', input.id)
+        .eq('issuer_kind', 'account')
+        .eq('issuer_account_id', input.issuerAccountId)
+        .is('redeemed_at', null)
+        .is('revoked_at', null)
+        .or(noLiveClaim(input.claimLeaseCutoff));
+
+      if (error) throw error;
+      const won = casWon(count);
+      if (won) methodLogger.info('Friend invite revoked by its issuer');
+      return { data: won, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to revoke friend invite');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * CHAMPION: whether THIS account's invite `id` has already been accepted
+   * (Slice 5b, 5a Q-3). Asked only after `revokeForIssuerAccount` matched no
+   * row, so the route can answer 409 "already used" instead of 404.
+   *
+   * Scoped exactly like the revoke (`issuer_kind` + `issuer_account_id` from
+   * the session), so another account's accepted invite reads as `false` and
+   * still gets the shared 404: "not found" and "not yours" stay
+   * indistinguishable. A plain SELECT of one column, kept as its own method so
+   * it never shares a block with the revoke's `.update(` (the
+   * `mutationOrSelect` guard reads to the end of that block).
+   */
+  async findRedeemedForIssuerAccount(id: string, issuerAccountId: string): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({
+      method: 'findRedeemedForIssuerAccount',
+      inviteId: id,
+      accountId: issuerAccountId,
+    });
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .select('redeemed_at')
+        .eq('id', id)
+        .eq('issuer_kind', 'account')
+        .eq('issuer_account_id', issuerAccountId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const redeemedAt = (data as { redeemed_at?: unknown } | null)?.redeemed_at;
+      return { data: typeof redeemedAt === 'string' && redeemedAt.length > 0, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to read whether a friend invite was accepted');
+      return { data: null, error: toError(error) };
+    }
+  }
+
   // ============ Public page (no identity; by token hash only) ============
 
   /**
@@ -391,6 +669,27 @@ export class BusinessOsInviteRepository {
       return { data: Array.isArray(data) && data.length > 0, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to record an open by an existing account');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  // ============ Payment hold (Slice 5b; the signed-in account's own invite) ============
+
+  /**
+   * HOLD: the grant kind and language of the invite that created the signed-in
+   * account, or `null`. `id` is the `invite_id` of THAT account's own lineage
+   * row (read by the caller with the session's account id), never a value from
+   * a request. Two columns only: no email, no issuer, no hash.
+   */
+  async findHoldFactsById(id: string): Promise<RepositoryResult<BusinessOsInviteHoldFacts>> {
+    const methodLogger = this.logger.child({ method: 'findHoldFactsById', inviteId: id });
+    try {
+      const { data, error } = await this.supabase.from(INVITES).select('grant_kind, language').eq('id', id).maybeSingle();
+
+      if (error) throw error;
+      return { data: (data ?? null) as unknown as BusinessOsInviteHoldFacts | null, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to read the invite hold facts');
       return { data: null, error: toError(error) };
     }
   }
@@ -500,39 +799,35 @@ export class BusinessOsInviteRepository {
    */
   async claimForSignup(input: ClaimInviteForSignupInput): Promise<RepositoryResult<boolean>> {
     const methodLogger = this.logger.child({ method: 'claimForSignup', inviteId: input.id });
-    const at = input.now.toISOString();
     try {
-      let query = this.supabase
-        .from(INVITES)
-        .update(
-          {
-            signup_code_hash: null,
-            signup_code_expires_at: null,
-            claimed_at: at,
-            claimed_account_id: input.accountId,
-            updated_at: at,
-          },
-          // A count, not the rows: see `casWon` for why `.select` is not used here.
-          { count: 'exact' }
-        )
-        .eq('id', input.id)
-        .eq('signup_code_hash', input.codeHash)
-        .is('redeemed_at', null)
-        .is('revoked_at', null)
-        .gt('link_expires_at', at)
-        .or(noLiveClaim(input.claimLeaseCutoff));
-
-      query =
-        input.observedClaimedAccountId === null
-          ? query.is('claimed_account_id', null)
-          : query.eq('claimed_account_id', input.observedClaimedAccountId);
-
-      const { count, error } = await query;
+      const { count, error } = await signupClaimUpdate(this.supabase, input, { kind: 'code', codeHash: input.codeHash });
 
       if (error) throw error;
       return { data: casWon(count), error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to claim an invite for signup');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * SIGNUP (Slice 3b, D-3): the same claim as `claimForSignup`, for a signup
+   * whose mailbox was proven by a verified Google ID token instead of the
+   * emailed code. Every condition of the code claim holds (still pending, no
+   * live claim, the observed claimant) EXCEPT the code-hash equality, and any
+   * outstanding code is cleared with the claim, so it dies here (CHECK
+   * `signup_code_paired`). The caller verifies the token and the email lock
+   * BEFORE calling this; nothing Google-derived is passed in.
+   */
+  async claimForGoogleSignup(input: ClaimInviteForGoogleSignupInput): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'claimForGoogleSignup', inviteId: input.id });
+    try {
+      const { count, error } = await signupClaimUpdate(this.supabase, input, { kind: 'google' });
+
+      if (error) throw error;
+      return { data: casWon(count), error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to claim an invite for Google signup');
       return { data: null, error: toError(error) };
     }
   }

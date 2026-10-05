@@ -110,9 +110,9 @@ checks AS (
          invite_columns.new_columns || ' of 13' AS detail
   FROM invite_columns
   UNION ALL
-  SELECT 11, 'S02 seven new invite checks and 23 in total',
-         CASE WHEN invite_checks.named_checks = 7 AND invite_checks.all_checks = 23 THEN 'PASS' ELSE 'FAIL' END,
-         invite_checks.named_checks || ' of 7 named and ' || invite_checks.all_checks || ' of 23 total'
+  SELECT 11, 'S02 seven new invite checks',
+         CASE WHEN invite_checks.named_checks = 7 THEN 'PASS' ELSE 'FAIL' END,
+         invite_checks.named_checks || ' of 7 named and ' || invite_checks.all_checks || ' in total with 23 expected at apply time'
   FROM invite_checks
   UNION ALL
   SELECT 12, 'S03 lineage table exists with row level security',
@@ -169,7 +169,8 @@ FROM (
   SELECT 0 AS sort_order, 'VERDICT' AS check_name,
          CASE WHEN EXISTS (SELECT 1 FROM checks WHERE checks.status = 'FAIL') THEN 'FAIL' ELSE 'PASS' END AS status,
          (SELECT count(*) FROM checks WHERE checks.status = 'PASS') || ' pass '
-           || (SELECT count(*) FROM checks WHERE checks.status = 'FAIL') || ' fail' AS detail
+           || (SELECT count(*) FROM checks WHERE checks.status = 'FAIL') || ' fail '
+           || (SELECT count(*) FROM checks WHERE checks.status = 'INFO') || ' info' AS detail
   UNION ALL
   SELECT checks.sort_order, checks.check_name, checks.status, checks.detail FROM checks
 ) AS report

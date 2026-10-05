@@ -157,6 +157,108 @@ describe('findEntitlementInputs', () => {
   });
 });
 
+describe('findPeriodAnchor (credit deduction slice 6a, SQ-20)', () => {
+  // A microsecond value, as PostgREST returns it. A `Date` would cut it to
+  // milliseconds; the repository must hand it back untouched.
+  const ANCHOR = '2026-09-14T09:31:07.123456+00:00';
+
+  it('reads period_anchor only, scoped by user_id, and returns the string verbatim', async () => {
+    const { client, calls, builder } = mockSupabase({ data: { period_anchor: ANCHOR }, error: null });
+
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchor('acct-1');
+
+    expect(error).toBeNull();
+    expect(data).toBe(ANCHOR);
+    expect(calls.table).toBe('business_os_account_plans');
+    expect(calls.select).toBe('period_anchor');
+    expect(calls.eqs).toEqual([['user_id', 'acct-1']]);
+    expect(builder.maybeSingle).toHaveBeenCalledTimes(1);
+    // Read only.
+    expect(builder.insert).not.toHaveBeenCalled();
+    expect(builder.update).not.toHaveBeenCalled();
+    expect(builder.upsert).not.toHaveBeenCalled();
+    expect(builder.delete).not.toHaveBeenCalled();
+  });
+
+  it('reports no plan row as null', async () => {
+    const { client } = mockSupabase({ data: null, error: null });
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchor('acct-1');
+    expect(error).toBeNull();
+    expect(data).toBeNull();
+  });
+
+  it('returns a read error as an error, never as "no row"', async () => {
+    const { client } = mockSupabase({ data: null, error: new Error('permission denied') });
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchor('acct-1');
+    expect(data).toBeNull();
+    expect(error?.message).toBe('permission denied');
+  });
+
+  it('treats a row with no readable anchor as an error', async () => {
+    const { client } = mockSupabase({ data: { period_anchor: null }, error: null });
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchor('acct-1');
+    expect(data).toBeNull();
+    expect(error).toBeInstanceOf(Error);
+  });
+});
+
+describe('findPeriodAnchorsBatch (credit deduction slice 8a, SA SQ-42)', () => {
+  const A1 = '11111111-1111-4111-8111-111111111111';
+  const A2 = '22222222-2222-4222-8222-222222222222';
+  const A3 = '33333333-3333-4333-8333-333333333333';
+  const ANCHOR = '2026-09-14T09:31:07.123456+00:00';
+
+  it('reads user_id and period_anchor only, with one IN query, anchors verbatim; a missing account has no plan row', async () => {
+    const { client, calls, builder } = mockSupabase({
+      data: [
+        { user_id: A1, period_anchor: ANCHOR },
+        { user_id: A2, period_anchor: '2026-09-20T00:00:00+00:00' },
+      ],
+      error: null,
+    });
+
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchorsBatch([A1, A2, A3]);
+
+    expect(error).toBeNull();
+    expect(data).toEqual({ [A1]: ANCHOR, [A2]: '2026-09-20T00:00:00+00:00' });
+    expect(data![A1]).toBe(ANCHOR);
+    expect(calls.table).toBe('business_os_account_plans');
+    expect(calls.select).toBe('user_id, period_anchor');
+    expect(calls.in).toEqual(['user_id', [A1, A2, A3]]);
+    expect(builder.insert).not.toHaveBeenCalled();
+    expect(builder.update).not.toHaveBeenCalled();
+    expect(builder.upsert).not.toHaveBeenCalled();
+    expect(builder.delete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an empty list', [] as string[]],
+    ['more than 100 ids', Array.from({ length: BOS_ENTITLEMENT_BATCH_LIMIT + 1 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)],
+    ['a malformed id', [A1, 'acct-1']],
+    ['a filter-syntax id', [`${A1},user_id.neq.x`]],
+  ])('refuses %s without querying', async (_name, ids) => {
+    const { client } = mockSupabase({ data: [], error: null });
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchorsBatch(ids);
+    expect(data).toBeNull();
+    expect(error).toBeInstanceOf(Error);
+    expect(client.from as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('returns a read error as an error, never as "no plan rows"', async () => {
+    const { client } = mockSupabase({ data: null, error: new Error('permission denied') });
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchorsBatch([A1]);
+    expect(data).toBeNull();
+    expect(error?.message).toBe('permission denied');
+  });
+
+  it('treats a row with no readable anchor as an error', async () => {
+    const { client } = mockSupabase({ data: [{ user_id: A1, period_anchor: null }], error: null });
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchorsBatch([A1]);
+    expect(data).toBeNull();
+    expect(error).toBeInstanceOf(Error);
+  });
+});
+
 describe('findEntitlementInputsBatch', () => {
   it('keys the result by account and uses a single IN query', async () => {
     const { client, calls } = mockSupabase({
@@ -689,6 +791,62 @@ describe('resetPlanState', () => {
 
     expect(data).toBeNull();
     expect(error).toBeTruthy();
+  });
+});
+
+describe('provisionFromFriendInvite (invite-only signup Slice 5b; T-19, T-13)', () => {
+  const input = {
+    inviteId: '11111111-1111-4111-8111-111111111111',
+    accountId: '33333333-3333-4333-8333-333333333333',
+    email: 'friend@example.com',
+    tierId: 'tier-x',
+    issuerCohort: 'cohort-x',
+  };
+
+  it('calls the friend finalise with exactly the five server-derived arguments, and writes no table from here', async () => {
+    const { client, calls, builder } = mockSupabase({
+      data: [{ result_outcome: 'finalised', result_invite_id: input.inviteId, result_level: 2 }],
+      error: null,
+    });
+    const result = await new BusinessOsAccountPlanRepository(client).provisionFromFriendInvite(input);
+    expect(result).toEqual({ data: { outcome: 'finalised', inviteId: input.inviteId, level: 2 }, error: null });
+    expect(calls.rpc).toEqual([
+      'business_os_finalise_friend_invite_redemption',
+      { p_invite_id: input.inviteId, p_account_id: input.accountId, p_email: input.email, p_tier: input.tierId, p_issuer_cohort: input.issuerCohort },
+    ]);
+    expect(builder.insert).not.toHaveBeenCalled();
+    expect(builder.update).not.toHaveBeenCalled();
+    expect(builder.delete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ result_outcome: 'already_finalised', result_invite_id: 'inv', result_level: 3 }, { outcome: 'already_finalised', inviteId: 'inv', level: 3 }],
+    [{ result_outcome: 'issuer_not_eligible', result_invite_id: null, result_level: null }, { outcome: 'issuer_not_eligible' }],
+    [{ result_outcome: 'not_matched', result_invite_id: null, result_level: null }, { outcome: 'not_matched' }],
+  ])('parses %o', async (row, expected) => {
+    const { client } = mockSupabase({ data: [row], error: null });
+    expect(await new BusinessOsAccountPlanRepository(client).provisionFromFriendInvite(input)).toEqual({ data: expected, error: null });
+  });
+
+  it('an unknown or malformed answer is an error, never a success', async () => {
+    for (const data of [[{ result_outcome: 'finalised', result_invite_id: null, result_level: 2 }], [], null, [{ result_outcome: 'weird' }]]) {
+      const { client } = mockSupabase({ data, error: null });
+      const result = await new BusinessOsAccountPlanRepository(client).provisionFromFriendInvite(input);
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it('a database error is scrubbed to { code, message }, and the email is never logged (M-1)', async () => {
+    const { client } = mockSupabase({
+      data: null,
+      error: { code: '23505', message: 'duplicate key value violates unique constraint', details: `Key (user_id)=(x) for ${input.email}`, hint: '' },
+    });
+    const result = await new BusinessOsAccountPlanRepository(client).provisionFromFriendInvite(input);
+    expect(result.data).toBeNull();
+    expect(result.error).not.toHaveProperty('details');
+    expect((result.error as Error & { code?: string }).code).toBe('23505');
+    expect(JSON.stringify(result.error)).not.toContain(input.email);
   });
 });
 

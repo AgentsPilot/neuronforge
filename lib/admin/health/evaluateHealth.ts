@@ -92,7 +92,7 @@ const LOWER_BOUND_TILES: ReadonlySet<MeasuredTileId> = new Set<MeasuredTileId>([
  * tile in or out is a code change that SA reviews. `entitlements_mode` is
  * deliberately absent: a chosen mode is not a health signal (OQ-9), so it is
  * shown "for information" and never green. `scheduled_jobs` is green only when
- * all 12 jobs have a recorded Vercel cron run and the run read succeeded;
+ * every registered job has a recorded Vercel cron run and the run read succeeded;
  * `queues` only when all five queue reads succeeded (their measurements say
  * `completeness: 'complete'` exactly then).
  */
@@ -683,8 +683,9 @@ function criticalMeasurement(facts: CriticalFacts, w: HealthWindows): TileMeasur
       },
     ],
     footnote:
-      'All products. "Critical" is the severity an event is recorded with; it includes routine events ' +
-      'such as password changes and refunds.',
+      'All products. "Critical" is the severity an event is recorded with, whatever the event was — ' +
+      'security events, destructive operations and platform malfunctions. Normal business operations ' +
+      'such as refunds and password changes are recorded at a lower severity and are not counted here.',
     completeness: 'complete',
   };
 }

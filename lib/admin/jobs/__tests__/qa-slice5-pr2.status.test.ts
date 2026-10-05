@@ -87,7 +87,10 @@ describe('manual runs never reset "late"', () => {
 });
 
 describe('a job with no run yet', () => {
-  it.each(BOS_CRON_JOBS.map((j) => [j.id, j] as const))('%s: grey until late-from-baseline, then late, then stopped', (_id, job) => {
+  it.each(BOS_CRON_JOBS.map((j) => [j.id, j] as const))('%s: grey until late-from-baseline, then late, then stopped', (_id, dated) => {
+    // The global-baseline rule. A job with an `addedOn` day is timed from that
+    // day instead (QA4b-B1, pinned in buildJobsQueuesView.test.ts); strip it here.
+    const job = { ...dated, addedOn: undefined };
     const row = fixtureRow(job, NOW, []) as CronRunSummaryRow;
     const baselineAgo = (m: number) => new Date(NOW.getTime() - m * MIN).toISOString();
     expect(jobStatus(job, row, baselineAgo(0), NOW).status).toBe('no_run_yet');
@@ -119,7 +122,11 @@ describe('a job with no run yet', () => {
       runs: { state: 'ok', rows: BOS_CRON_JOBS.map((j) => ({ ...(fixtureRow(j, NOW, []) as CronRunSummaryRow), first_run_at: null, installed_at: installed })) },
     };
     const emptyView = buildJobsQueuesView(empty, NOW);
-    expect(emptyView.jobs.every((j) => j.status === 'stopped')).toBe(true);
+    // QA4b-B1: a job with an `addedOn` day is timed from the end of that day,
+    // which is after this fixture's clock (2026-09-27): not measured yet.
+    const isDated = (id: string) => findBosCronJob(id)!.addedOn !== undefined;
+    expect(emptyView.jobs.filter((j) => !isDated(j.id)).every((j) => j.status === 'stopped')).toBe(true);
+    expect(emptyView.jobs.filter((j) => isDated(j.id)).map((j) => j.status)).toEqual(['no_run_yet']);
     expect(tilesFor(empty).t6.status).toBe('red');
   });
 });
@@ -227,7 +234,7 @@ describe('tile numbers equal page numbers (A-8), over a mixed fixture', () => {
     const { view, t6, t7 } = tilesFor(inputs);
     const n = (s: string) => view.jobs.filter((j) => j.status === s).length;
     const fig = (tile: typeof t6, label: string) => tile.figures.find((f) => f.label === label)?.value;
-    expect(fig(t6, 'Jobs healthy')).toBe(`${n('healthy')} of 12`);
+    expect(fig(t6, 'Jobs healthy')).toBe(`${n('healthy')} of 13`); // 13 jobs since credit deduction slice 4b
     expect(fig(t6, 'Jobs late')).toBe(String(n('late')));
     expect(fig(t6, 'Jobs stopped')).toBe(String(n('stopped')));
     expect(fig(t6, 'Jobs failing (last run, or run after run)')).toBe(String(n('last_run_failed') + n('keeps_failing')));

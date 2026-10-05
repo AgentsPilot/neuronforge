@@ -1,31 +1,45 @@
 import 'server-only';
 
 /**
- * The production wiring of the invite redemption (Slice 1b), shared by the two
- * public signup routes, and the one mapping from an outcome to an HTTP answer.
+ * The production wiring of the invite redemption (Slice 1b), shared by the
+ * public signup routes (code, complete and, from Slice 3b, google), and the one
+ * mapping from an outcome to an HTTP answer.
  *
  * Kept out of the routes so both build the SAME dependencies, and so the only
  * application file that names the plan repository is this one (it is listed,
- * with its reason, in the entitlements imports guard: it may call exactly one
- * plan-state write, `provisionFromInvite`).
+ * with its reason, in the entitlements imports guard: it may call exactly two
+ * plan-state writes, `provisionFromInvite` and, from Slice 5b,
+ * `provisionFromFriendInvite`; and one read, `findEntitlementInputs`, for the
+ * friend issuer's in-force champion re-check).
  *
- * The code email is sent from the platform's system sender (no `from`, no
- * `replyTo`, no `ownerUserId`), `kind: 'transactional'` (D-7, SA F-10).
+ * The code email, and from Slice 5b the "you already have an account" notice
+ * (F5b-3, SA R-5), are sent from the platform's system sender (no `from`, no
+ * `replyTo`, no `ownerUserId`), `kind: 'transactional'` (D-7, SA F-10). The
+ * sender FAILS CLOSED like the invitation email (`inviteEmail.ts`, SA R-2):
+ * `platformSenderAddress()` is the gate only. When `RESEND_FROM_EMAIL` is not
+ * configured nothing is sent (`{ sent: false, senderNotConfigured: true }`)
+ * rather than falling back to the transport's NeuronForge default; when it is,
+ * no `from` is passed, so the transport uses `RESEND_FROM_EMAIL` exactly as
+ * configured (display name included) and production mail is unchanged.
  */
 
 import type { NextRequest } from 'next/server';
 
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
+import { generateInviteExistingAccountEmail } from '@/lib/email/templates/invite-existing-account';
 import { generateInviteSignupCodeEmail } from '@/lib/email/templates/invite-signup-code';
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
-import { sendEmail } from '@/lib/notifications/emailTransport';
+import { platformSenderAddress, sendEmail } from '@/lib/notifications/emailTransport';
 import { authAccountRepository } from '@/lib/repositories/AuthAccountRepository';
 import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
+import { marketingUrl } from '@/lib/utils/origins';
 
-import type { RedemptionDeps, RedemptionLogger, RedemptionRefusal } from './inviteRedemption';
+import { verifyGoogleIdToken } from './googleIdToken';
+import type { RedemptionDeps, RedemptionLanding, RedemptionLogger, RedemptionRefusal } from './inviteRedemption';
+import { AWAITING_PAYMENT_PATH } from './paymentHold';
 import { INVITE_SIGNUP_CODE_POLICY } from './signupCodePolicy';
 
 /** On every signup response, success or not (C-4, T-7). */
@@ -44,12 +58,38 @@ export function buildRedemptionDeps(context: {
 }): RedemptionDeps {
   const auditTrail = AuditTrailService.getInstance();
 
+  /**
+   * Is the platform sender configured? Logs (no recipient address) when not.
+   * Never throws. A gate only: the From header itself is left to the transport.
+   */
+  const senderConfigured = (email: 'signup_code' | 'existing_account_notice'): boolean => {
+    let address: string | undefined;
+    try {
+      address = platformSenderAddress();
+    } catch {
+      address = undefined;
+    }
+    if (!address) {
+      context.logger.warn(
+        { email, reason: 'sender_not_configured' },
+        'System email not sent: RESEND_FROM_EMAIL is not configured, and invite emails never use the default sender'
+      );
+      return false;
+    }
+    return true;
+  };
+
   return {
     invites: businessOsInviteRepository,
     accounts: authAccountRepository,
     finalise: (input) => businessOsAccountPlanRepository.provisionFromInvite(input),
+    finaliseFriend: (input) => businessOsAccountPlanRepository.provisionFromFriendInvite(input),
+    // Read-only: the friend issuer's plan row (the TypeScript in-force re-check,
+    // T-19). Only the one read method is handed over (SA N-3).
+    issuerPlans: { findEntitlementInputs: (accountId) => businessOsAccountPlanRepository.findEntitlementInputs(accountId) },
     sendCode: async ({ to, code, language }) => {
       const locale: Locale = isValidLocale(language) ? (language as Locale) : (defaultLocale as Locale);
+      if (!senderConfigured('signup_code')) return { sent: false, senderNotConfigured: true };
       const email = generateInviteSignupCodeEmail({ code, validMinutes: INVITE_SIGNUP_CODE_POLICY.ttlMinutes, locale });
       const result = await sendEmail({
         kind: 'transactional',
@@ -61,6 +101,33 @@ export function buildRedemptionDeps(context: {
         redactRecipientInLogs: true,
       });
       return { sent: result.sent };
+    },
+    sendExistingAccountNotice: async ({ to, language }) => {
+      // SA N-1: never throws. A malformed marketing URL renders the notice
+      // without a link (QA-1, the template never throws); anything that still
+      // fails is `{ sent: false }`, logged. The code route answers the same
+      // either way (QA-1): the champion must not learn the address has an account.
+      try {
+        // Checked before anything is composed. The redemption answers this the
+        // SAME way as the code email's `senderNotConfigured` (no account oracle).
+        if (!senderConfigured('existing_account_notice')) return { sent: false, senderNotConfigured: true };
+        const locale: Locale = isValidLocale(language) ? (language as Locale) : (defaultLocale as Locale);
+        const email = generateInviteExistingAccountEmail({ signInUrl: marketingUrl('/login'), locale });
+        // SA R-5: the system sender, exactly like the code email. No `from`, no
+        // `replyTo` (never the champion's), no `ownerUserId`.
+        const result = await sendEmail({
+          kind: 'transactional',
+          to: [to],
+          subject: email.subject,
+          html: email.html,
+          text: email.text,
+          redactRecipientInLogs: true,
+        });
+        return { sent: result.sent };
+      } catch (err) {
+        context.logger.error({ err }, 'Existing-account notice could not be built or sent');
+        return { sent: false };
+      }
     },
     audit: async (entry) => {
       await auditTrail
@@ -78,9 +145,21 @@ export function buildRedemptionDeps(context: {
     config: getEntitlementConfig(),
     now: () => new Date(),
     newAccountId: () => crypto.randomUUID(),
+    // Slice 3b: never throws, never logs (SA R-1); off until the client id is set (R-6).
+    verifyGoogleIdToken,
     logger: context.logger,
   };
 }
+
+/**
+ * Where the browser goes after a redemption (FR-13, FR-35): a champion to
+ * onboarding, a friend (Slice 5b, not yet paid) to the payment hold. One map,
+ * shared by the complete and Google routes, so the two can never disagree.
+ */
+export const REDEMPTION_LANDING_PATHS: Readonly<Record<RedemptionLanding, string>> = {
+  onboarding: '/onboarding-chat',
+  awaiting_payment: AWAITING_PAYMENT_PATH,
+};
 
 /** Flush the audit queue before answering (WC-7): a serverless instance can freeze after. */
 export async function flushRedemptionAudit(logger: { error: (context: Record<string, unknown>, message: string) => void }) {

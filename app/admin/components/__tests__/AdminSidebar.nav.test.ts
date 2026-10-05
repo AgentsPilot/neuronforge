@@ -13,7 +13,10 @@
  *   5. (slice 4) `/admin` is the Health landing, and the old dashboard moved to
  *      `/admin/platform-dashboard`, listed only in the hidden parked section
  *      (URL-only, user decision U-6);
- *   6. (slice 5) Scheduled jobs & queues is third under Monitor.
+ *   6. (slice 5) Scheduled jobs & queues is third under Monitor;
+ *   7. (ADMIN_BOS_CLEANUP slice 2) Model pricing is split from the AgentsPilot
+ *      billing settings, which moved to a parked page, and Free tier &
+ *      onboarding moved to the parked section.
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -108,14 +111,16 @@ describe('section order', () => {
     expect(hrefsOf('Settings')).toEqual([
       '/admin/business-os-llm',
       '/admin/system-config',
-      '/admin/onboarding',
       '/admin/settings',
     ]);
   });
 
-  it('parks the thirteen AgentsPilot pages, the legacy dashboard included (slice 4)', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(13);
+  it('parks the fifteen AgentsPilot pages, the legacy dashboard included (slice 4)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(15);
     expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/platform-dashboard');
+    // ADMIN_BOS_CLEANUP slice 2: the free tier and the AgentsPilot billing page.
+    expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/onboarding');
+    expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/agentspilot-billing');
   });
 
   it('the landing entry is Health (slice 4)', () => {
@@ -131,9 +136,12 @@ describe('every admin page is reachable, exactly once', () => {
     // 27 pages: slice 4 moved the legacy dashboard to its own route, Admin
     // Archiving slice 1 added /admin/archiving, slice 5 added
     // /admin/jobs-queues, and invite-only signup slice 0 added
-    // /admin/business-os-invites. If this drops, the scan broke rather than
+    // /admin/business-os-invites. 28 since ADMIN_BOS_CLEANUP slice 2 added
+    // /admin/agentspilot-billing. If this drops, the scan broke rather than
     // the sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(27);
+    expect(onDisk.length).toBeGreaterThanOrEqual(28);
+    expect(onDisk).toContain('/admin/agentspilot-billing');
+    expect(onDisk).toContain('/admin/onboarding');
     expect(onDisk).toContain('/admin/business-os-invites');
     expect(onDisk).toContain('/admin/archiving');
     expect(onDisk).toContain('/admin/jobs-queues');
@@ -147,8 +155,8 @@ describe('every admin page is reachable, exactly once', () => {
     expect([...allHrefs].sort()).toEqual(expected);
     // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving
     // slice 1) + Scheduled jobs & queues (slice 5) + Invites (invite-only
-    // signup slice 0).
-    expect(allHrefs).toHaveLength(26);
+    // signup slice 0) + AgentsPilot billing (ADMIN_BOS_CLEANUP slice 2).
+    expect(allHrefs).toHaveLength(27);
   });
 
   it('never lists the same page twice', () => {
@@ -191,6 +199,24 @@ describe('labels are honest', () => {
     expect(item?.description).toBe('Business OS invite links');
   });
 
+  it('Model pricing is named for the one table it holds, and sits in Settings (ADMIN_BOS_CLEANUP slice 2)', () => {
+    const item = sections.find((s) => s.title === 'Settings')?.items.find((i) => i.href === '/admin/system-config');
+    expect(item?.name).toBe('Model pricing');
+    expect(item?.description).toContain('Business OS');
+  });
+
+  it('Plans & entitlements says the Business OS trial lives there (FR-FT2)', () => {
+    const item = sections.flatMap((s) => s.items).find((i) => i.name === 'Plans & entitlements');
+    expect(item?.description).toContain('trial');
+  });
+
+  it('Free tier & onboarding is parked and names AgentsPilot (FR-FT1)', () => {
+    const item = sections
+      .find((s) => s.title === 'AgentsPilot (parked)')
+      ?.items.find((i) => i.href === '/admin/onboarding');
+    expect(item?.description).toContain('AgentsPilot');
+  });
+
   it('item names are unique (they are the React keys)', () => {
     const names = sections.flatMap((s) => s.items.map((i) => i.name));
     expect(new Set(names).size).toBe(names.length);
@@ -214,8 +240,8 @@ describe('the parked AgentsPilot section is hidden, not removed', () => {
     expect(navBlock.match(/hidden: true/g)).toHaveLength(1);
   });
 
-  it('keeps all thirteen parked items in the data (routes are untouched)', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(13);
+  it('keeps all fifteen parked items in the data (routes are untouched)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(15);
   });
 
   it('renders only the visible sections, and draws separators between those alone', () => {
@@ -234,5 +260,17 @@ describe('slice 5: Scheduled jobs & queues', () => {
     expect(item?.description).not.toMatch(/OK/);
     const page = fs.readFileSync(path.join(ADMIN_DIR, 'jobs-queues/page.tsx'), 'utf8');
     expect(page.trimStart().startsWith("'use client'")).toBe(true);
+  });
+});
+
+describe('the logo matches the Business OS app (admin header identity)', () => {
+  it('uses the shared Logo on its always-dark surface, not the legacy PNG', () => {
+    expect(sidebar).toContain("import { Logo } from '@/components/brand/Logo'");
+    expect(sidebar).toMatch(/<Logo\b[^>]*surface="dark"/);
+    expect(sidebar).not.toContain('AgentPilot_Logo.png');
+  });
+
+  it('keeps the Admin badge beside the logo', () => {
+    expect(sidebar).toMatch(/<Logo\b[^>]*\/>\s*<span[^>]*>\s*Admin\s*<\/span>/);
   });
 });

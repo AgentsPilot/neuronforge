@@ -9,6 +9,8 @@
 //
 // Bootstrap: admins are seeded from the ADMIN_EMAILS env allow-list (comma or
 // semicolon separated). Seeding into the DB is done by scripts/seed-admin-users.ts.
+// The env value is parsed by the shared lib/admin/adminEmailsEnv.ts (one parser for
+// app code; the admin list route uses the same one).
 // As a safety net, an email present in ADMIN_EMAILS is ALSO treated as an admin at
 // runtime even if the DB seed hasn't run yet — so the very first operator is never
 // locked out. The DB remains the authoritative, runtime-manageable source.
@@ -20,6 +22,7 @@
 // Usage (notification recipients):
 //   const emails = await svc.listAdminEmails();
 
+import { readEnvAdminEmails } from '@/lib/admin/adminEmailsEnv';
 import { createLogger } from '@/lib/logger';
 import {
   AdminUserRepository,
@@ -47,17 +50,6 @@ interface AdminCache {
   fetchedAt: number;
 }
 
-/** Parse ADMIN_EMAILS (comma/semicolon/whitespace separated) into a normalized set. */
-function parseEnvAdminEmails(): Set<string> {
-  const raw = process.env.ADMIN_EMAILS || '';
-  return new Set(
-    raw
-      .split(/[,;\s]+/)
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean)
-  );
-}
-
 export class AdminAccessService {
   private static instance: AdminAccessService | null = null;
 
@@ -67,7 +59,7 @@ export class AdminAccessService {
 
   private constructor(repo: AdminUserRepository = adminUserRepository) {
     this.repo = repo;
-    this.envAdminEmails = parseEnvAdminEmails();
+    this.envAdminEmails = readEnvAdminEmails();
   }
 
   static getInstance(): AdminAccessService {

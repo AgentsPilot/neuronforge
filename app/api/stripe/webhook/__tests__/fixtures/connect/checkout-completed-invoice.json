@@ -1,0 +1,21 @@
+{
+  "id": "evt_connect_checkout_invoice",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "checkout.session.completed",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000200,
+  "data": {
+    "object": {
+      "id": "cs_invoice_1",
+      "object": "checkout.session",
+      "mode": "payment",
+      "amount_total": 20000,
+      "payment_intent": "pi_checkout_invoice_1",
+      "customer": "cus_client_1",
+      "subscription": null,
+      "metadata": { "invoice_id": "pinv-0002" }
+    }
+  }
+}

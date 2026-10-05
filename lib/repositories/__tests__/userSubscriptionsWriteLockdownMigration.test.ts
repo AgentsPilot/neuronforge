@@ -213,24 +213,24 @@ describe('user_subscriptions is never written with a caller\'s own credentials',
       'utf8'
     );
     expect(src).toContain("import { supabaseServer } from '@/lib/supabaseServer'");
-    expect(src.match(/supabase: supabaseServer,/g)).toHaveLength(2);
+    // One call since plan payments P-1 (the custom_credits branch is a 410).
+    expect(src.match(/supabase: supabaseServer,/g)).toHaveLength(1);
     // The bare shorthand would pass the cookie client again.
     expect(src).not.toMatch(/stripeService\.create\w+\(\{\s+supabase,/);
   });
 
-  it('the Stripe subscription update writes with the service-role client', () => {
+  // Plan payments P-1 (SA Q-3): the route is refused with 410 and no longer
+  // writes the table at all, so the service-role write (and the RC9-5 failure
+  // path that guarded it) are gone. What must hold is that no write returns,
+  // on either client.
+  it('the Stripe subscription update writes nothing (refused since P-1)', () => {
     const src = readFileSync(
       join(REPO_ROOT, 'app/api/stripe/update-subscription/route.ts'),
       'utf8'
     );
-    expect(src).toMatch(
-      /await supabaseServer\s*\.from\('user_subscriptions'\)\s*\.update\(/
-    );
-    expect(src).not.toMatch(/await supabase\s*\.from\('user_subscriptions'\)\s*\.update\(/);
-    // SA RC9-5: the result is captured, logged through Pino and surfaced as a 500.
-    expect(src).toContain('const { error: subUpdateError }');
-    expect(src).toMatch(/if \(subUpdateError\) \{/);
-    expect(src).toMatch(/status: 500/);
+    expect(src).not.toMatch(/\.from\('user_subscriptions'\)/);
+    expect(src).not.toMatch(/\.(update|insert|upsert|delete)\s*\(/);
+    expect(src).toMatch(/status: 410/);
     expect(src).not.toMatch(/console\./);
   });
 

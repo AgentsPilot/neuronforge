@@ -15,7 +15,7 @@ describe('Feature Flags', () => {
     // Create a new copy of process.env for isolation
     process.env = { ...originalEnv };
     // Clear the specific flag we're testing
-    delete process.env.USE_THREAD_BASED_AGENT_CREATION;
+    delete process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION;
   });
 
   afterAll(() => {
@@ -27,85 +27,85 @@ describe('Feature Flags', () => {
     it('should return false when flag is not set', () => {
       // Import after setting env to ensure fresh module
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
-      delete process.env.USE_THREAD_BASED_AGENT_CREATION;
+      delete process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION;
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false when flag is "false"', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'false';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'false';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false when flag is "0"', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = '0';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = '0';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return true when flag is "true"', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'true';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'true';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(true);
     });
 
     it('should return true when flag is "1"', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = '1';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = '1';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(true);
     });
 
     it('should return false for invalid values', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'invalid';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'invalid';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should be case-insensitive for "true"', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'TRUE';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'TRUE';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(true);
     });
 
     it('should be case-insensitive for "false"', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'FALSE';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'FALSE';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     // Additional edge case tests
     it('should return false for empty string', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = '';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = '';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false for whitespace', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = '   ';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = '   ';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should handle mixed case correctly', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'TrUe';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'TrUe';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(true);
     });
 
     it('should return false for numeric values other than 1', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = '2';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = '2';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false for "yes"', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'yes';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'yes';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false for "on"', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'on';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'on';
       const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
@@ -113,7 +113,7 @@ describe('Feature Flags', () => {
 
   describe('getFeatureFlags', () => {
     it('should return all feature flags with thread flag enabled', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'true';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'true';
       const { getFeatureFlags } = require('../featureFlags');
       const flags = getFeatureFlags();
 
@@ -122,7 +122,7 @@ describe('Feature Flags', () => {
     });
 
     it('should return all feature flags with thread flag disabled', () => {
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'false';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'false';
       const { getFeatureFlags } = require('../featureFlags');
       const flags = getFeatureFlags();
 
@@ -131,14 +131,14 @@ describe('Feature Flags', () => {
 
     it('should reflect current environment state', () => {
       // First call with false
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'false';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'false';
       const { getFeatureFlags: getFlags1 } = require('../featureFlags');
       const flags1 = getFlags1();
       expect(flags1.isThreadBasedAgentCreationEnabled).toBe(false);
 
       // Reset modules and change env
       jest.resetModules();
-      process.env.USE_THREAD_BASED_AGENT_CREATION = 'true';
+      process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION = 'true';
       const { getFeatureFlags: getFlags2 } = require('../featureFlags');
       const flags2 = getFlags2();
       expect(flags2.isThreadBasedAgentCreationEnabled).toBe(true);
@@ -338,5 +338,36 @@ describe('Feature Flags', () => {
 
       expect(flags.isV6ReviewModeEnabled).toBe(false);
     });
+  });
+});
+
+describe('isBusinessOsCreditHistoryEnabled (credit deduction slice 7a — parked, default off)', () => {
+  const original = process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY;
+  beforeEach(() => {
+    jest.resetModules();
+    delete process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY;
+  });
+  afterAll(() => {
+    if (original === undefined) delete process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY;
+    else process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY = original;
+  });
+
+  it('is off when unset (the default)', async () => {
+    const { isBusinessOsCreditHistoryEnabled } = await import('../featureFlags');
+    expect(isBusinessOsCreditHistoryEnabled()).toBe(false);
+  });
+
+  it.each([['', false], ['false', false], ['0', false], ['yes', false], ['true', true], ['TRUE', true], ['1', true]])(
+    'value %p → %p',
+    async (value, expected) => {
+      process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY = value;
+      const { isBusinessOsCreditHistoryEnabled } = await import('../featureFlags');
+      expect(isBusinessOsCreditHistoryEnabled()).toBe(expected);
+    }
+  );
+
+  it('is listed by getFeatureFlags', async () => {
+    const { getFeatureFlags } = await import('../featureFlags');
+    expect(getFeatureFlags().isBusinessOsCreditHistoryEnabled).toBe(false);
   });
 });

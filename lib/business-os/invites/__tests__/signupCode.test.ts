@@ -44,9 +44,10 @@ describe('the policy (T-5, SA D-4)', () => {
     });
   });
 
-  it('the claim lease exceeds the complete route maxDuration, and the route declares the same number', () => {
+  // Slice 3b: the Google route claims too, so it is held to the same lease.
+  it.each(['complete', 'google'])('the claim lease exceeds the %s route maxDuration, and the route declares the same number', (routeDir) => {
     expect(INVITE_CLAIM_LEASE_SECONDS).toBeGreaterThan(COMPLETE_ROUTE_MAX_DURATION_SECONDS);
-    const route = readFileSync(join(process.cwd(), 'app', 'api', 'public', 'invites', 'signup', 'complete', 'route.ts'), 'utf8');
+    const route = readFileSync(join(process.cwd(), 'app', 'api', 'public', 'invites', 'signup', routeDir, 'route.ts'), 'utf8');
     expect(route).toContain(`export const maxDuration = ${COMPLETE_ROUTE_MAX_DURATION_SECONDS};`);
   });
 
