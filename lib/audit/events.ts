@@ -230,6 +230,13 @@ export const AUDIT_EVENTS = {
   // invitee email, the link, the token, its hash or a provider's error text.
   BOS_INVITE_EMAIL_SENT: 'BOS_INVITE_EMAIL_SENT',
   BOS_INVITE_EMAIL_NOT_SENT: 'BOS_INVITE_EMAIL_NOT_SENT',
+  // N-1: the issuer of an accepted invite (the champion, or the one admin who
+  // issued it) was, or was not, emailed. A system event: no owner (userId and
+  // actorId null, SA Q-4), so it appears in neither person's own audit view;
+  // the recipient's account id, the status, the language and the reason class
+  // are in the details. Never an email address of anyone.
+  BOS_INVITE_INVITER_NOTIFIED: 'BOS_INVITE_INVITER_NOTIFIED',
+  BOS_INVITE_INVITER_NOT_NOTIFIED: 'BOS_INVITE_INVITER_NOT_NOTIFIED',
   // Slice 5a (F5a-13): a champion's friend invites. Actor = the champion
   // account. CREATED carries the language; REVOKED nothing beyond the invite
   // id; REFUSED the reason class only (`own_email`, `allowance_reached`,
@@ -760,6 +767,17 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'A Business OS invitation email was not sent, or not confirmed in time; the admin was shown the link to copy (reason class only)',
+  },
+  // N-1: 'info' for both. A skipped courtesy email is not an operator alert.
+  [AUDIT_EVENTS.BOS_INVITE_INVITER_NOTIFIED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'The issuer of an accepted Business OS invite was emailed (recipient kind, account id, status and language recorded)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_INVITER_NOT_NOTIFIED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'The issuer of an accepted Business OS invite was not emailed, or the send was not confirmed in time (reason class only)',
   },
   // Credit deduction slice 11b. 'warning': an admin changed what an account can
   // spend. SOC2 and not FINANCIAL: FINANCIAL is reserved for AgentsPilot's own

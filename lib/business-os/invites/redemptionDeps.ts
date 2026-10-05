@@ -21,6 +21,12 @@ import 'server-only';
  * rather than falling back to the transport's NeuronForge default; when it is,
  * no `from` is passed, so the transport uses `RESEND_FROM_EMAIL` exactly as
  * configured (display name included) and production mail is unchanged.
+ *
+ * N-1 adds `notifyInviter` (`inviterNotification.ts`): the "your invitation was
+ * accepted" email to the invite's issuer, through the same sender gate and the
+ * same non-blocking audit (with no owner, SA Q-4), flushed by the route's
+ * existing `flushRedemptionAudit`. Its lookups run on the SERVICE-ROLE
+ * repositories, keyed only on the issuer id of the matched invite row (SA C-2).
  */
 
 import type { NextRequest } from 'next/server';
@@ -34,11 +40,15 @@ import { platformSenderAddress, sendEmail } from '@/lib/notifications/emailTrans
 import { authAccountRepository } from '@/lib/repositories/AuthAccountRepository';
 import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { userPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
+import { AdminAccessService } from '@/lib/services/AdminAccessService';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
-import { marketingUrl } from '@/lib/utils/origins';
+import { marketingUrl, platformUrl } from '@/lib/utils/origins';
 
 import { verifyGoogleIdToken } from './googleIdToken';
 import type { RedemptionDeps, RedemptionLanding, RedemptionLogger, RedemptionRefusal } from './inviteRedemption';
+import { notifyInviter, type InviterNotificationDeps } from './inviterNotification';
 import { AWAITING_PAYMENT_PATH } from './paymentHold';
 import { INVITE_SIGNUP_CODE_POLICY } from './signupCodePolicy';
 
@@ -77,6 +87,39 @@ export function buildRedemptionDeps(context: {
       return false;
     }
     return true;
+  };
+
+  /*
+   * N-1. INTENTIONAL SERVICE-ROLE READS (RLS bypass): these routes are public
+   * and have no session, and the reads concern the invite's ISSUER, not the
+   * visitor. Each is keyed only on the issuer id of the row the 256-bit token
+   * matched (`inviteRedemption.ts` passes nothing else), and the two language
+   * reads keep their `.eq('user_id', id)` (tenant-isolation-guard; SA C-2).
+   */
+  const inviterNotificationDeps: InviterNotificationDeps = {
+    findUserIdentity: (id) => authAccountRepository.findUserIdentity(id),
+    isActiveAdmin: (id) => AdminAccessService.getInstance().isAdminById(id),
+    findProfileLanguage: (id) => businessProfileRepository.findLanguage(id),
+    findPreferredLanguage: (id) => userPreferencesRepository.findPreferredLanguage(id),
+    senderAddress: () => platformSenderAddress(),
+    sendEmail,
+    platformUrl,
+    audit: async (entry) => {
+      // SA Q-4: a system event. No owner, so the inviter's id never reaches
+      // the invitee's audit view (nor the other way round); it is in details.
+      await auditTrail
+        .log({
+          action: AUDIT_EVENTS[entry.action],
+          entityType: 'business_os_invite',
+          entityId: entry.inviteId,
+          userId: null,
+          actorId: null,
+          details: { correlationId: context.correlationId, ...entry.details },
+          request: context.request,
+        })
+        .catch((err) => context.logger.error({ err }, 'Audit failed (non-blocking)'));
+    },
+    logger: context.logger,
   };
 
   return {
@@ -147,6 +190,7 @@ export function buildRedemptionDeps(context: {
     newAccountId: () => crypto.randomUUID(),
     // Slice 3b: never throws, never logs (SA R-1); off until the client id is set (R-6).
     verifyGoogleIdToken,
+    notifyInviter: (input) => notifyInviter(input, inviterNotificationDeps),
     logger: context.logger,
   };
 }

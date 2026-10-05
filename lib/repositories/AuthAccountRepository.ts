@@ -24,7 +24,10 @@
 // Slice 3b adds `createConfirmedUserWithoutPassword`: the same creation for a
 // mailbox proven by a verified Google ID token, with no password.
 // Admin delete AD-1b adds `findUserIdentity` (D-1): id, email and joined date
-// of ONE account, for the admin-gated deletion preview only.
+// of ONE account. Two callers: the admin-gated deletion preview, and (N-1, SA
+// Q-6) the inviter notification, which reads the LIVE email of an invite's
+// issuer, by the issuer id on the invite row the token matched (wired in
+// `redemptionDeps.ts`), never by an id from a request.
 //
 // No method here deletes a user, now or later (Slice 1 invariant I-1; the
 // repo-wide no-deletion-paths guard). A signup that stops halfway keeps its
@@ -187,9 +190,13 @@ export class AuthAccountRepository {
   /**
    * Who is the account with this id? (Admin delete AD-1b, D-1.)
    *
-   * Read by the admin deletion preview only, for an id taken from an
-   * admin-gated route path: the dialog header shows the email and joined date
-   * (FR-A2), and R-2 checks the email against the admin list.
+   * Two callers:
+   *   - the admin deletion preview, for an id taken from an admin-gated route
+   *     path: the dialog header shows the email and joined date (FR-A2), and
+   *     R-2 checks the email against the admin list;
+   *   - the inviter notification (N-1, SA Q-6), for the issuer id of the invite
+   *     row a signup token matched: the email it returns is the recipient of
+   *     "your invitation was accepted". It is never logged there either.
    *
    * `{ data: null }` ONLY on a definite 404 / `user_not_found`. Anything else,
    * including a reply with no user and no error, is an error: the caller must

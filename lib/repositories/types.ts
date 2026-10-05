@@ -701,6 +701,12 @@ export interface BusinessOsInviteRedemptionView {
   issuer_kind: 'admin' | 'account';
   /** Slice 5b: the champion who sent a friend invite (NULL on an admin invite). */
   issuer_account_id: string | null;
+  /**
+   * N-1: the auth user id of the admin who issued an admin invite (NULL on a
+   * friend invite), so that admin can be told it was accepted. Server-side
+   * only: never returned by a redemption route (SA C-2, pinned by test).
+   */
+  issuer_admin_id: string | null;
   grant_kind: BusinessOsInviteGrantKind;
   grant_id: string;
   access_open_ended: boolean | null;

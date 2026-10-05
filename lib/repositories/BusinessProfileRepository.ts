@@ -1158,6 +1158,31 @@ export class BusinessProfileRepository {
   }
 
   /**
+   * The business's stored language (`business_profiles.language`), raw, or
+   * `null` when it has none or has no business row. Not validated here: the
+   * caller normalises it (`resolveUserLanguage`). Read by the inviter
+   * notification (N-1, N7) for the RECIPIENT's language; the caller passes an
+   * id taken from the matched invite row, never from a request.
+   */
+  async findLanguage(userId: string): Promise<BusinessProfileRepositoryResult<string | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('language')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const language = (data as { language?: unknown } | null)?.language;
+      return { data: typeof language === 'string' ? language : null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read business language');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Save the business's DEFAULT currency.
    *
    * A default, not a constraint: `scheduling_services.currency` stays the

@@ -99,10 +99,11 @@ export const BUSINESS_OS_INVITE_ADMIN_COLUMNS =
 /**
  * What the signup routes read (Slice 1b). The email is here because the account
  * is created for exactly that address; the routes never return it before
- * mailbox proof. Never `token_hash`.
+ * mailbox proof. Never `token_hash`. `issuer_admin_id` (N-1) is read so the
+ * issuing admin can be told the invite was accepted; it never leaves the server.
  */
 export const BUSINESS_OS_INVITE_REDEMPTION_COLUMNS =
-  'id, email, invite_type, issuer_kind, issuer_account_id, grant_kind, grant_id, access_open_ended, access_months, language, ' +
+  'id, email, invite_type, issuer_kind, issuer_account_id, issuer_admin_id, grant_kind, grant_id, access_open_ended, access_months, language, ' +
   'link_expires_at, revoked_at, redeemed_at, signup_code_hash, signup_code_expires_at, signup_code_attempts, ' +
   'signup_code_sent_count, signup_code_window_started_at, signup_code_last_sent_at, claimed_at, claimed_account_id';
 
