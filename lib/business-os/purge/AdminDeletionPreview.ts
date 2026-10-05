@@ -178,7 +178,11 @@ async function readLocalBlocking(targetId: string): Promise<LocalPreconditionRes
   try {
     return decideLocalPrecondition(await businessPurgeRepository.countLocalBlockingState(targetId));
   } catch (err) {
-    return { outcome: 'refused', reason: err instanceof Error ? err.message : 'the read threw' };
+    // A fixed reason, never `err.message`: this string reaches the admin's
+    // response in R-6's message, with no dev-only guard (AD-1b QA Low-1).
+    // The error itself goes to the log, with ids only.
+    logger.error({ err, targetId }, 'Admin deletion preview: local blocking-state read threw');
+    return { outcome: 'refused', reason: 'the read failed' };
   }
 }
 
@@ -225,6 +229,7 @@ export async function buildAdminDeletionPreview(params: {
   });
   const identityOnly = evaluateAdminDeletionRefusals({ adminId, targetId, targetIsAdmin });
 
+  // Read before the R-1 / R-2 short-circuit on purpose: display only, so the dialog header names the business even when it is refused.
   const business = await readBusinessName(targetId);
   const limitations: string[] = [];
   if (business.unreadable) {

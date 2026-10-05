@@ -34,6 +34,7 @@ import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotic
 import { BusinessOsPanel } from './components/BusinessOsPanel';
 import { UserNameLine } from './components/UserNameLine';
 import { CreditsLeftCell } from './components/CreditsLeftCell';
+import { DeleteBusinessDialog } from './components/DeleteBusinessDialog';
 import { countLabels, toStatusFilter, type StatusFilter } from './userName';
 import type { RowBusiness, RowCreditsLeft } from './types';
 
@@ -132,6 +133,8 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+  /** The account whose read-only deletion preview is open (admin delete AD-1c). */
+  const [deleteDialogUserId, setDeleteDialogUserId] = useState<string | null>(null);
   const [userLoginStats, setUserLoginStats] = useState<Record<string, UserLoginStats>>({});
   const [userAuditLogs, setUserAuditLogs] = useState<Record<string, AuditLogEntry[]>>({});
   const [userDetailedStats, setUserDetailedStats] = useState<Record<string, UserDetailedStats>>({});
@@ -410,6 +413,12 @@ export default function UsersPage() {
    * awaits `requireAdminPage()` before any admin page renders, and every
    * `/api/admin` handler calls `requireAdmin`. Both are enforced by the admin
    * authz CI guard (docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md).
+   *
+   * Its replacement is the gated flow in the expanded row's danger area
+   * (admin delete AD-1c): a "Delete…" button opening a READ-ONLY preview from
+   * `POST /api/admin/users/[id]/deletion/preview` (requireAdmin, target from
+   * the path only). The confirm control there is always disabled until the
+   * commit slice (AD-2) exists.
    */
 
 
@@ -1153,6 +1162,36 @@ export default function UsersPage() {
                                       ))}
                                     </div>
                                   )}
+                                </div>
+
+                                {/* Danger area (admin delete AD-1c, FR-A1): expanded row only, never the collapsed row. */}
+                                <div
+                                  data-testid="danger-area"
+                                  className="p-6 rounded-xl border border-rose-500/40 bg-rose-500/5"
+                                >
+                                  <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                                    <AlertTriangle className="w-5 h-5 text-rose-400" />
+                                    Danger area
+                                  </h3>
+                                  <p className="text-sm text-slate-400 mb-4">
+                                    Preview what deleting this business would remove and keep, and what refuses it. Nothing is deleted from here.
+                                  </p>
+                                  <button
+                                    type="button"
+                                    data-testid="delete-business-open"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDeleteDialogUserId(user.id);
+                                    }}
+                                    className="px-4 py-2 text-sm font-medium rounded-lg border border-rose-500/50 text-rose-200 hover:bg-rose-500/20 transition-colors"
+                                  >
+                                    Delete…
+                                  </button>
+                                  <DeleteBusinessDialog
+                                    open={deleteDialogUserId === user.id}
+                                    onOpenChange={(next) => setDeleteDialogUserId(next ? user.id : null)}
+                                    accountId={user.id}
+                                  />
                                 </div>
                               </motion.div>
                             )}

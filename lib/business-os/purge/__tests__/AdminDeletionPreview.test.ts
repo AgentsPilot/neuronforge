@@ -279,6 +279,17 @@ describe('failed reads are refusals, and the preview still renders', () => {
     expectNothingDestructive();
   });
 
+  it('a THROWN local blocking-state read: R-6 unverified with a fixed reason, never the raw message (AD-1b QA Low-1)', async () => {
+    spies.countLocalBlockingState.mockRejectedValue(new Error('relation "secret_internal_table" does not exist'));
+    const outcome = await run();
+    if (outcome.kind !== 'ok') throw new Error('expected ok');
+    const r6 = outcome.preview.refusals.find((r) => r.id === 'R-6');
+    expect(r6?.status).toBe('unverified');
+    expect(r6?.message).toContain('the read failed');
+    expect(JSON.stringify(outcome.preview)).not.toContain('secret_internal_table');
+    expectNothingDestructive();
+  });
+
   it('a live plan subscription: R-3 applies and is the disabled reason', async () => {
     mockFindByUser.mockImplementation(async (_id: string, livemode: boolean) => ({
       data: livemode ? null : { subscriptionStatus: 'active', stripeSubscriptionId: 'sub_1', endedAt: null },

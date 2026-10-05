@@ -1,11 +1,11 @@
 # Workplan: Admin Delete, slice AD-1: read-only deletion preview from `/admin/users`
 
-> **Last Updated**: 2026-10-04
+> **Last Updated**: 2026-10-05
 
 **Developer:** Dev
 **Requirement:** [ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md](/docs/requirements/ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md) §5 (AD-1), §6.1, §6.3, §8 (AC-A1…AC-A5), SA Review Notes (SC-1…SC-12)
 **Date:** 2026-10-04
-**Status:** AD-1a merged (PR #216, `0db9da62`). **AD-1b Code Complete (2026-10-04)**, uncommitted on `feature/admin-delete-ad1b-preview-route` (cut from `origin/main` `0db9da62`), waiting for SA code review. AD-1c not started.
+**Status:** AD-1a merged (PR #216, `0db9da62`). **AD-1b Code Complete (2026-10-04)** on `feature/admin-delete-ad1b-preview-route` (cut from `origin/main` `0db9da62`), SA-approved and QA-passed; PR #220 open. **AD-1c Code Complete (2026-10-05)**, uncommitted on `feature/admin-delete-ad1c-dialog` (stacked on `feature/admin-delete-ad1b-preview-route`; it needs AD-1b's route), waiting for SA code review.
 **Branch (AD-1a):** `feature/admin-delete-ad1a-reconciler`, cut from `origin/main` `1a9944a5` in worktree `neuronforge-admin-delete`. Original proposal for the whole slice: `feature/admin-delete-ad1-preview`. ⚠️ **It does not exist yet.** The working tree is on `main`, and local `main` is behind `origin/main`, which has 3,000+ lines of `app/admin/users` changes: the credits block, the dialog precedent and the source guard. RM must create the branch from **`origin/main`**. This plan was written against `origin/main` (`1a9944a5`), not the stale local tree.
 
 ## Overview
@@ -233,16 +233,35 @@ Re-run just before merge: `npx tsx --import ./scripts/env-preload.ts scripts/pur
 **AD-1b test run:** `npx jest lib/business-os/purge lib/repositories/__tests__ lib/services app/api/admin app/admin/users lib/admin/__tests__ lib/audit` → 167 suites / 3,748 tests green. Scoped `tsc` over the 16 touched TS files: 0 errors in them (35 pre-existing errors in transitively loaded files, none touched). ESLint on the touched files: 0 errors (the warnings are pre-existing `any`s in the AdminAccessService test and one in `events.ts`).
 
 ### AD-1c: Dialog
-- [ ] **T16** `types.ts` payload types and `deletionCopy.ts`: area labels, kept categories with reasons, a clearing action per refusal. The R-3 action points to the plan cancel (see Risk 3), R-5 to "Disconnect Stripe (available with AD-4)", R-6 to the C1/C2/C3 items to resolve, R-8 to "platform problem, not this business: contact engineering".
-- [ ] **T17** `DeleteBusinessDialog.tsx`:
+- [x] **T16** ✅ `types.ts` payload types and `deletionCopy.ts`: area labels, kept categories with reasons, a clearing action per refusal. The R-3 action points to the plan cancel (see Risk 3), R-5 to "Disconnect Stripe (available with AD-4)", R-6 to the C1/C2/C3 items to resolve, R-8 to "platform problem, not this business: contact engineering".
+- [x] **T17** ✅ `DeleteBusinessDialog.tsx`:
   - Header: business name, email, user id, joined date.
   - Area counts, with "unknown" shown as unknown and never as 0. Storage counts.
   - The kept list. The refusals list (every status shown, R-4 "Not applicable").
   - A technical `<details>` expander. `aria-live` blocked state. No input. The disabled confirm with "Deletion not yet available: [reason]".
   - Loading and error states. An error shows a sentence, never a raw message.
-- [ ] **T18** `page.tsx`: a separated danger area (border plus a heading) at the bottom of the expanded row, holding a "Delete…" button that opens the dialog. It is not in the collapsed row (FR-A1).
-- [ ] **T19** Source guard additions and the render test.
-- [ ] **T20** `npm run lint`. Run the touched suites. Hand to SA, then to QA for the manual prod check (AC-A2).
+- [x] **T18** ✅ `page.tsx`: a separated danger area (border plus a heading) at the bottom of the expanded row, holding a "Delete…" button that opens the dialog. It is not in the collapsed row (FR-A1).
+- [x] **T19** ✅ Source guard additions and the render test.
+- [x] **T20** ✅ ESLint on the touched files, the touched suites, scoped `tsc`. Hand to SA, then to QA for the manual prod check (AC-A2).
+
+| Task | Implementation note (AD-1c, 2026-10-05) |
+|---|---|
+| T16 | `DeletionPreviewPayload` and friends appended to `types.ts` (no import). **Added** `lib/business-os/purge/__tests__/adminDeletionPreview.wireTypes.test.ts`, the `adminCreditPosition.wireTypes` precedent: the payload and the area union are assignable both ways. Verified to fail with `TS2344` on a planted drift. Jest does not type-check, and `lib/business-os/purge/` is **not** in `typecheck:bos-llm`'s SCOPED_DIRS, so in CI only the full type-check job enforces it. `deletionCopy.ts`: area labels, refusal titles, status labels (text, not colour alone), the five fixed kept categories, error sentences, count formatting |
+| T16 deviation | Clearing actions are **not** duplicated in `deletionCopy.ts`. The server already sends one per refusal (`adminDeletionRefusals.ts`), including the SA-ruled R-3 Stripe-dashboard wording, so the dialog renders `clearingAction` as sent. A second copy could drift from it. A clearing line is shown for blocking statuses (`applies`, `unverified`) only |
+| T17 | Radix `Dialog` with the `CreditFormDialog` dark overrides. Fetches only while open, aborts on close, and refetches on every open and on "Try again". One `role="status" aria-live="polite"` region is mounted for the dialog's whole life: it says loading, then "Deletion not yet available: <reason>". The confirm `Button` is literally `disabled` with no `onClick`, and its `aria-describedby` points at that region. Errors use `role="alert"` and a sentence keyed by the route's error code; `details`, raw messages and a table's count `error` are never rendered. Section order: target, refusals, removed, kept, limitations, technical `<details>` (tables, kept tables with notes, schema status, correlation id) |
+| T18 | Danger area (rose border, heading, one sentence, "Delete…" button) is the last block of the expanded row, after the audit trail. `deleteDialogUserId` state on the page, so only one dialog is open. The terminate-removal comment now points at this flow. The page is not localised (English only), so no RTL work was needed |
+| T19 | Render test: 13 cases (POST `{}` once, nothing while closed, loading, target, counts with unknown, technical and kept, every refusal with clearing action and R-4 not applicable, disabled confirm described by the status region, no input, R-1 not counted, 500 / 404 / network errors, retry). Source guard: both new files in `SCREEN_FILES`, plus a dialog block (one URL = the preview route, one `fetch`, POST `{}`, no `commit` or `token`, no input element, confirm `disabled` without `onClick`, no `dangerouslySetInnerHTML`, the dialog only inside the expanded row's danger area) |
+| AD-1b follow-ups | `readLocalBlocking` returns the fixed reason "the read failed" and logs the error (ids only) instead of putting `err.message` in R-6 (QA Low-1), with a new composition test. Comment moved above `.catch` in the route. One-line comment: the business name is read before R-1 / R-2 on purpose, for the dialog header |
+
+**AD-1c SA/QA fixes (Dev, 2026-10-05):**
+- [x] ✅ SA Medium: `lib/business-os/purge/__tests__/adminDeletionPreview.wireTypes.test.ts` (that one file, not the purge directory) added to `SCOPED_DIRS` in `scripts/typecheck-bos-llm.ts`; the test's header now names `typecheck:bos-llm` as the enforcer. Proven: planted `resetLive: boolean` in `app/admin/users/types.ts` → the gate reports `TS2344` on the pin; restored (`cmp` byte-identical) → `passed`, 0 new. Runtime 114.4 s / 1m59 wall before → 112.5 s / 1m57 wall after (419 → 420 files in scope; inside noise, no added time)
+- [x] ✅ SA/QA Low: the disabled confirm's reason is never empty. Loading: "Loading the deletion preview… Deletion not yet available: the preview has not loaded yet." Error: "Deletion not yet available: the preview could not be loaded." Both tested
+- [x] ✅ QA Low: R-2 `unverified` render case added
+- [x] ✅ QA Low: distinct close names. The footer button is now "Close preview". The corner "Close" belongs to the shared `components/ui/dialog.tsx` primitive and is unchanged, because renaming it there would change every dialog in the app. Tested: exactly one "Close" and one "Close preview"
+- [x] ✅ QA Low: limitations use an index-qualified key
+- Re-run: affected suites 23 / 783 green; `typecheck:bos-llm` passed; ESLint 0 errors (one pre-existing unused-import warning in `typecheck-bos-llm.ts`)
+
+**AD-1c test run:** `npx jest app/admin/users app/api/admin/users lib/business-os/purge app/api/admin/__tests__/adminGate` → 23 suites / 781 tests green. Scoped `tsc` over the 10 touched or new TS files: 0 errors. ESLint on them: 0 errors; the 9 warnings are pre-existing in `page.tsx`. No `console.*` in any touched file. `npm run test:bos-entitlements` not run: no file touched imports the entitlements module.
 
 ---
 
@@ -397,6 +416,27 @@ Before merge: re-run `scripts/purge-schema-reconcile.ts` against prod and expect
 ### Code Approved for QA: Yes
 Do not commit until the user has seen the diff.
 
+**Code Review by SA, 2026-10-05 (AD-1c)** (uncommitted diff in worktree `neuronforge-admin-delete`, branch `feature/admin-delete-ad1c-dialog`, stacked on AD-1b / PR #220)
+**Status:** 🔄 Fix Required (one Medium; approved for QA in parallel, merge waits on the fix)
+
+### Code Review Comments
+1. Deviation 1, the dialog renders the server's `clearingAction`: **accepted.** `adminDeletionRefusals.ts` stays the single source of the SA-ruled R-3 wording, so the copy cannot drift between API and UI. The render test pins the R-3 text. It is shown only for blocking statuses, which is correct. Priority: none
+2. Deviation 2, the wire-type pin: **not accepted as stated.** There is **no full-project type-check job in CI.** `build.yml` runs `next build` with `typescript.ignoreBuildErrors: true`, and the only `tsc` gate, `Type check (Business OS LLM attribution)` (required), checks only `scripts/typecheck-bos-llm.ts`'s scope: `SCOPED_DIRS` (llm, usage, entitlements, credits), catalog importers, attribution tests, barrels, and one level of callers. `adminDeletionPreview.wireTypes.test.ts` is in none of these, so a drift between `app/admin/users/types.ts` and `AdminDeletionPreview` is caught by **nothing** in CI. The test's header comment ("the CI type-check job's full-project pass") is wrong. **Fix:** add the file path (`'lib/business-os/purge/__tests__/adminDeletionPreview.wireTypes.test.ts'`) to `SCOPED_DIRS` with a comment, following the `credits/` / `creditReport.wireTypes` precedent (`startsWith` matches a file path). Do not add all of `lib/business-os/purge/`, which would pull unrelated baseline into the gate. Correct the test's header comment. Prove it: plant a one-field drift in `types.ts`, run `npm run typecheck:bos-llm`, see `TS2344`, revert. The gate already runs on every non-docs PR, so this adds no CI time. Priority: **Medium** (blocks merge)
+3. Deviation 3, R-6 thrown read → fixed "the read failed": **accepted.** `err` goes to Pino with ids only. The test asserts the raw message is absent from the whole serialized preview. The `decideLocalPrecondition` "unreadable" reason lists table names only, which the technical expander shows anyway. Priority: none
+4. SC-9 and FR-A3: no destructive path exists. One `fetch`, to the preview route only, POST `{}`. No input, textarea, select or checkbox. The confirm button has a bare `disabled`, no `onClick`, and `aria-describedby` the status region. All of this is pinned by the source guard. No `commit` or `token` appears in either new file. Priority: none
+5. Error handling: an error shows only `deletionErrorSentence(code)`, mapped from the known codes, with a generic fallback. `details` and per-table `error` are never rendered. Network failures and non-JSON responses are caught. Server text is rendered as text only, with no `dangerouslySetInnerHTML` (guarded). Priority: none
+6. Boundaries: `DeleteBusinessDialog.tsx` is `'use client'` (guarded). Both new files are in `SCREEN_FILES`, so the guard against `lib/business-os` and repository imports and the `console.*` guard apply. They import only `components/ui` and local `types`/`deletionCopy`. The page imports only the component. Priority: none
+7. `DeleteBusinessDialog.tsx`: in the **error** state the `role="status"` region is empty, so the always-disabled confirm button points at an empty description. "Confirm always disabled with a reason" is only half true there. Give the error and loading states a reason too (for example `unavailablePrefix` + "the preview could not be loaded"), or keep the region's text non-empty in every state. Priority: Low
+8. Accessibility (SC-12): Radix traps focus, closes on Esc and restores focus to the "Delete…" button. Title and description are wired. One persistent polite live region, plus `role="alert"` for errors. Status is shown as text, not colour alone. A stale response is dropped through `AbortController`, and the request is aborted on close. Tokens: the `!`-overrides on the dark slate palette follow the `CreditFormDialog` precedent, because the admin shell lacks `--v2-*`. The danger area matches the page's rose/slate panels. Priority: none
+9. AD-1b carry-overs are closed: the `readBusinessName` intent comment is present, and the `logAndFlush` comment was moved (a whitespace-only change to the route). Priority: none
+10. Verified by SA: `npx jest app/admin/users` plus `AdminDeletionPreview` and the wire-types test give 12 suites, 265/265. ESLint on the 3 new or changed screen files is clean. SA did not run tsc. Priority: Low
+
+### Optimisation Suggestions
+- `schema.missingNever` is in the payload but not in the technical expander, while `unclassified` and `missingDeletable` are. Either show it or say in a comment why it is left out.
+- `deletionPreviewUrl` is exported only to be called internally. If no test imports it, make it module-private.
+
+### Code Approved for QA: Yes (in parallel). Merge is conditional on comment 2, and comment 7 is recommended. Do not commit until the user has seen the diff.
+
 ## QA Testing Report
 
 **QA — 2026-10-04 (AD-1a only)**
@@ -532,6 +572,93 @@ Hygiene: no DB was written and prod was not called. `git status --porcelain`, th
 - [x] All acceptance criteria pass — ready for commit (AD-1b scope: AC-A1, AC-A2 code half, AC-A3 API half, AC-A4. The live half of AC-A2 and the rendered AC-A3 are owed with AD-1c. The AC-A5 prod re-run is still owed before merge)
 - [ ] Issues found — Dev must address before commit
 
+---
+
+**QA — 2026-10-05 (AD-1c)**
+**Test mode:** full (for the AD-1c scope)
+**Strategy used:** A (Jest: the render test, the source guard, the wire-type pin, and the purge and preview-route suites), plus scoped `tsc` with two planted drifts, plus a **temporary** behaviour test. That test was written to the scratchpad, copied into `app/admin/users/__tests__/` for one run, then deleted. It covers close, reopen, Esc, outside pointer, the corner X and focus. QA also read the dialog, copy, page and route diffs against each check.
+**Focus:** ui, security (read-only, no raw errors), schema (wire types)
+**Skipped:** D (browser). It needs an admin session, and the brief forbids calling prod or writing to any DB. The visual checks still owed are listed below
+**Input source:** prompt from TL
+
+### Test Coverage
+| Acceptance Criterion / check | Tested? | Result | Notes |
+|---|---|---|---|
+| FR-A1: the "Delete…" button is in the expanded row only | ✅ | Pass | Source guard: one `<DeleteBusinessDialog`, inside `data-testid="danger-area"`, after `{isExpanded && (`. The open button is inside the danger area too. QA read the page: the danger area is the last block of the expanded `<tr>`, which has no `onClick` of its own, so clicks inside the portalled dialog cannot bubble into a row toggle. The open button calls `stopPropagation` |
+| Loading state | ✅ | Pass | The status region says "Loading the deletion preview…", the confirm button is disabled, and no body renders (render test) |
+| Error state: generic sentence only | ✅ | Pass | 500 with `details` → the generic sentence. Neither the raw `error` nor `details` is rendered. 404 → "no longer exists". A network throw → generic. `role="alert"`. QA's temp test: `identity_read_failed` + a `details` string → generic sentence, neither string in the DOM. Every error code the gate and route emit is mapped or falls back to the generic sentence (`Unauthorized`, `Forbidden`, `invalid_user_id`, `user_not_found`, and the rest go to generic) |
+| Refusals list: all 8, R-4 "Not applicable", R-2/R-8 unverified, clearing actions from the server | ⚠️ | Pass, with one gap | Render test: 8 items, R-3/R-5/R-6/R-8 clearing lines, R-8 `unverified` label, R-4 "Not applicable", R-7 deferred, no clearing line on a clear refusal. **R-2 `unverified` has no render case.** By reading, it takes the same generic path as R-8 (`DELETION_STATUS_LABELS.unverified`, blocking style, clearing line), so it is low risk |
+| Counts: unknown is never 0; storage; the server's count error is never shown | ✅ | Pass | `area-scheduling` reads "unknown", not "0 rows". The "permission denied" count error is absent from the DOM |
+| Confirm is always disabled, with the reason | ✅ | Pass | Literal `disabled`, no `onClick` (source guard). `aria-describedby` points at the `role="status"` region, which reads "Deletion not yet available: <reason>" (render test). It is disabled in the loading, error, ready and R-1 states. See Edge Case 1 for the error state |
+| No typed-confirmation input | ✅ | Pass | No textbox and no `input/textarea/select` in the rendered dialog. The source guard forbids those tags |
+| No call to any non-preview endpoint | ✅ | Pass | Source guard: exactly one `/api/` literal (the preview URL), one `fetch(`, POST `JSON.stringify({})`, and no `commit` or `token` in either new file. Render test: one call, to the preview URL, body `{}` |
+| Reopen refetches | ✅ | Pass (QA temp test) | A stateful harness: close, then reopen, gives 2 fetch calls, and the first request's signal is aborted on close. "Try again" refetches (render test) |
+| Esc, outside pointer (overlay), Close all close it | ✅ | Pass (QA temp test) | Each calls `onOpenChange(false)` and the dialog unmounts. There are **two** buttons named "Close": the footer button and the primitive's corner X (`sr-only` "Close"). Both close the dialog (see Edge Case 3) |
+| The disabled confirm is not focus-trapped | ✅ | Pass (QA temp test) | `focus()` on it does not move `activeElement`. It has no `tabindex`, and it is not in the dialog's tabbable set. The other controls (the Close buttons and the `<summary>`) are reachable |
+| No `dangerouslySetInnerHTML`; server text rendered as text | ✅ | Pass | Source guard, for both new files |
+| Wire types pinned both ways (T16) | ✅ | Pass under scoped `tsc` | Scoped `tsc` over the 10 touched files plus the wire-type test: 0 errors. **Planted drift 1** (area `'activity_history'` renamed in `types.ts`): 4× `TS2344` in the wire-type test, plus `TS2561` in `deletionCopy.ts`. **Planted drift 2** (an extra client field `qaExtra`): `TS2344` in the wire-type test, plus `TS2322` in the render test's payload fixture. Both were restored from a byte copy, and `cmp` shows the file identical. CI coverage of this pin is SA's Medium finding (not re-litigated here) |
+| AD-1b follow-ups | ✅ | Pass | R-6 now gives the fixed reason "the read failed" and logs `{ err, targetId }` (new composition test). The route comment has moved. The `readBusinessName` ordering comment is present |
+| AC-A2 live half / AC-A3 rendered on a real business | ⬜ | Owed | Manual pass, see below |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None found by QA. SA's open Medium (the wire-type pin is not covered by any CI type-check) stands on its own and is not duplicated here.
+
+#### Performance Issues (should fix)
+None. One fetch per open. An in-flight request is aborted on close.
+
+#### Edge Cases (nice to fix)
+1. **In the error state, the confirm's `aria-describedby` points at an empty status region** — File: `app/admin/users/components/DeleteBusinessDialog.tsx` (`statusText` is `''` when `state.kind === 'error'`) — Severity: Low. A screen reader user on the disabled confirm hears no reason. This is the same as SA's Low. A fallback such as "Deletion not yet available: the preview could not be loaded" would close it.
+2. **No render case for R-2 `unverified`** — File: `app/admin/users/__tests__/deleteBusinessDialog.render.test.tsx` — Severity: Low. The brief names it explicitly. The code path is shared with R-8, so this is a coverage gap, not a defect. One more `refusals({ 'R-2': { status: 'unverified', … } })` case would close it.
+3. **Two buttons with the accessible name "Close"** (the footer button and the primitive's corner X) — Severity: Low / cosmetic. Both work. A screen reader lists "Close" twice.
+4. `limitations` items use the line text as the React `key`. Two identical lines would warn. Today every limitation string is distinct. Severity: Low.
+
+### Visual checks owed (manual pass, admin session, a non-production or seeded business; no DB write)
+1. Expand a row: the rose-bordered "Danger area" is the last block, after the audit trail, and **no** "Delete…" appears in the collapsed row.
+2. Click "Delete…": the row stays expanded, and the dark dialog renders legibly on the admin shell (the `!` overrides, with no light-theme fallback).
+3. The loading line appears, then the amber "Deletion not yet available: …" box.
+4. The header shows the business name, email, user id and joined date (UTC date).
+5. Refusal badges: blocking ones in rose with text, clear ones in emerald, the rest in slate. R-4 reads "Not applicable" and R-7 reads "Checked at the moment of deletion". Clearing lines appear on blocking refusals only.
+6. Area counts are readable. An unknown table reads "unknown". The storage line shows.
+7. The technical `<details>` expander opens and lists the tables, the kept tables with notes, the schema status and the correlation id.
+8. Long content scrolls inside the dialog at desktop height (about 1366×768). The footer stays reachable. This is not checked anywhere in Jest.
+9. The "Delete business" button looks disabled and cannot be clicked or tabbed to. Tab cycles inside the dialog only.
+10. Esc, a click outside, the footer Close and the corner X each close it. Reopening shows the loading state again (a fresh fetch in Network, one POST to `/deletion/preview` and nothing else).
+11. Open it on your own account: R-1 blocks and "Not counted" shows. Open it on an admin account: R-2 blocks.
+12. AC-A2 live half: the row counts for the seeded business are identical before and after opening the dialog.
+
+### Test Outputs / Logs
+```text
+npx jest app/admin/users app/api/admin/users lib/business-os/purge app/api/admin/__tests__/adminGate
+Test Suites: 23 passed, 23 total
+Tests:       781 passed, 781 total
+
+npm run test:authz-guard
+Test Suites: 1 passed, 1 total
+Tests:       119 passed, 119 total
+
+npm test (full, worktree)                    (270 s)
+Test Suites: 11 failed, 8 skipped, 833 passed, 844 of 852 total
+Tests:       122 failed, 65 skipped, 16668 passed, 16855 total
+All 11 failing suites are in .github/ci/jest-quarantine.json (v4-generator, LogicalIRCompiler,
+v6 validation, IRToNaturalLanguageTranslator, IntentClassifier, TokenBudgetManager,
+ConditionalEvaluator x2, StructuredTransforms x3). 0 non-quarantined failures.
+
+scoped tsc (10 touched files + adminDeletionPreview.wireTypes.test.ts)      exit 0
+  planted area rename  -> TS2344 x4 (wireTypes) + TS2561 (deletionCopy.ts)   restored, cmp identical, exit 0
+  planted extra field  -> TS2344 (wireTypes) + TS2322 (render fixture)       restored, cmp identical
+
+QA temp behaviour test (copied in, run once, deleted)
+Tests: 6 passed, 6 total   (Close+reopen+abort, Esc, outside pointer, corner X, focus, error sanitising)
+```
+
+Hygiene: no DB was written and prod was not called. `git status --porcelain`, the sha256 of the code diff (excluding this workplan) and the sha256 of each untracked file are identical before and after QA. The temp test file is gone. No stash, no commit.
+
+### Final Status
+- [x] All acceptance criteria pass — ready for commit, as far as QA is concerned (AD-1c scope, Jest-verifiable half). Commit still waits for SA's open Medium (CI coverage of the wire-type pin), the manual visual pass above, the live half of AC-A2, and the AC-A5 prod re-run before merge
+- [ ] Issues found — Dev must address before commit
+
 ## Commit Info
 
 _(RM populates)_
@@ -550,3 +677,7 @@ _(RM populates)_
 
 | 2026-10-04 | AD-1b implemented (Dev) | T7–T14 on `feature/admin-delete-ad1b-preview-route` (base `0db9da62`), uncommitted. `checkAdminStatus` on one shared resolver, `findUserIdentity`, the pure evaluator R-1…R-8, the `AdminDeletionPreview` composition, `POST /api/admin/users/[id]/deletion/preview`, gate oracle 59 → 60, register rows 96 (drill-down, doc only) and 97 (this route), census 94 / 88 + 6 / 65. The user-added preview audit row is written admin-scoped (operator class needs a migration, flagged). AD-1a follow-ups closed |
 | 2026-10-04 | QA (AD-1b) | Pass. Affected suites 29 / 779, authz guard 119 / 119, full npm test 0 non-quarantined failures (11 quarantined red). AC-A1, AC-A2 code half, AC-A3 API half and AC-A4 verified, including fail-closed R-2/R-8, identity error → 500, no destructive call, audit non-blocking and no PII. 2 Low edge cases (R-6 raw error echo, unreachable today; stale-cache `false` already tracked as Risk 5). Live smoke skipped |
+| 2026-10-05 | AD-1c code complete (Dev) | Dialog, copy, payload types with a two-way wire-type pin, danger area on the page, render test and source-guard additions. AD-1b follow-ups (QA Low-1, two SA comments) carried. Uncommitted on `feature/admin-delete-ad1c-dialog`, stacked on AD-1b |
+| 2026-10-05 | SA code review (AD-1c) | Fix Required (one Medium). Deviations 1 and 3 accepted. Deviation 2 rejected as stated: no CI job type-checks the wire-type pin, so it must be added to `typecheck:bos-llm` scope and the drift proven. SC-9 read-only, no raw errors, client boundaries and a11y verified. Low: confirm's reason is empty in the error state. 265/265 |
+| 2026-10-05 | QA (AD-1c) | Pass (Jest half). Affected suites 23 / 781, authz guard 119 / 119, full npm test 0 non-quarantined failures. Wire-type pin fails on two planted drifts and was restored byte-identical. A temp test (deleted) verified reopen refetch, Esc / outside / both Close buttons, and that the disabled confirm takes no focus. 4 Low edge cases (empty reason in the error state = SA Low, no R-2 unverified render case, duplicate "Close" name, limitation keys). Manual visual pass owed |
+| 2026-10-05 | AD-1c SA/QA fixes (Dev) | Wire-type pin scoped into `typecheck:bos-llm` (single file) and proven by a planted drift; the confirm's reason is never empty; R-2 unverified render case; footer button renamed to "Close preview"; index-qualified limitation keys. 23 / 783 green, gate passed, runtime unchanged |
