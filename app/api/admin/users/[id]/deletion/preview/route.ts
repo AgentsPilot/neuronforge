@@ -112,8 +112,9 @@ export async function POST(request: NextRequest, context: { params: { id: string
       },
       requestLogger,
       { reason: 'admin deletion preview', continues: 'the preview answers regardless' }
+    )
       // logAndFlush never rejects by contract; the catch keeps that true here regardless.
-    ).catch((err) => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+      .catch((err) => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
   let outcome: AdminDeletionPreviewOutcome;
   try {

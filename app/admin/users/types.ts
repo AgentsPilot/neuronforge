@@ -126,3 +126,96 @@ export interface AccountCreditPositionPayload {
   usage: CreditUsageBlockView;
   extra: CreditExtraBlockView;
 }
+
+// ── Admin delete AD-1c: the read-only deletion preview ─────────────────────
+// `POST /api/admin/users/[id]/deletion/preview` → `data`. A structural copy of
+// `AdminDeletionPreview` in `lib/business-os/purge/AdminDeletionPreview.ts`
+// (this screen's source guard forbids `@/lib/business-os` imports); the two are
+// pinned together by `lib/business-os/purge/__tests__/adminDeletionPreview.wireTypes.test.ts`.
+
+/** The descriptor area a table belongs to (`PurgeArea`), or `unassigned`. */
+export type DeletionAreaView =
+  | 'business_profile'
+  | 'crm'
+  | 'website'
+  | 'scheduling'
+  | 'payments'
+  | 'email_marketing'
+  | 'intake'
+  | 'onboarding_chat'
+  | 'capabilities'
+  | 'smart_links'
+  | 'channels'
+  | 'insights'
+  | 'briefings'
+  | 'integrations'
+  | 'agents'
+  | 'activity_history'
+  | 'unassigned';
+
+export interface DeletionTableCountView {
+  table: string;
+  /** `null` = could not be counted. Shown as "unknown", never as 0. */
+  count: number | null;
+  /** The server's reason a count failed. Never rendered: only "unknown" is. */
+  error?: string;
+  /** The count reached a cap: a floor, not an exact figure. */
+  truncated?: boolean;
+}
+
+export interface DeletionAreaCountView {
+  area: DeletionAreaView;
+  rows: number;
+  tablesUnknown: number;
+  tables: DeletionTableCountView[];
+}
+
+export type DeletionRefusalIdView = 'R-1' | 'R-2' | 'R-3' | 'R-4' | 'R-5' | 'R-6' | 'R-7' | 'R-8';
+
+export type DeletionRefusalStatusView =
+  | 'applies'
+  | 'clear'
+  | 'unverified'
+  | 'not_applicable'
+  | 'not_evaluated'
+  | 'deferred';
+
+export interface DeletionRefusalView {
+  id: DeletionRefusalIdView;
+  status: DeletionRefusalStatusView;
+  message: string;
+  clearingAction?: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface DeletionPreviewPayload {
+  target: {
+    userId: string;
+    email: string | null;
+    businessName: string | null;
+    joinedAt: string | null;
+  };
+  /** False when R-1 or R-2 refused and nothing was counted. */
+  counted: boolean;
+  level: 'purge';
+  options: { integrations: boolean; agents: boolean; activityHistory: boolean };
+  areas: DeletionAreaCountView[];
+  storage: DeletionTableCountView[];
+  totals: { rows: number; tablesWithRows: number; tablesUnknown: number } | null;
+  keptTables: Array<{ table: string; notes: string | null }>;
+  refusals: DeletionRefusalView[];
+  schema: {
+    status: 'ok' | 'drift' | 'ambiguous' | 'unreadable';
+    unclassified: string[];
+    missingDeletable: string[];
+    missingNever: string[];
+    fingerprint: string | null;
+  } | null;
+  resetLive: boolean | null;
+  limitations: string[];
+  /** Always false in AD-1: the confirm control is disabled. */
+  deletionAvailable: false;
+  deletionUnavailableReason: string;
+  correlationId: string;
+  generatedAt: string;
+}

@@ -29,6 +29,9 @@ const SCREEN_FILES = [
   `${ROOT}/creditCopy.ts`,
   // Credit deduction slice 8a
   `${ROOT}/components/CreditsLeftCell.tsx`,
+  // Admin delete AD-1c
+  `${ROOT}/components/DeleteBusinessDialog.tsx`,
+  `${ROOT}/deletionCopy.ts`,
 ];
 
 /**
@@ -174,5 +177,54 @@ describe('the Credits block (credit deduction slice 11c)', () => {
     expect(panel).toMatch(/<details[\s\S]*<EntitlementSnapshot[\s\S]*<\/details>/);
     const snapshot = codeOf(read('app/admin/business-os-tiers/components/EntitlementSnapshot.tsx'));
     expect(snapshot).not.toMatch(/<details|Collapsible/);
+  });
+});
+
+describe('the Delete… dialog is read-only (admin delete AD-1c; SA SC-9, FR-A1, FR-A3)', () => {
+  const DIALOG = `${ROOT}/components/DeleteBusinessDialog.tsx`;
+  const DELETION_FILES = [DIALOG, `${ROOT}/deletionCopy.ts`];
+
+  it('is a client component', () => {
+    expect(read(DIALOG)).toMatch(/^'use client';/);
+  });
+
+  it('calls exactly one URL, the read-only preview route, with POST and an empty body', () => {
+    const code = codeOf(read(DIALOG));
+    const urls = [...code.matchAll(/`(\/api\/[^`]*)`|'(\/api\/[^']*)'/g)].map((m) => m[1] ?? m[2]);
+    expect(urls).toEqual(['/api/admin/users/${encodeURIComponent(accountId)}/deletion/preview']);
+    expect(code.match(/fetch\(/g)).toHaveLength(1);
+    expect(code).toContain("method: 'POST'");
+    expect(code).toContain('JSON.stringify({})');
+  });
+
+  it.each(DELETION_FILES)('%s names no commit route and no token', (file) => {
+    const code = codeOf(read(file));
+    expect(code).not.toMatch(/commit/i);
+    expect(code).not.toMatch(/token/i);
+  });
+
+  it('offers no confirmation input, and the confirm button is always disabled', () => {
+    const code = codeOf(read(DIALOG));
+    expect(code).not.toMatch(/<(input|textarea|select|Input|Textarea|Checkbox)\b/);
+    const confirm = /<Button[^>]*data-testid="deletion-confirm"[^>]*>/.exec(code);
+    expect(confirm).not.toBeNull();
+    expect(confirm![0]).toMatch(/\sdisabled\s/);
+    expect(confirm![0]).not.toMatch(/disabled=\{/);
+    expect(confirm![0]).not.toMatch(/onClick/);
+  });
+
+  it.each(DELETION_FILES)('%s renders server text as text only (no dangerouslySetInnerHTML)', (file) => {
+    expect(codeOf(read(file))).not.toMatch(/dangerouslySetInnerHTML/);
+  });
+
+  it('the page opens it from the expanded row only, inside the danger area', () => {
+    const page = codeOf(read(`${ROOT}/page.tsx`));
+    expect(page.match(/<DeleteBusinessDialog\b/g)).toHaveLength(1);
+    const expanded = page.indexOf('{isExpanded && (');
+    const dangerArea = page.indexOf('data-testid="danger-area"');
+    expect(expanded).toBeGreaterThan(-1);
+    expect(dangerArea).toBeGreaterThan(expanded);
+    expect(page.indexOf('<DeleteBusinessDialog')).toBeGreaterThan(dangerArea);
+    expect(page.indexOf('data-testid="delete-business-open"')).toBeGreaterThan(dangerArea);
   });
 });
