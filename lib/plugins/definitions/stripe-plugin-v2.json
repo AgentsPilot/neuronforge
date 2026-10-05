@@ -463,7 +463,7 @@
             "properties": {
               "subscription_id": {"type": "string"},
               "status": {"type": "string"},
-              "current_period_end": {"type": "string"},
+              "current_period_end": {"type": "string", "description": "End of the current billing period (ISO 8601), read from the subscription item. null when Stripe returns no subscription item."},
               "trial_end": {"type": "string"}
             }
           },
@@ -526,7 +526,7 @@
             "properties": {
               "subscription_id": {"type": "string"},
               "status": {"type": "string"},
-              "current_period_end": {"type": "string"}
+              "current_period_end": {"type": "string", "description": "End of the current billing period (ISO 8601), read from the subscription item. null when Stripe returns no subscription item."}
             }
           },
           "message": {"type": "string"}
@@ -663,7 +663,7 @@
                     "subscription_id": {"type": "string"},
                     "customer_id": {"type": "string"},
                     "status": {"type": "string"},
-                    "current_period_end": {"type": "string"},
+                    "current_period_end": {"type": "string", "description": "End of the current billing period (ISO 8601), read from the subscription item. null when Stripe returns no subscription item."},
                     "plan_name": {"type": "string"}
                   }
                 }

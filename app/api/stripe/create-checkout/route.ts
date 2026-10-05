@@ -14,6 +14,7 @@ import { createServerClient } from '@supabase/ssr';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { cookies } from 'next/headers';
 import { getStripeService } from '@/lib/stripe/StripeService';
+import { UserProfileRepository } from '@/lib/repositories/UserProfileRepository';
 
 const logger = createLogger({ module: 'StripeCreateCheckoutAPI' });
 
@@ -83,14 +84,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get user profile for name
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('full_name, display_name')
-      .eq('id', user.id)
-      .single();
-
-    const userName = profile?.full_name || profile?.display_name || undefined;
+    // Name for a new Stripe customer. Read through the repository (CLAUDE.md
+    // rule 1) on the caller's own cookie client, so RLS still applies. A missing
+    // row or a failed read only means the customer is created without a name.
+    const { data: profile } = await new UserProfileRepository(supabase).findById(user.id);
+    const userName = profile?.full_name || undefined;
 
     // Get Stripe service
     const stripeService = getStripeService();
