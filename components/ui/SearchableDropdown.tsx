@@ -33,7 +33,7 @@ import {
   ComboboxOption,
   ComboboxOptions,
 } from '@headlessui/react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Search } from 'lucide-react';
 
 export interface DropdownOption {
   /** What gets stored. */
@@ -63,6 +63,23 @@ interface SearchableDropdownProps {
    * rather than silently blanked, so the owner can see it and replace it.
    */
   fallbackLabel?: string;
+  /**
+   * What the field says once it is open and ready to be typed into.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This control has ALWAYS been searchable — it is a Headless UI Combobox, and
+   * typing "Calif" narrows 62 US states to one. Nobody knew. It wears a chevron,
+   * it shows the chosen value, and it is sat among `<select>`-looking fields, so
+   * it reads as a picker you scroll. The report that reached us was "the state
+   * dropdown has no search", from someone looking straight at a working search
+   * box.
+   *
+   * So the search is not being ADDED here, it is being made visible: this
+   * placeholder replaces the field's label while the list is open, and the
+   * trailing chevron becomes a magnifier at the same moment.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  searchPlaceholder?: string;
   className?: string;
   style?: React.CSSProperties;
   disabled?: boolean;
@@ -76,6 +93,7 @@ export function SearchableDropdown({
   emptyLabel,
   isRTL = false,
   fallbackLabel,
+  searchPlaceholder,
   className,
   style,
   disabled,
@@ -113,6 +131,7 @@ export function SearchableDropdown({
       disabled={disabled}
       immediate
     >
+      {({ open }) => (
       <div className="relative">
         <div className="relative">
           <ComboboxInput
@@ -129,14 +148,32 @@ export function SearchableDropdown({
               'w-full border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3 py-2 text-sm text-[var(--v2-text-primary)] transition-colors placeholder:text-[var(--v2-text-muted)] hover:border-[var(--v2-primary)] focus:border-[var(--v2-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]'
             } pe-9`}
             style={style ?? { borderRadius: 'var(--v2-radius-button)' }}
-            placeholder={placeholder}
+            /*
+             * The label when closed, the invitation to type when open.
+             *
+             * A placeholder only shows over an EMPTY box, and Headless UI clears
+             * the input's text while the list is open, so this is visible at
+             * exactly the moment it is useful and never covers a chosen value.
+             */
+            placeholder={open && searchPlaceholder ? searchPlaceholder : placeholder}
             displayValue={displayValue}
             onChange={event => setQuery(event.target.value)}
             // Typing filters; leaving without choosing restores the real value.
             onBlur={() => setQuery('')}
           />
           <ComboboxButton className="absolute inset-y-0 end-0 flex items-center pe-3">
-            <ChevronDown className="h-3.5 w-3.5 text-[var(--v2-text-muted)]" />
+            {/*
+              A magnifier the moment the list opens, a chevron the rest of the
+              time. Both live in the slot `pe-9` already reserves, so swapping
+              them moves nothing — and the icon is what tells somebody mid-click
+              that this box takes typing, before they start scrolling 62 states
+              looking for Pennsylvania.
+            */}
+            {open ? (
+              <Search className="h-3.5 w-3.5 text-[var(--v2-text-muted)]" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5 text-[var(--v2-text-muted)]" />
+            )}
           </ComboboxButton>
         </div>
 
@@ -179,6 +216,7 @@ export function SearchableDropdown({
           )}
         </ComboboxOptions>
       </div>
+      )}
     </Combobox>
   );
 }

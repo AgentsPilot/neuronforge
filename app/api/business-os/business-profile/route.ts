@@ -12,6 +12,8 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { organizationRepository } from '@/lib/repositories/OrganizationRepository';
+import { saveAddressForUse } from '@/lib/business-os/addressBook';
+import { hasAddressContent, type StructuredAddress } from '@/lib/geo/address';
 import { isPlausiblePhone, PHONE_MAX_LENGTH } from '@/lib/branding/phone';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 
@@ -100,6 +102,13 @@ const brandingSchema = z.object({
    * is simply not filled in yet, and must stay savable.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * Which entry in the address book `address_parts` belongs to.
+   *
+   * Null for a new address. Absent from older clients, which then fall back to
+   * whatever this profile already points at — the behaviour before the book.
+   */
+  address_id: z.string().uuid().nullable().optional(),
   address_parts: z
     .object({
       line1: z.string().trim().max(200).optional(),
@@ -328,6 +337,47 @@ export async function PUT(request: NextRequest) {
 
     if (!error && hasContact) {
       ({ error } = await businessProfileRepository.updateContactDetails(user.id, contact));
+    }
+
+    /*
+     * The address also goes into the business's address book.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `updateContactDetails` above writes `address_parts`, which is the copy
+     * every reader renders — the invoice PDF, the public booking and contact
+     * pages, the privacy policy. This writes the ENTRY it is a copy of, so the
+     * address has an identity the invoice form can offer back.
+     *
+     * `saveAddressForUse` owns the rule that matters: an entry this profile
+     * shares with the invoice is FORKED rather than rewritten, so correcting
+     * the address clients see can never silently change the address invoices go
+     * out with. See `lib/business-os/addressBook.ts`.
+     *
+     * Non-fatal. The copy is already saved and is what renders, so a book that
+     * failed to update costs the owner an entry in a picker, not their address.
+     * Logged loudly rather than swallowed — a book that quietly stops recording
+     * is how the two drifted apart in the first place.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (!error && address_parts && hasAddressContent(address_parts as StructuredAddress)) {
+      const booked = await saveAddressForUse({
+        userId: user.id,
+        use: 'profile',
+        parts: address_parts as StructuredAddress,
+        addressId: validated.address_id ?? null,
+      });
+
+      if (booked.error) {
+        requestLogger.error(
+          { err: booked.error, userId: user.id },
+          'Business profile saved, but its address did not reach the address book'
+        );
+      } else if (booked.data?.forked) {
+        requestLogger.info(
+          { userId: user.id, addressId: booked.data.address.id },
+          'Address forked: the invoice keeps the entry it had'
+        );
+      }
     }
 
     /*
