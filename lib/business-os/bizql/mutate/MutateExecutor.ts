@@ -22,6 +22,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { platformOrigin } from '@/lib/utils/origins';
 import { createLogger } from '@/lib/logger';
 import { STOP_REASONS, type StopReason } from '@/lib/business-os/cancellationReasons';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
@@ -901,7 +902,7 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
              * owner is handed something to click rather than told a page now
              * exists somewhere.
              */
-            url: `${process.env.NEXT_PUBLIC_APP_URL ?? ''}/website-preview/${created.data.id}`,
+            url: `${platformOrigin()}/website-preview/${created.data.id}`,
           } as Record<string, unknown>,
           error: null,
         };

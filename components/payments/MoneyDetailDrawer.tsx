@@ -6,7 +6,8 @@ import { useState } from 'react';
 import { X, FileText, CreditCard, CalendarClock, Receipt, Ban } from 'lucide-react';
 import { CancelPlanModal } from './CancelPlanModal';
 import { RefundHistory } from './RefundHistory';
-import type { MoneyEntry, MoneyItem, MoneyStatus } from '@/lib/payments/moneyItems';
+import type { MoneyEntry, MoneyItem } from '@/lib/payments/moneyItems';
+import { STATUS_TONE, statusChipStyle } from '@/lib/payments/moneyStatusTone';
 import { MoneyEntryActions, type EntryActionHandlers } from './MoneyEntryActions';
 
 /**
@@ -36,16 +37,11 @@ import { MoneyEntryActions, type EntryActionHandlers } from './MoneyEntryActions
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-const STATUS_STYLE: Record<MoneyStatus, string> = {
-  paid: 'text-emerald-600 bg-emerald-500/10',
-  partially_refunded: 'text-amber-600 bg-amber-500/10',
-  refunded: 'text-orange-600 bg-orange-500/10',
-  awaiting_payment: 'text-blue-600 bg-blue-500/10',
-  overdue: 'text-red-600 bg-red-500/10',
-  failed: 'text-red-600 bg-red-500/10',
-  draft: 'text-slate-500 bg-slate-500/10',
-  cancelled: 'text-slate-500 bg-slate-500/10',
-};
+/*
+ * The status chip takes its colour from `lib/payments/moneyStatusTone`, the one
+ * map every money surface reads. This file used to hold a fourth copy of the
+ * palette, so a row badged orange in the list opened a drawer that said blue.
+ */
 
 const METHOD_ICON = {
   direct: CreditCard,
@@ -155,7 +151,10 @@ export function MoneyDetailDrawer({
                 <SheetTitle className="text-lg font-semibold text-[var(--v2-text-primary)] truncate text-start">
                   {item.title}
                 </SheetTitle>
-                <span className={`text-xs font-bold px-3 py-1 rounded-full ${STATUS_STYLE[item.status]}`}>
+                <span
+                  className="text-xs font-bold px-3 py-1 rounded-full"
+                  style={statusChipStyle(item.status)}
+                >
                   {t(`payments.money_status.${item.status}`) || item.status}
                 </span>
               </div>
@@ -182,7 +181,7 @@ export function MoneyDetailDrawer({
                 {item.refunded > 0 && (
                   <>
                     <span>•</span>
-                    <span className="text-orange-600">
+                    <span style={{ color: STATUS_TONE.refunded }}>
                       {formatCurrency(item.refunded, item.currency)}{' '}
                       {t('payments.refunded_suffix') || 'refunded'}
                     </span>
@@ -251,16 +250,21 @@ export function MoneyDetailDrawer({
                       key={period.id}
                       className="flex items-center gap-2 border-t border-[var(--v2-border)] py-1.5 text-[12px] first:border-t-0"
                     >
+                      {/* The schedule's dots take the same colours as the chip
+                          above and the bar in the list, so a period does not
+                          change colour on its way between them. */}
                       <span
-                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                          period.status === 'paid'
-                            ? 'bg-emerald-500'
-                            : period.status === 'overdue'
-                              ? 'bg-red-500'
-                              : isCancelled
-                                ? 'bg-[var(--v2-border)]'
-                                : 'bg-slate-300'
-                        }`}
+                        className="h-1.5 w-1.5 shrink-0 rounded-full"
+                        style={{
+                          background:
+                            period.status === 'paid'
+                              ? STATUS_TONE.paid
+                              : period.status === 'overdue'
+                                ? STATUS_TONE.overdue
+                                : isCancelled
+                                  ? 'var(--v2-border)'
+                                  : STATUS_TONE.draft,
+                        }}
                       />
                       <span
                         className={

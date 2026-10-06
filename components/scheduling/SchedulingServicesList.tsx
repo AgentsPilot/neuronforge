@@ -1499,7 +1499,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         </div>
 
         {/* The three questions */}
-        <div className="flex-1 overflow-y-auto min-h-0 px-5 py-4 flex flex-col gap-5">
+        <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0 px-5 py-4 flex flex-col gap-5">
 
           {/* Saved is not live.
               An edited service returns to draft, so the owner has done half of
@@ -1685,7 +1685,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
                   <label className="flex flex-col gap-1.5">
                     <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                      {t('scheduling.service.min_buffer')}
+                      {t('scheduling.service.gap')}
                     </span>
                     <div className="flex items-center gap-2">
                       <input
@@ -2204,7 +2204,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               <span className="text-[11px] text-[var(--v2-text-muted)] tabular-nums">{services.length}</span>
             </div>
 
-            <div className="overflow-y-auto min-h-0 flex-1">
+            <div className="overflow-y-auto scrollbar-thin min-h-0 flex-1">
               {[...services].sort((a, b) => {
                 const aActive = a.status !== 'draft' && a.is_active;
                 const bActive = b.status !== 'draft' && b.is_active;
@@ -2389,7 +2389,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       {deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 max-w-sm w-full mx-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto"
+            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 max-w-sm w-full mx-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto scrollbar-thin"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             {deleteError?.bookingCount ? (
@@ -2522,7 +2522,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div
             ref={descriptionDialogRef}
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 max-w-md w-full mx-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto"
+            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 max-w-md w-full mx-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto scrollbar-thin"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             <div className="flex items-center justify-between mb-4">

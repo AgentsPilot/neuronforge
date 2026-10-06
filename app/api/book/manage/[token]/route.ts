@@ -318,6 +318,54 @@ export async function GET(
       (unbilled[0]?.currency as string) ||
       ((service as { currency?: string | null } | null)?.currency ?? null);
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * SOMEWHERE TO PAY, BESIDE THE AMOUNT.
+     *
+     * The portal already SAID what was outstanding — "לתשלום ₪400", whether it
+     * was overdue, "2 of 6 paid" — and offered no way to act on any of it. A
+     * client who wanted to pay had to go back and find the original invoice
+     * email, which is the email they could not find.
+     *
+     * The link goes to the public invoice page rather than straight to a card
+     * checkout, because that page already resolves card, bank transfer or
+     * written instructions per invoice and honours the business's own "Send via
+     * Stripe" choice. Sending a client to a checkout that a transfer-only
+     * business never offered would be a different bug.
+     *
+     * The SOONEST unpaid one, since that is the deadline shown next to it.
+     * Non-fatal: a failure here leaves the portal exactly as it was.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    let payUrl: string | null = null;
+
+    try {
+      const { data: openRows } = await supabaseServer
+        .from('payment_invoices')
+        .select('id, status, due_date, paid_at, refund_status, amount')
+        .eq('booking_id', booking.id)
+        .eq('user_id', booking.user_id)
+        .in('status', ['sent', 'overdue'])
+        .order('due_date', { ascending: true });
+
+      /*
+       * The ledger, not the status. An invoice refunded without first being
+       * marked paid keeps `sent` — the exact shape that had two clients chased
+       * for money they had already been given back. Showing that client a Pay
+       * button would be the same bug wearing a different hat.
+       */
+      const payable = (openRows ?? []).find(
+        row =>
+          !row.paid_at &&
+          (!row.refund_status || row.refund_status === 'none') &&
+          Number(row.amount ?? 0) > 0
+      );
+
+      if (payable) payUrl = `/invoice/${payable.id}`;
+    } catch (err) {
+      requestLogger.warn({ err, bookingId }, 'Could not resolve a pay link (non-blocking)');
+    }
+
     const payment = {
       /*
        * `refunded` first: money that went back is the most recent thing that
@@ -337,6 +385,12 @@ export async function GET(
       dueDate,
       overdue: owing.some(invoice => String(invoice.status) === 'overdue'),
       plan,
+      /*
+       * Only where money is genuinely outstanding. An unbilled quote stage —
+       * agreed but not yet raised — counts toward `outstanding` and has no
+       * invoice to pay against, so it correctly yields no link.
+       */
+      payUrl: outstanding > 0 ? payUrl : null,
     };
 
     /*

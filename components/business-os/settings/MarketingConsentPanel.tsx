@@ -35,6 +35,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SavedAddressPicker, type AddressSource } from '@/components/ui/SavedAddressPicker';
+import { formatAddressOneLine } from '@/lib/geo/address';
+import type { CountryLocale } from '@/lib/geo/countries';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 
@@ -129,6 +132,13 @@ function seeded(
 
 export function MarketingConsentPanel() {
   const { t, isRTL, language } = useLanguage();
+
+  /** Which saved address, if any, the postal field still represents. */
+  const [reusedAddress, setReusedAddress] = useState<AddressSource | null>(null);
+
+  /** `formatAddressOneLine` speaks three languages; anything else reads English. */
+  const addressLocale: CountryLocale =
+    language === 'he' || language === 'es' ? language : 'en';
   const [payload, setPayload] = useState<Payload | null>(null);
   const [form, setForm] = useState<Settings>(EMPTY);
   const [loading, setLoading] = useState(true);
@@ -327,13 +337,45 @@ export function MarketingConsentPanel() {
 
       <div>
         <label className="mb-1 block text-[var(--v2-text-primary)]">{t('consent.postal')}</label>
+
+        {/*
+          An address already on file, offered as a one-click fill.
+
+          The placeholder below has always SHOWN the business address greyed
+          out, which looks like an answer and is not one — a business that
+          never typed over it saved nothing, and the field is a legal
+          requirement for marketing email. This turns the hint into a choice.
+
+          Flattened to one line, because this column is free text rather than
+          structured: `formatAddressOneLine` renders exactly what the public
+          pages render.
+        */}
+        <div className="mb-2">
+          <SavedAddressPicker
+            selected={reusedAddress}
+            onSelectedChange={setReusedAddress}
+            onSelect={(address) =>
+              setForm(prev => ({
+                ...prev,
+                postal_address: formatAddressOneLine(address, addressLocale) ?? prev.postal_address,
+              }))
+            }
+            locale={language}
+            isRTL={isRTL}
+            t={t}
+          />
+        </div>
         {/* The business's own address from its profile, shown greyed. A detail it
             has already given the platform should not be a blank box here, and a
             business with no address on file still gets a worked example rather
             than nothing. */}
         <textarea
           value={form.postal_address ?? ''}
-          onChange={(e) => setForm({ ...form, postal_address: e.target.value || null })}
+          onChange={(e) => {
+            // Typed over, so it is no longer the saved one.
+            setReusedAddress(null);
+            setForm({ ...form, postal_address: e.target.value || null });
+          }}
           rows={2}
           placeholder={payload?.defaults.postal_address || t('consent.postal_placeholder')}
           className={field}

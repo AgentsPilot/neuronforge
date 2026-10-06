@@ -211,6 +211,24 @@ export class WebLinkDeadDestinationDetector extends BaseDetector {
       severity,
       metricKey: 'acquisition.broken_link_destinations',
       currentValue: broken.length,
+      // Links, not money. Unlabelled it reached the narrator as an amount.
+      currentValueUnit: 'count',
+      /*
+       * WHICH link, in the card rather than only in the parameters.
+       *
+       * The card said "one link you share does not open" and the owner's reply
+       * was "which link?" — a fair question, because the code, the name, the
+       * destination type and the click count were all sitting in
+       * `processParameters` and none of them reached the prompt. A card about a
+       * broken link that cannot name the link asks the owner to go hunting.
+       *
+       * Owner-authored names only: `smart_links.name` is what the owner typed
+       * when they made the link, never anything a client supplied.
+       */
+      narrationSubject: broken
+        .slice(0, 3)
+        .map(b => `"${b.link.name ?? b.link.code}" (${b.link.destination_type}, ${b.link.click_count ?? 0} clicks)`)
+        .join('; '),
       baselineValue: 0,
       thresholdValue: 0,
       // Nothing was measured against anything. See WebLinkNotConvertingDetector.

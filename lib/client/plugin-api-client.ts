@@ -1,6 +1,7 @@
 // lib/client/plugin-api-client.ts
 
 import { OAuthHandler } from './oauth-handler';
+import { platformOrigin } from '@/lib/utils/origins';
 import { PluginInfo, UserPluginStatus, LLMContext, ExecutionResult, ApiResponse } from '@/lib/types/plugin-types'
 import type { ClientSafeAuthConfig } from '@/lib/plugins/sanitize-plugin-definition';
 import { requestDeduplicator } from '@/lib/utils/request-deduplication';
@@ -16,7 +17,7 @@ export class PluginAPIClient {
     // NEXT_PUBLIC_APP_URL ever differs from the browsing origin (preview deploys, the
     // *.agentpilot.io subdomain rewrite in middleware.ts), an absolute URL silently
     // drops the cookies and every call 401s.
-    this.baseUrl = typeof window !== 'undefined' ? '' : (process.env.NEXT_PUBLIC_APP_URL || '');
+    this.baseUrl = typeof window !== 'undefined' ? '' : platformOrigin();
     this.oauthHandler = new OAuthHandler();
     clientLogger.debug('PluginAPIClient initialized');
   }

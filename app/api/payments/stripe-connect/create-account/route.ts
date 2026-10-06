@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
@@ -47,7 +48,10 @@ export async function POST(request: NextRequest) {
     // 3. Check if user already has a Stripe Connect account
     const existingAccount = await stripeConnectRepo.findByUserId(user.id);
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // `platformOrigin()`: this is a URL Stripe sends the OWNER back to, so a
+    // loopback address is a dead end on any deployed build. The resolver
+    // refuses one on Vercel; a laptop still gets localhost.
+    const appUrl = platformOrigin();
     const returnUrl = `${appUrl}/api/payments/stripe-connect/callback?type=onboarding`;
     const refreshUrl = `${appUrl}/api/payments/stripe-connect/callback?type=refresh`;
 

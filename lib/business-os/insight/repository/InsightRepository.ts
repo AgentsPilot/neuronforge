@@ -365,11 +365,30 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   GBP: '£',
 };
 
-function formatMoney(amount: number | null | undefined, currency: string): string {
+/*
+ * `currency` is widened to match what the body already tolerates.
+ *
+ * It was declared `string` while every line below reaches for it with `?.` and
+ * falls back — so the implementation was always null-safe and only the
+ * signature claimed otherwise. `describeCurrentValue` carries the currency as
+ * `string | null | undefined`, because a business that has never been paid has
+ * none, and passing that straight through is correct.
+ */
+function formatMoney(amount: number | null | undefined, currency: string | null | undefined): string {
   const value = Number(amount) || 0;
-  const symbol = CURRENCY_SYMBOLS[currency?.toUpperCase()];
+  /*
+   * Normalised once, so there is a `string` to index with and to print.
+   *
+   * This read `CURRENCY_SYMBOLS[currency?.toUpperCase()]`, which is safe at
+   * RUNTIME — an undefined key just misses — but is `string | undefined` going
+   * into a `Record<string, string>`, which TypeScript refuses. Widening the
+   * parameter to the `string | null | undefined` the caller actually passes
+   * moved the error here rather than removing it.
+   */
+  const code = currency?.toUpperCase() ?? '';
+  const symbol = CURRENCY_SYMBOLS[code];
   // An unmapped currency reads better as "1,200 CHF" than as a guessed symbol.
-  return symbol ? `${symbol}${value.toLocaleString()}` : `${value.toLocaleString()} ${currency?.toUpperCase() || ''}`.trim();
+  return symbol ? `${symbol}${value.toLocaleString()}` : `${value.toLocaleString()} ${code}`.trim();
 }
 
 const VECTOR_NAMES: Record<VectorKey, string> = {
@@ -510,6 +529,77 @@ const RESOLVED_VISIBLE_HOURS = 24;
  * 20260917_insight_resolution.sql must agree with it — they did before
  * `findActive` did.
  */
+/**
+ * The metric's own figure, labelled by what it measures, or nothing at all.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This line used to read `- Amount involved: ${formatMoney(currentValue)}` for
+ * every detector. `currentValue` is whatever its metric counts — two services,
+ * a 25% refund rate, two cancelled bookings — and the prompt asserted all three
+ * were money. The model wrote them as money because it was told they were:
+ *
+ *   "₪2 עלולים להפסיד ₪340"            two underperforming services
+ *   "שיעור החזרות גבוה של 25 ₪"        a twenty-five per cent rate
+ *   "2 פגישות מבוטלות - ₪2 לא הוחזרו"  two bookings, beside a real ₪150
+ *
+ * A detector that has not declared `currentValueUnit` sends NOTHING here. An
+ * unlabelled number whose unit the model must guess is worse than a number it
+ * never saw, and the two quantities that are never ambiguous — `affectedCount`
+ * and `estimatedImpactUsd` — are on the lines above and below.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function describeCurrentValue(
+  detection: { currentValue: number; currentValueUnit?: string; metricKey: string },
+  currency?: string | null
+): string {
+  const value = detection.currentValue;
+  if (!Number.isFinite(value)) return '';
+
+  switch (detection.currentValueUnit) {
+    case 'money':
+      return `- Amount involved: ${formatMoney(value, currency)}\n`;
+    case 'percent':
+      // Said as a rate, so the model cannot reach for a currency symbol.
+      return `- Rate: ${value}% (this is a percentage, never an amount of money)\n`;
+    case 'count':
+      return `- ${detection.metricKey} count: ${value} (a number of things, not money)\n`;
+    case 'days':
+      return `- Days: ${value}\n`;
+    default:
+      return '';
+  }
+}
+
+/**
+ * What moved, as counts of things rather than a mark out of a hundred.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The one summary a platform holding no benchmark data can honestly make. It
+ * replaces `healthScore` in every sentence a reader sees: "3 of 5 measures
+ * improved" is checkable against the list printed underneath it, while "85 out
+ * of 100" is not checkable against anything.
+ *
+ * Null when fewer than two categories could be compared, matching
+ * `BusinessHealth.movingUp` — a summary built on one measure is a sentence
+ * about one number wearing the clothes of an overview.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function movementOf(health: {
+  improved: number;
+  declined: number;
+  steady: number;
+  movingUp: number | null;
+}): { compared: number; improved: number; declined: number; steady: number } | null {
+  if (health.movingUp === null) return null;
+
+  return {
+    compared: health.improved + health.declined + health.steady,
+    improved: health.improved,
+    declined: health.declined,
+    steady: health.steady,
+  };
+}
+
 const OPEN_STATUSES = ['new', 'viewed'] as const;
 
 /** The figures an insight's own sentence is built from. */
@@ -971,9 +1061,9 @@ Business Context:
 Detection details:
 - Issue type: ${context}
 - Affected items: ${detection.affectedCount}
-- Amount involved: ${formatMoney(detection.currentValue, businessContext.currency)}
-- Estimated impact: ${formatMoney(detection.estimatedImpactUsd, businessContext.currency)}
+${describeCurrentValue(detection, businessContext.currency)}- Estimated impact: ${formatMoney(detection.estimatedImpactUsd, businessContext.currency)}
 - Severity: ${detection.severity}
+${detection.narrationSubject ? `- Specifically: ${detection.narrationSubject}` : ''}
 ${hasRealBaseline(detection) ? `- Change from baseline: ${detection.percentChange!.toFixed(0)}%` : ''}
 ${issueType ? `- Specific issue: ${issueType}` : ''}
 
@@ -2836,8 +2926,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       if (!settings.enabled) {
         logger.info({ reason: 'disabled' }, 'Health summary AI is switched off; using the templates');
         return this.generateHealthNarrativeFallback(
-          healthScore,
-          scoreChange,
+          movementOf(health),
           categoryScores,
           correlationSummary,
           language
@@ -2874,13 +2963,6 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
 
       // Build context
       const trendEmoji = scoreChange === null ? '➡️' : scoreChange > 0 ? '📈' : scoreChange < 0 ? '📉' : '➡️';
-      const trendText = scoreChange === null
-        ? 'First assessment'
-        : scoreChange > 0
-          ? `up ${scoreChange} points`
-          : scoreChange < 0
-            ? `down ${Math.abs(scoreChange)} points`
-            : 'stable';
 
       // Top issues
       const criticalInsights = allInsights.filter((i) => i.severity === 'critical').slice(0, 3);
@@ -2938,9 +3020,6 @@ ${theirTone}
 ${theirWords}
 
 HOW THIS BUSINESS IS MOVING:
-${healthScore === null
-  ? '- NO SCORE THIS WEEK. Fewer than two measures could be compared with last month, so there is no number to give. Write the title WITHOUT any number in it.'
-  : `- SCORE: ${healthScore} out of 100. This compares the business with ITS OWN previous month. 50 means unchanged, above 50 means the measured rates are improving, below means they are slipping. It is not a mark against other businesses — no such comparison exists.`}
 ${health.movingUp === null
   ? '- Not enough measurable history yet to say whether things are improving overall.'
   : `- ${health.improved} of ${health.improved + health.declined + health.steady} measures improved, ${health.declined} declined, ${health.steady} held steady ${trendEmoji}`}
@@ -2958,12 +3037,17 @@ RULES ABOUT THESE NUMBERS — these matter more than the writing:
   something you can know; "31%, up from 22%" is.
 - Never describe an unmeasured category as good, bad or fine. Say there is not
   enough data yet, or do not mention it.
-- The ONLY number out of 100 you may use is the SCORE above, and only when one
-  was given. Never invent a score for a single category — the per-category
-  figures are measured rates, not marks.
-- Never call the score good or bad by comparison with other businesses. It
-  compares this business with its own last month, and 50 is unchanged. A 55 is
-  "slightly better than last month", never "just above average".
+- NEVER write a number out of 100. There is no score, for the business or for
+  any part of it. The figures above are measured RATES — "92% of invoices were
+  paid on time" — and writing one as "92/100" turns a fact somebody can check
+  into a mark nobody can.
+  This is not a style note. A stored weekly note from 2026-09-20 read "your
+  business is in good shape at 85/100, with 80/100 in sales and 92/100 in cash
+  flow": one real score and two the model made up, none of which named a thing
+  that had happened.
+- Every number you write must be one of the rates above, with the movement that
+  came with it. "92%, up 4 points from 88%" is the shape. A number with no
+  comparison beside it is a number the reader cannot use.
 
 TOP CRITICAL ISSUES:
 ${issuesList || 'None'}
@@ -3008,7 +3092,7 @@ HOW TO WRITE IT — this matters as much as the facts:
 
 Generate in ${langName}. Respond with ONLY a JSON object:
 {
-  "title": "One warm line about the week. Include the score ONLY if one was given above, phrased as movement against last month (e.g. 'A better month: you're at 64/100, up from 58'). If there is NO SCORE, name what actually moved and use no number at all (e.g. 'Your reply times improved this week').",
+  "title": "One warm line naming WHAT MOVED this week, in their words. Never a score and never a number out of 100 — e.g. 'More invoices were paid on time this month' or 'Fewer enquiries got a reply than last month'. If nothing could be compared yet, say so plainly.",
   "narrative": "2-3 paragraph executive summary (conversational, specific, actionable)",
   "highlights": [
     {"type": "positive", "text": "Something good"},
@@ -3042,14 +3126,23 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       const parsed = JSON.parse(jsonStr);
 
       return {
-        title: parsed.title || `Business Health: ${healthScore}/100`,
+        /*
+         * No score here either. A model that returned no title must not be
+         * rescued with the one sentence the prompt above forbids.
+         */
+        title: parsed.title || 'How your week went',
         narrative: parsed.narrative || 'Your business health summary is being generated.',
         highlights: parsed.highlights || [],
         priorities: parsed.priorities || [],
       };
     } catch (error) {
       logger.warn({ err: error }, 'LLM health narrative generation failed, using fallback');
-      return this.generateHealthNarrativeFallback(healthScore, scoreChange, categoryScores, correlationSummary, language);
+      return this.generateHealthNarrativeFallback(
+        movementOf(health),
+        categoryScores,
+        correlationSummary,
+        language
+      );
     }
   }
 
@@ -3072,9 +3165,23 @@ Generate in ${langName}. Respond with ONLY a JSON object:
    * given a mark, and no number appears when there is no score to give.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * The weekly note without a model, and without a score.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `healthScore` and `scoreChange` used to be the whole opening sentence:
+   * "בריאות העסק שלך: 85/100 (ירידה של 2 נקודות)". Two numbers an owner cannot
+   * check, about nothing that happened.
+   *
+   * `moved` is the same comparison said as events: of the things we could
+   * compare with last month, how many got better. It is the one summary a
+   * platform holding no benchmarks can honestly make, and it survives being
+   * read aloud — "3 of 5 measures improved" means something, "85 out of 100"
+   * does not.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   private generateHealthNarrativeFallback(
-    healthScore: number | null,
-    scoreChange: number | null,
+    moved: { compared: number; improved: number; declined: number; steady: number } | null,
     categoryScores: Record<string, number>,
     correlationSummary: CorrelationSummary,
     language: string
@@ -3102,21 +3209,13 @@ Generate in ${langName}. Respond with ONLY a JSON object:
     const connected = correlationSummary.correlatedInsights.length;
 
     if (language === 'he') {
-      const trendText = scoreChange === null
-        ? ''
-        : scoreChange > 0
-          ? ` (עלייה של ${scoreChange} נקודות מהחודש שעבר)`
-          : scoreChange < 0
-            ? ` (ירידה של ${Math.abs(scoreChange)} נקודות מהחודש שעבר)`
-            : ' (ללא שינוי)';
-
       return {
-        title: healthScore === null
+        title: moved === null
           ? 'עדיין אין מספיק נתונים כדי לסכם את השבוע'
-          : `בריאות העסק שלך: ${healthScore}/100${trendText}`,
-        narrative: (healthScore === null
+          : `${moved.improved} מתוך ${moved.compared} מהדברים שנמדדו השתפרו`,
+        narrative: (moved === null
           ? 'עדיין אין מספיק היסטוריה כדי להשוות את החודש הזה לקודם. '
-          : `הציון ${healthScore} מתוך 100 משווה את העסק שלך לחודש הקודם שלו. 50 פירושו ללא שינוי. `) +
+          : `מתוך ${moved.compared} דברים שאפשר להשוות לחודש שעבר, ${moved.improved} השתפרו, ${moved.declined} ירדו ו-${moved.steady} נשארו כמו שהיו. `) +
           (needsAttention ? `מה שהכי כדאי להסתכל עליו כרגע: ${needsAttention}. ` : '') +
           (connected > 0 ? `זיהינו ${connected} דפוסי בעיות מקושרות שכדאי לטפל בהן יחד.` : ''),
         highlights: needsAttention
@@ -3135,21 +3234,14 @@ Generate in ${langName}. Respond with ONLY a JSON object:
        * everything else fell through to English, so a Spanish-speaking owner
        * whose narrator was switched off read their weekly note in English.
        */
-      const trendTextEs = scoreChange === null
-        ? ''
-        : scoreChange > 0
-          ? ` (${scoreChange} puntos más que el mes pasado)`
-          : scoreChange < 0
-            ? ` (${Math.abs(scoreChange)} puntos menos que el mes pasado)`
-            : ' (sin cambios)';
 
       return {
-        title: healthScore === null
+        title: moved === null
           ? 'Aún no hay suficientes datos para resumir la semana'
-          : `Cómo va tu negocio: ${healthScore}/100${trendTextEs}`,
-        narrative: (healthScore === null
+          : `${moved.improved} de ${moved.compared} medidas mejoraron`,
+        narrative: (moved === null
           ? 'Todavía no hay suficiente historial para comparar este mes con el anterior. '
-          : `${healthScore} sobre 100 compara tu negocio con su propio mes anterior. 50 significa sin cambios. `) +
+          : `De ${moved.compared} cosas comparables con el mes pasado, ${moved.improved} mejoraron, ${moved.declined} empeoraron y ${moved.steady} siguieron igual. `) +
           (needsAttention ? `Lo que más conviene mirar ahora: ${needsAttention}. ` : '') +
           (connected > 0
             ? `Detectamos ${connected} problemas relacionados que conviene resolver juntos.`
@@ -3163,21 +3255,13 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       };
     }
 
-    const trendText = scoreChange === null
-      ? ''
-      : scoreChange > 0
-        ? ` (up ${scoreChange} points from last month)`
-        : scoreChange < 0
-          ? ` (down ${Math.abs(scoreChange)} points from last month)`
-          : ' (unchanged)';
-
     return {
-      title: healthScore === null
+      title: moved === null
         ? 'Not enough yet to sum up the week'
-        : `Your business health: ${healthScore}/100${trendText}`,
-      narrative: (healthScore === null
+        : `${moved.improved} of ${moved.compared} measures improved`,
+      narrative: (moved === null
         ? 'There is not enough history yet to compare this month with the one before it. '
-        : `${healthScore} out of 100 compares your business with its own previous month. 50 means unchanged. `) +
+        : `Of ${moved.compared} things we can compare with last month, ${moved.improved} improved, ${moved.declined} slipped and ${moved.steady} stayed as they were. `) +
         (needsAttention ? `The thing most worth a look right now is ${needsAttention}. ` : '') +
         (connected > 0
           ? `We identified ${connected} connected issue patterns that are worth addressing together.`

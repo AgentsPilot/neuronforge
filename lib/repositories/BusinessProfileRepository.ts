@@ -8,6 +8,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import type { DocumentType } from '@/lib/payments/documentType';
+import type { StructuredAddress } from '@/lib/geo/address';
 
 const logger = createLogger({ service: 'BusinessProfileRepository' });
 
@@ -971,6 +972,134 @@ export class BusinessProfileRepository {
   }
 
   // ==================== INVOICE SETTINGS METHODS ====================
+
+  /**
+   * Every address this business has given us, for offering one in place of
+   * another.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Two structured addresses live on this row and mean different things:
+   * `address_parts` is the DISPLAY address — where clients come — and
+   * `invoice_address` is the BILLING address printed on invoices, which
+   * `20261004_structured_business_address.sql` records may deliberately differ.
+   *
+   * Both are returned raw. Deciding which has content, and how to word it, is
+   * the caller's: a picker wants a one-line label in the reader's language, and
+   * a wizard wants the parts.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async getAddresses(userId: string): Promise<
+    BusinessProfileRepositoryResult<{
+      address_parts: StructuredAddress | null;
+      invoice_address: StructuredAddress | null;
+    }>
+  > {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('address_parts, invoice_address')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) {
+        logger.error({ err: error, userId }, 'Failed to read business addresses');
+        return { data: null, error: new Error(error.message) };
+      }
+
+      return {
+        data: {
+          address_parts: (data?.address_parts as StructuredAddress) ?? null,
+          invoice_address: (data?.invoice_address as StructuredAddress) ?? null,
+        },
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read business addresses');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Which entry in the address book each use points at.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Separate from `getAddresses`, which returns the denormalised COPIES that
+   * every reader renders. These are the pointers: they say which saved address
+   * those copies are of, so a screen can mark the entry its invoices go out
+   * with, and so correcting one entry corrects every use of it.
+   *
+   * Null is ordinary and not a fault — an address typed into a form before the
+   * book existed, or typed and never added to it, still renders from its copy.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async getAddressPointers(userId: string): Promise<
+    BusinessProfileRepositoryResult<{
+      address_id: string | null;
+      invoice_address_id: string | null;
+    }>
+  > {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('address_id, invoice_address_id')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) {
+        logger.error({ err: error, userId }, 'Failed to read the address pointers');
+        return { data: null, error: new Error(error.message) };
+      }
+
+      return {
+        data: {
+          address_id: (data?.address_id as string) ?? null,
+          invoice_address_id: (data?.invoice_address_id as string) ?? null,
+        },
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read the address pointers');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Point a use at an entry in the book, and refresh the copy it renders from.
+   *
+   * Both together, always: the pointer says which address this is, the copy is
+   * what the invoice PDF and the public pages actually draw. Writing one
+   * without the other is how they come apart, which is the whole failure this
+   * table was added to end.
+   */
+  async setAddressPointer(
+    userId: string,
+    use: 'profile' | 'invoice',
+    addressId: string | null,
+    parts: StructuredAddress
+  ): Promise<BusinessProfileRepositoryResult<{ updated: boolean }>> {
+    try {
+      const patch =
+        use === 'profile'
+          ? { address_id: addressId, address_parts: parts }
+          : { invoice_address_id: addressId, invoice_address: parts };
+
+      const { error } = await this.supabase
+        .from('business_profiles')
+        .update(patch)
+        .eq('user_id', userId);
+
+      if (error) {
+        logger.error({ err: error, userId, use }, 'Failed to point a use at an address');
+        return { data: null, error: new Error(error.message) };
+      }
+
+      logger.info({ userId, use, addressId }, 'Address pointer set');
+      return { data: { updated: true }, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, use }, 'Failed to point a use at an address');
+      return { data: null, error: error as Error };
+    }
+  }
 
   /**
    * Get invoice settings for a user

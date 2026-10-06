@@ -67,6 +67,29 @@ const QuerySchema = z.object({
     .default('all'),
   search: z.string().max(200).optional(),
   sort: z.enum(['date', 'amount', 'client', 'status']).default('date'),
+  /**
+   * Which kind of row the page window is cut from.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE PAGE WINDOW HAS TO BE CUT PER KIND, OR THE VIEW LIES.
+   *
+   * The two kinds are shown as two views — a booking CONTAINS its money, an
+   * invoice with no booking IS the money — but the split used to happen in the
+   * browser, over the ten rows this endpoint had already chosen. So each view
+   * showed its share of one mixed page: with 19 bookings and 3 standalone
+   * invoices, page 2 held ten bookings and nothing else, and "invoices without
+   * an order" rendered empty while the pager still offered three pages. Page 3
+   * was the mirror image, with the orders view blank.
+   *
+   * Paging within the chosen kind is the only arrangement where the count, the
+   * pages and the rows agree.
+   *
+   * Deliberately NOT applied to the summary strip, which keeps describing the
+   * whole book for the same reason the KPI filter does not narrow it: figures
+   * that re-derive from the view offering them cannot be compared.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  kind: z.enum(['all', 'booking', 'standalone']).default('all'),
 });
 
 /** Which rows a filter keeps. Applied after grouping, so it filters ROWS not sources. */
@@ -135,13 +158,14 @@ export async function GET(request: NextRequest) {
       // re-fetched and returned the same date-ordered list, with no error to
       // show anything had gone wrong.
       sort: url.searchParams.get('sort') ?? undefined,
+      kind: url.searchParams.get('kind') ?? undefined,
     });
 
     if (!parsed.success) {
       return NextResponse.json({ success: false, error: 'Invalid query' }, { status: 400 });
     }
 
-    const { limit, offset, contact_id, filter, search, sort } = parsed.data;
+    const { limit, offset, contact_id, filter, search, sort, kind } = parsed.data;
 
     /*
      * No overdue refresh here any more — the daily payment-reminders cron does
@@ -201,7 +225,16 @@ export async function GET(request: NextRequest) {
        *
        * Same join the transactions query above uses.
        */
-      .select('id, start_time, created_at, contact_id, contact:crm_contacts(first_name, last_name), service:scheduling_services(service_name)')
+      /*
+       * `parent_booking_id` rides along so a package can be ONE order.
+       *
+       * A package or accepted quote writes a head booking plus one child per
+       * session, and the payment plan bills a session at a time. Without this
+       * column the grouping has no way to know the six sessions of a 450 quote
+       * are one thing, and renders six rows of 74.99 each labelled
+       * "payment plan · 1 payment".
+       */
+      .select('id, start_time, created_at, contact_id, parent_booking_id, contact:crm_contacts(first_name, last_name), service:scheduling_services(service_name)')
       .eq('user_id', user.id)
       .order('start_time', { ascending: false })
       .limit(GROUPING_CAP);
@@ -329,6 +362,9 @@ export async function GET(request: NextRequest) {
           // Products carry no time slot, so they fall back to their order date.
           startTime: booking.start_time ?? booking.created_at ?? null,
           contactId: booking.contact_id,
+          // The package this session belongs to, so `buildMoneyItems` can fold
+          // the sessions and their plan into the one order that was sold.
+          parentId: booking.parent_booking_id ?? null,
           // PostgREST returns a to-one join as an object; normalised the same
           // way the transactions mapping above does. Null rather than an empty
           // string when nothing is there, so the fallback chain continues.
@@ -380,7 +416,16 @@ export async function GET(request: NextRequest) {
       return haystack.includes(needle);
     });
 
-    const filtered = searched.filter(item => matchesFilter(item, filter));
+    /*
+     * Kind and filter together, because both narrow the LIST. `total` below is
+     * this set's size, so the pager offers exactly the pages the chosen view
+     * actually has — which is the bug this fixes. A caller that sends no `kind`
+     * (the CRM drawer via `fetchContactMoney`) defaults to 'all' and sees the
+     * mixed list it always did.
+     */
+    const filtered = searched.filter(
+      item => matchesFilter(item, filter) && (kind === 'all' || item.kind === kind)
+    );
 
     /**
      * Order, applied before the page window.

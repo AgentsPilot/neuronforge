@@ -12,6 +12,7 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { crmContactRepository, type CRMContactUpdate } from '@/lib/repositories/CRMContactRepository';
 import { generateDiff } from '@/lib/audit/diff';
 import { z } from 'zod';
+import { blankAsAbsent, emptiableEmail } from '@/lib/validation/blankFields';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence, activityFieldName, activityRecord } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -25,10 +26,36 @@ const auditTrail = AuditTrailService.getInstance();
 const updateContactSchema = z.object({
   first_name: z.string().optional(),
   last_name: z.string().optional(),
-  email: z.string().email().optional(),
+  /**
+   * An empty string is "no email", and must be accepted.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `z.string().email()` REJECTS `''`, and the drawer sends every field on every
+   * save — so a contact with no email address could not be saved AT ALL. The
+   * whole PUT came back `400 Invalid input`, and the phone number, the stage and
+   * the notes went with it.
+   *
+   * It hit exactly the contacts most likely to need editing: a lead captured
+   * from a booking or a call has a phone number and no email. The owner typed a
+   * phone number, pressed save, was told "Invalid input" — about a field they
+   * had not touched — and the number was gone on reopen.
+   *
+   * `emptiableEmail` rather than `blankAsAbsent`, because on an UPDATE an empty
+   * box is also how an owner removes an address they no longer have. Blank as
+   * absent would leave the old one in place and say nothing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  email: emptiableEmail().optional(),
   phone: z.string().optional(),
-  stage: z.string().min(1).max(50).optional(),
-  source: z.string().min(1).max(50).optional(),
+  /*
+   * Blank means "not set", not "too short".
+   *
+   * The drawer seeds `source: contact.source || ''`, so every contact without a
+   * source posted an empty string against `.min(1)` and failed the same way the
+   * email did. `stage` carries the same rule and the same risk.
+   */
+  stage: blankAsAbsent(z.string().min(1).max(50).optional()),
+  source: blankAsAbsent(z.string().min(1).max(50).optional()),
   tags: z.array(z.string()).optional(),
   custom_fields: z.record(z.any()).optional(),
   /**

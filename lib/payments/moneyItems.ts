@@ -137,6 +137,25 @@ export interface MoneyBooking {
    * Optional, so a caller that has not been updated still type-checks.
    */
   clientName?: string | null;
+  /**
+   * The package this booking is a session OF, if it is one.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A package or an accepted quote writes ONE booking to head it and one child
+   * booking per session, all pointing back at the head through
+   * `scheduling_bookings.parent_booking_id`. The payment plan then bills a
+   * session at a time, so each instalment names a different child.
+   *
+   * Grouped by booking alone, that renders as one row per session: a six-session
+   * quote worth 450 appeared as six rows of 74.99, each honestly labelled
+   * "payment plan · 1 payment", with the thing the client actually bought
+   * nowhere on the page. The sessions are not six orders; they are one.
+   *
+   * So rows are grouped by the HEAD of the package where there is one. Null for
+   * an ordinary standalone booking, which is its own head.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  parentId?: string | null;
 }
 
 export interface MoneyPeriod {
@@ -524,9 +543,62 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
   const invoices = input.invoices ?? [];
   const transactions = input.transactions ?? [];
   const bookings = input.bookings ?? [];
-  const plans = input.plansByBookingId ?? {};
+  const plansAsGiven = input.plansByBookingId ?? {};
 
   const bookingById = new Map(bookings.map(b => [b.id, b]));
+
+  /**
+   * Which booking heads the order a given booking belongs to.
+   *
+   * A session of a package resolves to the package; everything else is its own
+   * head. The parent has to be a booking we were actually given, or the row
+   * would be titled with nothing — the same rule the entry grouping below
+   * already applies to a booking id with no booking.
+   *
+   * One level only, deliberately: a package's child is never itself a package,
+   * and following the chain would turn a bad row of data into an infinite loop
+   * inside a money report.
+   */
+  const headOf = (bookingId: string): string => {
+    const parentId = bookingById.get(bookingId)?.parentId ?? null;
+    return parentId && bookingById.has(parentId) ? parentId : bookingId;
+  };
+
+  /**
+   * The plans, re-keyed onto the order that owns them.
+   *
+   * Callers key by the booking an instalment names, which for a package is a
+   * different session each time — so one six-instalment plan arrives as six
+   * plans of one period. Folded here rather than at each call site, so the CRM
+   * drawer and the orders page cannot disagree about what a package is.
+   *
+   * Periods are deduplicated by id: the same plan reached through two sessions
+   * must not count a period twice, which on this list would overstate what the
+   * client owes.
+   */
+  const plans: Record<string, MoneyPlan> = {};
+  for (const [bookingId, plan] of Object.entries(plansAsGiven)) {
+    const head = bookingById.has(bookingId) ? headOf(bookingId) : bookingId;
+    const existing = plans[head];
+
+    if (!existing) {
+      plans[head] = { ...plan, periods: [...plan.periods] };
+      continue;
+    }
+
+    const seen = new Set(existing.periods.map(period => period.id));
+    existing.periods.push(...plan.periods.filter(period => !seen.has(period.id)));
+    // A bound subscription anywhere in the package binds the package.
+    existing.subscriptionId = existing.subscriptionId ?? plan.subscriptionId ?? null;
+  }
+
+  for (const plan of Object.values(plans)) {
+    // Recomputed from the merged periods, so "2 of 6" cannot disagree with the
+    // schedule printed under it — the same rule the callers apply per booking.
+    plan.periods.sort((a, b) => a.installmentNumber - b.installmentNumber);
+    plan.installmentCount = plan.periods.length;
+    plan.periodsPaid = plan.periods.filter(period => period.status === 'paid').length;
+  }
 
   // Which booking each entry belongs to — taken from the invoice or from any of
   // its payments, since either may carry it.
@@ -555,8 +627,12 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
 
     // A booking id we were given no booking for cannot head a row — there would
     // be nothing to call it. Better standalone than a row titled with a uuid.
+    //
+    // Through `headOf`, so an invoice raised against one session of a package
+    // lands on the package's row rather than opening a second one beside it.
     if (bookingId && bookingById.has(bookingId)) {
-      grouped.set(bookingId, [...(grouped.get(bookingId) ?? []), entry]);
+      const head = headOf(bookingId);
+      grouped.set(head, [...(grouped.get(head) ?? []), entry]);
     } else {
       standalone.push(entry);
     }

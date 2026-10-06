@@ -1,6 +1,6 @@
 # Address Autocomplete Setup
 
-> **Last Updated**: 2026-10-04
+> **Last Updated**: 2026-10-05
 > **Status**: optional feature — the address forms work without it.
 
 ## Overview
@@ -21,6 +21,7 @@ This guide is the whole setup, start to finish. It takes about ten minutes.
 - [Step by step](#step-by-step)
 - [Restricting the key](#restricting-the-key)
 - [Adding it to the app](#adding-it-to-the-app)
+- [Deploying to Vercel](#deploying-to-vercel)
 - [Checking it works](#checking-it-works)
 - [What it costs](#what-it-costs)
 - [Troubleshooting](#troubleshooting)
@@ -109,6 +110,55 @@ browser bundle at build time, so an already-running server will not see it.
 
 ---
 
+## Deploying to Vercel
+
+Two separate things, and the second is the one that gets missed.
+
+### 1. The environment variable
+
+**Vercel → your project → Settings → Environment Variables**
+
+| Field | Value |
+|---|---|
+| Key | `NEXT_PUBLIC_GOOGLE_PLACES_API_KEY` |
+| Value | the key from Google Cloud |
+| Environments | tick **Production**, **Preview** and **Development** |
+
+> ⚠️ **Then redeploy.** `NEXT_PUBLIC_` variables are compiled into the browser
+> bundle at BUILD time, not read at run time. Adding one to an existing
+> deployment changes nothing until a new build runs — the field will simply not
+> appear, with no error to explain why.
+>
+> Deployments → the latest one → ⋯ → **Redeploy**.
+
+### 2. The key's website restrictions
+
+The key is restricted by HTTP referrer, so it only works from sites on its list.
+A production domain that is not on it fails with `RefererNotAllowedMapError`.
+
+In **Google Cloud → Credentials → your key → Application restrictions →
+Websites**, add:
+
+```
+http://localhost:3000/*
+https://neuronforge-kohl.vercel.app/*
+https://neuronforge-*.vercel.app/*
+```
+
+The third line covers **preview deployments**, which Vercel gives a fresh URL on
+every branch and commit — `neuronforge-git-my-branch-team.vercel.app`,
+`neuronforge-a1b2c3-team.vercel.app`. Without it autocomplete works in
+production and mysteriously does not on any preview.
+
+> ⚠️ **Do not use `https://*.vercel.app/*`.** It is the obvious shortcut and it
+> authorises every project on vercel.app — anyone's — to spend against this key.
+> Keep the project name in the pattern.
+
+Add a custom domain to the same list when there is one; the Vercel URL keeps
+working alongside it.
+
+---
+
 ## Checking it works
 
 1. Open **Settings → Business profile**, or **Settings → Invoice settings**.
@@ -164,3 +214,4 @@ typing the fields by hand.
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-10-04 | Created | Setup for the optional address autocomplete on the business and invoice address forms. |
+| 2026-10-05 | Added | Vercel deployment: the environment variable, the rebuild it needs, and the preview-URL pattern the key must allow. |

@@ -485,7 +485,7 @@ export function PaymentManagementModal({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent
-        className="w-full sm:max-w-md h-[100vh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden"
+        className="w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden"
         dir={isRTL ? 'rtl' : 'ltr'}
       >
         {/* Sticky Header */}

@@ -33,6 +33,16 @@ interface AdminAreaFieldProps {
   onChange: (value: string) => void;
   /** Translates the noun — 'state', 'province', 'county', 'oblast', … */
   label: (key: string) => string;
+  /**
+   * What the box says once it is open — "Type to search…".
+   *
+   * Deliberately free of the field's noun. "Search states" would have to be
+   * built per language and per country word, and Hebrew does not form it by
+   * prefixing anything to "state"; a noun-free sentence is correct everywhere
+   * and says the one thing that was missing. Optional: omitted, the field keeps
+   * its label and behaves exactly as before.
+   */
+  searchPlaceholder?: string;
   emptyLabel?: string;
   isRTL?: boolean;
   className?: string;
@@ -44,6 +54,7 @@ export function AdminAreaField({
   value,
   onChange,
   label,
+  searchPlaceholder,
   emptyLabel,
   isRTL = false,
   className,
@@ -115,6 +126,12 @@ export function AdminAreaField({
       onChange={onChange}
       options={options}
       placeholder={text}
+      /*
+       * Shown only while the list is open. Without it this looks like a
+       * `select`, and sixty-two states get scrolled by somebody who could have
+       * typed three letters.
+       */
+      searchPlaceholder={searchPlaceholder}
       emptyLabel={emptyLabel}
       isRTL={isRTL}
       fallbackLabel={!isKnown && value ? value : undefined}

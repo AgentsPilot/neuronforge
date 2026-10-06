@@ -121,3 +121,70 @@ describe('[smoke] resolveChannel', () => {
     }
   });
 });
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE BUSINESS'S OWN SITE IS NOT A REFERRAL.
+ *
+ * Reported by an owner on 2026-10-05: the channel card read "100% אתרים אחרים"
+ * over two leads, with a dash against Google, Instagram, Facebook, email and
+ * direct alike. All three of their contacts carried
+ * `referrer_domain: 'localhost'`, which matched no named channel and fell into
+ * the catch-all whose own comment promises "a referral from somewhere real — a
+ * directory, a partner site, a forum".
+ *
+ * The production version of the same hole is worse than the development one: a
+ * visitor who reads the booking page and submits it arrives with a referrer of
+ * that page, so every business's own traffic was being reported as somebody
+ * else's website — inflating referral and emptying direct.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('a referrer that is the business itself', () => {
+  it('counts development traffic as direct, not as another website', () => {
+    expect(resolveChannel('localhost').channel).toBe('direct');
+    expect(resolveChannel('127.0.0.1').channel).toBe('direct');
+    expect(resolveChannel('localhost:3000').channel).toBe('direct');
+  });
+
+  it('counts the local testing hosts as direct', () => {
+    // `lvh.me` is what `origins.ts` recommends for exercising the real
+    // subdomain shape on a laptop, so leads from it are self-referrals too.
+    expect(resolveChannel('joesgym.lvh.me:3000').channel).toBe('direct');
+    expect(resolveChannel('localtest.me').channel).toBe('direct');
+  });
+
+  it('counts the platform host as direct when it is given', () => {
+    const own = ['app.agentspilot.ai'];
+
+    expect(resolveChannel('app.agentspilot.ai', null, own).channel).toBe('direct');
+    // A subdomain of it is still the same business's site.
+    expect(resolveChannel('joesgym.app.agentspilot.ai', null, own).channel).toBe('direct');
+  });
+
+  it('still reports a genuine referral as one', () => {
+    /*
+     * The branch exists for real referrals and must keep working: a directory,
+     * a partner site, a forum. Over-reaching here would hide the one column
+     * this card is for.
+     */
+    expect(resolveChannel('somedirectory.co.il', null, ['app.agentspilot.ai']).channel).toBe('referral');
+  });
+
+  it('does not let a self-host beat an explicit tag', () => {
+    // A smart link that stamped `utm_source=instagram` says where they came
+    // from; the page they happened to land on first does not override it.
+    expect(resolveChannel('localhost', 'instagram').channel).toBe('instagram');
+  });
+
+  it('still reports a named channel even if it were somehow also own', () => {
+    // Checked after the named channels on purpose, so the ordering is pinned.
+    expect(resolveChannel('google.com', null, ['google.com']).channel).toBe('google');
+  });
+
+  it('keeps no referrer at all as direct', () => {
+    // Unchanged, and the reason `basis` exists: this one is a guess from
+    // absence, the self-host ones are read from a real referrer.
+    expect(resolveChannel(null).basis).toBe('none');
+    expect(resolveChannel('localhost').basis).toBe('referrer');
+  });
+});

@@ -8,19 +8,21 @@
  *   reminderType === 'overdue' ? config.chaseOverdue : config.enabled
  *
  *   before the due date   `payment_reminder_enabled`, default TRUE, no UI
- *                         `payment_reminder_days_before` = [3, 1] plus due-today
+ *                         `payment_reminder_days_before`, plus a due-day note
  *   after it              `chase_invoices_enabled`, the automation card
- *                         `payment_overdue_reminder_days` = [1, 3, 7]
+ *                         `payment_overdue_reminder_days`
  *
  * There is no double send — each reminder has exactly one owner. What there
  * was, was no way for the owner to know the other half existed. The card said
  * "a reminder on the first, third and seventh day", which is true of what it
- * controls and silent about three more going out before the invoice is even
- * late.
+ * controls and silent about the list that fires before the invoice is late.
  *
- * On 2026-10-04 four chasers reached one account's clients in a single morning
- * and the owner asked why. All four were correctly scheduled; the schedule had
- * simply never been shown to anyone.
+ * On 2026-10-05 the owner asked why the same invoices were being chased every
+ * day. INV-00015 had gone out on three consecutive mornings — day -1, day 0,
+ * day +1 — one entry from each of the three lists, every one correctly
+ * scheduled, and the 24-hour floor blind to all of it because it was scoped per
+ * reminder type. The defaults are now sparse and widening, and
+ * `MIN_HOURS_BETWEEN_REMINDERS` spans the lists.
  *
  * These hold the hint honest in all three languages. If the day lists ever
  * become editable, this guard is the thing that should fail and send you to the
@@ -51,23 +53,35 @@ describe('the chase-invoices hint', () => {
   it('names the half that is NOT this switch', () => {
     /*
      * The whole point. A hint describing only the overdue days lets an owner
-     * turn this on believing three emails and watch six arrive.
+     * turn this on believing three emails and watch more arrive from a list
+     * they were never shown.
      */
-    const before = [/before the due date/i, /previos al vencimiento/i, /לפני מועד התשלום/];
+    const before = [/before the due date/i, /antes del vencimiento/i, /לפני מועד התשלום/];
 
     hints.forEach((hint, index) => {
       expect(hint).toMatch(before[index]);
     });
   });
 
-  it('gives the owner the total, not just this half', () => {
-    // "Up to six" is the number they will be asked about, and the number no
-    // screen used to carry.
-    const total = [/six/i, /seis/i, /שש/];
+  it('promises the floor, which is what stops it reading as daily', () => {
+    /*
+     * The reassurance the owner actually needs, and the thing that was missing
+     * when a client got three mornings running. A count would be the wrong
+     * promise to print: the total depends on the account's own day lists, and
+     * a hint quoting "six" went stale the day the defaults changed.
+     */
+    const floor = [/three days/i, /tres días/i, /שלושה ימים/];
 
     hints.forEach((hint, index) => {
-      expect(hint).toMatch(total[index]);
+      expect(hint).toMatch(floor[index]);
     });
+  });
+
+  it('does not print a total that goes stale with the defaults', () => {
+    // An earlier version said "up to six emails". It was true for a day.
+    for (const hint of hints) {
+      expect(hint).not.toMatch(/\bsix\b|\bseis\b|שש/i);
+    }
   });
 
   it('still promises the reminders stop on payment', () => {

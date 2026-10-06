@@ -19,10 +19,11 @@
  */
 
 import { resolvePublishedWebsiteSubdomain } from '@/lib/branding/platformSite';
+import { platformOrigin } from '@/lib/utils/origins';
 
 /** Read at call time: tests and previews set it after module load. */
 function appUrl(): string {
-  return process.env.NEXT_PUBLIC_APP_URL || '';
+  return platformOrigin();
 }
 
 export interface PrivacyPolicySettings {

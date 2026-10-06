@@ -362,7 +362,19 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
     ).toMatchSnapshot();
   });
 
-  it('1b. invoice.paid, found through the metadata fallback, booking guessed by amount', async () => {
+  /*
+   * Renamed, not re-snapshotted quietly.
+   *
+   * This case used to characterise the amount-matching GUESS: an invoice with no
+   * `booking_id` was bound, on payment, to whichever recent unpaid booking had a
+   * service priced the same. That behaviour has been removed — it bound a
+   * standalone invoice to an unrelated booking and marked that booking paid with
+   * money that was never for it.
+   *
+   * The fixture still offers a booking that would have matched (`bk-guess`,
+   * priced 150). The point of the case is now that it is NOT taken.
+   */
+  it('1b. invoice.paid with no booking_id is left unlinked — the booking is never guessed', async () => {
     expect(
       await run({
         fixture: 'invoice-paid.json',

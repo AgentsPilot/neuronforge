@@ -66,6 +66,8 @@ interface PaymentState {
   dueDate: string | null;
   overdue: boolean;
   plan: { paid: number; total: number } | null;
+  /** The public invoice page for the soonest unpaid invoice, when there is one. */
+  payUrl?: string | null;
 }
 
 interface BookingData extends PublicBookingSummary {

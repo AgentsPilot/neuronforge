@@ -29,6 +29,13 @@
  * ordering right.
  */
 export const BUSINESS_OWNED_TABLES = [
+  // The addresses the business trades and bills from — its address book
+  // (20261036). Business data, not the person's: these are the addresses
+  // printed on its invoices and shown on its public booking and contact pages,
+  // and a new business must no more inherit the last one's address than its
+  // company name. `business_profiles.address_id` / `invoice_address_id` point
+  // in here, so the rows go when the profile they belong to does.
+  'business_addresses',
   // CRM
   'crm_activities',
   'crm_contacts',

@@ -263,24 +263,82 @@ export class PaymentReminderRepository {
    * ⟨unscoped-by-design⟩ — the overdue-items cron iterates every user's overdue
    * invoices; the invoice id already localises ownership.
    */
+  /**
+   * @param reminderType a single type, or `null` for ANY reminder on the invoice.
+   *
+   * Null is what the spacing floor asks with. Scoping the question to one type
+   * was the reason a client could be written to three mornings running: an
+   * `upcoming_due` yesterday did not block a `due_today` today, and that did
+   * not block an `overdue` tomorrow. Each check passed because each looked only
+   * at its own kind, while the person reading the inbox saw one invoice, three
+   * days, three emails.
+   */
   async findRecentByInvoice(
     invoiceId: string,
-    reminderType: string,
+    reminderType: string | null,
     since: string
   ): Promise<PaymentRepositoryResult<Array<{ id: string }>>> {
     try {
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('payment_reminders')
         .select('id')
         .eq('invoice_id', invoiceId)
-        .eq('reminder_type', reminderType)
         .gte('created_at', since)
         .limit(1);
+
+      if (reminderType !== null) query = query.eq('reminder_type', reminderType);
+
+      const { data, error } = await query;
 
       if (error) throw error;
       return { data: data || [], error: null };
     } catch (error) {
       logger.error({ err: error, invoiceId }, 'Failed to find recent invoice reminders');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Any reminder for this invoice already landing inside a window.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * The spacing floor asks this, and it asks about `scheduled_at` rather than
+   * `created_at` on purpose.
+   *
+   * Pre-due reminders are all written in ONE burst the moment an invoice is
+   * raised: a live account created rows for the 4th, 6th and 7th of October at
+   * 17:51 on the 1st. Compared by creation time they are simultaneous and a
+   * floor would reject every one but the first. Compared by the day they will
+   * actually reach the client, which is the only thing the client experiences,
+   * they are three days and two days apart.
+   *
+   * Cancelled rows are excluded: one the owner has already called off is not
+   * occupying a slot in the client's inbox.
+   *
+   * ⟨unscoped-by-design⟩ — the overdue cron iterates every user's invoices and
+   * the invoice id already localises ownership, the same reasoning as
+   * `findRecentByInvoice` above.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  async findScheduledNearInvoice(
+    invoiceId: string,
+    fromIso: string,
+    toIso: string
+  ): Promise<PaymentRepositoryResult<Array<{ id: string; scheduled_at: string }>>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_reminders')
+        .select('id, scheduled_at')
+        .eq('invoice_id', invoiceId)
+        .neq('status', 'cancelled')
+        .gte('scheduled_at', fromIso)
+        .lte('scheduled_at', toIso)
+        .limit(1);
+
+      if (error) throw error;
+      return { data: data || [], error: null };
+    } catch (error) {
+      logger.error({ err: error, invoiceId }, 'Failed to check reminder spacing');
       return { data: null, error: error as Error };
     }
   }

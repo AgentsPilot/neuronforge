@@ -9,6 +9,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { saveAddressForUse } from '@/lib/business-os/addressBook';
+import { hasAddressContent, type StructuredAddress } from '@/lib/geo/address';
 import { z } from 'zod';
 import { DEFAULT_PAYMENT_TERMS_DAYS } from '@/lib/payments/paymentTerms';
 
@@ -27,6 +29,12 @@ const invoiceAddressSchema = z.object({
 const invoiceSettingsSchema = z.object({
   invoice_company_name: z.string().max(200).optional(),
   invoice_address: invoiceAddressSchema,
+  /**
+   * Which entry in the address book `invoice_address` belongs to. Null for a
+   * new address; absent from older clients, which fall back to whatever this
+   * form already points at.
+   */
+  invoice_address_id: z.string().uuid().nullable().optional(),
   invoice_tax_id: z.string().max(50).optional(),
   invoice_bank_name: z.string().max(100).optional(),
   invoice_bank_account: z.string().max(50).optional(),
@@ -175,6 +183,45 @@ export async function PUT(request: NextRequest) {
         { success: false, error: 'Failed to update invoice settings' },
         { status: 500 }
       );
+    }
+
+    /*
+     * The billing address also goes into the business's address book.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The write above stores `invoice_address`, which is the copy the invoice
+     * PDF renders. This writes the ENTRY it is a copy of, so an address first
+     * typed here is offered back on the business profile later — the owner's
+     * "if he creates a new one it shall be also shown in the business profile".
+     *
+     * And `saveAddressForUse` FORKS rather than rewrites when the profile
+     * points at the same entry, so changing the address on an invoice cannot
+     * silently change the address clients are shown. An invoice is a document
+     * about money and keeps what it was set up with.
+     *
+     * Non-fatal, like the profile's: the copy is saved and is what renders, so
+     * a failed book write costs an entry in a picker, not the address.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (settings.invoice_address && hasAddressContent(settings.invoice_address as StructuredAddress)) {
+      const booked = await saveAddressForUse({
+        userId: user.id,
+        use: 'invoice',
+        parts: settings.invoice_address as StructuredAddress,
+        addressId: settings.invoice_address_id ?? null,
+      });
+
+      if (booked.error) {
+        requestLogger.error(
+          { err: booked.error, userId: user.id },
+          'Invoice settings saved, but the address did not reach the address book'
+        );
+      } else if (booked.data?.forked) {
+        requestLogger.info(
+          { userId: user.id, addressId: booked.data.address.id },
+          'Address forked: the business profile keeps the entry it had'
+        );
+      }
     }
 
     requestLogger.info({ userId: user.id }, 'Invoice settings updated successfully');

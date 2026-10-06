@@ -867,7 +867,7 @@ function BusinessOSSettingsContent() {
                     <button
                       key={lang.code}
                       onClick={() => { setLanguage(lang.code as 'en' | 'es' | 'he'); setOpenDropdown(null); }}
-                      className={`w-full px-4 py-3 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${language === lang.code ? 'bg-[var(--v2-bg)]' : ''}`}
+                      className={`w-full px-4 py-3 text-sm flex items-center justify-between text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] ${language === lang.code ? 'bg-[var(--v2-bg)]' : ''}`}
                     >
                       <span>{lang.flag} {lang.label}</span>
                       {language === lang.code && <Check className="w-4 h-4 text-[var(--v2-primary)]" />}
@@ -923,7 +923,7 @@ function BusinessOSSettingsContent() {
                           setTimeout(() => setErrorMessage(''), 6000);
                         }
                       }}
-                      className={`w-full px-4 py-3 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${currencyCode === curr.code ? 'bg-[var(--v2-bg)]' : ''}`}
+                      className={`w-full px-4 py-3 text-sm flex items-center justify-between text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] ${currencyCode === curr.code ? 'bg-[var(--v2-bg)]' : ''}`}
                     >
                       <span>{curr.label}</span>
                       {currencyCode === curr.code && <Check className="w-4 h-4 text-[var(--v2-primary)]" />}
@@ -982,7 +982,7 @@ function BusinessOSSettingsContent() {
                         <button
                           key={tz.value}
                           onClick={() => { setProfile(p => ({ ...p, timezone: tz.value })); setOpenDropdown(null); setTimezoneQuery(''); saveProfile({ timezone: tz.value }); }}
-                          className={`w-full px-4 py-3 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${profile.timezone === tz.value ? 'bg-[var(--v2-bg)]' : ''}`}
+                          className={`w-full px-4 py-3 text-sm flex items-center justify-between text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] ${profile.timezone === tz.value ? 'bg-[var(--v2-bg)]' : ''}`}
                         >
                           <span className="text-start">{tz.label}</span>
                           {profile.timezone === tz.value && <Check className="w-4 h-4 text-[var(--v2-primary)] flex-shrink-0" />}

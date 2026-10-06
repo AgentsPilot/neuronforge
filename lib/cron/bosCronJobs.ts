@@ -40,6 +40,7 @@ export type BosCronJobId =
   | 'insight-metrics'
   | 'insight-detect'
   | 'credit-leak-check'
+  | 'stripe-settlement-gap'
   | 'payment-reminders';
 
 export type BosQueueId =
@@ -386,6 +387,53 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { kind: 'atLeast', key: 'accountsIncomplete', value: 1 },
       { kind: 'atLeast', key: 'accountsNotChecked', value: 1 },
       { kind: 'atLeast', key: 'listingFailed', value: 1 },
+    ],
+  },
+  {
+    /*
+     * Read-only: compares the invoices Stripe reports as paid in the last 48
+     * hours, on the platform account and on every connected account, with what
+     * our tables record as settled. Drains nothing. Counts only, never money.
+     *
+     * Exists because production spent ten days holding a `stripe listen`
+     * signing secret, refusing every real Stripe delivery with a 400, and
+     * nothing noticed: fourteen payments were taken and recorded nowhere. An
+     * error alarm could not have caught it, since for most of that time no
+     * destination existed and production received nothing at all.
+     *
+     * A gap is a FINDING, not a job fault, so it is shown as a number and does
+     * not colour the job (the credit leak check's precedent); the
+     * `stripe_settlement_gap_found` error log is the alert. The job is "partly
+     * done" only when it could not look everywhere.
+     */
+    id: 'stripe-settlement-gap',
+    path: '/api/cron/stripe-settlement-gap',
+    schedule: '17 5 * * *',
+    ...DAILY,
+    ...MAX_60,
+    label: 'Stripe settlement gap check',
+    description: 'Checks that every payment Stripe took in the last 48 hours is recorded',
+    scheduleWords: 'Daily at 05:17 UTC',
+    addedOn: '2026-10-05',
+    drainsQueue: null,
+    counts: [
+      { key: 'targetsChecked', path: ['data', 'targetsChecked'], label: 'Stripe accounts checked' },
+      { key: 'invoicesChecked', path: ['data', 'invoicesChecked'], label: 'paid invoices examined' },
+      { key: 'gapsFound', path: ['data', 'gapsFound'], label: 'payments not recorded as settled' },
+      { key: 'gapsWithNoLocalInvoice', path: ['data', 'gapsWithNoLocalInvoice'], label: 'paid with no invoice of ours' },
+      { key: 'gapsUnsettledLocally', path: ['data', 'gapsUnsettledLocally'], label: 'our invoice still unsettled' },
+      { key: 'targetsIncomplete', path: ['data', 'targetsIncomplete'], label: 'accounts only partly read' },
+      { key: 'targetsNotChecked', path: ['data', 'targetsNotChecked'], label: 'accounts left when time ran out' },
+      { key: 'listingFailed', path: ['data', 'listingFailed'], label: 'a Stripe listing was refused (1 = yes)' },
+      { key: 'lookupFailed', path: ['data', 'lookupFailed'], label: 'a local lookup was refused (1 = yes)' },
+      { key: 'accountListingFailed', path: ['data', 'accountListingFailed'], label: 'account list unreadable (1 = yes)' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'targetsIncomplete', value: 1 },
+      { kind: 'atLeast', key: 'targetsNotChecked', value: 1 },
+      { kind: 'atLeast', key: 'listingFailed', value: 1 },
+      { kind: 'atLeast', key: 'lookupFailed', value: 1 },
+      { kind: 'atLeast', key: 'accountListingFailed', value: 1 },
     ],
   },
   {
