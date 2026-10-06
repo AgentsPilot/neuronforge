@@ -61,6 +61,8 @@ import {
   ADMIN_DELETION_GATE_VERSION,
   ADMIN_DELETION_OPTIONS,
   AGENTS_KEPT_NOTE,
+  CONFIRMATION_PENDING_REASON,
+  DELETE_FUNCTION_NOT_INSTALLED_REASON,
   buildAdminDeletionPreview,
 } from '../AdminDeletionPreview';
 import { verifyPreviewToken } from '../previewToken';
@@ -398,6 +400,22 @@ describe('AD-2a: commit token, kept agents, R-8 delete graph', () => {
     // Never logged (C-12).
     expect(JSON.stringify(logged)).not.toContain(preview.commitToken as string);
     expectNothingDestructive();
+  });
+
+  // SA-1 (AD-2b): a minted token's reason is current, never "ships in a later release / not built".
+  it('a minted token with the delete function not installed: the reason says a confirmed deletion will be refused', async () => {
+    const preview = await ok();
+    expect(preview.resetLive).toBe(false);
+    expect(preview.commitToken).toEqual(expect.any(String));
+    expect(preview.deletionUnavailableReason).toBe(DELETE_FUNCTION_NOT_INSTALLED_REASON);
+    expect(preview.deletionUnavailableReason).not.toMatch(/later release|not built/);
+  });
+
+  it('a minted token with the delete function installed: the reason is the pending typed confirmation', async () => {
+    spies.purgeFunctionExists.mockResolvedValue(true);
+    const preview = await ok();
+    expect(preview.commitToken).toEqual(expect.any(String));
+    expect(preview.deletionUnavailableReason).toBe(CONFIRMATION_PENDING_REASON);
   });
 
   it('switch off: no token, and the reason says so (BQ-1)', async () => {
