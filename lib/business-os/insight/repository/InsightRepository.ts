@@ -365,7 +365,16 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   GBP: '£',
 };
 
-function formatMoney(amount: number | null | undefined, currency: string): string {
+/*
+ * `currency` is widened to match what the body already tolerates.
+ *
+ * It was declared `string` while every line below reaches for it with `?.` and
+ * falls back — so the implementation was always null-safe and only the
+ * signature claimed otherwise. `describeCurrentValue` carries the currency as
+ * `string | null | undefined`, because a business that has never been paid has
+ * none, and passing that straight through is correct.
+ */
+function formatMoney(amount: number | null | undefined, currency: string | null | undefined): string {
   const value = Number(amount) || 0;
   const symbol = CURRENCY_SYMBOLS[currency?.toUpperCase()];
   // An unmapped currency reads better as "1,200 CHF" than as a guessed symbol.
