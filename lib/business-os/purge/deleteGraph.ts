@@ -42,6 +42,9 @@
 // except for a blocking edge into a same-named non-public table, which cannot
 // constrain a `public` delete anyway.
 //
+// Direct edges only, on purpose: a transitive unlisted grandchild is still
+// caught, because its direct parent is itself an unlisted cascade child.
+//
 // Pure except `runDeleteGraphCheck`, which does the one repository read and
 // the logging. No Supabase client (B-1).
 
@@ -224,6 +227,106 @@ export function checkDeleteGraph(input: DeleteGraphInput): DeleteGraphResult {
     unreviewedDeleteTriggers,
     cascadeAfterParent: sortEdges(cascadeAfterParent),
   };
+}
+
+// ── Held RPC control 7, mirrored (purge slice 3b, SA C-2; widened by G-2) ───
+//
+// The held `purge_business_data` refuses a run in which a CASCADE edge INSIDE
+// the run would remove another tenant's rows: children are deleted child-first
+// by `user_id`, so when the parent goes, its cascade can only reach rows that
+// are NOT this tenant's. Control 6 cannot see this — the child table IS
+// listed. The SQL cannot execute before the key rotation (no in-process
+// Postgres, SA OQ-6), so its decision rules are mirrored here as two pure
+// functions and unit-tested on a synthetic graph. They are not called at run
+// time: the live decision is the SQL's, and it reads `pg_constraint` itself
+// (the introspection payload carries no key columns).
+
+/** A foreign key with its column pairs, as control 7 reads it from pg_catalog. */
+export interface KeyedForeignKey {
+  constraint: string;
+  child: string;
+  parent: string;
+  /** `pg_constraint.confdeltype`. */
+  onDelete: string;
+  /** Column pairs in key order: child column -> parent column. */
+  columns: ReadonlyArray<{ child: string; parent: string }>;
+}
+
+export interface TenancyEdgePlan {
+  /** Edges whose rows control 7 checks. */
+  checked: KeyedForeignKey[];
+  /** Edges refused outright: the parent has no `user_id`, so its rows cannot be bounded. */
+  refused: KeyedForeignKey[];
+}
+
+const TENANCY_COLUMN = 'user_id';
+
+/** SET NULL / SET DEFAULT: the child row survives, but its key is overwritten. */
+const OVERWRITE_CODES: ReadonlySet<string> = new Set(['n', 'd']);
+
+/**
+ * Which edges control 7 checks, and which it refuses unseen. Mirrors the
+ * SQL's edge selection: the parent is in the run, the child has `user_id`, no
+ * key pair maps `user_id` to `user_id` (tenant-bounded by the schema itself,
+ * e.g. the composite keys to the tenancy root), and the edge is EITHER
+ *   - CASCADE with the child in the run too — self-references included
+ *     (SA G-2: a self-referencing cascade removes another tenant's row that
+ *     points at one of mine), OR
+ *   - SET NULL / SET DEFAULT, child in the run or not (SA G-2: no row is
+ *     lost, but another tenant's column is overwritten — a cross-tenant write).
+ * A CASCADE child outside the run is control 6's refusal, not this one's.
+ */
+export function planTenancyCheck(input: {
+  run: ReadonlyArray<Pick<PurgeDescriptor, 'table'>>;
+  foreignKeys: readonly KeyedForeignKey[];
+  /** Tables that have a `user_id` column. */
+  tablesWithUserId: ReadonlySet<string>;
+}): TenancyEdgePlan {
+  const inRun = new Set(input.run.map((d) => d.table));
+  const checked: KeyedForeignKey[] = [];
+  const refused: KeyedForeignKey[] = [];
+
+  for (const fk of input.foreignKeys) {
+    if (!inRun.has(fk.parent)) continue;
+    const isCascade = fk.onDelete === ON_DELETE.CASCADE;
+    if (!isCascade && !OVERWRITE_CODES.has(fk.onDelete)) continue;
+    if (isCascade && !inRun.has(fk.child)) continue;
+    if (!input.tablesWithUserId.has(fk.child)) continue;
+    if (fk.columns.some((c) => c.child === TENANCY_COLUMN && c.parent === TENANCY_COLUMN)) continue;
+
+    if (!input.tablesWithUserId.has(fk.parent)) refused.push(fk);
+    else checked.push(fk);
+  }
+
+  const byConstraint = (a: KeyedForeignKey, b: KeyedForeignKey) => byCode(a.constraint, b.constraint);
+  return { checked: checked.sort(byConstraint), refused: refused.sort(byConstraint) };
+}
+
+/**
+ * The row half of control 7: for each checked edge, is there a child row that
+ * references one of this tenant's parent rows but whose `user_id` is not
+ * `userId` (another tenant's, or null)? Mirrors
+ * `... JOIN parent p ON <key> WHERE p.user_id = $1 AND c.user_id IS DISTINCT FROM $1`.
+ */
+export function crossTenantCascadeViolations(input: {
+  edges: readonly KeyedForeignKey[];
+  rows: Readonly<Record<string, ReadonlyArray<Readonly<Record<string, unknown>>>>>;
+  userId: string;
+}): GraphEdge[] {
+  const violations: GraphEdge[] = [];
+
+  for (const fk of input.edges) {
+    const parents = (input.rows[fk.parent] ?? []).filter((p) => p[TENANCY_COLUMN] === input.userId);
+    const children = input.rows[fk.child] ?? [];
+    const leaks = children.some(
+      (c) =>
+        c[TENANCY_COLUMN] !== input.userId &&
+        parents.some((p) => fk.columns.every((k) => c[k.child] != null && c[k.child] === p[k.parent]))
+    );
+    if (leaks) violations.push({ constraint: fk.constraint, child: fk.child, parent: fk.parent });
+  }
+
+  return sortEdges(violations);
 }
 
 /**

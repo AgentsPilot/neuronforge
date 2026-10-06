@@ -170,6 +170,18 @@ An earlier draft claimed the guarantee is *"not weakened anywhere."* **That was 
 | **Depends on** | Slice 2 |
 | **Ships alone** | ✅ Yes |
 
+> **Slice 3 status (2026-10-05, Dev splice; insert-only).** Workplan: [PURGE_SLICE3_PURGE_LEVEL_WORKPLAN.md](/docs/workplans/PURGE_SLICE3_PURGE_LEVEL_WORKPLAN.md). Slice 3 ships **inactive** (user decision 2026-10-05): the `service_role` key is not rotated, so every database change goes to `supabase/held/`, never `supabase/migrations/`, and tests prove it.
+>
+> | Part | Scope | State |
+> |---|---|---|
+> | **3a** — delete-graph correctness | `business_profiles` in its own final band; cascade-accurate bands; B4 retired (§0.10 F-SA-4); FK-child invariant + cross-registry test (F-SA-3); `accountDeletionPolicy.ts` deprecated (deletion in AD-3); `deleteGraph.ts`; preview shows the graph verdict | SA-approved with conditions (F-1 fixed), QA passed; **PR #226 merged 2026-10-06** |
+> | **3b** — Purge level, inactive | Commit route and orchestrator accept `purge` + the integrations / activity-history extras; delete-graph pre-check (fail closed); held RPC extended **in place** with controls 5 (blocking order), 6 (cascade closure) and 7 (cascade tenancy, SA C-2); FR-24 / FR-25 / AC-32 / AC-42 internal copy; cron register; AC-27 route tests; inactive proofs | **In progress** on `feature/purge-slice3b-purge-level` (uncommitted) |
+> | ~~**3c** — "delete my agents"~~ | — | **Dropped** (OQ-1 = (c), below) |
+>
+> **OQ-1 = (c), decided by the user 2026-10-05: Purge never deletes agents.** The "Also delete my agents" extra is removed for good; there is no agents checkbox. The commit refuses `agents: true` with its own code (`agents_option_refused`) whatever the live graph says, and the delete-graph check and held control 6 refuse it independently (deleting agents cascades into 16 `never` tables and 3 unclassified ones). This supersedes the agents row of §10.3, FR-4's third extra and AC-34; see the notes there. The `optional:agents` descriptors stay classified as they are (no FR-32 churn); they keep the refusal testable.
+>
+> **Cron register correction.** "The six crons" (§6.3, FR-14, AC-25) is stale: `vercel.json` schedules **13**. Each one's selection predicate and the level that starves it are in [business-os-business-data-purge-cron-register.md](/docs/workplans/business-os-business-data-purge-cron-register.md) — input to AC-25, not evidence for it (T28 is the evidence).
+
 ### Slice 4 — Stripe pre-flight gate
 
 | | |
@@ -645,6 +657,8 @@ Plus two **public unauthenticated INSERT paths**: `website_page_views` and `smar
 
 > *Noted, not a change to this requirement:* each of `insight-detect`'s four enumeration selects carries `.limit(500)` with no pagination — a pre-existing tenant-coverage bug (FU-16).
 
+> **Correction (2026-10-05, slice 3b):** the table above lists six crons; `vercel.json` schedules **13**. The full register, verified against the code, is [business-os-business-data-purge-cron-register.md](/docs/workplans/business-os-business-data-purge-cron-register.md). Notably `daily-briefing` enumerates through `business_profiles`, so it keeps sending after a **Reset** (an FR-26 copy question for BA, slice 3 OQ-8).
+
 ---
 
 ## 7. Non-table state
@@ -875,6 +889,8 @@ BA proposed deleting `email_unsubscribes`, reasoning that a purged business cann
 
 > **`agent_memories` and `run_memories` were added from T1** — both live and user-scoped, both absent from this list until measured. A checkbox labelled "delete my agents" that leaves the user's own agent memory behind is the same defect that added `agent_prompt_threads`. **B6 (`agent_logs` before `agents`) and B7 (`agent_scheduler_state` before `agent_executions`) are engaged only by this checkbox**, which is off by default — so a default sweep never exercises them.
 
+> **Superseded 2026-10-05 (OQ-1 = (c), user decision):** the **Also delete my agents** row above is removed for good. Purge never deletes agents; the owner deletes them from the agents page. The commit refuses the option with its own code. B6 and B7 therefore have no runtime path in v1; they stay pinned by the ordering tests. See §0.4, slice 3 status.
+
 Constraints:
 - `auth.users` / `profiles` never deleted, under any combination.
 - **Purge always deletes `channel_connections`** regardless of the integrations checkbox.
@@ -957,6 +973,7 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 2. Operates on exactly one business, `user_id` from `getUser()`. **No client-supplied id accepted.**
 3. Two levels per §10.2 and the **R** column.
 4. Three opt-in extras, off by default, per §10.3.
+   > **Amended 2026-10-05 (OQ-1 = (c)):** two extras in v1 — integrations and activity history. The agents extra is removed for good and refused at commit (§0.4, slice 3 status).
 5. **Pre-flight gate before any deletion, both levels, both surfaces, no override.** Blocks on C1, C2 (charges **and** refunds), C3.
 6. The gate enumerates **from the provider across all connected-account candidates**, every read scoped with `stripeAccount`.
 7. The gate **fails closed** on any provider error, timeout, 429-after-retry, or exceeded budget.
@@ -967,6 +984,7 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 12. Pre-purge snapshot written, **read-back verified**, child ids captured (§10.7).
 13. Covers every §3 table appropriate to the level, all storage buckets, and reports orphan counts for the four parent-scoped tables.
 14. **Purge** starves the six crons and two public INSERT paths; **Reset** does not, and says so (FR-26).
+   > **Correction 2026-10-05:** thirteen scheduled crons, not six — see the [cron register](/docs/workplans/business-os-business-data-purge-cron-register.md).
 15. Respects **B1, B2, B3, B4, B6 and B7**; **never alters a FK definition**. The order is derived from the live `pg_constraint` dump, not from migration files.
 16. Never touches the §8 exclusion set or the portable `business_chat_plan_cache` rows.
 17. **T5 residue prevented by ordering** — `crm_activities` deleted last inside the RPC.
@@ -1053,6 +1071,7 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 - [ ] **AC-23** After a **Purge**, every §8 table is unchanged — the four global catalogs, `organizations`/`organization_members`, billing, org analytics, the §8.7 kernel tables, §8.10's agent platform, `token_usage`, and §8.12's account config — **and `business_chat_plan_cache WHERE user_id IS NULL` matches on both row count and a content checksum** (a count alone survives a delete-and-reinsert).
 - [ ] **AC-24** A **second, different** business is completely unaffected — full cross-tenant sweep. *(D9 un-gating condition.)*
 - [ ] **AC-25** **Purge** leaves no row causing the six crons to pick this business up. **Each cron's selection predicate is named in the workplan.**
+  > **Correction 2026-10-05:** thirteen crons; each predicate is named in the [cron register](/docs/workplans/business-os-business-data-purge-cron-register.md) (input to this AC; T28 is the evidence).
 - [ ] **AC-26** After a **Reset**, the UI states that calendar events resync within minutes, that channel stats refresh on their next scheduled sync, and that insights and metrics rebuild once new data is created. A later cron regenerating any of them is **not** a failure.
 - [ ] **AC-27** A public `POST` to the page-view or smart-link-click endpoint after a **Purge** cannot create a row attributable to the deleted business.
 
@@ -1065,6 +1084,7 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 - [ ] **AC-32** With integrations **off**, a **Purge** still deletes `channel_connections`.
 - [ ] **AC-33** With integrations **on**: *(ordering half, slice 3)* `plugin_connections` is read for account resolution **before** deletion; *(provider half, slice 4)* the gate still runs correctly and does not produce a false all-clear.
 - [ ] **AC-34** With **Also delete my agents** on, `agent_prompt_threads`, `agent_prompt_workflow_generation_sessions`, `user_memory`, `agent_memories`, `run_memories` and `agent_scheduler_state` are all removed, and **B6/B7 ordering holds**.
+  > **Superseded 2026-10-05 (OQ-1 = (c)):** there is no agents option. AC-34 is replaced by: *a commit with `agents: true` is refused with `agents_option_refused` before the reset guard and before any snapshot, regardless of the live graph* (slice 3 workplan SA C-4; `ResetService.order.test.ts`). The T28 live sweep checks the agents-on run as a refusal.
 - [ ] **AC-35** A failed snapshot write aborts with zero rows deleted; a snapshot that writes but fails **read-back** does the same.
 - [ ] **AC-36** The snapshot bucket has **no** policy granting `authenticated` any access, and no route returns its contents.
 - [ ] **AC-37** **Schema completeness** — the engine fails closed when an expected table is absent **and** when a user-scoped table exists in neither the delete set nor §8's enumerated exclusion set. **The FR-1 RPC is not executable as `authenticated`.** *(D9 un-gating condition.)*
@@ -1234,4 +1254,5 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 | 2026-09-26 | Admin Archiving: two tables classified | `archived_records` joins the activity-history checkbox beside `audit_trail` (`optional:activityHistory`, `user_id`, `snapshot: 'ids'`); `archive_runs` is `never` (§8.11). Classification lives in `lib/business-os/purge/descriptors.ts`, and the SA-S3 baseline moved 124 → 126 deliberately. Admin Archiving requirement C-4 |
 | 2026-10-04 | D13/D14 — admin-targeted delete; SA findings §0.10 | Insert-only splice from [ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md](/docs/requirements/ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md) Appendix A: D13 (admin target, amends D5, FU-4 promoted) and D14 (admin-surface account closure, FU-9 partially), user-approved 2026-10-04. §0.4 gains AD-1…AD-4, and a note that the customer surface keeps the login (D3), with parity deferred (UD-11). New §0.10 records SA's findings: T7 `SchemaReconciler` (AC-37) was never wired, so the preview silently under-counts; 2 unclassified business tables (`insight_actions`, `auth_handoff_codes`); PR #45's 56 CASCADE FKs are live, so `business_profiles` must run last in slice 3; the contact-delete trigger behind B4 was dropped. No existing section rewritten |
 | 2026-10-05 | OQ-1 decided: Purge never deletes agents | User decision (slice 3 workplan OQ-1): the opt-in "also delete my agents" extra is **removed for good** — Purge never deletes AgentsPilot agents; the customer deletes them from the agents page. Reason: deleting agents cascades into 16 `never` tables plus 3 unclassified ones. Slice 3c is dropped; the agents option stays refused at all three layers. Slice 3 = 3a + 3b |
+| 2026-10-05 | Slice 3 status spliced (Dev, insert-only) | §0.4 gains the slice 3 status: 3a = PR #226 (merged 2026-10-06), 3b in progress (inactive: held RPC controls 5–7, Purge commit, extras, cron register), 3c dropped. OQ-1 (c) noted against §10.3, FR-4 and AC-34 (AC-34 replaced by the agents-refusal test). Cron register correction: 13 crons, not six (§6.3, FR-14, AC-25). No existing text changed |
 | 2026-10-06 | `business_addresses` classified K (purge) | New business-owned table from PR #229 had no descriptor; purge slice 3a's cross-registry test turned main red. Classified `purge` (kept by Reset, deleted by Purge), band CONFIG, area `business_profile` — same as the profile it backs; precedent `marketing_consent_settings`. Added as §3.1 row #67 and to the §10.2 kept row. Frozen in `classification-baseline.json` (144 → 145). Notes are from the migrations; live FK/trigger confirmation owed after 20261037 is confirmed applied |
