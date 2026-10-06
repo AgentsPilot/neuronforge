@@ -77,6 +77,12 @@ DECLARE
    * table among them.
    */
   business_owned text[] := ARRAY[
+    -- The business's address book (20261036). Named here so an EXISTING
+    -- database picks the constraint up on a re-run of this loop; the table's
+    -- own migration adds it too, because this loop runs before that table
+    -- exists on a fresh database and would skip it. The loop skips a constraint
+    -- that is already there, so only one of the two ever creates it.
+    'business_addresses',
     -- CRM
     'crm_activities',
     'crm_contacts',
