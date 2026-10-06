@@ -145,26 +145,29 @@ export async function buildPurgePreview(params: {
 
   const limitations: string[] = [];
 
+  // Purge slice 3b: the commit exists for both levels, so the line names the
+  // level being previewed.
+  const Level = level === 'purge' ? 'Purge' : 'Reset';
   if (resetLive === true) {
     limitations.push(
-      '⚠️ RESET IS LIVE. This preview is read-only, but the Reset button below WILL permanently delete the rows counted here. A verified snapshot is written first; there is no undo.',
+      `⚠️ ${Level.toUpperCase()} IS LIVE. This preview is read-only, but the ${Level} button below WILL permanently delete the rows counted here. A verified snapshot is written first; there is no undo.`,
     );
   } else if (resetLive === false) {
     limitations.push(
-      'This preview is read-only. Reset is currently REFUSED: the destructive database function (`purge_business_data`) is not applied, so the server rejects Reset before writing a snapshot or deleting anything.',
+      `This preview is read-only. ${Level} is currently REFUSED: the destructive database function (\`purge_business_data\`) is not applied, so the server rejects ${Level} before writing a snapshot or deleting anything.`,
     );
   } else {
     limitations.push(
-      'Could not determine whether Reset is live. Treat it as LIVE — the server re-checks before deleting and refuses if it cannot confirm.',
+      `Could not determine whether ${Level} is live. Treat it as LIVE — the server re-checks before deleting and refuses if it cannot confirm.`,
     );
   }
 
-  if (level === 'purge') {
-    // Slice 2 implements Reset only. A Purge preview counts what Purge WOULD
-    // remove, but there is no Purge commit — say so, rather than let the counts
-    // imply one.
+  if (options.agents) {
+    // OQ-1 = (c), 2026-10-05: a purge never deletes agents. The preview still
+    // counts the run so the delete-graph refusal stays visible (SA, 3a review),
+    // but the commit refuses the option on its own terms (C-4).
     limitations.push(
-      'Purge is preview-only in this build. The commit path implements Reset; there is no Purge commit yet (slice 3).',
+      'Deleting agents is not offered: a purge never deletes agents. The commit refuses this option, whatever the counts below say.',
     );
   }
 

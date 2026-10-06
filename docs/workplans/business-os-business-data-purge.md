@@ -124,6 +124,11 @@ For `contact-documents` — contracts and intake forms — the old code saw **no
 - **C-37 (done):** the recursive storage walk now has a wall-clock budget (20s) and a call budget (2,000), not just an object cap. A large tree reports `truncated: true` as residue instead of dying at the 60s platform limit as an opaque timeout.
 - `20260722_create_contact_documents_bucket.sql` fails halfway in the SQL editor — recorded in `docs/investigations/`, not fixed.
 
+### Slice 5 prerequisites carried from purge slice 3 (added 2026-10-05, SA 3a F-2 and 3b G-4)
+
+- 🟡 **F-2 — the customer surface gets the delete-graph STATUS only.** Today the preview's `deleteGraph` field carries every edge and trigger name (constraint, child and parent tables, trigger names) because only admins can preview. When slice 5 opens the preview to a non-admin, that response must carry `status` (and at most counts), never edge or trigger names. The commit already returns counts only outside development (slice 3b, C-4).
+- 🟡 **Raw storage error text reaches the client in `storage` / `residue` (slice 2 code).** `removeStorageUnderUser` records the storage API's `error.message` in `failed[].reason`, and `ResetService` returns it in `storage[].failed` and joins it into `residue[]`. Acceptable on the admin-only internal surface; on the customer surface both must go behind the `NODE_ENV === 'development'` guard (`lib/business-os/purge/devDetail.ts`), with the raw text kept in Pino and the audit row.
+
 ---
 
 ## ⏸️ Slice 2 test plan — for QA, and for the owner
@@ -186,8 +191,11 @@ This is the most important thing in the parking state. Each step checks the one 
    ```
    ⚠️ **Not mentioned anywhere before C-40, and easy to miss.** Without it the API still cannot see the new function: Reset keeps refusing with `rpc_not_applied`, the banner keeps saying the function is not applied, and it looks exactly like a broken migration when it is only a stale cache.
 8. **Confirm the probe returns true** — `purgeFunctionExists()`.
-9. **Confirm the Danger Zone banner reads "⚠️ Reset is LIVE — it will delete data."** It is driven by the same probe (M-4), so if step 8 passed and the banner disagrees, reload the page.
+   **Then confirm it is the slice-3 body** (SA 3b, logged 2026-10-05): the probe is version-blind, so it also returns `true` for a slice-2 body without the graph controls. Run `SELECT pg_get_functiondef('purge_business_data(uuid, text, jsonb, jsonb)'::regprocedure) LIKE '%control 7%';` and expect `true` before trusting the LIVE banner.
+9. **Confirm the Danger Zone banner reads "⚠️ Reset and Purge are LIVE — they will delete data."** (wording since purge slice 3b; it read "⚠️ Reset is LIVE — it will delete data." before) It is driven by the same probe (M-4), so if step 8 passed and the banner disagrees, reload the page.
 10. **Run a Reset preview and confirm the preview panel AGREES with the banner** (B-1). Its first line must read *"⚠️ RESET IS LIVE…"*. Before this fix it said *"PREVIEW ONLY — this build has no commit route and no delete capability. Nothing here can remove a row"* regardless of state, directly above the Reset button. Both are now driven by the same probe; if they ever disagree, stop — something is reading a stale response.
+
+    **Then run a Purge preview (every option off) and confirm the delete-graph verdict reads CLEAN** (purge slice 3b, added 2026-10-05; mirrors `supabase/held/README.md` step 10). The same graph rules run again inside the function (controls 5 and 6), so a preview that is not clean means the commit will refuse. With *integrations* or *activity history* ticked it must also read CLEAN. There is no agents option: a purge never deletes agents (OQ-1 = (c)).
 11. **First Reset on the owner's test data only** — a throwaway account, never a real login — and **compare the result against the demonstration snapshot** already in the bucket.
 
     ⚠️ **E-4 — the numbers will not match exactly, and that is not a bug.** The demonstration snapshot recorded **75 rows**; a preview taken later showed **74**. The difference is `external_calendar_events`, which changes as calendar data syncs — the database moved between the two readings, not the code. Expect the first real Reset to differ from the demo snapshot by that kind of drift. Compare **per table**, and treat a mismatch confined to `external_calendar_events` as expected. A mismatch in a table nothing writes to on its own (contacts, invoices, bookings) is worth investigating.

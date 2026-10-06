@@ -5,9 +5,9 @@
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_BUSINESS_DATA_PURGE_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_BUSINESS_DATA_PURGE_REQUIREMENT.md) §0.4 Slice 3, §0.8, §0.10 (the 2026-10-04 splice; that copy currently lives on the unmerged admin-delete docs branch)
 **Parent workplan:** [business-os-business-data-purge.md](/docs/workplans/business-os-business-data-purge.md) (T7, T27, T28, C-28, C-32)
-**Branch:** `feature/purge-slice3-purge-level` (worktree `neuronforge-purge-s3`, from `origin/main` @ `adcd908d`)
+**Branch:** 3a `feature/purge-slice3-purge-level` (worktree `neuronforge-purge-s3`, from `origin/main` @ `adcd908d`; PR #226) · 3b `feature/purge-slice3b-purge-level` (same worktree, from 3a @ `612d1cd5`)
 **Date:** 2026-10-05
-**Status:** 3a SA code review: APPROVED WITH CONDITIONS (F-1, F-2; 2026-10-05), uncommitted · 3b not started · 3c **DROPPED** (OQ-1 decided (c), 2026-10-05)
+**Status:** 3a committed (`612d1cd5`, PR #226 open) · 3b **Code Complete, uncommitted** (awaiting SA code review) · 3c **DROPPED** (OQ-1 decided (c), 2026-10-05)
 
 ## Overview
 
@@ -83,6 +83,18 @@ Read-only. One call to `purge_schema_introspect()` per run, through `BusinessPur
 - **The re-band met no edge outside `BLOCKING_EDGES`.** Moving installments, reminders, proposals and agent_executions earlier produced zero blocking-order violations (the risk SA C-3 named).
 - **The 19 unlisted children with agents on** are M-5 exactly: 16 `never` (`agent_configurations`, `agent_intensity_metrics`, `agent_stats`, `agentkit_analytics`, `automation_slas`, `calibration_history`, `calibration_sessions`, `error_patterns`, `execution_anomalies` (from both `agents` and `agent_executions`), `execution_baselines`, `execution_insight_runs`, `execution_insights`, `plugin_performance`, `shadow_failure_snapshots`, `shared_agents`) and 3 unclassified (`agent_group_memberships`, `execution_metrics`, `execution_routing_decisions`). This is the refusal that keeps the agents option refused **permanently** (OQ-1 decided (c), 2026-10-05).
 - **`REVIEWED_DELETE_TRIGGERS`:** T2 only. The four DELETE-capable triggers in `public` are T2, `trg_mce_guard` and the `storage_usage` pair. The last three are reached by no run: `marketing_consent_events` is a SET NULL child (not deleted), and `storage_usage` is not a CASCADE child of any run table. Each is named in the descriptor review note.
+
+**G-2 live edge list (SA 3b code review), 2026-10-05.** Read-only, one `purge_schema_introspect()` call through `BusinessPurgeRepository.introspectSchema()`, `generated_at 2026-10-05T20:33:42Z`, 323 FKs (`c` 214, `n` 68, `a` 39, `r` 2, `d` 0). No DML, no DDL, no row data. These are the edges the widened control 7 adds, for the 8 default combinations (agents off). Every one appears in all 8:
+
+| Kind | Edges (parent → child) | Child listed? |
+|---|---|---|
+| Self-referencing CASCADE (1) | `scheduling_bookings → scheduling_bookings` (`parent_booking_id`) | yes |
+| Self-referencing SET NULL (2) | `insights → insights` (`correlation_parent_id`); `proposals → proposals` (`supersedes_id`) | yes |
+| SET NULL into an **unlisted** child (3) | `crm_contacts → email_unsubscribes`, `→ marketing_consent_events`, `→ marketing_consent_state` (all `never`; the M-6 retentions) | **no** |
+| SET NULL into a listed child (40) | `crm_contacts →` `business_events`, `business_subscribers`, `crm_tasks`, `payment_events`, `payment_invoices`, `payment_plan_installments`, `payment_plan_subscriptions`, `payment_reminders`, `payment_transactions`, `scheduling_bookings`; `contact_documents → proposals`; `email_campaigns` / `email_sequence_steps` / `email_sequences → email_sends`; `insights →` `insight_actions`, `insight_automations`, `kernel_action_log`, `kernel_executions`; `kernel_executions → kernel_action_log`; `payment_events → payment_automation_executions`; `payment_invoices →` `payment_plan_installments`, `payment_refunds`, `payment_transactions`, `proposals`, `scheduling_bookings`; `payment_plans →` `payment_plan_subscriptions`, `proposals`, `scheduling_bookings`; `payment_transactions → payment_plan_installments`; `proposals → payment_plan_installments`; `scheduling_bookings →` `payment_invoices`, `payment_plan_installments`, `payment_transactions`, `proposals` (×2); `scheduling_services →` `payment_invoices`, `payment_plan_subscriptions`, `payment_plans`, `payment_transactions`, `proposals` | yes |
+
+- **No default run is newly refused on structure.** All 46 have a parent AND a child with `user_id`, so the "parent has no `user_id`" refusal never fires. Whether the row half fires depends on rows (another tenant's row, or a NULL-owner row, pointing at this tenant's row), which cannot be measured before rotation. **Added to the T28 sweep:** run a Purge preview + commit on the throwaway account and expect control 7 silent; a refusal names the edge, and is a data finding, not a code one.
+- The three unlisted `never` children are the ones to watch: a NULL-owner `email_unsubscribes` / consent row pointing at one of this tenant's contacts would now refuse the run (by design: it would otherwise be overwritten by a delete it does not belong to).
 
 ---
 
@@ -215,7 +227,7 @@ Not built. Kept for the record only; none of these changes will be made.
 - [x] ✅ **T3a-5** Graph verdict in the preview (read-only, `deleteGraph` field + a limitation line when not `ok`) and a Danger Zone panel. C-5 preview half: `unreadable` renders "NOT VERIFIED (treated as refused)", and a missing field defaults to `unreadable`
 - [x] ✅ **T3a-6** `accountDeletionPolicy.ts` header fix + `@deprecated` (OQ-3: deletion in AD-3); one-line deprecation header on the four consuming scripts
 - [x] ✅ **T3a-7** Tests §6.1; scoped `tsc` on touched files (exit 0); purge + repository + businessOwnedTables + account suites green
-- [ ] **T3a-8** Splice slice-3a status into requirement §0.4 / §0.10. **Deferred per R-7:** §0.10 is not on this branch (it lives on the unmerged admin-delete docs branch). Splice once that PR merges
+- [x] ✅ **T3a-8** Splice slice-3a status into requirement §0.4 / §0.10. Done in 3b once docs PR #225 merged (the requirement file on this branch was first brought to `origin/main`'s copy, then spliced insert-only: 1235 → 1256 lines, 0 lines removed)
 
 **Dev notes (3a):**
 - **Inactive proofs.** I-1 … I-4 live in `supabase/held/__tests__/purgeBusinessData.held.test.ts`, a 3b file (§4.2), so none is assigned to 3a. C-1 (I-1 must match a `CREATE [OR REPLACE] FUNCTION … purge_business_data(` or `GRANT … purge_business_data` and not the bare string in `20260916a`'s comment) is carried into T3b-3. 3a adds nothing to `supabase/migrations/` or `supabase/held/` (I-8 holds) and no SQL.
@@ -225,15 +237,23 @@ Not built. Kept for the record only; none of these changes will be made.
 - **Plan delta (C-3 wording):** `TENANCY_ROOT` = 9900 and `PRE_BLOCKING` = 50 are the concrete values.
 
 ### Slice 3b
-- [ ] **T3b-1** `runPurgeCommit` generalisation + delete-graph pre-check (after the probe, before the guard)
-- [ ] **T3b-2** Commit route Zod + tests
-- [ ] **T3b-3** Held RPC controls 5 + 6 in place; README; static held test
-- [ ] **T3b-4** Danger Zone Purge commit + options + FR-24/FR-25/AC-32 copy
-- [ ] **T3b-5** Cron register doc (§8 verified line by line against the code)
-- [ ] **T3b-6** AC-27 route tests
-- [ ] **T3b-7** Inactive-proof tests (§6.3); order tests (§6.2)
-- [ ] **T3b-8** Read-only live check: the Danger Zone banner still reads "not applied" and a Purge preview shows a clean graph verdict for a default run and **refuses** with agents on (M-5)
-- [ ] **T3b-9** Splice status into the requirement
+- [x] ✅ **T3b-1** `runPurgeCommit({level, options})` + `runReset` wrapper (OQ-5). Order: capability → probe → **agents refusal** (`agents_option_refused`, C-4) → delete-graph check (`delete_graph_refused` / `delete_graph_unreadable`, C-5 commit half) → guard → snapshot → RPC → storage → audit. Options copied field by field. Storage loop is level-aware. OQ-4: `rows` = snapshot counts (new `SnapshotResult.tableCounts`), `rpcRows` = diagnostics, Pino `warn` on a mismatch outside `CASCADE_COUNT_EXEMPT`. F-1 pattern: raw snapshot / RPC error text and graph child-table names reach the client only in development; the audit row keeps them. `notes[]` (FR-24, FR-25, AC-32, AC-42) from the pure `commitResultNotes`
+- [x] ✅ **T3b-2** Commit route: `level: enum`, `options` `.strict()` with three boolean defaults; `agents` accepted and passed through so the orchestrator refuses it with its code. Tests: Purge happy path, defaults, unknown option key / non-boolean / non-object → 400, `userId` on a Purge and `user_id` inside options → 400, non-admin Purge → 403, wrong confirmation → 400
+- [x] ✅ **T3b-3** Held RPC extended in place: controls **5, 6 and 7** (C-2) after the probe preconditions and before the lock; header "SLICE 3 ADDITIONS"; `COMMENT ON FUNCTION` updated. README row + release step 10 (Purge preview CLEAN) + static-proof note; the parent workplan's duplicated checklist (C-40) updated to match. TS mirror of control 7 (`planTenancyCheck`, `crossTenantCascadeViolations`) on a synthetic graph
+- [x] ✅ **T3b-4** Danger Zone: commit offered for both levels, sending the previewed level and extras; **no agents checkbox**; AC-32 line; FR-25 / AC-42 bullets before the confirmation; result notes rendered; button warns when the graph is not CLEAN. Banner and preview live-line wording made level-aware; the stale "Purge is preview-only" limitation replaced by an agents-refusal line
+- [x] ✅ **T3b-5** [Cron register](/docs/workplans/business-os-business-data-purge-cron-register.md): all 13 verified against the code. §8 held, with two corrections (`credit-leak-check` reads `token_usage` + `business_os_credit_charges`; `lead-response`'s sweep reads `business_profiles` through the automation opt-in column)
+- [x] ✅ **T3b-6** AC-27 route tests: `app/api/website/analytics/track/__tests__/route.test.ts`, `app/go/[code]/__tests__/route.test.ts` (no page / link → no insert; body `user_id` never attributes a row)
+- [x] ✅ **T3b-7** `supabase/held/__tests__/purgeBusinessData.held.test.ts` (I-1 with the C-1 regex, I-2, I-3, I-4, each with a non-vacuity or negative case; mutation-checked: a planted migration definition and an `anon` grant each turn it red). Order tests §6.2 in `ResetService.order.test.ts`, incl. the C-4 test with a clean graph and the M-5 mirror
+- [ ] **T3b-8** Read-only live check. **Graph half done by Dev** (`purge_schema_introspect()` only, `generated_at 2026-10-05T20:00:51Z`, 323 FKs / 92 triggers): all 8 agents-off combinations `ok` (0 / 0 / 0); all 8 agents-on `refused` (19 unlisted, M-5). **Banner half (I-7) left to QA** in the browser
+- [x] ✅ **T3b-9** Requirement splice (with T3a-8): §0.4 slice 3 status table; OQ-1 (c) against §10.3, FR-4 and AC-34; 13-cron correction under §6.3, FR-14 and AC-25; Change History row. Insert-only, verified line by line
+
+**Dev notes (3b):**
+- **Agents refusal placement.** After the probe (so `rpc_not_applied` is always the first refusal on prod, as §6.3 requires) and before the graph read, so it holds even if the graph were clean (test: `refuses agents: true … EVEN WHEN the live graph is clean`). It refuses on Reset too.
+- **Control 7 design (SA C-2).** Relation-agnostic, like 5 and 6. Edges checked: CASCADE, non-self, both ends listed, child has `user_id`, and no key pair maps `user_id` → `user_id` (the 56 composite keys to `business_profiles` are tenant-bounded by the schema, so they are skipped). Row test: `JOIN parent p ON <key columns from pg_attribute> WHERE p.user_id = $1 AND c.user_id IS DISTINCT FROM $1` (NULL-owner rows refused too). A listed parent **without** `user_id` is refused outright (fail closed). Live measurement: every in-run CASCADE edge today has a `user_id` parent, and the three `user_id`-less children (`smart_link_clicks`, `website_blocks`, `agent_scheduler_state`) are `via` children, so neither branch refuses a default run on structure alone.
+- **Count change (OQ-4).** `rows` now reports snapshot counts. A slice-2 Reset that previously reported the RPC statement total now reports the snapshot total; the RPC figures are in `rpcRows` and in the audit row (`rpcRowsDeleted`, `rpcRowsByTable`).
+- **Requirement file.** The branch base (`adcd908d`) predates docs PR #225, so the file was first set to `origin/main`'s copy and then spliced. Its PR diff will therefore also show #225's lines until #226 and this branch rebase or merge onto main; the content is identical, so the merge is clean.
+- **Not changed (flagged).** `ResetGuard`'s `local_unreadable` message embeds `local.reason`, which can carry raw read-error text (slice 2 code, outside this diff). Control 7 covers CASCADE only; a SET NULL edge whose child belongs to another tenant would have its key nulled (SA to say whether that is in scope).
+- **F-2** stays carried to slice 5 (the customer surface gets the graph status only). It is not yet written into the parent workplan's slice-5 notes.
 
 ### Slice 3c — DROPPED (OQ-1 = (c), 2026-10-05; no tasks will be done)
 - ~~**T3c-1** Apply the ruling; add three `via` descriptors; baseline review notes if levels move~~
@@ -446,8 +466,136 @@ No. No code or comment in the diff names 3c. The `optional:agents` descriptors a
 
 ### Code Approved for QA: Yes — conditional on F-1 (small; SA re-checks only that fix's diff)
 
+---
+
+**Code Review by SA — 2026-10-05 (slice 3b, uncommitted, worktree `neuronforge-purge-s3`, branch `feature/purge-slice3b-purge-level` from `612d1cd5`)**
+**Status:** APPROVED WITH CONDITIONS. Fix G-1 to G-4 before the 3b PR; SA re-checks only those diffs.
+
+Verified independently: 13 modified + 5 untracked files. Nothing in `supabase/migrations/`: the function is only in `supabase/held/`, and I-1 (C-1 regex: definition or grant, not a mention) proves it, with non-vacuity and negative cases. 14 purge / held / AC-27 suites, 283 tests, green here in about 11 s, in the existing Jest shards (roots = `<rootDir>`, so `supabase/held/__tests__` is discovered). No added CI time. No `console.*` in any touched file. All DB access still goes through `BusinessPurgeRepository`; Pino with a `correlationId` child; no `any`.
+
+**Checked and holding:**
+- **Order.** capability → probe → agents → graph → guard → snapshot → RPC → storage → audit. The agents refusal comes after the probe on purpose (§6.3 inactive proof: `rpc_not_applied` comes first even when agents is on). It is independent of the graph, tested on a clean graph, and holds on Reset too (test at `ResetService.order.test.ts:359`).
+- **Route.** Strict Zod at the top level and in `options`. Unknown key, non-boolean, injected `userId` / `user_id` (also inside `options`) all return 400. The target is the session user only. The gate is `authorizePurge(…, 'internal')`, which requires a platform admin via `AdminAccessService` (admin_users), as built in slice 2. The route is not under `/api/admin`, so `requireAdmin` does not apply. The 500 path keeps the development guard.
+- **F-1 pattern.** Snapshot and RPC error text, and graph child-table names, are returned only in development; the audit row keeps them.
+- **Controls 5 and 6.** The SQL is correct. They are relation-agnostic, run after the probe preconditions and before the lock, use `NOT EXISTS` (not `NOT IN`), and have the schema pinned to `public`. A blocking edge from an *unlisted* table is not refused by control 5, but it can only make the parent DELETE fail, and that rolls back the whole call. That is fail-safe and acceptable.
+- **Control 7.** It quotes identifiers with `%I` from `pg_catalog` and binds the id with `USING`. `IS DISTINCT FROM` catches rows with a NULL owner. Static checks I-3 and I-4 pin it before the lock and DELETE, and confirm the body names no descriptor table.
+- **OQ-4.** Snapshot counts in `rows`, RPC counts in `rpcRows`: **accepted**. This changes what Reset reports (it now shows the truer figure). The client type ignores `rpcRows` harmlessly.
+
+### Rulings on Dev's questions
+
+| # | Ruling |
+|---|---|
+| Q1 SET NULL edge into another tenant | **In scope.** Deleting my parent row would null a column on another tenant's row. That is a cross-tenant write, which `tenant-isolation-guard` forbids even though no row is lost. Fold into control 7 now (G-2). |
+| Q2 listed parent without `user_id` → refuse | **Accepted as fail-closed.** §2.5 records that no in-run CASCADE edge has such a parent today, so a default run is not refused on structure alone. If one appears, a refusal is the right outcome. |
+| Q3 `local_unreadable` raw `reason` | **Fix now** (G-3). It is one line, uses the same `withDevDetail` pattern, and is on the same response this slice just hardened. |
+| Q4 F-2 into parent slice-5 notes | **Write it now** (G-4). It is a docs line in a file already in this diff. |
+
+### Code Review Comments
+1. **G-1 — honest copy when the RPC is not applied.** Priority: Medium. Files: `components/business-os/purge/PurgeDangerZone.tsx` (commit box) and `PreviewService.ts`. The top banner is driven by the probe, so on prod today it correctly shows "refused — the destructive function is not applied". The "Reset and Purge are LIVE" line renders only when `purgeFunctionExists()` returns true, so that line is not the problem. The problem is the commit box. It now renders after *every* preview, for both levels. Whatever `access.resetLive` says, it states "Permanently deletes the N rows … A verified snapshot is written first" above an enabled red "Purge — delete permanently" button. While the RPC is held, that is false. Required:
+   - When `resetLive !== true`, the box shows the same kind of red line already used for a graph that is not clean: "The destructive function is not applied, so the server will refuse this run before anything is snapshotted or deleted."
+   - When `resetLive === null`, it says that state is unknown.
+   - Change the box's lead sentence to "Would permanently delete…" unless the function is live.
+   - Keep the button enabled: the audited refusal path is still worth exercising.
+   - Add a source or render guard test for the not-live line.
+   - [x] ✅ **Fixed by Dev, 2026-10-05:** the commit box shows a red "not applied, so the server will refuse this run before anything is snapshotted or deleted" line when `resetLive === false`, an amber unknown-state line when it is null/undefined, and leads with "Would permanently delete" unless live. Button left enabled. Guard: `components/business-os/purge/__tests__/PurgeDangerZone.commitCopy.guard.test.ts` (5 tests). `PreviewService` already names the level and follows the probe; unchanged.
+2. **G-2 — widen control 7.** Priority: Medium (tenant isolation). File: `supabase/held/20260916b_purge_business_data.sql`, plus the TS mirror.
+   - (a) Include `confdeltype IN ('n','d')` edges whose child has `user_id`, **whether or not the child is listed**. For an unlisted child, my own kept rows are not flagged; other tenants' and NULL-owner rows are.
+   - (b) Remove `conrelid <> confrelid` from control 7 only. A self-referencing CASCADE removes another tenant's row that references mine. The comment "the statement that deletes the parent deletes the child" is true only for my own rows. The `c` / `p` aliases already make the row query work on one table.
+   - Mirror both in `planTenancyCheck` with mutation tests, and update the I-3 pin.
+   - Before the PR, list the live SET NULL / SET DEFAULT edges into run parents from the introspection payload, read-only, and record them in §1.4. The PR must show the widened control does not refuse a default run on today's data structure (rows are unknowable pre-rotation; record that as a T28 sweep item).
+   - [x] ✅ **Fixed by Dev, 2026-10-05:** control 7 now selects CASCADE edges with both ends listed (self-references included) **and** SET NULL / SET DEFAULT edges whose parent is listed, child listed or not; `conrelid <> confrelid` removed from control 7 only. Mirror: `planTenancyCheck` (+ 3 new tests, incl. per-kind mutations and self-ref / unlisted SET NULL row cases). I-3 pin added. Live edges in §1.4: 46, none newly refused on structure; row half → T28.
+3. **G-3** — `lib/business-os/purge/ResetGuard.ts:93`. `local.reason` is raw text in the client message. Wrap it with `withDevDetail` (or move the helper to a shared spot) and keep the raw text in the Pino `warn` and the audit `detail`. Add one test. Priority: Low.
+   - [x] ✅ **Fixed by Dev, 2026-10-05:** `withDevDetail` moved to `lib/business-os/purge/devDetail.ts` (shared by `ResetService` and `ResetGuard`); the guard returns the plain message, raw `reason` in Pino and in a new `auditDetail` that `ResetService` passes to the audit row only. Tests: 2 in `ResetService.order.test.ts` (production / development).
+4. **G-4** — `docs/workplans/business-os-business-data-purge.md`, slice-5 notes. Record F-2: the customer surface gets the graph *status* only, never edge or trigger names. Also note there that storage `failed[].reason` (raw storage error text, slice-2 code) reaches the client in `storage` / `residue`. On the customer surface it must be behind the development guard. Priority: Low.
+   - [x] ✅ **Fixed by Dev, 2026-10-05:** new "Slice 5 prerequisites carried from purge slice 3" block (F-2 and the storage `failed[].reason` / `residue` note). Also done from "Logged": the version-check release step (`pg_get_functiondef … LIKE '%control 7%'`) after step 8 in the held README and the parent checklist.
+
+### Logged (not blocking 3b)
+- **The probe is version-blind.** `purgeFunctionExists()` returns true for *any* applied `purge_business_data` that rejects a null id, including a slice-2 body without controls 5 to 7. It has never been applied anywhere, so nothing is exposed. Add a release-checklist step between 8 and 9, in both the held README and parent T28: `pg_get_functiondef` contains "control 7" before the LIVE banner is trusted.
+- **Control 7 cost.** Control 7 runs one `EXISTS` join per checked edge, inside the 60 s budget. Measure in the T28 sweep.
+- **Requirement diff.** The requirement file diff still shows #225's lines until the branch is rebased onto `main` (identical text). RM rebases before the PR.
+
+### Optimisation Suggestions
+- The banner, when live: "can delete data" reads truer than "will delete data", because a Purge with a graph that is not clean is still refused. Optional.
+
+### Code Approved for QA: Yes, conditional on G-1 to G-4 (SA re-checks only those diffs). Slice stays INACTIVE: confirmed.
+
+**SA re-check of G-1 to G-4: 2026-10-05. All four RESOLVED. Code Approved for QA: Yes (unconditional).**
+- **G-1.** The commit box now follows the probe: "Permanently deletes" appears only when the function is live; otherwise it reads "Would permanently delete", with a not-applied refusal line or an unknown-state line. The button stays enabled. Covered by a 5-case source guard (`PurgeDangerZone.commitCopy.guard.test.ts`).
+- **G-2.** Control 7 now selects:
+  - CASCADE keys with both ends listed, self-references included;
+  - SET NULL / SET DEFAULT keys whose parent is listed, whether or not the child is listed.
+
+  It still requires `user_id` on the child and still skips `user_id`→`user_id` keys. `planTenancyCheck` mirrors this exactly; there are G-2 mutation tests, and the I-3 pin was updated. §1.4 live check: 46 added edges, none refused on structure. Remaining limit: an unlisted SET NULL child outside `public` is not checked. It is theoretical; T28 sweep.
+- **G-3.** New `devDetail.ts`: the client sees `local.reason` only in development. The audit row keeps it via `auditDetail`. Tested.
+- **G-4.** The parent workplan's slice-5 prerequisites now record F-2 and the raw storage-reason text. The version-blind probe is covered by a new release step (`pg_get_functiondef … LIKE '%control 7%'`), added to both the held README and the parent checklist.
+
+Purge, held and component suites re-run: 14 suites / 289 tests green. Still nothing in `supabase/migrations/`.
+
 
 ## QA Testing Report
+
+**QA — 2026-10-05 (slice 3b, uncommitted, includes the G-1 to G-4 fixes)**
+**Test mode:** full
+**Strategy used:** A (Jest unit: purge, held, commit route, AC-27, PurgeDangerZone guard; plus planted mutations) and C (a read-only live script: `BusinessPurgeRepository.introspectSchema()` → `purge_schema_introspect()` → `checkDeleteGraph` over `descriptorsForRun` for all 16 combinations). No browser pass.
+**Focus:** security, api, schema, ui (copy)
+**Skipped:** I-7 (the banner reads "function not applied" in the browser). The brief limited live work to introspection, so the existence probe was not called against prod; the G-1 copy is covered by the source guard instead. No commit-route call and no DB write against prod.
+**Input source:** prompt keywords from TL
+
+### Test Coverage
+| Acceptance criterion / check | Tested? | Result | Notes |
+|---|---|---|---|
+| Purge + held + commit route + AC-27 + PurgeDangerZone guard + `businessOwnedTables` suites | ✅ | Pass | 17 suites, 309 tests green; re-run green after every mutation was restored |
+| `npm run test:authz-guard` | ✅ | Pass | 1 suite, 119 tests |
+| Full `npm test` | ✅ | Pass (no new failures) | 899 passed, 12 failed, 8 skipped (919). 11 failures are in `.github/ci/jest-quarantine.json`; the 12th is `lib/geo/__tests__/addressFormat.test.ts`, the known `lib-address` shared-`node_modules` gap. Nothing purge-related fails |
+| Scoped `tsc` (15 touched/new `.ts`/`.tsx`, `NODE_OPTIONS=--max-old-space-size=8192`) | ✅ | Pass | exit 0, no output |
+| `eslint` on the same files | ✅ | Pass | exit 0, 0 errors, 1 warning: `exhaustive-deps` at `PurgeDangerZone.tsx:223` (the same pre-existing warning QA 3a saw at :212). No `console.*` added (the one added-line hit is a doc sentence) |
+| Entitlements registration | ✅ | N/A | The diff imports nothing from `lib/business-os/entitlements/` and touches neither `catalog.ts` nor `tierMatrix.ts` |
+| Commit order: capability → probe → agents → graph → guard → snapshot → RPC → storage → audit | ✅ | Pass | Read in `ResetService.runPurgeCommit` (probe :235, agents :257, graph :265, guard :289, snapshot :295, RPC :324, storage :360, audit :404), and pinned by `runs probe -> graph -> guard -> snapshot -> commit -> storage -> audit` |
+| `agents: true` refused on Reset AND Purge with a clean graph | ✅ | Pass | `agents_option_refused` on both levels; the graph, guard, snapshot and RPC are never called (`ResetService.order.test.ts:342`, `:359`). The route passes `agents` through (route test), so the refusal is audited in one place |
+| RPC not applied → `rpc_not_applied` before any snapshot or write | ✅ | Pass | Only `purgeFunctionExists` is called (Reset, and Purge with extras on), and it comes before the agents refusal too. A `null` probe → `rpc_state_unknown` |
+| Schema unreadable → commit refuses | ✅ | Pass | `delete_graph_unreadable` for an error, a missing triggers key, an empty FK list, and a read that throws; never treated as clean |
+| Non-admin refused | ✅ | Pass | 403 on Reset and Purge, and the orchestrator never runs, even with a correct confirmation; 401 when signed out |
+| Invalid body → 400 | ✅ | Pass | Unknown level, missing level, unknown option key, non-boolean option, non-object options, injected `userId` / `user_id` (top level and inside options), malformed JSON. Options default to all-false when omitted or `{}` (zod 3.25: the inner defaults apply) |
+| No raw error text in production responses | ✅ | Pass | Snapshot, RPC, graph (counts only outside development) and G-3 `local_unreadable` tests, each with a development counterpart; the 500 path keeps the `NODE_ENV === 'development'` guard. Shared helper `devDetail.ts` |
+| UI copy honest when not live (G-1) | ✅ | Pass | Read in `PurgeDangerZone.tsx:621-635`: a red "not applied, so the server will refuse this run before anything is snapshotted or deleted" line when `resetLive === false`, an amber unknown-state line otherwise, and "Would permanently delete" unless live; no agents checkbox. Guard test (5 tests) green |
+| Inactive proof (I-1, I-8) | ✅ | Pass | No file under `supabase/migrations/` defines or grants `purge_business_data` (the only mention is a comment in `20260916a`). `git diff origin/main --stat -- supabase/migrations` is empty. **Plant 1:** a `create or replace function public.purge_business_data(...)` migration → I-1 red (1 failed of 18). **Plant 2:** a grant-only migration to `anon` → I-1 red. Both removed; held suite 18/18 green; `git status` identical to pre-QA |
+| Live read-only graph, 16 combinations | ✅ | Pass | `generated_at 2026-10-05T20:51:46Z`, 323 FKs / 92 triggers. 8 agents-off → **ok** (0 blocking / 0 unlisted / 0 unreviewed triggers; cascade-after-parent `crm_contacts → crm_activities` only, exempt). 8 agents-on → **refused** (19 unlisted edges, 18 distinct tables = M-5). Matches §1.4 and T3b-8. Two introspection calls in total, nothing else. `.env.local` read by path from the main checkout |
+| Control 7 regression is caught (TS mirror) | ✅ | Pass | **Plant:** re-introduced the self-reference exclusion (`if (isCascade && fk.child === fk.parent) continue;`) in `planTenancyCheck` → `deleteGraph.tenancy.test.ts` 3 failed of 13. Restored from a copy; `cmp` byte-identical |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues (should fix)
+None. The new suites add milliseconds; no new CI job.
+
+#### Edge Cases (nice to fix)
+1. **The order test does not pin audit after storage.** `runs probe -> … -> audit` asserts `audit > executePurge`, not `audit > removeStorageUnderUser`. The code is correct (audit at :404, after the storage loop at :360); one more `expect` would pin it. Low.
+2. **Commit-box sentence when not live.** It still says "A verified snapshot is written first" next to "Would permanently delete". With the conditional lead and the red refusal line above it, it reads as a description of a live run, so it is acceptable. Optional wording. Low.
+3. **§6.3 I-1 wording.** The table says "no file … contains `purge_business_data`", but the test (correctly, per C-1) checks for a definition or grant, and `20260916a` mentions the name in a comment. Align the table text with the test. Docs only. Low.
+4. **I-7 still open.** The browser check of the "function not applied" banner was not done in this pass (introspection-only brief). Low; carried to the user's click-through / T28.
+5. `lib/geo/__tests__/addressFormat.test.ts` stays red in shared-`node_modules` worktrees (`lib-address` is not installed in the main checkout). Environment, not 3b. Low.
+
+### Test Outputs / Logs
+```text
+Scoped:  Test Suites: 17 passed, 17 total · Tests: 309 passed, 309 total (before and after mutations)
+Authz:   Tests: 119 passed, 119 total
+Full:    Test Suites: 12 failed, 8 skipped, 899 passed (919) · Tests: 132 failed, 65 skipped, 17652 passed
+         failures = 11 quarantined + lib/geo/__tests__/addressFormat.test.ts (lib-address)
+tsc:     exit 0 · eslint: exit 0 (0 errors, 1 pre-existing warning)
+Live (20:51:46Z): {reset,purge} × integ × activity, agents=false → ok, 0/0/0
+                  same × agents=true → refused, unlisted 19 (18 tables), blocking 0, triggers 0
+I-1 plants: definition → 1 failed · anon grant → 1 failed · removed → 18/18
+Control 7 plant (self-ref exclusion) → 3 failed · restored, cmp byte-identical
+git status identical to pre-QA (except this report)
+```
+
+### Final Status
+- [x] All acceptance criteria pass — ready for commit
+- [ ] Issues found — Dev must address before commit
+
+---
 
 **QA — 2026-10-05 (slice 3a, uncommitted, includes the F-1 fix)**
 **Test mode:** full
@@ -513,3 +661,7 @@ Post-restore: purge + ownership + introspect 12 suites / 216 tests green; git st
 | 2026-10-05 | OQ-1 decided by the user: (c) | Purge never deletes agents; the "also delete my agents" extra is removed for good; slice 3c dropped; the delete-graph refusal stays. Scope, §1.3/§1.4, §3, §4.2/§4.3, §5, §7, R-1 and OQ-1 updated |
 | 2026-10-05 | SA code review of 3a | APPROVED WITH CONDITIONS: F-1 (no raw introspection error text to the client outside development) before the PR; F-2 (customer surface gets the graph status only) carried to slice 5. All five deviations accepted, incl. `onboarding_prompt_ideas` as a reasoned exception. Re-band verified: 5 order changes, 0 level or table changes |
 | 2026-10-05 | QA of 3a (incl. F-1) | PASS. Scoped suites 72/1,471 green; full run has no new failures (11 quarantined + an environment-only `lib/geo` failure); scoped tsc and eslint exit 0. Live read-only re-check: the 8 agents-off runs ok, the 8 agents-on runs refused (19 M-5 edges). Three planted regressions (F-1 revert, `business_profiles` band, `payment_reminders` band) each turned tests red and were restored byte-exact. Nothing in `supabase/` |
+| 2026-10-05 | 3b implemented (Dev) | Purge level + integrations / activity-history extras through `runPurgeCommit`; agents refused with its own code (C-4); delete-graph pre-check fail-closed (C-5 commit half); held RPC controls 5, 6, 7 in place (C-2), never applied; inactive proofs I-1…I-4 (C-1 regex); AC-27 route tests; cron register (13); Danger Zone Purge commit with FR-24 / FR-25 / AC-32 / AC-42 copy; requirement spliced (T3a-8 + T3b-9). Nothing in `supabase/migrations/`. Uncommitted |
+| 2026-10-05 | SA code review of 3b | APPROVED WITH CONDITIONS: G-1 (commit box must say the server will refuse while the RPC is not applied), G-2 (control 7 widened to SET NULL / SET DEFAULT and self-referencing edges), G-3 (`local_unreadable` raw text behind the development guard), G-4 (F-2 + storage-reason note in parent slice-5 notes). Q2 fail-closed and OQ-4 accepted. Logged: probe is version-blind (release-checklist step). Inactive state confirmed |
+| 2026-10-05 | SA 3b conditions G-1…G-4 addressed (Dev) | G-1 commit-box copy follows the probe (+ guard test); G-2 control 7 widened to SET NULL / SET DEFAULT and self-referencing edges (SQL + TS mirror + I-3 pin), live edge list recorded in §1.4 (46 edges, none newly refused on structure); G-3 `local_unreadable` raw text behind the development guard; G-4 slice-5 notes. Version-check release step added. Uncommitted |
+| 2026-10-05 | QA of 3b (incl. G-1…G-4) | PASS, no bugs. Scoped 17 suites / 309 tests, authz guard 119/119, full run no new failures (11 quarantined + `lib/geo` env gap); scoped tsc and eslint exit 0. Order, agents refusal (both levels, clean graph), `rpc_not_applied` first, unreadable schema, non-admin, invalid body and dev-only error text verified. Live read-only graph: 8 agents-off ok, 8 agents-on refused (M-5). Inactive proof: planted migration definition and `anon` grant each turned I-1 red, removed. Control 7 self-ref plant → 3 red, restored byte-exact. 5 Low edge cases; I-7 browser check still open |
