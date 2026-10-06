@@ -14,7 +14,8 @@
 // mutable ones (SA C-1), and the functions are the only intended path: they
 // take the per-account boost cap lock `hashtextextended('business_os_boost_cap:'
 // || user_id, 0)` (separate from the lots draw lock, R-13) and check the
-// account against the row. Slice 2b adds `credit` and `transition` here.
+// account against the row. Slice 2b (20261031) adds `credit`, `transition` and
+// `recordReceipt`: they take NO account id and return the row's (R-6).
 //
 // ── SERVICE ROLE (intentional RLS bypass, documented per CLAUDE.md) ─────────
 // No client role can write either table or execute any function. Owners may
@@ -155,6 +156,92 @@ export interface BusinessOsBoostCapOverride {
 
 export const BOOST_PURCHASE_COLUMNS =
   'id, user_id, livemode, status, package_id, package_version, retail_version, credit_value_version, price_minor, currency, tax_exclusive, credits_base, credits_bonus, credits_total, checkout_expires_at, stripe_checkout_session_id, stripe_payment_intent_id, stripe_charge_id, receipt_url, amount_subtotal_minor, amount_tax_minor, amount_total_minor, amount_refunded_minor, stripe_dispute_id, flag_reason, lot_id, paid_at, status_changed_at, created_at, updated_at';
+// ── Slice 2b: crediting, status and receipt (migration 20261031) ────────────
+
+export const BOS_CREDIT_BOOST_PURCHASE_RPC = 'business_os_credit_boost_purchase';
+export const BOS_TRANSITION_BOOST_PURCHASE_RPC = 'business_os_transition_boost_purchase';
+export const BOS_RECORD_BOOST_RECEIPT_RPC = 'business_os_record_boost_receipt';
+
+/** Every code the credit function can flag a purchase with (SA C-1, C-6, C-8 c, Q-6). */
+export const BOOST_FLAG_REASONS = [
+  'no_session',
+  'session_mismatch',
+  'payment_intent_mismatch',
+  'livemode_mismatch',
+  'currency_mismatch',
+  'amount_mismatch',
+  'total_mismatch',
+  'payment_intent_reused',
+  'account_deleted',
+  'lot_key_conflict',
+] as const;
+export type BusinessOsBoostFlagReason = (typeof BOOST_FLAG_REASONS)[number];
+
+/** What Stripe reported for a paid checkout; from a signature-verified event only (4a). */
+export interface BusinessOsBoostCreditInput {
+  /** The row id from `findBySessionIdForWebhook`, never `client_reference_id` taken unchecked. */
+  purchaseId: string;
+  sessionId: string;
+  paymentIntentId: string;
+  amountSubtotalMinor: number;
+  amountTaxMinor: number;
+  amountTotalMinor: number;
+  currency: string;
+  livemode: boolean;
+}
+
+/**
+ * The credit outcomes. Every deterministic problem is a `mismatch` (the row is
+ * flagged and the event can be completed); only a database failure is an
+ * `{ error }`, which 4a turns into a throw so Stripe retries (HP-1).
+ */
+export type BusinessOsBoostCreditResult =
+  | { outcome: 'credited'; accountId: string; lotId: string }
+  | { outcome: 'already_credited'; accountId: string | null; lotId: string }
+  | { outcome: 'mismatch'; accountId: string | null; flagReason: BusinessOsBoostFlagReason }
+  | { outcome: 'not_creditable'; accountId: string | null }
+  | { outcome: 'not_found' };
+
+export const BOOST_TRANSITION_TARGETS = [
+  'awaiting_payment',
+  'failed',
+  'expired',
+  'flagged_mismatch',
+  'partially_refunded',
+  'refunded',
+  'disputed',
+  'dispute_won',
+  'dispute_lost',
+] as const;
+export type BusinessOsBoostTransitionTarget = (typeof BOOST_TRANSITION_TARGETS)[number];
+
+export interface BusinessOsBoostTransitionInput {
+  purchaseId: string;
+  toStatus: BusinessOsBoostTransitionTarget;
+  paymentIntentId?: string | null;
+  /** Stripe's cumulative refunded amount (minor units); lower than stored answers `stale`. */
+  amountRefundedMinor?: number | null;
+  disputeId?: string | null;
+  flagReason?: string | null;
+}
+
+export type BusinessOsBoostTransitionStatus =
+  | 'transitioned'
+  | 'already'
+  | 'stale'
+  | 'recorded'
+  | 'not_allowed'
+  | 'mismatch'
+  | 'not_found';
+
+export interface BusinessOsBoostTransitionResult {
+  status: BusinessOsBoostTransitionStatus;
+  accountId: string | null;
+  fromStatus: BusinessOsBoostPurchaseStatus | null;
+}
+
+export type BusinessOsBoostReceiptStatus = 'recorded' | 'already_recorded' | 'conflict' | 'not_paid' | 'not_found';
+
 export const BOOST_CAP_OVERRIDE_COLUMNS = 'id, user_id, cap_minor, currency, reason, actor_admin_id, created_at';
 
 export const BOOST_PURCHASE_READ_LIMITS = {
@@ -628,6 +715,118 @@ export class BusinessOsBoostPurchaseRepository {
       return { data: mapOverride(data as unknown as Record<string, unknown>), error: null };
     } catch (error) {
       return this.fail(method, error, { accountId });
+    }
+  }
+  // ============ Slice 2b: crediting, status and receipt ============
+
+  /**
+   * Credit a paid checkout: exactly one lot, through `business_os_credit_boost_purchase`.
+   * The account is the one the row returns (R-6). A `mismatch` has flagged the row and
+   * is final; an `{ error }` is a database failure and the caller must retry (HP-1).
+   */
+  async credit(input: BusinessOsBoostCreditInput): Promise<RepositoryResult<BusinessOsBoostCreditResult>> {
+    const method = 'credit';
+    const ids = { purchaseId: input?.purchaseId };
+    try {
+      this.assertUuid(input.purchaseId, 'A purchase id');
+      this.assertSessionId(input.sessionId);
+      if (typeof input.paymentIntentId !== 'string' || !input.paymentIntentId.startsWith('pi_') || input.paymentIntentId.length > 255) {
+        throw new BoostPurchaseRepositoryError('A Stripe payment intent id is required');
+      }
+      const amounts = [input.amountSubtotalMinor, input.amountTaxMinor, input.amountTotalMinor];
+      if (!amounts.every((n) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0)) {
+        throw new BoostPurchaseRepositoryError('Amounts must be whole, non-negative minor units');
+      }
+      if (typeof input.currency !== 'string' || typeof input.livemode !== 'boolean') {
+        throw new BoostPurchaseRepositoryError('A currency and a mode are required');
+      }
+      const args = {
+        p_purchase_id: input.purchaseId,
+        p_session_id: input.sessionId,
+        p_payment_intent_id: input.paymentIntentId,
+        p_amount_subtotal: input.amountSubtotalMinor,
+        p_amount_tax: input.amountTaxMinor,
+        p_amount_total: input.amountTotalMinor,
+        p_currency: input.currency,
+        p_livemode: input.livemode,
+      };
+      const { data, error } = await this.supabase.rpc(BOS_CREDIT_BOOST_PURCHASE_RPC, args);
+      if (error) throw error;
+      const row = singleRow(data, BOS_CREDIT_BOOST_PURCHASE_RPC);
+      const status = toOneOf(row.out_status, ['credited', 'already_credited', 'mismatch', 'not_creditable', 'not_found'] as const);
+      if (status === 'not_found') return { data: { outcome: 'not_found' }, error: null };
+      const accountId = toNullableUuid(row.out_user_id);
+      if (status === 'credited') {
+        if (accountId === null) throw new BoostPurchaseRepositoryError('credited_without_account');
+        return { data: { outcome: 'credited', accountId, lotId: toUuid(row.out_lot_id) }, error: null };
+      }
+      if (status === 'already_credited') return { data: { outcome: 'already_credited', accountId, lotId: toUuid(row.out_lot_id) }, error: null };
+      if (status === 'mismatch') {
+        return { data: { outcome: 'mismatch', accountId, flagReason: toOneOf(row.out_flag_reason, BOOST_FLAG_REASONS) }, error: null };
+      }
+      return { data: { outcome: 'not_creditable', accountId }, error: null };
+    } catch (error) {
+      return this.fail(method, error, ids);
+    }
+  }
+
+  /** Move a purchase along the fixed transition table (unpaid, failed, expired, refunds, disputes). */
+  async transition(input: BusinessOsBoostTransitionInput): Promise<RepositoryResult<BusinessOsBoostTransitionResult>> {
+    const method = 'transition';
+    const ids = { purchaseId: input?.purchaseId, toStatus: input?.toStatus };
+    try {
+      this.assertUuid(input.purchaseId, 'A purchase id');
+      toOneOf(input.toStatus, BOOST_TRANSITION_TARGETS);
+      const refunded = input.amountRefundedMinor ?? null;
+      if (refunded !== null && !(typeof refunded === 'number' && Number.isSafeInteger(refunded) && refunded >= 0)) {
+        throw new BoostPurchaseRepositoryError('The refunded amount must be whole, non-negative minor units');
+      }
+      const args = {
+        p_purchase_id: input.purchaseId,
+        p_to_status: input.toStatus,
+        p_payment_intent_id: input.paymentIntentId ?? null,
+        p_amount_refunded_minor: refunded,
+        p_dispute_id: input.disputeId ?? null,
+        p_flag_reason: input.flagReason ?? null,
+      };
+      const { data, error } = await this.supabase.rpc(BOS_TRANSITION_BOOST_PURCHASE_RPC, args);
+      if (error) throw error;
+      const row = singleRow(data, BOS_TRANSITION_BOOST_PURCHASE_RPC);
+      const status = toOneOf(row.out_status, ['transitioned', 'already', 'stale', 'recorded', 'not_allowed', 'mismatch', 'not_found'] as const);
+      if (status === 'not_found') return { data: { status, accountId: null, fromStatus: null }, error: null };
+      return {
+        data: { status, accountId: toNullableUuid(row.out_user_id), fromStatus: toOneOf(row.out_from_status, BOOST_PURCHASE_STATUSES) },
+        error: null,
+      };
+    } catch (error) {
+      return this.fail(method, error, ids);
+    }
+  }
+
+  /** Fill the receipt link and charge id once (C-8 a). Never overwrites, never changes the status. */
+  async recordReceipt(input: {
+    purchaseId: string;
+    chargeId: string;
+    receiptUrl: string;
+  }): Promise<RepositoryResult<{ status: BusinessOsBoostReceiptStatus; accountId: string | null }>> {
+    const method = 'recordReceipt';
+    const ids = { purchaseId: input?.purchaseId };
+    try {
+      this.assertUuid(input.purchaseId, 'A purchase id');
+      if (typeof input.chargeId !== 'string' || !/^(ch|py)_/.test(input.chargeId) || input.chargeId.length > 255) {
+        throw new BoostPurchaseRepositoryError('A Stripe charge id is required');
+      }
+      if (typeof input.receiptUrl !== 'string' || !input.receiptUrl.startsWith('https://') || input.receiptUrl.length > 2048) {
+        throw new BoostPurchaseRepositoryError('An https receipt URL is required');
+      }
+      const args = { p_purchase_id: input.purchaseId, p_charge_id: input.chargeId, p_receipt_url: input.receiptUrl };
+      const { data, error } = await this.supabase.rpc(BOS_RECORD_BOOST_RECEIPT_RPC, args);
+      if (error) throw error;
+      const row = singleRow(data, BOS_RECORD_BOOST_RECEIPT_RPC);
+      const status = toOneOf(row.out_status, ['recorded', 'already_recorded', 'conflict', 'not_paid', 'not_found'] as const);
+      return { data: { status, accountId: status === 'not_found' ? null : toNullableUuid(row.out_user_id) }, error: null };
+    } catch (error) {
+      return this.fail(method, error, ids);
     }
   }
 }

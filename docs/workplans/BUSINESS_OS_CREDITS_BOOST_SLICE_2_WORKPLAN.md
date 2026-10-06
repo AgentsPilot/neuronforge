@@ -249,6 +249,8 @@ The function validates its arguments (positive price, `USD`, base > 0, bonus ≥
 
 ### 3.5 The 2b functions (outline for SA; detailed in 2b's revision of this file)
 
+> **2026-10-06:** 2b is planned in its own file, [BUSINESS_OS_CREDITS_BOOST_SLICE_2B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_CREDITS_BOOST_SLICE_2B_WORKPLAN.md). The outline below and C-8 stay as the record; the 2b file is authoritative.
+
 **SA C-8 (binding on 2b):** (a) the receipt fill is **not** a status transition: either a separate `business_os_record_boost_receipt(p_purchase_id, p_charge_id, p_receipt_url)` that fills only NULL fields on a paid-family row, or a written rule that a same-status call fills only those two NULL columns and never overwrites them; (b) the credit function's mismatch path writes `flagged_mismatch` and **returns normally**, so the webhook completes the event; only database errors throw; (c) `credit` refuses a row whose stored session id is NULL (`mismatch`, `flag_reason = no_session`); (d) transitions to `refunded`, `partially_refunded` and `disputed` keep `lot_id`, and no transition writes a lot.
 
 **`business_os_credit_boost_purchase(p_purchase_id uuid, p_session_id text, p_payment_intent_id text, p_amount_subtotal integer, p_amount_tax integer, p_amount_total integer, p_currency text, p_livemode boolean)` → `(out_status text, out_user_id uuid, out_lot_id uuid)`**. This is T-6 plus R-10.
@@ -415,6 +417,8 @@ Expected: an error starting `PROBE PASS  this error is expected and rolls everyt
 - 20261017 is applied on PROD (11a §17). The pre-check confirms it again (step 2).
 
 ### 6.6 2a on PROD: the exact steps (by the user, Supabase SQL editor)
+
+> **2026-10-06 (SA 2b CR-1):** `scripts/check-bos-boost-purchases-migration.sql` on `main` now describes the post-2b state. To re-check 2a alone, use the 2a version: `git show 1fbccab8:scripts/check-bos-boost-purchases-migration.sql`.
 
 Paste each file **whole**, as its own run. No agent applies anything.
 
@@ -935,3 +939,5 @@ Scoped tsc:     4 errors, all outside the diff (MemoryManager.ts 2, CalibrationS
 | 2026-10-06 | Probe P17 removed from PROD (user decision) | The production runbook must never write to `auth.users`. P17 was dropped from `scripts/probe-bos-boost-purchases-migration.sql`, and the detach check moved to a scratchpad-only file (`pglite/detach-check.sql`, harness step `detachCheck`). A migration-test assertion forbids any `auth.users` write in the probe. The detach rule is proven by checker B4 on PROD and by PGlite locally (§6.3, §7.5, §3.4b) |
 | 2026-10-06 | 2a approved and committed, PR #233 open | The user saw the diff and approved the commit (2026-10-06). RM committed on `feature/bos-credits-boost-slice-2` and opened [PR #233](https://github.com/AgentsPilot/neuronforge/pull/233) to `main`. PROD apply of 20261030 is pending: the user runs §6.6 after merge (pre-check incl. md5 and version, apply, checker, existing checkers, probe, recheck) |
 | 2026-10-06 | 2a applied to PROD and verified | The user applied 20261030 at 13:46:19 UTC (PG 17.4; pre-check and the four md5s matched §6.7). Checker PASS 20/0, existing lots (23/0) and charges (19/0) checkers PASS, probe P00–P16 PASS on the user's own account, recheck PASS 20/0 with 0 rows kept. Results in §6.9. PR #233 awaiting merge |
+| 2026-10-06 | 2b planned in a separate file | §3.5 points to BUSINESS_OS_CREDITS_BOOST_SLICE_2B_WORKPLAN.md |
+| 2026-10-06 | Note for re-checking 2a | §6.6: the shared checker is now post-2b; use `git show 1fbccab8:scripts/check-bos-boost-purchases-migration.sql` to re-check 2a alone |
