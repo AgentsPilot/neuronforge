@@ -1,0 +1,483 @@
+/**
+ * Unit tests for BusinessOsBoostPurchaseRepository (credits boost slice 2a;
+ * workplan §3.6 and §7.2, SA conditions C-1, C-2, C-5).
+ *
+ * What matters here: every RPC gets exactly its typed arguments, built field by
+ * field (tenant-isolation-guard Step 3); the RPC row is mapped strictly —
+ * exactly one row, a known status, parsable figures, never a 0 or a guessed
+ * status; a NaN never reaches the database as JSON null; scoped reads add
+ * `user_id` and an explicit column list; the two webhook finders are unscoped
+ * by design and only the Stripe webhook route and the reconcile cron route may
+ * name them; nothing is ever thrown; and no write bypasses the functions.
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: { marker: 'service-role-default' } }));
+const mockWarn = jest.fn();
+jest.mock('@/lib/logger', () => {
+  const make = (): Record<string, unknown> => {
+    const logger: Record<string, unknown> = {
+      info: jest.fn(),
+      warn: (...args: unknown[]) => mockWarn(...args),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+    logger.child = () => logger;
+    return logger;
+  };
+  return { createLogger: () => make() };
+});
+
+import {
+  BOOST_CAP_OVERRIDE_COLUMNS,
+  BOOST_PURCHASE_COLUMNS,
+  BOOST_PURCHASE_READ_LIMITS,
+  BOS_ABANDON_BOOST_PURCHASE_RPC,
+  BOS_ATTACH_BOOST_CHECKOUT_RPC,
+  BOS_END_BOOST_CAP_OVERRIDE_RPC,
+  BOS_RESERVE_BOOST_PURCHASE_RPC,
+  BOS_SET_BOOST_CAP_OVERRIDE_RPC,
+  BOOST_SESSION_IN_USE_ERROR,
+  BusinessOsBoostPurchaseRepository,
+  businessOsBoostPurchaseRepository,
+  type BusinessOsBoostReservationInput,
+} from '@/lib/repositories/BusinessOsBoostPurchaseRepository';
+
+const ACCOUNT = '22222222-2222-4222-8222-222222222222';
+const ADMIN = '33333333-3333-4333-8333-333333333333';
+const PURCHASE = '44444444-4444-4444-8444-444444444444';
+const OVERRIDE = '55555555-5555-4555-8555-555555555555';
+const PREVIOUS = '55555555-5555-4555-8555-555555555556';
+const SESSION = 'cs_test_a1b2c3d4e5f6';
+/** A checkout expiry 30 minutes out, inside the window attach accepts (SA CR-3). */
+const EXPIRES = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+
+const RESERVATION: BusinessOsBoostReservationInput = {
+  accountId: ACCOUNT,
+  livemode: false,
+  packageId: 'plus',
+  packageVersion: 1,
+  retailVersion: 1,
+  creditValueVersion: 1,
+  priceMinor: 2500,
+  currency: 'USD',
+  creditsBase: 12500,
+  creditsBonus: 1250,
+  defaultCapMinor: 15000,
+  windowDays: 30,
+  checkoutTtlSeconds: 1800,
+};
+
+const EXPECTED_RESERVE_ARGS = {
+  p_user_id: ACCOUNT,
+  p_livemode: false,
+  p_package_id: 'plus',
+  p_package_version: 1,
+  p_retail_version: 1,
+  p_credit_value_version: 1,
+  p_price_minor: 2500,
+  p_currency: 'USD',
+  p_credits_base: 12500,
+  p_credits_bonus: 1250,
+  p_default_cap_minor: 15000,
+  p_window_days: 30,
+  p_checkout_ttl_seconds: 1800,
+};
+
+const PURCHASE_ROW: Record<string, unknown> = {
+  id: PURCHASE,
+  user_id: ACCOUNT,
+  livemode: false,
+  status: 'pending',
+  package_id: 'plus',
+  package_version: 1,
+  retail_version: 1,
+  credit_value_version: 1,
+  price_minor: 2500,
+  currency: 'USD',
+  tax_exclusive: true,
+  credits_base: '12500.000000',
+  credits_bonus: '1250.000000',
+  credits_total: '13750.000000',
+  checkout_expires_at: '2026-10-05T12:30:00+00:00',
+  stripe_checkout_session_id: SESSION,
+  stripe_payment_intent_id: null,
+  stripe_charge_id: null,
+  receipt_url: null,
+  amount_subtotal_minor: null,
+  amount_tax_minor: null,
+  amount_total_minor: null,
+  amount_refunded_minor: 0,
+  stripe_dispute_id: null,
+  flag_reason: null,
+  lot_id: null,
+  paid_at: null,
+  status_changed_at: '2026-10-05T12:00:00+00:00',
+  created_at: '2026-10-05T12:00:00+00:00',
+  updated_at: '2026-10-05T12:00:00+00:00',
+};
+
+/** A client whose `rpc()` resolves to `outcome` (or rejects with it). `from()` is refused: writes are RPCs. */
+function rpcClient(outcome: { data: unknown; error: unknown } | Error) {
+  const recorded: { rpc?: [string, Record<string, unknown>] } = {};
+  const client = {
+    rpc: jest.fn((fn: string, args: Record<string, unknown>) => {
+      recorded.rpc = [fn, args];
+      return outcome instanceof Error ? Promise.reject(outcome) : Promise.resolve(outcome);
+    }),
+    from: jest.fn(() => {
+      throw new Error('a write must not use from()');
+    }),
+  };
+  return { repo: new BusinessOsBoostPurchaseRepository(client as unknown as SupabaseClient), client, recorded };
+}
+
+/** A read chain that records every call and resolves to `outcome` from maybeSingle() / range(). */
+function readClient(outcome: { data: unknown; error: unknown }) {
+  const calls: Array<[string, unknown[]]> = [];
+  const chain: Record<string, unknown> = {};
+  for (const name of ['select', 'eq', 'is', 'order']) {
+    chain[name] = (...args: unknown[]) => {
+      calls.push([name, args]);
+      return chain;
+    };
+  }
+  chain.maybeSingle = () => {
+    calls.push(['maybeSingle', []]);
+    return Promise.resolve(outcome);
+  };
+  chain.range = (...args: unknown[]) => {
+    calls.push(['range', args]);
+    return Promise.resolve(outcome);
+  };
+  const client = {
+    from: jest.fn((table: string) => {
+      calls.push(['from', [table]]);
+      return chain;
+    }),
+    rpc: jest.fn(() => {
+      throw new Error('a read must not use rpc()');
+    }),
+  };
+  return { repo: new BusinessOsBoostPurchaseRepository(client as unknown as SupabaseClient), calls };
+}
+
+beforeEach(() => mockWarn.mockReset());
+
+describe('reserve', () => {
+  it('sends exactly the typed arguments, field by field (an injected property never reaches the RPC)', async () => {
+    const { repo, recorded } = rpcClient({ data: [{ out_status: 'reserved', out_purchase_id: PURCHASE, out_cap_minor: 15000, out_counted_minor: '2500' }], error: null });
+    const injected = { ...RESERVATION, user_id: 'ATTACKER', p_user_id: 'ATTACKER', status: 'paid' } as unknown as BusinessOsBoostReservationInput;
+    const result = await repo.reserve(injected);
+    expect(recorded.rpc).toEqual([BOS_RESERVE_BOOST_PURCHASE_RPC, EXPECTED_RESERVE_ARGS]);
+    expect(result).toEqual({ data: { outcome: 'reserved', purchaseId: PURCHASE, capMinor: 15000, countedMinor: 2500 }, error: null });
+  });
+
+  it('maps cap_reached with the cap and the counted sum, and no_plan_row', async () => {
+    expect(
+      (await rpcClient({ data: [{ out_status: 'cap_reached', out_purchase_id: null, out_cap_minor: 15000, out_counted_minor: 15000 }], error: null }).repo.reserve(RESERVATION)).data
+    ).toEqual({ outcome: 'cap_reached', capMinor: 15000, countedMinor: 15000 });
+    expect(
+      (await rpcClient({ data: [{ out_status: 'no_plan_row', out_purchase_id: null, out_cap_minor: null, out_counted_minor: null }], error: null }).repo.reserve(RESERVATION)).data
+    ).toEqual({ outcome: 'no_plan_row' });
+  });
+
+  it('an unknown status, an unreadable figure or not exactly one row is an error, never a guess', async () => {
+    for (const data of [
+      [{ out_status: 'maybe', out_purchase_id: PURCHASE, out_cap_minor: 1, out_counted_minor: 0 }],
+      [{ out_status: 'reserved', out_purchase_id: PURCHASE, out_cap_minor: 'lots', out_counted_minor: 0 }],
+      [{ out_status: 'reserved', out_purchase_id: 'nope', out_cap_minor: 1, out_counted_minor: 0 }],
+      [],
+      null,
+    ]) {
+      const result = await rpcClient({ data, error: null }).repo.reserve(RESERVATION);
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it('a NaN figure, a bad account id or a non-boolean mode never reaches the RPC', async () => {
+    for (const input of [
+      { ...RESERVATION, creditsBase: Number.NaN },
+      { ...RESERVATION, priceMinor: Number.POSITIVE_INFINITY },
+      { ...RESERVATION, accountId: 'not-a-uuid' },
+      { ...RESERVATION, livemode: 'false' as unknown as boolean },
+    ]) {
+      const { repo, client } = rpcClient({ data: [], error: null });
+      const result = await repo.reserve(input);
+      expect(client.rpc).not.toHaveBeenCalled();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it('a database error or a rejected promise is returned, never thrown, and logged without the error object', async () => {
+    const dbError = { code: '22023', message: 'out of range', details: 'secret row' };
+    const result = await rpcClient({ data: null, error: dbError }).repo.reserve(RESERVATION);
+    expect(result).toEqual({ data: null, error: new Error('out of range') });
+    expect(mockWarn).toHaveBeenCalledWith(expect.objectContaining({ method: 'reserve', sqlstate: '22023' }), expect.any(String));
+    expect(JSON.stringify(mockWarn.mock.calls)).not.toContain('secret row');
+    await expect(rpcClient(new Error('network')).repo.reserve(RESERVATION)).resolves.toEqual({ data: null, error: new Error('network') });
+  });
+});
+
+describe('attachCheckout and abandon', () => {
+  it('attach sends its four arguments and maps each of the six statuses', async () => {
+    for (const status of ['attached', 'already_attached', 'session_conflict', 'not_pending', 'reservation_expired', 'not_found']) {
+      const { repo, recorded } = rpcClient({ data: [{ out_status: status }], error: null });
+      const result = await repo.attachCheckout({ accountId: ACCOUNT, purchaseId: PURCHASE, sessionId: SESSION, checkoutExpiresAt: EXPIRES });
+      expect(recorded.rpc).toEqual([
+        BOS_ATTACH_BOOST_CHECKOUT_RPC,
+        { p_user_id: ACCOUNT, p_purchase_id: PURCHASE, p_session_id: SESSION, p_checkout_expires_at: EXPIRES },
+      ]);
+      expect(result).toEqual({ data: { status }, error: null });
+    }
+  });
+
+  it('SA C-2: attach refuses a session id over 194 characters or without cs_ before calling the RPC', async () => {
+    for (const sessionId of [`cs_${'a'.repeat(192)}`, 'pi_test_1', '']) {
+      const { repo, client } = rpcClient({ data: [{ out_status: 'attached' }], error: null });
+      const result = await repo.attachCheckout({ accountId: ACCOUNT, purchaseId: PURCHASE, sessionId, checkoutExpiresAt: EXPIRES });
+      expect(client.rpc).not.toHaveBeenCalled();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+    const ok = rpcClient({ data: [{ out_status: 'attached' }], error: null });
+    await ok.repo.attachCheckout({ accountId: ACCOUNT, purchaseId: PURCHASE, sessionId: `cs_${'a'.repeat(191)}`, checkoutExpiresAt: EXPIRES });
+    expect(ok.client.rpc).toHaveBeenCalled();
+  });
+
+  it('SA CR-3: attach refuses an expiry at or before now, or more than 24 h 5 min ahead, before calling the RPC', async () => {
+    const now = Date.now();
+    for (const at of [now - 1000, now - 60 * 60 * 1000, now + (24 * 60 + 6) * 60 * 1000]) {
+      const { repo, client } = rpcClient({ data: [{ out_status: 'attached' }], error: null });
+      const result = await repo.attachCheckout({ accountId: ACCOUNT, purchaseId: PURCHASE, sessionId: SESSION, checkoutExpiresAt: new Date(at).toISOString() });
+      expect(client.rpc).not.toHaveBeenCalled();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+    const edge = rpcClient({ data: [{ out_status: 'attached' }], error: null });
+    await edge.repo.attachCheckout({ accountId: ACCOUNT, purchaseId: PURCHASE, sessionId: SESSION, checkoutExpiresAt: new Date(now + 24 * 60 * 60 * 1000).toISOString() });
+    expect(edge.client.rpc).toHaveBeenCalled();
+  });
+
+  it('QA R-7: a session another purchase already holds (23505) is a refusal error, never a throw', async () => {
+    const { repo } = rpcClient({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } });
+    const result = await repo.attachCheckout({ accountId: ACCOUNT, purchaseId: PURCHASE, sessionId: SESSION, checkoutExpiresAt: EXPIRES });
+    expect(result).toEqual({ data: null, error: new Error(BOOST_SESSION_IN_USE_ERROR) });
+    expect(mockWarn).toHaveBeenCalledWith(expect.objectContaining({ method: 'attachCheckout', sqlstate: '23505' }), expect.any(String));
+  });
+
+  it('abandon sends its two arguments and maps each of the five statuses; an unknown one is an error', async () => {
+    for (const status of ['abandoned', 'already_abandoned', 'has_session', 'not_pending', 'not_found']) {
+      const { repo, recorded } = rpcClient({ data: [{ out_status: status }], error: null });
+      expect(await repo.abandon({ accountId: ACCOUNT, purchaseId: PURCHASE })).toEqual({ data: { status }, error: null });
+      expect(recorded.rpc).toEqual([BOS_ABANDON_BOOST_PURCHASE_RPC, { p_user_id: ACCOUNT, p_purchase_id: PURCHASE }]);
+    }
+    expect((await rpcClient({ data: [{ out_status: 'gone' }], error: null }).repo.abandon({ accountId: ACCOUNT, purchaseId: PURCHASE })).error).toBeInstanceOf(Error);
+  });
+});
+
+describe('cap overrides', () => {
+  it('set sends its five arguments and maps set (with the replaced override) and no_plan_row', async () => {
+    const { repo, recorded } = rpcClient({ data: [{ out_status: 'set', out_override_id: OVERRIDE, out_previous_override_id: PREVIOUS }], error: null });
+    const result = await repo.setCapOverride({ accountId: ACCOUNT, capMinor: 30000, currency: 'USD', reason: 'Verified business', actorAdminId: ADMIN });
+    expect(recorded.rpc).toEqual([
+      BOS_SET_BOOST_CAP_OVERRIDE_RPC,
+      { p_user_id: ACCOUNT, p_cap_minor: 30000, p_currency: 'USD', p_reason: 'Verified business', p_actor_admin_id: ADMIN },
+    ]);
+    expect(result.data).toEqual({ outcome: 'set', overrideId: OVERRIDE, previousOverrideId: PREVIOUS });
+    expect(
+      (await rpcClient({ data: [{ out_status: 'no_plan_row', out_override_id: null, out_previous_override_id: null }], error: null }).repo.setCapOverride({
+        accountId: ACCOUNT, capMinor: 30000, currency: 'USD', reason: 'Verified business', actorAdminId: ADMIN,
+      })).data
+    ).toEqual({ outcome: 'no_plan_row' });
+  });
+
+  it('set refuses a non-integer or non-positive cap and a missing admin before calling the RPC', async () => {
+    for (const input of [
+      { capMinor: 0, actorAdminId: ADMIN },
+      { capMinor: 10.5, actorAdminId: ADMIN },
+      { capMinor: 30000, actorAdminId: 'nobody' },
+    ]) {
+      const { repo, client } = rpcClient({ data: [], error: null });
+      const result = await repo.setCapOverride({ accountId: ACCOUNT, currency: 'USD', reason: 'Verified business', ...input });
+      expect(client.rpc).not.toHaveBeenCalled();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it('end maps ended and none_active', async () => {
+    const { repo, recorded } = rpcClient({ data: [{ out_status: 'ended', out_override_id: OVERRIDE }], error: null });
+    expect((await repo.endCapOverride({ accountId: ACCOUNT, actorAdminId: ADMIN, reason: 'Back to default' })).data).toEqual({ outcome: 'ended', overrideId: OVERRIDE });
+    expect(recorded.rpc).toEqual([BOS_END_BOOST_CAP_OVERRIDE_RPC, { p_user_id: ACCOUNT, p_actor_admin_id: ADMIN, p_reason: 'Back to default' }]);
+    expect(
+      (await rpcClient({ data: [{ out_status: 'none_active', out_override_id: null }], error: null }).repo.endCapOverride({ accountId: ACCOUNT, actorAdminId: ADMIN, reason: 'Back to default' })).data
+    ).toEqual({ outcome: 'none_active' });
+  });
+});
+
+describe('QA-D3 (R-3): a null or undefined input resolves to { error }, never a rejection', () => {
+  const methods: Array<[string, (repo: BusinessOsBoostPurchaseRepository, input: unknown) => Promise<unknown>]> = [
+    ['reserve', (repo, input) => repo.reserve(input as BusinessOsBoostReservationInput)],
+    ['attachCheckout', (repo, input) => repo.attachCheckout(input as Parameters<BusinessOsBoostPurchaseRepository['attachCheckout']>[0])],
+    ['abandon', (repo, input) => repo.abandon(input as Parameters<BusinessOsBoostPurchaseRepository['abandon']>[0])],
+    ['setCapOverride', (repo, input) => repo.setCapOverride(input as Parameters<BusinessOsBoostPurchaseRepository['setCapOverride']>[0])],
+    ['endCapOverride', (repo, input) => repo.endCapOverride(input as Parameters<BusinessOsBoostPurchaseRepository['endCapOverride']>[0])],
+  ];
+
+  it.each(methods)('%s', async (_name, call) => {
+    for (const input of [null, undefined]) {
+      const { repo, client } = rpcClient({ data: [], error: null });
+      const result = (await call(repo, input)) as { data: unknown; error: unknown };
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+      expect(client.rpc).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe('reads', () => {
+  it('findForAccount scopes by id and user_id with the explicit column list and maps the row strictly', async () => {
+    const { repo, calls } = readClient({ data: PURCHASE_ROW, error: null });
+    const result = await repo.findForAccount(PURCHASE, ACCOUNT);
+    expect(calls).toEqual([
+      ['from', ['business_os_boost_purchases']],
+      ['select', [BOOST_PURCHASE_COLUMNS]],
+      ['eq', ['id', PURCHASE]],
+      ['eq', ['user_id', ACCOUNT]],
+      ['maybeSingle', []],
+    ]);
+    expect(result.data).toMatchObject({ id: PURCHASE, accountId: ACCOUNT, status: 'pending', creditsTotal: 13750, priceMinor: 2500, livemode: false });
+  });
+
+  it('findForAccount answers null for a missing or foreign purchase', async () => {
+    expect(await readClient({ data: null, error: null }).repo.findForAccount(PURCHASE, ACCOUNT)).toEqual({ data: null, error: null });
+  });
+
+  it('an unknown status or an unreadable figure in a row is an error, never a guess or a 0', async () => {
+    for (const patch of [{ status: 'refundish' }, { credits_total: 'many' }, { price_minor: 25.5 }, { livemode: 'no' }]) {
+      const result = await readClient({ data: { ...PURCHASE_ROW, ...patch }, error: null }).repo.findForAccount(PURCHASE, ACCOUNT);
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it('the webhook finders are unscoped by design and return the row account (R-6, SA C-5)', async () => {
+    const bySession = readClient({ data: PURCHASE_ROW, error: null });
+    const found = await bySession.repo.findBySessionIdForWebhook(SESSION);
+    expect(bySession.calls).toEqual([
+      ['from', ['business_os_boost_purchases']],
+      ['select', [BOOST_PURCHASE_COLUMNS]],
+      ['eq', ['stripe_checkout_session_id', SESSION]],
+      ['maybeSingle', []],
+    ]);
+    expect(found.data?.accountId).toBe(ACCOUNT);
+
+    const byIntent = readClient({ data: { ...PURCHASE_ROW, stripe_payment_intent_id: 'pi_test_1' }, error: null });
+    await byIntent.repo.findByPaymentIntentIdForWebhook('pi_test_1');
+    expect(byIntent.calls).toContainEqual(['eq', ['stripe_payment_intent_id', 'pi_test_1']]);
+    expect(byIntent.calls.some(([name, args]) => name === 'eq' && args[0] === 'user_id')).toBe(false);
+  });
+
+  it('the webhook finders refuse an id that is not a Stripe id of the right kind', async () => {
+    const { repo, calls } = readClient({ data: PURCHASE_ROW, error: null });
+    expect((await repo.findBySessionIdForWebhook('pi_test_1')).error).toBeInstanceOf(Error);
+    expect((await repo.findByPaymentIntentIdForWebhook('cs_test_1')).error).toBeInstanceOf(Error);
+    expect(calls).toEqual([]);
+  });
+
+  it('listForAccount scopes by user_id and mode, newest first, and clamps the limit', async () => {
+    const { repo, calls } = readClient({ data: [PURCHASE_ROW], error: null });
+    const result = await repo.listForAccount(ACCOUNT, { livemode: true, limit: 10_000 });
+    expect(calls).toEqual([
+      ['from', ['business_os_boost_purchases']],
+      ['select', [BOOST_PURCHASE_COLUMNS]],
+      ['eq', ['user_id', ACCOUNT]],
+      ['eq', ['livemode', true]],
+      ['order', ['created_at', { ascending: false }]],
+      ['range', [0, BOOST_PURCHASE_READ_LIMITS.MAX_LIST - 1]],
+    ]);
+    expect(result.data).toHaveLength(1);
+  });
+
+  it('findActiveCapOverride scopes by user_id and reads only the active row', async () => {
+    const { repo, calls } = readClient({
+      data: { id: OVERRIDE, user_id: ACCOUNT, cap_minor: 30000, currency: 'USD', reason: 'Verified business', actor_admin_id: ADMIN, created_at: '2026-10-05T12:00:00+00:00' },
+      error: null,
+    });
+    const result = await repo.findActiveCapOverride(ACCOUNT);
+    expect(calls).toEqual([
+      ['from', ['business_os_boost_cap_overrides']],
+      ['select', [BOOST_CAP_OVERRIDE_COLUMNS]],
+      ['eq', ['user_id', ACCOUNT]],
+      ['is', ['ended_at', null]],
+      ['maybeSingle', []],
+    ]);
+    expect(result.data).toMatchObject({ id: OVERRIDE, capMinor: 30000 });
+  });
+});
+
+describe('source guards', () => {
+  const ROOT = process.cwd();
+  const source = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsBoostPurchaseRepository.ts'), 'utf8');
+  const migration = fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', '20261030_business_os_boost_purchases.sql'), 'utf8');
+
+  it('never writes a table directly: no insert, update, delete or upsert (G-5)', () => {
+    expect(source).not.toMatch(/\.(insert|update|delete|upsert)\(/);
+  });
+
+  it('imports nothing from the entitlements module (G-7)', () => {
+    expect(source).not.toMatch(/(?:from|import|require\()\s*['"][^'"]*business-os\/entitlements/);
+    // Negative control: the pattern catches a real import (type-only included).
+    expect("import type { BoostPackage } from '@/lib/business-os/entitlements/boostCatalogue';").toMatch(
+      /(?:from|import|require\()\s*['"][^'"]*business-os\/entitlements/
+    );
+  });
+
+  it('defaults to the service-role client', () => {
+    expect((businessOsBoostPurchaseRepository as unknown as { supabase: unknown }).supabase).toEqual({ marker: 'service-role-default' });
+  });
+
+  it('the RPC names are the functions the migration creates', () => {
+    for (const name of [
+      BOS_RESERVE_BOOST_PURCHASE_RPC,
+      BOS_ATTACH_BOOST_CHECKOUT_RPC,
+      BOS_ABANDON_BOOST_PURCHASE_RPC,
+      BOS_SET_BOOST_CAP_OVERRIDE_RPC,
+      BOS_END_BOOST_CAP_OVERRIDE_RPC,
+    ]) {
+      expect(migration).toContain(`CREATE FUNCTION public.${name}(`);
+    }
+  });
+
+  it('every column the repository selects exists in the migration', () => {
+    for (const column of [...BOOST_PURCHASE_COLUMNS.split(', '), ...BOOST_CAP_OVERRIDE_COLUMNS.split(', ')]) {
+      expect(migration).toMatch(new RegExp(`\\n  ${column} `));
+    }
+  });
+
+  it('SA C-5: under app/, only the Stripe webhook route and the reconcile cron route may name the webhook finders', () => {
+    const allowed = ['app/api/stripe/webhook/', 'app/api/cron/bos-billing-reconcile/'];
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules') walk(rel);
+        } else if (/\.tsx?$/.test(entry.name)) {
+          const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+          if (/\bfind(?:BySessionId|ByPaymentIntentId)ForWebhook\b/.test(text) && !allowed.some((prefix) => rel.startsWith(prefix))) {
+            offenders.push(rel);
+          }
+        }
+      }
+    };
+    walk('app');
+    expect(offenders).toEqual([]);
+  });
+
+  it('the C-5 guard pattern catches a use (negative control)', () => {
+    expect(/\bfind(?:BySessionId|ByPaymentIntentId)ForWebhook\b/.test('repo.findBySessionIdForWebhook(id)')).toBe(true);
+  });
+});
