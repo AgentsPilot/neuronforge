@@ -246,6 +246,8 @@ Use the counting rules in §4.2 for deterministic actions, so figures stay compa
 5. Update the plan table in [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md) and this document's §1 / §3 in the same change.
 6. **Never rewrite history**: no charge row is edited, and no earlier revision-log row is changed — a correction is a new row.
 
+**The markup and the boost base rate (credits boost slice 1).** The markup (D1) also lives in code, in `lib/business-os/entitlements/config/creditRetail.ts`: an append-only history like the credit value's, each entry naming the credit value version it was decided against (version 1: 100% on credit value v1). The boost base rate is **computed** from the two, credits per dollar = 1 / (credit value × (1 + markup)), which is 500 today (`retailRate.ts`); no file types it. To change the markup, **append** an entry and extend `creditRetail.history.json` in the same PR, then re-point and re-version every boost package in `config/boostPackages.ts` (and append them to `boostPackages.snapshot.json`): until that is done the boost catalogue is invalid and the checkout refuses. Appending a credit value without a matching markup entry fails a CI test for the same reason. Boost packages store only a price and a bonus %; their credits are derived ([credits boost requirement](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md) §8, FR-42).
+
 ---
 
 ## 7. Revision log
@@ -284,3 +286,4 @@ Use the counting rules in §4.2 for deterministic actions, so figures stay compa
 | 2026-10-02 | Slice 7a: the history rounds | §5 "Fractional credits" row decided for the credit history (D-m: one decimal, "less than 0.1", every line shown, the total from the exact sum with the footnote) |
 | 2026-10-03 | Slice 8a: the card shows a percentage | §5 "Fractional credits" row: the card's headline is the percentage left (BD-20 rounding) with colour bands from `creditBands.ts` (BD-19); the admin Businesses list shows the same figure. The credit history's precision is unchanged |
 | 2026-10-04 | Slice 8b: the low-line audit record | §5 "Fractional credits" row: one admin audit entry when a recorded charge takes the shown plan percentage below 10 (BD-22, BD-25), derived once per period; KI-21 to KI-23 |
+| 2026-10-04 | Credits boost slice 1: the markup in code | One paragraph at the end of §6.3: the markup's home `creditRetail.ts` (append-only, version 1 = D1), the computed boost base rate, and the procedure for a markup change (re-version the boost packages). No figure changed |

@@ -32,6 +32,11 @@ import {
 
 const logger = createLogger({ service: 'AdminAccessService' });
 
+/** Trimmed, lower-cased email, or null when absent. */
+function normaliseEmail(email: string | null | undefined): string | null {
+  return email ? email.trim().toLowerCase() : null;
+}
+
 /** Minimal identity shape accepted by the gate — matches Supabase's auth user. */
 export interface AdminCheckUser {
   id: string;
@@ -89,39 +94,63 @@ export class AdminAccessService {
    */
   async isAdmin(user: AdminCheckUser): Promise<boolean> {
     if (!user?.id) return false;
-    const email = user.email ? user.email.trim().toLowerCase() : null;
+    const email = normaliseEmail(user.email);
 
     try {
-      const cache = await this.getCache();
+      const match = await this.resolveAdminMatch(user.id, email);
+      if (!match) return false;
 
-      // 1. Bound user_id — fast path.
-      if (cache.userIds.has(user.id)) return true;
-
-      // 2. Matched by email in the DB allow-list.
-      if (email && cache.emails.has(email)) {
+      if (match.source === 'db_email' && email) {
         // Self-heal: bind the user_id so future checks hit the fast path.
-        const existing = cache.admins.find((a) => a.email === email);
+        const existing = match.cache.admins.find((a) => a.email === email);
         if (existing && existing.user_id !== user.id) {
           await this.repo.bindUserId(email, user.id);
           this.invalidateCache();
         }
-        return true;
       }
 
-      // 3. Env allow-list fallback (pre-seed safety net).
-      if (email && this.envAdminEmails.has(email)) {
+      if (match.source === 'env_email') {
         logger.warn(
           { userId: user.id, email },
           'Admin granted via ADMIN_EMAILS env fallback — DB seed has not run for this admin yet'
         );
-        return true;
       }
 
-      return false;
+      return true;
     } catch (error) {
       // Fail closed: on any error, deny admin access (never grant on failure).
       logger.error({ err: error, userId: user.id }, 'Admin check failed — denying access');
       return false;
+    }
+  }
+
+  /**
+   * Read-only, tri-state admin status of ANY user — for a caller that must
+   * refuse when the answer is unknown (admin delete AD-1b, R-2; SA D-3).
+   *
+   *   true   the user is an admin (same three sources, same order as isAdmin)
+   *   false  definitely not an admin
+   *   null   could not tell (the admin set could not be read, or no id) — the
+   *          caller must treat this as "possibly an admin" and refuse
+   *
+   * Why not isAdmin: as a GATE, isAdmin fails closed by answering `false`, which
+   * for a REFUSAL is fail-open ("not an admin, go ahead"). It also self-heals
+   * with a write and logs the email on the env path. This method shares the one
+   * resolver with isAdmin, never writes, and logs ids only. `email` may be null:
+   * the bound-id source still decides.
+   *
+   * Shares isAdmin's 60 s cache, so a just-added admin may read `false` until
+   * it expires. Acceptable for a read-only preview; a destructive caller must
+   * invalidate the cache first (workplan Risk 5, carried to AD-2).
+   */
+  async checkAdminStatus(user: AdminCheckUser): Promise<boolean | null> {
+    if (!user?.id) return null;
+    try {
+      const match = await this.resolveAdminMatch(user.id, normaliseEmail(user.email));
+      return match !== null;
+    } catch (error) {
+      logger.error({ err: error, userId: user.id }, 'Admin status check failed — status unknown');
+      return null;
     }
   }
 
@@ -171,6 +200,23 @@ export class AdminAccessService {
   }
 
   // --------------------------------------------------------------------------
+
+  /**
+   * The ONE admin rule (SA D-3 a): cache -> bound id -> DB email -> env email.
+   * Returns which source matched (plus the cache it read), `null` when none
+   * did, and THROWS when the admin set cannot be read. Pure decision: no write
+   * and no log, so each public method adds its own behaviour on top.
+   */
+  private async resolveAdminMatch(
+    userId: string,
+    email: string | null
+  ): Promise<{ source: 'bound_id' | 'db_email' | 'env_email'; cache: AdminCache } | null> {
+    const cache = await this.getCache();
+    if (cache.userIds.has(userId)) return { source: 'bound_id', cache };
+    if (email && cache.emails.has(email)) return { source: 'db_email', cache };
+    if (email && this.envAdminEmails.has(email)) return { source: 'env_email', cache };
+    return null;
+  }
 
   private async getCache(): Promise<AdminCache> {
     const now = Date.now();

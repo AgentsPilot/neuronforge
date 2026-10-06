@@ -27,6 +27,31 @@ import type {
   UserSubscriptionGrantState,
 } from './types';
 
+/**
+ * The columns the GDPR export reads from `user_subscriptions`
+ * (findForUserDataExport; DATA_EXPORT_FOLLOWUPS_WORKPLAN.md §4.6). Changing
+ * this changes what the export holds: a privacy decision.
+ *
+ * Included: balances, totals, status, period dates, card last 4 / brand (already
+ * shown in the app), plan amounts, quotas, trial and free-tier fields, and, by
+ * user decision BQ-2 (2026-10-04), the Stripe reference ids on the last line:
+ * references to the person's own payments, useless without our secret key.
+ * Left out: `last_low_balance_alert_at` (an internal email throttle) and
+ * `grace_period_days` (an admin policy value). A column added later is not
+ * exported until it is listed here.
+ */
+const SUBSCRIPTION_DATA_EXPORT_COLUMNS =
+  'id, user_id, balance, total_earned, total_spent, created_at, updated_at, status, ' +
+  'current_period_start, current_period_end, next_billing_date, credits_used_this_cycle, ' +
+  'credits_carried_over, payment_method_last4, payment_method_brand, billing_cycle, ' +
+  'pilot_credits_allocated_this_cycle, pilot_credits_used_this_cycle, pilot_credits_carried_over, ' +
+  'total_lifetime_credits, cancel_at_period_end, canceled_at, trial_ends_at, monthly_amount_usd, ' +
+  'monthly_credits, subscription_type, free_trial_used, trial_credits_granted, last_calculator_inputs, ' +
+  'agents_paused, payment_retry_count, last_payment_attempt, storage_quota_mb, storage_used_mb, ' +
+  'storage_alert_threshold, executions_quota, executions_used, executions_alert_threshold, ' +
+  'free_tier_granted_at, free_tier_expires_at, free_tier_initial_amount, account_frozen, ' +
+  'stripe_customer_id, stripe_subscription_id, stripe_price_id';
+
 /** Postgres unique_violation. Matched on the code only, never the message (SA RC-2). */
 const PG_UNIQUE_VIOLATION = '23505';
 
@@ -179,21 +204,22 @@ export class UserSubscriptionRepository {
 
   /**
    * GDPR export only (GET /api/user/data-export, Art. 15 / 20). A READ: the
-   * caller's whole subscription row, every column. It changes nothing about the
-   * grant writers above. The column set and `.single()` are fixed: changing
-   * either changes what the export holds, which is a privacy decision. No row is
-   * an error here (PGRST116), as it always was; the route exports `[]`.
+   * caller's subscription row, SUBSCRIPTION_DATA_EXPORT_COLUMNS only. It changes
+   * nothing about the grant writers above. The column set and `.single()` are
+   * fixed: changing either changes what the export holds, which is a privacy
+   * decision. No row is an error here (PGRST116), as it always was; the route
+   * exports `[]`.
    */
   async findForUserDataExport(userId: string): Promise<RepositoryResult<Record<string, unknown>>> {
     try {
       const { data, error } = await this.supabase
         .from('user_subscriptions')
-        .select('*')
+        .select(SUBSCRIPTION_DATA_EXPORT_COLUMNS)
         .eq('user_id', userId)
         .single();
 
       if (error) throw error;
-      return { data: data as Record<string, unknown>, error: null };
+      return { data: data as unknown as Record<string, unknown>, error: null };
     } catch (error) {
       this.logger.error({ err: error, userId, method: 'findForUserDataExport' }, 'Failed to read the subscription for the data export');
       return { data: null, error: error as Error };

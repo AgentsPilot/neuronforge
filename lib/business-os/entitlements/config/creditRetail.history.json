@@ -1,0 +1,9 @@
+[
+  {
+    "version": 1,
+    "markup": 1,
+    "creditValueVersion": 1,
+    "decidedOn": "2026-09-30",
+    "derivation": "Decision D1 (user, 2026-09-30): 100% markup, the owner pays twice our measured AI cost. Recorded in code by credits boost slice 1 (SA F-3). Numbers and revision log: docs/architecture/BUSINESS_OS_CREDIT_PRICING.md."
+  }
+]

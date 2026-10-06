@@ -54,6 +54,11 @@ const ALLOWED = new Set(
     // Slice 5b (QA-1): the friend code route's end-to-end test replaces the
     // instance with a fake, to prove both kinds of address get one answer.
     'app/api/public/invites/signup/__tests__/code.friend.route.test.ts',
+    // Admin delete AD-1b (SA D-1): the admin deletion preview reads ONE
+    // account's id, email and joined date (`findUserIdentity`), for an id taken
+    // from an admin-gated route path. Its test replaces the instance.
+    'lib/business-os/purge/AdminDeletionPreview.ts',
+    'lib/business-os/purge/__tests__/AdminDeletionPreview.test.ts',
   ].map((file) => file.split('/').join(sep))
 );
 

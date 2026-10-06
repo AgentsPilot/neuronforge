@@ -246,13 +246,79 @@ describe('findUserExists (I-4, I-6, D-dev-2)', () => {
   });
 });
 
+describe('findUserIdentity (admin delete AD-1b, D-1)', () => {
+  const CREATED = '2026-05-01T10:00:00.000Z';
+
+  it('returns id, email and joined date for an existing account', async () => {
+    const { client, calls } = authClient({
+      getUser: { data: { user: { id: ACCOUNT, email: EMAIL, created_at: CREATED } }, error: null },
+    });
+    expect(await new AuthAccountRepository(client).findUserIdentity(ACCOUNT)).toEqual({
+      data: { id: ACCOUNT, email: EMAIL, createdAt: CREATED },
+      error: null,
+    });
+    expect(calls).toEqual([{ method: 'getUserById', args: ACCOUNT }]);
+  });
+
+  it('a user with no email or no created_at reads as null, not as an error', async () => {
+    const { client } = authClient({ getUser: { data: { user: { id: ACCOUNT } }, error: null } });
+    expect(await new AuthAccountRepository(client).findUserIdentity(ACCOUNT)).toEqual({
+      data: { id: ACCOUNT, email: null, createdAt: null },
+      error: null,
+    });
+  });
+
+  it('{ data: null } ONLY on a definite 404 / user_not_found', async () => {
+    expect(
+      await new AuthAccountRepository(
+        authClient({ getUser: { data: { user: null }, error: { status: 404, message: 'not found' } } }).client
+      ).findUserIdentity(ACCOUNT)
+    ).toEqual({ data: null, error: null });
+    expect(
+      await new AuthAccountRepository(
+        authClient({ getUser: { data: { user: null }, error: { code: 'user_not_found', status: 400, message: 'x' } } }).client
+      ).findUserIdentity(ACCOUNT)
+    ).toEqual({ data: null, error: null });
+  });
+
+  it('any other failure is an error, never "not found" (the route then answers 500)', async () => {
+    const upstream = await new AuthAccountRepository(
+      authClient({ getUser: { data: null, error: { status: 500, message: 'upstream' } } }).client
+    ).findUserIdentity(ACCOUNT);
+    expect(upstream.data).toBeNull();
+    expect(upstream.error).toBeInstanceOf(Error);
+
+    const thrown = await new AuthAccountRepository(authClient({ getUser: 'throw' }).client).findUserIdentity(ACCOUNT);
+    expect(thrown.data).toBeNull();
+    expect(thrown.error).toBeInstanceOf(Error);
+
+    // No user and no error is a broken reply, not a 404.
+    const empty = await new AuthAccountRepository(
+      authClient({ getUser: { data: { user: null }, error: null } }).client
+    ).findUserIdentity(ACCOUNT);
+    expect(empty.data).toBeNull();
+    expect(empty.error).toBeInstanceOf(Error);
+  });
+
+  it('never logs the email it returns', async () => {
+    await new AuthAccountRepository(
+      authClient({ getUser: { data: { user: { id: ACCOUNT, email: EMAIL, created_at: CREATED } }, error: null } }).client
+    ).findUserIdentity(ACCOUNT);
+    await new AuthAccountRepository(
+      authClient({ getUser: { data: null, error: { status: 500, message: 'upstream' } } }).client
+    ).findUserIdentity(ACCOUNT);
+    expect(logged.length).toBeGreaterThan(0);
+    expect(JSON.stringify(logged).toLowerCase()).not.toContain(EMAIL.toLowerCase());
+  });
+});
+
 describe('the door stays narrow', () => {
   const source = readFileSync(join(process.cwd(), 'lib', 'repositories', 'AuthAccountRepository.ts'), 'utf8');
   const code = source.replace(/^\s*\/\/.*$/gm, '');
 
-  it('exposes only the methods Slices 1 and 3b need (and no delete, invariant I-1)', () => {
+  it('exposes only the methods Slices 1 and 3b and admin delete AD-1b need (and no delete, invariant I-1)', () => {
     const methods = Object.getOwnPropertyNames(AuthAccountRepository.prototype).filter((name) => name !== 'constructor');
-    expect(methods.sort()).toEqual(['createConfirmedUser', 'createConfirmedUserWithoutPassword', 'emailHasAccount', 'findUserExists']);
+    expect(methods.sort()).toEqual(['createConfirmedUser', 'createConfirmedUserWithoutPassword', 'emailHasAccount', 'findUserExists', 'findUserIdentity']);
   });
 
   it('never pages through users and never deletes one (L-3, invariant I-1)', () => {

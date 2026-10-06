@@ -15,6 +15,30 @@ import type {
 } from './types';
 import { STATUS_TRANSITIONS } from './types';
 
+/**
+ * The columns the GDPR export reads from `agents` (listForUserDataExport;
+ * DATA_EXPORT_FOLLOWUPS_WORKPLAN.md §4.2). Changing this changes what the
+ * export holds: a privacy decision.
+ *
+ * Everything the person wrote, configured or the platform derived about their
+ * automations, including the AI-derived fields and the intensity score that
+ * fed their charge. Left out as internal plumbing: `qstash_schedule_id`
+ * (scheduler handle), `workflow_hash` (change-detection hash),
+ * `schedule_version` (optimistic-lock counter) and
+ * `last_successful_calibration_id` (pointer into a table the export does not
+ * hold). A column added later is not exported until it is listed here.
+ */
+const AGENT_DATA_EXPORT_COLUMNS =
+  'id, agent_name, user_prompt, user_id, created_at, system_prompt, description, is_archived, ' +
+  'input_schema, output_schema, connected_plugins, status, mode, schedule_cron, trigger_conditions, ' +
+  'plugins_required, deactivation_reason, workflow_steps, generated_plan, ai_reasoning, ai_confidence, ' +
+  'detected_categories, created_from_prompt, ai_generated_at, agent_config, last_run, next_run, timezone, ' +
+  'updated_at, schedule_enabled, intensity_score, last_intensity_update, pilot_steps, deleted_at, ' +
+  'production_ready, production_ready_at, calibration_run_count, insights_enabled, workflow_purpose, ' +
+  'is_calibrated, pilot_steps_original, business_entity_type, entity_detection_confidence, ' +
+  'entity_desirability, manual_time_per_item_seconds, items_per_week_baseline, org_id, tags, ' +
+  'calibration_prompt_decision, calibration_prompt_decided_at, hourly_rate_usd, calibration_status';
+
 /** Lean agent projection for admin operator pickers (cross-user). */
 export interface AdminAgentListItem {
   id: string;
@@ -704,21 +728,21 @@ export class AgentRepository {
 
   /**
    * GDPR export only (GET /api/user/data-export, Art. 15 / 20). Every agent row
-   * of the caller, every column, newest first. Deleted and inactive agents are
-   * included ON PURPOSE: they are still personal data the platform holds, so
-   * there is no status filter. The column set is fixed; changing it changes what
-   * the export holds, which is a privacy decision.
+   * of the caller, AGENT_DATA_EXPORT_COLUMNS only, newest first. Deleted and
+   * inactive agents are included ON PURPOSE: they are still personal data the
+   * platform holds, so there is no status filter. The column set is fixed;
+   * changing it changes what the export holds, which is a privacy decision.
    */
   async listForUserDataExport(userId: string): Promise<AgentRepositoryResult<Record<string, unknown>[]>> {
     try {
       const { data, error } = await this.supabase
         .from('agents')
-        .select('*')
+        .select(AGENT_DATA_EXPORT_COLUMNS)
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return { data: (data ?? []) as Record<string, unknown>[], error: null };
+      return { data: (data ?? []) as unknown as Record<string, unknown>[], error: null };
     } catch (error) {
       this.logger.error({ err: error, userId }, 'Failed to list agents for the data export');
       return { data: null, error: error as Error };

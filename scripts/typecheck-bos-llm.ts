@@ -108,6 +108,11 @@ const SCOPED_DIRS = [
   // forbids `@/lib/` imports), and `credits/__tests__/creditReport.wireTypes.test.ts`
   // pins the two together. Jest cannot check that; this gate can.
   'lib/business-os/credits/',
+  // Admin delete AD-1c: ONE file, not the purge directory. The deletion
+  // preview's payload is re-declared by the admin Businesses page (whose source
+  // guard forbids `@/lib/business-os` imports), and this test pins the two
+  // together. Matched by `startsWith`, so a file path scopes exactly that file.
+  'lib/business-os/purge/__tests__/adminDeletionPreview.wireTypes.test.ts',
 ];
 
 const ATTRIBUTION_TEST = /attribution[^/]*\.test\.tsx?$/;

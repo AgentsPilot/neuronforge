@@ -126,6 +126,14 @@ export const AUDIT_EVENTS = {
   // interesting event to have on record: it is the one where something was
   // wrong, and the one someone may later ask about.
   BUSINESS_DATA_PURGE_BLOCKED: 'BUSINESS_DATA_PURGE_BLOCKED',
+  // Admin delete AD-1b: an admin opened the READ-ONLY deletion preview of one
+  // business (POST /api/admin/users/[id]/deletion/preview). Nothing is deleted.
+  // Entity type 'user', id = the TARGET account; written with the ADMIN's own id
+  // as user_id and actor (the archive_run / bos_queue precedent), so it never
+  // lands on the owner's account and the owner can never read it. The details
+  // carry the outcome, the refusal ids and statuses and the correlation id;
+  // never an email or a business name.
+  BUSINESS_DELETION_PREVIEWED: 'BUSINESS_DELETION_PREVIEWED',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -808,6 +816,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'Business data reset or purge refused before any data was touched',
+  },
+  // Admin delete AD-1b. 'info': a read, nothing changed. Kept so the later
+  // deletion trail (AD-2) shows what the admin saw first.
+  [AUDIT_EVENTS.BUSINESS_DELETION_PREVIEWED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'An admin opened the read-only deletion preview of a business (nothing deleted)',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',

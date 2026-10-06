@@ -185,7 +185,12 @@ describe('GDPR data export repository reads', () => {
   it('the plugin connection read never selects credentials', async () => {
     const { client, calls } = recordingClient({ data: [], error: null });
     await new PluginConnectionRepository(client).listForUserDataExport(USER);
-    expect(calls).toContainEqual(['select', 'user_id, plugin_key, created_at, updated_at, metadata']);
+    // DATA_EXPORT_FOLLOWUPS_WORKPLAN.md NF-1 / SA C-1: `metadata` does not exist;
+    // `profile_data` is read but the route passes only allow-listed fields.
+    expect(calls).toContainEqual([
+      'select',
+      'user_id, plugin_key, plugin_name, username, email, scope, status, connected_at, created_at, updated_at, last_used, disconnected_at, profile_data',
+    ]);
   });
 
   it('the audit read applies both BD-26 owner exclusions', async () => {
@@ -194,5 +199,48 @@ describe('GDPR data export repository reads', () => {
     // ADMIN_BOS_CLEANUP slice 7b added bos_queue_item (migration 20261035).
     expect(calls).toContainEqual(['not', 'entity_type', 'in', '(ai_action,bos_queue_item,business_os_account_plan,business_os_credit_lot,business_os_credit_period)']);
     expect(calls).toContainEqual(['not', 'action', 'like', 'BUSINESS_AI_ACTION_%']);
+  });
+
+  it('the audit read filters and orders on created_at, at most 10000 (FU-1)', async () => {
+    const { client, calls } = recordingClient({ data: [], error: null });
+    await new AuditTrailRepository(client).listOwnerEntriesForExport(USER, SINCE);
+    expect(calls).toContainEqual(['gte', 'created_at', SINCE]);
+    expect(calls).toContainEqual(['order', 'created_at', { ascending: false }]);
+    expect(calls).toContainEqual(['limit', 10000]);
+    expect(calls.some((c) => c[1] === 'timestamp')).toBe(false);
+  });
+
+  /**
+   * FU-P1 (DATA_EXPORT_FOLLOWUPS_WORKPLAN.md §4): every export read names its
+   * columns, and none names a column the plan excludes. A deny-list on top of
+   * the named lists: it catches a list that someone widens by hand.
+   * `profile_data` is read on purpose (SA C-1); route.test.ts proves the raw
+   * value never reaches the export body.
+   */
+  const EXCLUDED_COLUMNS = [
+    // credentials and token plumbing
+    'access_token', 'refresh_token', 'expires_at', 'last_refreshed_at', 'settings',
+    // internal hashes and denormalised copies
+    'hash', 'user_email', 'workflow_hash',
+    // queue / scheduler plumbing
+    'qstash_schedule_id', 'schedule_version', 'last_successful_calibration_id', 'job_id', 'queue_name',
+    // internal throttles and admin policy values
+    'last_low_balance_alert_at', 'grace_period_days',
+    // our provider cost, user decision BQ-1 (2026-10-04)
+    'total_cost_usd', 'models_used',
+  ];
+
+  it.each(CASES)('$name selects an explicit column list with no excluded column', async ({ table, read }) => {
+    const { client, calls } = recordingClient({ data: [], error: null });
+    await read(client);
+    const selects = calls.filter((c) => c[0] === 'select');
+    expect(selects).toHaveLength(1);
+    const columns = String(selects[0][1]).split(',').map((c) => c.trim());
+    expect(columns).not.toContain('*');
+    expect(columns.length).toBeGreaterThan(1);
+    for (const excluded of EXCLUDED_COLUMNS) expect(columns).not.toContain(excluded);
+    // `metadata` is a real, exported column on credit_transactions only; on
+    // plugin_connections it does not exist (NF-1).
+    if (table === 'plugin_connections') expect(columns).not.toContain('metadata');
   });
 });

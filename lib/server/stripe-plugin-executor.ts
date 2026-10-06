@@ -5,6 +5,7 @@ import { PluginManagerV2 } from './plugin-manager-v2';
 import { BasePluginExecutor } from './base-plugin-executor';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import type Stripe from 'stripe';
+import { subscriptionPeriodEndIso } from '@/lib/stripe/subscriptionPeriod';
 
 const pluginName = 'stripe';
 
@@ -344,7 +345,8 @@ export class StripePluginExecutor extends BasePluginExecutor {
         data: {
           subscription_id: subscription.id,
           status: subscription.status,
-          current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+          // Read from the subscription item (Stripe Basil+); null, never a throw.
+          current_period_end: subscriptionPeriodEndIso(subscription),
           trial_end: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
         },
         message: 'Subscription created successfully'
@@ -394,7 +396,8 @@ export class StripePluginExecutor extends BasePluginExecutor {
         data: {
           subscription_id: subscription.id,
           status: subscription.status,
-          current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+          // Read from the subscription item (Stripe Basil+); null, never a throw.
+          current_period_end: subscriptionPeriodEndIso(subscription),
           cancel_at_period_end: subscription.cancel_at_period_end,
         },
         message: 'Subscription updated successfully'
@@ -477,7 +480,7 @@ export class StripePluginExecutor extends BasePluginExecutor {
         subscription_id: sub.id,
         customer_id: sub.customer as string,
         status: sub.status,
-        current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+        current_period_end: subscriptionPeriodEndIso(sub),
         plan_name: sub.items.data[0]?.price?.product as string || 'Unknown',
         amount: sub.items.data[0]?.price?.unit_amount || 0,
         currency: sub.items.data[0]?.price?.currency || 'usd',

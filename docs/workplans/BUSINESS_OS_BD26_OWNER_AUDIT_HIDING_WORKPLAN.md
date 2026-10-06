@@ -306,7 +306,7 @@ The SQL files carry no comments (paste rules), so this table is the only place t
 
 | # | Finding | Owner |
 |---|---|---|
-| FU-1 | The self-service data export has never included audit history (`timestamp` does not exist, error swallowed). Article 15 / 20 completeness gap; fix is small but changes what the export contains; also moves the read into a repository | BA → small fix slice |
+| FU-1 | The self-service data export has never included audit history (`timestamp` does not exist, error swallowed). Article 15 / 20 completeness gap; fix is small but changes what the export contains; also moves the read into a repository | ✅ **Closed** (2026-10-04): repository half by the data export repository refactor; the `created_at` fix by the data export follow-ups PR (`fix/data-export-history-and-columns`, [workplan](/docs/workplans/DATA_EXPORT_FOLLOWUPS_WORKPLAN.md)). Both BD-26 exclusions unchanged |
 | FU-2 | `PLUGIN_ACT_AS` (entity `connection`, `userId` = owner) would show the owner the admin's email; 0 live rows. Needs an event-level rule | BA, later |
 | FU-3 | Purge "delete my activity history" would delete admin credit/plan and `ai_action` rows with the owner's history; purge Reset is inert (parked) | Purge session |
 
@@ -528,3 +528,4 @@ None.
 | 2026-10-04 | QA report: PASS WITH NOTES | All suites re-run green (`test:bos-entitlements` 154 suites / 3,573 tests, Jest 76.2 s locally against 72.4 s on the old paths; authz guard; `typecheck:bos-llm` 0 new). Independent PGlite run 21 / 21 and Dev harness 33 / 33. Route black box 14 / 14. `creditPeriod` fix confirmed (2 fail before, pass after). Write path, 20260930 file and admin views untouched. Bug QA26-1 (Low): backslash-u escapes in the export route test. CR26-1 rebase confirmed necessary; notes on migration file order, NULL handling and FU-1 |
 | 2026-10-04 | Review fixes + main merged (Dev) | Fast-forwarded to `origin/main` `8c8b5d08` with the work still uncommitted; `types.ts` conflict resolved by keeping both entries. CR26-1 `bos_queue` set to `owner` (no SQL change), QA26-1 emoji check without escapes, CR26-3 P09 wording, CR26-5 42501 STOP clause, P04 FAIL prints the low-line count. `test:bos-entitlements` 157 / 3,679 green, authz guard 119, `typecheck:bos-llm` 0 new. Still uncommitted |
 | 2026-10-04 | Committed, PR #202 opened (RM) | fc3f1ab7 docs, 4204253d fix, merge of main 9faa22cf (slice 8b); duplicate `business_os_credit_period` entity type reduced to one; re-tested 160 suites / 3,751 tests + authz 119; 20261018 not applied |
+| 2026-10-04 | FU-1 closed (Dev) | §10 FU-1 marked closed: the export's audit read now filters and orders on `created_at` (data export follow-ups PR, `fix/data-export-history-and-columns`); both BD-26 exclusions unchanged and still guarded |
