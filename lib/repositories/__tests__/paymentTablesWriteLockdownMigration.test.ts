@@ -351,9 +351,9 @@ describe('the payment tables are never written with a caller\'s own credentials'
   it('no user-cookie server client writes any of the twelve tables', () => {
     // The `'use client'` guard above only sees the browser. A route that builds
     // `createAuthenticatedServerClient()` and writes one of these tables is
-    // equally RLS-respecting and would break on apply — `sync-subscription` is
-    // the live example of the shape done right (cookie client for auth,
-    // `supabaseAdmin` for every write).
+    // equally RLS-respecting and would break on apply — `sync-subscription` was
+    // the example of the shape done right (cookie client for auth,
+    // `supabaseAdmin` for every write) until plan payments P-10 made it a 410.
     const USER_COOKIE = /supabaseServerAuth|createAuthenticatedServerClient|createServerClient/;
     const offenders: string[] = [];
     for (const f of sourceFiles) {

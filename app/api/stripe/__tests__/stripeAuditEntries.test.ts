@@ -185,10 +185,15 @@ describe('Stripe routes keep writing their audit entries (Q-1)', () => {
     expectStored('SUBSCRIPTION_CHECKOUT_INITIATED', 'info', ['SOC2', 'FINANCIAL']);
   });
 
-  it('create-checkout (boost pack) → BOOST_PACK_CHECKOUT_INITIATED', async () => {
+  // Plan payments P-10 (Credits Boost FR-40): the AgentsPilot boost purchase is
+  // switched off. No checkout is initiated, so no BOOST_PACK_CHECKOUT_INITIATED
+  // entry is written. The event stays registered for the entries already in the
+  // trail, as SUBSCRIPTION_CHECKOUT_INITIATED does.
+  it('create-checkout (boost pack) → 410, no audit entry, no Stripe call', async () => {
     const res = await checkoutPOST(req('http://localhost/api/stripe/create-checkout', { purchaseType: 'boost_pack', boostPackId: 'bp_1' }));
-    expect(res.status).toBe(200);
-    expect(onlyEntry()).toMatchObject({ action: 'BOOST_PACK_CHECKOUT_INITIATED', entityType: 'boost_pack', entityId: 'bp_1', userId: USER.id });
+    expect(res.status).toBe(410);
+    expect(mockLog).not.toHaveBeenCalled();
+    expect(mockStripeService.createBoostPackCheckout).not.toHaveBeenCalled();
     expectStored('BOOST_PACK_CHECKOUT_INITIATED', 'info', ['SOC2', 'FINANCIAL']);
   });
 

@@ -204,19 +204,32 @@ describe('user_subscriptions is never written with a caller\'s own credentials',
     expect(src).not.toContain('new CreditService(supabase)');
   });
 
-  it('Stripe checkout hands the service-role client to the customer-creating calls (W-4)', () => {
-    // `getOrCreateCustomer` UPDATEs/INSERTs `user_subscriptions` without checking
-    // the result; with the cookie client it would fail 42501 in silence and a
-    // paying user with no row would never be credited.
+  // Plan payments P-10 (Credits Boost FR-40): the checkout refuses every
+  // purchase with 410, so the customer-creating call (W-4) is gone. What must
+  // hold is that it stays gone: `getOrCreateCustomer` UPDATEs/INSERTs
+  // `user_subscriptions` without checking the result, so a revival on the
+  // cookie client would fail 42501 in silence.
+  it('Stripe checkout makes no customer-creating call (refused since P-10, W-4)', () => {
     const src = readFileSync(
       join(REPO_ROOT, 'app/api/stripe/create-checkout/route.ts'),
       'utf8'
     );
-    expect(src).toContain("import { supabaseServer } from '@/lib/supabaseServer'");
-    // One call since plan payments P-1 (the custom_credits branch is a 410).
-    expect(src.match(/supabase: supabaseServer,/g)).toHaveLength(1);
-    // The bare shorthand would pass the cookie client again.
-    expect(src).not.toMatch(/stripeService\.create\w+\(\{\s+supabase,/);
+    expect(src).not.toMatch(/stripeService\.\w+\(/);
+    expect(src).not.toMatch(/\.from\('user_subscriptions'\)/);
+    expect(src).not.toMatch(/\.(update|insert|upsert|delete)\s*\(/);
+    expect(src).toMatch(/status: 410/);
+  });
+
+  it('the Stripe subscription sync writes nothing (refused since P-10, CF-3)', () => {
+    const src = readFileSync(
+      join(REPO_ROOT, 'app/api/stripe/sync-subscription/route.ts'),
+      'utf8'
+    );
+    expect(src).not.toMatch(/\.from\(/);
+    expect(src).not.toMatch(/\.(update|insert|upsert|delete)\s*\(/);
+    expect(src).not.toMatch(/createClient|supabaseServer|new Stripe/);
+    expect(src).toMatch(/status: 410/);
+    expect(src).not.toMatch(/console\./);
   });
 
   // Plan payments P-1 (SA Q-3): the route is refused with 410 and no longer
