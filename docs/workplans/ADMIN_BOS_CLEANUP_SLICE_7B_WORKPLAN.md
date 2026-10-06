@@ -906,11 +906,11 @@ A UI-only partial revert (hiding the button) leaves the route admin-gated and un
 - [ ] **The user has applied 20261035 and run `scripts/check-audit-owner-policy-migration.sql` (VERDICT PASS) and `scripts/probe-audit-owner-policy-migration.sql` (PROBE PASS, P01–P08 and P10). Do not merge before this is ticked** (merging deploys production, W7B-1 f).
 
 ### Verified live (read-only / zero-row)
-- One zero-row compare-and-set per queue table through the real repository: accepted, `count = 0`; negative control 42703.
+- One zero-row compare-and-set per queue table through the real repository: accepted, `count = 0`; negative control PGRST204 (42703 also passes). *(Corrected 2026-10-04 in slice 7c, CR7B-1: this line said 42703.)*
 - §6.2, run by the user 2026-10-04 (read-only): status CHECKs allow `skipped` on the three non-payment tables; no CHECK on either payment table; no `skip_reason` CHECK; zero triggers on the five tables.
 
 ### Registrations
-- `adminGate.writes` 58 → 59; access register row 93 (and row 94, `business-os/ai-activity#GET`, found unregistered by the re-measure, doc only); census 91 = 85 + 6 + 0, 62 files; no guard cap moved.
+- `adminGate.writes` 58 → 59; access register row 95 (after the rebase onto `7eac5b98`, where `main` already held rows 93 and 94); census 92 = 86 + 6 + 0, 63 files at merge; no guard cap moved. *(Corrected 2026-10-04 in slice 7c, CR7B-2: this line showed the pre-rebase row 93 and census 91 = 85 + 6 + 0, 62 files; the merged PR #211 body carried the right figures. Re-measured on `1a9944a5` with the guard's own scanner: 93 = 87 + 6 + 0, 64 files; the extra handler is `business-os/ai-activity/drill-down#GET` from PR #214, gated but not yet in the register.)*
 - Event `BOS_QUEUE_ITEM_CANCELLED`, entity type `bos_queue_item` (group "Business OS Queues").
 
 ### Tests

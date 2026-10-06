@@ -391,6 +391,7 @@ auth.users(id)
 | # | Table | Scoping | R | Status | Notes |
 |---|---|---|---|---|---|
 | 1 | `business_profiles` | `user_id` **1:1** | K | ✅ | UNIQUE `user_code`, UNIQUE partial `subdomain`. **No DELETE RLS policy**. Reset retains it — the enumeration source for `calendar-sync` (FR-26) |
+| 67 | `business_addresses` | `user_id` + CASCADE to `business_profiles` | K | ✅ | Added 2026-10-06 (PR #229, migrations 20261036/20261037). The address book behind `business_profiles.address_parts` / `invoice_address`, whose `address_id` / `invoice_address_id` point here (SET NULL). Kept by Reset **with** its profile, or the kept profile would show an address the picker no longer offers. Not in the §3 count of 64 |
 
 ### 3.2 CRM — 5 tables
 
@@ -861,7 +862,7 @@ BA proposed deleting `email_unsubscribes`, reasoning that a purged business cann
 | | **Reset** | **Purge** |
 |---|---|---|
 | **Pre-flight gate** | Applies — identical | Applies — identical |
-| `business_profiles`, `crm_pipeline_stages`, `user_capabilities` (+blocks) | Kept | Deleted |
+| `business_profiles`, `business_addresses`, `crm_pipeline_stages`, `user_capabilities` (+blocks) | Kept | Deleted |
 | `user_intake_settings`, `business_intake_forms` | Kept | Deleted |
 | `payment_processors`, `stripe_connect_accounts` | Kept | Deleted |
 | `channel_connections` | Kept | Deleted |
@@ -1254,3 +1255,4 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 | 2026-10-04 | D13/D14 — admin-targeted delete; SA findings §0.10 | Insert-only splice from [ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md](/docs/requirements/ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md) Appendix A: D13 (admin target, amends D5, FU-4 promoted) and D14 (admin-surface account closure, FU-9 partially), user-approved 2026-10-04. §0.4 gains AD-1…AD-4, and a note that the customer surface keeps the login (D3), with parity deferred (UD-11). New §0.10 records SA's findings: T7 `SchemaReconciler` (AC-37) was never wired, so the preview silently under-counts; 2 unclassified business tables (`insight_actions`, `auth_handoff_codes`); PR #45's 56 CASCADE FKs are live, so `business_profiles` must run last in slice 3; the contact-delete trigger behind B4 was dropped. No existing section rewritten |
 | 2026-10-05 | OQ-1 decided: Purge never deletes agents | User decision (slice 3 workplan OQ-1): the opt-in "also delete my agents" extra is **removed for good** — Purge never deletes AgentsPilot agents; the customer deletes them from the agents page. Reason: deleting agents cascades into 16 `never` tables plus 3 unclassified ones. Slice 3c is dropped; the agents option stays refused at all three layers. Slice 3 = 3a + 3b |
 | 2026-10-05 | Slice 3 status spliced (Dev, insert-only) | §0.4 gains the slice 3 status: 3a = PR #226 (merged 2026-10-06), 3b in progress (inactive: held RPC controls 5–7, Purge commit, extras, cron register), 3c dropped. OQ-1 (c) noted against §10.3, FR-4 and AC-34 (AC-34 replaced by the agents-refusal test). Cron register correction: 13 crons, not six (§6.3, FR-14, AC-25). No existing text changed |
+| 2026-10-06 | `business_addresses` classified K (purge) | New business-owned table from PR #229 had no descriptor; purge slice 3a's cross-registry test turned main red. Classified `purge` (kept by Reset, deleted by Purge), band CONFIG, area `business_profile` — same as the profile it backs; precedent `marketing_consent_settings`. Added as §3.1 row #67 and to the §10.2 kept row. Frozen in `classification-baseline.json` (144 → 145). Notes are from the migrations; live FK/trigger confirmation owed after 20261037 is confirmed applied |

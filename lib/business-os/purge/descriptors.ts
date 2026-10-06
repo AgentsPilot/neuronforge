@@ -179,7 +179,11 @@ export const CASCADE_COUNT_EXEMPT: readonly string[] = ['crm_activities'];
 const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.1 Business profile ────────────────────────────────────────────────
   { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.TENANCY_ROOT, snapshot: 'rows',
-    notes: '1:1 with auth.users — THIS is the "business" row. Kept by Reset so tests re-run without onboarding. No DELETE RLS policy. Alone in the final band (TENANCY_ROOT): 56 tables CASCADE from it, so it goes last or their counts read 0 (F-SA-3).' },
+    notes: '1:1 with auth.users — THIS is the "business" row. Kept by Reset so tests re-run without onboarding. No DELETE RLS policy. Alone in the final band (TENANCY_ROOT): 56 tables CASCADE from it (measured 2026-10-05; 57 with business_addresses, 20261037), so it goes last or their counts read 0 (F-SA-3).' },
+  // Added 2026-10-06 (20261036_business_addresses_book.sql + 20261037_…_ownership_fk.sql):
+  // the address book behind business_profiles.address_parts / invoice_address.
+  { table: 'business_addresses', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+    notes: 'The business\'s saved addresses. Same level as business_profiles, which Reset keeps: its address_id / invoice_address_id point here and its address_parts / invoice_address are copies of these rows, so a Reset that emptied the book would leave the profile showing an address the picker no longer offers. CASCADE child of business_profiles (business_addresses_business_fk), so CONFIG keeps it ahead of TENANCY_ROOT for an accurate count. Its only inbound FKs are those two business_profiles columns, ON DELETE SET NULL — no blocking edge.' },
 
   // ── §3.2 CRM ─────────────────────────────────────────────────────────────
   { table: 'crm_contacts', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',

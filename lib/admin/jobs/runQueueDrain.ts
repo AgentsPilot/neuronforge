@@ -12,7 +12,9 @@
  * a run of the scheduled job. The source guard
  * (`app/api/admin/jobs-queues/drain/__tests__/drain.source.guard.test.ts`)
  * pins the five imports below as the only runtime imports of these service
- * modules anywhere on the admin path (W7D-5).
+ * modules on the admin path besides one: `reminderRetryTime.ts` (slice 7c,
+ * SA OP-3), pinned to the single read-only `paymentReminderService` member
+ * the admin retry needs (W7D-5 as amended, S-10).
  *
  * `server-only`: the jobs page's client files must never pull this in (C-21);
  * a mistaken client import becomes a build error, not a bundle leak.
