@@ -429,6 +429,7 @@ BEGIN
     UPDATE public.business_os_boost_purchases SET lot_id = gen_random_uuid() WHERE id = v_third.out_purchase_id;
     v_text := v_text || ' update lot_id';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
+    WHEN check_violation THEN NULL;
     WHEN OTHERS THEN v_text := v_text || ' unexpected ' || SQLSTATE;
   END;
   BEGIN

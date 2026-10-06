@@ -31,6 +31,16 @@ const PROBE = join(ROOT, 'scripts', 'probe-bos-boost-purchases-migration.sql');
 const LOTS_MIGRATION = join(MIGRATIONS_DIR, '20261017_business_os_credit_lots.sql');
 const CHARGES_MIGRATION = join(MIGRATIONS_DIR, '20261015_business_os_credit_charges.sql');
 const WORKPLAN = join(ROOT, 'docs', 'workplans', 'BUSINESS_OS_CREDITS_BOOST_SLICE_2_WORKPLAN.md');
+const WORKPLAN_2B = join(ROOT, 'docs', 'workplans', 'BUSINESS_OS_CREDITS_BOOST_SLICE_2B_WORKPLAN.md');
+/**
+ * Slice 2b (20261031) adds one more column UPDATE grant. The shared checker describes the post-2b
+ * state, so its update list is 2a's five columns followed by 2b's eleven, read from the 2b file.
+ */
+const SERVICE_PURCHASE_UPDATE_2B = (() => {
+  const text = readFileSync(join(MIGRATIONS_DIR, '20261031_business_os_boost_crediting.sql'), 'utf8').replace(/\s+/g, ' ');
+  const match = text.match(/GRANT UPDATE \(([^)]*)\) ON TABLE public\.business_os_boost_purchases TO service_role;/);
+  return match ? match[1].split(',').map((column) => column.trim()) : [];
+})();
 
 const read = (file: string) => readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
 const migration = read(MIGRATION);
@@ -405,12 +415,13 @@ describe('RLS and grants (§3.3, SA C-1, Q-3)', () => {
 
   it('the checker lists the same owner, insert and update columns as the GRANT lines', () => {
     expect(checker).toContain(`pg_attribute.attname::text IN (${OWNER_PURCHASE_COLUMNS.map((c) => `'${c}'`).join(', ')})`);
-    expect(checker).toContain(`pg_attribute.attname::text IN (${SERVICE_PURCHASE_UPDATE.map((c) => `'${c}'`).join(', ')})`);
+    expect(SERVICE_PURCHASE_UPDATE_2B).toHaveLength(11);
+    expect(checker).toContain(`pg_attribute.attname::text IN (${[...SERVICE_PURCHASE_UPDATE, ...SERVICE_PURCHASE_UPDATE_2B].map((c) => `'${c}'`).join(', ')})`);
     expect(checker).toContain(`pg_attribute.attname::text IN (${SERVICE_OVERRIDE_INSERT.map((c) => `'${c}'`).join(', ')})`);
     expect(checker).toContain(`pg_attribute.attname::text IN (${SERVICE_OVERRIDE_UPDATE.map((c) => `'${c}'`).join(', ')})`);
     expect(checker).toContain(`column_summary.owner_readable = ${OWNER_PURCHASE_COLUMNS.length}`);
     expect(checker).toContain(`column_summary.service_insertable = ${SERVICE_PURCHASE_INSERT.length + SERVICE_OVERRIDE_INSERT.length}`);
-    expect(checker).toContain(`column_summary.service_updatable = ${SERVICE_PURCHASE_UPDATE.length + SERVICE_OVERRIDE_UPDATE.length}`);
+    expect(checker).toContain(`column_summary.service_updatable = ${SERVICE_PURCHASE_UPDATE.length + SERVICE_PURCHASE_UPDATE_2B.length + SERVICE_OVERRIDE_UPDATE.length}`);
     expect(checker).toContain(`column_summary.total = ${columnsOf(PURCHASES).length + columnsOf(OVERRIDES).length}`);
   });
 });
@@ -545,7 +556,8 @@ describe('the checker (§6.2, SA C-3)', () => {
   });
 
   it('the workplan §6.7 lists the same four md5 values (the PROD pre-check stop condition)', () => {
-    const workplan = read(WORKPLAN);
+    // The 2a function md5s were added to the checker by slice 2b and are listed in the 2b workplan.
+    const workplan = read(WORKPLAN) + read(WORKPLAN_2B);
     for (const hash of [...checker.matchAll(/md5\(replace\(pg_proc\.prosrc, chr\(13\), ''\)\) = '([0-9a-f]{32})'/g)].map((m) => m[1])) {
       expect(workplan).toContain(hash);
     }

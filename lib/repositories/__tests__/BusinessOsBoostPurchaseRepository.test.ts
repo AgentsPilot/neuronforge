@@ -40,10 +40,17 @@ import {
   BOS_END_BOOST_CAP_OVERRIDE_RPC,
   BOS_RESERVE_BOOST_PURCHASE_RPC,
   BOS_SET_BOOST_CAP_OVERRIDE_RPC,
+  BOS_CREDIT_BOOST_PURCHASE_RPC,
+  BOS_TRANSITION_BOOST_PURCHASE_RPC,
+  BOS_RECORD_BOOST_RECEIPT_RPC,
+  BOOST_FLAG_REASONS,
   BOOST_SESSION_IN_USE_ERROR,
   BusinessOsBoostPurchaseRepository,
   businessOsBoostPurchaseRepository,
   type BusinessOsBoostReservationInput,
+  type BusinessOsBoostCreditInput,
+  type BusinessOsBoostTransitionInput,
+  type BusinessOsBoostTransitionTarget,
 } from '@/lib/repositories/BusinessOsBoostPurchaseRepository';
 
 const ACCOUNT = '22222222-2222-4222-8222-222222222222';
@@ -415,6 +422,147 @@ describe('reads', () => {
       ['maybeSingle', []],
     ]);
     expect(result.data).toMatchObject({ id: OVERRIDE, capMinor: 30000 });
+  });
+});
+
+describe('slice 2b: credit', () => {
+  const CREDIT: BusinessOsBoostCreditInput = {
+    purchaseId: PURCHASE,
+    sessionId: SESSION,
+    paymentIntentId: 'pi_test_1',
+    amountSubtotalMinor: 2500,
+    amountTaxMinor: 0,
+    amountTotalMinor: 2500,
+    currency: 'usd',
+    livemode: false,
+  };
+  const LOT = '66666666-6666-4666-8666-666666666666';
+
+  it('sends exactly the typed arguments, field by field, and no account id (R-6)', async () => {
+    const { repo, recorded } = rpcClient({ data: [{ out_status: 'credited', out_user_id: ACCOUNT, out_lot_id: LOT, out_flag_reason: null }], error: null });
+    const injected = { ...CREDIT, accountId: 'ATTACKER', p_user_id: 'ATTACKER' } as unknown as BusinessOsBoostCreditInput;
+    const result = await repo.credit(injected);
+    expect(recorded.rpc).toEqual([
+      BOS_CREDIT_BOOST_PURCHASE_RPC,
+      {
+        p_purchase_id: PURCHASE,
+        p_session_id: SESSION,
+        p_payment_intent_id: 'pi_test_1',
+        p_amount_subtotal: 2500,
+        p_amount_tax: 0,
+        p_amount_total: 2500,
+        p_currency: 'usd',
+        p_livemode: false,
+      },
+    ]);
+    expect(result).toEqual({ data: { outcome: 'credited', accountId: ACCOUNT, lotId: LOT }, error: null });
+  });
+
+  it('maps already_credited, every flag reason, not_creditable and not_found', async () => {
+    expect(
+      (await rpcClient({ data: [{ out_status: 'already_credited', out_user_id: ACCOUNT, out_lot_id: LOT, out_flag_reason: null }], error: null }).repo.credit(CREDIT)).data
+    ).toEqual({ outcome: 'already_credited', accountId: ACCOUNT, lotId: LOT });
+    for (const reason of BOOST_FLAG_REASONS) {
+      const { repo } = rpcClient({ data: [{ out_status: 'mismatch', out_user_id: reason === 'account_deleted' ? null : ACCOUNT, out_lot_id: null, out_flag_reason: reason }], error: null });
+      expect((await repo.credit(CREDIT)).data).toEqual({ outcome: 'mismatch', accountId: reason === 'account_deleted' ? null : ACCOUNT, flagReason: reason });
+    }
+    expect(
+      (await rpcClient({ data: [{ out_status: 'not_creditable', out_user_id: ACCOUNT, out_lot_id: null, out_flag_reason: null }], error: null }).repo.credit(CREDIT)).data
+    ).toEqual({ outcome: 'not_creditable', accountId: ACCOUNT });
+    expect(
+      (await rpcClient({ data: [{ out_status: 'not_found', out_user_id: null, out_lot_id: null, out_flag_reason: null }], error: null }).repo.credit(CREDIT)).data
+    ).toEqual({ outcome: 'not_found' });
+  });
+
+  it('an unknown status or flag, or credited without an account or lot, is an error, never a guess', async () => {
+    for (const row of [
+      { out_status: 'maybe', out_user_id: ACCOUNT, out_lot_id: LOT, out_flag_reason: null },
+      { out_status: 'mismatch', out_user_id: ACCOUNT, out_lot_id: null, out_flag_reason: 'weird' },
+      { out_status: 'credited', out_user_id: null, out_lot_id: LOT, out_flag_reason: null },
+      { out_status: 'credited', out_user_id: ACCOUNT, out_lot_id: null, out_flag_reason: null },
+    ]) {
+      const result = await rpcClient({ data: [row], error: null }).repo.credit(CREDIT);
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it('a database error is { error } (4a then throws to release the claim, HP-1)', async () => {
+    const result = await rpcClient({ data: null, error: { code: '40001', message: 'serialization failure' } }).repo.credit(CREDIT);
+    expect(result).toEqual({ data: null, error: new Error('serialization failure') });
+  });
+
+  it('bad input never reaches the RPC', async () => {
+    for (const input of [
+      { ...CREDIT, purchaseId: 'nope' },
+      { ...CREDIT, sessionId: 'pi_x' },
+      { ...CREDIT, paymentIntentId: 'cs_x' },
+      { ...CREDIT, amountTaxMinor: -1 },
+      { ...CREDIT, amountSubtotalMinor: 25.5 },
+      { ...CREDIT, livemode: 'false' as unknown as boolean },
+      null as unknown as BusinessOsBoostCreditInput,
+    ]) {
+      const { repo, client } = rpcClient({ data: [], error: null });
+      const result = await repo.credit(input);
+      expect(client.rpc).not.toHaveBeenCalled();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+});
+
+describe('slice 2b: transition and recordReceipt', () => {
+  it('transition sends its six arguments with nulls for the unused ones and maps every outcome', async () => {
+    for (const status of ['transitioned', 'already', 'stale', 'recorded', 'not_allowed', 'mismatch']) {
+      const { repo, recorded } = rpcClient({ data: [{ out_status: status, out_user_id: ACCOUNT, out_from_status: 'paid' }], error: null });
+      const result = await repo.transition({ purchaseId: PURCHASE, toStatus: 'partially_refunded', amountRefundedMinor: 1000 });
+      expect(recorded.rpc).toEqual([
+        BOS_TRANSITION_BOOST_PURCHASE_RPC,
+        { p_purchase_id: PURCHASE, p_to_status: 'partially_refunded', p_payment_intent_id: null, p_amount_refunded_minor: 1000, p_dispute_id: null, p_flag_reason: null },
+      ]);
+      expect(result.data).toEqual({ status, accountId: ACCOUNT, fromStatus: 'paid' });
+    }
+    expect((await rpcClient({ data: [{ out_status: 'not_found', out_user_id: null, out_from_status: null }], error: null }).repo.transition({ purchaseId: PURCHASE, toStatus: 'expired' })).data).toEqual({
+      status: 'not_found',
+      accountId: null,
+      fromStatus: null,
+    });
+  });
+
+  it('transition refuses an unknown target, a fractional refund and null input before the RPC', async () => {
+    for (const input of [
+      { purchaseId: PURCHASE, toStatus: 'paid' as unknown as BusinessOsBoostTransitionTarget },
+      { purchaseId: PURCHASE, toStatus: 'refunded' as BusinessOsBoostTransitionTarget, amountRefundedMinor: 10.5 },
+      null as unknown as BusinessOsBoostTransitionInput,
+    ]) {
+      const { repo, client } = rpcClient({ data: [], error: null });
+      expect((await repo.transition(input)).error).toBeInstanceOf(Error);
+      expect(client.rpc).not.toHaveBeenCalled();
+    }
+  });
+
+  it('recordReceipt sends its three arguments and maps every outcome; a bad id or url never reaches the RPC', async () => {
+    for (const status of ['recorded', 'already_recorded', 'conflict', 'not_paid']) {
+      const { repo, recorded } = rpcClient({ data: [{ out_status: status, out_user_id: ACCOUNT }], error: null });
+      const result = await repo.recordReceipt({ purchaseId: PURCHASE, chargeId: 'ch_test_1', receiptUrl: 'https://pay.stripe.com/receipts/x' });
+      expect(recorded.rpc).toEqual([BOS_RECORD_BOOST_RECEIPT_RPC, { p_purchase_id: PURCHASE, p_charge_id: 'ch_test_1', p_receipt_url: 'https://pay.stripe.com/receipts/x' }]);
+      expect(result.data).toEqual({ status, accountId: ACCOUNT });
+    }
+    for (const input of [
+      { purchaseId: PURCHASE, chargeId: 'pi_1', receiptUrl: 'https://x' },
+      { purchaseId: PURCHASE, chargeId: 'ch_1', receiptUrl: 'http://x' },
+    ]) {
+      const { repo, client } = rpcClient({ data: [], error: null });
+      expect((await repo.recordReceipt(input)).error).toBeInstanceOf(Error);
+      expect(client.rpc).not.toHaveBeenCalled();
+    }
+  });
+
+  it('the 2b RPC names are the functions the 2b migration creates', () => {
+    const migration2b = fs.readFileSync(path.join(process.cwd(), 'supabase', 'migrations', '20261031_business_os_boost_crediting.sql'), 'utf8');
+    for (const name of [BOS_CREDIT_BOOST_PURCHASE_RPC, BOS_TRANSITION_BOOST_PURCHASE_RPC, BOS_RECORD_BOOST_RECEIPT_RPC]) {
+      expect(migration2b).toContain(`CREATE FUNCTION public.${name}(`);
+    }
+    for (const reason of BOOST_FLAG_REASONS) expect(migration2b).toContain(`'${reason}'`);
   });
 });
 
