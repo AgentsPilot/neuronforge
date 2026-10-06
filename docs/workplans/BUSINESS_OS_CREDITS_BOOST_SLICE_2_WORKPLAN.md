@@ -9,7 +9,7 @@
 **Worktree:** `neuronforge-boost`
 **Branch:** `feature/bos-credits-boost-slice-2`, cut from `origin/main` `b3c32ea7` (includes slice 1, PR #224). Confirmed with `git branch --show-current` on 2026-10-05; the worktree was clean before the switch. 2b, if SA accepts the split, gets its own branch from RM.
 **Date:** 2026-10-05
-**Status:** **2a approved and committed 2026-10-06, [PR #233](https://github.com/AgentsPilot/neuronforge/pull/233) open; PROD apply pending (user, §6.6).** **2a QA 2026-10-05: PASS WITH NOTES** (QA-D1 Medium checker fix owed before the PR; QA-D2/D3 Low; see QA Testing Report). **2a SA code review 2026-10-05: Code Approved for QA** (CR-1 migration-number record owed before the PR; CR-2 `version()` in the pre-check). 2a Code Complete 2026-10-05. SA workplan review: approved with conditions C-1 to C-8 (split 2a/2b approved); C-1 to C-7 applied (§3.4a), C-8 recorded for 2b. Local bar and PGlite run green (§6.8, §7.5). 2b not started. Nothing is committed.
+**Status:** **2a applied to PROD 2026-10-06 13:46:19 UTC and verified (§6.9); [PR #233](https://github.com/AgentsPilot/neuronforge/pull/233) awaiting merge.** **2a QA 2026-10-05: PASS WITH NOTES** (QA-D1 Medium checker fix owed before the PR; QA-D2/D3 Low; see QA Testing Report). **2a SA code review 2026-10-05: Code Approved for QA** (CR-1 migration-number record owed before the PR; CR-2 `version()` in the pre-check). 2a Code Complete 2026-10-05. SA workplan review: approved with conditions C-1 to C-8 (split 2a/2b approved); C-1 to C-7 applied (§3.4a), C-8 recorded for 2b. Local bar and PGlite run green (§6.8, §7.5). 2b not started. Nothing is committed.
 
 ## Overview
 
@@ -501,6 +501,22 @@ Expect four rows equal to the table. Any difference: stop before applying.
 
 The PROD checker and the mandatory PROD probe stay required.
 
+### 6.9 2a PROD apply results (2026-10-06)
+
+Run by the user in the Supabase SQL editor on PROD, following §6.6. The probe ran on the user's own account. Every step passed.
+
+| Step | Time (UTC) | Result |
+|---|---|---|
+| Pre-check 1a: existence | — | `business_os_boost_purchases` NULL, `business_os_boost_cap_overrides` NULL; the lots table, the plans table and `business_os_record_credit_lot` present ✅ |
+| Pre-check 1b: `version()` | — | PostgreSQL 17.4 on aarch64-unknown-linux-gnu. The PGlite smoke test (§6.8) ran 18.3; the PROD checker and probe below are the proof ✅ |
+| Pre-check 1c: md5 of the four existing functions | — | All four equal §6.7: `credit_period_start` b00af2d2…, `record_credit_charge` a7aa425d…, `record_credit_lot` 89c46b47…, `reverse_credit_lot` da020d2d… ✅ |
+| Apply `20261030` | 2026-10-06 13:46:19.61124 | Success ✅ |
+| New checker | 13:47:23 | **VERDICT PASS, 20 pass / 0 fail.** B2: 18 of 40 columns owner-readable. B3: 18 insertable and 8 updatable service_role columns; B3 33 service_role has bypassrls. B4: 23 checks, the 194-char session check, 3 FKs, 3 indexes plus the partial unique. B5: 5 invoker functions. B6: service_role only. B8 INFO yes. B9: 0 purchases, 0 overrides ✅ |
+| Existing checker: credit lots | after apply | **VERDICT PASS 23/0.** L9: 1 lot (admin_grant), 0 boost_purchase, 0 draws, 200 unexpired credits ✅ |
+| Existing checker: credit charges | after apply | **VERDICT PASS 19/0.** C7: 0 mismatched; 207 charge rows, 7 totals rows ✅ |
+| Probe (user's own account) | after checkers | **PROBE PASS.** P00 INFO: 0 purchases, 0 overrides, 1 lot, 0 draws. P01–P15 PASS; P15 lot and draw counts unchanged (1 and 0). P16 INFO: concurrency is not provable in one transaction ✅ |
+| Recheck | 13:51:18 | **VERDICT PASS 20/0**, 0 purchases, 0 overrides. The probe kept nothing ✅ |
+
 ## 7. Test Plan
 
 ### 7.1 `supabase/migrations/__tests__/business-os-boost-purchases.migration.test.ts`
@@ -918,3 +934,4 @@ Scoped tsc:     4 errors, all outside the diff (MemoryManager.ts 2, CalibrationS
 | 2026-10-06 | C-7 / CR-1 satisfied | §6.5: migration block 20261030–34 acknowledged by the credit-deduction session (2026-10-04) and the plan-payments session (2026-10-05; payments use 20261027, 20261028, 20261029, 20261036). Date recorded 2026-10-05 |
 | 2026-10-06 | Probe P17 removed from PROD (user decision) | The production runbook must never write to `auth.users`. P17 was dropped from `scripts/probe-bos-boost-purchases-migration.sql`, and the detach check moved to a scratchpad-only file (`pglite/detach-check.sql`, harness step `detachCheck`). A migration-test assertion forbids any `auth.users` write in the probe. The detach rule is proven by checker B4 on PROD and by PGlite locally (§6.3, §7.5, §3.4b) |
 | 2026-10-06 | 2a approved and committed, PR #233 open | The user saw the diff and approved the commit (2026-10-06). RM committed on `feature/bos-credits-boost-slice-2` and opened [PR #233](https://github.com/AgentsPilot/neuronforge/pull/233) to `main`. PROD apply of 20261030 is pending: the user runs §6.6 after merge (pre-check incl. md5 and version, apply, checker, existing checkers, probe, recheck) |
+| 2026-10-06 | 2a applied to PROD and verified | The user applied 20261030 at 13:46:19 UTC (PG 17.4; pre-check and the four md5s matched §6.7). Checker PASS 20/0, existing lots (23/0) and charges (19/0) checkers PASS, probe P00–P16 PASS on the user's own account, recheck PASS 20/0 with 0 rows kept. Results in §6.9. PR #233 awaiting merge |
