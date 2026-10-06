@@ -3,13 +3,9 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { tokensToPilotCredits, pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
-// Stripe integration removed - payment processing coming soon
+import { createLogger } from '@/lib/logger';
 
-export interface CalculatorInputs {
-  agents: number;
-  plugins: number;
-  frequency: 'low' | 'medium' | 'high' | 'very_high';
-}
+const logger = createLogger({ module: 'CreditService' });
 
 export interface CreditBalance {
   balance: number;
@@ -28,7 +24,7 @@ export class CreditService {
    * Initialize new user with free trial credits
    */
   async initializeUser(userId: string, stripeCustomerId?: string): Promise<void> {
-    console.log('🎁 Initializing user with trial credits:', userId);
+    logger.info({ userId }, 'Initializing user with trial credits');
 
     // Trial credits: 1,000 Pilot Credits → tokens (fetched from database)
     const trialPilotCredits = 1000;
@@ -51,7 +47,7 @@ export class CreditService {
       });
 
     if (insertError) {
-      console.error('Error initializing user credits:', insertError);
+      logger.error({ err: insertError, userId }, 'Error initializing user credits');
       throw insertError;
     }
 
@@ -78,7 +74,7 @@ export class CreditService {
       description: `New user trial: ${trialPilotCredits.toLocaleString()} Pilot Credits granted`
     });
 
-    console.log(`✅ User initialized with ${trialPilotCredits.toLocaleString()} trial Pilot Credits (${trialTokens} tokens)`);
+    logger.info({ userId, trialPilotCredits, trialTokens }, 'User initialized with trial Pilot Credits');
   }
 
   /**
@@ -118,38 +114,6 @@ export class CreditService {
   }
 
   /**
-   * Create dynamic subscription from calculator
-   * NOTE: Stripe integration removed - payment processing coming soon
-   */
-  async createSubscription(
-    _userId: string,
-    _monthlyCredits: number,
-    _calculatorInputs: CalculatorInputs
-  ): Promise<any> {
-    throw new Error('Payment integration not yet implemented. Please contact support.');
-  }
-
-  /**
-   * Update existing subscription
-   * NOTE: Stripe integration removed - payment processing coming soon
-   */
-  async updateSubscription(
-    _userId: string,
-    _newMonthlyCredits: number,
-    _calculatorInputs?: CalculatorInputs
-  ): Promise<void> {
-    throw new Error('Payment integration not yet implemented. Please contact support.');
-  }
-
-  /**
-   * Purchase boost pack (one-time credit purchase)
-   * NOTE: Stripe integration removed - payment processing coming soon
-   */
-  async purchaseBoostPack(_userId: string, _boostPackId: string, _stripePaymentIntentId: string): Promise<void> {
-    throw new Error('Payment integration not yet implemented. Please contact support.');
-  }
-
-  /**
    * Charge credits for agent execution (with intensity multiplier)
    */
   async chargeForExecution(
@@ -163,13 +127,10 @@ export class CreditService {
     const intensityMultiplier = 1.0 + (intensityScore / 10);
     const finalCredits = Math.ceil(baseCredits * intensityMultiplier);
 
-    console.log('💸 Charging for execution:', {
-      tokens,
-      baseCredits,
-      intensityScore,
-      intensityMultiplier,
-      finalCredits
-    });
+    logger.info(
+      { userId, agentId, tokens, baseCredits, intensityScore, intensityMultiplier, finalCredits },
+      'Charging for execution'
+    );
 
     const currentBalance = await this.getBalance(userId);
     const newBalance = currentBalance.balance - finalCredits;
@@ -212,7 +173,7 @@ export class CreditService {
       await this.pauseAgents(userId);
     }
 
-    console.log(`✅ Charged ${finalCredits} credits. New balance: ${newBalance}`);
+    logger.info({ userId, agentId, charged: finalCredits, newBalance }, 'Charged credits for execution');
     return { charged: finalCredits, newBalance };
   }
 
@@ -227,7 +188,7 @@ export class CreditService {
     // Use database-driven token-to-credit conversion
     const credits = await tokensToPilotCredits(tokens, this.supabase);
 
-    console.log('💸 Charging for agent creation:', { tokens, credits });
+    logger.info({ userId, agentId, tokens, credits }, 'Charging for agent creation');
 
     const currentBalance = await this.getBalance(userId);
     const newBalance = currentBalance.balance - credits;
@@ -255,7 +216,7 @@ export class CreditService {
       metadata: { tokens }
     });
 
-    console.log(`✅ Charged ${credits} credits for creation. New balance: ${newBalance}`);
+    logger.info({ userId, agentId, charged: credits, newBalance }, 'Charged credits for agent creation');
     return { charged: credits, newBalance };
   }
 
@@ -285,7 +246,7 @@ export class CreditService {
       .eq('user_id', userId);
 
     // TODO: Send email notification
-    console.log(`⚠️ Low balance alert for user ${userId}: ${balance} credits remaining`);
+    logger.warn({ userId, balance }, 'Low balance alert');
 
     // Log event
     await this.supabase.from('billing_events').insert({
@@ -304,7 +265,7 @@ export class CreditService {
    * Pause agents when balance reaches zero
    */
   private async pauseAgents(userId: string): Promise<void> {
-    console.log('🚫 Pausing agents for user:', userId);
+    logger.info({ userId }, 'Pausing agents');
 
     await this.supabase
       .from('user_subscriptions')
@@ -328,7 +289,7 @@ export class CreditService {
    * Resume agents when credits are added
    */
   async resumeAgents(userId: string): Promise<void> {
-    console.log('▶️ Resuming agents for user:', userId);
+    logger.info({ userId }, 'Resuming agents');
 
     await this.supabase
       .from('user_subscriptions')
@@ -355,7 +316,7 @@ export class CreditService {
       .limit(limit);
 
     if (error) {
-      console.error('Error fetching transaction history:', error);
+      logger.error({ err: error, userId }, 'Error fetching transaction history');
       return [];
     }
 
@@ -374,7 +335,7 @@ export class CreditService {
       .limit(limit);
 
     if (error) {
-      console.error('Error fetching billing events:', error);
+      logger.error({ err: error, userId }, 'Error fetching billing events');
       return [];
     }
 
@@ -402,7 +363,7 @@ export class CreditService {
       .maybeSingle();
 
     if (error) {
-      console.error('Error checking execution allowed:', error);
+      logger.error({ err: error, userId }, 'Error checking execution allowed; failing open');
       // On error, allow execution (fail open for better UX)
       return { allowed: true, frozen: false, balance: 0 };
     }
@@ -451,12 +412,10 @@ export class CreditService {
     const intensityMultiplier = 1.0 + (intensityScore / 10);
     const adjustedTokens = Math.ceil(rawTokens * intensityMultiplier);
 
-    console.log('💸 [CreditService] Charging tokens with intensity:', {
-      rawTokens,
-      intensityScore,
-      intensityMultiplier,
-      adjustedTokens
-    });
+    logger.info(
+      { userId, agentId, rawTokens, intensityScore, intensityMultiplier, adjustedTokens },
+      'Charging tokens with intensity'
+    );
 
     // Get current balance and total_spent
     const { data: currentSub } = await this.supabase
@@ -481,13 +440,14 @@ export class CreditService {
       .eq('user_id', userId);
 
     if (updateError) {
-      console.error('❌ [CreditService] Failed to update balance:', updateError);
+      logger.error({ err: updateError, userId }, 'Failed to update balance');
       throw updateError;
     }
 
-    console.log(`✅ [CreditService] Token spending tracked: ${adjustedTokens} tokens`);
-    console.log(`   Balance: ${currentBalance} → ${newBalance} tokens`);
-    console.log(`   Total Spent: ${currentTotalSpent} → ${newTotalSpent} tokens`);
+    logger.info(
+      { userId, adjustedTokens, balanceBefore: currentBalance, newBalance, totalSpentBefore: currentTotalSpent, newTotalSpent },
+      'Token spending tracked'
+    );
 
     // Log transaction for audit trail
     const { error: txError } = await this.supabase.from('credit_transactions').insert({
@@ -510,10 +470,10 @@ export class CreditService {
     });
 
     if (txError) {
-      console.error('❌ [CreditService] Failed to log transaction:', txError);
+      logger.error({ err: txError, userId }, 'Failed to log transaction');
       // Non-fatal - balance already updated
     } else {
-      console.log('✅ [CreditService] Transaction logged successfully');
+      logger.debug({ userId }, 'Transaction logged');
     }
 
     // Check if agents should be paused

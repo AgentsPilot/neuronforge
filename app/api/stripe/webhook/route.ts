@@ -319,9 +319,19 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
 }
 
 /**
- * Handle customer.subscription.updated event
- * - Sync subscription amount and credits when changed in Stripe
- * - Update monthly_credits and monthly_amount_usd in database
+ * Handle customer.subscription.updated event (agent platform, platform events only)
+ *
+ * Plan payments P-10: this is now a status mirror and nothing else. It used to
+ * turn `metadata.credits` into `monthly_credits` / `monthly_amount_usd`, insert
+ * a `billing_events` row and re-run `QuotaAllocationService`; credit
+ * subscriptions are no longer sold, so those effects are gone (reuse plan §4.6
+ * *Dies*, L-26). The mirror stays because the portal and cancel / reactivate
+ * routes still serve the agent platform's remaining subscriptions: without it a
+ * cancellation made in the Stripe portal would never reach `user_subscriptions`.
+ *
+ * Both early returns are kept on purpose (SA Q-9): the handler runs for exactly
+ * the events it ran for before, and never for a Business OS plan subscription,
+ * which carries no legacy `user_id` + `credits` metadata.
  */
 async function handleSubscriptionUpdated(subscription: Stripe.Subscription, log: Logger) {
   log.info({ subscriptionId: subscription.id }, 'Processing customer.subscription.updated');
@@ -333,7 +343,8 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription, log:
     return;
   }
 
-  // Get credits from metadata (try both 'credits' and 'pilot_credits')
+  // Legacy credit subscriptions only (try both 'credits' and 'pilot_credits').
+  // The value is no longer written anywhere; it only decides whether to mirror.
   const pilotCredits = parseInt(subscription.metadata?.credits || subscription.metadata?.pilot_credits || '0');
 
   if (!pilotCredits) {
@@ -341,57 +352,17 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription, log:
     return;
   }
 
-  // Get subscription amount from Stripe
-  const stripeAmountCents = subscription.items.data[0]?.price?.unit_amount || 0;
-  const stripeAmountUsd = stripeAmountCents / 100;
-
-  log.info({ userId, pilotCredits, amountUsd: stripeAmountUsd.toFixed(2) }, 'Syncing subscription');
-
-  // Update database including cancellation status
+  // Lifecycle mirror only: cancellation state and status.
   await supabaseAdmin
     .from('user_subscriptions')
     .update({
-      monthly_credits: pilotCredits,
-      monthly_amount_usd: stripeAmountUsd,
       cancel_at_period_end: subscription.cancel_at_period_end || false,
       canceled_at: subscription.canceled_at ? new Date(subscription.canceled_at * 1000).toISOString() : null,
       status: subscription.status
     })
     .eq('user_id', userId);
 
-  // Log billing event
-  await supabaseAdmin
-    .from('billing_events')
-    .insert({
-      user_id: userId,
-      event_type: 'subscription_updated',
-      credits_delta: 0,
-      description: `Subscription updated: ${pilotCredits.toLocaleString()} Pilot Credits/month ($${stripeAmountUsd.toFixed(2)})`,
-      amount_cents: stripeAmountCents,
-      currency: 'usd'
-    });
-
-  // Recalculate storage and execution quotas based on new subscription tier
-  try {
-    log.info({ userId }, 'Recalculating quotas after subscription update');
-    const quotaService = new QuotaAllocationService(supabaseAdmin);
-    const quotaResult = await quotaService.allocateQuotasForUser(userId);
-
-    if (quotaResult.success) {
-      log.info({
-        userId,
-        storageQuotaMB: quotaResult.storageQuotaMB,
-        executionQuota: quotaResult.executionQuota
-      }, 'Quotas allocated after subscription update');
-    } else {
-      log.error({ err: quotaResult.error, userId }, 'Quota allocation returned failure');
-    }
-  } catch (error) {
-    log.error({ err: error, userId }, 'Error allocating quotas after subscription update');
-    // Don't fail the webhook if quota allocation fails
-  }
-
-  log.info({ userId, pilotCredits, amountUsd: stripeAmountUsd }, 'Subscription updated');
+  log.info({ userId, status: subscription.status }, 'Subscription status mirrored');
 }
 
 /**

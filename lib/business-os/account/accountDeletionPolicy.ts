@@ -169,6 +169,25 @@ export const ACCOUNT_POLICY_EXCEPTIONS: Record<string, AccountTablePolicy> = {
       'it is a pseudonymous link needed to reconcile with Stripe, whose own records hold the email; ' +
       'deleting the Stripe customer is a separate P-7a / PF-14 decision.',
   },
+
+  // Credits boost slice 2a (NFR-12, F-11): the same financial-record verdict
+  // and mechanism as the credit lots.
+  business_os_boost_purchases: {
+    verdict: 'minimise',
+    reason:
+      'Financial record: the Business OS boost purchases of the account (price, Stripe references, ' +
+      'the link to the credit lot). Retained for accounting, detached from the person. Its user_id is ' +
+      'declared ON DELETE SET NULL, and service_role holds no UPDATE on user_id, so the detach happens ' +
+      'when the auth user is deleted, not through an update.',
+  },
+
+  business_os_boost_cap_overrides: {
+    verdict: 'minimise',
+    reason:
+      "Audited admin record: changes to the account's boost purchase cap. Retained, detached from the " +
+      'person. Its user_id is declared ON DELETE SET NULL, and service_role holds no UPDATE on user_id, ' +
+      'so the detach happens when the auth user is deleted, not through an update.',
+  },
 };
 
 /**

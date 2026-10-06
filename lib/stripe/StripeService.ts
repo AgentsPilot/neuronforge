@@ -1,5 +1,6 @@
 // lib/stripe/StripeService.ts
-// Stripe service for custom credit purchases with recurring billing
+// Stripe service: platform customers, the agent platform's subscription
+// lifecycle, and Stripe Connect.
 
 import Stripe from 'stripe';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -10,17 +11,16 @@ const logger = createLogger({ module: 'StripeService' });
 /**
  * StripeService
  *
- * Handles Stripe operations for NeuronForge billing:
- * - Custom credit amount purchases (not fixed plans)
- * - Recurring monthly billing at user's chosen amount
- * - One-time boost pack purchases
- * - Subscription management (increase/decrease amount, cancel)
+ * Handles Stripe operations for the platform:
+ * - Platform customers (agent platform and Business OS)
+ * - Agent-platform subscription lifecycle: portal, cancel, reactivate, invoices
+ * - Webhook signature verification
+ * - Stripe Connect accounts for Business OS client payments
  *
- * Business Model:
- * - User purchases $X worth of credits (e.g., $20 for 100K credits)
- * - This becomes a monthly recurring charge at $X
- * - User can adjust amount for next billing cycle
- * - All credits roll over completely
+ * Plan payments P-10 removed the Pilot-Credit purchase side
+ * (`createCustomCreditSubscription`, `updateSubscriptionAmount`): both minted
+ * ad-hoc prices and had no caller left (reuse plan §4.6 *Dies*, L-9). The
+ * boost-pack checkout is switched off but kept (Credits Boost FR-40).
  */
 export class StripeService {
   private stripe: Stripe;
@@ -58,8 +58,8 @@ export class StripeService {
    *
    * Deliberately placed above `getOrCreateCustomer` and takes no database
    * client: the user_subscriptions lockdown guard reads the slice from
-   * `getOrCreateCustomer` to `createCustomCreditSubscription`, and only three
-   * methods of this class may take one.
+   * `getOrCreateCustomer` to `createBoostPackCheckout`, and only two methods
+   * of this class may take one.
    */
   async findOrCreatePlatformCustomer(params: {
     existingCustomerId?: string | null;
@@ -159,107 +159,16 @@ export class StripeService {
   }
 
   /**
-   * Create custom credit purchase with recurring billing
-   *
-   * User selects Pilot Credits → we calculate price from DB → recurs monthly
-   * Example: 100,000 Pilot Credits → price calculated from ais_system_config
-   *
-   * Pricing: 1 Pilot Credit = 10 LLM tokens (from database)
-   * Rate: Fetched from ais_system_config.pilot_credit_cost_usd
-   */
-  async createCustomCreditSubscription(params: {
-    supabase: SupabaseClient;
-    userId: string;
-    email: string;
-    name?: string;
-    pilotCredits: number; // Number of Pilot Credits user wants monthly
-    successUrl: string;
-    cancelUrl: string;
-    currency?: string; // Optional currency code (defaults to USD)
-  }): Promise<Stripe.Checkout.Session> {
-    const {
-      supabase,
-      userId,
-      email,
-      name,
-      pilotCredits,
-      successUrl,
-      currency = 'usd' // Default to USD if not specified
-    } = params;
-
-    // Fetch pricing from database (ais_system_config table)
-    const { data: configData } = await supabase
-      .from('ais_system_config')
-      .select('config_key, config_value')
-      .in('config_key', ['pilot_credit_cost_usd', 'tokens_per_pilot_credit'])
-      .limit(2);
-
-    const configMap = new Map(configData?.map(c => [c.config_key, c.config_value]) || []);
-    const pricePerCredit = parseFloat(configMap.get('pilot_credit_cost_usd') || '0.00048');
-
-    // Calculate price in USD
-    const amountUsd = pilotCredits * pricePerCredit;
-    const credits = pilotCredits;
-
-    // Get or create customer
-    const customerId = await this.getOrCreateCustomer(supabase, userId, email, name);
-
-    // Normalize currency code to lowercase for Stripe
-    const stripeCurrency = currency.toLowerCase();
-
-    // Create or get Stripe price for this amount
-    // We'll create prices on-the-fly for custom amounts
-    const price = await this.stripe.prices.create({
-      currency: stripeCurrency,
-      unit_amount: Math.round(amountUsd * 100), // Convert to cents (or smallest currency unit)
-      recurring: {
-        interval: 'month'
-      },
-      product_data: {
-        name: `${credits.toLocaleString()} Pilot Credits`,
-        metadata: {
-          credits: credits.toString(),
-          price_per_credit: pricePerCredit.toString(),
-          description: `Monthly recurring: ${credits.toLocaleString()} Pilot Credits for $${amountUsd.toFixed(2)}`
-        }
-      },
-      metadata: {
-        user_id: userId,
-        credits: credits.toString(),
-        subscription_type: 'custom_credits'
-      }
-    });
-
-    // Create checkout session with embedded UI support
-    const session = await this.stripe.checkout.sessions.create({
-      customer: customerId,
-      mode: 'subscription',
-      line_items: [
-        {
-          price: price.id,
-          quantity: 1
-        }
-      ],
-      ui_mode: 'embedded', // Enable embedded checkout
-      return_url: successUrl, // Fallback URL (won't be used with onComplete callback)
-      metadata: {
-        user_id: userId,
-        credits: credits.toString(),
-        amount_usd: amountUsd.toString()
-      },
-      subscription_data: {
-        metadata: {
-          user_id: userId,
-          credits: credits.toString()
-        }
-      }
-    });
-
-    return session;
-  }
-
-  /**
    * Create one-time boost pack purchase
+   *
+   * NO CALLER since plan payments P-10. The AgentsPilot boost purchase is
+   * switched off, not deleted (Credits Boost FR-40, user decision Q14):
+   * `create-checkout` refuses every purchase with 410. This method, the
+   * webhook's `boost_pack` branch and the `boost_packs` /
+   * `boost_pack_purchases` tables are kept so the purchase can be revived.
+   * Deleting any of them needs an SA-approved plan. A revival must pass the
+   * service-role client (W-4) and add back a reviewed caller to the
+   * user_subscriptions lockdown guard.
    */
   async createBoostPackCheckout(params: {
     supabase: SupabaseClient;
@@ -350,80 +259,6 @@ export class StripeService {
     });
 
     return session;
-  }
-
-  /**
-   * Update subscription to new amount
-   * Hybrid proration: upgrades get immediate credits, downgrades wait until next cycle
-   *
-   * @param subscriptionId - Stripe subscription ID
-   * @param newAmountUsd - New monthly amount in USD
-   * @param pilotCredits - New monthly Pilot Credits amount (user-facing)
-   * @param currentMonthlyAmountUsd - Current monthly amount in USD (for upgrade detection)
-   */
-  async updateSubscriptionAmount(
-    subscriptionId: string,
-    newAmountUsd: number,
-    pilotCredits: number,
-    currentMonthlyAmountUsd: number = 0
-  ): Promise<Stripe.Subscription> {
-    const subscription = await this.stripe.subscriptions.retrieve(subscriptionId);
-
-    // Detect if this is an upgrade (higher amount) or downgrade (lower amount)
-    const isUpgrade = newAmountUsd > currentMonthlyAmountUsd;
-
-    // Ids and amounts only: no customer email or name (SA P2-C5).
-    logger.info(
-      {
-        subscriptionId,
-        currentMonthlyAmountUsd,
-        newAmountUsd,
-        changeType: isUpgrade ? 'upgrade' : 'downgrade',
-        prorationBehavior: isUpgrade ? 'always_invoice' : 'none'
-      },
-      'Stripe subscription amount update'
-    );
-
-    // Create new price for the new amount
-    // Store Pilot Credits in metadata (not tokens)
-    const newPrice = await this.stripe.prices.create({
-      currency: 'usd',
-      unit_amount: Math.round(newAmountUsd * 100),
-      recurring: {
-        interval: 'month'
-      },
-      product_data: {
-        name: `${pilotCredits.toLocaleString()} Pilot Credits`,
-        metadata: {
-          credits: pilotCredits.toString(), // Pilot Credits (not tokens)
-          description: `Monthly recurring: ${pilotCredits.toLocaleString()} Pilot Credits for $${newAmountUsd.toFixed(2)}`
-        }
-      },
-      metadata: {
-        credits: pilotCredits.toString() // Pilot Credits (not tokens)
-      }
-    });
-
-    // Update subscription with new price
-    // Hybrid proration: immediate for upgrades, next cycle for downgrades
-    const updatedSubscription = await this.stripe.subscriptions.update(subscriptionId, {
-      items: [
-        {
-          id: subscription.items.data[0].id,
-          price: newPrice.id
-        }
-      ],
-      // Upgrades: Charge prorated amount immediately and allocate credits via invoice.paid webhook
-      // Downgrades: Change takes effect at next billing cycle, no refund
-      proration_behavior: isUpgrade ? 'always_invoice' : 'none',
-      metadata: {
-        ...subscription.metadata,
-        credits: pilotCredits.toString(), // Update credits in subscription metadata
-        pilot_credits: pilotCredits.toString() // Also store as pilot_credits for consistency
-      }
-    });
-
-    return updatedSubscription;
   }
 
   /**

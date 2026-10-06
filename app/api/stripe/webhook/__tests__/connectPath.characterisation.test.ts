@@ -712,3 +712,42 @@ describe('Stripe webhook, platform path through the Business OS router (P-1)', (
     expect(logged('bos_billing_event_denied')).toEqual([{ level: 'warn', reason: 'unknown_price', alert: undefined }]);
   });
 });
+
+// ─── P-10: the agent-platform subscription status mirror ─────────────────────
+
+//
+// Both scenarios were recorded against the UNMODIFIED route first (SA P10-C3);
+// the pre-edit P10-1 snapshot is kept in the P-10 workplan evidence log because
+// this file's copy is overwritten by the after-run. Before P-10, P10-1 also
+// wrote `monthly_credits` / `monthly_amount_usd`, inserted a `billing_events`
+// row and called the quota service. P10-2 never wrote anything, before or after.
+
+/** The payloads of every `user_subscriptions` update, in order. */
+function userSubscriptionUpdates(result: unknown): Array<Record<string, unknown>> {
+  return effectsOf(result)
+    .filter((e) => e.type === 'db' && e.table === 'user_subscriptions' && e.operation === 'update')
+    .map((e) => (e as { chain: unknown[][] }).chain[0][1] as Record<string, unknown>);
+}
+
+describe('Stripe webhook, platform customer.subscription.updated (P-10)', () => {
+  it('P10-1. legacy user_id + credits metadata: only the status mirror is written', async () => {
+    const result = await run({ fixtureDir: 'platform', fixture: 'subscription-updated-legacy.json' });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, CREDIT_TABLES)).toEqual(['user_subscriptions:update']);
+    expect(userSubscriptionUpdates(result).map((payload) => Object.keys(payload).sort())).toEqual([
+      ['cancel_at_period_end', 'canceled_at', 'status'],
+    ]);
+    expect(effectsOf(result).some((e) => e.type === 'quota.allocateQuotasForUser')).toBe(false);
+  });
+
+  it('P10-2. no credits metadata: nothing is written', async () => {
+    const result = await run({ fixtureDir: 'platform', fixture: 'subscription-updated-no-credits.json' });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
+    expect(effectsOf(result).some((e) => e.type === 'quota.allocateQuotasForUser')).toBe(false);
+  });
+});

@@ -7,11 +7,14 @@
  * pairs where only logging changed must pass; pairs where a `return` was
  * dropped, a condition changed, or a log argument gained a side-effecting call
  * must fail or be flagged. The refusal (SA P0-C3) and the `--functions` mode
- * (SA P0-C4, relied on by P-1) are covered too.
+ * (SA P0-C4, relied on by P-1) are covered too, and so is the `--exact` mode
+ * (plan payments P-10, SA P10-C5): plain text equality, no normalisation, no
+ * refusal, and the default mode left exactly as it was.
  */
 
 import {
   compareFunctions,
+  compareFunctionsExact,
   compareSources,
   findReservedIdentifierUses,
   RefusedError,
@@ -215,5 +218,57 @@ describe('check-logging-only-diff: --functions mode (P0-C4)', () => {
     const edited = `${CONVERTED}\nexport function added() { return 1; }\n`;
     expect(compareFunctions(FILE, BASE, edited, ['handle', 'POST']).every((v) => v.status === 'identical')).toBe(true);
     expect(compareSources(FILE, BASE, edited).identical).toBe(false);
+  });
+});
+
+describe('check-logging-only-diff: --exact mode (P10-C5)', () => {
+  it('passes for identical text, including a base that already uses `log` (no P0-C3 refusal)', () => {
+    const verdicts = compareFunctionsExact(FILE, CONVERTED, CONVERTED, ['handle', 'POST']);
+    expect(verdicts.map((v) => [v.name, v.status])).toEqual([
+      ['handle', 'identical'],
+      ['POST', 'identical'],
+    ]);
+    // The default mode still refuses the same base: --exact did not change it.
+    expect(() => compareFunctions(FILE, CONVERTED, CONVERTED, ['handle'])).toThrow(RefusedError);
+  });
+
+  it('treats CRLF and LF copies as identical', () => {
+    const crlf = CONVERTED.replace(/\n/g, '\r\n');
+    expect(compareFunctionsExact(FILE, CONVERTED, crlf, ['handle', 'POST']).every((v) => v.status === 'identical')).toBe(
+      true
+    );
+  });
+
+  it('fails on a one-character change inside a named function, and only for that function', () => {
+    const edited = CONVERTED.replace('return respond(400);', 'return respond(401);');
+    const verdicts = compareFunctionsExact(FILE, CONVERTED, edited, ['handle', 'POST']);
+    expect(verdicts.find((v) => v.name === 'handle')?.status).toBe('identical');
+    const post = verdicts.find((v) => v.name === 'POST');
+    expect(post?.status).toBe('differs');
+    expect(post?.diff).toContain('respond(401)');
+  });
+
+  it('fails on a log-only or comment-only edit inside a function (nothing is normalised)', () => {
+    const logEdit = CONVERTED.replace("'Lookup failed'", "'Lookup failed!'");
+    expect(compareFunctionsExact(FILE, CONVERTED, logEdit, ['handle'])[0].status).toBe('differs');
+    // The default mode would call the same edit identical; exact must not.
+    expect(compareFunctions(FILE, BASE, logEdit, ['handle'])[0].status).toBe('identical');
+
+    const commentEdit = CONVERTED.replace('  if (error) {', '  // added\n  if (error) {');
+    expect(compareFunctionsExact(FILE, CONVERTED, commentEdit, ['handle'])[0].status).toBe('differs');
+  });
+
+  it('reports a function missing on either side', () => {
+    const renamed = CONVERTED.replace('async function handle(', 'async function handle2(');
+    const verdicts = compareFunctionsExact(FILE, CONVERTED, renamed, ['handle', 'nope']);
+    expect(verdicts.map((v) => v.status)).toEqual(['missing-in-head', 'missing-in-base']);
+  });
+
+  it('ignores edits outside the named functions, including a changed leading comment', () => {
+    const documented = CONVERTED.replace('async function handle(', '/** new doc */\nasync function handle(');
+    const edited = `${documented}\nexport function added() { return 1; }\n`;
+    expect(compareFunctionsExact(FILE, CONVERTED, edited, ['handle', 'POST']).every((v) => v.status === 'identical')).toBe(
+      true
+    );
   });
 });

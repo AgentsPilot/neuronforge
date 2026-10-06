@@ -1,36 +1,36 @@
 /**
- * RD-9, settled (S-0): `check-free-tier-expiration` stays unscheduled, and
- * cannot be scheduled without first excluding Business OS payers.
+ * RD-9, made permanent (plan payments P-10, TK-3, decided by BQ-P8):
+ * `check-free-tier-expiration` is never scheduled, full stop, and its route
+ * writes nothing.
  *
  * ── The trap, in one paragraph ──────────────────────────────────────────────
- * The cron freezes accounts whose `free_tier_expires_at` has passed and who
- * never bought credits. Those are agent-platform ideas. A Business OS customer
- * paying $79 a month has never bought a credit and carries whatever
- * `free_tier_expires_at` their signup wrote — so the day this cron is scheduled,
- * it freezes **paying Business OS customers**. `account_frozen` is additionally
- * read by `generate-agent`, so the freeze is not cosmetic.
+ * The cron froze accounts whose `free_tier_expires_at` had passed and who
+ * never bought credits, and zeroed their balance. Those are agent-platform
+ * ideas. A Business OS customer paying $79 a month has never bought a credit
+ * and carries whatever `free_tier_expires_at` their signup wrote — so the day
+ * this cron ran, it would have frozen **paying Business OS customers**.
+ * `account_frozen` is read by `generate-agent` and `run-agent`, so the freeze
+ * is not cosmetic.
  *
- * It is harmless today only because nothing schedules it (F-16). That is a
- * property of a JSON file, held in place by nothing.
+ * ── What changed in P-10 ────────────────────────────────────────────────────
+ * S-0 wrote this suite to allow two safe states: unscheduled, or scheduled with
+ * a Business OS exclusion. BQ-P8 (2026-10-02) removed the second: the job stays
+ * off for good and `free_tier_expires_at` keeps its meaning. So:
  *
- * ── Why this is a test and not a note ───────────────────────────────────────
- * The plan asked for RD-9 to be recorded "where a future reader of
- * `vercel.json` will find it". `vercel.json` is JSON: it cannot carry a comment,
- * so there is nowhere in that file to write the warning. A comment in the route
- * would be read after the schedule was added, which is too late.
+ *   1. it may not appear in `vercel.json` at all (also enforced, with the
+ *      reason, by `PERMANENTLY_UNSCHEDULED_CRONS` in `lib/cron/bosCronJobs.ts`
+ *      and `lib/cron/__tests__/vercelCrons.test.ts`);
+ *   2. the route is an inert 410 whose source contains no table access, no
+ *      write and no `account_frozen: true` — so even a mistaken schedule
+ *      freezes nobody;
+ *   3. no other code writes `account_frozen = true`
+ *      (`lib/__tests__/accountFrozenWriters.guard.test.ts`).
  *
- * So the rule is executable. Adding the path to `vercel.json` fails this suite
- * until the route excludes Business OS accounts — and the failure message says
- * what to do. A reader who never opens this file still meets the rule, because
- * CI does.
- *
- * ── What this does NOT do ───────────────────────────────────────────────────
- * It does not decide TK-3 (S-4a), which chooses between replacing
- * `free_tier_expires_at`'s semantics and keeping RD-9 for ever. Either way the
- * rule below holds: whatever the field comes to mean, this cron may not freeze a
- * Business OS payer.
+ * `vercel.json` is JSON and cannot carry a comment, so the rule is executable:
+ * a reader who never opens this file still meets it, because CI does.
  *
  * @see docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md RD-9, F-17, TK-3
+ * @see docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md BQ-P8
  */
 
 import { readFileSync } from 'fs';
@@ -44,98 +44,56 @@ const vercelConfig = JSON.parse(readFileSync(join(process.cwd(), 'vercel.json'),
 };
 const routeSource = readFileSync(join(process.cwd(), ROUTE_FILE), 'utf8');
 
-/**
- * Does the route exclude Business OS accounts?
- *
- * The only honest signal is that it consults something that knows what a
- * Business OS account is. Anything else — a comment, a variable named
- * `skipBusinessOs` — is a claim rather than an exclusion.
- *
- * Two signals, and they are exhaustive because of a *different* guard. There is
- * a third way a route could reach entitlement state: importing the account-plan
- * repository from the repository barrel, which names neither string below. It is
- * deliberately not checked here, because RC-15
- * (`lib/repositories/__tests__/businessOsEntitlements.imports.guard.test.ts`)
- * forbids application code from naming those symbols at all — a cron that tried
- * it fails that suite rather than this one. So the third path cannot exist
- * silently. This comment exists because naming the symbol here tripped RC-15
- * on the first run, which is the guard working.
- */
-function excludesBusinessOsPayers(source: string): boolean {
-  // A MENTION is not an exclusion (QA observation). The first version of this
-  // accepted `source.includes('business_os_account_plans')`, which a comment
-  // reading "TODO: skip business_os_account_plans" satisfies — and a TODO is
-  // the single most likely thing to be sitting in a route somebody is about to
-  // schedule. So the table has to appear where it is being QUERIED, and the
-  // module where it is being IMPORTED.
-  const queriesThePlanTable = /\.from\(\s*['"`]business_os_account_plans['"`]\s*\)/.test(source);
-  const importsTheModule = /from\s+['"`][^'"`]*business-os\/entitlements[^'"`]*['"`]/.test(source);
-
-  return queriesThePlanTable || importsTheModule;
+/** Code only: comments may explain the old behaviour without tripping the rule. */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
-const scheduled = (vercelConfig.crons ?? []).some((cron) => cron.path === CRON_PATH);
+/** Everything that would let the route touch an account. Empty means inert. */
+function accountTouches(source: string): string[] {
+  // The secret check hashes with `createHash(...).update(...)`: a hash update,
+  // not a table write.
+  const code = stripComments(source).replace(/createHash\([^)]*\)\s*\.update\(/g, 'createHash().');
+  const found: string[] = [];
+  if (/account_frozen\s*:\s*true/.test(code)) found.push('account_frozen: true');
+  if (/\.(update|insert|upsert|delete)\s*\(/.test(code)) found.push('a table write');
+  if (/\.from\s*\(/.test(code)) found.push('a table access');
+  if (/\.rpc\s*\(/.test(code)) found.push('an RPC call');
+  if (/createClient|supabaseServer|supabaseAdmin/.test(code)) found.push('a database client');
+  return found;
+}
 
-describe('RD-9 — the free-tier expiration cron', () => {
-  it('is either unscheduled, or excludes Business OS payers — never scheduled and blind', () => {
-    // Written as one assertion on purpose: the two safe states are different,
-    // and the failure message should name which one is missing rather than
-    // reporting "expected false to be true" about a boolean nobody can read.
-    const state = scheduled
-      ? excludesBusinessOsPayers(routeSource)
-        ? 'scheduled, and excludes Business OS accounts'
-        : 'SCHEDULED WITHOUT EXCLUDING BUSINESS OS ACCOUNTS'
-      : 'unscheduled';
-
+describe('RD-9 — the free-tier expiration cron (permanent, BQ-P8)', () => {
+  it('is not scheduled in vercel.json, full stop', () => {
+    const scheduled = (vercelConfig.crons ?? []).filter((cron) => cron.path === CRON_PATH);
     expect({
       cron: CRON_PATH,
-      state,
+      scheduled: scheduled.length > 0,
       whatToDo:
-        state === 'SCHEDULED WITHOUT EXCLUDING BUSINESS OS ACCOUNTS'
-          ? `Remove ${CRON_PATH} from vercel.json, or make ${ROUTE_FILE} skip accounts with a Business OS plan row before it freezes anything. It freezes accounts that never bought credits — which is every paying Business OS customer.`
+        scheduled.length > 0
+          ? `Remove ${CRON_PATH} from vercel.json. BQ-P8 retired it for good: it freezes accounts that never bought credits, which is every paying Business OS customer.`
           : 'nothing',
-    }).toEqual({ cron: CRON_PATH, state, whatToDo: 'nothing' });
+    }).toEqual({ cron: CRON_PATH, scheduled: false, whatToDo: 'nothing' });
   });
 
-  it('records today: unscheduled, and still blind — so the schedule is the only thing protecting anyone', () => {
-    // Both halves of the current truth, asserted so a change to either is
-    // visible in a diff rather than discovered by a customer.
-    expect(scheduled).toBe(false);
-    expect(excludesBusinessOsPayers(routeSource)).toBe(false);
+  it('the route is inert: no table access, no write, no account_frozen: true, no database client', () => {
+    expect(accountTouches(routeSource)).toEqual([]);
+    expect(routeSource).toContain('status: 410');
   });
 
-  it('still reads the two fields that make it dangerous', () => {
-    // If these ever disappear, the hazard is gone and this guard should be
-    // revisited rather than left as folklore about a cron that no longer does
-    // anything. TK-3 may be what removes them.
-    expect(routeSource).toContain('free_tier_expires_at');
-    expect(routeSource).toContain('account_frozen');
-  });
-
-  it('the rule rejects the dangerous state — not just today\'s safe one', () => {
-    // The negative control. Without it this suite passes because the cron
-    // happens to be absent, which is a fact about `vercel.json` rather than a
-    // rule about it.
-    const blindRoute = "const { data } = await supabase.from('credits').select('free_tier_expires_at');";
-    const viaTheTable =
-      blindRoute + "\nconst plans = await supabase.from('business_os_account_plans').select('user_id');";
-    const viaTheModule = blindRoute + "\nimport { EntitlementService } from '@/lib/business-os/entitlements';";
-
-    expect(excludesBusinessOsPayers(blindRoute)).toBe(false);
-    // Both accepted signals, so neither half of the condition is dead code.
-    expect(excludesBusinessOsPayers(viaTheTable)).toBe(true);
-    expect(excludesBusinessOsPayers(viaTheModule)).toBe(true);
-
-    // And the reason the rule is not a substring search: each of these MENTIONS
-    // the right thing and excludes nobody. The first is the realistic one — a
-    // TODO left in a route that is then scheduled.
-    for (const decorative of [
-      blindRoute + "\n// TODO: skip accounts in business_os_account_plans",
-      blindRoute + "\nconst TABLE = 'business_os_account_plans';",
-      blindRoute + "\n/* see lib/business-os/entitlements for the plan model */",
-    ]) {
-      expect(excludesBusinessOsPayers(decorative)).toBe(false);
-    }
+  it('negative control: the old freezing body is caught', () => {
+    const freezing = [
+      'const { data } = await supabase',
+      "  .from('user_subscriptions')",
+      '  .update({ balance: 0, account_frozen: true })',
+      "  .eq('user_id', user.user_id);",
+    ].join('\n');
+    expect(accountTouches(freezing)).toEqual(['account_frozen: true', 'a table write', 'a table access']);
+    expect(accountTouches("const supabase = createClient(url, key);")).toEqual(['a database client']);
+    // Only a hash update is exempt, not a write chained after one.
+    expect(accountTouches("createHash('sha256').update(v); await db.update({ x: 1 });")).toEqual(['a table write']);
+    // A comment describing the old behaviour is not code.
+    expect(accountTouches('// it used to set account_frozen: true with .update(')).toEqual([]);
   });
 
   it('every other cron in vercel.json is left alone', () => {
