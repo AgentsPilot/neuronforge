@@ -675,3 +675,44 @@ describe('Slice 5b (FR-34, D-11): a champion friend invite is `valid`, with the 
     }
   });
 });
+
+describe('N-1 (N6, FR-42): the inviter will be told when the visitor joins', () => {
+  it.each(['en', 'he', 'es'] as const)('%s: the named line under the form, with the inviter name', async (language) => {
+    respond = () => ({ status: 200, body: { success: true, data: { ...validData, language } } });
+    render(<InvitePage />);
+    await screen.findByTestId('invite-signup');
+    expect(screen.getByTestId('invite-inviter-will-be-told')).toHaveTextContent(INVITE_PAGE_COPY[language].inviterWillBeTold('Dana'));
+  });
+
+  it.each(['AgentPilot', '  ', ''])('the platform fallback name (%j) gets the unnamed line', async (inviterDisplayName) => {
+    respond = () => ({ status: 200, body: { success: true, data: { ...validData, inviterDisplayName } } });
+    render(<InvitePage />);
+    await screen.findByTestId('invite-signup');
+    const line = screen.getByTestId('invite-inviter-will-be-told');
+    expect(line).toHaveTextContent(INVITE_PAGE_COPY.en.inviterWillBeToldUnnamed);
+    expect(line).not.toHaveTextContent('AgentPilot');
+  });
+
+  it('a signed-in visitor (no form) does not see it', async () => {
+    session.user = { id: 'user-1', email: 'someone@example.com' };
+    render(<InvitePage />);
+    await screen.findByTestId('invite-signed-in');
+    expect(screen.queryByTestId('invite-inviter-will-be-told')).not.toBeInTheDocument();
+  });
+
+  it.each(['expired', 'revoked', 'used', 'unavailable', 'existing_account'])('not shown on a %s invite', async (state) => {
+    respond = () => ({ status: 200, body: { success: true, data: { state, language: 'en', inviterDisplayName: 'Dana' } } });
+    render(<InvitePage />);
+    await screen.findByTestId(`invite-state-${state}`);
+    expect(screen.queryByTestId('invite-inviter-will-be-told')).not.toBeInTheDocument();
+  });
+
+  it('the copy, in all three languages', () => {
+    expect(INVITE_PAGE_COPY.en.inviterWillBeTold('Dana')).toBe("We'll let Dana know when you join.");
+    expect(INVITE_PAGE_COPY.he.inviterWillBeTold('Dana')).toBe('נעדכן את Dana כשתצטרפו.');
+    expect(INVITE_PAGE_COPY.es.inviterWillBeTold('Dana')).toBe('Avisaremos a Dana cuando te unas.');
+    expect(INVITE_PAGE_COPY.en.inviterWillBeToldUnnamed).toBe("We'll let the person who invited you know when you join.");
+    expect(INVITE_PAGE_COPY.he.inviterWillBeToldUnnamed).toBe('נעדכן את מי שהזמין אתכם כשתצטרפו.');
+    expect(INVITE_PAGE_COPY.es.inviterWillBeToldUnnamed).toBe('Avisaremos a quien te invitó cuando te unas.');
+  });
+});

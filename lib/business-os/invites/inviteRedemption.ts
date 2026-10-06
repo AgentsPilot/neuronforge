@@ -64,6 +64,13 @@ import 'server-only';
  * Both signup methods reach the friend path through the shared
  * `createAndFinish`, so I-1 to I-6 and FR-12a hold for friends by construction.
  *
+ * ── Telling the inviter (N-1) ───────────────────────────────────────────────
+ * After a successful finalise (champion or friend, code or Google), the
+ * issuer of the invite is emailed through `deps.notifyInviter`
+ * (`inviterNotification.ts`). The outcome is computed first and returned
+ * unchanged: the notification never throws, is capped at 4 s, and cannot fail
+ * or change the signup. Nothing is sent on any refusal or failure path.
+ *
  * Pure orchestration over injected dependencies, so every branch is testable.
  */
 
@@ -92,6 +99,8 @@ import type {
 import type { GoogleIdTokenVerification, VerifyGoogleIdToken } from './googleIdToken';
 import { isInForceChampion, type IssuerPlanReader } from './friendInviteOps';
 import { isInviteGrantAvailable } from './inviteOffer';
+import { INVITER_NOTIFICATION_POLICY } from './inviteEmailPolicy';
+import type { NotifyInviterInput } from './inviterNotification';
 import { deriveInviteState } from './inviteState';
 import { hashInviteToken, isWellFormedInviteToken } from './inviteToken';
 import {
@@ -197,6 +206,12 @@ export interface RedemptionDeps {
    * (SA R-1); returns the verified address or a fixed reason code only.
    */
   verifyGoogleIdToken: VerifyGoogleIdToken;
+  /**
+   * N-1: email the issuer that the invite was accepted. Never throws by
+   * contract, resolves within `INVITER_NOTIFICATION_POLICY.deadlineMs`; called
+   * through `notifyInviterSafely` all the same.
+   */
+  notifyInviter: (input: NotifyInviterInput) => Promise<unknown>;
   logger: RedemptionLogger;
 }
 
@@ -265,6 +280,9 @@ function refuse(
 }
 
 const NOT_RECOGNISED: Refusal = { ok: false, kind: 'not_recognised' };
+
+/** N-1: the most the signup ever waits on the inviter notification (its own deadline, plus a margin). */
+export const INVITER_NOTIFICATION_BACKSTOP_MS = INVITER_NOTIFICATION_POLICY.deadlineMs + 500;
 const TRY_AGAIN_LATER: Refusal = { ok: false, kind: 'unavailable_try_again' };
 
 // ── The shared checks ───────────────────────────────────────────────────────
@@ -789,7 +807,9 @@ async function finish(
     },
   });
   deps.logger.info({ inviteId: row.id, accountId }, 'Invite redeemed');
-  return { ok: true, email: row.email, accountId, inviteId: row.id, landing: 'onboarding' };
+  const outcome: CompleteSignupOutcome = { ok: true, email: row.email, accountId, inviteId: row.id, landing: 'onboarding' };
+  await notifyInviterSafely(row, outcome.landing, deps);
+  return outcome;
 }
 
 /**
@@ -861,7 +881,52 @@ async function finishFriend(
     },
   });
   deps.logger.info({ inviteId: row.id, accountId, level: done.level }, 'Friend invite redeemed; account held until payment');
-  return { ok: true, email: row.email, accountId, inviteId: row.id, landing: 'awaiting_payment' };
+  const outcome: CompleteSignupOutcome = { ok: true, email: row.email, accountId, inviteId: row.id, landing: 'awaiting_payment' };
+  await notifyInviterSafely(row, outcome.landing, deps);
+  return outcome;
+}
+
+/**
+ * N-1: tell the issuer, AFTER the outcome is fixed. Every id comes from the
+ * matched row (C-2). Whatever the notification does, the signup's outcome is
+ * the caller's, unchanged: a rejection is caught, and a notification that
+ * somehow outlived its own 4 s deadline is abandoned at a backstop just past
+ * it, so the signup response can never wait on it longer. Logged by invite id
+ * and error class only (never the error text, which could carry an address).
+ */
+async function notifyInviterSafely(
+  row: BusinessOsInviteRedemptionView,
+  landing: RedemptionLanding,
+  deps: RedemptionDeps
+): Promise<void> {
+  let backstop: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const abandoned = new Promise<void>((resolve) => {
+      backstop = setTimeout(resolve, INVITER_NOTIFICATION_BACKSTOP_MS);
+    });
+    const notifying = deps.notifyInviter({
+      event: 'accepted',
+      inviteId: row.id,
+      issuerKind: row.issuer_kind,
+      issuerAccountId: row.issuer_account_id,
+      issuerAdminId: row.issuer_admin_id ?? null,
+      inviteeEmail: row.email,
+      landing,
+    });
+    // A late rejection after the backstop must not become an unhandled one.
+    notifying.catch(() => undefined);
+    const first = await Promise.race([notifying.then(() => 'done' as const), abandoned.then(() => 'abandoned' as const)]);
+    if (first === 'abandoned') {
+      deps.logger.warn({ inviteId: row.id }, 'Inviter notification abandoned at the backstop; the signup is unaffected');
+    }
+  } catch (err) {
+    deps.logger.warn(
+      { inviteId: row.id, errName: err instanceof Error ? err.name : typeof err },
+      'Inviter notification failed; the signup is unaffected'
+    );
+  } finally {
+    clearTimeout(backstop);
+  }
 }
 
 /**

@@ -97,3 +97,33 @@ describe('findDefaultCurrency', () => {
     expect((result.error as Error & { code?: string }).code).toBe('42703');
   });
 });
+
+describe('findLanguage (N-1, N7: the inviter notification reads the recipient language)', () => {
+  it("reads only this user's language, at most one row", async () => {
+    const { client, calls } = recordingClient({ data: { language: 'he' }, error: null });
+    const result = await new BusinessProfileRepository(client).findLanguage(USER);
+
+    expect(result).toEqual({ data: 'he', error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_profiles'] },
+      { method: 'select', args: ['language'] },
+      { method: 'eq', args: ['user_id', USER] },
+      { method: 'maybeSingle', args: [] },
+    ]);
+  });
+
+  it.each([
+    ['no business row', null],
+    ['no language stored', { language: null }],
+  ])('is null (not a default) for %s', async (_label, data) => {
+    const { client } = recordingClient({ data, error: null });
+    expect(await new BusinessProfileRepository(client).findLanguage(USER)).toEqual({ data: null, error: null });
+  });
+
+  it('returns the database error', async () => {
+    const { client } = recordingClient({ data: null, error: { code: '42703', message: 'nope' } });
+    const result = await new BusinessProfileRepository(client).findLanguage(USER);
+    expect(result.data).toBeNull();
+    expect((result.error as Error & { code?: string }).code).toBe('42703');
+  });
+});
