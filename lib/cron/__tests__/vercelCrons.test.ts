@@ -23,6 +23,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { PERMANENTLY_UNSCHEDULED_CRONS, type PermanentlyUnscheduledCron } from '@/lib/cron/bosCronJobs';
 
 interface CronEntry {
   path: string;
@@ -83,5 +84,49 @@ describe('vercel.json crons (slice 5, part A)', () => {
 
   it('no path is scheduled twice', () => {
     expect(new Set(crons.map((c) => c.path)).size).toBe(crons.length);
+  });
+});
+
+/**
+ * Plan payments P-10 (TK-3, BQ-P8): jobs that may never be scheduled. The
+ * decision is data in the registry (`PERMANENTLY_UNSCHEDULED_CRONS`), because
+ * `vercel.json` cannot hold a comment; this suite is where it bites.
+ */
+function scheduledButForbidden(
+  config: CronEntry[],
+  forbidden: readonly PermanentlyUnscheduledCron[]
+): Array<{ path: string; reason: string }> {
+  return forbidden
+    .filter((job) => config.some((c) => c.path === job.path))
+    .map((job) => ({ path: job.path, reason: job.reason }));
+}
+
+describe('vercel.json never schedules a permanently unscheduled job (P-10, TK-3)', () => {
+  it('lists the free-tier freeze job, with its reason and decision date', () => {
+    const freeze = PERMANENTLY_UNSCHEDULED_CRONS.find((j) => j.path === '/api/cron/check-free-tier-expiration');
+    expect(freeze).toBeDefined();
+    expect(freeze?.reason).toMatch(/BQ-P8/);
+    expect(freeze?.decidedOn).toBe('2026-10-02');
+  });
+
+  it('none of them is in vercel.json (the failure prints why)', () => {
+    // Compared as data so a failure shows the path AND the reason it may not run.
+    expect(scheduledButForbidden(vercel.crons ?? [], PERMANENTLY_UNSCHEDULED_CRONS)).toEqual([]);
+  });
+
+  it('none of them is a scheduled Business OS job either', () => {
+    const bosPaths = new Set(BOS_CRONS.map((c) => c.path));
+    for (const job of PERMANENTLY_UNSCHEDULED_CRONS) expect(bosPaths.has(job.path)).toBe(false);
+  });
+
+  it('negative control: a config that schedules the freeze job is caught, with its reason', () => {
+    const tampered: CronEntry[] = [
+      ...BOS_CRONS,
+      { path: '/api/cron/check-free-tier-expiration', schedule: '0 2 * * *' },
+    ];
+    const caught = scheduledButForbidden(tampered, PERMANENTLY_UNSCHEDULED_CRONS);
+    expect(caught).toHaveLength(1);
+    expect(caught[0].path).toBe('/api/cron/check-free-tier-expiration');
+    expect(caught[0].reason).toMatch(/freeze paying customers/);
   });
 });
