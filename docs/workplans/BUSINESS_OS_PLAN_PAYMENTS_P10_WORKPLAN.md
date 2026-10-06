@@ -1,14 +1,14 @@
 # Workplan: Business OS Plan Payments, P-10 (Retire the rest of the Pilot-Credit purchase path, WS-3)
 
-> **Last Updated**: 2026-10-05
+> **Last Updated**: 2026-10-06
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): §9.1 P-10, §9.4 CF-3, §10.1 BQ-P8, SA-P5 (`billing_events` shape), SR-10. Reuse plan [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md): §4.6, §4.6b, TK-2, TK-3, TK-5, TK-6, RD-2, RD-9, RD-12, RD-15, RD-16, F-7, F-16 to F-20, F-28, L-7, L-9, L-23, L-26, L-33, L-35. Credits Boost [requirement](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md): FR-40, T-11, R-7.
 **Depends on:** P-1 merged (#188, done). `billing_events` live shape answered by the user on 2026-10-04 (C-4, done, §1.3).
 **Prior slices read:** [P-0](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md) (Connect characterisation harness, AST check), [P-1](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P1_WORKPLAN.md) (router, deny by default, what P-1 removed, SA Q-1), [Payment tables lockdown](/docs/workplans/PAYMENT_TABLES_WRITE_LOCKDOWN_WORKPLAN.md) (grant revoke pattern).
 **Date:** 2026-10-05
-**Branch:** `feature/bos-plan-payments-p10` (worktree `neuronforge-invite-s1`), on `origin/main` `f9448054`. Created by RM at kickoff. Changes stay **uncommitted** until the user has seen the diff.
-**Status:** P-10a Code Complete (2026-10-05), uncommitted, waiting for SA code review. P-10b not started (after P-10a merges). Evidence: [§16](#16-p-10a-implementation-and-evidence-log).
+**Branch:** `feature/bos-plan-payments-p10` (worktree `neuronforge-invite-s1`), on `origin/main` `f9448054`, **rebased 2026-10-06 onto `origin/main` `4c1b630a`** (§16.9). Created by RM at kickoff. Committed locally on the branch (not pushed) at the user's instruction of 2026-10-06.
+**Status:** P-10a Code Complete (2026-10-05); rebased on `main` and migration renumbered to 20261038 (2026-10-06), waiting for the SA re-check. P-10b not started (after P-10a merges). Evidence: [§16](#16-p-10a-implementation-and-evidence-log).
 
 ## Overview
 
@@ -556,7 +556,7 @@ All on `feature/bos-plan-payments-p10` at `f9448054`, **uncommitted** (user sees
 | C3 RD-9 guard | "Unscheduled, full stop"; route code (comments stripped) has no table access, no write, no RPC, no database client, no `account_frozen: true`. `createHash(...).update(` is exempted explicitly (the secret hash), with a negative control proving a real write after it is still caught |
 | C4 guards | `accountFrozenWriters` scans `app/ lib/ components/ hooks/ supabase/migrations/` (wider than planned: migrations and hooks added). `noPilotCreditTableReads` matches whole import statements (multi-line and dynamic too) |
 | D migration | As §5.3. See §16.6 for one deviation in the pre-check's shape |
-| Pino floor (`pinoLogging.guard`) | **Not lowered**: the route still has at least 134 log calls after losing five in `handleSubscriptionUpdated`, so the floor stays as it is |
+| Pino floor (`pinoLogging.guard`) | **Not lowered**: the route still has at least 134 log calls after losing five in `handleSubscriptionUpdated`, so the floor stays as it is. **Superseded after the rebase (2026-10-06): lowered to 133, see §16.9** |
 
 ### 16.2 Connect evidence (SR-10, C-3)
 
@@ -740,6 +740,28 @@ exports[`Stripe webhook, platform customer.subscription.updated (P-10) P10-1. le
 | G-2 | Migration apply (§5.5 steps 1–3, 5); fill C5 policy counts first | User |
 | G-3 | TK-5 hand-run step (§5.5 step 4), **only after P-10a is deployed**, with Q-6 values saved first | User |
 
+### 16.9 After the rebase on `main` (2026-10-06)
+
+The five P-10a commits were rebased from `f9448054` onto `origin/main` `4c1b630a` (31 commits, including Offir's `f0723d4d` "payments, insight and CRM work in progress"). All proofs below were re-run against the new `origin/main`.
+
+**Conflicts.** One, the known one: `app/api/stripe/create-checkout/route.ts`. `main` changed only two lines of that file (`import { platformOrigin } from '@/lib/utils/origins'` and `baseUrl = request.headers.get('origin') || platformOrigin()`), both inside the boost checkout body P-10a deletes. Resolved to P-10a's 410 version verbatim (`const { purchaseType } = parsed.data;`), so the import is gone too. The rebased file is byte-identical to the pre-rebase P-10a file. `lib/cron/bosCronJobs.ts` and `lib/cron/__tests__/vercelCrons.test.ts` merged cleanly: `main` added the 14th job (`stripe-settlement-gap`), P-10a appends `PERMANENTLY_UNSCHEDULED_CRONS` and its suite; neither touches the other's lines. (§1's "13 Business OS jobs" is as measured at `f9448054`; `main` now schedules 14.)
+
+**Migration renumbered 20261036 → 20261038.** `main` now holds `20261036_business_addresses_book.sql` and `20261037_business_addresses_ownership_fk.sql` (address book, PR #229). 20261038 was checked free on `main` and on every remote branch. Renamed: the migration and `supabase/SQL Scripts/20261038_purchase_path_tables_client_grants_rollback.sql`; updated: the migration test's two paths, this workplan, and the payments requirement (§9.1, §9.3 with a renumber note, Change History). The pre-check, the checker and `check-billing-events-db-writers.sql` never named the number. No guard lists migration numbers. The SA Review section and the 2026-10-05 history rows keep 20261036 as written on their date. The first commit's subject still says 20261036 (nothing is amended).
+
+**One interaction, fixed in its own commit.** `pinoLogging.guard` floor (at least 134 log calls in the webhook): `main` deleted the Connect booking guess in `handleConnectInvoicePaid` (141 → 138 calls) and P-10a deleted the minting in `handleSubscriptionUpdated` (141 → 136). Each alone passes; together the route has 133. Code was deleted, which is the case the floor's own comment allows, so the floor is now 133 with both deletions named in the comment.
+
+| Proof | Result |
+|---|---|
+| Connect harness, entry by entry vs `origin/main`'s snapshot | `main` 26 entries, branch 28. **All 26 byte-identical** (LF-normalised), including `main`'s rewritten 1b (*"invoice.paid with no booking_id is left unlinked — the booking is never guessed"*); the branch carries `main`'s new value, not P-0's. The 2 extra are P10-1 and P10-2, both new relative to `main`. SHA-256 over the 26 shared entries (sorted, name + body): `f1f8de62ce3852869cd25ca4853a6445ab34994252d3976a6c167d6cfbdeecc4` on both |
+| Connect 17 entries 1a–9c, §16.2 method | `main` `e3c1150e47dccb8cbff5f3d5d3d50606333407554da555e315043a8e16b96aa6` = branch `e3c1150e…6aa6`. (Changed from `77eaca41…ec3f` because of `main`'s 1b, not P-10a: the same method gives `77eaca41…` on `f9448054` and on pre-rebase P-10a) |
+| `check-logging-only-diff.ts --base origin/main --file app/api/stripe/webhook/route.ts --functions <17 names of §16.4> --exact` | **exit 0, all 17 identical** to `main`'s new text, including `handleConnectInvoicePaid` (so P-10a keeps Offir's no-guess change). `--functions handleSubscriptionUpdated --exact` reports `differs` with the intended diff. 18 top-level functions on both sides. `git diff origin/main` of the route: 5 hunks, all in `handleSubscriptionUpdated` and its JSDoc |
+| `main` did not touch P-10a's function | `--base f9448054 --head origin/main --exact`: `handleSubscriptionUpdated` and `handleCheckoutCompleted` identical; only `handleConnectInvoicePaid` differs. So §16.3's P10-1 *before* recording is still valid |
+| `npx jest app/api/stripe lib/stripe lib/services lib/business-os/billing lib/cron lib/__tests__ supabase/migrations/__tests__ app/api/cron --ci` | Before the floor fix: 89/90 suites, 1,910/1,911 (only the floor). After: **90 suites, 1,911 tests, 35 snapshots green** |
+| Scoped `tsc --noEmit` over the 23 changed TS files | **0 errors in changed files**; the same 64 pre-existing errors in transitively imported files, none touched |
+| `eslint` on the 23 changed TS files | 0 errors, the same 8 pre-existing warnings as §16.7 |
+
+**Offir's change and P-10a's surfaces.** Checked across all 31 new commits: no new reader or writer of `billing_events`, `boost_pack_purchases`, `subscription_invoices`, `processed_webhook_events` or `boost_packs` (every `.from()` on them is the same set as at `f9448054`; browser reads of `boost_packs` are still only the two billing components, which keep SELECT). No change to `CreditService`, `sync-subscription`, the freeze route, `user_subscriptions` writes or the Pilot-Credit path. The new `stripe-settlement-gap` cron and `StripeService.listPaidInvoices` are read-only and do not touch the revoked tables. Purge slices 3a/3b classify the four revoked tables `never` and run on the service role, so the grant revoke does not reach them. P-10a's `noPilotCreditTableReads` and `accountFrozenWriters` guards pass over the rebased tree.
+
 ---
 
 ## SA Review
@@ -872,3 +894,4 @@ scripts/__tests__/check-logging-only-diff.test.ts: 24 passed
 |---|---|---|
 | 2026-10-05 | Created (Dev) | P-10 workplan: TK-2 inventory confirmed against `f9448054`; TK-3 per BQ-P8 (freeze job inert and recorded in the cron registry, no `account_frozen` writer); TK-5 per FR-40 (boost checkout 410, kept); TK-6 already closed, guard added; `sync-subscription` closed (CF-3); migration 20261036 revoking browser grants on four purchase-path tables (plus `boost_packs` writes); split into P-10a (server) and P-10b (UI) |
 | 2026-10-05 | P-10a implemented (Dev) | Code complete, uncommitted, under SA C-1 to C-8: webhook status mirror, three 410 stubs, `StripeService` / `CreditService` deletions and Pino conversion, freeze job inert and permanently unscheduled, TK-6 and `account_frozen` writer guards, migration 20261036 with pre-check, checker, rollback and static test, `--exact` mode for the function-text check. Evidence in §16 (Connect 17 entries identical, `77eaca41…cbfec3f` before and after; P10-1 before-text kept). §3.4 C-8 note; §5.6 C-1 merge gate. Deviations D-1 to D-5 in §16.8 |
+| 2026-10-06 | Rebased on `main` `4c1b630a`; migration renumbered to 20261038 (Dev) | One conflict (`create-checkout`, resolved to P-10a's 410 version). 20261036/37 taken on `main` by the address book. Webhook log floor 134 → 133 (both sides deleted code). Proofs re-run against the new `main`: §16.9 |
