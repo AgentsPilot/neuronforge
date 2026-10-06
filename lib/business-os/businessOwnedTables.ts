@@ -182,6 +182,14 @@ export const USER_OWNED_TABLES: Record<string, string> = {
     'The commercial relationship with the person: their Business OS Stripe customer and plan ' +
     'subscription. Keyed to auth.users, not business_profiles, so it survives any business Reset ' +
     '(a Reset that removed it would orphan a subscription that keeps charging).',
+
+  // Credits boost slice 2a (NFR-12, F-11).
+  business_os_boost_purchases:
+    'Boost purchases of the account: what was bought, its price and Stripe references. Keyed to ' +
+    'auth.users, not business_profiles, so a business Reset cannot erase them.',
+
+  business_os_boost_cap_overrides:
+    "Admin changes to the account's boost purchase cap; follows the account for the same reason.",
   profiles: 'Account level.',
   plugin_connections: 'Account level — the user\'s own third-party credentials.',
   admin_users: 'Platform authorization.',

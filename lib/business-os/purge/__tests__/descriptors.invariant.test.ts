@@ -704,7 +704,8 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
 
   it('the baseline count matches its levels, and covers the SC-8 additions', () => {
     expect(Object.keys(baseline.levels).length).toBe(baseline.count);
-    expect(baseline.count).toBe(144);
+    // 144 -> 146: credits boost slice 2a adds business_os_boost_purchases and business_os_boost_cap_overrides (both never).
+    expect(baseline.count).toBe(146);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {
