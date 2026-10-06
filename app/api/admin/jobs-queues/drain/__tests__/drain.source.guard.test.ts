@@ -14,6 +14,14 @@
  *   S-8 the five cron routes keep their secret, run record and time limit, and
  *       grew no admin bypass
  *   S-9 BL-7a's lead route is not imported
+ *   S-10 (slice 7c) the one other service importer on the admin path,
+ *       lib/admin/jobs/reminderRetryTime.ts, reaches exactly one member,
+ *       `paymentReminderService.nextSendableAt(`, and nothing that sends
+ *
+ * Amended by ADMIN_BOS_CLEANUP slice 7c (SA OP-3, W7C-7), narrowly: the W7D-5
+ * importer set grows from exactly [runQueueDrain.ts] to exactly
+ * [runQueueDrain.ts, reminderRetryTime.ts], and S-10 pins the new importer to
+ * its one side-effect-free call. S-1 and S-3..S-9 are unchanged.
  */
 
 import * as fs from 'fs';
@@ -22,6 +30,8 @@ import * as path from 'path';
 const ROOT = process.cwd();
 const ROUTE = 'app/api/admin/jobs-queues/drain/route.ts';
 const RUNNER = 'lib/admin/jobs/runQueueDrain.ts';
+/** Slice 7c (OP-3): the admin retry's sending-hours helper. */
+const RETRY_TIME = 'lib/admin/jobs/reminderRetryTime.ts';
 
 const read = (relative: string) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
 
@@ -105,7 +115,7 @@ describe('Drain now source guard', () => {
     expect(route).toMatch(/await runQueueDrain\(queue\)/);
   });
 
-  it('S-2 / W7D-5 runQueueDrain.ts is the only importer of the five service modules on the admin path', () => {
+  it('S-2 / W7D-5 (amended 7c) runQueueDrain.ts and reminderRetryTime.ts are the only importers of the five service modules on the admin path', () => {
     const importers: string[] = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
@@ -127,7 +137,7 @@ describe('Drain now source guard', () => {
       }
     };
     for (const dir of ['app/api/admin', 'lib/admin', 'app/admin']) walk(dir);
-    expect([...new Set(importers)]).toEqual([RUNNER]);
+    expect([...new Set(importers)].sort()).toEqual([RETRY_TIME, RUNNER].sort());
   });
 
   it.each([
@@ -185,5 +195,50 @@ describe('Drain now source guard', () => {
     for (const code of [route, runner]) {
       for (const { spec } of importsOf(code)) expect(spec).not.toMatch(/business-os\/leads/);
     }
+  });
+
+  describe('S-10 (slice 7c, OP-3) reminderRetryTime.ts reaches one side-effect-free member, and nothing else', () => {
+    const helper = codeOf(read(RETRY_TIME));
+    const SEND_PATH_NAMES = [
+      'processDueReminders',
+      'processOverdueItems',
+      'billDueDatedStages',
+      'markAllOverdueInvoices',
+      'sendReminder',
+      'scheduleReminder',
+      'emitPaymentEvent',
+      'PaymentEventService',
+      'CRON_SECRET',
+      '/api/cron',
+    ];
+
+    it('its runtime imports are exactly server-only and paymentReminderService', () => {
+      const runtime = importsOf(helper).filter((i) => !i.typeOnly);
+      expect(runtime.map((i) => `${i.spec}:${i.names.join(',')}`).sort()).toEqual(
+        ['@/lib/services/PaymentReminderService:paymentReminderService', 'server-only:'].sort()
+      );
+    });
+
+    it('it makes exactly one member access on the service, and it is .nextSendableAt(', () => {
+      expect(helper.match(/paymentReminderService\s*\./g)).toHaveLength(1);
+      expect(helper.match(/paymentReminderService\s*\.\s*(\w+)/)?.[1]).toBe('nextSendableAt');
+      expect(helper).not.toMatch(/paymentReminderService\s*\[/);
+    });
+
+    it('it names nothing on the send path, the cron secret or a cron URL', () => {
+      for (const name of SEND_PATH_NAMES) expect(helper).not.toContain(name);
+      for (const name of FORBIDDEN_NAMES) expect(helper).not.toContain(name);
+    });
+
+    it('it returns the promise: never fired and forgotten', () => {
+      expect(helper).toMatch(/return paymentReminderService\.nextSendableAt\(ownerUserId, now\);/);
+      expect(helper).not.toMatch(/void\s+paymentReminderService/);
+      expect(helper).not.toMatch(/nextSendableAt\([^)]*\)\s*\.(then|catch)\(/);
+    });
+
+    it('no direct table or RPC access', () => {
+      expect(helper).not.toMatch(/\.from\(/);
+      expect(helper).not.toMatch(/\.rpc\(/);
+    });
   });
 });

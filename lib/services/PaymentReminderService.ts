@@ -1418,6 +1418,18 @@ export class PaymentReminderService {
   // ==================== CONFIGURATION ====================
 
   /**
+   * The soonest moment a reminder for this business may go out, for a desired
+   * time: exactly the rule `sendableAt` applies when a reminder is scheduled
+   * (08:00–20:00 where the business is). Public for the admin retry of one
+   * failed reminder (ADMIN_BOS_CLEANUP slice 7c, SA C7-8): reuse the rule,
+   * never copy the window. Reads the business's zone only; writes, sends and
+   * emits nothing.
+   */
+  async nextSendableAt(userId: string, desired: Date): Promise<Date> {
+    return new Date(await this.sendableAt(desired, userId));
+  }
+
+  /**
    * Get user's reminder configuration
    */
   /**

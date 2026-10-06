@@ -11,7 +11,9 @@
  * on the server by the shared eligibility function. Slice 7b: a row marked
  * cancellable renders the CancelQueueItemDialog trigger in its Cancellable
  * cell; that dialog owns the one POST, and `onChanged` refreshes the page
- * after it. Re-send comes with 7c. Pinned by
+ * after it. Slice 7c: a row marked re-sendable renders the
+ * RetryQueueItemDialog trigger in its Re-send cell, with the "until …" words
+ * under it; that dialog owns its own one POST. Pinned by
  * app/admin/__tests__/jobsQueues.source.guard.test.ts.
  *
  * It renders only what the route sent: fixed labels, the platform's status
@@ -34,6 +36,7 @@ import { useEffect, useState } from 'react';
 import { createLogger } from '@/lib/logger';
 import { ageWords, formatUtc } from './jobsFormat';
 import { CancelQueueItemDialog } from './CancelQueueItemDialog';
+import { RetryQueueItemDialog } from './RetryQueueItemDialog';
 import type { BosQueueId } from '@/lib/cron/bosCronJobs';
 import type { QueueItemState, QueueItemView, QueueItemsView } from '@/lib/admin/jobs/jobsQueuesTypes';
 
@@ -101,6 +104,9 @@ function resendWords(queueId: BosQueueId, item: QueueItemView): string {
       return 'no: never re-sent on this queue';
     case 'no_due_time':
       return 'no: no due time recorded';
+    case 'retry_held':
+      // Slice 7c, SA fallback (b): lead-reply retry switched off until BL-7a(2) is live.
+      return 'no: paused on this queue for now';
     default:
       return item.cancel.allowed === false && item.cancel.code === 'leased' ? leasedWords(item) : 'no';
   }
@@ -212,8 +218,8 @@ export function QueueItemsPanel({
       className="mt-2 space-y-2 rounded-lg border border-slate-700 bg-slate-900/60 p-3"
     >
       <p className="text-xs text-slate-400">
-        Items marked cancellable can be closed from their row; re-sending comes in a later release. Failed items keep
-        no failure time, so their age is counted {ageAnchorSentence(queueId)}.
+        Items marked cancellable can be closed from their row, and items with a re-send window can be retried from
+        theirs. Failed items keep no failure time, so their age is counted {ageAnchorSentence(queueId)}.
       </p>
 
       <div role="group" aria-label="Item state" className="flex flex-wrap gap-1">
@@ -272,7 +278,19 @@ export function QueueItemsPanel({
                   <td className="py-1 pr-3">{dueWords(item)}</td>
                   <td className="py-1 pr-3">{item.attempts}</td>
                   <td className="py-1 pr-3">{ageText(item)}</td>
-                  <td className="py-1 pr-3">{resendWords(queueId, item)}</td>
+                  <td className="py-1 pr-3">
+                    {item.retry.allowed ? (
+                      <RetryQueueItemDialog
+                        queueId={queueId}
+                        queueLabel={queueLabel}
+                        item={item}
+                        windowNote={resendWords(queueId, item)}
+                        onChanged={onChanged}
+                      />
+                    ) : (
+                      resendWords(queueId, item)
+                    )}
+                  </td>
                   <td className="py-1">
                     {item.cancel.allowed ? (
                       <CancelQueueItemDialog queueId={queueId} queueLabel={queueLabel} item={item} onChanged={onChanged} />
