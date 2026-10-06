@@ -46,6 +46,13 @@
  *   --functions a,b      compare only these top-level functions, one verdict each
  *                        (used to prove named functions are unchanged by a later
  *                        slice that edits the same file)
+ *   --exact              with --functions only: compare the named functions'
+ *                        source text exactly (line endings aside), with NO
+ *                        logging normalisation. Comments inside a function count.
+ *                        Because nothing is normalised, the P0-C3 refusal does
+ *                        not apply, so it works on a base that already uses
+ *                        `log` (plan payments P-10, SA Q-8 / P10-C5). The
+ *                        default mode is unchanged.
  *
  * Exit codes: 0 identical, 1 differs (or a named function is missing), 2 refused
  * or bad usage.
@@ -432,6 +439,43 @@ export function compareFunctions(
   });
 }
 
+/** Source text of every named top-level function, as written (no normalisation). */
+function exactFunctions(sf: ts.SourceFile): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const statement of sf.statements) {
+    const name = topLevelName(statement);
+    if (name) out.set(name, statement.getText(sf));
+  }
+  return out;
+}
+
+/**
+ * `--exact` mode: one verdict per named top-level function, by plain text
+ * equality. Leading comments (JSDoc) are outside the compared text; comments
+ * inside the function are part of it. Line endings are normalised to LF so a
+ * Windows checkout does not read as a change.
+ */
+export function compareFunctionsExact(
+  fileName: string,
+  baseText: string,
+  headText: string,
+  names: string[]
+): FunctionVerdict[] {
+  const lf = (s: string) => s.replace(/\r\n/g, '\n');
+  const base = exactFunctions(parse(fileName, lf(baseText)));
+  const head = exactFunctions(parse(fileName, lf(headText)));
+
+  return names.map((name) => {
+    const b = base.get(name);
+    const h = head.get(name);
+    if (b === undefined) return { name, status: 'missing-in-base', diff: '' };
+    if (h === undefined) return { name, status: 'missing-in-head', diff: '' };
+    return b === h
+      ? { name, status: 'identical', diff: '' }
+      : { name, status: 'differs', diff: lineDiff(b, h) };
+  });
+}
+
 // ─── CLI ────────────────────────────────────────────────────────────────────
 
 function readArg(args: string[], flag: string): string | undefined {
@@ -457,9 +501,12 @@ function main(): void {
   const file = readArg(args, '--file');
   const headRef = readArg(args, '--head');
   const functions = readArg(args, '--functions');
+  const isExact = args.includes('--exact');
 
-  if (!baseRef || !file) {
-    process.stderr.write('Usage: check-logging-only-diff --base <ref> --file <path> [--head <ref>] [--functions a,b]\n');
+  if (!baseRef || !file || (isExact && !functions)) {
+    process.stderr.write(
+      'Usage: check-logging-only-diff --base <ref> --file <path> [--head <ref>] [--functions a,b [--exact]]\n'
+    );
     process.exit(2);
   }
 
@@ -471,8 +518,11 @@ function main(): void {
   try {
     if (functions) {
       const names = functions.split(',').map((s) => s.trim()).filter(Boolean);
-      const verdicts = compareFunctions(relFile, baseText, headText, names);
-      process.stdout.write(`Functions in ${relFile}, ${baseRef} vs ${headLabel} (logging normalised):\n`);
+      const verdicts = isExact
+        ? compareFunctionsExact(relFile, baseText, headText, names)
+        : compareFunctions(relFile, baseText, headText, names);
+      const mode = isExact ? 'exact text' : 'logging normalised';
+      process.stdout.write(`Functions in ${relFile}, ${baseRef} vs ${headLabel} (${mode}):\n`);
       for (const v of verdicts) {
         process.stdout.write(`  ${v.status.padEnd(16)} ${v.name}\n`);
         if (v.diff) process.stdout.write(`${v.diff}\n`);
