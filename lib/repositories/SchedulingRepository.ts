@@ -187,6 +187,9 @@ export interface SchedulingBooking {
     responses: Record<string, unknown>;
   } | null;
   intake_completed_at: string | null;
+  /** A package's meeting: its purchase, and which of the N it is. See the insert type. */
+  parent_booking_id?: string | null;
+  occurrence_number?: number | null;
   created_at: string;
   updated_at: string;
   // Contact data from JOIN (populated by repository when using findById/list with JOIN)
@@ -227,6 +230,16 @@ export interface SchedulingBookingInsert {
   notes?: string | null;
   internal_notes?: string | null;
   booking_source?: string;
+  /**
+   * A PACKAGE: the purchase this meeting belongs to, and which meeting it is.
+   *
+   * Set together or not at all. The container — the purchase itself — has
+   * neither, which is what makes `parent_booking_id IS NULL` mean "a purchase"
+   * for every reader that counts them. See
+   * supabase/migrations/20261001_package_sessions.sql.
+   */
+  parent_booking_id?: string | null;
+  occurrence_number?: number | null;
 }
 
 export interface SchedulingBookingUpdate {
@@ -549,6 +562,63 @@ export class SchedulingServiceRepository {
   }
 
   /**
+   * What this business publicly sells — one answer, for every public surface.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS EXISTS ALONGSIDE `listAll(userId, true)`
+   *
+   * Four public routes answered this question and only the three website ones
+   * went through `BOOKABLE`; `website/booking/availability` and both conversion
+   * routes each repeated `.eq('is_active', true).eq('status', 'active')` by hand.
+   * All four happened to agree, which is the dangerous kind of correct: the
+   * constant exists precisely so the next surface cannot pick one flag and
+   * forget the other, and three surfaces bypassed it. They also disagreed on
+   * ORDER — `service_name` on one, `created_at` ascending on two, descending on
+   * `listAll` — so the same catalogue came back in three different sequences.
+   *
+   * NOT `listAll`, which selects `*`. These rows are returned to anonymous
+   * visitors, and the table carries `ai_suggestions`, `source`, `availability`,
+   * `max_bookings_per_day` and the booking-window settings — internal fields the
+   * public routes deliberately never sent. Pointing them at `listAll` would have
+   * unified the filter by widening the payload, which is a worse trade than the
+   * duplication it removed.
+   *
+   * So: the same rule, and exactly the columns the four public callers already
+   * used between them — `toServiceCard` reads `is_active`, so it stays; `status`
+   * was selected by one route and read by none, so it does not.
+   *
+   * WHICH SERVICES a given surface then shows is still its own business: a smart
+   * link excludes (`servicesForLink`), a landing page names one, a services
+   * block hides. That narrowing is correct and stays where it is. This is only
+   * the base set it narrows FROM.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  static readonly PUBLIC_COLUMNS =
+    'id, service_name, description, duration_minutes, price, currency, ' +
+    'is_active, is_scheduled, collection, sale_mode';
+
+  async listBookable(userId: string): Promise<SchedulingRepositoryResult<SchedulingService[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_services')
+        .select(SchedulingServiceRepository.PUBLIC_COLUMNS)
+        .eq('user_id', userId)
+        .match(SchedulingServiceRepository.BOOKABLE)
+        // Alphabetical, because a client is scanning a list rather than reading a
+        // changelog — and one order, so the same catalogue reads the same way on
+        // every surface.
+        .order('service_name', { ascending: true });
+
+      if (error) throw error;
+
+      return { data: (data || []) as unknown as SchedulingService[], error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to list bookable services');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Update service
    */
   async update(
@@ -856,7 +926,13 @@ export class SchedulingBookingRepository {
           payment_status: booking.payment_status || 'pending',
           notes: booking.notes,
           internal_notes: booking.internal_notes,
-          booking_source: booking.booking_source || 'manual'
+          booking_source: booking.booking_source || 'manual',
+          // Null on every ordinary booking, which is all of them but a
+          // package's meetings. Listed explicitly because this payload is
+          // built field by field: a column not named here is a column the
+          // caller cannot write, however well the type describes it.
+          parent_booking_id: booking.parent_booking_id ?? null,
+          occurrence_number: booking.occurrence_number ?? null
         })
         .select()
         .single();
@@ -973,7 +1049,21 @@ export class SchedulingBookingRepository {
           service:scheduling_services(service_name)
         `)
         .eq('user_id', userId)
-        .in('status', ['confirmed', 'completed'])
+        /*
+         * CONFIRMED ONLY. "Next" means one the owner still has to attend.
+         *
+         * `completed` used to be in this list, and a booking can carry that
+         * status while still in the future — the owner marks a session done
+         * ahead of time, or a recurring series pre-marks its first occurrence.
+         * The morning briefing then told an owner their next appointment was on
+         * Sunday the 4th, about a session already recorded as finished, and
+         * they could see it was wrong.
+         *
+         * `summariseAppointments` makes the same distinction for today's
+         * bookings and documents it at length: a session cannot have finished
+         * before it began. This is that rule applied to tomorrow's.
+         */
+        .eq('status', 'confirmed')
         .gte('start_time', afterUtc)
         .order('start_time', { ascending: true })
         .limit(1)
@@ -1033,9 +1123,10 @@ export class SchedulingBookingRepository {
         .select(`
           *,
           contact:crm_contacts(first_name, last_name, email, phone),
-          service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency, sale_mode),
+          service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency, sale_mode, is_scheduled),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
-          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at)
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at),
+          planPeriods:payment_plan_installments!payment_plan_installments_booking_id_fkey(id, installment_number, amount, currency, status, trigger, due_date, paid_at, invoice_id, label)
         `)
         .eq('user_id', userId);
 
@@ -1379,6 +1470,40 @@ export class SchedulingBookingRepository {
   /**
    * Delete booking
    */
+  /**
+   * The meetings a PACKAGE bought, in the order they were sold.
+   *
+   * `occurrence_number` carries that order, so the caller never sorts: the
+   * drawer, the calendar and the confirmation email all show "session 3 of 6"
+   * and must agree about which one that is.
+   *
+   * Scoped by `user_id` as well as the parent (CLAUDE.md rule 4): a parent id
+   * is a guess away from another business's package.
+   */
+  async findChildren(
+    parentBookingId: string,
+    userId: string
+  ): Promise<SchedulingRepositoryResult<SchedulingBooking[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_bookings')
+        .select('id, start_time, end_time, status, occurrence_number')
+        .eq('parent_booking_id', parentBookingId)
+        .eq('user_id', userId)
+        .order('occurrence_number', { ascending: true });
+
+      if (error) throw error;
+
+      return { data: (data || []) as unknown as SchedulingBooking[], error: null };
+    } catch (error) {
+      logger.error(
+        { err: error, parentBookingId, userId },
+        'Failed to read the meetings of a package'
+      );
+      return { data: null, error: error as Error };
+    }
+  }
+
   async delete(
     id: string,
     userId: string

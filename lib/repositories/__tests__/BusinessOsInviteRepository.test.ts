@@ -494,6 +494,8 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
     );
     // Slice 5b: the friend issuer, for the in-force champion re-check (T-19).
     expect(BUSINESS_OS_INVITE_REDEMPTION_COLUMNS.split(', ')).toContain('issuer_account_id');
+    // N-1: the issuing admin, so that admin can be told the invite was accepted (server-side only).
+    expect(BUSINESS_OS_INVITE_REDEMPTION_COLUMNS.split(', ')).toContain('issuer_admin_id');
   });
 
   it('issueSignupCode: CAS on the observed send count AND last-sent time, pending, unexpired, no live claim; resets attempts', async () => {

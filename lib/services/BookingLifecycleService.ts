@@ -41,13 +41,16 @@ import {
   type SchedulingService,
   type SchedulingRepositoryResult,
 } from '@/lib/repositories/SchedulingRepository';
+import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { OPEN_PROPOSAL_STATUSES } from '@/lib/repositories/ProposalRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
 import { BookingEmailService, getBusinessTimezone } from '@/lib/services/BookingEmailService';
-import { businessDateKey } from '@/lib/scheduling/businessTime';
+import { businessDateKey, businessHhmm, safeTimezone } from '@/lib/scheduling/businessTime';
+import { closedDayVerdict } from '@/lib/scheduling/closedDay';
+import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import {
   paymentInvoiceRepository,
   paymentTransactionRepository,
@@ -61,6 +64,14 @@ import { voidInvoice } from '@/lib/payments/invoiceLifecycle';
 import { bookingPaymentState } from '@/lib/payments/bookingPaymentState';
 import { SERVICE_DATE_TERMS } from '@/lib/payments/invoiceTerms';
 import { isPlanStopped, PLAN_STOPPED_STATUSES } from '@/lib/payments/planStatus';
+import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
+import { isInstallmentPlan } from '@/lib/payments/PaymentPlanService';
+import { planStartDate } from '@/lib/payments/planSchedule';
+import {
+  paymentPlanRepository,
+  type InstallmentFrequency,
+} from '@/lib/repositories/PaymentPlanRepository';
+import { termsValueForDays } from '@/lib/payments/paymentTerms';
 
 const logger = createLogger({ service: 'BookingLifecycleService' });
 const auditTrail = AuditTrailService.getInstance();
@@ -99,6 +110,20 @@ export interface CancelBookingParams {
   cancelReason?: string | null;
   cancelNote?: string | null;
   cancelledBy?: CancelledBy | null;
+  /**
+   * Cancel the meetings this purchase bought, for a package. Default true.
+   *
+   * Set false when cancelling one of those meetings, which owns none of its
+   * own: the model is a purchase and its sessions, and nothing below that.
+   */
+  cascadeToMeetings?: boolean;
+  /**
+   * Tell the client. Default true.
+   *
+   * False only when something else is telling them: a package's meetings are
+   * cancelled silently and the purchase sends one email naming every date.
+   */
+  notifyClient?: boolean;
   /**
    * Whether the owner's note reaches the client's email.
    *
@@ -149,6 +174,22 @@ export interface CancelBookingOutcome {
   booking: SchedulingBooking;
   calendarEventRemoved: boolean;
   clientNotified: boolean;
+  /**
+   * A PACKAGE's meetings, cancelled with it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Cancelling the purchase used to leave them standing: six confirmed
+   * appointments in the diary and six live stages, for a block the owner had
+   * just called off. Nothing cascades on a status change the way `ON DELETE`
+   * does on a delete, and the stages hang off the MEETINGS rather than the
+   * purchase, so neither half of the money was reached either.
+   *
+   * Each meeting is cancelled as a booking in its own right, so each voids its
+   * own unpaid invoice, closes its own stage, clears its own calendar event and
+   * tells the client about its own date. Zero for an ordinary booking.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  meetingsCancelled: number;
   /** Unpaid invoices moved to `cancelled`, so nothing chases them any more. */
   invoicesCancelled: number;
   /**
@@ -236,6 +277,71 @@ export async function cancelBooking(
     { bookingId, userId, reason, cancelReason: params.cancelReason ?? null, cancelledBy: params.cancelledBy ?? null },
     'Cancelling booking'
   );
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PACKAGE'S MEETINGS GO WITH IT.
+   *
+   * Cancelling the purchase used to leave six confirmed appointments in the
+   * diary and six live stages: nothing cascades on a status change, and the
+   * stages hang off the MEETINGS rather than the purchase, so neither half of
+   * the money was reached.
+   *
+   * FIRST, before the purchase itself. A failure then leaves the purchase open
+   * with some of its meetings cancelled — recoverable and visible — where the
+   * other order leaves a cancelled purchase whose appointments are all still
+   * live and still reminding the client.
+   *
+   * Each meeting is cancelled as a booking in its own right, which is what
+   * makes this correct rather than a loop of status writes: it voids that
+   * meeting's unpaid invoice, closes its stage, clears its calendar event and
+   * tells the client about its own date, with its own reason.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  let meetingsCancelled = 0;
+
+  /*
+   * ONE LEVEL, AND ONLY ONE.
+   *
+   * A meeting owns no meetings — the model has a purchase and its sessions, and
+   * nothing below that — so a cancellation reaching this point from the loop
+   * below must not go looking again. Stated as a parameter rather than left to
+   * the query returning nothing: a row whose parent pointed at itself, or a
+   * pair pointing at each other, would otherwise recurse until the process
+   * died. It did, in the first version of this.
+   */
+  const { data: meetings } = params.cascadeToMeetings === false
+    ? { data: [] as SchedulingBooking[] }
+    : await schedulingBookingRepository.findChildren(bookingId, userId);
+
+  for (const meeting of meetings ?? []) {
+    if (meeting.status === 'cancelled' || meeting.status === 'completed') continue;
+
+    const child = await cancelBooking({
+      ...params,
+      bookingId: meeting.id,
+      // A meeting owns no meetings. See the note above.
+      cascadeToMeetings: false,
+      /*
+       * Silently: the purchase sends ONE email below, listing every date. Six
+       * separate cancellations arriving together is six times the alarm for one
+       * piece of news, and leaves the client working out whether anything
+       * survived.
+       */
+      notifyClient: false,
+      logger: log,
+    });
+
+    if (child.error) {
+      log.error(
+        { err: child.error, bookingId, meetingId: meeting.id },
+        'A package meeting could not be cancelled; the purchase is left open'
+      );
+      return { data: null, error: child.error };
+    }
+
+    meetingsCancelled += 1;
+  }
 
   const result = await schedulingBookingRepository.cancel(bookingId, userId, reason, {
     code: params.cancelReason ?? null,
@@ -476,12 +582,46 @@ export async function cancelBooking(
   try {
     const { data: closed } = await supabaseServer
       .from('payment_plan_installments')
-      .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
+      .update({
+        status: 'cancelled',
+        /*
+         * THE REASON TRAVELS HERE TOO.
+         *
+         * ───────────────────────────────────────────────────────────────────
+         * It already travels to the proposal a few lines below — "one
+         * namespace, so the booking's cancel code is a valid stop code, and a
+         * report counting `client_not_paying` finds both". The periods closed
+         * by this very statement were the one thing left out, so a plan
+         * stopped THIS way recorded nothing countable while the same plan
+         * stopped from Manage Payment recorded a code, a note and an owner.
+         *
+         * The columns are the same three every other cancellation surface uses
+         * (20260930_installment_cancel_reason), which is what lets one report
+         * union them without a translation layer.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        cancel_reason: params.cancelReason ?? null,
+        cancel_note: params.cancelNote ?? null,
+        cancelled_by: params.cancelledBy ?? 'owner',
+        cancelled_at: new Date().toISOString(),
+        next_retry_at: null,
+        updated_at: new Date().toISOString(),
+      })
       .eq('user_id', userId)
       .eq('booking_id', bookingId)
-      // Only what has not happened. A paid stage is a record of money that
-      // arrived and is never rewritten.
-      .eq('status', 'pending')
+      /*
+       * Everything not settled, not just `pending`.
+       *
+       * A stage that had been BILLED — an invoice raised, nobody paid — stayed
+       * open on a cancelled booking, because this matched only `pending`. The
+       * invoices are cancelled a few statements above, so the stage was left
+       * disagreeing with its own invoice: "billed" on a booking that is off.
+       *
+       * `paid` is never rewritten; it records money that arrived. Same rule as
+       * `cancelQuoteStages` and `stopBookingPlan`, so the three ways of calling
+       * work off leave the same state behind.
+       */
+      .not('status', 'in', '(paid,cancelled)')
       .is('subscription_id', null)
       .select('id');
 
@@ -592,7 +732,108 @@ export async function cancelBooking(
   const meetingStillAhead = !booking.start_time || new Date(booking.start_time) > new Date();
 
   let clientNotified = false;
-  if (!meetingStillAhead) {
+  if (params.notifyClient === false) {
+    // Something else is telling them — see `notifyClient`.
+    log.info({ bookingId }, 'Cancellation email suppressed by the caller');
+  } else if (meetingsCancelled > 0) {
+    /*
+     * ONE EMAIL FOR THE WHOLE BLOCK, listing every date that is now off.
+     *
+     * The purchase has no hour of its own, so a cancellation about it alone
+     * would name no date — and one per meeting is six times the alarm for one
+     * piece of news. The meetings were cancelled silently above; this is where
+     * the client is told, once, with the list.
+     *
+     * Sent from the FIRST cancelled meeting, because the email needs a booking
+     * to read the service, the client and the brand from, and that meeting is
+     * one of the things being cancelled. The dates come from all of them.
+     */
+    const cancelledMeetings = (meetings ?? [])
+      .filter(meeting => meeting.status !== 'completed' && meeting.status !== 'cancelled')
+      .filter(meeting => Boolean(meeting.start_time));
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * WHAT TOOK PLACE, AND WHAT IT CAME TO.
+     *
+     * A block of six cancelled after two is not six cancellations. The client
+     * has had two sessions and paid for them, and an email naming only the four
+     * that are off reads as though the whole thing was undone — which is the
+     * version a dispute would be argued from.
+     *
+     * The money matters even more. The figures above are read from the
+     * PURCHASE, and on a package billed per session the money sits on each
+     * MEETING's invoice — so the email would have told a client who had paid
+     * for two sessions that nothing was ever collected. Summed across the whole
+     * package instead: the purchase and every one of its meetings.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const heldMeetings = (meetings ?? [])
+      .filter(meeting => meeting.status === 'completed')
+      .filter(meeting => Boolean(meeting.start_time));
+
+    for (const meeting of meetings ?? []) {
+      try {
+        const { data: meetingInvoices } = await paymentInvoiceRepository.findByBookingId(
+          meeting.id,
+          userId
+        );
+
+        const { data: meetingSettled } = await paymentTransactionRepository.findSettledForBooking(
+          meeting.id,
+          (meetingInvoices ?? []).map(invoice => invoice.id),
+          userId
+        );
+
+        const state = bookingPaymentState(meetingSettled ?? []);
+        amountHeld += state.netHeld;
+        collectedTotal += state.collected;
+        refundedTotal += state.refunded;
+        heldCurrency = heldCurrency ?? (meetingSettled ?? []).find(row => row.currency)?.currency ?? null;
+      } catch (err) {
+        /*
+         * Loud, and not fatal. The cancellation has happened; what is at risk
+         * is the accuracy of a figure in an email, and an email that goes
+         * without it is better than none at all — but an owner needs to know
+         * the client may have been told a number that is short.
+         */
+        log.error(
+          { err, bookingId, meetingId: meeting.id },
+          'Could not read a meeting’s money for the cancellation email'
+        );
+      }
+    }
+
+    if (cancelledMeetings.length === 0) {
+      log.info({ bookingId }, 'Package cancelled with no dated meetings to tell the client about');
+    } else {
+      try {
+        const email = await BookingEmailService.sendCancellationEmail(
+          cancelledMeetings[0].id,
+          userId,
+          reason,
+          {
+            offerRebooking,
+            shareNoteWithClient: params.shareNoteWithClient,
+            amountHeld,
+            heldCurrency,
+            paidAmount: collectedTotal,
+            refundedAmount: refundedTotal,
+            sessions: cancelledMeetings.map(meeting => new Date(meeting.start_time as string)),
+            // What was delivered, stated as plainly as what is not.
+            heldSessions: heldMeetings.map(meeting => new Date(meeting.start_time as string)),
+          }
+        );
+
+        clientNotified = email.sent;
+        if (!email.sent) {
+          log.warn({ bookingId, error: email.error }, 'Package cancellation email not sent');
+        }
+      } catch (err) {
+        log.warn({ err, bookingId }, 'Package cancellation email threw');
+      }
+    }
+  } else if (!meetingStillAhead) {
     log.info({ bookingId }, 'Cancellation email skipped — the meeting had already passed');
   } else try {
     const email = await BookingEmailService.sendCancellationEmail(bookingId, userId, reason, {
@@ -643,6 +884,7 @@ export async function cancelBooking(
       planLive,
       periodsRemaining,
       stagesClosed,
+      meetingsCancelled,
     },
     error: null,
   };
@@ -670,6 +912,44 @@ export async function cancelBooking(
  * and both callers need to say which, in their own words: the route as a 409,
  * the chat as a sentence offering another time.
  */
+/**
+ * The owner closed this date, and is booking a client into it anyway.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NOT a `BookingSlotUnavailableError`. That one means somebody else has the
+ * hour, and every surface translates it as "pick another time" — which is the
+ * wrong instruction here, because the obstacle is the owner's OWN statement
+ * about the day and they are entitled to overrule it. Seeing one client during
+ * a holiday is a real thing a business does; doing it by accident is not.
+ *
+ * So this is a question, not a refusal: the caller is expected to put it to the
+ * owner and come back with `allowClosedDay: true` if they mean it. Nothing is
+ * created in the meantime, which is the whole point — the bug was a client
+ * receiving a confirmation, and then a reminder, for a day the business is shut.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export class BookingOnClosedDayError extends Error {
+  constructor(
+    /** `all_day`: the date is off. `short_day`: open, but not at this hour. */
+    readonly kind: 'all_day' | 'short_day',
+    /** `YYYY-MM-DD` on the business's own calendar. */
+    readonly dateKey: string,
+    /** What the owner called it — 'Sukkot'. Null when they named nothing. */
+    readonly closedReason: string | null,
+    /** The hours it IS open, for a short day. */
+    readonly hours?: { start: string; end: string }
+  ) {
+    super(
+      kind === 'all_day'
+        ? `You are closed on ${dateKey}${closedReason ? ` (${closedReason})` : ''}`
+        : `On ${dateKey} you are open ${hours?.start}–${hours?.end}${
+            closedReason ? ` (${closedReason})` : ''
+          }`
+    );
+    this.name = 'BookingOnClosedDayError';
+  }
+}
+
 export class BookingSlotUnavailableError extends Error {
   constructor(
     message: string,
@@ -705,6 +985,30 @@ export interface CreateBookingParams {
   timezone?: string;
   notes?: string;
   bookingSource?: string;
+  /**
+   * A PACKAGE's meeting: the purchase it belongs to, and which one it is.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Set when a meeting is ADDED to a package that is already running — a
+   * make-up for one the client missed, or a seventh session on a block of six.
+   *
+   * The meeting goes through this verb like any other, so it gets the overlap
+   * check, the closed-day question, the calendar event and the client's
+   * confirmation. What it does NOT get is an invoice: a package's money is the
+   * purchase's, and an added meeting either rides on what was already agreed or
+   * is billed by a stage of its own — never by an invoice raised here.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  parentBookingId?: string | null;
+  occurrenceNumber?: number | null;
+  /**
+   * What the booking starts as. Defaults to `confirmed`, as it always has.
+   *
+   * A meeting added to a package follows its purchase: `pending` while the
+   * block is still waiting to be paid for, so it holds its hour without
+   * telling the client it is on, and `confirmed` once the money has arrived.
+   */
+  status?: BookingStatus;
   /** Raise an invoice when the service is priced. Defaults to true. */
   createInvoice?: boolean;
   sendIntakeForm?: boolean;
@@ -717,6 +1021,14 @@ export interface CreateBookingParams {
   contactEmail?: string | null;
   request?: NextRequest;
   logger?: ContextLogger;
+  /**
+   * The owner has been told the day is closed and said book it anyway.
+   *
+   * Only ever set from a surface that ASKED. Defaulting it true anywhere would
+   * put the original bug back: a client confirmed into a day the business shut,
+   * with nobody having decided that.
+   */
+  allowClosedDay?: boolean;
 }
 
 export interface CreateBookingOutcome {
@@ -724,6 +1036,69 @@ export interface CreateBookingOutcome {
   invoice: PaymentInvoice | null;
   calendarSynced: boolean;
   clientNotified: boolean;
+}
+
+/**
+ * Whether this slot falls on a day the owner closed, or outside a short day's
+ * hours — and null when it does not, or when the answer cannot be read.
+ *
+ * AN UNREADABLE LIST ALLOWS THE BOOKING. The owner is sitting in front of the
+ * dialog with a client on the phone; a database hiccup must not become "you
+ * cannot book anyone today". The public booking page makes the same call for
+ * the same reason, and the worst case here is the thing that happened before
+ * this check existed.
+ *
+ * Only the START's date is consulted. A booking that runs past midnight is
+ * vanishingly rare in this product and asking about two dates would mean
+ * deciding which one's reason to show; the start is the day the owner picked.
+ *
+ * EXPORTED for the one path that does not come through this file: the owner's
+ * update route writes `start_time` itself rather than calling
+ * `rescheduleBooking`. That is a second implementation of a verb that has one,
+ * and worth collapsing — but collapsing it is a change to a route that also
+ * settles invoices and moves pipeline stages, so until then it asks the same
+ * question through the same function rather than growing its own copy.
+ */
+export async function closedDayCheck(
+  userId: string,
+  startTime: string,
+  endTime: string,
+  timezone: string,
+  log: ContextLogger = logger
+): Promise<{ kind: 'all_day' | 'short_day'; error: BookingOnClosedDayError } | null> {
+  const zone = safeTimezone(timezone);
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+
+  const dateKey = businessDateKey(start, zone);
+
+  const { data: timeOff, error } = await schedulingTimeOffRepository.list(userId, {
+    from: dateKey,
+    to: dateKey,
+  });
+
+  if (error || !timeOff) {
+    log.warn({ err: error, userId, dateKey }, 'Time off unreadable; the booking is allowed');
+    return null;
+  }
+
+  const verdict = closedDayVerdict(timeOff, dateKey, {
+    start: businessHhmm(start, zone),
+    end: businessHhmm(end, zone),
+  });
+
+  if (!verdict.closed) return null;
+
+  return {
+    kind: verdict.kind,
+    error: new BookingOnClosedDayError(
+      verdict.kind,
+      dateKey,
+      verdict.reason,
+      verdict.kind === 'short_day' ? verdict.hours : undefined
+    ),
+  };
 }
 
 /**
@@ -817,6 +1192,26 @@ export async function createBooking(
     };
   }
 
+  /*
+   * 1b. IS THE BUSINESS EVEN OPEN THAT DAY?
+   *
+   * Time off reached every surface that publishes an hour and none that takes a
+   * booking, so an owner who closed 7 October could book a client into it from
+   * their own calendar — no warning, a confirmation email naming a day the
+   * business is shut, and a reminder on the morning of it.
+   *
+   * A QUESTION, NOT A REFUSAL. `allowClosedDay` is the owner answering it; the
+   * dialog asks before it sends. Unlike the two checks above, this obstacle is
+   * the owner's own statement about their diary and theirs to overrule.
+   */
+  if (scheduled && !params.allowClosedDay) {
+    const closed = await closedDayCheck(userId, startTime as string, endTime as string, timezone, log);
+    if (closed) {
+      log.info({ userId, startTime, kind: closed.kind }, 'Booking refused: the day is closed');
+      return { data: null, error: closed.error };
+    }
+  }
+
   // 2. Insert.
   const result = await schedulingBookingRepository.create({
     user_id: userId,
@@ -832,7 +1227,31 @@ export async function createBooking(
     timezone,
     notes,
     booking_source: bookingSource,
+    status: params.status,
+    // Null on every ordinary booking, which is almost all of them.
+    parent_booking_id: params.parentBookingId ?? null,
+    occurrence_number: params.occurrenceNumber ?? null,
   } as Parameters<typeof schedulingBookingRepository.create>[0]);
+
+  /*
+   * The slot went between the check above and this write.
+   *
+   * `scheduling_bookings_no_overlap` (20261001) is the one check that cannot be
+   * raced, and when it fires it is not a fault: two clients pressed Book at the
+   * same second and one of them lost. Reported as the SAME error the pre-check
+   * raises, so every surface that already handles a clash handles this too —
+   * without it the loser saw an internal error for working as designed.
+   */
+  if (isSlotTakenError(result.error)) {
+    log.info({ userId, startTime }, 'Slot taken between the check and the write');
+    return {
+      data: null,
+      error: new BookingSlotUnavailableError(
+        'That time has just been taken. Please choose another.',
+        'overlap'
+      ),
+    };
+  }
 
   if (result.error) return { data: null, error: result.error };
   if (!result.data) return { data: null, error: new Error('Failed to create booking') };
@@ -1032,6 +1451,124 @@ export async function createBooking(
  * client received a confirmation with nothing to pay against. This is the one
  * producer of booking invoices; there must not be a second.
  */
+/**
+ * The plan behind a booking of an instalment service.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS: THE OWNER'S PATH COLLECTED THE WHOLE PRICE.
+ *
+ * `isInstallmentPlan` was consulted by three routes, all of them
+ * `/api/website/*` — the public widget. A booking made by the OWNER (the drawer,
+ * the chat, the bookings API) went straight to `createBookingInvoice`, which
+ * billed `service.price` with no idea a plan existed.
+ *
+ * So a service sold as "2 weekly payments of ₪400" produced one ₪800 invoice,
+ * one ₪800 Stripe page, and one ₪800 charge. The client saw a plan in the email
+ * and paid the lot. The public dialog showed the split correctly the whole time,
+ * which is what made it look like the plan system worked.
+ *
+ * THE MECHANISM IS THE QUOTE'S, NOT STRIPE'S. A Stripe Subscription Schedule
+ * needs a card on file, and this path has no checkout — the client is emailed an
+ * invoice link. So the schedule is written as dated `payment_plan_installments`,
+ * exactly as an accepted proposal writes its stages, and
+ * `PaymentReminderService.billDueDatedStages` raises each later period's invoice
+ * when its date arrives. `trigger` defaults to 'date', which is what that sweep
+ * selects on.
+ *
+ * Period 1 is invoiced here and its stage is stamped with that invoice id, so
+ * the sweep's `.is('invoice_id', null)` claim cannot bill it a second time.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function createBookingPaymentPlan(
+  userId: string,
+  bookingId: string,
+  contactId: string,
+  service: SchedulingService,
+  log: ContextLogger
+): Promise<{ planId: string; firstAmount: number; firstDueDate: string; count: number }> {
+  const count = service.installment_count!;
+
+  /*
+   * THE SERVICE'S OWN PLAN ROW, NOT A SECOND ONE.
+   *
+   * `syncServicePaymentPlan` writes a `payment_plans` row whenever a service is
+   * saved, and that row is what the public booking dialog, the contact drawer
+   * and `PaymentReminderService` all read. Creating another here would give one
+   * service two live plans: `findByServiceId` returns both, newest first, and
+   * the surfaces would disagree about which is the agreement.
+   *
+   * So the row is reused when it exists, and written only when it does not —
+   * a service saved before that sync existed, which is exactly the account this
+   * bug was found on.
+   */
+  const existing = await paymentPlanRepository.findByServiceId(service.id, userId);
+  const reusable = existing.data?.find(
+    row => row.installment_count === count && Number(row.total_amount) === service.price
+  );
+
+  const planResult = reusable
+    ? { data: reusable, error: null }
+    : await paymentPlanRepository.create({
+        user_id: userId,
+        service_id: service.id,
+        name: service.service_name,
+        total_amount: service.price!,
+        currency: service.currency,
+        installment_count: count,
+        // The headline figure. The instalment rows carry the authoritative
+        // amounts, including the remainder on the final period.
+        installment_amount: service.price! / count,
+        installment_frequency: (service.installment_frequency ||
+          'monthly') as InstallmentFrequency,
+      });
+
+  if (planResult.error || !planResult.data) {
+    throw planResult.error ?? new Error('Payment plan was created but returned no row');
+  }
+
+  const start = planStartDate(
+    {
+      firstPaymentDue: (service.first_payment_due as 'on_booking' | 'days_after') ?? 'on_booking',
+      firstPaymentDays: service.first_payment_days ?? 0,
+    },
+    new Date()
+  );
+
+  const installmentResult = await paymentPlanRepository.createInstallmentsForBooking(
+    planResult.data.id,
+    userId,
+    contactId,
+    start.toISOString(),
+    { bookingId, currency: service.currency, customAmount: service.price! }
+  );
+
+  if (installmentResult.error || !installmentResult.data?.length) {
+    /*
+     * The plan row exists and its schedule does not. Raising the full price
+     * instead would be the very bug this function was written to end, so the
+     * throw is deliberate: the caller logs it and the booking is left with no
+     * invoice — visible, and recoverable by the owner.
+     */
+    throw installmentResult.error ?? new Error('Payment plan has no instalments');
+  }
+
+  const periods = [...installmentResult.data].sort(
+    (a, b) => a.installment_number - b.installment_number
+  );
+
+  log.info(
+    { bookingId, planId: planResult.data.id, count, firstAmount: periods[0].amount },
+    'Booking sold on a payment plan; invoicing the first period only'
+  );
+
+  return {
+    planId: planResult.data.id,
+    firstAmount: periods[0].amount,
+    firstDueDate: periods[0].due_date,
+    count,
+  };
+}
+
 export async function createBookingInvoice(
   userId: string,
   bookingId: string,
@@ -1075,9 +1612,43 @@ export async function createBookingInvoice(
    * ───────────────────────────────────────────────────────────────────────────
    */
   const scheduledSale = Boolean(bookingData.start_time);
-  const dueDate = scheduledSale
-    ? businessDateKey(new Date(bookingData.start_time as string), zone)
-    : businessDateKey(new Date(), zone);
+
+  /*
+   * A plan changes what is being asked for: the first period, not the price.
+   *
+   * Everything below reads from `billed` rather than `service.price` so the two
+   * cases cannot diverge — see `createBookingPaymentPlan` for why this path was
+   * collecting the whole total.
+   */
+  const plan = isInstallmentPlan(service)
+    ? await createBookingPaymentPlan(userId, bookingId, bookingData.contact_id, service, log)
+    : null;
+
+  const billed = plan ? plan.firstAmount : service.price!;
+  const billedFor = plan
+    ? `${service.service_name} (1/${plan.count})`
+    : service.service_name;
+
+  const dueDate = plan
+    ? plan.firstDueDate
+    : scheduledSale
+      ? businessDateKey(new Date(bookingData.start_time as string), zone)
+      : businessDateKey(new Date(), zone);
+
+  /*
+   * A plan period's terms come from its own due date, not the service date.
+   * `SERVICE_DATE_TERMS` is read by the overdue chase, which holds an invoice
+   * carrying it while its session is still ahead — a rule that would wrongly
+   * excuse a first period due today on a service booked for next month.
+   */
+  const planTermsDays = plan
+    ? Math.max(
+        0,
+        Math.round(
+          (new Date(`${plan.firstDueDate}T12:00:00Z`).getTime() - Date.now()) / 86_400_000
+        )
+      )
+    : 0;
 
   const invoiceResult = await paymentInvoiceRepository.create({
     user_id: userId,
@@ -1085,24 +1656,42 @@ export async function createBookingInvoice(
     booking_id: bookingId, // Links payment status back to the booking.
     service_id: service.id, // What was billed, for the revenue-by-service breakdown.
     invoice_number: invoiceNumberResult.data!,
-    amount: service.price!,
+    amount: billed,
     currency: service.currency,
-    status: 'sent',
+    // See the note on `sent_at` below: 'draft' until the confirmation is away.
+    status: 'draft',
     client_name: bookingData.contact_name || null,
     client_email: bookingData.contact_email || null,
     line_items: [
       {
-        description: service.service_name,
+        description: billedFor,
         quantity: 1,
-        unit_price: service.price!,
-        total: service.price!,
+        unit_price: billed,
+        total: billed,
       },
     ],
     due_date: dueDate,
-    payment_terms: scheduledSale ? SERVICE_DATE_TERMS : 'due_on_receipt',
+    payment_terms: plan
+      ? termsValueForDays(planTermsDays)
+      : scheduledSale
+        ? SERVICE_DATE_TERMS
+        : 'due_on_receipt',
     notes: `Booking for ${bookingData.contact_name}`,
     internal_notes: `Auto-generated for booking ${bookingId}`,
-    sent_at: new Date().toISOString(),
+    /*
+     * NOT `sent_at`, and the status above is 'draft' rather than 'sent'.
+     *
+     * This claimed both at the moment of creation, before any mail existed. Two
+     * things followed. `InvoiceDeliveryService` states the rule this broke —
+     * "an invoice marked sent that nobody received is the exact bug this module
+     * exists to prevent" — and, because `alreadyWithTheClient` reads exactly
+     * that status to decide the COPY watermark, the client's FIRST copy of a
+     * brand-new invoice arrived stamped as a duplicate.
+     *
+     * `markBookingInvoiceSent` sets both once the confirmation is actually away,
+     * the same order `sendInvoiceEmail` uses.
+     */
+    sent_at: null,
     paid_at: null,
     payment_method: null,
     payment_received_at: null,
@@ -1122,6 +1711,60 @@ export async function createBookingInvoice(
   }
 
   let invoice = invoiceResult.data!;
+
+  /*
+   * Claim period 1 against this invoice, and tell the booking it is on a plan.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * FIRST, AND SCOPED BY BOOKING. Both details are load-bearing.
+   *
+   * FIRST, because `billDueDatedStages` claims a period with
+   * `.eq('status','pending').is('invoice_id', null)`. A first period due TODAY
+   * — which `first_payment_due: 'on_booking'` makes the normal case — is
+   * eligible for that sweep the moment it is written, so every line between
+   * writing the schedule and stamping it is a window in which the client could
+   * be invoiced twice. Stamping here, before the Stripe round trip below,
+   * leaves the narrowest one available.
+   *
+   * BY BOOKING, because the plan row is the SERVICE's and is shared by every
+   * booking of it. Scoping on `payment_plan_id` + `installment_number` alone
+   * would stamp period 1 of every other client's booking on the same service
+   * with this client's invoice — and then none of them would ever be billed.
+   *
+   * Non-blocking: the money has been asked for correctly and a bookkeeping
+   * write must not undo that. Logged at error level because it needs a human,
+   * unlike the warnings around it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (plan) {
+    const { error: stampError } = await supabaseServer
+      .from('payment_plan_installments')
+      .update({ invoice_id: invoice.id, updated_at: new Date().toISOString() })
+      .eq('payment_plan_id', plan.planId)
+      .eq('booking_id', bookingId)
+      .eq('installment_number', 1)
+      .eq('user_id', userId);
+
+    if (stampError) {
+      log.error(
+        { err: stampError, planId: plan.planId, bookingId, invoiceId: invoice.id },
+        'Could not stamp the first plan period with its invoice; it may be billed twice'
+      );
+    }
+
+    const { error: linkError } = await supabaseServer
+      .from('scheduling_bookings')
+      .update({ payment_plan_id: plan.planId, updated_at: new Date().toISOString() })
+      .eq('id', bookingId)
+      .eq('user_id', userId);
+
+    if (linkError) {
+      log.error(
+        { err: linkError, bookingId, planId: plan.planId },
+        'Could not link the booking to its payment plan'
+      );
+    }
+  }
 
   const stripeAccountResult = await stripeConnectRepository.findByUserId(userId);
   const stripeAccount = stripeAccountResult.data;
@@ -1145,10 +1788,18 @@ export async function createBookingInvoice(
         customerName: bookingData.contact_name || 'Client',
         lineItems: [
           {
-            description: service.service_name,
+            /*
+             * `billed`, NOT `service.price`.
+             *
+             * This is the figure the client is actually charged, and it was the
+             * last place the full price survived: the local invoice could say
+             * ₪400 while the Stripe page still asked for ₪800, which is exactly
+             * what happened to INV-00012.
+             */
+            description: billedFor,
             quantity: 1,
-            unit_price: Math.round(service.price! * 100), // Stripe works in cents.
-            total: Math.round(service.price! * 100),
+            unit_price: Math.round(billed * 100), // Stripe works in cents.
+            total: Math.round(billed * 100),
           },
         ],
         /*
@@ -1213,9 +1864,13 @@ export async function createBookingInvoice(
     metadata: {
       bookingId,
       serviceName: service.service_name,
-      amount: service.price,
+      // What this invoice asks for. On a plan that is the first period, not the
+      // agreed total — the event feeds revenue reads that must not book ₪800
+      // when ₪400 was raised.
+      amount: billed,
       currency: service.currency,
       dueDate,
+      planId: plan?.planId,
       stripeInvoiceId: invoice.stripe_invoice_id || undefined,
     },
   });
@@ -1257,6 +1912,15 @@ export interface RescheduleBookingParams {
   endTime?: string;
   request?: NextRequest;
   logger?: ContextLogger;
+  /**
+   * The owner has been told the new day is closed and said move it anyway.
+   *
+   * Only the OWNER's surfaces ever send this. A client rescheduling from their
+   * own link is offered slots that already exclude the closed days, so for them
+   * the check below is a backstop and a refusal is the right end of it — they
+   * are not in a position to decide that the business will open for them.
+   */
+  allowClosedDay?: boolean;
 }
 
 export interface RescheduleBookingOutcome {
@@ -1334,10 +1998,49 @@ export async function rescheduleBooking(
     };
   }
 
+  /*
+   * IS THE BUSINESS OPEN ON THE DAY IT IS MOVING TO?
+   *
+   * Moving an appointment onto a closed day is the same mistake as booking one
+   * there, arriving by a different route — and it is the likelier of the two,
+   * because a reschedule is usually "some time next week" rather than a date
+   * the owner has just thought about.
+   *
+   * The booking's OWN timezone, not a parameter: it is the business's clock,
+   * stored on the row when it was taken, and every client-facing email about
+   * this appointment is already formatted against it.
+   */
+  if (!params.allowClosedDay) {
+    const closed = await closedDayCheck(
+      userId,
+      startTime,
+      endTime,
+      existing.data.timezone,
+      log
+    );
+    if (closed) {
+      log.info({ userId, bookingId, startTime, kind: closed.kind }, 'Reschedule refused: the day is closed');
+      return { data: null, error: closed.error };
+    }
+  }
+
   const result = await schedulingBookingRepository.update(bookingId, userId, {
     start_time: startTime,
     end_time: endTime,
   });
+
+  // Same race as creating one, and the same answer: the new time went while the
+  // move was in flight, and the booking is untouched where it was.
+  if (isSlotTakenError(result.error)) {
+    log.info({ userId, bookingId, startTime }, 'Slot taken while rescheduling');
+    return {
+      data: null,
+      error: new BookingSlotUnavailableError(
+        'That time has just been taken. Please choose another.',
+        'overlap'
+      ),
+    };
+  }
 
   if (result.error) return { data: null, error: result.error };
   if (!result.data) return { data: null, error: new Error('Booking not found') };
@@ -1425,9 +2128,108 @@ export class BookingPaidError extends Error {
   }
 }
 
+/**
+ * A booking that cannot be deleted because a payment plan points at it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE DATABASE REFUSES THIS, NOT US — and that is the right place for it.
+ *
+ * `payment_plan_subscriptions.booking_id` is `ON DELETE RESTRICT` (20260828e),
+ * so Postgres rejects the delete outright. Nothing in application code could
+ * orphan a live Stripe subscription even by mistake, which is exactly the
+ * protection worth having around money that is still arriving.
+ *
+ * What was missing was the translation. The raw `23503` came back through the
+ * repository, the route turned it into a flat 500 "Failed to delete booking",
+ * and the owner got a dead end with no reason and no hint that stopping the
+ * plan is the way through.
+ *
+ * Deliberately NOT solved by cancelling the plan here. `cancelBooking` sets out
+ * the reasoning at length: a plan can fund more than one booking, and ending
+ * someone's payment arrangement is a decision with a client on the other side
+ * of it. `cancelPlan` stays a human's to press.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export class BookingHasPlanError extends Error {
+  /**
+   * @param planLive Whether the plan is still charging.
+   *
+   * It changes the advice, and getting it wrong wastes the owner's time.
+   * RESTRICT is status-agnostic — ANY row referencing the booking blocks the
+   * delete, a finished plan included — so "stop the payment plan first" is
+   * useless to somebody whose plan stopped months ago. Cancelling is the way
+   * out of both, and is the only way out of the second.
+   */
+  constructor(readonly planLive: boolean) {
+    super(
+      planLive
+        ? 'This booking has a payment plan that is still charging the client. ' +
+            'Stop the payment plan first, or cancel the booking instead.'
+        : 'This booking has a payment plan on record, so it cannot be deleted without ' +
+            'erasing that history. Cancel the booking instead.'
+    );
+    this.name = 'BookingHasPlanError';
+  }
+}
+
+/**
+ * Did the DATABASE refuse this delete because something still references the
+ * booking?
+ *
+ * In practice that is the payment plan: it is the only foreign key to
+ * `scheduling_bookings` with `ON DELETE RESTRICT`. Every other reference is
+ * `SET NULL` or `CASCADE` and cannot block a delete.
+ *
+ * Matched on the code AND the constraint name, the same belt-and-braces
+ * `isSlotTakenError` uses for `23P01`: PostgREST does not always carry the
+ * code through, and a `23503` from anywhere else should not be reported to the
+ * owner as a payment plan.
+ */
+function isPlanRestrictError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+
+  const message = (error as { message?: unknown }).message;
+  const details = (error as { details?: unknown }).details;
+  const text = `${typeof message === 'string' ? message : ''} ${typeof details === 'string' ? details : ''}`;
+
+  if (text.includes('payment_plan_subscriptions')) return true;
+
+  // A bare 23503 with no table named: still a reference blocking the delete,
+  // and the plan is the only one that can.
+  return (error as { code?: unknown }).code === '23503';
+}
+
 export interface DeleteBookingOutcome {
   bookingId: string;
   deletedInvoices: string[];
+  /**
+   * The client was told the appointment is off.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * DELETING NOTIFIES, exactly as cancelling does.
+   *
+   * Nothing here used to. A booking sends the client a confirmation the moment
+   * it is made, so the appointment exists for them as much as for the business —
+   * and deleting it removed every trace on this side while they went on
+   * expecting to be seen. Silence is not a smaller version of cancelling; it is
+   * the one outcome that leaves somebody turning up.
+   *
+   * False is a real answer and not only a failure: a booking with no client
+   * email has nobody to tell, and one whose meeting has already passed is not
+   * sent "your appointment has been cancelled" about last Tuesday.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  clientNotified: boolean;
+  /**
+   * The external calendar event is gone.
+   *
+   * Deleting the row frees the slot in OUR availability — nothing is left to
+   * match `SLOT_HOLDING_STATUSES` — but the event in the owner's Google or
+   * Outlook calendar is a separate object, and leaving it behind is worse than
+   * the missing email: the platform offers the time to a new client while the
+   * owner's own calendar still shows them busy in it.
+   */
+  calendarEventRemoved: boolean;
 }
 
 /**
@@ -1517,6 +2319,11 @@ export async function deleteBooking(params: {
   if (existing.error) return { data: null, error: existing.error };
   if (!existing.data) return { data: null, error: new Error('Booking not found') };
 
+  // Bound once, narrowed by the guard above: the calendar step needs
+  // `external_calendar_event_id` and the email step needs `start_time`, both
+  // read BEFORE the row is deleted.
+  const booking = existing.data;
+
   const money = await heldOnBooking(bookingId, userId);
   if (money.error) return { data: null, error: money.error };
 
@@ -1537,6 +2344,56 @@ export async function deleteBooking(params: {
     };
   }
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PAYMENT PLAN BLOCKS THE DELETE — asked HERE, before anything is destroyed.
+   *
+   * The database already refuses it: `payment_plan_subscriptions.booking_id` is
+   * `ON DELETE RESTRICT`. But that refusal arrives at the very LAST step, and by
+   * then this function has voided and deleted the invoices, removed the calendar
+   * event and emailed the client that their appointment is cancelled — for a
+   * booking that then survives. Every one of those is unrecoverable, and the
+   * email is a lie the moment the delete fails.
+   *
+   * So the constraint is asked about up front and left in place as the backstop
+   * it should be, not as the control flow.
+   *
+   * ANY row counts, live or finished, because that is what RESTRICT enforces.
+   * `cancelBooking`'s plan read filters to live plans — correct there, where the
+   * question is "is this client still being charged" — and copying that filter
+   * here would let a booking with a stopped plan through to a delete the
+   * database then rejects, which is the exact failure above.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { data: attachedPlan, error: planReadError } = await supabaseServer
+    .from('payment_plan_subscriptions')
+    // `installment_count`, never `periods_total` — one unknown column makes
+    // PostgREST reject the WHOLE select, and this would then report no plan on
+    // every booking that has one.
+    .select('id, status')
+    .eq('user_id', userId)
+    .eq('booking_id', bookingId)
+    .limit(1)
+    .maybeSingle();
+
+  if (planReadError) {
+    // Refuse rather than guess. Proceeding would hit RESTRICT at the last step,
+    // after the invoices, the calendar and the email are already gone.
+    log.error({ err: planReadError, bookingId, userId }, 'Could not check for a payment plan before deleting');
+    return { data: null, error: planReadError as Error };
+  }
+
+  if (attachedPlan) {
+    // `isPlanStopped`, the same predicate `cancelPlan` and `cancelBooking` read,
+    // so the three cannot disagree about what "live" means.
+    const planLive = !isPlanStopped(attachedPlan.status);
+    log.info(
+      { userId, bookingId, planId: attachedPlan.id, planStatus: attachedPlan.status, planLive },
+      'Refused to delete a booking with a payment plan attached'
+    );
+    return { data: null, error: new BookingHasPlanError(planLive) };
+  }
+
   // Nothing is owed and nothing is held: drop the OPEN invoices raised for this
   // booking, voiding each at the processor first so nobody can still open the
   // hosted page and pay for a session that no longer exists.
@@ -1549,8 +2406,88 @@ export async function deleteBooking(params: {
     deletedInvoices.push(invoice.invoice_number);
   }
 
+  /*
+   * The calendar event, before the row that names it goes.
+   *
+   * `external_calendar_event_id` lives on the booking, so after the delete there
+   * is nothing left to read it from and the event would stay in the owner's
+   * calendar for good. Same two-step as `cancelBooking`: the service REPORTS
+   * failure rather than throwing, so the returned flag decides the outcome and
+   * the try/catch is only for the unexpected.
+   */
+  let calendarEventRemoved = false;
+  if (booking.external_calendar_event_id) {
+    try {
+      const sync = await CalendarSyncService.deleteCalendarEvent(booking, userId);
+      calendarEventRemoved = sync.success;
+      if (!sync.success) {
+        log.warn({ bookingId, error: sync.error }, 'Calendar event delete failed on a booking delete');
+      }
+    } catch (err) {
+      log.warn({ err, bookingId }, 'Calendar event delete threw on a booking delete');
+    }
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE EMAIL, AND WHY IT IS SENT HERE AND NOT A LINE LATER.
+   *
+   * `sendCancellationEmail` takes a booking ID and re-reads the booking with
+   * `findById`, so after the row is deleted it returns
+   * `{ sent: false, error: 'Booking not found' }`. A call placed after the
+   * delete — the obvious place for it — compiles, runs, logs that, and sends
+   * nothing. This has to run while the booking still exists.
+   *
+   * And it runs AFTER the invoices, deliberately. Invoice deletion returns
+   * early on failure, and a client told their appointment is cancelled when
+   * the delete then failed is worse than one told a moment later. By this point
+   * the invoices are gone and the booking is going; the only step left is one
+   * that does not depend on anything outside this process.
+   *
+   * No money is mentioned because none can be held: `heldAmount > 0` was
+   * refused above, so every figure `cancelBooking` passes would be zero here.
+   * Rebooking IS offered — deleting frees the slot, so booking again is a real
+   * suggestion rather than a dead link.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const meetingStillAhead = !booking.start_time || new Date(booking.start_time) > new Date();
+
+  let clientNotified = false;
+  if (!meetingStillAhead) {
+    log.info({ bookingId }, 'Deletion email skipped — the meeting had already passed');
+  } else {
+    try {
+      const email = await BookingEmailService.sendCancellationEmail(bookingId, userId);
+      clientNotified = email.sent;
+      if (!email.sent) {
+        log.warn({ bookingId, error: email.error }, 'Deletion email not sent');
+      }
+    } catch (err) {
+      // Never fails the delete. The owner asked for the booking to go; a mail
+      // transport problem must not leave it standing, and the flag reports it.
+      log.warn({ err, bookingId }, 'Deletion email threw');
+    }
+  }
+
   const result = await schedulingBookingRepository.delete(bookingId, userId);
-  if (result.error) return { data: null, error: result.error };
+  if (result.error) {
+    /*
+     * The backstop. The plan guard above should have caught this, so reaching
+     * here means something referencing the booking appeared between the two —
+     * or a reference this code does not know about acquired RESTRICT. Reported
+     * as the plan refusal rather than a bare 500, because that is what it is,
+     * and logged at error so the gap between the guard and the constraint is
+     * visible rather than silently smoothed over.
+     */
+    if (isPlanRestrictError(result.error)) {
+      log.error(
+        { err: result.error, bookingId, userId },
+        'Delete refused by a database reference the plan guard did not catch'
+      );
+      return { data: null, error: new BookingHasPlanError(true) };
+    }
+    return { data: null, error: result.error };
+  }
 
   auditTrail
     .log({
@@ -1558,16 +2495,42 @@ export async function deleteBooking(params: {
       userId,
       entityType: 'scheduling_booking',
       entityId: bookingId,
-      resourceName: `Booking ${bookingId}`,
-      details: { deletedInvoices },
+      /*
+       * Named for the client, which is how an owner reading the audit trail
+       * recognises it — a bare UUID identifies nothing to a human.
+       *
+       * No extra query: `findById` normalises `client_first_name` and
+       * `client_last_name` onto the row it already returned. The route this
+       * replaced ran a second `crmContactRepository.findById` purely for these
+       * two words.
+       */
+      /*
+       * Named for the client, which is how an owner reading the audit trail
+       * recognises it — a bare UUID identifies nothing to a human.
+       *
+       * No extra query: `findById` normalises `client_first_name` and
+       * `client_last_name` onto the row it already returned. The route this
+       * replaced ran a second `crmContactRepository.findById` purely for these
+       * two words.
+       */
+      resourceName: `Booking for ${
+        [booking.client_first_name, booking.client_last_name]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || 'Client'
+      }`,
+      details: { deletedInvoices, clientNotified, calendarEventRemoved },
       severity: 'warning',
       request,
     })
     .catch((err) => log.warn({ err, bookingId }, 'Audit failed (non-blocking)'));
 
-  log.info({ bookingId, userId, deletedInvoices: deletedInvoices.length }, 'Booking deleted');
+  log.info(
+    { bookingId, userId, deletedInvoices: deletedInvoices.length, clientNotified, calendarEventRemoved },
+    'Booking deleted'
+  );
 
-  return { data: { bookingId, deletedInvoices }, error: null };
+  return { data: { bookingId, deletedInvoices, clientNotified, calendarEventRemoved }, error: null };
 }
 
 /**

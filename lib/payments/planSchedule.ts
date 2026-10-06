@@ -115,6 +115,32 @@ export function dueDatesFor(start: Date, frequency: PlanFrequency, count: number
   return dates;
 }
 
+/** The two fields that decide when a plan starts charging. */
+export interface PlanStart {
+  firstPaymentDue: 'on_booking' | 'days_after';
+  firstPaymentDays: number;
+}
+
+/**
+ * When the schedule starts charging.
+ *
+ * `first_payment_due` and `first_payment_days` were configurable, saved, and
+ * read by nothing — an owner could set "first payment 30 days after booking"
+ * and it was silently ignored.
+ *
+ * Lives HERE rather than in `PaymentPlanService` so the booking dialog can use
+ * it: that module imports Stripe and a server logger, and the client needs the
+ * same dates the server schedules. Re-exported there, so one implementation
+ * answers both and they cannot drift.
+ */
+export function planStartDate(terms: PlanStart, bookedAt: Date): Date {
+  if (terms.firstPaymentDue !== 'days_after') return bookedAt;
+
+  const start = new Date(bookedAt);
+  start.setUTCDate(start.getUTCDate() + Math.max(0, terms.firstPaymentDays));
+  return start;
+}
+
 export interface PlanInstallment {
   installmentNumber: number;
   amount: number;

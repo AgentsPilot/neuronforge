@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-10-04T00:00:00Z",
+  "columns": [
+    { "table_name": "alpha_rows", "column_name": "id", "data_type": "uuid", "is_nullable": "NO" },
+    { "table_name": "alpha_rows", "column_name": "user_id", "data_type": "uuid", "is_nullable": "NO" },
+    { "table_name": "alpha_children", "column_name": "id", "data_type": "uuid", "is_nullable": "NO" },
+    { "table_name": "alpha_children", "column_name": "alpha_id", "data_type": "uuid", "is_nullable": "NO" },
+    { "table_name": "kept_ledger", "column_name": "id", "data_type": "uuid", "is_nullable": "NO" },
+    { "table_name": "kept_ledger", "column_name": "user_id", "data_type": "uuid", "is_nullable": "YES" },
+    { "table_name": "owned_orgs", "column_name": "id", "data_type": "uuid", "is_nullable": "NO" },
+    { "table_name": "owned_orgs", "column_name": "owner_user_id", "data_type": "uuid", "is_nullable": "NO" },
+    { "table_name": "platform_config", "column_name": "id", "data_type": "uuid", "is_nullable": "NO" },
+    { "table_name": "platform_config", "column_name": "updated_by", "data_type": "uuid", "is_nullable": "YES" },
+    { "table_name": "global_catalog", "column_name": "id", "data_type": "uuid", "is_nullable": "NO" },
+    { "table_name": "global_catalog", "column_name": "name", "data_type": "text", "is_nullable": "NO" }
+  ],
+  "user_scoped_tables": ["alpha_rows", "kept_ledger"],
+  "foreign_keys": [
+    { "constraint_name": "alpha_rows_user_id_fkey", "table_name": "alpha_rows", "references": "users", "on_delete": "c" },
+    { "constraint_name": "alpha_children_alpha_id_fkey", "table_name": "alpha_children", "references": "alpha_rows", "on_delete": "c" },
+    { "constraint_name": "platform_config_updated_by_fkey", "table_name": "platform_config", "references": "users", "on_delete": "a" }
+  ],
+  "triggers": [],
+  "policies": []
+}

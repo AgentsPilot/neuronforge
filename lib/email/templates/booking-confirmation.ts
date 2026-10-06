@@ -11,6 +11,7 @@ import {
   emailDetailsTable,
   emailNoticeBox,
   emailPalette,
+  emailPlanSchedule,
   emailTone,
   formatCurrency,
   formatEmailDate,
@@ -41,6 +42,30 @@ export interface BookingConfirmationData {
    * Only 'pending' shows the payment button; every other state simply does not.
    */
   paymentStatus?: 'pending' | 'paid' | 'refunded' | 'not_required';
+  /**
+   * The instalment plan this booking is sold on, as its real dated periods.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WITHOUT IT THE EMAIL ASKED FOR THE WHOLE PRICE.
+   *
+   * `price` is the AGREEMENT — ₪800 — and the confirmation printed it twice: as
+   * the price row, and inside "please complete your payment of ₪800". A client
+   * who had just been shown "₪400 today, ₪400 on the 7th" in the booking dialog,
+   * and whose invoice says ₪400, then received an email demanding ₪800.
+   *
+   * Absent for every ordinary booking, and then nothing below changes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  plan?: {
+    totalAmount: number;
+    periods: Array<{
+      number: number;
+      amount: number;
+      /** `YYYY-MM-DD`. Null only if the schedule was written without one. */
+      dueDate: string | null;
+      status: string;
+    }>;
+  };
   paymentUrl?: string;
   rescheduleUrl: string;
   cancelUrl: string;
@@ -77,6 +102,25 @@ export interface BookingConfirmationData {
    * ───────────────────────────────────────────────────────────────────────────
    */
   hasSchedule?: boolean;
+  /**
+   * A PACKAGE: every meeting it bought, in the order they were sold.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE EMAIL, NOT SIX. A client who has just bought a block of six sessions
+   * needs the six dates in front of them, once. Six separate confirmations
+   * arriving together is how a list becomes something the client has to
+   * reconstruct.
+   *
+   * When present it replaces the single date and time rows, and the calendar
+   * attachment carries one VEVENT per meeting so the whole block lands in the
+   * client's own calendar from one file. `dateTime`/`endTime` stay set to the
+   * FIRST meeting: the subject line and the reminder still speak about
+   * something, and the first is the one that matters next.
+   *
+   * Absent for every ordinary booking, and then nothing below changes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  sessions?: Array<{ start: Date; end: Date }>;
   branding: BrandingData;
   /** Locale for email content (defaults to 'en') */
   locale?: Locale;
@@ -197,17 +241,38 @@ export function generateICSContent(data: BookingConfirmationData, options: ICSOp
   // Escape special characters for iCalendar
   const escape = (str: string) => str.replace(/[,;\\]/g, '\\$&').replace(/\n/g, '\\n');
 
+  /*
+   * ONE VEVENT PER MEETING.
+   *
+   * A package's six sessions are six appointments in the client's calendar, and
+   * one file carries them all: a calendar reads every VEVENT in a VCALENDAR, so
+   * tapping the attachment once gets the whole block.
+   *
+   * Each needs its OWN UID. A shared one makes every event an update to the
+   * same appointment, and the client ends up with exactly one meeting — the
+   * last. The occurrence number distinguishes them and is stable, so a re-sent
+   * confirmation updates the same six rather than adding six more.
+   */
+  const events: Array<{ uid: string; start: string; end: string }> = data.sessions?.length
+    ? data.sessions.map((session, index) => ({
+        uid: `${uid}-${index + 1}`,
+        start: formatDateForCalendar(session.start),
+        end: formatDateForCalendar(session.end),
+      }))
+    : [{ uid, start, end }];
+
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//NeuronForge//Booking//EN',
     'CALSCALE:GREGORIAN',
     `METHOD:${method}`,
+    ...events.flatMap(event => [
     'BEGIN:VEVENT',
-    `UID:${uid}`,
+    `UID:${event.uid}`,
     `DTSTAMP:${now}`,
-    `DTSTART:${start}`,
-    `DTEND:${end}`,
+    `DTSTART:${event.start}`,
+    `DTEND:${event.end}`,
     `SUMMARY:${escape(data.serviceName)}`,
     `DESCRIPTION:${escape(`Appointment with ${data.branding.businessName}`)}`,
     data.location ? `LOCATION:${escape(data.location)}` : '',
@@ -228,6 +293,7 @@ export function generateICSContent(data: BookingConfirmationData, options: ICSOp
           'END:VALARM',
         ]),
     'END:VEVENT',
+    ]),
     'END:VCALENDAR'
   ].filter(Boolean);
 
@@ -259,7 +325,18 @@ export function generateBookingConfirmationEmail(
   const locale = data.locale || 'en';
   const calendarLinks = generateCalendarLinks(data);
   const formattedDate = formatEmailDate(data.dateTime, data.timezone, { locale });
-  const hasPendingPayment = data.paymentStatus === 'pending' && data.price && data.price > 0;
+  /*
+   * On a plan, what is owed NOW is the first unpaid period — never the total.
+   *
+   * The notice below used `data.price`, so a booking sold as "₪400 today, ₪400
+   * on the 7th" asked the client for ₪800 in the same email as a ₪400 invoice.
+   */
+  const planPeriods = data.plan?.periods ?? [];
+  const dueNowPeriod = planPeriods.find(p => p.status !== 'paid' && p.status !== 'cancelled');
+  const amountDueNow = data.plan ? (dueNowPeriod?.amount ?? 0) : data.price;
+
+  const hasPendingPayment =
+    data.paymentStatus === 'pending' && Boolean(amountDueNow) && (amountDueNow as number) > 0;
   const t = emailTranslations.bookingConfirmation;
   const tIntake = emailTranslations.intake;
 
@@ -297,22 +374,53 @@ export function generateBookingConfirmationEmail(
           </h3>
 
           ${emailDetailsTable([
+            /*
+             * A package lists its meetings instead of its one date.
+             *
+             * Numbered, because "session 3 of 6" is how both sides refer to
+             * them — and each row carries the day and the hour together, since
+             * a column of times whose dates live elsewhere is the shape that
+             * gets misread.
+             */
+            ...(data.sessions?.length
+              ? data.sessions.map((session, index) =>
+                  emailDetailRow(
+                    `${index + 1}.`,
+                    formatEmailDate(session.start, data.timezone, { locale }),
+                    brandingWithLocale
+                  )
+                )
+              : []),
             // Date, time and duration exist only because something was
             // scheduled. On a product they described the moment of purchase as
             // if it were an appointment, with a duration in minutes.
-            data.hasSchedule === false ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
-            data.hasSchedule !== false && timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale) : '',
+            data.hasSchedule === false || data.sessions?.length ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
+            data.hasSchedule !== false && timeStr && !data.sessions?.length ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale) : '',
             data.hasSchedule === false ? '' : emailDetailRow(tIntake.durationLabel[locale], `${data.duration} ${tIntake.minutes[locale]}`, brandingWithLocale),
             data.location ? emailDetailRow(tIntake.locationLabel[locale], data.location, brandingWithLocale) : '',
             data.price && data.price > 0 ? emailDetailRow(t.priceLabel[locale], formatCurrency(data.price, data.currency || 'USD'), brandingWithLocale) : ''
           ].filter(Boolean), brandingWithLocale)}
+
+          ${emailPlanSchedule({
+            periods: planPeriods,
+            totalAmount: data.plan?.totalAmount ?? 0,
+            currency: data.currency || 'USD',
+            branding: brandingWithLocale,
+            highlightNumber: dueNowPeriod?.number,
+            labels: {
+              title: t.planTitle[locale],
+              paid: t.planPaid[locale],
+              highlight: t.planDueToday[locale],
+              total: t.planTotal[locale],
+            },
+          })}
         </td>
       </tr>
     </table>
 
     ${hasPendingPayment ? `
     <!-- Payment Pending Notice -->
-    ${emailNoticeBox((data.hasSchedule === false ? t.unscheduledPaymentRequired : t.paymentRequired)[locale](formatCurrency(data.price!, data.currency || 'USD')), 'warning', brandingWithLocale)}
+    ${emailNoticeBox((data.hasSchedule === false ? t.unscheduledPaymentRequired : t.paymentRequired)[locale](formatCurrency(amountDueNow as number, data.currency || 'USD')), 'warning', brandingWithLocale)}
     ${data.paymentUrl ? emailButton(t.payNow[locale], data.paymentUrl, { branding: data.branding }) : ''}
     ` : ''}
 
@@ -393,6 +501,33 @@ export function generateBookingCancellationEmail(data: {
   timezone: string;
   reason?: string;
   bookAgainUrl?: string;
+  /**
+   * A PACKAGE's cancelled meetings, when a whole block is called off.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE EMAIL, NOT SIX. Cancelling a block of six used to send six separate
+   * cancellations, one per meeting, each accurate and all arriving together —
+   * which is six times the alarm for one piece of news, and leaves the client
+   * working out whether anything survived.
+   *
+   * When present it replaces the single date and time with the whole list, each
+   * struck through, so the client can see exactly which dates are gone.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  sessions?: Date[];
+  /**
+   * The meetings of that block that ALREADY TOOK PLACE.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A block of six cancelled after two is not six cancellations. The client has
+   * had two sessions and paid for them, and an email naming only the four that
+   * are off reads as though the whole thing was undone — which is the version a
+   * dispute would be argued from.
+   *
+   * Listed separately and NOT struck through, because they happened.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  heldSessions?: Date[];
   /**
    * What the client paid, or agreed to pay.
    *
@@ -543,11 +678,49 @@ export function generateBookingCancellationEmail(data: {
             ${data.serviceName}
           </h3>
 
+          ${
+            /*
+             * WHAT TOOK PLACE, before what did not.
+             *
+             * First, and outside the struck-through panel's logic, because it
+             * is the part that is NOT being undone: two sessions were
+             * delivered and paid for, and the client is owed an accurate
+             * record of that as much as of the cancellation.
+             */
+            data.heldSessions?.length
+              ? `<p style="margin: 0 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">${t.sessionsHeldTitle[locale]}</p>
+                 ${emailDetailsTable(
+                   data.heldSessions.map((session, index) =>
+                     emailDetailRow(
+                       `${index + 1}.`,
+                       formatEmailDate(session, data.timezone, { locale }),
+                       brandingWithLocale
+                     )
+                   ),
+                   brandingWithLocale
+                 )}
+                 <p style="margin: 16px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">${t.sessionsCancelledTitle[locale]}</p>`
+              : ''
+          }
+
           ${emailDetailsTable([
+            /*
+             * A block lists its dates instead of its one date — numbered, so
+             * the client can see at a glance how many are gone.
+             */
+            ...(data.sessions?.length
+              ? data.sessions.map((session, index) =>
+                  emailDetailRow(
+                    `${index + 1}.`,
+                    formatEmailDate(session, data.timezone, { locale }),
+                    brandingWithLocale
+                  )
+                )
+              : []),
             // No date or time when none was booked: they would describe the
             // moment of purchase as an appointment that had been struck out.
-            data.hasSchedule === false ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
-            data.hasSchedule !== false && timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale) : '',
+            data.hasSchedule === false || data.sessions?.length ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
+            data.hasSchedule !== false && timeStr && !data.sessions?.length ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale) : '',
             data.location ? emailDetailRow(tIntake.locationLabel[locale], data.location, brandingWithLocale) : '',
             /*
              * The price, as the confirmation shows it.
@@ -715,6 +888,35 @@ export function generateBookingRescheduledEmail(data: {
   bookingId: string;
   branding: BrandingData;
   locale?: Locale;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * STILL OWED, WHEN IT IS.
+   *
+   * A reschedule used to say nothing about money, so a client moving an unpaid
+   * appointment got a tidy email with no way to pay and no mention that they
+   * had not. Every field here is OPTIONAL and absent by default: a caller that
+   * does not pass them renders exactly the email it rendered before.
+   *
+   * The shape mirrors the confirmation deliberately — the same `plan`, the same
+   * `paymentStatus` vocabulary — so the amount-due rule below can be the same
+   * rule rather than a second one that drifts.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  price?: number;
+  currency?: string;
+  /** Only 'pending' shows anything; every other state renders nothing. */
+  paymentStatus?: 'pending' | 'paid' | 'refunded' | 'not_required';
+  /** Where to pay. Absent means no card route, and then no button is shown. */
+  paymentUrl?: string;
+  plan?: {
+    totalAmount: number;
+    periods: Array<{
+      number: number;
+      amount: number;
+      dueDate: string | null;
+      status: string;
+    }>;
+  };
 }, icsOptions: ICSOptions = {}): {
   subject: string;
   html: string;
@@ -749,6 +951,22 @@ export function generateBookingRescheduledEmail(data: {
     dateTime: data.newDateTime,
     endTime: data.newEndTime
   } as BookingConfirmationData);
+
+  /*
+   * What is owed NOW — the first unpaid period on a plan, never the total.
+   *
+   * Identical to the confirmation's rule a few hundred lines above, and
+   * deliberately so. That one carries the scar: using the full price meant a
+   * booking sold as "₪400 today, ₪400 on the 7th" asked for ₪800 in the same
+   * email as a ₪400 invoice. A second, subtly different calculation here is how
+   * that comes back.
+   */
+  const planPeriods = data.plan?.periods ?? [];
+  const dueNowPeriod = planPeriods.find(p => p.status !== 'paid' && p.status !== 'cancelled');
+  const amountDueNow = data.plan ? (dueNowPeriod?.amount ?? 0) : data.price;
+
+  const hasPendingPayment =
+    data.paymentStatus === 'pending' && Boolean(amountDueNow) && (amountDueNow as number) > 0;
 
   const content = `
     <!-- Greeting -->
@@ -793,6 +1011,29 @@ export function generateBookingRescheduledEmail(data: {
         </td>
       </tr>
     </table>
+
+    ${hasPendingPayment ? `
+    <!-- Still owed.
+         Placed AFTER the new time and before the calendar links: the client
+         came for the change, so the change is read first and the money second.
+         Shown only when the booking is genuinely unpaid and there is a figure
+         to name; the button only when there is somewhere to pay. -->
+    ${planPeriods.length ? emailPlanSchedule({
+      periods: planPeriods,
+      totalAmount: data.plan?.totalAmount ?? 0,
+      currency: data.currency || 'USD',
+      branding: brandingWithLocale,
+      highlightNumber: dueNowPeriod?.number,
+      labels: {
+        title: tConfirm.planTitle[locale],
+        paid: tConfirm.planPaid[locale],
+        highlight: tConfirm.planDueToday[locale],
+        total: tConfirm.planTotal[locale],
+      },
+    }) : ''}
+    ${emailNoticeBox(tConfirm.paymentRequired[locale](formatCurrency(amountDueNow as number, data.currency || 'USD')), 'warning', brandingWithLocale)}
+    ${data.paymentUrl ? emailButton(tConfirm.payNow[locale], data.paymentUrl, { branding: data.branding }) : ''}
+    ` : ''}
 
     <!-- Add to Calendar -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">

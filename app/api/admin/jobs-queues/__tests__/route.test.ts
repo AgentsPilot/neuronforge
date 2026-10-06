@@ -6,6 +6,7 @@
  * body and every logger argument, with marker strings planted in the mocks.
  */
 
+import { BOS_CRON_JOBS } from '@/lib/cron/bosCronJobs';
 import { NextRequest } from 'next/server';
 
 const mockGetUser = jest.fn();
@@ -117,11 +118,13 @@ describe('strict Zod', () => {
 });
 
 describe('happy path', () => {
-  it('13 jobs healthy and 5 queues clear, read with the admin context', async () => {
+  it('every job healthy and 5 queues clear, read with the admin context', async () => {
     const res = await GET(req());
     expect(res.status).toBe(200);
     const body = await json(res);
-    expect(body.data!.jobs).toHaveLength(13); // 13 since credit deduction slice 4b
+    // Counted from the registry: the route returns every registered job, and
+    // writing the number down turns "somebody added a cron" into a failure here.
+    expect(body.data!.jobs).toHaveLength(BOS_CRON_JOBS.length);
     expect(body.data!.queues).toHaveLength(5);
     expect(body.data!.jobs.every((j) => j.status === 'healthy')).toBe(true);
     expect(body.data!.queues.every((q) => q.status === 'clear')).toBe(true);

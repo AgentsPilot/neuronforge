@@ -56,8 +56,24 @@ export function BrandButton({
      * the template stylesheet supplies it, and `base()` supplies the default for
      * a surface with no template at all.
      */
+    /*
+     * EVERY VARIANT STATES ITS OWN BORDER.
+     *
+     * `.apc-btn` is how a template reaches this control, and one composition
+     * draws `border: 1px solid var(--ap-text)` on it — an outline button by
+     * design. A variant that set only `background` and `color` inline kept that
+     * border, so the red Cancel button came out framed in near-black, and the
+     * primary button in the same composition was framed too.
+     *
+     * The inline border wins over the stylesheet, so each filled variant draws
+     * its edge in its own colour and the ghost clears it outright.
+     */
     ...(variant === 'primary'
-      ? { background: 'var(--ap-brand)', color: 'var(--ap-on-brand)' }
+      ? {
+          background: 'var(--ap-brand)',
+          color: 'var(--ap-on-brand)',
+          border: '1px solid var(--ap-brand)',
+        }
       : variant === 'secondary'
         ? {
             background: 'var(--ap-brand-tint)',
@@ -65,8 +81,12 @@ export function BrandButton({
             border: '1px solid var(--ap-brand-ring)',
           }
         : variant === 'danger'
-          ? { background: '#DC2626', color: '#FFFFFF' }
-          : { background: 'transparent', color: 'var(--ap-text-muted)' }),
+          ? { background: '#DC2626', color: '#FFFFFF', border: '1px solid #DC2626' }
+          : {
+              background: 'transparent',
+              color: 'var(--ap-text-muted)',
+              border: '1px solid transparent',
+            }),
   };
 
   const content = (

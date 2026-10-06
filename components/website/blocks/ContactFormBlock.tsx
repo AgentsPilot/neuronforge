@@ -8,6 +8,11 @@ import { isValidPhoneNumber } from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
 import type { BlockRendererProps, FormField } from './types';
 import type { Country } from 'react-phone-number-input';
+import {
+  applyCountryToPhone,
+  phoneFieldValue,
+  publicFormCountry,
+} from '@/components/crm/phoneField';
 import { WebsiteCountrySelect } from './WebsiteCountrySelect';
 import { ConsentCheckbox } from '@/components/public/ConsentCheckbox';
 import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
@@ -97,7 +102,27 @@ function normalizeFields(fields: unknown): FormField[] {
     { name: 'message', type: 'textarea', label: 'Message', required: true }
   ];
 
-  if (!fields || !Array.isArray(fields)) {
+  /*
+   * AN EMPTY LIST IS NOT A CONFIGURATION, IT IS THE ABSENCE OF ONE.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This read `!fields || !Array.isArray(fields)`, so the defaults applied only
+   * to a value that was not an array at all. `[]` IS an array, and it mapped to
+   * nothing — and every `contact_form` block in the database stores exactly
+   * that: all ten of them, on every page, generated that way.
+   *
+   * What rendered was the single phone box the guard below appends, with no
+   * name, no email and no message. The form could be filled in and sent, and
+   * `/api/website/forms/contact` requires `email` and a non-empty `message`, so
+   * every submission came back 400 and the visitor was shown the generic
+   * failure. One contact has ever been captured through this form.
+   *
+   * A form with no fields cannot be a deliberate choice: there is nothing to
+   * submit and nothing the route would accept. So an empty list falls back the
+   * same way a missing one does.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (!fields || !Array.isArray(fields) || fields.length === 0) {
     return defaultFields;
   }
 
@@ -146,7 +171,11 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [phoneCountry, setPhoneCountry] = useState<Country>('US');
+  /*
+   * The page's language decides, not a hardcoded US. A Hebrew site's visitors
+   * had to correct the dropdown before they could type their own number.
+   */
+  const [phoneCountry, setPhoneCountry] = useState<Country>(() => publicFormCountry(locale));
 
   /*
    * Marketing consent. Unticked, and it stays unticked unless the visitor acts.
@@ -342,7 +371,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                       className="block text-sm font-medium ap-ink-2 mb-1.5"
                     >
                       {getFieldLabel(field)}
-                      {field.required && <span className="text-red-500 ms-1">*</span>}
+                      {field.required && <span className="ap-danger ms-1">*</span>}
                     </label>
 
                     {field.type === 'textarea' ? (
@@ -360,8 +389,8 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                         }}
                         className={`w-full px-3 py-2.5 ap-card-2 border ap-ink ap-placeholder focus:outline-none focus:ring-2 transition-all text-sm ${
                           errors[field.name]
-                            ? 'border-red-500 focus:ring-red-200'
-                            : 'ap-line focus:ring-blue-200'
+                            ? 'ap-danger-line ap-ring-danger'
+                            : 'ap-line ap-ring'
                         }`}
                         style={{
                           borderRadius: theme?.borderRadius || '0.5rem',
@@ -372,17 +401,32 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                       <div dir="ltr" className="flex gap-2">
                         <WebsiteCountrySelect
                           value={phoneCountry}
-                          onChange={setPhoneCountry}
+                          /*
+                            Choosing a country is a statement about the NUMBER.
+                            Wired to the state alone, a visitor who picked their
+                            country saw the dropdown move and their number stay
+                            national — and a national number with a bare `+` in
+                            front of it dials somewhere else entirely.
+                          */
+                          onChange={(country) => {
+                            setPhoneCountry(country);
+                            setFormData({
+                              ...formData,
+                              [field.name]:
+                                applyCountryToPhone(formData[field.name], country) ??
+                                formData[field.name],
+                            });
+                          }}
                           isRTL={isRTL}
                           hasError={!!errors[field.name]}
                         />
                         <div className={`phone-input-contact flex-1 ${errors[field.name] ? 'has-error' : ''}`}>
                           <PhoneInput
-                            international
                             countryCallingCodeEditable={false}
                             country={phoneCountry}
-                            defaultCountry="US"
-                            value={formData[field.name] || ''}
+                            /* The page's own language decides, not a fixed US. */
+                            defaultCountry={phoneCountry}
+                            value={phoneFieldValue(formData[field.name], phoneCountry) ?? ''}
                             onChange={(value) => {
                               setFormData({ ...formData, [field.name]: value || '' });
                               if (errors[field.name]) {
@@ -406,8 +450,8 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                         }}
                         className={`w-full px-3 py-2.5 ap-card-2 border ap-ink focus:outline-none focus:ring-2 transition-all text-sm ${
                           errors[field.name]
-                            ? 'border-red-500 focus:ring-red-200'
-                            : 'ap-line focus:ring-blue-200'
+                            ? 'ap-danger-line ap-ring-danger'
+                            : 'ap-line ap-ring'
                         }`}
                         style={{
                           borderRadius: theme?.borderRadius || '0.5rem',
@@ -434,8 +478,8 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                         }}
                         className={`w-full px-3 py-2.5 ap-card-2 border ap-ink ap-placeholder focus:outline-none focus:ring-2 transition-all text-sm ${
                           errors[field.name]
-                            ? 'border-red-500 focus:ring-red-200'
-                            : 'ap-line focus:ring-blue-200'
+                            ? 'ap-danger-line ap-ring-danger'
+                            : 'ap-line ap-ring'
                         }`}
                         style={{
                           borderRadius: theme?.borderRadius || '0.5rem',
@@ -445,13 +489,13 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                     )}
 
                     {errors[field.name] && (
-                      <p className="mt-1 text-xs text-red-500">{errors[field.name]}</p>
+                      <p className="mt-1 ap-danger">{errors[field.name]}</p>
                     )}
                   </div>
                 ))}
 
                 {errors._form && (
-                  <p className="text-sm text-red-500 text-center">{errors._form}</p>
+                  <p className="ap-danger text-center">{errors._form}</p>
                 )}
 
                 {/*

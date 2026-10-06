@@ -14,6 +14,7 @@ import { createServiceSchema } from '@/lib/validation/schedulingService';
 import { soldServiceIds } from '@/lib/scheduling/soldServices';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { bustSitesForUser } from '@/lib/website-builder/siteCache';
+import { syncServicePaymentPlan } from '@/lib/payments/syncServicePaymentPlan';
 // One schema for create and update, so the two cannot drift apart again.
 
 const logger = createLogger({ module: 'SchedulingServicesAPI' });
@@ -49,6 +50,36 @@ export async function POST(request: NextRequest) {
       requestLogger.error({ err: result.error, userId: user.id }, 'Failed to create service');
       return NextResponse.json(
         { success: false, error: 'Failed to create service' },
+        { status: 500 }
+      );
+    }
+
+    /*
+     * A service created as instalments needs the row the CLIENT is shown.
+     *
+     * Same reason as the update path in `[id]/route.ts`: the instalment columns
+     * here are what the server trusts, and a `payment_plans` row is what the
+     * public dialog, the contact drawer and the reminders read. Creating one
+     * without the other is how a 200 ILS service sold as 2 × 100 came to quote
+     * 200 and bank nothing.
+     */
+    const planSync = await syncServicePaymentPlan(result.data!, user.id);
+
+    if (planSync.error) {
+      requestLogger.error(
+        { err: planSync.error, userId: user.id, serviceId: result.data!.id },
+        'Service created but its payment plan row was not written — clients may be quoted the wrong amount'
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'The service was created, but its payment plan could not be saved. Edit and save it again before taking bookings.',
+          code: 'PLAN_SYNC_FAILED',
+          service: result.data,
+          details: process.env.NODE_ENV === 'development' ? planSync.error.message : undefined,
+        },
         { status: 500 }
       );
     }

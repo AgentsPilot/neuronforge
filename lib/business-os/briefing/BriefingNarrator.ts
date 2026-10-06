@@ -231,7 +231,7 @@ export async function narrateBriefing(
  * It costs one re-narration per user on the day it changes, which is the same
  * price as any other fact moving.
  */
-export const PROMPT_VERSION = 10;
+export const PROMPT_VERSION = 11;
 
 /**
  * Which model writes the briefing.
@@ -720,6 +720,10 @@ export function findUnsupportedFigures(
   for (const entry of money.instalmentsDue ?? []) permit(entry.amount);
 
   const { outlook } = facts;
+  permit(outlook.quotesAccepted?.count ?? 0);
+  permit(outlook.quotesAccepted?.value);
+  permit(outlook.quotesDeclined?.count ?? 0);
+  permit(outlook.quotesDeclined?.value);
   permit(outlook.unanswered?.count ?? 0);
   permit(outlook.refunded?.count ?? 0);
   permit(outlook.refunded?.value);
@@ -1019,6 +1023,48 @@ function outlookStatements(facts: BriefingFacts, language: BriefingLanguage): st
   const lines: string[] = [];
 
   /*
+   * WON WORK LEADS, before anything that needs chasing.
+   *
+   * A quote accepted this morning is the only unambiguously good thing a day
+   * can contain, and the briefing never carried it: an owner who had just won
+   * ₪8,500 read a summary about appointments and unpaid invoices. Ordering it
+   * below the enquiries would be taking the order from the database rather
+   * than from the person reading it.
+   */
+  if ((outlook.quotesAccepted?.count ?? 0) > 0) {
+    lines.push(
+      phrase.quoteAccepted(
+        phrase.names(outlook.quotesAccepted.people, outlook.quotesAccepted.count),
+        outlook.quotesAccepted.count,
+        outlook.quotesAccepted.value && outlook.quotesAccepted.currency
+          ? formatMoney(outlook.quotesAccepted.value, outlook.quotesAccepted.currency)
+          : undefined
+      )
+    );
+  }
+
+  /*
+   * Turned down, stated as a fact about today and never as a trend.
+   *
+   * `topReason` is set only where every decline today gave the SAME reason,
+   * and even then it is one day. Whether declines form a pattern belongs to
+   * `ConvDeclineReasonDetector`, which has a quarter of evidence behind it.
+   * Names are deliberately not used: being named in your owner's morning
+   * summary for saying no is not a thing the client agreed to.
+   */
+  if ((outlook.quotesDeclined?.count ?? 0) > 0) {
+    lines.push(
+      phrase.quoteDeclined(
+        outlook.quotesDeclined.count,
+        outlook.quotesDeclined.value && outlook.quotesDeclined.currency
+          ? formatMoney(outlook.quotesDeclined.value, outlook.quotesDeclined.currency)
+          : undefined,
+        outlook.quotesDeclined.topReason
+      )
+    );
+  }
+
+  /*
    * Leads the outlook, because it is the most actionable thing a morning
    * briefing can carry and the briefing was blind to it. `newLeads` counts
    * contacts created TODAY, so an enquiry that arrived on Friday and was never
@@ -1059,6 +1105,7 @@ function outlookStatements(facts: BriefingFacts, language: BriefingLanguage): st
   if (outlook.quotesWaiting.count > 0) {
     lines.push(
       phrase.quotesWaiting(
+        phrase.names(outlook.quotesWaiting.people, outlook.quotesWaiting.count),
         outlook.quotesWaiting.count,
         outlook.quotesWaiting.value && outlook.quotesWaiting.currency
           ? formatMoney(outlook.quotesWaiting.value, outlook.quotesWaiting.currency)
@@ -1250,6 +1297,17 @@ interface FallbackPhrases {
   instalmentsDue: (n: number, money: string) => string;
   /* A card that failed and is queued to try again. */
   retrying: (n: number) => string;
+  /**
+   * A quote the client said YES to today.
+   *
+   * Leads the outlook, ahead of anything that needs chasing. It is the one
+   * unambiguously good thing a day can contain, and a briefing that opened
+   * with unpaid invoices while ₪8,500 of work was won that morning had its
+   * priorities from the database rather than from the owner.
+   */
+  quoteAccepted: (named: string, n: number, money?: string) => string;
+  /** Turned down today. `reason` only where every one today agreed on it. */
+  quoteDeclined: (n: number, money?: string, reason?: string) => string;
   /* Wrote in, still no reply — whenever they wrote. */
   unanswered: (named: string, n: number) => string;
   /* Money that has gone back out. */
@@ -1276,9 +1334,18 @@ interface FallbackPhrases {
    * for gets the names it can show and the true total.
    */
   newLeads: (n: number, people: Array<{ name: string; note?: string }>) => string;
-  /** People owed a price — unwritten or written and unsent. The owner's move. */
-  /** `money` is the group's total, already formatted; absent on mixed currencies. */
-  quotesWaiting: (n: number, money?: string) => string;
+  /**
+   * People owed a price — unwritten or written and unsent. The owner's move.
+   *
+   * `named` carries who, where the gap knows. It did not, and the line read
+   * "somebody is waiting on a price from you" over data that held the name:
+   * the owner's reply to their own briefing was "who is waiting?". `unanswered`
+   * above has taken names all along; this one simply never asked for them.
+   *
+   * `money` is the group's total, already formatted; absent on mixed
+   * currencies and absent when the count covers more rows than were totalled.
+   */
+  quotesWaiting: (named: string, n: number, money?: string) => string;
   /** Quotes out with the client and unanswered. Reported, never a chore. */
   quotesOut: (n: number) => string;
   /** Phases waiting on the owner to mark done so they can be billed. */
@@ -1363,6 +1430,16 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     instalmentsDue: (n, money) =>
       n === 1 ? `A plan payment of ${money} is due.` : `${n} plan payments are due, ${money} in total.`,
     retrying: n => (n === 1 ? 'A payment failed and is being retried.' : `${n} payments failed and are being retried.`),
+    quoteAccepted: (named, n, money) => {
+      const who = named || (n === 1 ? 'A client' : `${n} clients`);
+      return money
+        ? `${who} accepted your quote, ${money}.`
+        : `${who} accepted your quote.`;
+    },
+    quoteDeclined: (n, money, reason) =>
+      `${n === 1 ? 'One quote was' : `${n} quotes were`} turned down${money ? `, ${money}` : ''}${
+        reason ? ` (${reason})` : ''
+      }.`,
     unanswered: (named, n) =>
       named ? `${named} wrote in and are still waiting for a reply.` : `${n} enquiries are still waiting for a reply.`,
     refunded: (n, money) =>
@@ -1387,9 +1464,12 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       const note = people.length === 1 && people[0].note ? ` — ${people[0].note}` : '';
       return `${named} got in touch today${note}.`;
     },
-    quotesWaiting: (n, money) =>
-      (n === 1 ? 'Someone is waiting on a price from you' : `${n} people are waiting on a price from you`) +
-      (money ? ` — ${money}.` : '.'),
+    quotesWaiting: (named, n, money) =>
+      (named
+        ? `${named} ${n === 1 ? 'is' : 'are'} waiting on a price from you`
+        : n === 1
+          ? 'Someone is waiting on a price from you'
+          : `${n} people are waiting on a price from you`) + (money ? `, ${money}.` : '.'),
     quotesOut: n =>
       n === 1 ? 'One quote is out and still unanswered.' : `${n} quotes are out and still unanswered.`,
     stagesToBill: (n, money) =>
@@ -1430,6 +1510,16 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       n === 1 ? `Vence un pago del plan de ${money}.` : `Vencen ${n} pagos del plan, ${money} en total.`,
     retrying: n =>
       n === 1 ? 'Un pago falló y se está reintentando.' : `${n} pagos fallaron y se están reintentando.`,
+    quoteAccepted: (named, n, money) => {
+      const who = named || (n === 1 ? 'Un cliente' : `${n} clientes`);
+      return money
+        ? `${who} aceptó tu presupuesto, ${money}.`
+        : `${who} aceptó tu presupuesto.`;
+    },
+    quoteDeclined: (n, money, reason) =>
+      `${n === 1 ? 'Rechazaron un presupuesto' : `Rechazaron ${n} presupuestos`}${money ? `, ${money}` : ''}${
+        reason ? ` (${reason})` : ''
+      }.`,
     unanswered: (named, n) =>
       named ? `${named} escribieron y siguen esperando respuesta.` : `${n} consultas siguen esperando respuesta.`,
     refunded: (n, money) =>
@@ -1453,9 +1543,12 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       const note = people.length === 1 && people[0].note ? ` — ${people[0].note}` : '';
       return `${named} te ${n === 1 ? 'contactó' : 'contactaron'} hoy${note}.`;
     },
-    quotesWaiting: (n, money) =>
-      (n === 1 ? 'Alguien espera un precio tuyo' : `${n} personas esperan un precio tuyo`) +
-      (money ? ` — ${money}.` : '.'),
+    quotesWaiting: (named, n, money) =>
+      (named
+        ? `${named} ${n === 1 ? 'espera' : 'esperan'} un precio tuyo`
+        : n === 1
+          ? 'Alguien espera un precio tuyo'
+          : `${n} personas esperan un precio tuyo`) + (money ? `, ${money}.` : '.'),
     quotesOut: n =>
       n === 1 ? 'Un presupuesto sigue sin respuesta.' : `${n} presupuestos siguen sin respuesta.`,
     stagesToBill: (n, money) =>
@@ -1495,6 +1588,16 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     instalmentsDue: (n, money) =>
       n === 1 ? `תשלום אחד בתוכנית בסך ${money} הגיע לפירעון.` : `${n} תשלומים בתוכנית הגיעו לפירעון, ${money} בסך הכול.`,
     retrying: n => (n === 1 ? 'תשלום אחד נכשל ומנסים שוב.' : `${n} תשלומים נכשלו ומנסים שוב.`),
+    quoteAccepted: (named, n, money) => {
+      const who = named || (n === 1 ? 'לקוח' : `${n} לקוחות`);
+      return money
+        ? `${who} אישר את הצעת המחיר, ${money}.`
+        : `${who} אישר את הצעת המחיר.`;
+    },
+    quoteDeclined: (n, money, reason) =>
+      `${n === 1 ? 'הצעת מחיר אחת נדחתה' : `${n} הצעות מחיר נדחו`}${money ? `, ${money}` : ''}${
+        reason ? ` (${reason})` : ''
+      }.`,
     unanswered: (named, n) =>
       named ? `${named} פנו ועדיין מחכים לתשובה.` : `${n} פניות עדיין מחכות לתשובה.`,
     refunded: (n, money) =>
@@ -1518,9 +1621,12 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       const note = people.length === 1 && people[0].note ? ` — ${people[0].note}` : '';
       return `${named} ${n === 1 ? 'פנה/תה' : 'פנו'} אליך היום${note}.`;
     },
-    quotesWaiting: (n, money) =>
-      (n === 1 ? 'מישהו מחכה לך להצעת מחיר' : `${n} אנשים מחכים לך להצעת מחיר`) +
-      (money ? ` — ${money}.` : '.'),
+    quotesWaiting: (named, n, money) =>
+      (named
+        ? `${named} ${n === 1 ? 'מחכה' : 'מחכים'} לך להצעת מחיר`
+        : n === 1
+          ? 'מישהו מחכה לך להצעת מחיר'
+          : `${n} אנשים מחכים לך להצעת מחיר`) + (money ? `, ${money}.` : '.'),
     quotesOut: n =>
       n === 1 ? 'הצעת מחיר אחת נשלחה ועדיין ללא מענה.' : `${n} הצעות מחיר נשלחו ועדיין ללא מענה.`,
     stagesToBill: (n, money) =>

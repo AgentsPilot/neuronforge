@@ -53,17 +53,11 @@ export interface PlanTerms {
 /**
  * When the schedule starts charging.
  *
- * `first_payment_due` and `first_payment_days` were configurable, saved, and
- * read by nothing — an owner could set "first payment 30 days after booking"
- * and it was silently ignored.
+ * Re-exported from `planSchedule`, which has no Stripe or logger import, so the
+ * public booking dialog can compute the same dates this module schedules.
+ * Every existing caller keeps importing it from here.
  */
-export function planStartDate(terms: PlanTerms, bookedAt: Date): Date {
-  if (terms.firstPaymentDue !== 'days_after') return bookedAt;
-
-  const start = new Date(bookedAt);
-  start.setUTCDate(start.getUTCDate() + Math.max(0, terms.firstPaymentDays));
-  return start;
-}
+export { planStartDate } from './planSchedule';
 
 /**
  * Whether a service's configuration describes a plan at all.

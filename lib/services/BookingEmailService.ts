@@ -9,6 +9,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { platformOrigin } from '@/lib/utils/origins';
 import { clientFacingCancelReason } from '@/lib/email/templates/translations';
 import { splitClientCancellationReason } from '@/lib/services/bookingCancellationReason';
 import { REASONS_WITHOUT_REBOOKING } from '@/lib/business-os/cancellationReasons';
@@ -43,12 +44,41 @@ import { resolveEmailBranding } from '@/lib/email/branding';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale } from '@/lib/i18n/config';
 import { supabaseServer } from '@/lib/supabaseServer';
+// The payment half of a reschedule email. Each is the SAME rule used elsewhere:
+// the settled checks the reminder sender reads, and the card/bank resolver the
+// invoice email uses — so no surface can disagree with another about whether
+// this client still owes money or may pay by card.
+import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
+import { hasBeenRefunded } from '@/lib/payments/invoiceSettlement';
+import { resolveInvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
 import * as jwt from 'jsonwebtoken';
 
 const logger = createLogger({ service: 'BookingEmailService' });
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || '';
+/**
+ * The platform's own address, for the links a CLIENT receives.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Through `platformOrigin()`, not `process.env.NEXT_PUBLIC_APP_URL`.
+ *
+ * That variable is one value per environment, and a deployed build hands out
+ * whatever it was set to — including `http://localhost:3000`, which is what it
+ * holds when it has been copied out of `.env.local`. Every link in this file
+ * goes to a client: reschedule, cancel, the intake form, an invoice. A loopback
+ * address in any of them is a dead end for everyone except the person who
+ * deployed it.
+ *
+ * `platformOrigin()` refuses a loopback address when it is running on Vercel and
+ * falls back to the deployment's own host, so production gets the production
+ * domain and a laptop still gets localhost. See lib/utils/origins.ts.
+ *
+ * A function, not a const: read at call time, because a module-scope read is
+ * fixed at import and tests and previews set the environment after that.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const appUrl = (): string => platformOrigin();
 
 /**
  * What signs a booking manage link.
@@ -97,9 +127,13 @@ interface EmailResult {
 }
 
 /**
- * Generate a signed token for booking management URLs
+ * Generate a signed token for booking management URLs.
+ *
+ * Exported because a route that has already verified one token may need to mint
+ * a sibling — the package manage page signs each meeting of the block for the
+ * same address, which grants nothing the caller did not already hold.
  */
-function generateBookingToken(bookingId: string, email: string): string {
+export function generateBookingToken(bookingId: string, email: string): string {
   return jwt.sign(
     { bookingId, email },
     bookingTokenSecret(),
@@ -119,10 +153,10 @@ function manageUrlFor(
   clientEmail: string,
   log: { warn: (ctx: Record<string, unknown>, msg: string) => void }
 ): string | null {
-  if (!APP_URL) return null;
+  if (!appUrl()) return null;
 
   try {
-    return `${APP_URL}/book/manage/${generateBookingToken(bookingId, clientEmail)}/reschedule`;
+    return `${appUrl()}/book/manage/${generateBookingToken(bookingId, clientEmail)}/reschedule`;
   } catch (err) {
     log.warn({ err, bookingId }, 'Could not sign a manage link; sending the reminder without one');
     return null;
@@ -408,7 +442,25 @@ export class BookingEmailService {
   static async sendBookingConfirmation(
     bookingId: string,
     userId: string,
-    options?: { skipInvoice?: boolean; invoiceId?: string; stripeHostedInvoiceUrl?: string }
+    options?: {
+      skipInvoice?: boolean;
+      invoiceId?: string;
+      stripeHostedInvoiceUrl?: string;
+      /**
+       * A PACKAGE's meetings, when this confirmation covers several.
+       *
+       * Sent for the FIRST meeting of the block with all of its dates attached,
+       * rather than through a sender of its own: everything this method does —
+       * the branding, the locale, the invoice attachment, the manage links, the
+       * calendar file — is wanted unchanged, and only the dates differ. The
+       * template then lists them all and the invite carries one event each.
+       *
+       * The manage links are the first meeting's, which is what they should be:
+       * a client rescheduling from this email moves session one, and each later
+       * session carries its own links on its own reminder.
+       */
+      sessions?: Array<{ start: Date; end: Date }>;
+    }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendBookingConfirmation' });
 
@@ -454,8 +506,8 @@ export class BookingEmailService {
 
       // Generate booking management token and URLs
       const token = generateBookingToken(bookingId, clientEmail);
-      const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
-      const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
+      const rescheduleUrl = `${appUrl()}/book/manage/${token}/reschedule`;
+      const cancelUrl = `${appUrl()}/book/manage/${token}/cancel`;
 
       // Generate payment URL if invoice exists and payment is pending
       let paymentUrl: string | undefined;
@@ -480,7 +532,7 @@ export class BookingEmailService {
       if (hasInvoice && isPending && hasPrice) {
         // Prefer Stripe hosted invoice URL if available (allows direct payment)
         // Otherwise fall back to local invoice page
-        paymentUrl = options?.stripeHostedInvoiceUrl || `${APP_URL}/invoice/${options?.invoiceId}`;
+        paymentUrl = options?.stripeHostedInvoiceUrl || `${appUrl()}/invoice/${options?.invoiceId}`;
         requestLogger.info({ paymentUrl }, 'Payment URL generated for email');
       } else {
         requestLogger.info({
@@ -496,6 +548,35 @@ export class BookingEmailService {
       // Build email data
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
 
+      /*
+       * The instalment schedule, if this booking has one.
+       *
+       * Non-fatal by construction: a confirmation that reaches the client
+       * without its plan table is a worse email, and one that never arrives
+       * because a secondary read failed is a worse outcome. The `?? []` below
+       * makes an unreadable schedule indistinguishable from no schedule, which
+       * is the safe direction — the email then behaves exactly as it did before
+       * plans were shown at all.
+       */
+      const { data: periodRows } = await supabaseServer
+        .from('payment_plan_installments')
+        .select('installment_number, amount, due_date, status')
+        .eq('booking_id', bookingId)
+        .eq('user_id', userId)
+        .order('installment_number');
+
+      const bookingPlan = (periodRows ?? []).length
+        ? {
+            totalAmount: Number(service.price ?? 0),
+            periods: (periodRows ?? []).map(row => ({
+              number: Number(row.installment_number),
+              amount: Number(row.amount),
+              dueDate: (row.due_date as string | null) ?? null,
+              status: String(row.status),
+            })),
+          }
+        : undefined;
+
       const emailData = {
         clientName,
         clientEmail,
@@ -507,6 +588,15 @@ export class BookingEmailService {
         location: undefined, // TODO: add location support
         price: service.price || undefined,
         currency: service.currency,
+        /*
+         * The plan's real periods, so the email asks for the first one.
+         *
+         * Read from `payment_plan_installments` rather than projected from the
+         * service, because those rows are what the money is actually billed
+         * from — and because a period already paid must read as paid. Undefined
+         * for an ordinary booking, and the template then renders as before.
+         */
+        plan: bookingPlan,
         paymentStatus: booking.payment_status as 'pending' | 'paid' | 'refunded' | undefined,
         paymentUrl,
         rescheduleUrl,
@@ -525,6 +615,11 @@ export class BookingEmailService {
          * invitation and a reschedule link for a meeting that does not exist.
          */
         hasSchedule: Boolean(booking.start_time),
+        /*
+         * The whole block, for a package. Undefined for an ordinary booking,
+         * and the template then renders exactly as it did before.
+         */
+        sessions: options?.sessions,
         branding,
         locale
       };
@@ -644,6 +739,46 @@ export class BookingEmailService {
           clientEmail,
           invoiceAttached: attachments.length > 0
         }, 'Booking confirmation sent');
+
+        /*
+         * The invoice has now reached the client, so it may say so.
+         *
+         * `createBookingInvoice` writes it as a draft precisely so this line can
+         * be the thing that marks it sent — the same order `sendInvoiceEmail`
+         * uses, and for the same reason it gives: an invoice marked sent that
+         * nobody received is the bug that module exists to prevent.
+         *
+         * It also decides the COPY watermark. `alreadyWithTheClient` reads the
+         * status, so marking it sent BEFORE this point stamped the client's
+         * first copy as a duplicate.
+         *
+         * Non-blocking: the mail is away, and a bookkeeping write must not
+         * report that as a failure.
+         */
+        if (invoiceIdToAttach && attachments.length > 0) {
+          const invoiceId = invoiceIdToAttach;
+          paymentInvoiceRepository
+            .update(invoiceId, userId, {
+              status: 'sent',
+              sent_at: new Date().toISOString(),
+            })
+            // The repository reports failure in `error` rather than throwing, so
+            // both have to be handled or a stuck draft passes silently.
+            .then(({ error }) => {
+              if (error) {
+                requestLogger.error(
+                  { err: error, invoiceId },
+                  'Confirmation sent but the invoice was not marked sent'
+                );
+              }
+            })
+            .catch(err =>
+              requestLogger.error(
+                { err, invoiceId },
+                'Confirmation sent but the invoice was not marked sent'
+              )
+            );
+        }
       } else {
         requestLogger.warn({ error: result.error }, 'Failed to send booking confirmation');
       }
@@ -721,6 +856,59 @@ export class BookingEmailService {
    * Send payment receipt
    * Called from: Stripe webhook
    */
+  /**
+   * The plan behind a receipt, and which period it settles.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `settleInvoicePaid` marks the period paid before this email is sent — keyed
+   * on `invoice_id`, in the same call — so by now the row genuinely says paid.
+   * The period being receipted is therefore the most recently paid one, which
+   * is more reliable than matching on amount: two periods of an even split are
+   * the same number.
+   *
+   * Non-fatal throughout. A receipt that reaches the client without its
+   * schedule is worse than one with it; a receipt that never arrives because a
+   * secondary read failed is worse than both.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private static async planForReceipt(
+    userId: string,
+    bookingId: string | undefined,
+    // Only `warn` is used, and naming the child-logger type here pinned a
+    // generic parameter the caller's logger does not satisfy.
+    log: { warn: (obj: object, msg: string) => void }
+  ) {
+    if (!bookingId) return undefined;
+
+    const { data, error } = await supabaseServer
+      .from('payment_plan_installments')
+      .select('installment_number, amount, due_date, status, paid_at')
+      .eq('booking_id', bookingId)
+      .eq('user_id', userId)
+      .order('installment_number');
+
+    if (error) {
+      log.warn({ err: error, bookingId }, 'Receipt sent without its plan schedule');
+      return undefined;
+    }
+    if (!data?.length) return undefined;
+
+    const paidPeriodNumber = [...data]
+      .filter(row => row.status === 'paid' && row.paid_at)
+      .sort((a, b) => String(b.paid_at).localeCompare(String(a.paid_at)))[0]?.installment_number;
+
+    return {
+      totalAmount: data.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
+      paidPeriodNumber: paidPeriodNumber ? Number(paidPeriodNumber) : undefined,
+      periods: data.map(row => ({
+        number: Number(row.installment_number),
+        amount: Number(row.amount),
+        dueDate: (row.due_date as string | null) ?? null,
+        status: String(row.status),
+      })),
+    };
+  }
+
   static async sendPaymentReceipt(
     userId: string,
     paymentData: {
@@ -771,7 +959,7 @@ export class BookingEmailService {
 
           // Generate manage URL
           const token = generateBookingToken(paymentData.bookingId, paymentData.customerEmail);
-          bookingManageUrl = `${APP_URL}/book/manage/${token}`;
+          bookingManageUrl = `${appUrl()}/book/manage/${token}`;
 
           // Get service name
           const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
@@ -796,6 +984,19 @@ export class BookingEmailService {
         appointmentDate,
         timezone,
         bookingManageUrl,
+        /*
+         * The schedule this payment belongs to.
+         *
+         * A receipt saying "₪400.00 paid" is complete about the money and
+         * silent about the ₪400 still due — which is the one thing a client
+         * paying in instalments wants to know. Read from the plan rows, so a
+         * period already settled reads as settled.
+         */
+        plan: await BookingEmailService.planForReceipt(
+          userId,
+          paymentData.bookingId,
+          requestLogger
+        ),
         branding,
         locale
       });
@@ -901,6 +1102,17 @@ export class BookingEmailService {
        */
       shareNoteWithClient?: boolean;
       /**
+       * A PACKAGE's cancelled meetings, when a whole block is called off.
+       *
+       * Sent ONCE, from the purchase, with every date listed — rather than one
+       * cancellation per meeting, which is six times the alarm for one piece of
+       * news. The purchase has no hour of its own, so without this the email
+       * would name no date at all.
+       */
+      sessions?: Date[];
+      /** The meetings of that block that already took place. See the template. */
+      heldSessions?: Date[];
+      /**
        * Money the business is still holding for this booking, if any.
        *
        * Supplied by `cancelBooking`, which has already worked it out from the
@@ -985,6 +1197,10 @@ export class BookingEmailService {
         clientName,
         serviceName: service.service_name,
         dateTime: startTime,
+        // The whole block, for a package. Undefined for an ordinary booking,
+        // and the template then renders exactly as it did before.
+        sessions: options?.sessions,
+        heldSessions: options?.heldSessions,
         timezone: await getBusinessTimezone(userId, booking.timezone),
         /*
          * The free text, or ONLY the reason — the owner's choice.
@@ -1292,8 +1508,8 @@ export class BookingEmailService {
 
       // Generate booking management token and URLs
       const token = generateBookingToken(bookingId, clientEmail);
-      const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
-      const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
+      const rescheduleUrl = `${appUrl()}/book/manage/${token}/reschedule`;
+      const cancelUrl = `${appUrl()}/book/manage/${token}/cancel`;
 
       // Parse booking datetime
       const newDateTime = new Date(booking.start_time);
@@ -1303,10 +1519,119 @@ export class BookingEmailService {
       // Build client name
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
 
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * WHAT IS STILL OWED, IF ANYTHING.
+       *
+       * A reschedule said nothing about money, so a client moving an unpaid
+       * appointment got a tidy email with no mention that they had not paid and
+       * no way to do it.
+       *
+       * Read here rather than passed in, because unlike the confirmation there
+       * is no caller holding a freshly-created invoice — by now it exists and
+       * has to be found by `booking_id`.
+       *
+       * ENTIRELY NON-FATAL. Every step below falls back to "say nothing": a
+       * reschedule that reaches the client without a payment note is a worse
+       * email, and one that never arrives because an invoice lookup failed is a
+       * worse outcome. The client's appointment moved either way.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      let price: number | undefined;
+      let currency: string | undefined;
+      let paymentStatus: 'pending' | 'paid' | 'refunded' | 'not_required' | undefined;
+      let paymentUrl: string | undefined;
+      let bookingPlan:
+        | {
+            totalAmount: number;
+            periods: Array<{ number: number; amount: number; dueDate: string | null; status: string }>;
+          }
+        | undefined;
+
+      try {
+        const { data: invoice } = await supabaseServer
+          .from('payment_invoices')
+          .select(
+            'id, amount, currency, status, paid_at, refund_status, stripe_hosted_invoice_url, allow_online_payment'
+          )
+          .eq('booking_id', bookingId)
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        /*
+         * THE LEDGER DECIDES, NOT `booking.payment_status`.
+         *
+         * That column is written `paid` for a FREE booking — the create route
+         * reads a price of zero as nothing left to collect, which is true and is
+         * not the same as money having arrived. It is also trigger-derived for
+         * refunds. `isSettledInvoice` and `hasBeenRefunded` are the same two
+         * rules the reminder sender uses, so a refunded or settled booking is
+         * silent here exactly as it is there.
+         */
+        const settled = invoice ? isSettledInvoice(invoice) || hasBeenRefunded(invoice) : true;
+
+        if (invoice && !settled) {
+          const [{ data: periodRows }, capability] = await Promise.all([
+            supabaseServer
+              .from('payment_plan_installments')
+              .select('installment_number, amount, due_date, status')
+              .eq('booking_id', bookingId)
+              .eq('user_id', userId)
+              .order('installment_number'),
+            resolvePaymentCollectionCapability(supabaseServer, userId),
+          ]);
+
+          /*
+           * The same resolver the invoice email uses, so the two cannot
+           * disagree about whether this client may pay by card. It honours the
+           * invoice's own "Send via Stripe" tick as well as the business
+           * capability — offering a card the pay page will not draw is worse
+           * than offering none.
+           */
+          const options = resolveInvoicePaymentOptions({
+            canCollectOnline: capability.canCollect,
+            cardUrl:
+              invoice.stripe_hosted_invoice_url ||
+              `${appUrl()}/api/public/invoice/${invoice.id}/pay`,
+            profile: profileResult.data as never,
+            allowOnlinePayment: (invoice as { allow_online_payment?: boolean | null })
+              .allow_online_payment,
+          });
+
+          price = Number(invoice.amount ?? 0) || undefined;
+          currency = invoice.currency ?? service.currency ?? undefined;
+          paymentStatus = 'pending';
+          // Only where a card can actually be taken. Without one the note still
+          // says what is owed; it just has no button under it.
+          paymentUrl = options.card ? options.cardUrl ?? undefined : undefined;
+
+          bookingPlan = (periodRows ?? []).length
+            ? {
+                totalAmount: Number(service.price ?? invoice.amount ?? 0),
+                periods: (periodRows ?? []).map(row => ({
+                  number: Number(row.installment_number),
+                  amount: Number(row.amount),
+                  dueDate: (row.due_date as string | null) ?? null,
+                  status: String(row.status),
+                })),
+              }
+            : undefined;
+        }
+      } catch (err) {
+        requestLogger.warn({ err, bookingId }, 'Could not resolve payment for the reschedule email (non-blocking)');
+      }
+
       // Generate email
       const { subject, html, icsContent } = generateBookingRescheduledEmail({
         clientName,
         clientEmail,
+        price,
+        currency,
+        paymentStatus,
+        paymentUrl,
+        plan: bookingPlan,
         serviceName: service.service_name,
         oldDateTime: previousDateTime,
         newDateTime,
@@ -2017,9 +2342,9 @@ export class BookingEmailService {
 
       // Generate booking management token and URLs
       const token = generateBookingToken(bookingId, clientEmail);
-      const intakeFormUrl = `${APP_URL}/book/manage/${token}/intake`;
-      const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
-      const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
+      const intakeFormUrl = `${appUrl()}/book/manage/${token}/intake`;
+      const rescheduleUrl = `${appUrl()}/book/manage/${token}/reschedule`;
+      const cancelUrl = `${appUrl()}/book/manage/${token}/cancel`;
 
       /*
        * Parse booking datetime.
@@ -2217,8 +2542,8 @@ export class BookingEmailService {
         completedAt: booking.intake_completed_at
           ? new Date(booking.intake_completed_at)
           : new Date(),
-        rescheduleUrl: `${APP_URL}/book/manage/${token}/reschedule`,
-        cancelUrl: `${APP_URL}/book/manage/${token}/cancel`,
+        rescheduleUrl: `${appUrl()}/book/manage/${token}/reschedule`,
+        cancelUrl: `${appUrl()}/book/manage/${token}/cancel`,
         branding,
         locale
       });

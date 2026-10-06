@@ -116,6 +116,32 @@ export interface ClientWorkflowExtraction {
    */
   needs_intake?: boolean;
   needs_more_details?: boolean;
+  /**
+   * Do clients pick a time, or is this sold without appointments?
+   *
+   * Asked once for the business rather than per service, because it is the
+   * question the owner can answer in one tap and the one that decides whether
+   * working hours and a timezone are ever needed — `journeyReadiness` blocks a
+   * booking surface on both, and only for services where this is true.
+   *
+   * A service that differs is changed in the services editor afterwards, which
+   * is where every other per-service exception already lives.
+   */
+  sells_scheduled?: boolean;
+  /**
+   * How many different things the business sells.
+   *
+   * A COUNT, not a list. The chat used to render a fifteen-column grid to
+   * collect every field of every service before anything existed, which is not
+   * a conversation and is where owners stopped. This asks the one number needed
+   * to create that many services as drafts, and leaves the detail to the
+   * editor, which already has every field and a publish button.
+   *
+   * Any services the business story already yielded are kept and used first —
+   * a name and price the owner actually typed is worth more than a generated
+   * one, so the count tops those up rather than replacing them.
+   */
+  service_count?: number;
 }
 
 /** How the money physically reaches the business. */
@@ -184,6 +210,13 @@ export interface InferredConfiguration {
 
   // Services
   services: ExtractedService[];
+  /**
+   * How many services to create, when the chat asked for a count instead of a
+   * catalogue. Anything in `services` is created first and this tops it up.
+   */
+  service_count?: number;
+  /** The business-wide appointments answer, for services it has to invent. */
+  sells_scheduled?: boolean;
 
   // Online Presence Mode
   online_presence_mode: OnlinePresenceMode;
@@ -515,6 +548,8 @@ export class OnboardingConfigurationService {
 
       // Services
       services,
+      service_count: extracted.service_count,
+      sells_scheduled: extracted.sells_scheduled,
 
       // Online Presence
       online_presence_mode: onlinePresenceMode,
@@ -532,7 +567,23 @@ export class OnboardingConfigurationService {
       // invoices for everything never does. The business-wide
       // `collection_method` above is kept as a summary for older readers, but
       // it is not what decides this any more.
-      needs_stripe_connect: services.some(service => service.collection === 'online'),
+      /*
+       * Falls back to the business-wide answer when there is no catalogue yet.
+       *
+       * `services.some(...)` alone returned FALSE for the chat's new flow,
+       * which asks how they sell and a count rather than collecting services —
+       * so an owner who had just answered "the client pays online by card" was
+       * given no Stripe account at all, and the one thing they had said about
+       * money was the thing that got dropped.
+       *
+       * The per-service answer still wins wherever services exist, exactly as
+       * the comment above says and for the same reason: a practice that takes a
+       * card for a session and invoices for a programme needs a processor, and
+       * one business-wide word cannot describe it.
+       */
+      needs_stripe_connect: services.length > 0
+        ? services.some(service => service.collection === 'online')
+        : collectionMethod === 'card_online' || collectionMethod === 'mixed',
       needs_intake: extracted.needs_intake === true,
 
       /*

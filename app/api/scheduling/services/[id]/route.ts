@@ -19,6 +19,7 @@ import {
 import { z } from 'zod';
 import { updateServiceSchema } from '@/lib/validation/schedulingService';
 import { bustSitesForUser } from '@/lib/website-builder/siteCache';
+import { syncServicePaymentPlan } from '@/lib/payments/syncServicePaymentPlan';
 // One schema for create and update, so the two cannot drift apart again.
 
 const logger = createLogger({ module: 'SchedulingServiceAPI' });
@@ -150,6 +151,42 @@ export async function PUT(
       return NextResponse.json(
         { success: false, error: 'Service not found' },
         { status: 404 }
+      );
+    }
+
+    /*
+     * Mirror the instalment configuration to the row the CLIENT is shown.
+     *
+     * Two places answer "is this service paid in instalments": these columns,
+     * which the server trusts, and a `payment_plans` row, which the public
+     * booking dialog, the contact drawer and the reminders read. This save
+     * wrote only the first, so a service configured here had a server that knew
+     * it was a plan and a dialog that did not — and the dialog quoted, and
+     * charged, the full price. See `syncServicePaymentPlan`.
+     *
+     * Blocking, and reported as a failure. The service row itself is already
+     * written and cannot be rolled back here, so the honest outcome is to say
+     * exactly that rather than return success over a plan row that does not
+     * exist: the next save repairs it, because the sync is idempotent.
+     */
+    const planSync = await syncServicePaymentPlan(result.data, user.id);
+
+    if (planSync.error) {
+      requestLogger.error(
+        { err: planSync.error, userId: user.id, serviceId },
+        'Service saved but its payment plan row was not written — clients may be quoted the wrong amount'
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'The service was saved, but its payment plan could not be updated. Save it again before taking bookings.',
+          code: 'PLAN_SYNC_FAILED',
+          service: result.data,
+          details: process.env.NODE_ENV === 'development' ? planSync.error.message : undefined,
+        },
+        { status: 500 }
       );
     }
 

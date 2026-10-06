@@ -81,13 +81,30 @@ export class ConvPipelineStuckDetector extends BaseDetector {
     const excludeTypes = [...CLIENT_STAGE_TYPES, ...TERMINAL_STAGE_TYPES];
     const excludeStageKeys = await getStageKeysByType(this.supabase, userId, excludeTypes);
 
-    // Get contacts that are NOT in excluded stages (clients, past_clients, lost, archived)
-    // and haven't had a stage change in 14+ days
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * AGED BY `stage_entered_at`, NOT BY `updated_at`.
+     *
+     * `updated_at` is how long since the ROW was last touched by anything, so
+     * correcting a phone number, adding a tag or saving a note reset the clock
+     * and a contact genuinely parked in one stage for six weeks read as
+     * freshly active. The activity check below catches the opposite error and
+     * does nothing for this one.
+     *
+     * Filtered in code rather than in the query, because the comparison is
+     * "stage_entered_at, or updated_at where the column has not been
+     * backfilled yet" and PostgREST cannot express a COALESCE in a filter. The
+     * stage exclusion stays in the query, so the set read back is still small.
+     *
+     * The fallback is not defensive habit: the column arrives in
+     * 20260928_contact_stage_entered_at.sql, and until that migration is
+     * applied this detector must go on working exactly as it did.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     let query = this.supabase
       .from('crm_contacts')
-      .select('id, first_name, last_name, email, stage, updated_at')
-      .eq('user_id', userId)
-      .lt('updated_at', stuckDate.toISOString());
+      .select('id, first_name, last_name, email, stage, updated_at, stage_entered_at')
+      .eq('user_id', userId);
 
     // Exclude converted/terminal stages if we found any
     if (excludeStageKeys.length > 0) {
@@ -96,11 +113,19 @@ export class ConvPipelineStuckDetector extends BaseDetector {
       query = query.not('stage', 'in', `(${excludeList})`);
     }
 
-    const { data: contacts, error: contactsError } = await query;
+    const { data: allContacts, error: contactsError } = await query;
 
     if (contactsError) {
       throw contactsError;
     }
+
+    /** When this contact entered the stage it is in, as well as we can know. */
+    const enteredStageAt = (c: { stage_entered_at?: string | null; updated_at: string }) =>
+      Date.parse(c.stage_entered_at || c.updated_at);
+
+    const contacts = (allContacts ?? []).filter(
+      c => enteredStageAt(c as never) < stuckDate.getTime()
+    );
 
     if (!contacts || contacts.length === 0) {
       this.logDetection(userId, null);
@@ -129,10 +154,9 @@ export class ConvPipelineStuckDetector extends BaseDetector {
 
     // Calculate average days stuck
     const now = new Date();
-    const daysStuckList = stuckContacts.map((c) => {
-      const lastUpdate = new Date(c.updated_at);
-      return Math.floor((now.getTime() - lastUpdate.getTime()) / (1000 * 60 * 60 * 24));
-    });
+    const daysStuckList = stuckContacts.map(
+      c => Math.floor((now.getTime() - enteredStageAt(c as never)) / (1000 * 60 * 60 * 24))
+    );
     const avgDaysStuck = Math.round(daysStuckList.reduce((a, b) => a + b, 0) / daysStuckList.length);
 
     // Calculate severity
@@ -191,7 +215,7 @@ export class ConvPipelineStuckDetector extends BaseDetector {
           id: c.id,
           name: `${c.first_name || ''} ${c.last_name || ''}`.trim() || c.email,
           stage: c.stage,
-          days_stuck: Math.floor((now.getTime() - new Date(c.updated_at).getTime()) / (1000 * 60 * 60 * 24)),
+          days_stuck: Math.floor((now.getTime() - enteredStageAt(c as never)) / (1000 * 60 * 60 * 24)),
         })),
       },
     });

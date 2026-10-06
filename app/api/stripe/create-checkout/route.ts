@@ -7,6 +7,7 @@
 // with 410 before any Stripe or database call. The boost-pack branch stays (TK-5).
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { z } from 'zod';
 import { AuditTrail as auditTrail } from '@/lib/services/AuditTrailService';
 import { createLogger } from '@/lib/logger';
@@ -14,6 +15,7 @@ import { createServerClient } from '@supabase/ssr';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { cookies } from 'next/headers';
 import { getStripeService } from '@/lib/stripe/StripeService';
+import { UserProfileRepository } from '@/lib/repositories/UserProfileRepository';
 
 const logger = createLogger({ module: 'StripeCreateCheckoutAPI' });
 
@@ -83,20 +85,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get user profile for name
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('full_name, display_name')
-      .eq('id', user.id)
-      .single();
-
-    const userName = profile?.full_name || profile?.display_name || undefined;
+    // Name for a new Stripe customer. Read through the repository (CLAUDE.md
+    // rule 1) on the caller's own cookie client, so RLS still applies. A missing
+    // row or a failed read only means the customer is created without a name.
+    const { data: profile } = await new UserProfileRepository(supabase).findById(user.id);
+    const userName = profile?.full_name || undefined;
 
     // Get Stripe service
     const stripeService = getStripeService();
 
     // Construct URLs
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.headers.get('origin') || 'http://localhost:3000';
+    const baseUrl = request.headers.get('origin') || platformOrigin();
     const successUrl = `${baseUrl}/v2/billing?success=true`;
     const cancelUrl = `${baseUrl}/v2/billing?canceled=true`;
 

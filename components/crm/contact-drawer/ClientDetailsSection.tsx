@@ -10,27 +10,14 @@ import {
   Users as UsersIcon, Phone as PhoneIcon, MessageCircle,
   Plus, X, Check
 } from 'lucide-react';
-import PhoneInput, { getCountryCallingCode } from 'react-phone-number-input';
+import PhoneInput from 'react-phone-number-input';
 import type { Country } from 'react-phone-number-input';
 import { SearchableCountrySelect } from '../SearchableCountrySelect';
+import { applyCountryToPhone, phoneFieldCountry, phoneFieldValue } from '../phoneField';
 import en from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
 import { CollapsibleSection } from '../CollapsibleSection';
 
-// Format phone number to E.164 if it's missing the + prefix
-function formatToE164(phone: string | undefined, country: Country): string | undefined {
-  if (!phone) return undefined;
-  // Already in E.164 format
-  if (phone.startsWith('+')) return phone;
-  // Add country calling code
-  try {
-    const callingCode = getCountryCallingCode(country);
-    return `+${callingCode}${phone.replace(/\D/g, '')}`;
-  } catch {
-    // If country code lookup fails, just prepend +
-    return `+${phone.replace(/\D/g, '')}`;
-  }
-}
 import type { ContactFormData, CRMPipelineStage } from './types';
 
 // One list for every surface that shows a contact's source — see
@@ -71,7 +58,17 @@ export function ClientDetailsSection({
   isOpen,
   onToggle
 }: ClientDetailsSectionProps) {
-  const [phoneCountry, setPhoneCountry] = useState<Country>('US');
+  /*
+   * Seeded from the number itself, not hardcoded to US.
+   *
+   * `useState('US')` meant an Israeli business opened every contact on the
+   * wrong country, and the field then reinterpreted `054…` as American. The
+   * initialiser runs once per mount, which is what a field's starting country
+   * should be: an answer, not a value that keeps overriding the owner.
+   */
+  const [phoneCountry, setPhoneCountry] = useState<Country>(() =>
+    phoneFieldCountry(formData.phone)
+  );
   /** The chip list is collapsed to the current answer until somebody opens it. */
   const [sourceOpen, setSourceOpen] = useState(false);
   const [newTag, setNewTag] = useState('');
@@ -160,14 +157,26 @@ export function ClientDetailsSection({
           <div className="flex gap-2" dir="ltr">
             <SearchableCountrySelect
               value={phoneCountry}
-              onChange={setPhoneCountry}
+              /*
+                Choosing a country is a statement about the NUMBER, so it
+                rewrites the number. Wired to `setPhoneCountry` alone, picking
+                "United States" moved a dropdown and left `2013643030` national
+                — and the value that reached the database, `+2013643030`, reads
+                as Egypt.
+              */
+              onChange={(country) => {
+                setPhoneCountry(country);
+                setFormData(prev => ({
+                  ...prev,
+                  phone: applyCountryToPhone(prev.phone, country) ?? prev.phone,
+                }));
+              }}
               labels={en}
             />
             <PhoneInput
-              international
               countryCallingCodeEditable={false}
               country={phoneCountry}
-              value={formatToE164(formData.phone, phoneCountry)}
+              value={phoneFieldValue(formData.phone, phoneCountry)}
               onChange={(value) => setFormData(prev => ({ ...prev, phone: value || '' }))}
               className="phone-input-crm flex-1"
             />

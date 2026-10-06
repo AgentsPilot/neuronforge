@@ -18,6 +18,11 @@ import {
   Percent,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { CountrySelect } from '@/components/ui/CountrySelect';
+import { AdminAreaField } from '@/components/ui/AdminAreaField';
+import { AddressAutocomplete } from '@/components/ui/AddressAutocomplete';
+import { SavedAddressPicker } from '@/components/ui/SavedAddressPicker';
+import { legacyCountryToCode } from '@/lib/geo/countries';
 import { CONFIG_ACCENT, configAccentButton } from '@/components/business-os/configAccent';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
 import { StripeConnectStatus } from '@/components/payments/StripeConnectStatus';
@@ -107,7 +112,7 @@ export function InvoiceSettingsSection({
 }: InvoiceSettingsSectionProps) {
   // Without the accordion there is nothing to collapse, so the panel is open.
   const expanded = chrome ? expandedProp === true : true;
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
 
   /*
    * Shared field styling.
@@ -153,6 +158,17 @@ export function InvoiceSettingsSection({
    * chosen terms it never saw, on the one number that decides when its clients
    * are chased.
    */
+  /*
+   * The country is required, and the save is blocked without it.
+   *
+   * It is no longer a label on an invoice: it decides which legal sentence goes
+   * on a refund email and which tax rules apply. A blank one leaves those
+   * silently unanswerable, so it is asked for once rather than guessed at
+   * forever. Legacy free text does NOT satisfy it — picking from the list is
+   * what turns "Israel" into something the rest of the platform can read.
+   */
+  const countryMissing = !legacyCountryToCode(settings.invoice_address?.country);
+
   const termsMissing =
     settings.invoice_payment_terms_days === null ||
     settings.invoice_payment_terms_days === undefined ||
@@ -174,7 +190,22 @@ export function InvoiceSettingsSection({
         if (data.success && data.data) {
           setSettings({
             invoice_company_name: data.data.invoice_company_name || '',
-            invoice_address: data.data.invoice_address || {},
+            /*
+             * The country is resolved to a CODE on the way in.
+             *
+             * The column still holds what businesses typed before the picker
+             * existed — "Israel", "USA". Left alone, the dropdown would show
+             * nothing and the owner would think their address had been lost.
+             * Anything unrecognised stays as it is and the picker shows it as
+             * text until they choose from the list.
+             */
+            invoice_address: {
+              ...(data.data.invoice_address || {}),
+              country:
+                legacyCountryToCode(data.data.invoice_address?.country) ??
+                data.data.invoice_address?.country ??
+                '',
+            },
             invoice_tax_id: data.data.invoice_tax_id || '',
             invoice_bank_name: data.data.invoice_bank_name || '',
             invoice_bank_account: data.data.invoice_bank_account || '',
@@ -224,6 +255,15 @@ export function InvoiceSettingsSection({
         ...settings,
         invoice_tax_rate: rate === '' ? null : Number(rate),
         invoice_document_type: settings.invoice_document_type || null,
+        /*
+         * WHICH ENTRY the address fields belong to.
+         *
+         * Without it the server falls back to the entry this form points at —
+         * so opening the PROFILE's address with the pencil, correcting it and
+         * saving would rewrite the billing entry with the profile's content and
+         * leave the profile's untouched. Silently, and backwards.
+         */
+        invoice_address_id: editingAddress ?? reusedAddress,
       };
 
       const response = await fetch('/api/business-os/invoice-settings', {
@@ -234,6 +274,12 @@ export function InvoiceSettingsSection({
 
       if (response.ok) {
         setSuccessMessage(t('settings.invoice.saved') || 'Invoice settings saved');
+        /* The address may have become a new entry in the book — a fork, or the
+           first one this business has saved. Refetch so the picker shows it
+           without a page reload. */
+        setAddressBookVersion(v => v + 1);
+        setEditingAddress(null);
+
         setTimeout(() => setSuccessMessage(''), 3000);
       } else {
         const data = await response.json();
@@ -261,7 +307,24 @@ export function InvoiceSettingsSection({
     })}`
   );
 
+  /** Which saved address, if any, these fields still represent. */
+  /**
+   * Which entry in the address book the invoice is on.
+   *
+   * An id now, not a source — every address lives in one book, so "the profile
+   * one" is no longer something a form can point at. `null` means the owner is
+   * adding a new address, which is the one state that shows the fields.
+   */
+  const [reusedAddress, setReusedAddress] = useState<string | null>(null);
+  /** Bumped after a save so the picker refetches and shows a new entry. */
+  const [addressBookVersion, setAddressBookVersion] = useState(0);
+  /** The saved entry open in the fields for correcting; it stays selected. */
+  const [editingAddress, setEditingAddress] = useState<string | null>(null);
+
+
   const updateAddress = (field: keyof InvoiceAddress, value: string) => {
+    // These fields no longer represent whatever was picked.
+    setReusedAddress(null);
     setSettings((prev) => ({
       ...prev,
       invoice_address: {
@@ -667,61 +730,132 @@ export function InvoiceSettingsSection({
                   {t('settings.invoice.address') || 'Business Address'}
                 </label>
 
-                <input
-                  type="text"
-                  value={settings.invoice_address.line1 || ''}
-                  onChange={(e) => updateAddress('line1', e.target.value)}
-                  placeholder={t('settings.invoice.address_line1') || 'Street address'}
-                  className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                {/*
+                  An address this business already gave us, offered before it is
+                  asked for a fourth time. Renders nothing when there is nothing
+                  to offer, which is most businesses.
+                */}
+                <SavedAddressPicker
+                  use="invoice"
+                  current={settings.invoice_address}
+                  selectedId={reusedAddress}
+                  onSelectedChange={(id) => {
+                    setReusedAddress(id);
+                    setEditingAddress(null);
+                  }}
+                  onSelect={(address) =>
+                    setSettings(prev => ({
+                      ...prev,
+                      invoice_address: { ...prev.invoice_address, ...address },
+                    }))
+                  }
+                  locale={language}
+                  isRTL={isRTL}
+                  t={t}
+                  refreshKey={addressBookVersion}
+                  onEdit={(option) => {
+                    setSettings(prev => ({
+                      ...prev,
+                      invoice_address: { ...prev.invoice_address, ...option.address },
+                    }));
+                    // Stays selected while it is corrected — see the profile
+                    // section for why clearing it was wrong.
+                    setEditingAddress(option.id);
+                  }}
                 />
 
-                <input
-                  type="text"
-                  value={settings.invoice_address.line2 || ''}
-                  onChange={(e) => updateAddress('line2', e.target.value)}
-                  placeholder={t('settings.invoice.address_line2') || 'Suite, unit, building (optional)'}
-                  className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                />
+                {/*
+                  Hidden while a saved address is chosen, for the same reason as
+                  the business profile: a form sitting under a chosen answer asks
+                  the owner which of two statements about one address is true.
+                */}
+                {(reusedAddress === null || editingAddress !== null) && (
+                  <>
+                  <AddressAutocomplete
+                    onSelect={(address) => {
+                      // Typing an address of your own ends the claim that one of
+                      // the saved ones is what is in these fields.
+                      setReusedAddress(null);
+                      setAddressPicked(false);
+                      setSettings(prev => ({
+                        ...prev,
+                        invoice_address: { ...prev.invoice_address, ...address },
+                      }));
+                    }}
+                    country={settings.invoice_address.country}
+                    language={language}
+                    isRTL={isRTL}
+                    placeholder={t('settings.address.lookup') || 'Start typing your address…'}
+                    hint={t('settings.address.lookup_hint') || undefined}
+                    className={`w-full py-2.5 text-sm ${FIELD}`}
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  />
 
-                <div className="grid grid-cols-2 gap-3">
                   <input
                     type="text"
-                    value={settings.invoice_address.city || ''}
-                    onChange={(e) => updateAddress('city', e.target.value)}
-                    placeholder={t('settings.invoice.city') || 'City'}
+                    value={settings.invoice_address.line1 || ''}
+                    onChange={(e) => updateAddress('line1', e.target.value)}
+                    placeholder={t('settings.invoice.address_line1') || 'Street address'}
                     className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
-                  <input
-                    type="text"
-                    value={settings.invoice_address.state || ''}
-                    onChange={(e) => updateAddress('state', e.target.value)}
-                    placeholder={t('settings.invoice.state') || 'State/Province'}
-                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  />
-                </div>
 
-                <div className="grid grid-cols-2 gap-3">
                   <input
                     type="text"
-                    value={settings.invoice_address.postal_code || ''}
-                    onChange={(e) => updateAddress('postal_code', e.target.value)}
-                    placeholder={t('settings.invoice.postal_code') || 'Postal code'}
+                    value={settings.invoice_address.line2 || ''}
+                    onChange={(e) => updateAddress('line2', e.target.value)}
+                    placeholder={t('settings.invoice.address_line2') || 'Suite, unit, building (optional)'}
                     className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
-                  <input
-                    type="text"
-                    value={settings.invoice_address.country || ''}
-                    onChange={(e) => updateAddress('country', e.target.value)}
-                    placeholder={t('settings.invoice.country') || 'Country'}
-                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  />
-                </div>
+
+                  {/* FLEX, not a 2-column grid.
+                      The state field renders nothing for Israel, the UK and most
+                      of Europe — and in a fixed grid that left City at half width
+                      with a blank cell beside it. Flexed, City simply takes the
+                      whole row when there is no state to share it with. */}
+                  <div className="flex gap-3 [&>*]:min-w-0 [&>*]:flex-1">
+                    <input
+                      type="text"
+                      value={settings.invoice_address.city || ''}
+                      onChange={(e) => updateAddress('city', e.target.value)}
+                      placeholder={t('settings.invoice.city') || 'City'}
+                      className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    />
+                    <AdminAreaField
+                      country={settings.invoice_address.country}
+                      value={settings.invoice_address.state || ''}
+                      onChange={(value) => updateAddress('state', value)}
+                      label={(key) => t(`settings.address.admin.${key}`) || key}
+                searchPlaceholder={t('settings.address.admin_search') || 'Type to search…'}
+                      emptyLabel={t('settings.address.admin_none') || 'No matches'}
+                      isRTL={isRTL}
+                      className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      type="text"
+                      value={settings.invoice_address.postal_code || ''}
+                      onChange={(e) => updateAddress('postal_code', e.target.value)}
+                      placeholder={t('settings.invoice.postal_code') || 'Postal code'}
+                      className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    />
+                    <CountrySelect
+                      value={settings.invoice_address.country || ''}
+                      onChange={(code) => updateAddress('country', code)}
+                      locale={language === 'he' ? 'he' : language === 'es' ? 'es' : 'en'}
+                      isRTL={isRTL}
+                      placeholder={t('settings.invoice.country') || 'Country'}
+                      emptyLabel={t('settings.invoice.country_none') || 'No countries found'}
+                    />
+                  </div>
+                  </>
+                )}
               </div>
 
               {/* Bank Details Section */}
@@ -832,7 +966,7 @@ export function InvoiceSettingsSection({
               >
                 <button
                   onClick={saveSettings}
-                  disabled={saving || termsMissing}
+                  disabled={saving || termsMissing || countryMissing}
                   className={`text-sm font-medium disabled:opacity-50 flex items-center gap-2 ${
                     chrome
                       ? 'px-4 py-2 bg-[var(--v2-primary)] text-white'

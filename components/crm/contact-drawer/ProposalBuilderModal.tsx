@@ -34,13 +34,44 @@ import {
   PAYMENT_TERMS_PRESETS,
   DEFAULT_PAYMENT_TERMS_DAYS,
 } from '@/lib/payments/paymentTerms';
-import { FileText, Loader2, Paperclip, Plus, Send, Trash2, AlertTriangle, X } from 'lucide-react';
+import { FileText, Loader2, Paperclip, Plus, Send, Trash2, AlertTriangle, X, CalendarClock } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
+import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { windowsForDate, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
+import { closedDayVerdict } from '@/lib/scheduling/closedDay';
+import { recurringLocalInputs, MAX_OCCURRENCES, type Cadence } from '@/lib/scheduling/recurrence';
+import {
+  toBusinessLocalInput,
+  fromBusinessLocalInput,
+  shiftBusinessDateKey,
+  businessDateKey,
+  safeTimezone,
+} from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'ProposalBuilderModal' });
 
 /** Mirrors `PaymentShape` in ProposalRepository. */
 type ShapeKind = 'single' | 'installments' | 'milestones';
+
+/**
+ * How a PACKAGE is paid for — the only two answers that mean anything about a
+ * block of meetings.
+ *
+ * `upfront` is today's single payment: one invoice, and the meetings are held
+ * `pending` until it clears. `per_session` is a milestone plan whose stages ARE
+ * the meetings: nothing due on approval, each meeting billed when it is marked
+ * held. Neither is a new payment shape — see `PackageSessions.bill_per_session`.
+ */
+type PackagePay = 'upfront' | 'per_session';
+
+/**
+ * The scheduling teal, as the calendar and the service editor already use it.
+ *
+ * Borrowed deliberately rather than picked: everything in this product that
+ * occupies an hour is this colour, so the package block reads as the diary half
+ * of the quote at a glance. The money beside it keeps the dialog's own neutral.
+ */
+const MEETINGS_COLOR = '#14B8A6';
 
 interface Stage {
   label: string;
@@ -94,6 +125,24 @@ interface ProposalBuilderModalProps {
       frequency?: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
       stages?: Array<{ label: string; percent: number }>;
     };
+    /**
+     * The meetings that version sold, for a package.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WITHOUT IT A REVISION STOPPED BEING A PACKAGE.
+     *
+     * A per-session package's `payment_shape` is `milestones` with its stages
+     * labelled "Meeting 1"…"Meeting 6" — so a revision inherited six WORK
+     * PHASES called Meeting 1 to 6, the Package switch was off, and the six
+     * dates were gone. The owner then re-quoted a block of sessions as a staged
+     * job, which is a different offer.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    sessions?: {
+      dates: string[];
+      duration_minutes: number;
+      bill_per_session?: boolean;
+    } | null;
   } | null;
   /**
    * Show the quote as it was sent, with nothing editable.
@@ -152,6 +201,16 @@ export function ProposalBuilderModal({
   isRTL = false,
 }: ProposalBuilderModalProps) {
   /*
+   * The business's clock, for a package's meeting times.
+   *
+   * `t` arrives as a prop here — this dialog is rendered by a drawer that
+   * already has it — so only the zone is taken from the context. Every date
+   * the owner types below is the hour the CLIENT turns up at, which is the
+   * business's and not the browser's.
+   */
+  const { timezone } = useLanguage();
+
+  /*
    * Which versions a revision may replace.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -185,6 +244,15 @@ export function ProposalBuilderModal({
    * a single payment, each instalment, and each milestone as it is billed.
    */
   const [termsDays, setTermsDays] = useState<number | null>(null);
+  /**
+   * Whether the owner has answered the terms question themselves.
+   *
+   * Choosing `מראש` for a package moves the terms to "due on receipt", because
+   * "up front" and "pay in 60 days" are opposite instructions. That is a
+   * DEFAULT, not a rule: once the owner has touched the control, nothing moves
+   * it again — a figure the screen keeps overwriting is worse than a wrong one.
+   */
+  const [termsTouched, setTermsTouched] = useState(false);
   const [defaultTermsDays, setDefaultTermsDays] = useState(DEFAULT_PAYMENT_TERMS_DAYS);
   const [frequency, setFrequency] = useState<'weekly' | 'biweekly' | 'monthly' | 'quarterly'>(
     'monthly'
@@ -192,6 +260,67 @@ export function ProposalBuilderModal({
 
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PACKAGE: several meetings sold as one purchase.
+   *
+   * Six coaching sessions, a course of four treatments, ten lessons. The dates
+   * are EXPLICIT, never a repeat rule: a rule has to be expanded somewhere, and
+   * expanding it needs clash detection, time off, DST-correct stepping and a
+   * preview before the owner can trust what they are sending — whereas six
+   * dates cost six date pickers. The dates are also what was AGREED, which is
+   * what a dispute needs to read.
+   *
+   * Each entry is a `datetime-local` string on the BUSINESS's clock, the same
+   * form the booking dialog uses, so what the owner types is the hour the
+   * client turns up at wherever the owner happens to be sitting.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [isPackage, setIsPackage] = useState(false);
+  const [packagePay, setPackagePay] = useState<PackagePay>('upfront');
+  /*
+   * THE PATTERN, which is how the owner describes a block of twelve.
+   *
+   * Three controls — when the first one is, how often, how many — and the list
+   * below is generated from them. Typing twelve dates by hand is not a feature;
+   * what the owner needs afterwards is to move the one that falls on a holiday,
+   * which is why every generated date stays editable.
+   */
+  const [firstSession, setFirstSession] = useState('');
+  const [cadence, setCadence] = useState<Cadence>('weekly');
+  const [sessionCount, setSessionCount] = useState(6);
+  /** The dates themselves: generated, then edited. This is what gets stored. */
+  const [sessionDates, setSessionDates] = useState<string[]>([]);
+  const [sessionMinutes, setSessionMinutes] = useState<number>(60);
+  /**
+   * Whether the length came from the version being revised.
+   *
+   * The service's own duration is a DEFAULT for a new package. On a revision
+   * the length is part of what was agreed — 50 minutes where the service now
+   * says 60 — and the service fetch below resolved a moment later and quietly
+   * overwrote it.
+   */
+  const [minutesFromQuote, setMinutesFromQuote] = useState(false);
+  /** The closed days and short days, so a bad date is named where it is shown. */
+  const [timeOff, setTimeOff] = useState<TimeOffEntry[]>([]);
+  /**
+   * The service's weekly hours, and the hours already taken.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A quote is not the owner's own booking dialog. There, an hour outside the
+   * usual pattern is unremarkable — owners see a client at 7am all the time —
+   * and a clash is refused at the write with a good error.
+   *
+   * Here the dates go to a CLIENT, who approves them, and acceptance then
+   * creates what it can and SKIPS what it cannot: a clashing date becomes a
+   * meeting that quietly is not there. So all three are worth saying before the
+   * quote is sent: the day is closed, the hour is outside the service's hours,
+   * or something is already booked in it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [serviceHours, setServiceHours] = useState<unknown>(null);
+  const [takenSlots, setTakenSlots] = useState<Array<{ start: string; end: string }>>([]);
 
   /*
    * The proposal document.
@@ -265,13 +394,57 @@ export function ProposalBuilderModal({
       setTitle(basedOn.title);
       setDescription(basedOn.description ?? '');
       setTotal(String(basedOn.total));
-      setKind(basedOn.payment_shape?.kind ?? 'single');
-      setStages(
-        basedOn.payment_shape?.stages?.map(s => ({
-          label: s.label,
-          percent: String(s.percent),
-        })) ?? []
-      );
+
+      /*
+       * A REVISION OF A PACKAGE IS STILL A PACKAGE.
+       *
+       * Read from `sessions` and not from the payment shape: a per-session
+       * package IS a milestone plan underneath, so inheriting the shape alone
+       * reopened six meetings as six phases of work.
+       *
+       * The dates come back as the owner typed them — converted from the stored
+       * instants onto the business's clock — because a revision is almost never
+       * a re-plan: it is the same block at a different price. Any date now in
+       * the past is marked in red and blocks sending, which is what should
+       * happen to a quote being revised weeks later.
+       */
+      const previousSessions = basedOn.sessions;
+
+      if (previousSessions?.dates?.length) {
+        const locals = previousSessions.dates
+          .map(iso => new Date(iso))
+          .filter(at => !Number.isNaN(at.getTime()))
+          .map(at => toBusinessLocalInput(at, packageZone));
+
+        setIsPackage(true);
+        setPackagePay(previousSessions.bill_per_session ? 'per_session' : 'upfront');
+        setSessionDates(locals);
+        setFirstSession(locals[0] ?? '');
+        setSessionCount(locals.length || 1);
+        setSessionMinutes(previousSessions.duration_minutes || 60);
+        setMinutesFromQuote(Boolean(previousSessions.duration_minutes));
+        /*
+         * The job-shape state stays untouched: for a package it is derived from
+         * `packagePay` at send, and leaving the stage rows of "Meeting 1…6"
+         * behind would put them back on screen the moment the switch is turned
+         * off.
+         */
+        setKind('single');
+        setStages([]);
+      } else {
+        setIsPackage(false);
+        setSessionDates([]);
+        setFirstSession('');
+        setMinutesFromQuote(false);
+        setKind(basedOn.payment_shape?.kind ?? 'single');
+        setStages(
+          basedOn.payment_shape?.stages?.map(s => ({
+            label: s.label,
+            percent: String(s.percent),
+          })) ?? []
+        );
+      }
+
       setInstallmentCount(basedOn.payment_shape?.count ?? 3);
       setFrequency(basedOn.payment_shape?.frequency ?? 'monthly');
     } else {
@@ -282,10 +455,20 @@ export function ProposalBuilderModal({
       setStages([]);
       setInstallmentCount(3);
       setFrequency('monthly');
+      setIsPackage(false);
+      setSessionDates([]);
+      setFirstSession('');
+      setMinutesFromQuote(false);
     }
 
     setValidUntil('');
     setTermsDays(basedOn?.payment_terms_days ?? null);
+    /*
+     * A revision inherits the terms that were negotiated, so they count as
+     * ANSWERED: the package default must not pull a client's agreed 15 days
+     * back to due-on-receipt behind the owner's back.
+     */
+    setTermsTouched(Boolean(basedOn));
     setAttachDocument(false);
     setFile(null);
     setError(null);
@@ -384,8 +567,317 @@ export function ProposalBuilderModal({
    */
   const documentReady = !attachDocument || Boolean(file);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE PACKAGE'S DATES, AND WHAT IS WRONG WITH THEM
+   *
+   * Checked here rather than at acceptance, because acceptance SKIPS a date it
+   * cannot take — the client has agreed by then, so refusing the whole package
+   * would leave them with nothing — and a skipped date is a meeting that
+   * quietly is not there. The place to catch it is before the quote is sent.
+   *
+   * A QUOTE IS NOT THE OWNER'S OWN BOOKING DIALOG. There, an hour outside the
+   * usual pattern is unremarkable and a clash is refused at the write with a
+   * good error. Here the dates go to a client who approves them, so each of
+   * these is worth saying first:
+   *
+   *   · `empty`   — not filled in yet; sending is blocked;
+   *   · `past`    — a client cannot accept their way into last Tuesday; blocked;
+   *   · `closed`  — a day the owner closed, named with their own reason;
+   *   · `outside` — the service is not open at that hour on that day;
+   *   · `taken`   — something is already booked in it, so acceptance would skip
+   *                 this date entirely.
+   *
+   * Only the first two block sending. The rest are warnings: the owner may well
+   * be opening for this client, or moving the other booking.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const packageZone = safeTimezone(timezone);
+
+  const sessionProblems = useMemo(
+    () =>
+      sessionDates.map(local => {
+        if (!local || local.length < 16) return 'empty' as const;
+
+        const start = fromBusinessLocalInput(local, packageZone);
+        if (start.getTime() < Date.now()) return 'past' as const;
+
+        const end = new Date(start.getTime() + sessionMinutes * 60_000);
+        const dateKey = local.slice(0, 10);
+        const from = local.slice(11, 16);
+        const to = toBusinessLocalInput(end, packageZone).slice(11, 16);
+
+        /*
+         * A day the owner closed, or a short day this hour falls outside of.
+         * Asked first because it is the owner's own statement about that date,
+         * and the most specific thing that can be said about it.
+         */
+        const closed = closedDayVerdict(timeOff, dateKey, { start: from, end: to });
+        if (closed.closed) return { closed } as const;
+
+        /*
+         * THE SERVICE'S OWN HOURS, through the same resolver the public booking
+         * page uses — so a client could never have been offered this hour
+         * either. Skipped entirely when the hours have not loaded or the
+         * service keeps none: an empty `availability` means "no pattern
+         * recorded", not "never open".
+         */
+        const windows = serviceHours ? windowsForDate(serviceHours, dateKey, timeOff) : [];
+        if (windows.length > 0) {
+          const inside = windows.some(window => from >= window.start && to <= window.end);
+          if (!inside) return { outside: windows[0] } as const;
+        }
+
+        /*
+         * And whether the hour is already sold. Half-open overlap, the same test
+         * the database constraint makes: a meeting ending exactly when this one
+         * starts is not a clash.
+         */
+        const clash = takenSlots.some(
+          slot => new Date(slot.start) < end && new Date(slot.end) > start
+        );
+        if (clash) return 'taken' as const;
+
+        return null;
+      }),
+    [sessionDates, timeOff, sessionMinutes, packageZone, serviceHours, takenSlots]
+  );
+
+  /*
+   * HOW LOUD EACH PROBLEM IS, and what it costs.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * RED MEANS THERE WILL BE NO MEETING. A date in the past cannot be sent at
+   * all, and a date whose hour is already sold is SKIPPED by acceptance — the
+   * client approves five dates and gets four meetings, which is the failure
+   * this whole panel exists to prevent.
+   *
+   * AMBER MEANS IT WILL BE BOOKED ANYWAY, on a day the owner closed or outside
+   * the service's hours. That may be exactly what they intend — a holiday
+   * exception for one client — so it is a warning and not a refusal.
+   *
+   * The two must not look the same, which they did: one 11px amber line under
+   * every kind of problem, reading as "note" where half of them mean "lost".
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  type SessionProblem = (typeof sessionProblems)[number];
+
+  const problemTone = (problem: SessionProblem): 'lost' | 'warn' | null => {
+    if (!problem || problem === 'empty') return null;
+    return problem === 'past' || problem === 'taken' ? 'lost' : 'warn';
+  };
+
+  const lostCount = sessionProblems.filter(p => problemTone(p) === 'lost').length;
+  const warnCount = sessionProblems.filter(p => problemTone(p) === 'warn').length;
+
+  /*
+   * THE LIST, REGENERATED FROM THE PATTERN.
+   *
+   * Only the entries the pattern decides are rewritten: an owner who moved
+   * session three to a Thursday and then raised the count from six to eight
+   * keeps their Thursday and gains two. Without that, every change to the
+   * pattern would silently undo the edits the pattern exists to allow.
+   *
+   * Called from the three pattern controls rather than run in an effect, so
+   * nothing regenerates behind the owner's back while they are mid-edit.
+   */
+  const regenerate = (first: string, every: Cadence, count: number, previous: string[]) => {
+    if (!first || first.length < 16) return previous;
+
+    const generated = recurringLocalInputs(
+      first.slice(0, 10),
+      first.slice(11, 16),
+      every,
+      count
+    );
+
+    /*
+     * An edited row is one that differs from what the pattern would have put
+     * there — so regenerating with the SAME pattern keeps it, and changing the
+     * pattern replaces it. That is the only reading under which both controls
+     * mean what they say.
+     */
+    const previousPattern = recurringLocalInputs(
+      previous[0]?.slice(0, 10) ?? '',
+      previous[0]?.slice(11, 16) ?? '',
+      cadence,
+      previous.length
+    );
+
+    return generated.map((value, index) => {
+      const wasEdited =
+        previous[index] !== undefined &&
+        previousPattern[index] !== undefined &&
+        previous[index] !== previousPattern[index];
+
+      return wasEdited && every === cadence ? previous[index] : value;
+    });
+  };
+
+  /**
+   * What one meeting costs, which is what makes "after each meeting" concrete.
+   *
+   * Derived, never typed: the owner names the price of the BLOCK, and a figure
+   * the two could disagree about is a figure that will. Zero sessions reads as
+   * nothing rather than a division by zero.
+   */
+  const perSessionAmount =
+    sessionDates.length > 0 && totalNumber > 0 ? totalNumber / sessionDates.length : 0;
+
+  /**
+   * What the terms actually govern, which differs by arrangement.
+   *
+   * The label says "payment terms", which reads as a property of one invoice.
+   * For a staged plan it is the deadline on every milestone once billed; for
+   * instalments it also decides when the first period falls due, so it moves
+   * the whole schedule. Worth one line rather than a support conversation.
+   */
+  const termsHintKey = isPackage
+    ? packagePay === 'per_session'
+      ? 'proposal.terms_hint_per_session'
+      : 'proposal.terms_hint_upfront'
+    : kind === 'milestones'
+      ? 'proposal.terms_hint_stages'
+      : kind === 'installments'
+        ? 'proposal.terms_hint_installments'
+        : 'proposal.terms_hint_single';
+
+  /** Sending is blocked only by a date that is missing or already gone. */
+  const packageReady =
+    !isPackage ||
+    (sessionDates.length > 0 &&
+      sessionProblems.every(problem => problem !== 'empty' && problem !== 'past'));
+
+  /*
+   * The service's own length, as the default for each meeting.
+   *
+   * Taken from the service rather than asked for: a quote for six sessions of a
+   * 50-minute service is six 50-minute meetings, and making the owner retype
+   * that is the kind of question a form asks rather than a colleague. Editable,
+   * because a package session is sometimes longer than the taster.
+   */
+  useEffect(() => {
+    if (!serviceId) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch(`/api/scheduling/services/${serviceId}`);
+        const data = await response.json();
+        const service = data?.service ?? data?.data;
+        const minutes = Number(service?.duration_minutes);
+        if (cancelled) return;
+        // Never over a length inherited from the quote being revised.
+        if (!minutesFromQuote && Number.isFinite(minutes) && minutes > 0) {
+          setSessionMinutes(minutes);
+        }
+        // Its weekly hours, which is what makes "outside the hours" answerable.
+        if (service?.availability) setServiceHours(service.availability);
+      } catch {
+        // An hour is the fallback, and the owner can change it.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceId, minutesFromQuote]);
+
+  /*
+   * WHAT IS ALREADY BOOKED across the window these dates cover.
+   *
+   * Re-read when the series moves, because the window moves with it. Only the
+   * statuses that actually hold a slot: a cancelled meeting frees its hour, and
+   * warning about it would send the owner hunting for a booking that is not
+   * there. Those four statuses are `SLOT_HOLDING_STATUSES` plus the booking
+   * being quoted — this list is client-side, so it names them rather than
+   * importing a server constant.
+   */
+  const seriesFrom = sessionDates[0] ?? '';
+  const seriesTo = sessionDates[sessionDates.length - 1] ?? '';
+
+  useEffect(() => {
+    if (!isPackage || !seriesFrom || !seriesTo) {
+      setTakenSlots([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const from = fromBusinessLocalInput(seriesFrom, packageZone);
+        // A day past the last one, so a meeting late on that day is included.
+        const to = new Date(fromBusinessLocalInput(seriesTo, packageZone).getTime() + 86_400_000);
+
+        const params = new URLSearchParams({
+          start_date: from.toISOString(),
+          end_date: to.toISOString(),
+          limit: '200',
+        });
+
+        const response = await fetch(`/api/scheduling/bookings?${params.toString()}`);
+        const data = await response.json();
+
+        if (cancelled || !data?.success || !Array.isArray(data.bookings)) return;
+
+        setTakenSlots(
+          (data.bookings as Array<Record<string, unknown>>)
+            .filter(
+              booking =>
+                booking.start_time &&
+                booking.end_time &&
+                ['confirmed', 'pending', 'completed'].includes(String(booking.status))
+            )
+            .map(booking => ({ start: String(booking.start_time), end: String(booking.end_time) }))
+        );
+      } catch {
+        /*
+         * Silent: an unreadable list loses the clash warning, not the feature.
+         * The slot is still protected by the database's exclusion constraint,
+         * and acceptance reports a date it could not take.
+         */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isPackage, seriesFrom, seriesTo, packageZone]);
+
+  /* The closed days, read once: the warning beside each date needs them. */
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch('/api/scheduling/time-off');
+        const data = await response.json();
+        if (!cancelled && data?.success && Array.isArray(data.data)) {
+          setTimeOff(data.data as TimeOffEntry[]);
+        }
+      } catch {
+        /*
+         * Silent: an unreadable list loses the warning, not the feature. The
+         * dates are still checked on the owner's calendar, where a closed day
+         * is drawn, and a clash is reported at acceptance.
+         */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const canSend =
-    totalValid && title.trim().length > 0 && splitComplete && stagesNamed && documentReady && !sending;
+    totalValid &&
+    title.trim().length > 0 &&
+    splitComplete &&
+    stagesNamed &&
+    documentReady &&
+    packageReady &&
+    !sending;
 
   /**
    * A pill segmented control, matching the services list.
@@ -428,8 +920,40 @@ export function ProposalBuilderModal({
     setSending(true);
     setError(null);
 
-    const payment_shape =
-      kind === 'milestones'
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A PER-SESSION PACKAGE IS A MILESTONE PLAN WHOSE STAGES ARE ITS MEETINGS.
+     *
+     * One stage per meeting, an equal share each, and `bill_per_session` on the
+     * package itself is what tells acceptance to make every stage MANUAL and
+     * bind it to its own meeting. The shape stays `milestones` so every reader
+     * that already understands a staged plan — the email, the client's page,
+     * the Money page, the drawer — keeps working with no change.
+     *
+     * The percentages are computed so they SUM TO 100 exactly: the last stage
+     * takes the remainder, because 100/3 three times is not 100 and the server
+     * refuses a split that does not cover the job. The money itself is split by
+     * `splitTotal` at acceptance, which is where the rounding is made exact.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const sessionStages = () => {
+      const n = sessionDates.length;
+      const share = Math.floor((100 / n) * 10_000) / 10_000;
+
+      return sessionDates.map((_, index) => ({
+        label: t('proposal.package_session_n').replace('{n}', String(index + 1)),
+        percent:
+          index === n - 1
+            ? Number((100 - share * (n - 1)).toFixed(4))
+            : share,
+      }));
+    };
+
+    const payment_shape = isPackage
+      ? packagePay === 'per_session'
+        ? { kind: 'milestones' as const, stages: sessionStages() }
+        : { kind: 'single' as const }
+      : kind === 'milestones'
         ? {
             kind: 'milestones' as const,
             stages: stages.map(s => ({ label: s.label.trim(), percent: Number(s.percent) })),
@@ -497,6 +1021,24 @@ export function ProposalBuilderModal({
           total: totalNumber,
           valid_until: validUntil || null,
           payment_shape,
+          /*
+           * The meetings, as absolute instants.
+           *
+           * The inputs hold the business's wall clock; the column holds
+           * instants, because a meeting happens at a moment and every reader —
+           * the diary, the email, the client's calendar — needs that moment
+           * rather than a string whose zone has to be remembered.
+           */
+          sessions: isPackage
+            ? {
+                dates: sessionDates.map(local =>
+                  fromBusinessLocalInput(local, packageZone).toISOString()
+                ),
+                duration_minutes: sessionMinutes,
+                // What makes the stages above the MEETINGS rather than phases.
+                bill_per_session: packagePay === 'per_session',
+              }
+            : null,
           supersedes_id: supersedesId,
           document_id: documentId,
           payment_terms_days: termsDays,
@@ -562,7 +1104,7 @@ export function ProposalBuilderModal({
         class outright.
       */}
       <DialogContent
-        className="w-full h-[100vh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden transition-[max-width] duration-200"
+        className="w-full h-[100dvh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden transition-[max-width] duration-200"
         style={{ maxWidth: file ? '64rem' : '42rem' }}
         dir={isRTL ? 'rtl' : 'ltr'}
       >
@@ -665,10 +1207,17 @@ export function ProposalBuilderModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+              {/* `htmlFor`/`id`, which this pair never had: the label was not
+                  associated with the field, so a screen reader announced an
+                  unnamed input and clicking the word did not focus it. */}
+              <label
+                htmlFor="proposal-total"
+                className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2"
+              >
                 {t('proposal.field.total')}
               </label>
               <Input
+                id="proposal-total"
                 value={total}
                 onChange={e => setTotal(e.target.value)}
                 inputMode="decimal"
@@ -700,35 +1249,349 @@ export function ProposalBuilderModal({
           </div>
 
           {/*
-            When it has to be paid.
-            ───────────────────────────────────────────────────────────────────
-            Applies to whichever shape is chosen below: the single payment, each
-            instalment, and each milestone as it is billed. Sits above the shape
-            for that reason — it is a term of the whole agreement, not a
-            property of one arrangement.
+            A PACKAGE — several meetings sold as one purchase.
+            ─────────────────────────────────────────────────────────────────
+            Tinted in the SCHEDULING teal, the colour the calendar and the
+            service editor already use for anything that occupies an hour, so
+            the block reads as the diary half of the quote rather than as one
+            more field. Everything inside it is about meetings; everything
+            outside is about money and words.
+
+            The fields are sized to what they hold. A date is eleven
+            characters and a count is two, and a row of full-width inputs made
+            ten meetings look like a form to fill in rather than a series to
+            check. The generated dates sit in two compact columns for the same
+            reason: twelve of them are a block you scan, not a list you read.
           */}
-          <div>
-            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-              {t('proposal.field.terms')}
-            </label>
-            {/* The same segmented control, so the two questions on this
-                screen read as one form rather than two. */}
-            {segment([
-              {
-                value: 'default',
-                // Names its number, so "default" is not a word the owner has to
-                // go and look up.
-                label: t('proposal.terms_default').replace('{days}', String(defaultTermsDays)),
-                active: termsDays === null,
-                onClick: () => setTermsDays(null),
-              },
-              ...PAYMENT_TERMS_PRESETS.filter(preset => preset.days >= 0).map(preset => ({
-                value: preset.value,
-                label: t(`invoice.payment_terms_values.${preset.key}`),
-                active: termsDays === preset.days,
-                onClick: () => setTermsDays(preset.days),
-              })),
-            ])}
+          <div
+            className="rounded-xl border p-3.5"
+            style={{
+              borderColor: `${MEETINGS_COLOR}33`,
+              backgroundColor: `${MEETINGS_COLOR}0D`,
+            }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <label htmlFor="proposal-is-package" className="min-w-0 cursor-pointer">
+                <span className="flex items-center gap-2 text-sm font-semibold text-[var(--v2-text-primary)]">
+                  <CalendarClock className="h-4 w-4 shrink-0" style={{ color: MEETINGS_COLOR }} />
+                  {t('proposal.package')}
+                </span>
+                <span className="mt-1 block text-xs leading-relaxed text-[var(--v2-text-secondary)]">
+                  {t('proposal.package_hint')}
+                </span>
+              </label>
+
+              {/* Pinned to LTR, as in DailyBriefingCard: the shared Switch
+                  shifts its thumb rightwards by a fixed amount, which inside an
+                  RTL dialog would carry it out of its own track. */}
+              <div dir="ltr" className="mt-0.5 shrink-0">
+                <Switch
+                  id="proposal-is-package"
+                  checked={isPackage}
+                  disabled={readOnly || !serviceId}
+                  onCheckedChange={checked => {
+                    setIsPackage(checked);
+
+                    /*
+                     * The same default the moment it is switched on, and undone
+                     * when it is switched off: a one-off job has no reason to be
+                     * due on receipt unless the owner said so.
+                     */
+                    if (!termsTouched) setTermsDays(checked ? 0 : null);
+
+                    if (checked && !firstSession) {
+                      /*
+                       * Opens on a week today at 10:00 and generates the
+                       * default six weekly meetings straight away, so the owner
+                       * sees what the controls do rather than an empty panel
+                       * they have to work out.
+                       */
+                      const nextWeek = shiftBusinessDateKey(
+                        businessDateKey(new Date(), packageZone),
+                        7
+                      );
+                      const first = `${nextWeek}T10:00`;
+                      setFirstSession(first);
+                      setSessionDates(recurringLocalInputs(nextWeek, '10:00', cadence, sessionCount));
+                    }
+                    // Turning it off drops the dates: leaving them staged would
+                    // send a package the owner had just decided against.
+                    if (!checked) {
+                      setSessionDates([]);
+                      setFirstSession('');
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            {/*
+              A package needs a service, and this quote has none. The meetings
+              are bookings and `scheduling_bookings.service_id` is NOT NULL, so
+              rather than let the owner fill in ten dates that acceptance would
+              refuse, the switch is disabled and says why.
+            */}
+            {!serviceId && (
+              <p className="mt-2.5 text-xs text-[var(--v2-text-secondary)]">
+                {t('proposal.package_needs_service')}
+              </p>
+            )}
+
+            {isPackage && (
+              <div className="mt-3.5 flex flex-col gap-3.5">
+                {/* The pattern: three short answers on one line where there is
+                    room, each the width of what it holds. */}
+                <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+                  <div>
+                    <label
+                      htmlFor="proposal-first-session"
+                      className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[var(--v2-text-secondary)]"
+                    >
+                      {t('proposal.package_first')}
+                    </label>
+                    <Input
+                      id="proposal-first-session"
+                      type="datetime-local"
+                      disabled={readOnly}
+                      value={firstSession}
+                      onChange={e => {
+                        setFirstSession(e.target.value);
+                        setSessionDates(regenerate(e.target.value, cadence, sessionCount, sessionDates));
+                      }}
+                      className="h-9 w-[12.5rem] bg-[var(--v2-surface)] text-[13px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="proposal-session-count"
+                      className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[var(--v2-text-secondary)]"
+                    >
+                      {t('proposal.package_how_many')}
+                    </label>
+                    <Input
+                      id="proposal-session-count"
+                      type="number"
+                      min={1}
+                      max={MAX_OCCURRENCES}
+                      disabled={readOnly}
+                      value={sessionCount}
+                      onChange={e => {
+                        const next = Math.min(
+                          Math.max(Number(e.target.value) || 1, 1),
+                          MAX_OCCURRENCES
+                        );
+                        setSessionCount(next);
+                        setSessionDates(regenerate(firstSession, cadence, next, sessionDates));
+                      }}
+                      className="h-9 w-16 bg-[var(--v2-surface)] text-center text-[13px] tabular-nums"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="proposal-session-minutes"
+                      className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[var(--v2-text-secondary)]"
+                    >
+                      {t('proposal.package_each_lasts')}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="proposal-session-minutes"
+                        type="number"
+                        min={5}
+                        max={1440}
+                        step={5}
+                        disabled={readOnly}
+                        value={sessionMinutes}
+                        onChange={e => setSessionMinutes(Number(e.target.value) || 60)}
+                        className="h-9 w-16 bg-[var(--v2-surface)] text-center text-[13px] tabular-nums"
+                      />
+                      <span className="text-xs text-[var(--v2-text-secondary)]">
+                        {t('proposal.package_minutes')}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--v2-text-secondary)]">
+                    {t('proposal.package_repeats')}
+                  </span>
+                  {segment(
+                    (['weekly', 'biweekly', 'monthly'] as Cadence[]).map(value => ({
+                      value,
+                      label: t(`proposal.package_cadence_${value}`),
+                      active: cadence === value,
+                      onClick: () => {
+                        if (readOnly) return;
+                        setSessionDates(regenerate(firstSession, value, sessionCount, sessionDates));
+                        setCadence(value);
+                      },
+                    }))
+                  )}
+                </div>
+
+                {/*
+                  THE DATES THEMSELVES — generated, and every one editable.
+                  Two columns, because a dozen of them in one column is a scroll
+                  and a block the owner cannot take in at a glance. The owner's
+                  real job here is the one week that is a holiday, and that is a
+                  single picker rather than a re-plan.
+                */}
+                {sessionDates.length > 0 && (
+                  <div
+                    className="flex flex-col gap-2.5 border-t pt-3"
+                    style={{ borderColor: `${MEETINGS_COLOR}26` }}
+                  >
+                    {/*
+                      THE HEADLINE, so twelve dates do not have to be scanned to
+                      find the one that is wrong.
+                      ─────────────────────────────────────────────────────────
+                      Counted, not listed: the rows themselves say which. Lost
+                      wins over warned when both exist, because "two of these
+                      will not be booked" is the sentence that changes what the
+                      owner does next.
+                    */}
+                    {(lostCount > 0 || warnCount > 0) && (
+                      <div
+                        className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs font-medium ${
+                          lostCount > 0
+                            ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300'
+                            : 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300'
+                        }`}
+                      >
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          {lostCount > 0
+                            ? t('proposal.package_dates_lost').replace('{count}', String(lostCount))
+                            : t('proposal.package_dates_warned').replace(
+                                '{count}',
+                                String(warnCount)
+                              )}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+                      {sessionDates.map((local, index) => {
+                        const problem = sessionProblems[index];
+                        const tone = problemTone(problem);
+
+                        return (
+                          /*
+                            The whole cell carries the problem, not a line of
+                            small print under it: a tinted ground, a coloured
+                            field, and the message at a size somebody reads.
+                          */
+                          <div
+                            key={index}
+                            className={`rounded-lg px-1.5 py-1 ${
+                              tone === 'lost'
+                                ? 'bg-red-500/10'
+                                : tone === 'warn'
+                                  ? 'bg-amber-500/10'
+                                  : ''
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`w-5 shrink-0 text-[11px] font-semibold tabular-nums ${
+                                  tone === 'lost'
+                                    ? 'text-red-600 dark:text-red-400'
+                                    : tone === 'warn'
+                                      ? 'text-amber-700 dark:text-amber-400'
+                                      : 'text-[var(--v2-text-muted)]'
+                                }`}
+                              >
+                                {index + 1}
+                              </span>
+                              <Input
+                                type="datetime-local"
+                                disabled={readOnly}
+                                value={local}
+                                onChange={e => {
+                                  const next = [...sessionDates];
+                                  next[index] = e.target.value;
+                                  setSessionDates(next);
+                                }}
+                                className={`h-8 w-[12.5rem] bg-[var(--v2-surface)] text-[12.5px] ${
+                                  tone === 'lost'
+                                    ? 'border-red-500/70 focus:border-red-500'
+                                    : tone === 'warn'
+                                      ? 'border-amber-500/70 focus:border-amber-500'
+                                      : ''
+                                }`}
+                              />
+                              {!readOnly && sessionDates.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSessionDates(sessionDates.filter((_, i) => i !== index));
+                                    setSessionCount(sessionDates.length - 1);
+                                  }}
+                                  /* Always visible, quietly. `opacity-0` with
+                                     a `group-hover` that has no `group` parent
+                                     left it invisible-but-clickable on a phone,
+                                     which is worse than a grey icon. */
+                                  className="shrink-0 rounded-md p-1 text-[var(--v2-text-muted)] transition-colors hover:bg-[var(--v2-surface)] hover:text-[var(--v2-text-secondary)]"
+                                  aria-label={t('proposal.package_remove_date')}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+
+                            {/*
+                              Under its own date, inside its own cell. Each
+                              kind says the specific thing: a closed day names
+                              the owner's reason, a wrong hour names the hours
+                              that ARE open, and a taken slot says it will not
+                              be booked — because acceptance would skip it.
+                            */}
+                            {problem && problem !== 'empty' && (
+                              <p
+                                className={`mt-1 ms-[1.625rem] flex items-start gap-1.5 text-xs font-medium leading-snug ${
+                                  tone === 'lost'
+                                    ? 'text-red-600 dark:text-red-400'
+                                    : 'text-amber-700 dark:text-amber-400'
+                                }`}
+                              >
+                                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                {problem === 'past'
+                                  ? t('proposal.package_date_past')
+                                  : problem === 'taken'
+                                    ? t('proposal.package_date_taken')
+                                    : 'outside' in problem
+                                      ? t('proposal.package_date_outside')
+                                          .replace('{start}', problem.outside.start)
+                                          .replace('{end}', problem.outside.end)
+                                      : `${t('scheduling.closed')}${
+                                          problem.closed.reason ? ` · ${problem.closed.reason}` : ''
+                                        }`}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <p className="text-xs text-[var(--v2-text-secondary)]">
+                      {t('proposal.package_count')
+                        .replace('{count}', String(sessionDates.length))
+                        .replace('{minutes}', String(sessionMinutes))}
+                    </p>
+                  </div>
+                )}
+
+                {/* Nothing to show yet: the first date is what starts it. */}
+                {sessionDates.length === 0 && (
+                  <p className="text-xs text-[var(--v2-text-secondary)]">
+                    {t('proposal.package_pick_first')}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* How the money arrives. */}
@@ -736,22 +1599,84 @@ export function ProposalBuilderModal({
             <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
               {t('proposal.field.payment')}
             </label>
-            {segment(
-              (['single', 'milestones', 'installments'] as ShapeKind[]).map(option => ({
-                value: option,
-                label: t(`proposal.shape.${option}`),
-                active: kind === option,
-                onClick: () => {
-                  setKind(option);
-                  if (option === 'milestones' && stages.length === 0) {
-                    applyPreset('deposit_balance');
-                  }
-                },
-              }))
+
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              A PACKAGE IS ASKED A DIFFERENT QUESTION.
+              `תשלום אחד / לפי שלבים / בתשלומים` is the right question for a
+              JOB: one payment, phases of work, or periods of time. A block of
+              ten meetings has no phases and no periods — it has meetings, and
+              the only two answers that mean anything are the two this offers:
+              the whole block before the first one, or each one as it happens.
+              A quote with no meetings keeps all three, untouched.
+              ─────────────────────────────────────────────────────────────────
+            */}
+            {isPackage ? (
+              <>
+                {segment(
+                  (['upfront', 'per_session'] as PackagePay[]).map(option => ({
+                    value: option,
+                    label: t(`proposal.package_pay_${option}`),
+                    active: packagePay === option,
+                    onClick: () => {
+                      setPackagePay(option);
+
+                      /*
+                       * A PACKAGE IS DUE ON RECEIPT, either way, unless the
+                       * owner says otherwise.
+                       *
+                       * `מראש` means before the first meeting, and the business
+                       * default — 45 days on the account this was found on —
+                       * would leave the hours held and the meetings unconfirmed
+                       * for six weeks.
+                       *
+                       * `אחרי כל פגישה` means paying for the session that just
+                       * happened. The invoice goes out the moment the owner
+                       * marks it held, so a 45-day term turns "after each
+                       * meeting" into "six weeks after each meeting" — which is
+                       * not what either side read.
+                       *
+                       * A DEFAULT, not a rule: once the owner has answered the
+                       * terms themselves, nothing moves them again.
+                       */
+                      if (!termsTouched) setTermsDays(0);
+                    },
+                  }))
+                )}
+
+                {/*
+                  The consequence, which is the part that was missing: whether
+                  the client pays before the first meeting, and when the
+                  meetings become confirmed. Those differ between the two
+                  answers and nothing on the screen said so.
+                */}
+                <p className="mt-2 text-xs leading-relaxed text-[var(--v2-text-secondary)]">
+                  {packagePay === 'per_session'
+                    ? t('proposal.package_pay_per_session_why').replace(
+                        '{each}',
+                        perSessionAmount ? money(perSessionAmount) : '—'
+                      )
+                    : t('proposal.package_pay_upfront_why')}
+                </p>
+              </>
+            ) : (
+              segment(
+                (['single', 'milestones', 'installments'] as ShapeKind[]).map(option => ({
+                  value: option,
+                  label: t(`proposal.shape.${option}`),
+                  active: kind === option,
+                  onClick: () => {
+                    setKind(option);
+                    if (option === 'milestones' && stages.length === 0) {
+                      applyPreset('deposit_balance');
+                    }
+                  },
+                }))
+              )
             )}
           </div>
 
-          {kind === 'installments' && (
+          {!isPackage && kind === 'installments' && (
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
@@ -784,7 +1709,8 @@ export function ProposalBuilderModal({
             </div>
           )}
 
-          {kind === 'milestones' && (
+          {/* A block of sessions has no phases to bill against. */}
+          {!isPackage && kind === 'milestones' && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-[var(--v2-text-primary)]">
@@ -877,6 +1803,59 @@ export function ProposalBuilderModal({
               )}
             </div>
           )}
+
+          {/*
+            When it has to be paid.
+            ───────────────────────────────────────────────────────────────────
+            AFTER the shape, because that is the order the question makes sense
+            in: the terms mean something different for each arrangement, and
+            above it they were a deadline for an invoice nobody had described
+            yet.
+
+            They are relevant to EVERY shape, which is easy to doubt and worth
+            recording. A single payment: the deadline for its one invoice. A
+            staged plan: the deadline for the deposit, and then for each
+            milestone from the moment the owner bills it — a milestone has no
+            date of its own, so `billStage` falls back to these terms. An
+            instalment plan: the first period is due after them and the cadence
+            steps from there, so changing them moves the whole schedule.
+          */}
+          <div>
+            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+              {t('proposal.field.terms')}
+            </label>
+            {/* The same segmented control, so the two questions on this
+                screen read as one form rather than two. */}
+            {segment([
+              {
+                value: 'default',
+                // Names its number, so "default" is not a word the owner has to
+                // go and look up.
+                label: t('proposal.terms_default').replace('{days}', String(defaultTermsDays)),
+                active: termsDays === null,
+                onClick: () => {
+                  setTermsDays(null);
+                  setTermsTouched(true);
+                },
+              },
+              ...PAYMENT_TERMS_PRESETS.filter(preset => preset.days >= 0).map(preset => ({
+                value: preset.value,
+                label: t(`invoice.payment_terms_values.${preset.key}`),
+                active: termsDays === preset.days,
+                onClick: () => {
+                  setTermsDays(preset.days);
+                  setTermsTouched(true);
+                },
+              })),
+            ])}
+
+            {/*
+              What they actually govern, which the label alone does not say:
+              "payment terms" reads as a property of one invoice, and for stages
+              and instalments it is the deadline applied to every bill.
+            */}
+            <p className="mt-2 text-xs text-[var(--v2-text-secondary)]">{t(termsHintKey)}</p>
+          </div>
 
           {/*
             The proposal document.

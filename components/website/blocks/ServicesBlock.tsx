@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { motion } from 'framer-motion';
 import { resolveBlockLayout } from '@/lib/website-builder/pageTheme';
 import {
@@ -209,6 +210,17 @@ interface ServiceItemWithRawData extends ServiceItem {
   collection?: 'online' | 'invoice' | null;
   /** Bought outright, or quoted per job. Absent means direct. */
   sale_mode?: 'direct' | 'proposal' | null;
+  /**
+   * How this service may be paid over time.
+   *
+   * The routes that build this block's content have always supplied it
+   * (`plansByService[s.id]`) and this type did not declare it, so the card threw
+   * it away before the dialog could see it. A client clicking an instalment
+   * service in the MAIN services list therefore reached the payment step with no
+   * plan attached and was quoted the whole price — the same narrowest-point-in-
+   * the-chain fault `PublicBookingPage` documents about its own copy of it.
+   */
+  paymentPlan?: ServicePaymentPlan;
   currency?: string;
   durationMinutes?: number;
   hidden?: boolean;
@@ -463,6 +475,8 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
       // walked a different one.
       is_scheduled: service.is_scheduled,
       collection: service.collection,
+      // Without this the modal opens on a plan service with no plan.
+      paymentPlan: service.paymentPlan,
       /*
        * And whether it is quoted rather than bought.
        *

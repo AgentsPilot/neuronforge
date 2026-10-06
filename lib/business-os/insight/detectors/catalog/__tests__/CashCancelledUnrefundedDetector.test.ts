@@ -76,6 +76,11 @@ const booking = (over: Record<string, unknown> = {}) => ({
   updated_at: daysAgo(10),
   created_at: daysAgo(30),
   cancellation_reason: 'Cancelled by client',
+  // Legacy by default: every cancelled booking on the account this was built
+  // against predates `cancelled_by`, so the fixture's default is the shape
+  // that actually exists in the wild.
+  cancelled_by: null,
+  cancel_reason: null,
   contact_id: 'c1',
   payment_status: null,
   payment_amount: null,
@@ -245,6 +250,63 @@ describe('what it deliberately leaves alone', () => {
     });
   });
 
+  it('reads the column, not the prose, when the column is set', async () => {
+    /*
+     * `cancelled_by` (migration 20260928c) is the authority. Its own comment
+     * says it "replaces parsing the CLIENT_CANCELLED_PREFIX", and this row
+     * carries the column with NO prefix anywhere — which is what every
+     * cancellation looks like once that prose stops being written.
+     */
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'owner', cancellation_reason: null })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
+      cancelled_by_client: false,
+    });
+  });
+
+  it('believes the column over a contradicting prefix', async () => {
+    // Both present and disagreeing. The column wins, or the fallback is not a
+    // fallback — it is a second source of truth racing the first.
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'owner' })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
+      cancelled_by_client: false,
+    });
+  });
+
+  it('still reads a legacy row that only has the prefix', async () => {
+    /*
+     * Every cancelled booking on the account this was built against is of this
+     * kind: called off before the column existed, carrying only the English
+     * prose. Dropping them would blind the detector to the entire history.
+     */
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: null })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
+      cancelled_by_client: true,
+    });
+  });
+
+  it('carries the reason code so the narrator can say why', async () => {
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'client', cancel_reason: 'client_cost' })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
+      cancel_reason: 'client_cost',
+    });
+  });
+
   it('marks a client cancellation as one', async () => {
     const result = await detectorFor({
       bookings: [booking()],
@@ -254,6 +316,59 @@ describe('what it deliberately leaves alone', () => {
     expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
       cancelled_by_client: true,
     });
+  });
+});
+
+describe('what the narrator is told', () => {
+  it('says who called it off, so the card cannot guess', async () => {
+    /*
+     * The card read "2 פגישות שבוטלו על ידי הלקוח" while this row recorded
+     * `cancelled_by_client: false`. The model had no fact and filled the gap
+     * with the likelier-sounding half, and an owner read something untrue
+     * about their own client.
+     */
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'owner', cancellation_reason: null })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect(result!.narrationSubject).toContain('the business cancelled');
+    expect(result!.narrationSubject).not.toContain('the client cancelled');
+  });
+
+  it('says the client cancelled when they did', async () => {
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'client' })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect(result!.narrationSubject).toContain('the client cancelled');
+  });
+
+  it('carries the held amount, because the figure beside it is a count', async () => {
+    // Without this the model wrote "₪2 not refunded" — the count of bookings,
+    // rendered as money, beside a real ₪300.
+    const result = await detectorFor({
+      bookings: [booking()],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect(result!.currentValueUnit).toBe('count');
+    expect(result!.narrationSubject).toContain('300');
+  });
+
+  it('admits when nobody recorded the amount', async () => {
+    /*
+     * A cash payment marked on the booking and never written to the ledger.
+     * The card must not invent a figure for it, and saying so is better than
+     * a silent zero.
+     */
+    const result = await detectorFor({
+      bookings: [booking({ payment_status: 'paid' })],
+      transactions: [],
+    }).evaluate(U);
+
+    expect(result!.narrationSubject).toContain('nobody recorded');
   });
 });
 

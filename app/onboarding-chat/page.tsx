@@ -387,28 +387,30 @@ export default function OnboardingChatPage() {
   }, [messages, isSending, showPreview, showServicesForm]);
 
   /*
-   * The services form follows the QUESTION, not just the step.
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SERVICES FORM NEVER OPENS.
    *
-   * It used to key on `currentStep` alone. But `service_details` is a loop:
-   * submit rows, get asked "any more?", say yes, get asked for details again —
-   * and `currentStep` is `service_details` throughout. The effect therefore ran
-   * once, and after the first submission the form never reopened. Answering
-   * "I have more" produced a prompt with no way to respond to it, which is the
-   * dead end this fixes.
+   * It was a fifteen-column grid rendered under the conversation, asking for
+   * every field of every service before a single one existed — a spreadsheet
+   * in a chat window, and the point people stopped.
    *
-   * `pendingQuestion` is what actually moves: it is `'more_services'` while the
-   * chips are up and cleared when the assistant asks for details again.
+   * `service_details` now asks two chip questions and a number instead
+   * (`sell_scheduled`, `sell_collection`, `service_count` in
+   * `OnboardingConversationManager`), and the catalogue is created as drafts
+   * the owner finishes in the services editor, which already has every field
+   * this grid had plus a publish button.
+   *
+   * Held at `false` here rather than deleted in the same change, so the switch
+   * can be reverted on its own if the new questions misbehave. The grid's JSX
+   * and its row handlers are unreachable from this point and come out next.
+   *
+   * It used to open whenever `service_details` had no pending question. The
+   * new flow always has one — and `OnboardingConversationManager.attribution`
+   * has a test pinning that, because a branch that cleared `pendingQuestion`
+   * without moving the step would put the grid straight back on screen.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   useEffect(() => {
-    const askingForDetails = currentStep === 'service_details' && !pendingQuestion;
-
-    if (askingForDetails) {
-      // Delayed so the assistant's message lands first; the form arriving
-      // before the sentence that asks for it reads as a glitch.
-      const timer = setTimeout(() => setShowServicesForm(true), 500);
-      return () => clearTimeout(timer);
-    }
-
     setShowServicesForm(false);
   }, [currentStep, pendingQuestion]);
 

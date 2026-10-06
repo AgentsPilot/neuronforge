@@ -34,6 +34,27 @@ const ANSWERED_ACTIVITIES = ['booking_link_sent', 'booking_link_chase'];
  */
 const CANCELLED_SCAN_LIMIT = 200;
 
+/**
+ * How far back the unmarked-meeting scan reads.
+ *
+ * Its own constant rather than borrowing the one above: that name describes a
+ * different question, and a shared number is how two scans come to be tuned
+ * against each other. Unlike the cancelled scan this one discards nothing after
+ * the query, so the limit is a ceiling on work rather than a risk of hiding a
+ * row — the newest are the ones an owner can still remember.
+ */
+const UNMARKED_SCAN_LIMIT = 200;
+
+/**
+ * How far back an unmarked meeting is still an ERRAND.
+ *
+ * Beyond this it is a record, not a question: an owner cannot usefully say
+ * whether a client turned up seven months ago, and a card carrying a permanent
+ * count of legacy rows is one people stop reading — which costs more than the
+ * rows are worth. Nothing is deleted or decided; it simply stops being asked.
+ */
+const UNMARKED_MAX_AGE_DAYS = 90;
+
 /** Invoices that have been issued and not settled. */
 const ISSUED = ['sent', 'pending', 'overdue'];
 
@@ -524,22 +545,40 @@ const bookingCancelled: GapDefinition = {
     safely('booking_cancelled', async () => {
       const { data } = await supabaseServer
         .from('scheduling_bookings')
-        .select('id, contact_id, start_time, updated_at, created_at, cancellation_reason, service:scheduling_services(service_name), contact:crm_contacts(first_name, last_name, email)')
+        .select('id, contact_id, start_time, updated_at, created_at, cancellation_reason, cancelled_by, service:scheduling_services(service_name), contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
         .eq('status', 'cancelled')
         /*
          * Cancelled BY THE CLIENT. An owner who cancelled a booking does not
          * need the dashboard telling them they cancelled it — they were there.
          *
-         * Matched against the constant the cancel route writes, not a literal
-         * copied to here: the two spellings drifted apart within a day of each
-         * other, and a mismatch is silent — the card simply shows nothing.
+         * NOT a query filter any more. `cancelled_by` (20260928c) is the
+         * authority, and rows cancelled before that column existed carry only
+         * the English prefix in the prose — so the test is "the column, or the
+         * prefix where the column is null", which PostgREST cannot express as
+         * one filter.
+         *
+         * Either alone silently drops half the rows: the column alone loses
+         * every pre-migration cancellation, and the prefix alone will lose
+         * every future one the moment that prose stops being written. Applied
+         * in `byClient` below, over a set the status filter has already made
+         * small.
          */
-        .ilike('cancellation_reason', `${CLIENT_CANCELLED_PREFIX}%`)
         .order('updated_at', { ascending: false })
         .limit(CANCELLED_SCAN_LIMIT);
 
-      const rows = (data || []).filter(row => row.contact_id);
+      /**
+       * Who called it off, from the column where there is one.
+       *
+       * The prefix is the fallback and only the fallback: it is what rows
+       * cancelled before `cancelled_by` existed carry instead.
+       */
+      const byClient = (row: { cancelled_by?: string | null; cancellation_reason?: string | null }) =>
+        row.cancelled_by
+          ? row.cancelled_by === 'client'
+          : (row.cancellation_reason ?? '').startsWith(CLIENT_CANCELLED_PREFIX);
+
+      const rows = (data || []).filter(row => row.contact_id && byClient(row));
       if (rows.length === 0) return [];
 
       /*
@@ -813,7 +852,7 @@ const stageAwaitingCompletion: GapDefinition = {
     safely('stage_awaiting_completion', async () => {
       const { data: stages } = await supabaseServer
         .from('payment_plan_installments')
-        .select('id, contact_id, amount, currency, label, created_at, proposal_id')
+        .select('id, contact_id, amount, currency, label, created_at, proposal_id, booking_id')
         .eq('user_id', userId)
         .eq('trigger', 'manual')
         .eq('status', 'pending')
@@ -827,7 +866,59 @@ const stageAwaitingCompletion: GapDefinition = {
         .order('created_at', { ascending: true })
         .limit(50);
 
-      const rows = (stages || []).filter(row => row.contact_id);
+      const allStages = (stages || []).filter(row => row.contact_id);
+      if (allStages.length === 0) return [];
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A STAGE THAT BILLS A MEETING WAITS FOR THAT MEETING.
+       *
+       * The header above says "there is nothing to wait for: no date will ever
+       * arrive to make it billable", and `staleAfterHours: 0` follows from it.
+       * That is true of a quote phase, which has no date of its own.
+       *
+       * It is FALSE for a recurring booking, where the stage has an obvious
+       * date: the session it bills for. A real series on 2026-10-02 created six
+       * manual stages of ₪74.99, one per session, for meetings running from 8
+       * October to 17 December — and the card asked the owner to mark December's
+       * session done and invoice for it, in October. Every one of the six.
+       *
+       * So a stage carrying a `booking_id` is held until that booking's start
+       * time has passed. A stage with no booking behind it is unchanged: it is
+       * the quote phase the gap was written for, and it has nothing to wait on.
+       *
+       * The owner decided this on 2026-10-02: only once the meeting has
+       * happened, with no grace period.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const bookingIds = [...new Set(allStages.map(row => row.booking_id).filter(Boolean))] as string[];
+
+      const startByBooking = new Map<string, string | null>();
+      for (const ids of chunked(bookingIds)) {
+        const { data: bookings } = await supabaseServer
+          .from('scheduling_bookings')
+          .select('id, start_time')
+          .eq('user_id', userId)
+          .in('id', ids);
+        for (const booking of bookings || []) {
+          startByBooking.set(booking.id as string, (booking.start_time as string) ?? null);
+        }
+      }
+
+      const nowMs = Date.now();
+      const rows = allStages.filter(row => {
+        if (!row.booking_id) return true;
+        const start = startByBooking.get(row.booking_id as string);
+        /*
+         * A booking we could not read, or one with no time at all, is NOT
+         * withheld. The stage is real and unbilled either way, and hiding it
+         * over a missing join would lose the owner money silently — the
+         * opposite failure from the one above, and the worse of the two.
+         */
+        if (!start) return true;
+        return Date.parse(start) <= nowMs;
+      });
+
       if (rows.length === 0) return [];
 
       const { data: contacts } = await supabaseServer
@@ -892,6 +983,101 @@ const stageAwaitingCompletion: GapDefinition = {
     }),
 };
 
+/**
+ * A meeting whose time has passed and which nobody has marked.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS A GAP AND NOT MERELY UNTIDY
+ *
+ * Marking a meeting has always been optional admin with no consequence, so most
+ * are never marked. Three things depend on it, and each one fails silently:
+ *
+ *   · A QUOTED job cannot move. The drawer's quote step now asks "did the
+ *     meeting happen?" rather than assuming it did the moment the clock passed
+ *     — an honest question that nobody answers if they never open the contact.
+ *   · The NO-SHOW rate is unknowable, so nothing can tell a business that one
+ *     client in five does not turn up.
+ *   · Under per-session billing (packages, scenario 2) the session is never
+ *     invoiced. A forgotten tick becomes money that never arrives.
+ *
+ * `blocksOn: 'owner'` because nobody else can know what happened in a room they
+ * were not in.
+ *
+ * `staleAfterHours: 12` — the one gap here with a real wait, and deliberately
+ * so. `since` is the START time, so a 10am meeting becomes a row at 10pm the
+ * same day: late enough that an owner is not nagged about a session they are
+ * still in or have only just left, early enough that tomorrow morning's glance
+ * at the card catches it.
+ *
+ * ONLY WHAT CAN STILL BE MARKED. `confirmed` and `pending` are the two states a
+ * marking decision applies to. Completed, no-show and cancelled ARE the answers.
+ * And only bookings with a time: a product sale has no meeting to have happened.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const meetingUnmarked: GapDefinition = {
+  id: 'meeting_unmarked',
+  blocksOn: 'owner',
+  staleAfterHours: 12,
+  action: 'mark_meeting',
+  find: userId =>
+    safely('meeting_unmarked', async () => {
+      const { data: bookings } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('id, contact_id, start_time, status, service:scheduling_services(service_name)')
+        .eq('user_id', userId)
+        .in('status', ['confirmed', 'pending'])
+        .not('start_time', 'is', null)
+        /*
+         * Already past. The staleness window in `findGaps` then holds it back
+         * for another twelve hours — this bound only keeps the query from
+         * dragging back every future appointment the business has.
+         */
+        .lt('start_time', new Date().toISOString())
+        /*
+         * And not older than the window above. An account arriving with a year
+         * of never-marked history would otherwise show a count that never moves
+         * however many an owner answers.
+         */
+        .gte(
+          'start_time',
+          new Date(Date.now() - UNMARKED_MAX_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString()
+        )
+        .order('start_time', { ascending: false })
+        .limit(UNMARKED_SCAN_LIMIT);
+
+      const rows = (bookings || []).filter(row => row.contact_id);
+      if (rows.length === 0) return [];
+
+      const { data: contacts } = await supabaseServer
+        .from('crm_contacts')
+        .select('id, first_name, last_name, email')
+        .eq('user_id', userId)
+        .in('id', rows.map(row => row.contact_id as string));
+
+      const nameById = new Map((contacts || []).map(c => [c.id as string, personName(c)]));
+
+      /*
+       * One row per MEETING. Two unmarked sessions with the same client are two
+       * answers the owner owes, and they may differ — one held, one missed.
+       */
+      return rows.map(row => {
+        const service = Array.isArray(row.service) ? row.service[0] : row.service;
+        return {
+          contactId: row.contact_id as string,
+          name: nameById.get(row.contact_id as string) || 'Someone',
+          // The service, so the row says which meeting it is asking about.
+          note: str((service as { service_name?: string } | null)?.service_name),
+          /*
+           * The START, not the end: it is what the owner recognises ("the 10am
+           * on Tuesday"), and it is what the staleness window measures from.
+           */
+          since: row.start_time as string,
+          entityId: row.id as string,
+        };
+      });
+    }),
+};
+
 export const GAP_DEFINITIONS: GapDefinition[] = [
   enquiryUnanswered,
   quoteUnwritten,
@@ -903,6 +1089,7 @@ export const GAP_DEFINITIONS: GapDefinition[] = [
   meetingUpcoming,
   bookingCancelled,
   bookingRefunded,
+  meetingUnmarked,
 ];
 
 /* ------------------------------------------------------------------ helpers */

@@ -1,4 +1,4 @@
-import { windowsForDay, hasAnyAvailability } from '../availabilityWindows';
+import { windowsForDay, windowsForDate, weekdayNameFor, hasAnyAvailability } from '../availabilityWindows';
 
 /** Exactly what the editor writes today. */
 const CURRENT = {
@@ -88,5 +88,94 @@ describe('hasAnyAvailability', () => {
 
   it('is false for nothing at all', () => {
     expect(hasAnyAvailability(null)).toBe(false);
+  });
+});
+
+/*
+ * Time off: the reason a client could book a closed day.
+ *
+ * `scheduling_availability_exceptions` existed for months with nothing reading
+ * it, so a business shut for a holiday went on publishing slots for it. These
+ * pin the three rules and the two failure directions.
+ */
+describe('windowsForDate', () => {
+  const OPEN = { sunday: [{ start: '09:00', end: '17:00' }], friday: [] };
+  // 2026-10-04 is a Sunday; 2026-10-09 is a Friday.
+  const SUNDAY = '2026-10-04';
+  const FRIDAY = '2026-10-09';
+
+  it('is the weekday’s hours when nothing is recorded', () => {
+    expect(windowsForDate(OPEN, SUNDAY)).toEqual([{ start: '09:00', end: '17:00' }]);
+    expect(windowsForDate(OPEN, FRIDAY)).toEqual([]);
+  });
+
+  it('closes a date inside an unavailable range', () => {
+    const away = [{ exception_type: 'unavailable', start_date: '2026-10-01', end_date: '2026-10-08' }];
+    expect(windowsForDate(OPEN, SUNDAY, away)).toEqual([]);
+  });
+
+  it('leaves the days either side of that range alone', () => {
+    const away = [{ exception_type: 'unavailable', start_date: '2026-10-05', end_date: '2026-10-08' }];
+    expect(windowsForDate(OPEN, SUNDAY, away)).toEqual([{ start: '09:00', end: '17:00' }]);
+  });
+
+  it('treats a single-day range as that one day', () => {
+    const away = [{ exception_type: 'unavailable', start_date: SUNDAY, end_date: SUNDAY }];
+    expect(windowsForDate(OPEN, SUNDAY, away)).toEqual([]);
+  });
+
+  it('replaces the hours for a short day', () => {
+    const short = [{
+      exception_type: 'custom_hours',
+      start_date: SUNDAY,
+      end_date: SUNDAY,
+      custom_hours: { start: '09:00', end: '13:00' },
+    }];
+    expect(windowsForDate(OPEN, SUNDAY, short)).toEqual([{ start: '09:00', end: '13:00' }]);
+  });
+
+  it('can OPEN a day that is normally closed', () => {
+    // Replacing rather than narrowing is what makes this work with one rule.
+    const special = [{
+      exception_type: 'custom_hours',
+      start_date: FRIDAY,
+      end_date: FRIDAY,
+      custom_hours: { start: '10:00', end: '14:00' },
+    }];
+    expect(windowsForDate(OPEN, FRIDAY, special)).toEqual([{ start: '10:00', end: '14:00' }]);
+  });
+
+  it('closed beats short hours on the same date', () => {
+    const both = [
+      { exception_type: 'custom_hours', start_date: SUNDAY, end_date: SUNDAY, custom_hours: { start: '09:00', end: '13:00' } },
+      { exception_type: 'unavailable', start_date: SUNDAY, end_date: SUNDAY },
+    ];
+    expect(windowsForDate(OPEN, SUNDAY, both)).toEqual([]);
+  });
+
+  it('closes the date when a custom-hours entry cannot be read', () => {
+    // The owner recorded an intention to restrict it. A restriction we cannot
+    // parse must not be read as business as usual.
+    const broken = [
+      { exception_type: 'custom_hours', start_date: SUNDAY, end_date: SUNDAY, custom_hours: { start: '13:00', end: '09:00' } },
+    ];
+    expect(windowsForDate(OPEN, SUNDAY, broken)).toEqual([]);
+
+    const missing = [
+      { exception_type: 'custom_hours', start_date: SUNDAY, end_date: SUNDAY, custom_hours: null },
+    ];
+    expect(windowsForDate(OPEN, SUNDAY, missing)).toEqual([]);
+  });
+
+  it('ignores an entry with no dates on it', () => {
+    expect(windowsForDate(OPEN, SUNDAY, [{ exception_type: 'unavailable' }]))
+      .toEqual([{ start: '09:00', end: '17:00' }]);
+  });
+
+  it('names the weekday in the business calendar, not the server’s', () => {
+    // Midnight-UTC parsing reads 2026-10-04 as a Saturday anywhere behind UTC.
+    expect(weekdayNameFor('2026-10-04')).toBe('sunday');
+    expect(weekdayNameFor('2026-10-09')).toBe('friday');
+    expect(weekdayNameFor('not a date')).toBe('');
   });
 });

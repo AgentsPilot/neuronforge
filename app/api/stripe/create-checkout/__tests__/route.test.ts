@@ -63,6 +63,8 @@ const mockStripeService = {
 const mockGetStripeService = jest.fn(() => mockStripeService);
 jest.mock('@/lib/stripe/StripeService', () => ({ getStripeService: () => mockGetStripeService() }));
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { POST } from '../route';
 
 function req(body: unknown): NextRequest {
@@ -91,6 +93,21 @@ describe('POST /api/stripe/create-checkout', () => {
     expect(mockLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'BOOST_PACK_CHECKOUT_INITIATED', entityId: 'bp_1', userId: USER.id })
     );
+  });
+
+  // CLAUDE.md rule 1: the profile read goes through UserProfileRepository, on the
+  // caller's cookie client (RLS applies), and only full_name is used.
+  it('boost_pack: reads the customer name through UserProfileRepository', async () => {
+    const res = await POST(req({ purchaseType: 'boost_pack', boostPackId: 'bp_1' }));
+    expect(res.status).toBe(200);
+    expect(mockFrom).toHaveBeenCalledWith('profiles');
+    expect(mockStripeService.createBoostPackCheckout).toHaveBeenCalledWith(expect.objectContaining({ name: 'Owner' }));
+  });
+
+  it('the route makes no direct Supabase table call (source guard)', () => {
+    const source = readFileSync(join(__dirname, '..', 'route.ts'), 'utf8');
+    expect(source).not.toMatch(/\.from\(/);
+    expect(source).toContain('new UserProfileRepository(supabase).findById(user.id)');
   });
 
   it('unauthenticated → 401, nothing else happens', async () => {

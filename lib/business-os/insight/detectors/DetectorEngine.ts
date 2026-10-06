@@ -55,6 +55,8 @@ import { PricingIntroOfferStuckDetector } from './catalog/PricingIntroOfferStuck
 import { CashBookingUnpaidDetector } from './catalog/CashBookingUnpaidDetector';
 import { CashWorkUnbilledDetector } from './catalog/CashWorkUnbilledDetector';
 import { CashCancelledUnrefundedDetector } from './catalog/CashCancelledUnrefundedDetector';
+import { ConvDeclineReasonDetector } from './catalog/ConvDeclineReasonDetector';
+import { RetCancelPatternDetector } from './catalog/RetCancelPatternDetector';
 import { CashIncomeDropDetector } from './catalog/CashIncomeDropDetector';
 import { CashClientConcentrationDetector } from './catalog/CashClientConcentrationDetector';
 import { ConvQuoteAcceptanceDropDetector } from './catalog/ConvQuoteAcceptanceDropDetector';
@@ -160,6 +162,8 @@ export class DetectorEngine {
       new CashBookingUnpaidDetector(supabase),
       new CashWorkUnbilledDetector(supabase),
       new CashCancelledUnrefundedDetector(supabase),
+      new ConvDeclineReasonDetector(supabase),
+      new RetCancelPatternDetector(supabase),
       new CashIncomeDropDetector(supabase),
       new CashClientConcentrationDetector(supabase),
       new ConvQuoteAcceptanceDropDetector(supabase),

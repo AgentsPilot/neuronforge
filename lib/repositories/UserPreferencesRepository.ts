@@ -22,6 +22,9 @@
 // `business_profiles.language`. Keep it the only one, or the "both columns
 // together" rule (see `lib/business-os/userLanguage.ts`) gets a second home.
 //
+// `findTimezone` was added for the package-acceptance wire, which creates
+// bookings off-request and so has no browser zone to fall back on.
+//
 // Methods never throw: they return `{ data, error }`, with a database error
 // reduced to `{ code, message }` before it is logged or returned (the invite
 // repository's `safeDbError`, SA M-1).

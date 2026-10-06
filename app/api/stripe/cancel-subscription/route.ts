@@ -8,6 +8,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
+import { subscriptionPeriodEnd } from '@/lib/stripe/subscriptionPeriod';
 
 const logger = createLogger({ module: 'StripeCancelSubscriptionAPI' });
 
@@ -77,6 +78,8 @@ export async function POST(request: NextRequest) {
     );
 
     logger.info({ userId: user.id, subscriptionId: subscription.id }, 'Subscription set to cancel at period end');
+    // Basil moved the billing period onto subscription items.
+    const currentPeriodEnd = subscriptionPeriodEnd(subscription);
 
     // Update database
     const { error: updateError } = await supabaseAdmin
@@ -105,7 +108,7 @@ export async function POST(request: NextRequest) {
         details: {
           subscription_id: subscription.id,
           cancel_at_period_end: true,
-          current_period_end: subscription.current_period_end,
+          current_period_end: currentPeriodEnd,
           timestamp: new Date().toISOString()
         },
         userId: user.id,
@@ -115,7 +118,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Subscription canceled successfully. You will retain access until the end of your billing period.',
-      current_period_end: subscription.current_period_end
+      current_period_end: currentPeriodEnd
     });
 
   } catch (error: any) {

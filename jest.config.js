@@ -16,6 +16,16 @@ const config = {
     // component importing one (react-phone-number-input, for instance) was
     // untestable without this.
     '\\.(css|scss|sass|less)$': '<rootDir>/__mocks__/styleMock.js',
+    /*
+     * `lib-address/lite` resolves to an ESM build under the `browser`
+     * condition, which jsdom tests pick and Jest cannot parse ("Cannot use
+     * import statement outside a module") because node_modules is not
+     * transformed. Webpack handles the `.mjs` natively, so this is a Jest gap
+     * rather than a product one — but without the mapping no jsdom test can
+     * exercise the address rules at all, which is exactly the path that was
+     * broken for weeks while the Node-only suite stayed green.
+     */
+    '^lib-address/lite$': '<rootDir>/node_modules/lib-address/dist/entry-lite.cjs',
   },
   collectCoverageFrom: [
     'lib/**/*.{ts,tsx}',

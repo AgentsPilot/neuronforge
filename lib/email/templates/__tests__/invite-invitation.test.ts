@@ -188,3 +188,37 @@ describe('the invitation email: comments and the wordmark (Slice 3a)', () => {
     expect(withLogo.subject).toBe(withoutLogo.subject);
   });
 });
+
+describe('the invitation email: the inviter will be told (N-1, N6, FR-42)', () => {
+  it.each([
+    ['en', "We'll let Dana Levi know when you join."],
+    ['he', 'נעדכן את Dana Levi כשתצטרפו.'],
+    ['es', 'Avisaremos a Dana Levi cuando te unas.'],
+  ] as const)('%s: the named line, in html and text, above the safety line', (locale, line) => {
+    const email = generateInviteInvitationEmail(data({ locale }));
+    expect(email.html).toContain(line.replace("'", '&#39;'));
+    expect(email.text).toContain(line);
+    // Above the "Not expecting this?" safety line, which stays last.
+    const lines = email.text.split(/\r?\n/);
+    expect(lines.indexOf(line)).toBe(lines.length - 3);
+  });
+
+  it.each([
+    ['en', "We'll let the person who invited you know when you join."],
+    ['he', 'נעדכן את מי שהזמין אתכם כשתצטרפו.'],
+    ['es', 'Avisaremos a quien te invitó cuando te unas.'],
+  ] as const)('%s: the unnamed line when there is no inviter name (the platform fallback)', (locale, line) => {
+    const email = generateInviteInvitationEmail(data({ locale, inviterName: null }));
+    expect(email.text).toContain(line);
+  });
+
+  it('the name is escaped in the line', () => {
+    const email = generateInviteInvitationEmail(data({ inviterName: '<b>Eve</b>' }));
+    expect(email.html).not.toContain('<b>Eve</b>');
+    expect(email.html).toContain('&lt;b&gt;Eve&lt;/b&gt; know when you join.');
+  });
+
+  it('the subject is unchanged', () => {
+    expect(generateInviteInvitationEmail(data()).subject).toBe('Dana Levi invited you to AgentPilot');
+  });
+});

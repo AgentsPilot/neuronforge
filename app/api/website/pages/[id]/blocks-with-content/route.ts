@@ -143,7 +143,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       ? Promise.all([
           // Both in one pass, and the same pair the public route loads — the
           // editor and the live site must describe a service identically.
-          new SchedulingServiceRepository(supabaseServer).listAll(user.id, true), // active only
+          // The shared base set: `BOOKABLE` plus the public columns only.
+          new SchedulingServiceRepository(supabaseServer).listBookable(user.id),
           loadServicePaymentPlans(user.id),
         ]).then(
           value => ({ ok: true as const, value }),
@@ -484,6 +485,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                   collection: matchingService.collection,
                   // The split, where the business offers one.
                   paymentPlan: matchingService.paymentPlan,
+                sale_mode: matchingService.sale_mode,
                   serviceId: matchingService.id,
                   serviceName: matchingService.name
                 };

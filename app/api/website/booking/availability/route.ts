@@ -3,18 +3,24 @@
  * GET - Fetch available time slots for public website booking widget
  *
  * This endpoint:
- * 1. Looks up the business by subdomain
+ * 1. Resolves the business by subdomain, user code, or the signed-in owner
+ *    (the preview, where a draft page has no subdomain)
  * 2. Fetches available services from Scheduling capability
  * 3. Returns available time slots based on business availability settings
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getUser } from '@/lib/auth';
+import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
+import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
-import { windowsForDay, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
+import { windowsForDate, hasAnyAvailability, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
+import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
+import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { safeTimezone, businessInstant, businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'WebsiteBookingAvailabilityAPI' });
@@ -31,6 +37,10 @@ interface TimeSlot {
 interface Service {
   is_scheduled?: boolean;
   collection?: 'online' | 'invoice' | null;
+  /** Bought outright, or quoted first. The booking modal's resolver reads it. */
+  sale_mode?: 'direct' | 'proposal';
+  /** How this service may be paid over time, where the business offers one. */
+  paymentPlan?: ServicePaymentPlan;
   id: string;
   name: string;
   description: string | null;
@@ -46,33 +56,67 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const subdomain = searchParams.get('subdomain');
+    const userCode = searchParams.get('user_code');
     const serviceId = searchParams.get('service_id');
     const date = searchParams.get('date'); // YYYY-MM-DD format
     const daysAhead = parseInt(searchParams.get('days') || '7', 10);
 
-    if (!subdomain) {
-      return NextResponse.json(
-        { success: false, error: 'Subdomain is required' },
-        { status: 400 }
-      );
+    /*
+     * Who this calendar belongs to — resolved the same way every other public
+     * booking route resolves it.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This route required a `subdomain` and did its own `website_pages` lookup,
+     * and both facts broke the PREVIEW.
+     *
+     * A draft page has no subdomain (`app/website-preview/[id]/page.tsx`: "a
+     * draft in the wizard has neither"), so the preview passes an empty string
+     * and this answered 400 "Subdomain is required" — while the smart link
+     * worked, because ITS identity is a path segment that cannot go missing.
+     * Same services, same journey, and the calendar loaded on one surface and
+     * not the other.
+     *
+     * `payment-intent` had already solved exactly this: subdomain OR user code,
+     * and otherwise the signed-in owner. Preview works because the owner is
+     * signed in. That resolution is now here too, so the two halves of one
+     * booking cannot disagree about whose business it is.
+     *
+     * `resolvePublicOwner` also replaces the `.single()` this used to do, which
+     * ERRORS on more than one row: subdomain `0kgjcy` carries a draft and a live
+     * page, so that lookup returned a failure and this route answered 404 for a
+     * business whose site is fine.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    let ownerId: string;
+
+    if (subdomain || userCode) {
+      const owner = await resolvePublicOwner({
+        subdomain: subdomain ?? undefined,
+        userCode: userCode ?? undefined,
+      });
+
+      if (!owner) {
+        requestLogger.warn({ subdomain, userCode }, 'Business not found');
+        return NextResponse.json(
+          { success: false, error: 'Website not found' },
+          { status: 404 }
+        );
+      }
+
+      ownerId = owner.userId;
+    } else {
+      // No address at all: the preview, where the owner is the caller.
+      const user = await getUser();
+
+      if (!user) {
+        return NextResponse.json(
+          { success: false, error: 'Unauthorized' },
+          { status: 401 }
+        );
+      }
+
+      ownerId = user.id;
     }
-
-    // Look up website and owner
-    const { data: websitePage, error: pageError } = await supabaseServer
-      .from('website_pages')
-      .select('user_id')
-      .eq('subdomain', subdomain)
-      .single();
-
-    if (pageError || !websitePage) {
-      requestLogger.warn({ subdomain }, 'Website not found');
-      return NextResponse.json(
-        { success: false, error: 'Website not found' },
-        { status: 404 }
-      );
-    }
-
-    const ownerId = websitePage.user_id;
 
     // Fetch business profile for availability settings
     const { data: businessProfile, error: profileError } = await supabaseServer
@@ -125,17 +169,18 @@ export async function GET(request: NextRequest) {
      */
     const timezone = safeTimezone(ownerPrefs?.timezone);
 
-    // Fetch active services
-    const { data: services, error: servicesError } = await supabaseServer
-      .from('scheduling_services')
-      // Both flags. This route checked only `is_active`, the exact mirror of
-      // the conversion routes checking only `status` — so a draft service was
-      // bookable on the website and a deactivated one on the smart links.
-      .select('id, service_name, description, duration_minutes, price, currency, is_active, status, is_scheduled, collection, sale_mode')
-      .eq('user_id', ownerId)
-      .eq('is_active', true)
-      .eq('status', 'active')
-      .order('service_name');
+    /*
+     * What this business publicly sells.
+     *
+     * Through `listBookable` rather than the `.eq('is_active').eq('status')`
+     * pair this used to repeat. Both flags still have to hold — `is_active` is
+     * the owner's Power toggle and `status` is draft versus published — and
+     * `BOOKABLE` is the one definition of that, which three public routes were
+     * restating by hand. The order comes with it, so the same catalogue no
+     * longer arrives in a different sequence on each surface.
+     */
+    const { data: services, error: servicesError } =
+      await schedulingServiceRepository.listBookable(ownerId);
 
     if (servicesError) {
       requestLogger.error({ err: servicesError }, 'Failed to fetch services');
@@ -155,6 +200,18 @@ export async function GET(request: NextRequest) {
     const capability = await resolvePaymentCollectionCapability(supabaseServer, ownerId);
     const processorReady = capability.canCollect;
 
+    /*
+     * How each service may be paid over time.
+     *
+     * The conversion route has always sent this and THIS one never did, so an
+     * instalment plan showed its split on a smart link and nowhere on the
+     * business's own booking page — which is why `BookingWidget` computed an
+     * `activePlan` from a field its data source never supplied, and its entire
+     * plan display was unreachable. The client saw one price and was told
+     * nothing about the schedule they were agreeing to.
+     */
+    const plansByService = await loadServicePaymentPlans(ownerId);
+
     const formattedServices: Service[] = (filteredServices || []).map(s => ({
       id: s.id,
       name: s.service_name,
@@ -165,10 +222,35 @@ export async function GET(request: NextRequest) {
       // The two facts the widget builds its journey from.
       is_scheduled: s.is_scheduled !== false,
       collection: s.collection ?? null,
+      sale_mode: s.sale_mode ?? 'direct',
+      paymentPlan: plansByService[s.id],
     }));
 
     // Calculate available slots (only if availability is configured)
     let slots: TimeSlot[] = [];
+
+    /*
+     * The closed days, once, for the whole window.
+     *
+     * Read before the loop below rather than inside it: the answer is the same
+     * for every day it walks, and one request beats `daysAhead` of them. A
+     * failure here leaves the list EMPTY, which publishes the ordinary weekly
+     * hours — the behaviour this endpoint has always had, and the safer of the
+     * two wrongs for a page whose job is to take bookings.
+     */
+    let timeOff: TimeOffEntry[] = [];
+    if (hasAvailabilityConfigured && availabilitySettings) {
+      const from = date || businessDateKey(new Date(), timezone);
+      const to = date || shiftBusinessDateKey(from, daysAhead);
+      const offResult = await schedulingTimeOffRepository.list(ownerId, { from, to });
+      if (offResult.error) {
+        requestLogger.warn(
+          { err: offResult.error, ownerId },
+          'Time off unreadable; publishing the ordinary weekly hours'
+        );
+      }
+      timeOff = offResult.data ?? [];
+    }
 
     if (hasAvailabilityConfigured && availabilitySettings) {
       if (date && serviceId) {
@@ -180,7 +262,8 @@ export async function GET(request: NextRequest) {
             date,
             selectedService.duration_minutes,
             availabilitySettings,
-            timezone
+            timezone,
+            timeOff
           );
         }
       } else if (serviceId) {
@@ -200,7 +283,8 @@ export async function GET(request: NextRequest) {
               dayKey,
               selectedService.duration_minutes,
               availabilitySettings,
-              timezone
+              timezone,
+              timeOff
             );
             dayKey = shiftBusinessDateKey(dayKey, 1);
             slots.push(...daySlots);
@@ -286,22 +370,38 @@ async function calculateDaySlots(
    * business open 09:00 in New York published its slots at 09:00 UTC, which is
    * 05:00 in its own reception. Every client saw a different wrong hour.
    */
-  timezone: string
+  timezone: string,
+  /**
+   * The business's closed days and short days, already fetched for the whole
+   * window the caller is asking about.
+   *
+   * Passed in rather than queried here: this function is called once per day in
+   * a loop up to `daysAhead` long, and reading the table inside it would be one
+   * request per day for an answer that does not change between them.
+   */
+  timeOff: TimeOffEntry[]
 ): Promise<TimeSlot[]> {
   const slots: TimeSlot[] = [];
   /*
-   * Noon UTC, purely to name the weekday. `new Date('2026-09-21')` is midnight
-   * UTC, and reading its weekday in any zone behind UTC gives the day before.
+   * The weekday is derived inside `windowsForDate` now — by the same noon-UTC
+   * trick this spelled out, kept in one place as `weekdayNameFor` so a fourth
+   * call site cannot get it wrong. (`new Date('2026-09-21')` is midnight UTC,
+   * and reading its weekday in any zone behind UTC gives the day before.)
    */
-  const dayOfWeek = new Date(`${dateStr}T12:00:00Z`)
-    .toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })
-    .toLowerCase();
 
   // The editor writes an array of windows per day. This asked for `.enabled` on
   // that array, got `undefined`, and returned no slots for every day of the
   // week — the same failure the public booking page had, with a different
   // guess about the shape. Both now ask one normaliser instead.
-  const windows = windowsForDay(availabilitySettings, dayOfWeek);
+  /*
+   * The weekday's hours, with this DATE's time off applied.
+   *
+   * Was `windowsForDay(availabilitySettings, dayOfWeek)` — the weekly pattern
+   * and nothing else, which is why a business closed for a holiday went on
+   * publishing slots for it. `windowsForDate` reads the same pattern and then
+   * subtracts the closed days and clamps the short ones.
+   */
+  const windows = windowsForDate(availabilitySettings, dateStr, timeOff);
   if (windows.length === 0) {
     return slots;
   }

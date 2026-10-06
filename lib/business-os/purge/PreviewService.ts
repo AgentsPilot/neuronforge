@@ -24,6 +24,7 @@ import {
 } from './descriptors';
 import { evaluatePreflightGate, describeGateCoverage } from './PreflightGate';
 import { missingCapabilities, describeCapability, hasCapability } from './capabilities';
+import { runDeleteGraphCheck, type DeleteGraphResult } from './deleteGraph';
 import type { PurgeLevel, PurgeOptions, GateResult } from './types';
 import {
   businessPurgeRepository,
@@ -61,6 +62,13 @@ export interface PreviewResult {
    * The same answer the page banner shows, so the two cannot disagree.
    */
   resetLive: boolean | null;
+
+  /**
+   * Purge slice 3a (T3a-5): the delete-graph verdict for THIS level and
+   * these options, read-only, so a refusal is visible before anyone types a
+   * confirmation. `unreadable` is a blocking state, never "clean" (SA C-5).
+   */
+  deleteGraph: DeleteGraphResult;
 
   /** Always false: a PREVIEW never proceeds. The commit route is separate. */
   canProceed: false;
@@ -132,6 +140,9 @@ export async function buildPurgePreview(params: {
   // can never disagree with the banner or with `ResetService`.
   const resetLive = await businessPurgeRepository.purgeFunctionExists();
 
+  // Never throws: a failed read is `unreadable`, rendered as blocking (C-5).
+  const deleteGraph = await runDeleteGraphCheck({ level, options, correlationId });
+
   const limitations: string[] = [];
 
   if (resetLive === true) {
@@ -154,6 +165,16 @@ export async function buildPurgePreview(params: {
     // imply one.
     limitations.push(
       'Purge is preview-only in this build. The commit path implements Reset; there is no Purge commit yet (slice 3).',
+    );
+  }
+
+  if (deleteGraph.status === 'unreadable') {
+    limitations.push(
+      `DELETE GRAPH NOT VERIFIED: the live foreign keys and triggers could not be read (${deleteGraph.error ?? 'unknown error'}). Treat this run as REFUSED; it is not shown as clean.`,
+    );
+  } else if (deleteGraph.status === 'refused') {
+    limitations.push(
+      `DELETE GRAPH REFUSES THIS RUN: ${deleteGraph.blockingOrderViolations.length} blocking-order violation(s), ${deleteGraph.unlistedCascadeChildren.length} cascade child table(s) outside the run, ${deleteGraph.unreviewedDeleteTriggers.length} unreviewed DELETE trigger(s). See the delete-graph panel.`,
     );
   }
 
@@ -194,7 +215,7 @@ export async function buildPurgePreview(params: {
   const durationMs = Date.now() - startedAt;
 
   log.info(
-    { userId, level, rows, tablesWithRows, tablesUnknown, gate: gate.outcome, durationMs },
+    { userId, level, rows, tablesWithRows, tablesUnknown, gate: gate.outcome, deleteGraph: deleteGraph.status, durationMs },
     'Purge preview complete',
   );
 
@@ -209,6 +230,7 @@ export async function buildPurgePreview(params: {
     gateCoverage,
     limitations,
     resetLive,
+    deleteGraph,
     canProceed: false,
     generatedAt: new Date().toISOString(),
     durationMs,

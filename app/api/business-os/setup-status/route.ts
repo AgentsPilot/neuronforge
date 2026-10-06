@@ -25,6 +25,18 @@ export interface SetupStatus {
   allComplete: boolean;
   dismissed: boolean;
   dismissedSteps: string[];
+  /**
+   * Services written but not yet published.
+   *
+   * The onboarding chat asks how many things the business sells and creates
+   * that many DRAFTS, leaving the detail to the services editor. The `services`
+   * step counts only `status = 'active'`, so those drafts correctly leave it
+   * outstanding — but "Add your services" is the wrong thing to say to someone
+   * who has six waiting to be finished. This is what lets the label tell the
+   * two situations apart; it deliberately does NOT change `complete`, because
+   * publishing behaviour moves with that.
+   */
+  draftServices: number;
 }
 
 export async function GET(request: NextRequest) {
@@ -51,6 +63,7 @@ export async function GET(request: NextRequest) {
       { data: stripeConnectAccount },
       { data: websitePage },
       { data: liveBookingLinks },
+      { count: draftServicesCount },
     ] = await Promise.all([
       // Business profile - includes availability and dismissed steps
       // Using * to ensure we get all columns including newly added ones
@@ -101,6 +114,20 @@ export async function GET(request: NextRequest) {
         .eq('destination_type', 'booking')
         .eq('is_active', true)
         .limit(1),
+      /*
+       * Services written but not published — what onboarding now creates.
+       *
+       * A separate count rather than a widened one: the `services` step above
+       * must keep counting ONLY `status = 'active'`, because a draft cannot be
+       * booked and `businessShape` deliberately refuses to let one decide the
+       * shape. This exists so the label can say "finish the six you have"
+       * instead of "add your services".
+       */
+      supabaseServer
+        .from('scheduling_services')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('status', 'draft'),
     ]);
 
     // Debug: Log the full businessProfile and stripe account to see all fields
@@ -195,10 +222,11 @@ export async function GET(request: NextRequest) {
       allComplete,
       dismissed,
       dismissedSteps,
+      draftServices: draftServicesCount || 0,
     };
 
     requestLogger.info(
-      { userId: user.id, completedCount, totalCount, allComplete },
+      { userId: user.id, completedCount, totalCount, allComplete, draftServices: status.draftServices },
       'Setup status fetched'
     );
 

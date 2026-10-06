@@ -3,12 +3,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Clock, Settings, ChevronDown, ChevronRight, Check, Tag, Trash2, Loader2, AlertCircle, CreditCard } from 'lucide-react';
+import { Clock, Settings, ChevronDown, ChevronRight, Check, Trash2, Loader2, AlertCircle, CreditCard } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { ServicePaymentOptions } from './ServicePaymentOptions';
 import { ServiceCurrencySelect, CURRENCY_OPTIONS, getCurrencySymbol } from './ServiceCurrencySelect';
 import type { SchedulingService, ServiceCurrency, ServiceCollection, ServiceSaleMode, PaymentType, InstallmentFrequency, FirstPaymentDue } from '@/lib/repositories/SchedulingRepository';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
+import { serviceMoneyLine } from '@/lib/business-os/serviceMoneyLine';
 
 interface SchedulingServiceModalProps {
   service?: SchedulingService;
@@ -21,6 +22,29 @@ interface SchedulingServiceModalProps {
 
 // Scheduling theme color: Teal
 const SCHEDULING_COLOR = '#14B8A6';
+
+/**
+ * The three ways a service can be sold, as one choice.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `sale_mode` and `collection` were two controls, and the second was a question
+ * that hid itself: absent while the price was 0, absent for a quoted service,
+ * and its answer discarded on save in both cases. They are one choice here
+ * because they were never independent — a quoted job has no collection method,
+ * and a card service with no processor is invoiced by every public surface.
+ *
+ * `collection` is deliberately NOT written for a quote: the save has always
+ * stored `null` there, and carrying the last value the control held is how a
+ * quoted job ends up publishing a payment step nobody agreed to.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+type SaleShape = 'card' | 'invoice' | 'quote';
+
+const SALE_SHAPES: ReadonlyArray<{ id: SaleShape; titleKey: string; descKey: string }> = [
+  { id: 'card', titleKey: 'scheduling.modal.shape.card', descKey: 'scheduling.modal.shape.card_desc' },
+  { id: 'invoice', titleKey: 'scheduling.modal.shape.invoice', descKey: 'scheduling.modal.shape.invoice_desc' },
+  { id: 'quote', titleKey: 'scheduling.modal.shape.quote', descKey: 'scheduling.modal.shape.quote_desc' },
+];
 
 export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpdated, prefill, onServiceCreated }: SchedulingServiceModalProps) {
   const { t, currencyCode, businessCurrency } = useLanguage();
@@ -71,6 +95,16 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
    */
   const [intakeEnabled, setIntakeEnabled] = useState(false);
 
+  /**
+   * Whether a card can actually be charged today.
+   *
+   * Three states, not two: `null` is "we have not found out", and it must not
+   * be shown as a problem. Only a definite `false` changes what section 4 says
+   * — and it changes it to the truth, which is that a card service on an
+   * account with no processor is invoiced.
+   */
+  const [processorReady, setProcessorReady] = useState<boolean | null>(null);
+
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
@@ -83,6 +117,26 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
       .catch(() => {
         // Never fatal: without the flag the strip simply omits a step it
         // cannot confirm, which is the safer of the two mistakes.
+      });
+
+    return () => { cancelled = true; };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+
+    // `charges_enabled` is the whole question — the same flag Stripe itself
+    // enforces when a charge is created.
+    fetch('/api/payments/stripe-connect')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => {
+        if (!cancelled) setProcessorReady(data?.data?.charges_enabled === true);
+      })
+      .catch(() => {
+        // Left null: unknown, which reads as connected. Announcing a missing
+        // processor because a status request failed would send an owner to fix
+        // something that is not broken.
       });
 
     return () => { cancelled = true; };
@@ -316,9 +370,72 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
     setDeleteError(null);
   };
 
+  /*
+   * Which of the three shapes this service already is.
+   *
+   * Read from the two stored columns rather than held in state, so an existing
+   * service opens on the shape it actually has and nothing has to be migrated.
+   * `collection` arrives normalised to 'invoice' when the column is empty (see
+   * the loader above), which is the reading a legacy row has always had here.
+   */
+  const saleShape: SaleShape =
+    formData.sale_mode === 'proposal'
+      ? 'quote'
+      : formData.collection === 'online'
+        ? 'card'
+        : 'invoice';
+
+  /*
+   * Pressing a shape writes both columns, and only the ones it owns.
+   *
+   * A quote leaves `collection` exactly as it was: the save writes `null` for a
+   * proposal anyway, and preserving it means switching back to direct does not
+   * lose the method the owner had chosen.
+   */
+  const pickSaleShape = (next: SaleShape) => {
+    setFormData(prev => ({
+      ...prev,
+      sale_mode: next === 'quote' ? 'proposal' : 'direct',
+      collection: next === 'card' ? 'online' : next === 'invoice' ? 'invoice' : prev.collection,
+    }));
+  };
+
+  /**
+   * The whole money arrangement, in one sentence.
+   *
+   * Resolved by `serviceMoneyLine` — a pure module with its own tests, because
+   * the branch that matters is the one an owner cannot see: a card service on
+   * an account with no processor is INVOICED by every public surface, and this
+   * is the only place that says so.
+   */
+  const moneyLine = serviceMoneyLine({
+    saleMode: formData.sale_mode,
+    collection: formData.price > 0 ? formData.collection : null,
+    price: formData.price,
+    paymentType: formData.payment_type,
+    installmentCount: formData.installment_count,
+    frequency: formData.installment_frequency,
+    processorReady,
+  });
+
+  /** A figure as the owner priced it: no trailing zeros on a whole number. */
+  const money = (value: number | undefined) =>
+    value === undefined
+      ? ''
+      : `${getCurrencySymbol(formData.currency)}${Number.isInteger(value) ? value : value.toFixed(2)}`;
+
+  const moneyText = t(`scheduling.modal.money.${moneyLine.key}`)
+    .split('{amount}').join(money(moneyLine.amount))
+    .split('{each}').join(money(moneyLine.each))
+    .split('{count}').join(String(moneyLine.count ?? ''))
+    .split('{rest}').join(String(moneyLine.rest ?? ''))
+    .split('{freq}').join(
+      moneyLine.freqKey ? t(`scheduling.modal.installment_${moneyLine.freqKey}`) : ''
+    );
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="w-full sm:max-w-2xl h-[100vh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
+      <DialogContent className="w-full sm:max-w-2xl h-[100dvh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
         {/* Sticky Header - pe-14 for close button space */}
         <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 pe-12 sm:pe-14 bg-[var(--v2-surface)]">
           <div className="flex items-center gap-3 sm:gap-4">
@@ -341,214 +458,56 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           {/* Scrollable Content */}
           <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
-          {/* Basic Info Section */}
-          <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide">
-              {t('scheduling.modal.basic_info')}
+          {/* ──────────────────────────────────────────────────────────────────
+              THE FORM, RESTRUCTURED (2026-09-30)
+
+              It asked three questions drawn identically — how is this sold,
+              what does it need, how is it paid — and the third hid itself
+              whenever the price was 0 or the service was quoted, with no
+              explanation. Two of them decided the client's journey and the
+              third decided whether the business could be paid at all.
+
+              Now there are two, and the payment question is folded into the
+              selling one, because they were never independent: a quoted job has
+              no collection method at all, and the save has always written
+              `null` for it.
+
+              What replaces the explaining is section 4: the journey the client
+              walks and one sentence about the money, both derived from the same
+              rules the public pages run on. A setting and its consequence are
+              on screen together, which is the only way an owner selling across
+              six verticals can tell that they have chosen the wrong one.
+              ────────────────────────────────────────────────────────────────── */}
+
+          {/* 1 · The service */}
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-[0.07em]">
+              {t('scheduling.modal.section.service')}
             </h3>
 
-            {/* Service Name */}
-            <div>
-              <label htmlFor="service_name" className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                {t('scheduling.modal.service_name')} <span className="text-red-500">*</span>
-              </label>
-              <input
-                id="service_name"
-                value={formData.service_name}
-                onChange={(e) => setFormData(prev => ({ ...prev, service_name: e.target.value }))}
-                placeholder={t('scheduling.modal.service_name_placeholder')}
-                required
-                className="w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              />
-            </div>
-
-            {/* Description */}
-            <div>
-              <label htmlFor="description" className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                {t('scheduling.modal.description')}
-              </label>
-              <textarea
-                id="description"
-                value={formData.description}
-                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                placeholder={t('scheduling.modal.description_placeholder')}
-                rows={3}
-                className="w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all resize-none"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              />
-            </div>
-          </div>
-
-          {/* Time & Pricing Section */}
-          <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-              <Tag className="h-4 w-4" />
-              {t('scheduling.modal.time_pricing')}
-            </h3>
-
-            {/* Can a client buy this outright, or do you quote it?
-                Placed before the time and money questions because it decides
-                whether they apply at all: a quoted job has no published price
-                and no card taken at booking — both are settled in the proposal. */}
-            <div>
-              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                {t('scheduling.modal.sale_mode')}
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                {(['direct', 'proposal'] as const).map(value => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, sale_mode: value }))}
-                    className={`p-3 text-start border transition-all ${
-                      formData.sale_mode === value
-                        ? 'border-[#14B8A6] bg-[#14B8A6]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                        formData.sale_mode === value ? 'border-[#14B8A6]' : 'border-[var(--v2-text-muted)]'
-                      }`}>
-                        {formData.sale_mode === value && <div className="w-2 h-2 rounded-full bg-[#14B8A6]" />}
-                      </div>
-                      <span className={`text-sm font-medium ${
-                        formData.sale_mode === value ? 'text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'
-                      }`}>
-                        {value === 'direct'
-                          ? t('scheduling.modal.sale_mode.direct')
-                          : t('scheduling.modal.sale_mode.proposal')}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs text-[var(--v2-text-secondary)] leading-snug">
-                      {value === 'direct'
-                        ? t('scheduling.modal.sale_mode.direct_desc')
-                        : t('scheduling.modal.sale_mode.proposal_desc')}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Does a client pick a time for this?
-                Asked explicitly rather than inferred from a blank duration: a
-                field left empty by accident must not silently switch booking
-                off for a service people are meant to book. */}
-            <div>
-              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                {t('scheduling.modal.needs_time')}
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                {([true, false] as const).map(value => (
-                  <button
-                    key={String(value)}
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, is_scheduled: value }))}
-                    className={`p-3 text-start border transition-all ${
-                      formData.is_scheduled === value
-                        ? 'border-[#14B8A6] bg-[#14B8A6]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                        formData.is_scheduled === value ? 'border-[#14B8A6]' : 'border-[var(--v2-text-muted)]'
-                      }`}>
-                        {formData.is_scheduled === value && <div className="w-2 h-2 rounded-full bg-[#14B8A6]" />}
-                      </div>
-                      <span className={`text-sm font-medium ${
-                        formData.is_scheduled === value ? 'text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'
-                      }`}>
-                        {value ? t('scheduling.modal.needs_time.yes') : t('scheduling.modal.needs_time.no')}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* How the money arrives — only where there is money, and only
-                where the figure is settled.
-                This is what replaces asking the business, once, whether it
-                "needs a card processor": a question nobody could answer about
-                everything they sell at the same time.
-
-                Hidden for a quoted service as well as an unpriced one. The save
-                below already writes `null` for a proposal — nobody has said
-                what the work costs, so there is no money for a method to
-                describe — so showing the control meant offering a choice that
-                was then discarded, which is worse than not offering it. */}
-            {formData.price > 0 && formData.sale_mode !== 'proposal' && (
-              <div>
-                <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                  {t('scheduling.modal.collection')}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1 min-w-0">
+                <label htmlFor="service_name" className="block text-[11px] font-medium text-[var(--v2-text-secondary)] mb-1">
+                  {t('scheduling.modal.service_name')} <span className="text-red-500">*</span>
                 </label>
-                <div className="grid grid-cols-2 gap-3">
-                  {(['online', 'invoice'] as const).map(value => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setFormData(prev => ({ ...prev, collection: value }))}
-                      className={`p-3 text-start border transition-all ${
-                        formData.collection === value
-                          ? 'border-[#22C58B] bg-[#22C58B]/10'
-                          : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                      }`}
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                          formData.collection === value ? 'border-[#22C58B]' : 'border-[var(--v2-text-muted)]'
-                        }`}>
-                          {formData.collection === value && <div className="w-2 h-2 rounded-full bg-[#22C58B]" />}
-                        </div>
-                        <span className={`text-sm font-medium ${
-                          formData.collection === value ? 'text-[#22C58B]' : 'text-[var(--v2-text-primary)]'
-                        }`}>
-                          {value === 'online'
-                            ? t('scheduling.modal.collection.online')
-                            : t('scheduling.modal.collection.invoice')}
-                        </span>
-                      </div>
-                      <p className="text-xs text-[var(--v2-text-muted)] mt-1 leading-snug">
-                        {value === 'online'
-                          ? t('scheduling.modal.collection.online.why')
-                          : t('scheduling.modal.collection.invoice.why')}
-                      </p>
-                    </button>
-                  ))}
-                </div>
+                <input
+                  id="service_name"
+                  value={formData.service_name}
+                  onChange={(e) => setFormData(prev => ({ ...prev, service_name: e.target.value }))}
+                  placeholder={t('scheduling.modal.service_name_placeholder')}
+                  required
+                  className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-[13px] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                />
               </div>
-            )}
 
-            {/* The consequence, beside the setting. */}
-            <div className="p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-              <span className="block text-[11px] font-semibold tracking-wide text-[var(--v2-text-muted)] mb-2">
-                {t('journey.label')}
-              </span>
-              <ClientJourneyStrip
-                service={{
-                  scheduled: formData.is_scheduled,
-                  collection:
-                    formData.sale_mode !== 'proposal' && formData.price > 0
-                      ? formData.collection
-                      : null,
-                  price: formData.sale_mode === 'proposal' ? null : formData.price,
-                  saleMode: formData.sale_mode,
-                }}
-                intakeEnabled={intakeEnabled}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                {/* Independent of whether a time is booked: a workshop can run
-                    two hours and still be sold as a product. */}
-                <label htmlFor="duration_minutes" className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                  {t('scheduling.modal.duration')}
+              {/* The length describes the SERVICE, so it sits with the name
+                  rather than with the money. Required only where a slot is
+                  actually held; a workshop can run three hours and still be
+                  sold as a product. */}
+              <div className="w-full sm:w-[132px]">
+                <label htmlFor="duration_minutes" className="block text-[11px] font-medium text-[var(--v2-text-secondary)] mb-1">
+                  {formData.is_scheduled ? t('scheduling.modal.length') : t('scheduling.modal.length_optional')}
                   {formData.is_scheduled && <span className="text-red-500"> *</span>}
                 </label>
                 <div className="relative">
@@ -560,98 +519,304 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
                     value={formData.duration_minutes}
                     onChange={(e) => setFormData(prev => ({ ...prev, duration_minutes: parseInt(e.target.value) }))}
                     required={formData.is_scheduled}
-                    className="w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
+                    className="w-full px-3 py-2 pe-12 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-[13px] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
-                  <span className="absolute end-4 top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)] text-sm">
+                  <span className="absolute end-3 top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)] text-[11px]">
                     {t('scheduling.service.minutes')}
                   </span>
                 </div>
               </div>
-              {/* A quoted job has no price to type.
-                  The figure is named in the proposal, per client, which is what
-                  choosing "quoted first" means — so the field goes dead rather
-                  than inviting a number that would be discarded on save. Dead
-                  and visible, not removed: a field that vanishes mid-form moves
-                  everything under the reader's eye. */}
-              <div>
-                <label htmlFor="price" className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                  {t('scheduling.modal.price')}
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
+            </div>
+
+            <div>
+              <label htmlFor="description" className="block text-[11px] font-medium text-[var(--v2-text-secondary)] mb-1">
+                {t('scheduling.modal.description')}
+              </label>
+              <textarea
+                id="description"
+                value={formData.description}
+                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                placeholder={t('scheduling.modal.description_placeholder')}
+                rows={2}
+                className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-[13px] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all resize-none"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              />
+            </div>
+          </div>
+
+          {/* 2 · What the client gets
+              Asked explicitly rather than inferred from a blank duration: a
+              field left empty by accident must not silently switch booking off
+              for a service people are meant to book. One line high, because
+              section 4 says what it means better than a subtitle could. */}
+          <div className="space-y-2">
+            <h3 className="text-[11px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-[0.07em]">
+              {t('scheduling.modal.section.client_gets')}
+            </h3>
+            <div className="flex flex-wrap items-center gap-2">
+              {([true, false] as const).map(value => (
+                <button
+                  key={String(value)}
+                  type="button"
+                  onClick={() => setFormData(prev => ({ ...prev, is_scheduled: value }))}
+                  className={`flex items-center gap-2 px-3 py-2 border transition-all ${
+                    formData.is_scheduled === value
+                      ? 'border-[#14B8A6] bg-[#14B8A6]/10'
+                      : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
+                  }`}
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <span className={`w-[15px] h-[15px] rounded-full border-2 flex items-center justify-center shrink-0 ${
+                    formData.is_scheduled === value ? 'border-[#14B8A6]' : 'border-[var(--v2-text-muted)]'
+                  }`}>
+                    {formData.is_scheduled === value && <span className="w-[7px] h-[7px] rounded-full bg-[#14B8A6]" />}
+                  </span>
+                  <span className={`text-[13px] font-medium ${
+                    formData.is_scheduled === value ? 'text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'
+                  }`}>
+                    {value ? t('scheduling.modal.needs_time.yes') : t('scheduling.modal.needs_time.no')}
+                  </span>
+                </button>
+              ))}
+              <p className="text-[11px] text-[var(--v2-text-secondary)] leading-snug flex-1 min-w-[180px]">
+                {formData.is_scheduled
+                  ? t('scheduling.modal.length_hint_booked')
+                  : t('scheduling.modal.length_hint_product')}
+              </p>
+            </div>
+          </div>
+
+          {/* 3 · How it is sold and paid
+              One question where there were two. `sale_mode` and `collection`
+              were separate controls, and the second was meaningless for a
+              proposal — which is why the save has always written `null` for it
+              there. Pressing a shape sets both. */}
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-[0.07em]">
+              {t('scheduling.modal.section.sold_paid')}
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {SALE_SHAPES.map(shape => {
+                const on = saleShape === shape.id;
+                const accent = shape.id === 'quote' ? '#F0A02A' : '#22C58B';
+                return (
+                  <button
+                    key={shape.id}
+                    type="button"
+                    onClick={() => pickSaleShape(shape.id)}
+                    className={`p-3 text-start border transition-all ${
+                      on ? 'bg-[var(--v2-bg)]' : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
+                    }`}
+                    style={{
+                      borderRadius: 'var(--v2-radius-button)',
+                      borderColor: on ? accent : undefined,
+                      backgroundColor: on ? `${accent}1A` : undefined,
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="w-[15px] h-[15px] rounded-full border-2 flex items-center justify-center shrink-0"
+                        style={{ borderColor: on ? accent : 'var(--v2-text-muted)' }}
+                      >
+                        {on && <span className="w-[7px] h-[7px] rounded-full" style={{ backgroundColor: accent }} />}
+                      </span>
+                      <span
+                        className="text-[13px] font-medium"
+                        style={{ color: on ? accent : 'var(--v2-text-primary)' }}
+                      >
+                        {t(shape.titleKey)}
+                      </span>
+                    </span>
+                    <span className="block mt-1 ms-[23px] text-[11px] leading-snug text-[var(--v2-text-secondary)]">
+                      {t(shape.descKey)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {formData.sale_mode === 'proposal' ? (
+              /* No price and no plan, and it says why. The figure, the deposit
+                 and the instalments are named on the proposal, per client — a
+                 disabled field invited a number that would be discarded. */
+              <div
+                className="flex gap-2 p-3 bg-[var(--v2-status-warning-bg)] border border-[var(--v2-status-warning-border)]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-[var(--v2-status-warning-text)]" />
+                <p className="text-[12px] leading-snug text-[var(--v2-status-warning-text)]">
+                  {t('scheduling.modal.quote_note')}
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="w-[120px]">
+                    <label htmlFor="price" className="block text-[11px] font-medium text-[var(--v2-text-secondary)] mb-1">
+                      {t('scheduling.modal.price')}
+                    </label>
                     <input
                       id="price"
                       type="number"
                       min="0"
                       step="0.01"
-                      value={formData.sale_mode === 'proposal' ? '' : formData.price}
+                      value={formData.price}
                       onChange={(e) => setFormData(prev => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
-                      disabled={formData.sale_mode === 'proposal'}
-                      placeholder={formData.sale_mode === 'proposal' ? t('scheduling.modal.price.quoted') : undefined}
-                      className={`w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all ${
-                        formData.sale_mode === 'proposal' ? 'opacity-40 cursor-not-allowed' : ''
-                      }`}
+                      className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-[13px] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     />
                   </div>
                   {/* The platform's currency control, shared with the
                       onboarding chat so both offer the same thing. */}
-                  <ServiceCurrencySelect
-                    value={formData.currency}
-                    onChange={code => setFormData(prev => ({ ...prev, currency: code }))}
-                    /*
-                      Frozen once this service has been booked, invoiced, paid
-                      or quoted. The database refuses the change either way
-                      (`service_currency_lock`); showing it here is what stops
-                      the owner meeting that rule as an error after the click.
-                      A new service is never locked — there is nothing behind it
-                      yet.
-                    */
-                    locked={Boolean(service?.currency_locked)}
-                    lockedReason={t('scheduling.service.currency_locked')}
-                  />
+                  <div className="w-[128px] pb-[1px]">
+                    <ServiceCurrencySelect
+                      value={formData.currency}
+                      onChange={code => setFormData(prev => ({ ...prev, currency: code }))}
+                      /*
+                        Frozen once this service has been booked, invoiced, paid
+                        or quoted. The database refuses the change either way
+                        (`service_currency_lock`); showing it here is what stops
+                        the owner meeting that rule as an error after the click.
+                        A new service is never locked — there is nothing behind
+                        it yet.
+                      */
+                      locked={Boolean(service?.currency_locked)}
+                      lockedReason={t('scheduling.service.currency_locked')}
+                    />
+                  </div>
+                  <p className="pb-2 text-[11px] text-[var(--v2-text-secondary)] leading-snug flex-1 min-w-[160px]">
+                    {t('scheduling.modal.free_hint')}
+                  </p>
                 </div>
-              </div>
-            </div>
+
+                {/* Out of Advanced Options, where a pricing decision sat next
+                    to buffer time. The controls live in ServicePaymentOptions
+                    so the onboarding chat offers exactly these rather than a
+                    lookalike. */}
+                <ServicePaymentOptions
+                  formData={formData}
+                  setFormData={setFormData as any}
+                  getCurrencySymbol={getCurrencySymbol}
+                  scheduled={formData.is_scheduled}
+                />
+              </>
+            )}
           </div>
 
-          {/* Advanced Options Toggle */}
+          {/* 4 · What this means
+              The two things the form could never say. Both are derived from the
+              same facts the public pages run on, so this cannot describe a
+              journey the client does not walk. */}
+          <div className="space-y-2">
+            <h3 className="text-[11px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-[0.07em]">
+              {t('scheduling.modal.section.means')}
+            </h3>
+
+            <div
+              className="p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)] space-y-2.5"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-semibold text-[var(--v2-text-muted)]">
+                  {t('scheduling.modal.client_walks')}
+                </span>
+                <ClientJourneyStrip
+                  service={{
+                    scheduled: formData.is_scheduled,
+                    collection:
+                      formData.sale_mode !== 'proposal' && formData.price > 0
+                        ? formData.collection
+                        : null,
+                    price: formData.sale_mode === 'proposal' ? null : formData.price,
+                    saleMode: formData.sale_mode,
+                  }}
+                  intakeEnabled={intakeEnabled}
+                  /* Unknown counts as ready: the strip then draws the journey
+                     the settings describe, and the notice below is what speaks
+                     when we KNOW a card cannot be charged. */
+                  processorReady={processorReady !== false}
+                  compact
+                />
+              </div>
+
+              <div className="h-px bg-[var(--v2-border)]" />
+
+              <p className="text-[12px] leading-relaxed text-[var(--v2-text-primary)]">
+                <span className="font-semibold text-[var(--v2-text-muted)]">
+                  {t('scheduling.modal.you_get_paid')}{' '}
+                </span>
+                {moneyText}
+              </p>
+            </div>
+
+            {/* Only on a definite no. A failed status request must not announce
+                a problem nobody has confirmed. */}
+            {processorReady === false && formData.sale_mode !== 'proposal' && formData.collection === 'online' && formData.price > 0 && (
+              <div
+                className="flex gap-2 p-3 bg-[var(--v2-status-warning-bg)] border border-[var(--v2-status-warning-border)]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-[var(--v2-status-warning-text)]" />
+                <p className="text-[12px] leading-snug text-[var(--v2-status-warning-text)]">
+                  {t('scheduling.modal.stripe_missing')}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* 5 · Booking rules
+              ──────────────────────────────────────────────────────────────────
+              The payment plan has moved out of here and into section 3, where
+              the price it divides is. What is left is genuinely about the
+              calendar — and on a service with no appointment, none of it
+              applies: notice period, daily limit and how far ahead all describe
+              a booking that never happens.
+
+              So the row STATES that rather than offering the fields. It is not
+              removed and the values are not cleared: switching back to an
+              appointment finds them exactly as they were.
+              ────────────────────────────────────────────────────────────────── */}
           <button
             type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="w-full flex items-center justify-between p-4 bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+            onClick={() => formData.is_scheduled && setShowAdvanced(!showAdvanced)}
+            disabled={!formData.is_scheduled}
+            aria-expanded={formData.is_scheduled ? showAdvanced : undefined}
+            className={`w-full flex items-center justify-between p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-all ${
+              formData.is_scheduled ? 'hover:bg-[var(--v2-surface-hover)]' : 'opacity-70 cursor-default'
+            }`}
             style={{ borderRadius: 'var(--v2-radius-button)' }}
           >
             <div className="flex items-center gap-3">
-              <Settings className="h-5 w-5 text-[var(--v2-text-muted)]" />
+              <Settings className="h-4 w-4 text-[var(--v2-text-muted)] shrink-0" />
               <div className="text-start">
-                <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-                  {t('scheduling.modal.advanced_options')}
+                <span className="text-[13px] font-medium text-[var(--v2-text-primary)]">
+                  {formData.is_scheduled
+                    ? t('scheduling.modal.advanced_options')
+                    : t('scheduling.modal.rules_na')}
                 </span>
-                <p className="text-xs text-[var(--v2-text-muted)] mt-0.5">
-                  {t('scheduling.modal.advanced_options_desc')}
+                <p className="text-[11px] text-[var(--v2-text-secondary)] mt-0.5">
+                  {formData.is_scheduled
+                    ? t('scheduling.modal.rules_hint')
+                    : t('scheduling.modal.rules_na_hint')}
                 </p>
               </div>
             </div>
-            {showAdvanced ? (
-              <ChevronDown className="h-5 w-5 text-[var(--v2-text-muted)]" />
+            {formData.is_scheduled && (showAdvanced ? (
+              <ChevronDown className="h-4 w-4 text-[var(--v2-text-muted)] shrink-0" />
             ) : (
-              <ChevronRight className="h-5 w-5 text-[var(--v2-text-muted)]" />
-            )}
+              <ChevronRight className="h-4 w-4 text-[var(--v2-text-muted)] shrink-0" />
+            ))}
           </button>
 
           {/* Collapsible Advanced Options */}
-          {showAdvanced && (
+          {showAdvanced && formData.is_scheduled && (
             <div className="space-y-6 pt-2">
-              {/* Payment Options Section - only show if service has a price.
-                  The controls live in ServicePaymentOptions so the onboarding
-                  chat can offer exactly these rather than a lookalike. */}
-              <ServicePaymentOptions
-                formData={formData}
-                setFormData={setFormData as any}
-                getCurrencySymbol={getCurrencySymbol}
-              />
+              {/* Payment options now sit in section 3, beside the price they
+                  divide. They were here, under a heading that promised
+                  "payment plans, booking rules & settings" — a pricing
+                  decision folded away next to buffer time. */}
 
               {/* Booking Settings Section */}
               <div className="space-y-4">

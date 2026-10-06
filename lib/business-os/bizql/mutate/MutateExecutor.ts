@@ -22,6 +22,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { platformOrigin } from '@/lib/utils/origins';
 import { createLogger } from '@/lib/logger';
 import { STOP_REASONS, type StopReason } from '@/lib/business-os/cancellationReasons';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
@@ -901,7 +902,7 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
              * owner is handed something to click rather than told a page now
              * exists somewhere.
              */
-            url: `${process.env.NEXT_PUBLIC_APP_URL ?? ''}/website-preview/${created.data.id}`,
+            url: `${platformOrigin()}/website-preview/${created.data.id}`,
           } as Record<string, unknown>,
           error: null,
         };
@@ -1444,10 +1445,19 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
 
       if (bookingsError) return { data: null, error: bookingsError as Error };
 
+      /*
+       * The closed days for that one date. Unreadable leaves it empty, which
+       * answers from the weekly hours — what this did before the table was read
+       * by anything.
+       */
+      const { schedulingTimeOffRepository } = await import('@/lib/repositories/SchedulingTimeOffRepository');
+      const timeOffResult = await schedulingTimeOffRepository.list(ctx.userId, { from: date, to: date });
+
       const result = computeOpenTime({
         availability: profile?.scheduling_availability,
         date,
         timeZone: ctx.timezone ?? 'UTC',
+        timeOff: timeOffResult.data ?? [],
         bookings: (bookings ?? []).map((b) => ({
           start: b.start_time as string,
           end: (b.end_time as string | null) ?? null,
@@ -1572,10 +1582,25 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
       return { data: result.data?.booking ?? null, error: result.error };
     },
 
-    complete: async (q, _data, ctx) =>
-      schedulingBookingRepository.complete(requireTargetId(q), ctx.userId) as Promise<
-        RepoResult<unknown>
-      >,
+    complete: async (q, _data, ctx) => {
+      const bookingId = requireTargetId(q);
+      const result = (await schedulingBookingRepository.complete(bookingId, ctx.userId)) as RepoResult<unknown>;
+
+      /*
+       * A package session bills itself when it is held — the same wire the
+       * owner's Complete button uses. Hung off that route alone, a session the
+       * owner marked held FROM THE CHAT would be delivered and never invoiced.
+       *
+       * Only when the completion actually happened, and never fatal: the
+       * meeting is recorded either way.
+       */
+      if (!result.error) {
+        const { billSessionOnCompletion } = await import('@/lib/payments/billSessionOnCompletion');
+        await billSessionOnCompletion(bookingId, ctx.userId);
+      }
+
+      return result;
+    },
 
     // A no-show changes a status and nothing else — the slot was used up
     // either way, so there is no calendar event to remove and nobody to tell.

@@ -338,7 +338,21 @@ async function projectPeriods({
   contactId: string | null;
   /** Already resolved by the caller, so the mirror and its periods agree. */
   planRowId: string | null;
-  /** Logged only: the key `resolvePlanRowId` falls back on, so it names the offer that was missing. */
+  /**
+   * Only for the log below, and it has to be a parameter.
+   *
+   * The error branch read a bare `serviceId` that this function never declared.
+   * TypeScript would have said so, but `next.config.js` sets
+   * `ignoreBuildErrors`, so it shipped and threw
+   * `ReferenceError: serviceId is not defined` at runtime — from inside the
+   * handler for `invoice.paid`. The throw escaped `handleConnectInvoicePaid`,
+   * the event was marked `failed`, and the period was never recorded: on
+   * 2026-09-29 subscription `993e83a1` took a real payment and still reads
+   * `periods_paid: 0` with no `payment_transactions` row behind it.
+   *
+   * So the line written to be loud about a missing plan row was the thing that
+   * lost the money it was warning about.
+   */
   serviceId: string | null;
 }): Promise<void> {
   if (!planRowId) {
@@ -371,6 +385,33 @@ async function projectPeriods({
 
   if (error) {
     logger.error({ err: error, planId }, 'Plan recorded but periods not projected');
+  }
+
+  /*
+   * Tell the booking it is on a plan.
+   *
+   * The periods above are enough to BILL correctly, but nothing on the booking
+   * itself said "this sale is an instalment plan" — so the contact drawer had
+   * to infer it from the service's configuration, and inferred it for bookings
+   * that had been charged in full. One field, written by both plan paths, ends
+   * that guess.
+   *
+   * Non-blocking: the money is already recorded correctly, and a display link
+   * must never undo that.
+   */
+  if (bookingId) {
+    const { error: linkError } = await supabaseServer
+      .from('scheduling_bookings')
+      .update({ payment_plan_id: planRowId, updated_at: new Date().toISOString() })
+      .eq('id', bookingId)
+      .eq('user_id', ownerId);
+
+    if (linkError) {
+      logger.error(
+        { err: linkError, planId, bookingId },
+        'Plan periods written but the booking was not linked to its plan',
+      );
+    }
   }
 }
 

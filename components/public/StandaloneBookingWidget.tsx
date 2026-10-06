@@ -45,7 +45,15 @@ interface Service {
   id: string;
   name: string;
   description: string | null;
-  duration_minutes: number;
+  /**
+   * Null on a PRODUCT, which has no length to fit a slot into.
+   *
+   * Both availability endpoints return null here for an unscheduled service, and
+   * this said `number` — so the chain typed away a value it receives. Harmless
+   * only because a route response arrives untyped; a caller that types its own
+   * data honestly (the subdomain booking page) could not pass it at all.
+   */
+  duration_minutes: number | null;
   price: number | null;
   currency: string;
   is_scheduled?: boolean | null;
@@ -57,7 +65,17 @@ interface Service {
 }
 
 interface StandaloneBookingWidgetProps {
-  userCode: string;
+  /**
+   * Which business, and how this surface names it.
+   *
+   * A smart link carries a `userCode` and no subdomain; a business's own booking
+   * page carries a subdomain and no code. Exactly one is expected, and both are
+   * forwarded — `BookingModal` has always accepted either, so this wrapper being
+   * userCode-only was the single reason `/site/{subdomain}/book` could not use
+   * it and kept a second 1,500-line implementation of the same five steps.
+   */
+  userCode?: string;
+  subdomain?: string;
   services: Service[];
   timezone: string;
   primaryColor: string;
@@ -75,6 +93,7 @@ interface StandaloneBookingWidgetProps {
 
 export function StandaloneBookingWidget({
   userCode,
+  subdomain,
   services,
   primaryColor,
   locale = 'en',
@@ -98,7 +117,7 @@ export function StandaloneBookingWidget({
   });
 
   const open = (service: Service) => {
-    logger.info({ userCode, serviceId: service.id }, 'Smart-link booking opened');
+    logger.info({ userCode, subdomain, serviceId: service.id }, 'Standalone booking opened');
     setSelected(toModalService(service, collectionMethod));
   };
 
@@ -124,15 +143,16 @@ export function StandaloneBookingWidget({
       />
 
       {/* The same modal the website and landing pages open, on the same
-          components, with the same fields and the same wording. It identifies
-          the business by `userCode` because a smart link has no subdomain —
-          which is the single reason this surface could not use it before. */}
+          components, with the same fields and the same wording — and now for
+          the business's own booking page too. Whichever identifier this surface
+          has travels with it; the modal accepts either. */}
       <BookingModal
         isOpen={!!selected}
         onClose={() => setSelected(null)}
         theme={theme}
         locale={locale}
         isRTL={isRTL}
+        subdomain={subdomain}
         userCode={userCode}
         initialService={selected}
         paymentsEnabled={processorReady}
@@ -157,13 +177,27 @@ function toModalService(
     id: service.id,
     name: service.name,
     description: service.description,
-    duration_minutes: service.duration_minutes,
+    /*
+     * Zero, not null, and only here.
+     *
+     * `SelectedServiceData.duration_minutes` is `number` and is read by the slot
+     * maths, which never runs for an unscheduled service — `is_scheduled: false`
+     * drops the scheduling step before any duration is needed. Normalising at
+     * this one boundary keeps the honest type on the way in without widening
+     * every consumer downstream.
+     */
+    duration_minutes: service.duration_minutes ?? 0,
     price: service.price,
     currency: service.currency,
     is_scheduled: service.is_scheduled,
     // Carried through, or the modal shows a single price for a service the
     // business sells in instalments — and the client agrees to the wrong thing.
     paymentPlan: service.paymentPlan,
+    // Declared on the way in and dropped on the way out, so a QUOTED service
+    // reached the modal looking like a direct sale and was asked for a card
+    // instead of ending at a request. Affects the smart link and the business's
+    // own booking page, which both run through here.
+    sale_mode: service.sale_mode,
     // The service's own answer, falling back to the business-wide one for a
     // service saved before services carried it.
     collection: service.collection ?? (businessCollection as 'online' | 'invoice' | null),

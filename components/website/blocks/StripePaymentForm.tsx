@@ -41,7 +41,12 @@ const LABELS = {
     poweredByStripe: 'Powered by Stripe',
     paymentFailed: 'Payment failed',
     tryAgain: 'Please try again or use a different payment method.',
-    cardDetails: 'Card Details'
+    cardDetails: 'Card Details',
+    // A deferred plan takes no money today, so the button must not say "Pay".
+    saveCard: 'Save card',
+    firstChargeOn: 'First payment of {amount} on {date}',
+    noChargeToday: 'Nothing is charged today.',
+    saveFailed: 'Card could not be saved'
   },
   es: {
     pay: 'Pagar',
@@ -50,7 +55,11 @@ const LABELS = {
     poweredByStripe: 'Procesado por Stripe',
     paymentFailed: 'Pago fallido',
     tryAgain: 'Por favor intenta de nuevo o usa otro metodo de pago.',
-    cardDetails: 'Datos de Tarjeta'
+    cardDetails: 'Datos de Tarjeta',
+    saveCard: 'Guardar tarjeta',
+    firstChargeOn: 'Primer pago de {amount} el {date}',
+    noChargeToday: 'Hoy no se cobra nada.',
+    saveFailed: 'No se pudo guardar la tarjeta'
   },
   he: {
     pay: 'שלם',
@@ -59,7 +68,11 @@ const LABELS = {
     poweredByStripe: 'מופעל על ידי Stripe',
     paymentFailed: 'התשלום נכשל',
     tryAgain: 'נסה שוב או השתמש באמצעי תשלום אחר.',
-    cardDetails: 'פרטי כרטיס'
+    cardDetails: 'פרטי כרטיס',
+    saveCard: 'שמירת כרטיס',
+    firstChargeOn: 'תשלום ראשון של {amount} בתאריך {date}',
+    noChargeToday: 'לא מחויב דבר היום.',
+    saveFailed: 'לא ניתן היה לשמור את הכרטיס'
   }
 };
 
@@ -73,6 +86,21 @@ interface PaymentFormProps {
   locale?: 'en' | 'es' | 'he';
   isRTL?: boolean;
   borderRadius?: string;
+  /**
+   * What `clientSecret` is, and therefore which Stripe call confirms it.
+   *
+   * A payment plan whose first payment is deferred takes no money today: the
+   * subscription runs a trial until the agreed date, so there is no invoice and
+   * nothing to pay — only a card to store, carried by a SetupIntent.
+   * `confirmPayment` on a SetupIntent secret fails at the final step of a
+   * booking, so the kind is told to this form rather than guessed from the
+   * secret's prefix.
+   *
+   * Defaults to 'payment', which is every existing caller.
+   */
+  intentKind?: 'payment' | 'setup';
+  /** When the first payment will be taken. Shown instead of a charge today. */
+  firstChargeAt?: string | null;
 }
 
 function PaymentForm({
@@ -84,7 +112,9 @@ function PaymentForm({
   primaryColor,
   locale = 'en',
   isRTL = false,
-  borderRadius = '0.5rem'
+  borderRadius = '0.5rem',
+  intentKind = 'payment',
+  firstChargeAt = null
 }: PaymentFormProps) {
   const stripe = useStripe();
   const elements = useElements();
@@ -104,6 +134,35 @@ function PaymentForm({
     setErrorMessage(null);
 
     try {
+      /*
+       * Nothing is owed today, so there is no payment to confirm — only a card
+       * to store against the trialling subscription Stripe will charge on the
+       * agreed date. `onSuccess` receives the SetupIntent id in place of a
+       * PaymentIntent id; the caller records the booking either way, and the
+       * money arrives through `invoice.paid` when the trial ends.
+       */
+      if (intentKind === 'setup') {
+        const { error: setupError, setupIntent } = await stripe.confirmSetup({
+          elements,
+          confirmParams: { return_url: window.location.href },
+          redirect: 'if_required'
+        });
+
+        if (setupError) {
+          setErrorMessage(setupError.message || labels.saveFailed);
+          onError(setupError.message || labels.saveFailed);
+        } else if (setupIntent && setupIntent.status === 'succeeded') {
+          onSuccess(setupIntent.id);
+        } else {
+          // Never claim a saved card we have no confirmation of: the plan
+          // would read as set up and then collect nothing on the day.
+          setErrorMessage(labels.saveFailed);
+          onError(labels.saveFailed);
+        }
+
+        return;
+      }
+
       const { error, paymentIntent } = await stripe.confirmPayment({
         elements,
         confirmParams: {
@@ -199,10 +258,35 @@ function PaymentForm({
         ) : (
           <>
             <CreditCard className="w-5 h-5" />
-            {labels.pay} {formatAmount(amount, currency)}
+            {/*
+              "Pay ₪100" beside a plan that charges nothing today is simply
+              untrue, and it is the sentence a client would hold us to.
+            */}
+            {intentKind === 'setup' ? labels.saveCard : `${labels.pay} ${formatAmount(amount, currency)}`}
           </>
         )}
       </button>
+
+      {/* What happens instead of a charge today, and when. */}
+      {intentKind === 'setup' && (
+        <p className="text-sm text-center ap-ink-3">
+          {labels.noChargeToday}
+          {firstChargeAt && amount > 0 && (
+            <>
+              {' '}
+              {labels.firstChargeOn
+                .replace('{amount}', formatAmount(amount, currency))
+                .replace(
+                  '{date}',
+                  new Date(firstChargeAt).toLocaleDateString(
+                    locale === 'he' ? 'he-IL' : locale === 'es' ? 'es-ES' : 'en-US',
+                    { year: 'numeric', month: 'short', day: 'numeric' }
+                  )
+                )}
+            </>
+          )}
+        </p>
+      )}
 
       {/* Security badges */}
       <div className="flex items-center justify-center gap-4 text-sm ap-ink-3">
@@ -232,6 +316,9 @@ interface StripePaymentFormProps {
   locale?: 'en' | 'es' | 'he';
   isRTL?: boolean;
   borderRadius?: string;
+  /** Passed straight through — see `PaymentFormProps.intentKind`. */
+  intentKind?: 'payment' | 'setup';
+  firstChargeAt?: string | null;
 }
 
 export function StripePaymentForm({
@@ -245,7 +332,9 @@ export function StripePaymentForm({
   primaryColor,
   locale = 'en',
   isRTL = false,
-  borderRadius = '0.5rem'
+  borderRadius = '0.5rem',
+  intentKind = 'payment',
+  firstChargeAt = null
 }: StripePaymentFormProps) {
   // Same table the inner form uses; needed here for the failure state below.
   const labels = LABELS[locale] || LABELS.en;
@@ -316,6 +405,8 @@ export function StripePaymentForm({
         locale={locale}
         isRTL={isRTL}
         borderRadius={borderRadius}
+        intentKind={intentKind}
+        firstChargeAt={firstChargeAt}
       />
     </Elements>
   );

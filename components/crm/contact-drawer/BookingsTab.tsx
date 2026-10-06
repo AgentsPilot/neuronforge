@@ -4,7 +4,7 @@ import { useState } from 'react';
 import {
   Calendar, Clock, CreditCard, ClipboardList, Mail, CheckCircle2,
   XCircle, AlertCircle, ChevronDown, ChevronUp, Plus, Edit2,
-  Loader2, ShoppingBag, Package, Truck, Gift, User, MapPin,
+  Loader2, ShoppingBag, Package, User, MapPin,
   Phone, AtSign, Eye, ExternalLink, Save, X, RotateCcw, Ban, FileText, Paperclip,
   type LucideIcon
 } from 'lucide-react';
@@ -23,6 +23,119 @@ import { cancelReasonKey } from '@/lib/business-os/cancellationReasons';
 import { splitClientCancellationReason } from '@/lib/services/bookingCancellationReason';
 import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
 import { PaymentPlanTotals } from '@/components/payments/PaymentPlanTotals';
+
+/**
+ * Add another date to a package already under way.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Its own component because it holds state — one date, one answer about the
+ * money — and the journey renders many steps: a single set of fields on the tab
+ * would be shared by every package on screen and open on all of them at once.
+ *
+ * The money question is only asked where it means anything: on a package billed
+ * after each meeting, where the client is already paying session by session. On
+ * one paid up front the server refuses a charge outright, because billing more
+ * than the agreed sum is selling something else.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function AddPackageMeeting({
+  containerId,
+  billsPerMeeting,
+  onAdd,
+  t,
+}: {
+  containerId: string;
+  billsPerMeeting: boolean;
+  onAdd: (containerId: string, startTime: string, charge: boolean) => Promise<void> | void;
+  t: (key: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [when, setWhen] = useState('');
+  const [charge, setCharge] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={event => {
+          event.stopPropagation();
+          setOpen(true);
+          setWhen('');
+          setCharge(false);
+          setError(null);
+        }}
+        className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#8B5CF6] hover:underline"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        {t('crm.booking.package.add_meeting')}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--v2-bg)] px-2.5 py-2"
+      onClick={event => event.stopPropagation()}
+    >
+      <input
+        type="datetime-local"
+        value={when}
+        onChange={event => {
+          setWhen(event.target.value);
+          setError(null);
+        }}
+        className="h-8 rounded-md border border-[var(--v2-border)] bg-[var(--v2-surface)] px-2 text-[12.5px] text-[var(--v2-text-primary)]"
+      />
+
+      {billsPerMeeting && (
+        <label className="flex items-center gap-1.5 text-[11.5px] text-[var(--v2-text-secondary)]">
+          <input type="checkbox" checked={charge} onChange={event => setCharge(event.target.checked)} />
+          {t('crm.booking.package.charge_it')}
+        </label>
+      )}
+
+      <button
+        type="button"
+        disabled={!when || busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await onAdd(containerId, when, charge && billsPerMeeting);
+            setOpen(false);
+          } catch (err) {
+            /*
+             * Said here, where the date is: the commonest answers are "that
+             * hour is taken" and "you are closed that day", and both are about
+             * the field being looked at.
+             */
+            setError(err instanceof Error ? err.message : t('crm.booking.package.add_failed'));
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="rounded-full bg-[#8B5CF6] px-3 py-1 text-[11.5px] font-medium text-white transition-colors hover:bg-[#7C3AED] disabled:opacity-50"
+      >
+        {busy ? t('crm.booking.package.adding') : t('crm.booking.package.add_confirm')}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          setOpen(false);
+          setError(null);
+        }}
+        className="text-[11.5px] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
+      >
+        {t('button.cancel')}
+      </button>
+
+      {error && <p className="w-full text-[11.5px] text-red-500">{error}</p>}
+    </div>
+  );
+}
 
 interface BookingsTabProps {
   sessions: SessionCardData[];
@@ -112,6 +225,22 @@ interface BookingsTabProps {
     bookingId: string,
     status: 'completed' | 'no_show' | 'cancelled'
   ) => Promise<void> | void;
+  /**
+   * Add a meeting to a package that is already running.
+   *
+   * A block of six is agreed and under way, and then a seventh date is needed:
+   * the client missed one, or the course ran long. `charge` is the owner's
+   * answer about the money and is only offered where it means anything — on a
+   * package billed after each meeting, where the client is already paying
+   * session by session.
+   */
+  onAddPackageMeeting?: (
+    containerId: string,
+    startTime: string,
+    charge: boolean
+  ) => Promise<void> | void;
+  /** Whether this purchase is billed per meeting, which decides the money question. */
+  packageBillsPerMeeting?: (containerId: string) => boolean;
   isLoading?: boolean;
   isOpen?: boolean;
   onToggle?: (isOpen: boolean) => void;
@@ -206,11 +335,14 @@ const VERSION_TONES: Record<string, { dot: string; text: string }> = {
 };
 
 const STEP_ICONS: Record<string, LucideIcon> = {
-  // Service/Product steps
+  /*
+   * Keyed on what the journey builder actually emits.
+   *
+   * `ordered` and `booked` were here alongside `service` and nothing produces
+   * either — leftovers from a vocabulary this platform does not use. An icon map
+   * with keys no step carries reads as a feature that exists somewhere.
+   */
   service: Calendar,
-  product: ShoppingBag,
-  booked: Calendar,
-  ordered: ShoppingBag,
   // Schedule
   schedule: Clock,
   // Client
@@ -228,11 +360,15 @@ const STEP_ICONS: Record<string, LucideIcon> = {
   session: Clock,
   completed: CheckCircle2,
   done: CheckCircle2,
-  // Fulfillment (products)
+  /*
+   * The delivery step of a service that is not booked into a time.
+   *
+   * `fulfilled`, `shipped` and `delivered` sat here too and no step ever
+   * carried those keys — this platform sells services and ships nothing. The
+   * one `delivered` in the journey builder is an EMAIL status, which never
+   * reaches this map.
+   */
   fulfillment: Package,
-  fulfilled: Gift,
-  shipped: Truck,
-  delivered: Package,
   // Status
   cancelled: XCircle,
   no_show: AlertCircle,
@@ -258,6 +394,8 @@ export function BookingsTab({
   onSendInvoice,
   onResendConfirmation,
   onSetBookingStatus,
+  onAddPackageMeeting,
+  packageBillsPerMeeting,
   isLoading = false,
   isOpen,
   onToggle
@@ -280,11 +418,35 @@ export function BookingsTab({
   const { timeZoneOptions } = useBusinessTimezone();
 
   /** A payment stage's date, short, on the business's clock. */
+  /**
+   * A stage's date, which is one of two different kinds of value.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * `paidAt` is an INSTANT — the moment money arrived — and must be resolved in
+   * the business's zone, because that is what decides which day it landed on.
+   *
+   * `dueDate` is a DATE. `new Date('2026-09-30')` makes it midnight UTC, and
+   * rendering that in a zone behind UTC moves it to the 29th. An invoice raised
+   * on the 30th and payable on receipt therefore read "due 29 Sept" — a day
+   * before it existed — and the row beside it said OVERDUE.
+   *
+   * So a date-only value is rendered AS its calendar date — built in UTC and
+   * read back in UTC — rather than converted into anyone's zone. Anchoring at
+   * noon UTC, the usual workaround, still lands on the next day in Auckland
+   * (UTC+13); `dateOnlyIsNotMidnightUTC.guard` pins that.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
   const stageDate = (value: string) =>
-    new Date(value).toLocaleDateString(
-      isRTL ? 'he-IL' : 'en-US',
-      timeZoneOptions({ day: 'numeric', month: 'short' })
-    );
+    /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(`${value}T00:00:00Z`).toLocaleDateString(isRTL ? 'he-IL' : 'en-US', {
+          timeZone: 'UTC',
+          day: 'numeric',
+          month: 'short',
+        })
+      : new Date(value).toLocaleDateString(
+          isRTL ? 'he-IL' : 'en-US',
+          timeZoneOptions({ day: 'numeric', month: 'short' })
+        );
 
   const toggleBooking = (id: string) => {
     setExpandedBookings(prev => {
@@ -377,16 +539,28 @@ export function BookingsTab({
     return `${hours}h ${mins}m`;
   };
 
-  // Check if booking is a product (no time slot)
-  const isProductBooking = (booking: SessionCardData['booking']) => {
-    return !booking.start_time || booking.service?.is_product;
+  // Whether this booking has no time slot — the service decides, not the row.
+  const isUnscheduledBooking = (booking: SessionCardData['booking']) => {
+    /*
+     * `is_scheduled`, not a guess from the timestamp.
+     *
+     * This read `booking.service?.is_product`, a column that does not exist in
+     * the database — so the test collapsed to "has no start time" and a
+     * SCHEDULED booking missing its time was silently reclassified, hiding the
+     * very thing that was wrong. The start-time check survives only as a
+     * fallback for a row that did not carry `is_scheduled`.
+     */
+    return (
+      booking.service?.is_scheduled === false ||
+      (booking.service?.is_scheduled == null && !booking.start_time)
+    );
   };
 
   /*
    * The badge on a booking header.
    *
-   * Turns on whether a time was BOOKED, not on any notion of a product —
-   * nothing in the data says "product", and the start time is the only thing
+   * Turns on whether a time was BOOKED. Nothing in the data says "product",
+   * and before `is_scheduled` was read here the start time was the only thing
    * that distinguishes a session from a course sold without one.
    *
    * `confirmed` renders as "קרובה" — *upcoming*, a word about when something
@@ -414,12 +588,16 @@ export function BookingsTab({
     quoteState: string,
     paid: boolean,
     /*
-     * Whether the consultation is still ahead — taken from the journey step,
-     * which already weighed the booking's start time against now. Re-deriving
-     * it from `status === 'confirmed'` here would call a meeting that finished
-     * this morning "upcoming", because nothing marks a booking past.
+     * Where the consultation stands — taken from the journey step, which already
+     * weighed the booking's start time against now. Re-deriving it from
+     * `status === 'confirmed'` here would call a meeting that finished this
+     * morning "upcoming", because nothing marks a booking past.
+     *
+     * Three values, not a boolean: `unmarked` is the state the gate added, and
+     * collapsing it into "not ahead" is exactly how the badge came to say
+     * "needs a quote" about a meeting nobody had confirmed happened.
      */
-    meetingAhead: boolean
+    meetingState: 'ahead' | 'unmarked' | 'settled'
   ) => {
     const amber = { color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-500/10' };
     const blue = { color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-500/10' };
@@ -471,11 +649,25 @@ export function BookingsTab({
      * quote was ever written, or every version has been replaced with nothing
      * standing. Either way the client holds no price and the owner owes them one.
      */
-    // Before the meeting it is simply upcoming; after it, the owner owes the
-    // client a price, and that is the whole point of the badge.
-    return meetingAhead
-      ? { text: t('crm.booking.status.confirmed') || 'Upcoming', ...amber }
-      : { text: t('crm.booking.quoted.awaiting_quote'), ...amber };
+    // A missed meeting keeps the job alive, so the badge names the outcome
+    // rather than the money — the step below it asks for the next move.
+    if (bookingStatus === 'no_show') {
+      return { text: t('crm.booking.quoted.meeting_missed'), ...amber };
+    }
+
+    /*
+     * Before the meeting it is simply upcoming. Once its time has passed and
+     * nobody has marked it, the honest badge is that nobody has marked it —
+     * "needs a quote" asserts a consultation took place. Only after the owner
+     * says it was held does the badge name the price they owe.
+     */
+    if (meetingState === 'ahead') {
+      return { text: t('crm.booking.status.confirmed') || 'Upcoming', ...amber };
+    }
+    if (meetingState === 'unmarked') {
+      return { text: t('crm.booking.quoted.not_marked'), ...amber };
+    }
+    return { text: t('crm.booking.quoted.awaiting_quote'), ...amber };
   };
 
   const getBookingStatusLabel = (
@@ -995,7 +1187,7 @@ export function BookingsTab({
               const { booking, payment, journeyData } = session;
               const isExpanded = expandedBookings.has(booking.id);
               // Declared first: the badge's wording depends on it.
-              const isProduct = isProductBooking(booking);
+              const isUnscheduled = isUnscheduledBooking(booking);
 
               /*
                * A quoted booking is a CONSULTATION inside a longer job.
@@ -1004,7 +1196,14 @@ export function BookingsTab({
                * has to ask a different question here: the appointment reaching
                * its end is step two of six, not the finish.
                */
-              const isQuoted = booking.service?.sale_mode === 'proposal';
+              /*
+               * A quoted booking is a CONSULTATION inside a longer job — and a
+               * package's MEETING is neither: the quote that created it was
+               * accepted, so the quoting labels ("the quote will be sent after
+               * the meeting") describe something that already happened.
+               */
+              const isQuoted =
+                booking.service?.sale_mode === 'proposal' && !booking.parent_booking_id;
               const proposalStep = isQuoted
                 ? session.journeySteps?.find(s => s.key === 'proposal')
                 : undefined;
@@ -1019,11 +1218,15 @@ export function BookingsTab({
                     quoteState,
                     Boolean(quotePaid),
                     proposalStep?.metadata?.waitingOn === 'meeting'
+                      ? 'ahead'
+                      : proposalStep?.metadata?.waitingOn === 'unmarked'
+                        ? 'unmarked'
+                        : 'settled'
                   )
-                : getBookingStatusLabel(booking.status, !isProduct, booking.payment_status !== undefined && booking.payment_status !== 'paid');
+                : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid');
               const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
               const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
-              const isPendingProduct = isProduct && booking.status !== 'completed' && booking.status !== 'cancelled';
+              const isPendingUnscheduled = isUnscheduled && booking.status !== 'completed' && booking.status !== 'cancelled';
 
               const hasIntake = booking.intake_responses && Object.keys(booking.intake_responses.responses || {}).length > 0;
 
@@ -1033,7 +1236,7 @@ export function BookingsTab({
                   className={`border rounded-lg overflow-hidden transition-all ${
                     isUpcoming
                       ? 'border-amber-500/50 bg-amber-500/5'
-                      : isPendingProduct
+                      : isPendingUnscheduled
                       ? 'border-purple-500/50 bg-purple-500/5'
                       : 'border-[var(--v2-border)] bg-[var(--v2-surface)]'
                   }`}
@@ -1046,7 +1249,7 @@ export function BookingsTab({
                   >
                     <div className="flex items-center gap-3">
                       {/* Type indicator icon */}
-                      {isProduct ? (
+                      {isUnscheduled ? (
                         <ShoppingBag className={`h-5 w-5 flex-shrink-0 ${
                           booking.status === 'completed' ? 'text-green-500' :
                           booking.status === 'cancelled' ? 'text-red-500' :
@@ -1066,10 +1269,16 @@ export function BookingsTab({
                           {booking.service?.service_name || t('crm.session.unknown_service')}
                         </p>
                         <p className="text-xs text-[var(--v2-text-muted)]">
-                          {isProduct ? (
+                          {isUnscheduled ? (
                             <bdi>
                               {t('crm.booking.purchased_on') || 'Purchased'}{' '}
-                              {formatShortDate(booking.created_at || new Date().toISOString())}
+                              {/*
+                                * The clock, not just the day. An unscheduled
+                                * service has no `start_time` to fall back on, so this line is
+                                * the only record of WHEN it was bought — and two
+                                * purchases on one day were indistinguishable.
+                                */}
+                              {formatDateTime(booking.created_at || new Date().toISOString())}
                             </bdi>
                           ) : booking.start_time ? (
                             <bdi>{formatDate(booking.start_time)}</bdi>
@@ -1171,7 +1380,7 @@ export function BookingsTab({
                         </button>
 
                         {/* The one that needs a time to mean anything. */}
-                        {!isProduct && (
+                        {!isUnscheduled && (
                           <button
                             type="button"
                             onClick={() => onSetBookingStatus(booking.id, 'no_show')}
@@ -1276,7 +1485,26 @@ export function BookingsTab({
                                     <span className="text-[11px] text-[var(--v2-text-muted)]">
                                       {group.steps.some(s => s.status === 'pending' || s.status === 'active')
                                         ? t('crm.journey.upcoming') || 'Upcoming'
-                                        : t('crm.journey.undated') || 'Time not recorded'}
+                                        : isUnscheduled
+                                          /*
+                                           * NOTHING, on a sale with no appointment.
+                                           * ───────────────────────────────────────
+                                           * This slot holds a DATE on every other
+                                           * group. A service sold without a meeting
+                                           * has none, and every wording tried here
+                                           * described an absence: "time not
+                                           * recorded" claimed a clock had been lost,
+                                           * "no appointment" announced the lack of a
+                                           * thing this sale never involved. Both
+                                           * read as a date that failed to load.
+                                           *
+                                           * The step below it — service delivery —
+                                           * already says what it is and whether it
+                                           * has happened. A label that only restates
+                                           * what is missing is worse than no label.
+                                           */
+                                          ? ''
+                                          : t('crm.journey.undated') || 'Time not recorded'}
                                     </span>
                                   )}
                                   <span className="flex-1 h-px bg-[var(--v2-border)]" aria-hidden="true" />
@@ -1285,7 +1513,33 @@ export function BookingsTab({
                                 {group.steps.map((step, index) => {
                                   const StepIcon = STEP_ICONS[step.key] || CheckCircle2;
 
-                                  const stepTitle = step.label || t(`crm.booking.step.${step.key}`) || step.key;
+                                  /*
+                                    THE LAST STEP NAMES THE OUTCOME, NOT THE STAGE.
+                                    ─────────────────────────────────────────────
+                                    `session` and `fulfillment` are the journey's
+                                    terminal node, and their static names describe
+                                    the stage rather than what happened at it —
+                                    so a finished sale and a cancelled one both
+                                    read as "Service delivery", with only a dot's
+                                    colour between them.
+
+                                    The booking already carries the answer. Once
+                                    it is completed or cancelled the step says so
+                                    in the booking's own words; while it is still
+                                    open the stage name is the honest label,
+                                    because nothing has happened yet.
+                                  */
+                                  const isFinalStep = step.key === 'session' || step.key === 'fulfillment';
+                                  const outcomeTitle =
+                                    isFinalStep && booking.status === 'completed'
+                                      ? t('crm.booking.step.booking_completed')
+                                      : isFinalStep &&
+                                          (booking.status === 'cancelled' || booking.status === 'no_show')
+                                        ? t('crm.booking.step.booking_cancelled')
+                                        : null;
+
+                                  const stepTitle =
+                                    step.label || outcomeTitle || t(`crm.booking.step.${step.key}`) || step.key;
                                   const isIntakeStep = step.key === 'intake';
                                   const isProposalStep = step.key === 'proposal';
 
@@ -1554,7 +1808,7 @@ export function BookingsTab({
                                               // just recorded.
                                               isQuoted && booking.status === 'completed'
                                               ? t('crm.booking.quoted.meeting_held')
-                                              : getBookingStatusLabel(booking.status, !isProduct, booking.payment_status !== undefined && booking.payment_status !== 'paid').text
+                                              : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid').text
                                             : new Date(booking.start_time) > new Date()
                                               ? t('crm.journey.not_yet_held') || 'Not yet held'
                                               : t('crm.journey.awaiting_outcome') || 'Awaiting an outcome'
@@ -1641,7 +1895,7 @@ export function BookingsTab({
                                       !!step.metadata?.canResend &&
                                       onSendInvoice &&
                                       booking.status !== 'cancelled') ||
-                                    (isScheduleStep && onEditSession && !isProduct && !meetingSettled) ||
+                                    (isScheduleStep && onEditSession && !isUnscheduled && !meetingSettled) ||
                                     // The cancelled-plan notice. Rendered by an IIFE rather
                                     // than a `&&`, which is why it is easy to miss when
                                     // reading the blocks off the markup — it is a body like
@@ -1889,6 +2143,17 @@ export function BookingsTab({
                                               ? t('crm.proposal.closed')
                                               : step.metadata?.waitingOn === 'meeting'
                                               ? `${t('crm.proposal.after_meeting')} ${step.metadata?.meetingAt ?? ''}`.trim()
+                                              /* Its time has passed and nobody has
+                                                 said what happened. The line asks
+                                                 instead of naming a price the owner
+                                                 may not owe. */
+                                              : step.metadata?.waitingOn === 'unmarked'
+                                              ? t('crm.proposal.ask_happened')
+                                              /* Missed, and still alive: a client who
+                                                 did not turn up often still wants a
+                                                 price. */
+                                              : step.metadata?.waitingOn === 'noshow'
+                                              ? t('crm.proposal.after_missed')
                                               : step.metadata?.proposalStatus === 'accepted'
                                                 ? t('crm.proposal.accepted')
                                                 : step.metadata?.proposalStatus === 'declined'
@@ -2162,6 +2427,8 @@ export function BookingsTab({
                                                 total: t('crm.payment.total') || 'Total',
                                                 collected: t('crm.payment.collected') || 'Collected',
                                                 outstanding: t('crm.payment.outstanding') || 'Outstanding',
+                                                // Only rendered when a period has actually been called off.
+                                                cancelled: t('payments.plan.status.cancelled') || 'Stopped',
                                               }}
                                             />
 
@@ -2174,12 +2441,24 @@ export function BookingsTab({
                                           >
                                             {payment.plan.stages.map((stage, i) => {
                                               const paid = stage.status === 'paid';
-                                              const billed = Boolean(stage.invoiceId) && !paid;
+                                              /*
+                                                A STOPPED PERIOD IS NOT AN UPCOMING ONE.
+                                                ─────────────────────────────────────
+                                                Everything below keyed off paid / billed /
+                                                neither, so a period that had been deliberately
+                                                called off fell into "neither" and drew exactly
+                                                like one still to come — grey dot, live amount,
+                                                its old due date. Stopping a plan changed nothing
+                                                the owner could see.
+                                              */
+                                              const stopped = stage.status === 'cancelled';
+                                              const billed = Boolean(stage.invoiceId) && !paid && !stopped;
                                               // Only a manual stage that has not
                                               // been billed can be completed. A
                                               // dated one bills itself.
                                               const canComplete =
                                                 !paid &&
+                                                !stopped &&
                                                 !billed &&
                                                 stage.trigger === 'manual' &&
                                                 Boolean(onCompleteStage) &&
@@ -2204,9 +2483,11 @@ export function BookingsTab({
                                                     style={{
                                                       background: paid
                                                         ? '#22C58B'
-                                                        : billed
-                                                          ? '#F79009'
-                                                          : 'var(--v2-border)',
+                                                        : stopped
+                                                          ? '#B54708'
+                                                          : billed
+                                                            ? '#F79009'
+                                                            : 'var(--v2-border)',
                                                     }}
                                                     aria-hidden="true"
                                                   />
@@ -2220,7 +2501,12 @@ export function BookingsTab({
 
                                                   <span
                                                     className="text-[12.5px] font-medium tabular-nums"
-                                                    style={{ color: 'var(--v2-text-secondary)' }}
+                                                    style={{
+                                                      color: 'var(--v2-text-secondary)',
+                                                      // Struck through, because this amount is
+                                                      // never going to be collected.
+                                                      textDecoration: stopped ? 'line-through' : undefined,
+                                                    }}
                                                   >
                                                     {amountText}
                                                   </span>
@@ -2245,6 +2531,12 @@ export function BookingsTab({
                                                     >
                                                       {paid && stage.paidAt
                                                         ? stageDate(stage.paidAt)
+                                                        : stopped
+                                                          // Its old due date is no longer a fact
+                                                          // about this period — saying "due 7 Oct"
+                                                          // of something called off is the whole
+                                                          // confusion this fixes.
+                                                          ? t('payments.plan.status.cancelled')
                                                         : stage.dueDate
                                                           ? `${t('crm.payment.due')} ${stageDate(stage.dueDate)}`
                                                           : ''}
@@ -2298,6 +2590,25 @@ export function BookingsTab({
                                                       >
                                                         {t('crm.stage.paid')}
                                                       </span>
+                                                    ) : stopped ? (
+                                                      /*
+                                                        Before every other test, because a stopped
+                                                        period is stopped whether or not it was
+                                                        billed first.
+                                                        ─────────────────────────────────────────
+                                                        This chain ended in a bare else that said
+                                                        "Scheduled", so anything not paid, not
+                                                        billed and not completable claimed to be
+                                                        upcoming — a cancelled period included.
+                                                        The owner stopped the plan and the row
+                                                        still said it was on its way.
+                                                      */
+                                                      <span
+                                                        className="text-[11.5px]"
+                                                        style={{ color: '#B54708' }}
+                                                      >
+                                                        {t('payments.plan.status.cancelled')}
+                                                      </span>
                                                     ) : billed ? (
                                                       <span
                                                         className="text-[11.5px]"
@@ -2347,7 +2658,7 @@ export function BookingsTab({
                                         {(() => {
                                           // The PAYMENT step only. Without this it
                                           // rendered under every step in the journey —
-                                          // the product, the client details, the
+                                          // the service, the client details, the
                                           // confirmation — because a plan belongs to
                                           // the booking and every step could see it.
                                           // A plan being stopped is a fact about the
@@ -2468,7 +2779,7 @@ export function BookingsTab({
                                                   a payment, and a second name
                                                   for the same button on some
                                                   cards and not others makes the
-                                                  drawer read as two products.
+                                                  drawer read as two sales.
                                                   What differs is what the dialog
                                                   does, not what the button is
                                                   called. */}
@@ -2507,9 +2818,17 @@ export function BookingsTab({
                                               a rejected price is the start of
                                               a negotiation, not the end of
                                               the job. */}
+                                          {/* Reachable in three states, not one.
+                                              `owner` is the ordinary case; `unmarked`
+                                              and `noshow` are the two the gate added,
+                                              and in both the owner may still quote —
+                                              which is the whole reason the gate asks
+                                              rather than closing the step. */}
                                           {isProposalStep
                                             && onOpenProposalBuilder
-                                            && step.metadata?.waitingOn === 'owner'
+                                            && (step.metadata?.waitingOn === 'owner'
+                                              || step.metadata?.waitingOn === 'unmarked'
+                                              || step.metadata?.waitingOn === 'noshow')
                                             && booking.status !== 'cancelled' && (
                                             <button
                                               type="button"
@@ -2681,7 +3000,30 @@ export function BookingsTab({
                                               a no-show is a record of what happened
                                               — offering to reschedule it invites an
                                               edit that contradicts the outcome. */}
-                                          {isScheduleStep && onEditSession && !isProduct && !meetingSettled && (
+                                          {/* After a no-show, a NEW time — not a
+                                              reschedule.
+                                              Rescheduling is deliberately refused on
+                                              a settled booking just above: the row is
+                                              a record of what happened and moving it
+                                              would contradict the outcome. So the way
+                                              forward is another meeting, which is the
+                                              tab's own action. */}
+                                          {isProposalStep
+                                            && onNewSession
+                                            && step.metadata?.waitingOn === 'noshow' && (
+                                            <button
+                                              type="button"
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                onNewSession();
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
+                                            >
+                                              {t('crm.proposal.book_new_meeting')}
+                                            </button>
+                                          )}
+
+                                          {isScheduleStep && onEditSession && !isUnscheduled && !meetingSettled && (
                                             <button
                                               type="button"
                                               onClick={e => {
@@ -2694,6 +3036,129 @@ export function BookingsTab({
                                             </button>
                                           )}
                                         </div>
+
+                                        {/* ── THE MEETINGS, AS A STAGE OF THE JOURNEY ──
+                                            Every booking with a parent belongs to the
+                                            quote that sold it, so its meetings are a
+                                            step on that client's journey rather than a
+                                            card of their own — which is what made a
+                                            package look like two jobs, the second
+                                            asking for a quote the first had already
+                                            agreed.
+
+                                            Each row keeps its own date, status and
+                                            actions, because each is a real appointment
+                                            that can be held, missed, moved or called
+                                            off alone, and on a package billed per
+                                            session marking one held is what invoices
+                                            it. */}
+                                        {step.key === 'package' && session.meetings && (
+                                          <div className="mt-2 flex flex-col gap-1.5" style={{ gridColumn: 1 }}>
+                                            {session.meetings.map((meeting, meetingIndex) => {
+                                              const row = meeting.booking;
+                                              const held = row.status === 'completed';
+                                              const off =
+                                                row.status === 'cancelled' || row.status === 'no_show';
+                                              const open = !held && !off;
+                                              const meetingStatus = getBookingStatusLabel(row.status, true, false);
+
+                                              return (
+                                                <div
+                                                  key={row.id}
+                                                  className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg bg-[var(--v2-bg)] px-2.5 py-1.5"
+                                                >
+                                                  <span className="w-4 shrink-0 text-[11px] font-semibold tabular-nums text-[var(--v2-text-muted)]">
+                                                    {row.occurrence_number ?? meetingIndex + 1}
+                                                  </span>
+
+                                                  <span
+                                                    className={`text-[12.5px] ${
+                                                      off
+                                                        ? 'text-[var(--v2-text-muted)] line-through'
+                                                        : 'text-[var(--v2-text-primary)]'
+                                                    }`}
+                                                  >
+                                                    {row.start_time ? formatDate(row.start_time) : '—'}
+                                                  </span>
+
+                                                  <span
+                                                    className={`rounded-full px-1.5 py-0.5 text-[11px] font-medium ${meetingStatus.color} ${meetingStatus.bgColor}`}
+                                                  >
+                                                    {meetingStatus.text}
+                                                  </span>
+
+                                                  <span className="ms-auto flex items-center gap-1.5">
+                                                    {open && onSetBookingStatus && (
+                                                      <>
+                                                        <button
+                                                          type="button"
+                                                          onClick={e => {
+                                                            e.stopPropagation();
+                                                            onSetBookingStatus(row.id, 'completed');
+                                                          }}
+                                                          className="rounded-full border border-green-600/40 px-2 py-0.5 text-[11px] font-medium text-green-700 transition-colors hover:bg-green-500/10 dark:text-green-400"
+                                                        >
+                                                          {t('crm.booking.quoted.meeting_held')}
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          onClick={e => {
+                                                            e.stopPropagation();
+                                                            onSetBookingStatus(row.id, 'no_show');
+                                                          }}
+                                                          className="rounded-full border border-[var(--v2-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--v2-text-secondary)] transition-colors hover:border-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+                                                        >
+                                                          {t('crm.booking.status.no_show') || 'No show'}
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          onClick={e => {
+                                                            e.stopPropagation();
+                                                            onSetBookingStatus(row.id, 'cancelled');
+                                                          }}
+                                                          className="rounded-full border border-red-600/40 px-2 py-0.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
+                                                        >
+                                                          {t('crm.booking.status.cancelled') || 'Cancel'}
+                                                        </button>
+                                                      </>
+                                                    )}
+
+                                                    {onEditSession && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={e => {
+                                                          e.stopPropagation();
+                                                          onEditSession(row.id);
+                                                        }}
+                                                        className="rounded-full border border-[var(--v2-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--v2-text-secondary)] transition-colors hover:border-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+                                                      >
+                                                        {t('crm.booking.reschedule') || 'Reschedule'}
+                                                      </button>
+                                                    )}
+                                                  </span>
+                                                </div>
+                                              );
+                                            })}
+
+                                            {/* Another date on a block already under way:
+                                                a make-up for one the client missed, or a
+                                                seventh on a block of six. */}
+                                            {onAddPackageMeeting && (
+                                              <AddPackageMeeting
+                                                containerId={
+                                                  (step.metadata?.containerId as string) ?? booking.id
+                                                }
+                                                billsPerMeeting={Boolean(
+                                                  packageBillsPerMeeting?.(
+                                                    (step.metadata?.containerId as string) ?? booking.id
+                                                  )
+                                                )}
+                                                onAdd={onAddPackageMeeting}
+                                                t={t}
+                                              />
+                                            )}
+                                          </div>
+                                        )}
 
                                         {/* The intake answers, now the CARD'S BODY.
                                             They used to sit outside the row, indented by a
@@ -2754,7 +3219,7 @@ export function BookingsTab({
                           rewrites history and, for a completed one, contradicts the
                           outcome the owner just recorded. */}
                       {onEditSession &&
-                        !isProduct &&
+                        !isUnscheduled &&
                         booking.status !== 'completed' &&
                         booking.status !== 'cancelled' &&
                         booking.status !== 'no_show' && (

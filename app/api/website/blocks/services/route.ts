@@ -135,7 +135,17 @@ export async function GET(request: NextRequest) {
     }
 
     const schedulingRepo = new SchedulingServiceRepository(supabaseServer);
-    const servicesResult = await schedulingRepo.listAll(userId, activeOnly);
+    /*
+     * Two different questions, so two different methods.
+     *
+     * The default is the PUBLIC set — `listBookable`, the same base every public
+     * surface now uses. `?active_only=false` is the editor asking to see
+     * everything the owner has, including what is switched off, which is not a
+     * public read and legitimately wants the full row.
+     */
+    const servicesResult = activeOnly
+      ? await schedulingRepo.listBookable(userId)
+      : await schedulingRepo.listAll(userId, false);
 
     if (servicesResult.error || !servicesResult.data) {
       requestLogger.warn({ err: servicesResult.error }, 'Failed to fetch services');

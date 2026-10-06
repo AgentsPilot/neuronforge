@@ -242,8 +242,31 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
      * Unused, and left in place as the record of what this used to do.
      *
      * The send was withdrawn to `PaymentReminderService`, which chases on days
-     * 1, 3 and 7 past due — `payment_overdue_reminder_days`, which the owner can
-     * change. This 72-hour send landed on top of that schedule's day three.
+     * 1, 3 and 7 past due (`payment_overdue_reminder_days`). This 72-hour send
+     * landed on top of that schedule's day three.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * THIS SWITCH IS HALF THE SCHEDULE, AND THE HINT NOW SAYS SO.
+     *
+     * `chase_invoices_enabled` governs the sends AFTER the due date only. The
+     * ones before it — `payment_reminder_days_before`, defaulting to 3 and 1
+     * days, plus a due-today reminder — are governed by
+     * `payment_reminder_enabled`, which defaults to TRUE and has no UI
+     * anywhere. One line in `PaymentReminderService` splits them:
+     *
+     *   reminderType === 'overdue' ? config.chaseOverdue : config.enabled
+     *
+     * So an owner turning this on reads "three reminders" and their client
+     * receives up to six. On a live account on 2026-10-04, four chasers went
+     * out in one morning and the owner had to ask why. Neither schedule is
+     * editable from any screen: an earlier version of this comment said the
+     * owner could change the days, and they cannot.
+     *
+     * The card's hint now states both halves and the total. The settings
+     * channel the meeting reminder uses (`hours_before`, `notify_client`,
+     * `notify_owner`, all editable on the card) is the obvious home for the day
+     * lists too, and is not built yet.
+     * ─────────────────────────────────────────────────────────────────────────
      */
     delayHours: 72,
     covers: ['invoice_chase'],

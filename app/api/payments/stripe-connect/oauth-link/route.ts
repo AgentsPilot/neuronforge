@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { getStripeService } from '@/lib/stripe/StripeService';
@@ -61,7 +62,10 @@ export async function GET(request: NextRequest) {
     });
 
     // 6. Generate OAuth URL
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // `platformOrigin()`: this is a URL Stripe sends the OWNER back to, so a
+    // loopback address is a dead end on any deployed build. The resolver
+    // refuses one on Vercel; a laptop still gets localhost.
+    const appUrl = platformOrigin();
     const redirectUri = `${appUrl}/api/payments/stripe-connect/callback?type=oauth`;
 
     const stripeService = getStripeService();

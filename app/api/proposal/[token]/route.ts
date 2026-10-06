@@ -18,6 +18,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { verifyProposalToken } from '@/lib/business-os/proposalToken';
 import { resolveTermsDays } from '@/lib/payments/paymentTerms';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { proposalRepository } from '@/lib/repositories/ProposalRepository';
 import { applyAcceptance, splitTotal } from '@/lib/services/ProposalAcceptanceService';
 import { sendInvoice } from '@/lib/services/InvoiceDeliveryService';
@@ -133,6 +134,15 @@ async function present(proposal: Proposal) {
       .maybeSingle(),
   ]);
 
+  /** Billed after each meeting: see `PackageSessions.bill_per_session`. */
+  const perSession = Boolean(proposal.sessions?.bill_per_session);
+
+  const { data: ownerPrefs } = await supabaseServer
+    .from('user_preferences')
+    .select('timezone')
+    .eq('user_id', proposal.user_id)
+    .maybeSingle();
+
   const shape = proposal.payment_shape;
   let stages: Array<{ label: string; amount: number }> = [];
 
@@ -154,7 +164,15 @@ async function present(proposal: Proposal) {
     currency: proposal.currency,
     validUntil: proposal.valid_until,
     stages,
-    dueOnAccept: stages.length ? stages[0].amount : proposal.total,
+    /*
+     * WHAT THE CLIENT PAYS WHEN THEY PRESS ACCEPT.
+     *
+     * Zero for a package billed after each meeting: the stages are the
+     * meetings, and none of them has happened. The button read "Accept —
+     * ₪83.33 due now" for a quote whose own terms say nothing is due until the
+     * first session is held, which is the page contradicting the offer.
+     */
+    dueOnAccept: perSession ? 0 : stages.length ? stages[0].amount : proposal.total,
     clientFirstName: contact?.first_name ?? null,
     /*
      * The terms, on the page as well as in the email.
@@ -182,6 +200,39 @@ async function present(proposal: Proposal) {
      */
     id: proposal.id,
     isRevision: Boolean(proposal.supersedes_id),
+    /*
+     * THE MEETINGS, for a package.
+     *
+     * The client is agreeing to six specific hours of their own life, so the
+     * dates belong on the page they press accept on — not only in the email,
+     * and certainly not discovered afterwards in a confirmation. Sent as
+     * instants; the page formats them on the READER's clock, which is the one
+     * they will turn up by.
+     *
+     * Null for every ordinary quote.
+     */
+    sessions: proposal.sessions?.dates?.length
+      ? {
+          dates: proposal.sessions.dates,
+          durationMinutes: proposal.sessions.duration_minutes,
+          /*
+           * Billed after each meeting, so the page can say so instead of
+           * showing a schedule of stages that duplicates the dates.
+           */
+          billPerSession: perSession,
+          /*
+           * THE BUSINESS'S CLOCK, named.
+           *
+           * The page formatted these on the READER's clock, which for a page
+           * that server-renders its first paint is the server's: an Israeli
+           * business's 16:30 sessions were listed as 09:30, every one of them,
+           * because the host runs in New York. The hour a client turns up at is
+           * the business's, so it is resolved here and the page is told which
+           * zone it is showing.
+           */
+          timezone: safeTimezone(ownerPrefs?.timezone),
+        }
+      : null,
   };
 }
 
@@ -419,7 +470,13 @@ export async function POST(
         prices_include_tax: proposal.prices_include_tax,
         accepted_at: new Date().toISOString(),
       },
-      { invoiceId: created.invoiceId, planId: created.planId }
+      {
+        invoiceId: created.invoiceId,
+        planId: created.planId,
+        // The package, for a quote that sold several meetings. Null otherwise,
+        // which is every quote written before packages existed.
+        packageBookingId: created.package?.container ?? null,
+      }
     );
 
     await logActivity(proposal, 'proposal_accepted');
@@ -506,6 +563,54 @@ export async function POST(
       { proposalId: proposal.id, invoiceId: created.invoiceId, planId: created.planId },
       'Proposal accepted'
     );
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A PACKAGE DATE THAT WAS TAKEN WHILE THE QUOTE SAT UNANSWERED.
+     *
+     * Acceptance never refuses the whole package over one slot — the client has
+     * agreed, and possibly paid — so it creates what it can and reports the
+     * rest. Until now that report went only to the log, which means the owner
+     * learns about it by counting meetings.
+     *
+     * Written to the CONTACT'S TIMELINE, because that is where the owner is
+     * already looking when they open this client: beside the acceptance itself,
+     * naming the dates to re-offer. Non-blocking for the same reason every
+     * other write here is — the client's answer must not fail over a note.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (created.package?.clashed?.length) {
+      const dates = created.package.clashed;
+
+      requestLogger.warn(
+        { proposalId: proposal.id, clashed: dates },
+        'A package was accepted with dates that were no longer free'
+      );
+
+      await supabaseServer
+        .from('crm_activities')
+        .insert({
+          user_id: proposal.user_id,
+          contact_id: proposal.contact_id,
+          activity_type: 'note',
+          title: `${dates.length} session ${dates.length === 1 ? 'time' : 'times'} were already taken`,
+          description:
+            `These times were no longer free when the quote was accepted, so they were not booked: ` +
+            `${dates.join(', ')}. Offer the client another time for each.`,
+          auto_logged: true,
+          source_capability: 'payments',
+          source_entity_id: proposal.id,
+          activity_date: new Date().toISOString(),
+        })
+        .then(({ error }) => {
+          if (error) {
+            requestLogger.error(
+              { err: error, proposalId: proposal.id },
+              'Could not record the clashed package dates on the timeline'
+            );
+          }
+        });
+    }
 
     return NextResponse.json({
       success: true,

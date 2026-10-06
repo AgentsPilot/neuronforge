@@ -336,6 +336,21 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
     }
 
     /*
+     * Saying what happened to a meeting is the third that is not a send — and
+     * the clearest case for it: the answer is one of THREE (it was held, they
+     * did not turn up, it was called off), and a single button cannot offer
+     * three answers.
+     *
+     * Same target as the two above, because the three marks already live on the
+     * booking row in the drawer's bookings section. Nothing new to build there;
+     * this is the route to it for an owner who has not opened the contact.
+     */
+    if (action === 'mark_meeting') {
+      router.push(`/business-os/crm?contact=${item.contactId}&section=bookings`);
+      return;
+    }
+
+    /*
      * Refunding opens the dialog rather than posting.
      *
      * ─────────────────────────────────────────────────────────────────────────
@@ -454,6 +469,8 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
               {gap.items.map(item => {
                 const key = rowKey(gap, item);
                 const state = rows[key] ?? { kind: 'idle' };
+                // The queued strip's own request (Send now / Cancel) lives on its own key.
+                const isQueuedWorking = rows[`queued:${item.contactId}`]?.kind === 'working';
                 const action = actionFor(gap, item);
                 const Icon = ACTION_ICON[action || ''] || Send;
 
@@ -581,23 +598,31 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                           {t('gaps.will_send')} {item.queued.label}
                           {item.queued.dueAt && <> · {dueIn(item.queued.dueAt, t)}</>}
                         </p>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => control(item, 'send_now')}
-                            className="text-[11px] font-medium text-[var(--v2-primary)] hover:opacity-70"
-                          >
-                            {t('gaps.send_now')}
-                          </button>
-                          <span className="text-[var(--v2-border)]">·</span>
-                          <button
-                            type="button"
-                            onClick={() => control(item, 'cancel')}
-                            className="text-[11px] font-medium text-[var(--v2-text-muted)] hover:opacity-70"
-                          >
-                            {t('gaps.cancel')}
-                          </button>
-                        </div>
+                        {/*
+                          "Send now" waits for the send (BL-7a part 2), so say so
+                          and take both buttons away: no second click while it runs.
+                        */}
+                        {isQueuedWorking ? (
+                          <span className="text-[11px] text-[var(--v2-text-muted)]" aria-live="polite">{t('gaps.working')}</span>
+                        ) : (
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => control(item, 'send_now')}
+                              className="text-[11px] font-medium text-[var(--v2-primary)] hover:opacity-70"
+                            >
+                              {t('gaps.send_now')}
+                            </button>
+                            <span className="text-[var(--v2-border)]">·</span>
+                            <button
+                              type="button"
+                              onClick={() => control(item, 'cancel')}
+                              className="text-[11px] font-medium text-[var(--v2-text-muted)] hover:opacity-70"
+                            >
+                              {t('gaps.cancel')}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
 

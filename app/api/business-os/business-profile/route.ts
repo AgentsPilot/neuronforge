@@ -12,6 +12,8 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { organizationRepository } from '@/lib/repositories/OrganizationRepository';
+import { saveAddressForUse } from '@/lib/business-os/addressBook';
+import { hasAddressContent, type StructuredAddress } from '@/lib/geo/address';
 import { isPlausiblePhone, PHONE_MAX_LENGTH } from '@/lib/branding/phone';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 
@@ -78,6 +80,53 @@ const brandingSchema = z.object({
     .string()
     .trim()
     .max(300, 'Address is too long')
+    .nullable()
+    .optional(),
+
+  /**
+   * The display address in parts.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The comment above used to say this address was free text ON PURPOSE, and
+   * that the structured one lived only on the invoice. That was true until the
+   * country started deciding things — which legal sentence goes on a refund
+   * email, which tax rules apply — and a free-text line cannot be asked what
+   * country it is in.
+   *
+   * `country` is an ISO 3166-1 alpha-2 code picked from a list, which is why it
+   * is length-2 rather than free text: there is nothing to normalise, and
+   * anything else is a bug upstream rather than a value to be lenient about.
+   *
+   * REQUIRED ONCE THE ADDRESS HAS ANY CONTENT. An address with no country is
+   * the state this change exists to end; an address with nothing in it at all
+   * is simply not filled in yet, and must stay savable.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /**
+   * Which entry in the address book `address_parts` belongs to.
+   *
+   * Null for a new address. Absent from older clients, which then fall back to
+   * whatever this profile already points at — the behaviour before the book.
+   */
+  address_id: z.string().uuid().nullable().optional(),
+  address_parts: z
+    .object({
+      line1: z.string().trim().max(200).optional(),
+      line2: z.string().trim().max(200).optional(),
+      city: z.string().trim().max(100).optional(),
+      state: z.string().trim().max(100).optional(),
+      postal_code: z.string().trim().max(30).optional(),
+      country: z.string().trim().length(2).toUpperCase().optional().or(z.literal('')),
+    })
+    .refine(
+      parts => {
+        const filled = [parts.line1, parts.city, parts.postal_code, parts.state].some(
+          value => value && value.trim().length > 0
+        );
+        return !filled || Boolean(parts.country && parts.country.trim());
+      },
+      { message: 'Choose the country for this address', path: ['country'] }
+    )
     .nullable()
     .optional(),
 
@@ -153,7 +202,7 @@ export async function GET(request: NextRequest) {
     // 2. Fetch business profile
     const { data: profile, error } = await supabaseServer
       .from('business_profiles')
-      .select('vertical, sub_vertical, language, company_size, logo_url, show_logo_on_smart_links, phone, email, address')
+      .select('vertical, sub_vertical, language, company_size, logo_url, show_logo_on_smart_links, phone, email, address, address_parts')
       .eq('user_id', user.id)
       .single();
 
@@ -219,6 +268,9 @@ export async function GET(request: NextRequest) {
       phone: profile?.phone || null,
       email: profile?.email || null,
       address: profile?.address || null,
+      // `{}` rather than null: the form needs an object to spread into, and the
+      // column defaults to `{}` for every row that predates the structured form.
+      address_parts: profile?.address_parts || {},
     });
   } catch (error) {
     requestLogger.error({ err: error }, 'Business profile request failed');
@@ -267,13 +319,14 @@ export async function PUT(request: NextRequest) {
       phone,
       email,
       address,
+      address_parts,
       daily_briefing_email_enabled,
       lead_alert_email_enabled,
       lead_autosend_enabled,
       organization,
       ...branding
     } = validated;
-    const contact = { phone, email, address };
+    const contact = { phone, email, address, address_parts };
     const hasContact = Object.values(contact).some(value => value !== undefined);
 
     let error: Error | null = null;
@@ -284,6 +337,47 @@ export async function PUT(request: NextRequest) {
 
     if (!error && hasContact) {
       ({ error } = await businessProfileRepository.updateContactDetails(user.id, contact));
+    }
+
+    /*
+     * The address also goes into the business's address book.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `updateContactDetails` above writes `address_parts`, which is the copy
+     * every reader renders — the invoice PDF, the public booking and contact
+     * pages, the privacy policy. This writes the ENTRY it is a copy of, so the
+     * address has an identity the invoice form can offer back.
+     *
+     * `saveAddressForUse` owns the rule that matters: an entry this profile
+     * shares with the invoice is FORKED rather than rewritten, so correcting
+     * the address clients see can never silently change the address invoices go
+     * out with. See `lib/business-os/addressBook.ts`.
+     *
+     * Non-fatal. The copy is already saved and is what renders, so a book that
+     * failed to update costs the owner an entry in a picker, not their address.
+     * Logged loudly rather than swallowed — a book that quietly stops recording
+     * is how the two drifted apart in the first place.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (!error && address_parts && hasAddressContent(address_parts as StructuredAddress)) {
+      const booked = await saveAddressForUse({
+        userId: user.id,
+        use: 'profile',
+        parts: address_parts as StructuredAddress,
+        addressId: validated.address_id ?? null,
+      });
+
+      if (booked.error) {
+        requestLogger.error(
+          { err: booked.error, userId: user.id },
+          'Business profile saved, but its address did not reach the address book'
+        );
+      } else if (booked.data?.forked) {
+        requestLogger.info(
+          { userId: user.id, addressId: booked.data.address.id },
+          'Address forked: the invoice keeps the entry it had'
+        );
+      }
     }
 
     /*

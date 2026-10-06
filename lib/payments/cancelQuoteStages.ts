@@ -298,9 +298,26 @@ export async function cancelQuoteStages(input: {
     .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
     .eq('user_id', userId)
     .eq('proposal_id', proposalId)
-    // Only what has not happened. A paid stage records money that arrived, and a
-    // billed one is represented by the invoice voided above.
-    .eq('status', 'pending')
+    /*
+     * EVERYTHING NOT SETTLED, which includes the billed ones.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This read `.eq('status', 'pending')`, on the reasoning that "a billed one
+     * is represented by the invoice voided above". True of the MONEY — that
+     * invoice cannot be paid and nobody is chased for it — and false of the
+     * RECORD, which is what every reader sees.
+     *
+     * The quote for הצעת מחיר לשיפוץ is the case: both invoices voided, stage 1
+     * closed because it happened to be `pending`, stage 2 left reading `billed`
+     * on a job marked `stopped`. The drawer showed it as unpaid, the count said
+     * "0/2 paid" with nothing left to pay, and `unpaidPeriods` still treats it
+     * as owed because only `paid` and `cancelled` are settled.
+     *
+     * A stage whose invoice this same call just voided should agree with it.
+     * `paid` is never rewritten: that records money that actually arrived.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    .not('status', 'in', '(paid,cancelled)')
     .is('subscription_id', null)
     .select('id');
 

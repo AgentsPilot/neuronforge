@@ -96,4 +96,123 @@ describe('origins', () => {
 
     expect(publicSiteDisplayHost('joesgym')).toBe('joesgym.agentspilot.ai');
   });
+
+  /**
+   * A deployed build must never hand out an address only the builder can reach.
+   *
+   * `NEXT_PUBLIC_APP_URL` is one value per environment and a preview does not
+   * have one address, so the variable copied out of `.env.local` reached Vercel
+   * saying `http://localhost:3000`. Every smart link, website address and
+   * landing-page link is built from `platformOrigin`, so all three handed that
+   * out. `NODE_ENV` cannot catch it: Vercel builds previews with
+   * `NODE_ENV=production`, so it arrives as configuration, not as a fallback.
+   */
+  describe('on Vercel', () => {
+    const onPreview = (host = 'neuronforge-abc123-scope.vercel.app') => {
+      process.env.VERCEL = '1';
+      process.env.NEXT_PUBLIC_VERCEL_ENV = 'preview';
+      process.env.NEXT_PUBLIC_VERCEL_URL = host;
+    };
+
+    beforeEach(() => {
+      delete process.env.VERCEL;
+      delete process.env.VERCEL_ENV;
+      delete process.env.VERCEL_URL;
+      delete process.env.NEXT_PUBLIC_VERCEL_ENV;
+      delete process.env.NEXT_PUBLIC_VERCEL_URL;
+      delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+      delete process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL;
+    });
+
+    it('refuses a localhost value configured on a preview, and uses the deployment', () => {
+      onPreview();
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      const { platformOrigin } = load();
+
+      expect(platformOrigin()).toBe('https://neuronforge-abc123-scope.vercel.app');
+    });
+
+    it('addresses a preview by ITS OWN host, not one value shared by every preview', () => {
+      // The reason configuration cannot win here: each deployment differs.
+      onPreview('neuronforge-second-build.vercel.app');
+      process.env.NEXT_PUBLIC_APP_URL = 'https://app.agentspilot.ai';
+      const { platformOrigin } = load();
+
+      expect(platformOrigin()).toBe('https://neuronforge-second-build.vercel.app');
+    });
+
+    it('carries that host into smart links, website addresses and landing pages alike', () => {
+      onPreview();
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      const { platformUrl, publicSiteUrl } = load();
+
+      // The three surfaces that were handing out localhost.
+      expect(platformUrl('/go/abc')).toBe('https://neuronforge-abc123-scope.vercel.app/go/abc');
+      expect(publicSiteUrl('joesgym')).toBe('https://neuronforge-abc123-scope.vercel.app/site/joesgym');
+      expect(publicSiteUrl('joesgym', '/spring-offer')).toBe(
+        'https://neuronforge-abc123-scope.vercel.app/site/joesgym/spring-offer'
+      );
+    });
+
+    it('reads the server-only system variables when the public copies are absent', () => {
+      // A project may expose system variables to the server but not the browser.
+      process.env.VERCEL = '1';
+      process.env.VERCEL_ENV = 'preview';
+      process.env.VERCEL_URL = 'neuronforge-server-only.vercel.app';
+      const { platformOrigin } = load();
+
+      expect(platformOrigin()).toBe('https://neuronforge-server-only.vercel.app');
+    });
+
+    it('keeps the real domain in production rather than a deployment hash', () => {
+      // A client should never be shown a per-deployment URL.
+      process.env.VERCEL = '1';
+      process.env.NEXT_PUBLIC_VERCEL_ENV = 'production';
+      process.env.NEXT_PUBLIC_VERCEL_URL = 'neuronforge-xyz789.vercel.app';
+      process.env.NEXT_PUBLIC_APP_URL = 'https://app.agentspilot.ai';
+      const { platformOrigin } = load();
+
+      expect(platformOrigin()).toBe('https://app.agentspilot.ai');
+    });
+
+    it("uses the project's real production host when production is misconfigured to localhost", () => {
+      // Not the `app.agentspilot.ai` constant: that apex is not served yet (see
+      // the marketing-origin comment), so preferring it would swap one
+      // unreachable address for another and be harder to notice than localhost.
+      process.env.VERCEL = '1';
+      process.env.NEXT_PUBLIC_VERCEL_ENV = 'production';
+      process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL = 'neuronforge-kohl.vercel.app';
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      const { platformOrigin } = load();
+
+      expect(platformOrigin()).toBe('https://neuronforge-kohl.vercel.app');
+    });
+
+    it('falls back to the constant only when Vercel tells us nothing else', () => {
+      process.env.VERCEL = '1';
+      process.env.NEXT_PUBLIC_VERCEL_ENV = 'production';
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      const { platformOrigin } = load();
+
+      expect(platformOrigin()).toBe('https://app.agentspilot.ai');
+    });
+
+    it('honours a real configured domain on a preview environment variable', () => {
+      // Refusing localhost must not refuse a deliberately configured host.
+      process.env.VERCEL = '1';
+      process.env.NEXT_PUBLIC_VERCEL_ENV = 'preview';
+      process.env.NEXT_PUBLIC_APP_URL = 'https://staging.agentspilot.ai';
+      const { platformOrigin } = load();
+
+      // No deployment host exposed, so configuration is all there is.
+      expect(platformOrigin()).toBe('https://staging.agentspilot.ai');
+    });
+  });
+
+  it('still uses localhost for local development, which is not Vercel', () => {
+    process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+    const { platformOrigin } = load();
+
+    expect(platformOrigin()).toBe('http://localhost:3000');
+  });
 });

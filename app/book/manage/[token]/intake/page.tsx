@@ -2,13 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { ClipboardList } from 'lucide-react';
 
 import { AppointmentCard, type PublicBookingSummary } from '@/components/public/AppointmentCard';
+import { PortalHero } from '@/components/public/PortalHero';
 import { BrandButton } from '@/components/public/BrandButton';
 import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
 import { PublicPageSpinner } from '@/components/public/PublicSpinner';
-import { PublicShell } from '@/components/public/PublicShell';
 import { StatusCard } from '@/components/public/StatusCard';
 import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider';
 import { createPublicT } from '@/lib/i18n/public-pages';
@@ -208,27 +207,24 @@ export default function IntakeFormPage() {
 
   if (terminal) {
     return (
-      /*
-       * `default` (42rem), not `narrow` (32rem).
-       *
-       * This screen carries more than a sentence: the appointment card with its
-       * service name, date, time range and duration, and — uniquely among the
-       * booking-management screens — the business's contact panel, which holds
-       * a full street address. At 32rem the address wrapped mid-line and the
-       * date ran onto two.
-       *
-       * `default` is also what the intake FORM below uses and what the booking
-       * details page this links to uses, so the page no longer changes width
-       * between filling the form in and being thanked for it.
-       */
-      <PublicShell brand={brand} width="default" header={{ compact: true }}>
+      <>
+        <PortalHero
+          brand={brand}
+          title={terminal.title}
+          subtitle={terminal.desc}
+          back={{ href: `/book/manage/${token}`, label: t('backToBookingDetails') }}
+        />
+
         <div className="space-y-4">
           <StatusCard
-            standalone
             inShell
             tone={terminal.tone}
+            /*
+             * The title and the explanation are the hero's now. Repeating them
+             * in the card directly beneath would say the same sentence twice,
+             * which is what this screen did when it owned its own header.
+             */
             title={terminal.title}
-            description={terminal.desc}
             actions={
               <BrandButton href={`/book/manage/${token}`} size="lg" fullWidth>
                 {t('viewBookingDetails')}
@@ -238,11 +234,14 @@ export default function IntakeFormPage() {
             {booking && <AppointmentCard booking={booking} brand={brand} variant="summary" />}
           </StatusCard>
 
-          {terminal.showInfo && (
-            <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address', 'links']} />
-          )}
+          {/*
+            No business panel here any more. The portal's rail carries the
+            contact details, the address and the opening hours on every screen
+            in this section, so drawing them again below the card printed the
+            business's address twice on one page.
+          */}
         </div>
-      </PublicShell>
+      </>
     );
   }
 
@@ -258,36 +257,23 @@ export default function IntakeFormPage() {
   const progress = shown.length ? (answered / shown.length) * 100 : 0;
 
   return (
-    <PublicShell
-      brand={brand}
-      width="default"
-      header={{
-        compact: true,
-        backHref: `/book/manage/${token}`,
-        backLabel: t('backToBookingDetails'),
-      }}
-    >
-      <div className="space-y-4">
-        <div className="flex items-start gap-3">
-          <div
-            className="flex h-11 w-11 shrink-0 items-center justify-center"
-            style={{ background: 'var(--ap-brand-tint)', borderRadius: 'var(--ap-radius-md)' }}
-          >
-            <ClipboardList className="h-5 w-5" style={{ color: 'var(--ap-brand)' }} aria-hidden />
-          </div>
-          <div>
-            <h1
-              className="text-xl font-bold"
-              style={{ color: 'var(--ap-text)', fontFamily: 'var(--ap-font-heading)' }}
-            >
-              {t('completeIntakeForm')}
-            </h1>
-            <p className="mt-0.5 text-sm" style={{ color: 'var(--ap-text-muted)' }}>
-              {t('helpUsPrepare')}
-            </p>
-          </div>
-        </div>
+    <>
+      {/*
+        The same hero the other three screens use.
 
+        This page kept a heading of its own — an icon tile beside an `h2` — from
+        when it drew its own frame. Inside the portal that read as a second,
+        smaller header under the real one, and as the only screen in the section
+        that announced itself differently.
+      */}
+      <PortalHero
+        brand={brand}
+        title={t('completeIntakeForm')}
+        subtitle={t('helpUsPrepare')}
+        back={{ href: `/book/manage/${token}`, label: t('backToBookingDetails') }}
+      />
+
+      <div className="space-y-4">
         {booking && <AppointmentCard booking={booking} brand={brand} variant="summary" />}
 
         {/* How much is left. A long intake form with no sense of progress is
@@ -369,6 +355,6 @@ export default function IntakeFormPage() {
           </BrandButton>
         </form>
       </div>
-    </PublicShell>
+    </>
   );
 }

@@ -1224,8 +1224,20 @@ export function LiveDashboard({
       const ends = gapEndsFor(from, to);
       const verdict = resolveGap(ends.from, ends.to, hasPublished);
 
+      /*
+       * EVERY VERDICT SAYS SOMETHING, INCLUDING THE SILENT ONES.
+       *
+       * `setup` and `empty` had no label, so they drew as a dashed line with no
+       * explanation. On an account whose site is still a draft that is EVERY
+       * connector — and the owner, reading a card that said one contact was
+       * stuck, saw a diagram marking nothing anywhere and concluded one of the
+       * two was broken. Both were right; the diagram simply never said why it
+       * had nothing to report.
+       */
       let lb: string | undefined;
-      if (verdict.kind === 'tooEarly') lb = t('gap.tooEarly') || 'too early to tell';
+      if (verdict.kind === 'setup') lb = t('gap.setup') || 'publish your site to start measuring';
+      else if (verdict.kind === 'empty') lb = t('gap.empty') || 'nobody here yet';
+      else if (verdict.kind === 'tooEarly') lb = t('gap.tooEarly') || 'too early to tell';
       else if (verdict.kind === 'watching') lb = t('gap.watchConversion') || 'watching';
       else if (verdict.kind === 'leaking') lb = `${verdict.dropped} ${t('gap.dropped') || 'dropped off'}`;
 
@@ -1269,6 +1281,56 @@ export function LiveDashboard({
       });
     }
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A NAMED PERSON PARKED IN A STAGE, MARKED ON THE STATION.
+     *
+     * The card and the diagram used two different rules for when they were
+     * allowed to speak, and the screen stopped making sense as a result:
+     * `conv_pipeline_stuck` reports at ONE person, while a connector refuses
+     * to call anything a leak below `MIN_TO_JUDGE` of five, because a rate
+     * from four people is noise. So "1 contact stuck in your pipeline" sat
+     * beside a diagram marking nothing anywhere, and the owner reasonably
+     * concluded one of them was lying.
+     *
+     * Both were right. What was missing is this: the stuck person belongs on
+     * the STATION, not on the connector. A station marker is a count of named
+     * people, which is true at one; a connector is a rate, which is not. The
+     * five-person floor stays exactly where it is.
+     *
+     * Pending only. A resolved stuck-insight must not leave a marker behind on
+     * the diagram — that is the same mistake in a different place.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const stuck = pendingInsights.find(insight => insight.detector_id === 'conv_pipeline_stuck');
+    if (stuck) {
+      const breakdown = (stuck.process_parameters?.stage_breakdown ?? {}) as Record<string, unknown>;
+      const days = Number(stuck.process_parameters?.avg_days_stuck) || 0;
+
+      for (const [stageKey, raw] of Object.entries(breakdown)) {
+        const count = Number(raw) || 0;
+        if (count <= 0) continue;
+
+        /*
+         * Only a stage the map actually draws. A pipeline the owner has since
+         * renamed or deleted would otherwise pin a badge to a station that is
+         * not there — the bug the 'found' tips already had once.
+         */
+        const node = funnelNodes.find(n => n.key === stageKey);
+        if (!node) continue;
+
+        result.push({
+          at: stageKey,
+          n: result.length + 1,
+          t: (t('gap.stuckHere') || '{n} waiting {d} days')
+            .replace('{n}', String(count))
+            .replace('{d}', String(days)),
+          s: `${count} ${t('tip.stuck.waitingAt') || 'have been sitting at'} ${node.label} ${t('tip.stuck.forDays') || 'for about'} ${days} ${t('tip.stuck.days') || 'days'}. ${t('tip.stuck.desc') || 'A note costs nothing.'}`,
+          about: node.label,
+        });
+      }
+    }
+
     // Low reach tip
     if (stats.found > 0 && stats.found < 50) {
       result.push({
@@ -1281,7 +1343,7 @@ export function LiveDashboard({
     }
 
     return result;
-  }, [hasPublished, reachesByLink, funnelGaps, funnelNodes, funnelStations, stats, t]);
+  }, [hasPublished, reachesByLink, funnelGaps, funnelNodes, funnelStations, pendingInsights, stats, t]);
 
   /*
    * `FirstLightMilestones` and the `milestones` memo that fed it are gone.

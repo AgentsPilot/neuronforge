@@ -207,12 +207,16 @@ export function IntakeFormStep({
       </div>
 
       {/* Form */}
-      <form onSubmit={handleSubmit} className="space-y-4">
+      {/* `noValidate`: this step already validates every required field itself
+          and renders the message in the page, in the business's palette. Left
+          to the browser, the native bubble pre-empted it — same question, asked
+          in the browser's language and its own chrome. */}
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
         {template.fields.map((field) => (
           <div key={field.key} className="space-y-1.5">
             <label className="block text-sm font-medium ap-ink-2">
               {getFieldLabel(field)}
-              {field.required && <span className="text-red-500 ml-1">*</span>}
+              {field.required && <span className="ap-danger ml-1">*</span>}
             </label>
 
             {/* Text input */}
@@ -330,13 +334,13 @@ export function IntakeFormStep({
 
             {/* Validation error */}
             {validationErrors[field.key] && (
-              <p className="text-xs text-red-500">{validationErrors[field.key]}</p>
+              <p className="ap-danger">{validationErrors[field.key]}</p>
             )}
           </div>
         ))}
 
         {/* Error message */}
-        {error && <p className="text-sm text-red-600 text-center">{error}</p>}
+        {error && <p className="ap-danger text-center">{error}</p>}
 
         {/* Submit button */}
         <button

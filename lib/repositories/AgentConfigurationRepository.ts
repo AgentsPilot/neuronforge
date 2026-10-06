@@ -6,6 +6,17 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { AgentRepositoryResult } from './types';
 
+/**
+ * The columns the GDPR export reads from `agent_configurations`
+ * (listForUserDataExport; DATA_EXPORT_FOLLOWUPS_WORKPLAN.md §4.4). Today that
+ * is every column; `input_values` are values the person typed. Listed by name
+ * so a column added later is NOT exported until someone decides it should be.
+ * Changing this changes what the export holds: a privacy decision.
+ */
+const AGENT_CONFIGURATION_DATA_EXPORT_COLUMNS =
+  'id, agent_id, user_id, status, input_values, input_schema, total_logs, confidence, quality_score, ' +
+  'duration_ms, plugins_used, business_context, data_processed, completed_at, created_at, updated_at';
+
 export interface AgentConfiguration {
   id: string;
   agent_id: string;
@@ -232,20 +243,20 @@ export class AgentConfigurationRepository {
 
   /**
    * GDPR export only (GET /api/user/data-export, Art. 15 / 20). Every agent
-   * configuration row of the caller, every column, newest first. The column set
-   * is fixed; changing it changes what the export holds, which is a privacy
-   * decision.
+   * configuration row of the caller, AGENT_CONFIGURATION_DATA_EXPORT_COLUMNS
+   * only, newest first. The column set is fixed; changing it changes what the
+   * export holds, which is a privacy decision.
    */
   async listForUserDataExport(userId: string): Promise<AgentRepositoryResult<Record<string, unknown>[]>> {
     try {
       const { data, error } = await this.supabase
         .from('agent_configurations')
-        .select('*')
+        .select(AGENT_CONFIGURATION_DATA_EXPORT_COLUMNS)
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return { data: (data ?? []) as Record<string, unknown>[], error: null };
+      return { data: (data ?? []) as unknown as Record<string, unknown>[], error: null };
     } catch (error) {
       this.logger.error({ err: error, userId }, 'Failed to list agent configurations for the data export');
       return { data: null, error: error as Error };

@@ -56,6 +56,20 @@ interface ProposalView {
     mimeType: string | null;
     url: string;
   } | null;
+  /**
+   * A PACKAGE: the meetings being sold, as instants.
+   *
+   * The client is agreeing to specific hours of their own life, so they are on
+   * the page the accept button is on. Null for an ordinary quote.
+   */
+  sessions: {
+    dates: string[];
+    durationMinutes: number;
+    /** Each meeting is invoiced after it happens; nothing is due on approval. */
+    billPerSession: boolean;
+    /** The BUSINESS's zone, which is the clock the client turns up by. */
+    timezone: string;
+  } | null;
 }
 
 export default function ProposalPage() {
@@ -274,9 +288,17 @@ export default function ProposalPage() {
             </span>
           </div>
 
-          {/* The schedule, spelled out. "Paid in 3" is not something a client
-              can agree to; how much, and against what, is. */}
-          {proposal.stages.length > 1 && (
+          {/*
+            The schedule, spelled out. "Paid in 3" is not something a client can
+            agree to; how much, and against what, is.
+
+            NOT for a package billed per meeting: there the stages ARE the
+            meetings, so this block listed "Meeting 1 … Meeting 6" with their
+            amounts and the dates were listed again underneath — the same six
+            facts twice, in two different orders. The meetings list below
+            carries the amount on each row instead.
+          */}
+          {proposal.stages.length > 1 && !proposal.sessions?.billPerSession && (
             <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--ap-border)' }}>
               <p
                 className="mb-2 text-xs font-semibold uppercase tracking-wide"
@@ -294,6 +316,88 @@ export default function ProposalPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/*
+            THE MEETINGS, when this quote sells several.
+            ─────────────────────────────────────────────────────────────────
+            ON THE BUSINESS'S CLOCK, NAMED. This formatted on the reader's own
+            clock, which for a page that server-renders its first paint is the
+            SERVER's: an Israeli business's 16:30 sessions were listed as 09:30,
+            all six of them, because the host runs in New York. The hour that
+            matters is the one the client turns up at, so the zone comes from
+            the business and the list says which it is.
+
+            For a package billed per meeting each row also carries its amount —
+            the stage list above would otherwise repeat these six facts in a
+            different order, which is what made this page hard to read.
+          */}
+          {proposal.sessions && proposal.sessions.dates.length > 0 && (
+            <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--ap-border)' }}>
+              <p
+                className="mb-2 text-xs font-semibold uppercase tracking-wide"
+                style={{ color: 'var(--ap-text-muted)' }}
+              >
+                {t('proposal.sessions_title')
+                  .replace('{count}', String(proposal.sessions.dates.length))
+                  .replace('{minutes}', String(proposal.sessions.durationMinutes))}
+              </p>
+
+              <ol className="space-y-2">
+                {proposal.sessions.dates.map((iso, i) => (
+                  <li key={iso} className="flex items-baseline justify-between gap-3 text-sm">
+                    <span className="flex items-baseline gap-2">
+                      <span
+                        className="tabular-nums"
+                        style={{ color: 'var(--ap-text-muted)', minWidth: '1.25rem' }}
+                      >
+                        {i + 1}.
+                      </span>
+                      <span style={{ color: 'var(--ap-text)' }}>
+                        {new Date(iso).toLocaleString(intlLocale, {
+                          weekday: 'short',
+                          day: 'numeric',
+                          month: 'long',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          timeZone: proposal.sessions?.timezone,
+                        })}
+                      </span>
+                    </span>
+
+                    {/* Its own share, for a package billed per meeting. */}
+                    {proposal.sessions?.billPerSession && proposal.stages[i] && (
+                      <span
+                        className="font-medium tabular-nums"
+                        style={{ color: 'var(--ap-text)' }}
+                      >
+                        {money(proposal.stages[i].amount)}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+
+              {/*
+                Which clock those hours are on. A client in another country
+                needs to know, and a client in the same one loses nothing by
+                being told.
+              */}
+              <p className="mt-2 text-xs" style={{ color: 'var(--ap-text-muted)' }}>
+                {t('proposal.sessions_timezone').replace(
+                  '{zone}',
+                  proposal.sessions.timezone.replace(/_/g, ' ')
+                )}
+              </p>
+
+              {/* Nothing is due now, and each meeting is invoiced after it
+                  happens. The button alone cannot say that. */}
+              {proposal.sessions.billPerSession && (
+                <p className="mt-2 text-sm" style={{ color: 'var(--ap-text)' }}>
+                  {t('proposal.sessions_billed_after')}
+                </p>
+              )}
             </div>
           )}
 

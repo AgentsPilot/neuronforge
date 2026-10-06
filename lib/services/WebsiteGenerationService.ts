@@ -24,6 +24,7 @@ import { getWebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockReposi
 import { themeForTemplateId } from '@/lib/website-builder/templates';
 import { DEFAULT_ARCHETYPE } from '@/lib/website-builder/archetypes';
 import { recipeFor, orderByRecipe, recommendArchetypeId } from '@/lib/website-builder/recipes';
+import { repairBlockLinks } from '@/lib/website-builder/linkIntegrity';
 import { imageForSection, imagesForSection } from '@/lib/services/StockImageService';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
@@ -501,11 +502,44 @@ export class WebsiteGenerationService {
        */
       const pageType = options.focus ? 'landing' : 'homepage';
 
-      const blocks = orderByRecipe(
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * AND EVERY BUTTON POINTS AT A SECTION THIS PAGE ACTUALLY HAS.
+       *
+       * Checked HERE, after the recipe, because the recipe is what makes a
+       * destination stale: `buildBlocks` writes `#about` and `#services` from
+       * what it knows, and then `orderByRecipe` DROPS the sections this
+       * vertical does not get. A consultant never gets a gallery; a trade with
+       * no catalogue loses the services list. Any button still naming one is
+       * now a fragment matching no element — and the browser does not
+       * navigate, does not scroll and reports nothing, so the loudest button on
+       * a new site silently does nothing at all.
+       *
+       * This is the same pass the renderer runs, from the same shared table of
+       * section anchors, so what is STORED is already correct rather than
+       * corrected on the way out: a dead destination is sent to the best
+       * section the page does have, and dropped when it has none — which lets
+       * the hero, header and CTA fall through to opening the booking dialog.
+       * A dead menu item is removed rather than silently repointed.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const ordered = orderByRecipe(
         builtBlocks,
         recipeFor(profile.vertical, pageType),
         (pageTheme.layouts ?? DEFAULT_ARCHETYPE.layouts),
       );
+
+      const { blocks, repairs: linkRepairs } = repairBlockLinks(ordered);
+
+      if (linkRepairs.length > 0) {
+        // Loud, because it means `buildBlocks` and the recipe disagreed about
+        // which sections this page has — worth knowing even though the page
+        // being written is already correct.
+        logger.warn(
+          { userId, pageType, vertical: profile.vertical, repairs: linkRepairs },
+          'Generated buttons named sections the recipe did not install; destinations resolved'
+        );
+      }
       const websiteBlockRepository = getWebsiteBlockRepository(supabaseServer);
 
       // A page we were handed already has blocks — the standard set installed

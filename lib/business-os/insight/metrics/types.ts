@@ -49,6 +49,8 @@ export type ConversionMetricKey =
   | 'conversion.pipeline_velocity'
   | 'conversion.overdue_tasks'
   | 'conversion.source_performance'
+  /** Why declined quotes were declined, grouped by the reason the client gave. */
+  | 'conversion.decline_reason'
   /** Share of ANSWERED quotes that were accepted. */
   | 'conversion.quote_acceptance_rate';
 
@@ -98,7 +100,14 @@ export type RetentionMetricKey =
   | 'retention.cancellation_spike'
   | 'retention.rebooking_rate'
   | 'retention.repeat_booking_rate'
-  | 'retention.clients_at_risk';
+  | 'retention.clients_at_risk'
+  /**
+   * Why bookings get called off, across a quarter rather than a spike week.
+   *
+   * Distinct from `cancellation_spike`, which is a rate that moved. A business
+   * losing one booking a week to the same cause never spikes and is never told.
+   */
+  | 'retention.cancel_reason';
 
 // Operations metrics
 export type OperationsMetricKey =

@@ -11,6 +11,7 @@
 
 import { useState, useEffect } from 'react';
 import { RefundModal } from '@/components/payments/RefundModal';
+import { CancelPlanModal } from '@/components/payments/CancelPlanModal';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -62,6 +63,8 @@ export function PaymentManagementModal({
   const [reason, setReason] = useState('');
   const [notifyContact, setNotifyContact] = useState(true);
   const [deleteBooking, setDeleteBooking] = useState(false);
+  /** The stop-plan confirmation, which owns its own reason picker. */
+  const [stopPlanOpen, setStopPlanOpen] = useState(false);
 
   // Check if refund is possible (payment status is 'paid')
   // Note: refund works with or without payment.id - manual payments can be "refunded" by updating status
@@ -100,7 +103,31 @@ export function PaymentManagementModal({
    * mark paid — the next step there is to raise it, not to record money against
    * it.
    */
-  const settleableInvoiceId = outstandingStage?.invoiceId ?? paymentData?.outstandingInvoiceId ?? null;
+  /*
+   * A DATED PERIOD THAT HAS NOT BEEN BILLED IS NOT SETTLEABLE BY HAND.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * An instalment plan collects itself: `billDueDatedStages` raises each
+   * period's invoice when its date arrives, and the client is sent it and pays
+   * it. There is nothing for the owner to mark, and marking it would be a lie
+   * about money that has not moved — the period would read paid while the
+   * charge still fires on its date, collecting it a second time.
+   *
+   * The fallback below is what made that reachable. With no invoice of its own,
+   * a future period fell through to `outstandingInvoiceId` — a DIFFERENT
+   * invoice, quite possibly the one already paid — so "record payment" pointed
+   * at the wrong document entirely.
+   *
+   * A MANUAL stage is the opposite case and keeps the fallback: it waits on the
+   * owner by design, which is exactly what `trigger: 'manual'` means.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const awaitsItsOwnSchedule =
+    Boolean(outstandingStage) && !outstandingStage!.invoiceId && outstandingStage!.trigger === 'date';
+
+  const settleableInvoiceId = awaitsItsOwnSchedule
+    ? null
+    : outstandingStage?.invoiceId ?? paymentData?.outstandingInvoiceId ?? null;
 
   /**
    * Whether "Mark as paid" should be offered at all.
@@ -179,11 +206,27 @@ export function PaymentManagementModal({
    * recorded at 11pm in New York is not the next day because the owner happens
    * to be reading from Tel Aviv.
    */
+  /**
+   * A stage date, which is one of two kinds of value.
+   *
+   * `paidAt` is an INSTANT and is resolved in the business's zone, because that
+   * decides which day the money landed on. `dueDate` is a DATE with no time and
+   * no zone — converting it moves it: midnight UTC renders as the previous day
+   * anywhere west of UTC, which printed "due 29 Sept" on a period due the 30th.
+   * So a date-only value is shown as the calendar date it is.
+   * See `dateOnlyIsNotMidnightUTC.guard`.
+   */
   const stageDate = (value: string) =>
-    new Date(value).toLocaleDateString(
-      isRTL ? 'he-IL' : 'en-US',
-      timeZoneOptions({ day: 'numeric', month: 'short' })
-    );
+    /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(`${value}T00:00:00Z`).toLocaleDateString(isRTL ? 'he-IL' : 'en-US', {
+          timeZone: 'UTC',
+          day: 'numeric',
+          month: 'short',
+        })
+      : new Date(value).toLocaleDateString(
+          isRTL ? 'he-IL' : 'en-US',
+          timeZoneOptions({ day: 'numeric', month: 'short' })
+        );
 
   const formatCurrency = (amount: number, currency: string) => {
     return new Intl.NumberFormat('en-US', {
@@ -442,7 +485,7 @@ export function PaymentManagementModal({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent
-        className="w-full sm:max-w-md h-[100vh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden"
+        className="w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden"
         dir={isRTL ? 'rtl' : 'ltr'}
       >
         {/* Sticky Header */}
@@ -530,6 +573,8 @@ export function PaymentManagementModal({
                       total: t('crm.payment.total') || 'Total',
                       collected: t('crm.payment.collected') || 'Collected',
                       outstanding: t('crm.payment.outstanding') || 'Outstanding',
+                      // Only rendered when a period has actually been called off.
+                      cancelled: t('payments.plan.status.cancelled') || 'Stopped',
                     }}
                   />
 
@@ -538,7 +583,36 @@ export function PaymentManagementModal({
                   <div className="overflow-hidden rounded-xl border border-[var(--v2-border)]">
                     {stages.map((stage, index) => {
                       const settled = stage.status === 'paid';
+                      /*
+                       * Stopped, and therefore neither owed nor collected.
+                       * The chain below asked only whether a period was settled
+                       * and whether it had an invoice, so a cancelled one read
+                       * as "not billed yet" — an instruction to wait for money
+                       * that will never be asked for.
+                       */
+                      const stopped = stage.status === 'cancelled';
                       const isTarget = outstandingStage?.id === stage.id;
+
+                      /*
+                       * "Due now" has to mean now.
+                       *
+                       * The badge marked whichever period was next, so an
+                       * instalment due on the 7th was labelled "due now" on the
+                       * 30th — beside a line correctly saying it had not been
+                       * billed yet. The two read as a contradiction, and the
+                       * owner is the one who has to resolve it.
+                       *
+                       * A DATED period is due when its date arrives. Anything
+                       * else — a milestone waiting on the owner, a period
+                       * already invoiced — is genuinely the one in hand.
+                       * Compared as calendar days: `due_date` is a DATE, and
+                       * `en-CA` renders both sides as sortable `YYYY-MM-DD`.
+                       */
+                      const notYetDue =
+                        stage.trigger === 'date' &&
+                        !stage.invoiceId &&
+                        Boolean(stage.dueDate) &&
+                        String(stage.dueDate).slice(0, 10) > new Date().toLocaleDateString('en-CA');
 
                       return (
                         <div
@@ -552,9 +626,14 @@ export function PaymentManagementModal({
                               <span className="truncate text-sm font-medium text-[var(--v2-text-primary)]">
                                 {stage.label || `${t('crm.payment.installment') || 'Payment'} ${index + 1}`}
                               </span>
-                              {isTarget && (
+                              {isTarget && !notYetDue && (
                                 <span className="flex-shrink-0 rounded-full bg-[#8B5CF6] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                                   {t('crm.payment.due_now') || 'Due now'}
+                                </span>
+                              )}
+                              {isTarget && notYetDue && (
+                                <span className="flex-shrink-0 rounded-full border border-[var(--v2-border)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--v2-text-muted)]">
+                                  {t('crm.payment.scheduled') || 'Scheduled'}
                                 </span>
                               )}
                             </div>
@@ -568,7 +647,9 @@ export function PaymentManagementModal({
                               status was being shown.
                             */}
                             <div className="mt-0.5 text-xs text-[var(--v2-text-muted)]">
-                              {settled
+                              {stopped
+                                ? t('payments.plan.status.cancelled')
+                                : settled
                                 ? stage.paidAt
                                   ? `${t('crm.payment.status_paid')} · ${stageDate(stage.paidAt)}`
                                   : t('crm.payment.status_paid')
@@ -578,17 +659,32 @@ export function PaymentManagementModal({
                                     : t('crm.payment.status_invoiced')
                                   : t('crm.payment.status_not_billed')}
                               {/*
-                                Say where the answer is.
+                                Say where the answer is — and only when there is
+                                something for the owner to DO.
+                                ─────────────────────────────────────────────────
                                 "Not billed" is accurate and was a dead end: this
-                                modal has no way to raise it, and the note at the
-                                top of this file already says the next step there
+                                modal has no way to raise it, and the next step
                                 is to raise it rather than record money against
                                 it. It never said WHERE. The control lives on the
                                 booking's journey, in the drawer behind this.
+
+                                But that instruction belongs to a MANUAL stage
+                                only. An instalment period is `trigger: 'date'`
+                                and bills ITSELF when its date arrives — nothing
+                                is waiting on the owner. Telling them to "mark
+                                the phase done to bill it" asked for an action
+                                that does not exist on this kind of period, and
+                                implied the money was stuck when it was merely
+                                scheduled.
                               */}
-                              {!stage.invoiceId && (
+                              {!stopped && !stage.invoiceId && stage.trigger !== 'date' && (
                                 <span className="mt-0.5 block text-[11px] text-[var(--v2-text-muted)]">
                                   {t('crm.payment.bill_it_hint')}
+                                </span>
+                              )}
+                              {!stopped && !stage.invoiceId && stage.trigger === 'date' && stage.dueDate && (
+                                <span className="mt-0.5 block text-[11px] text-[var(--v2-text-muted)]">
+                                  {t('crm.payment.bills_automatically')} {stageDate(stage.dueDate)}
                                 </span>
                               )}
                             </div>
@@ -596,12 +692,18 @@ export function PaymentManagementModal({
 
                           <div className="flex flex-shrink-0 items-center gap-2">
                             <span className={`text-sm font-semibold tabular-nums ${
-                              settled ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-primary)]'
+                              settled || stopped
+                                ? 'text-[var(--v2-text-muted)] line-through'
+                                : 'text-[var(--v2-text-primary)]'
                             }`}>
                               {formatCurrency(stage.amount, payment.currency)}
                             </span>
                             {settled ? (
                               <CheckCircle2 className="h-4 w-4 text-green-500" />
+                            ) : stopped ? (
+                              // A clock says "waiting". Nothing is waiting on a
+                              // period that was called off.
+                              <XCircle className="h-4 w-4 text-amber-700" />
                             ) : (
                               <Clock className="h-4 w-4 text-amber-500" />
                             )}
@@ -917,6 +1019,28 @@ export function PaymentManagementModal({
         {/* Sticky Footer - only for details view */}
         {view === 'details' && (
           <div className="flex-shrink-0 flex justify-end gap-3 p-6 border-t border-[var(--v2-border)] bg-[var(--v2-bg)] [dir=rtl]:flex-row-reverse">
+            {/*
+              STOPPING THE PLAN, WHERE THE PLAN IS.
+              ─────────────────────────────────────────────────────────────────
+              This existed only on the Money screen, against a
+              `payment_plan_subscriptions` row — so a plan billed by invoice
+              could not be stopped from anywhere, and the owner was looking for
+              it here, beside the schedule it would stop.
+
+              Shown only while something is still owed: a plan collected in full
+              has nothing left to call off, and offering the button there reads
+              as an undo.
+            */}
+            {isPlan && outstandingStage && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setStopPlanOpen(true)}
+                className="px-6 border-amber-500/40 text-amber-600 hover:bg-amber-500/10"
+              >
+                {t('payments.plan.stop') || 'Stop plan'}
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -928,6 +1052,32 @@ export function PaymentManagementModal({
           </div>
         )}
       </DialogContent>
+
+      {/*
+        Stopping by BOOKING, not by subscription id.
+        ───────────────────────────────────────────────────────────────────────
+        The same modal the Money screen uses — same reasons, same confirmation
+        — pointed at the booking route, which covers a plan of any shape. Its
+        refund half hides itself there: returning collected money is the refund
+        view behind this, against the ledger.
+      */}
+      {booking?.booking?.id && (
+        <CancelPlanModal
+          isOpen={stopPlanOpen}
+          onClose={() => setStopPlanOpen(false)}
+          planId=""
+          bookingId={booking.booking.id}
+          periodsRemaining={stages.filter(st => st.status !== 'paid' && st.status !== 'cancelled').length}
+          collectedAmount={0}
+          currency={paymentData?.currency ?? 'USD'}
+          onSuccess={() => {
+            setStopPlanOpen(false);
+            onPaymentUpdated();
+            onClose();
+          }}
+          onError={message => setError(message)}
+        />
+      )}
     </Dialog>
   );
 }

@@ -31,6 +31,7 @@
  */
 
 import { resolveEmailBranding } from '@/lib/email/branding';
+import { platformOrigin } from '@/lib/utils/origins';
 import { generateConsentConfirmationEmail } from '@/lib/email/templates/consent-confirmation';
 import { sendEmail } from '@/lib/notifications/emailTransport';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
@@ -95,7 +96,7 @@ export async function beginDoubleOptIn(params: BeginDoubleOptInParams): Promise<
       l: statement.locale,
     });
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+    const appUrl = platformOrigin();
     const confirmUrl = `${appUrl}/consent/confirm/${token}`;
 
     const branding = await resolveEmailBranding(params.userId, locale, profile);

@@ -16,6 +16,11 @@ import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMActivity } from '@/lib/repositories/CRMActivityRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 import type { Country } from 'react-phone-number-input';
+import {
+  applyCountryToPhone,
+  phoneFieldCountry,
+  phoneFieldValue,
+} from '@/components/crm/phoneField';
 
 interface CRMContactModalProps {
   contact?: CRMContact;
@@ -53,7 +58,18 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
   const [activities, setActivities] = useState<CRMActivity[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingActivities, setLoadingActivities] = useState(false);
-  const [phoneCountry, setPhoneCountry] = useState<Country>('US');
+  /*
+   * Seeded from the number itself, not hardcoded to US.
+   *
+   * `useState('US')` meant a business outside the US opened every contact on
+   * the wrong country, and the calling code it then applied belonged to
+   * somewhere else. A number that already carries a `+` knows where it is from;
+   * only a genuinely empty field falls back, and there the owner picks before
+   * typing.
+   */
+  const [phoneCountry, setPhoneCountry] = useState<Country>(() =>
+    phoneFieldCountry(formData.phone)
+  );
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [duplicateContact, setDuplicateContact] = useState<{ id: string; first_name?: string; last_name?: string; email: string } | null>(null);
@@ -253,7 +269,7 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="w-full sm:max-w-3xl h-[100vh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden">
+      <DialogContent className="w-full sm:max-w-3xl h-[100dvh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden">
         {/* Sticky Header */}
         <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 bg-[var(--v2-bg)]">
           <DialogHeader className="rtl:text-right">
@@ -364,14 +380,26 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
               <div className="flex gap-2" dir="ltr">
                 <SearchableCountrySelect
                   value={phoneCountry}
-                  onChange={setPhoneCountry}
+                  /*
+                    Choosing a country is a statement about the NUMBER, so it
+                    rewrites the number. Wired to `setPhoneCountry` alone, picking
+                    "United States" moved a dropdown and left `2013643030` national
+                    — and the value that reached the database, `+2013643030`, reads
+                    as Egypt.
+                  */
+                  onChange={(country) => {
+                    setPhoneCountry(country);
+                    setFormData(prev => ({
+                      ...prev,
+                      phone: applyCountryToPhone(prev.phone, country) ?? prev.phone,
+                    }));
+                  }}
                   labels={en}
                 />
                 <PhoneInput
-                  international
                   countryCallingCodeEditable={false}
                   country={phoneCountry}
-                  value={formData.phone}
+                  value={phoneFieldValue(formData.phone, phoneCountry)}
                   onChange={(value) => setFormData(prev => ({ ...prev, phone: value || '' }))}
                   className="phone-input-crm flex-1"
                 />

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { getStripeService } from '@/lib/stripe/StripeService';
@@ -43,7 +44,10 @@ export async function POST(request: NextRequest) {
 
     // 3. Generate onboarding link for completing setup
     // Express accounts require the user to complete onboarding via Stripe's hosted flow
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // `platformOrigin()`: this is a URL Stripe sends the OWNER back to, so a
+    // loopback address is a dead end on any deployed build. The resolver
+    // refuses one on Vercel; a laptop still gets localhost.
+    const appUrl = platformOrigin();
     const returnUrl = `${appUrl}/business-os/settings?tab=payments&stripe=connected`;
     const refreshUrl = `${appUrl}/business-os/settings?tab=payments&stripe=refresh`;
 

@@ -68,6 +68,7 @@ function friendRow(): BusinessOsInviteRedemptionView {
     email: 'friend@example.com',
     invite_type: INVITE_ISSUANCE_POLICY.account.inviteType,
     issuer_kind: 'account',
+    issuer_admin_id: null,
     issuer_account_id: CHAMPION,
     grant_kind: 'tier',
     grant_id: INVITE_ISSUANCE_POLICY.account.grantId,

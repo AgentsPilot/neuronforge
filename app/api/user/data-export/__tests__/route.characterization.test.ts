@@ -16,6 +16,12 @@
  *   repositories add their own error log on a failed read (C-2).
  * - The clock is frozen, so the cut-off dates, `export_date`, the duration and
  *   the file name are deterministic.
+ *
+ * Deliberately re-pinned by DATA_EXPORT_FOLLOWUPS_WORKPLAN.md (SA C-2): the
+ * eight selects (FU-P1), the audit `created_at` filter and order (FU-1), the
+ * plugin connection seed and mapping (NF-1, SA C-1) and the 500 body (FU-P2).
+ * Each changed expectation carries a comment naming that workplan; everything
+ * else is unchanged.
  */
 
 import { NextRequest } from 'next/server';
@@ -118,34 +124,84 @@ const TABLES = [
 ] as const;
 type Table = (typeof TABLES)[number];
 
+// DATA_EXPORT_FOLLOWUPS_WORKPLAN.md FU-P1 (intended change): every read names
+// its columns instead of `*`. Written out literally so a list change is a
+// visible diff here.
+const SELECTS: Record<Table, string> = {
+  profiles:
+    'id, full_name, avatar_url, plan, company, job_title, timezone, language, created_at, updated_at, ' +
+    'role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data, hourly_rate_usd, org_id',
+  agents:
+    'id, agent_name, user_prompt, user_id, created_at, system_prompt, description, is_archived, ' +
+    'input_schema, output_schema, connected_plugins, status, mode, schedule_cron, trigger_conditions, ' +
+    'plugins_required, deactivation_reason, workflow_steps, generated_plan, ai_reasoning, ai_confidence, ' +
+    'detected_categories, created_from_prompt, ai_generated_at, agent_config, last_run, next_run, timezone, ' +
+    'updated_at, schedule_enabled, intensity_score, last_intensity_update, pilot_steps, deleted_at, ' +
+    'production_ready, production_ready_at, calibration_run_count, insights_enabled, workflow_purpose, ' +
+    'is_calibrated, pilot_steps_original, business_entity_type, entity_detection_confidence, ' +
+    'entity_desirability, manual_time_per_item_seconds, items_per_week_baseline, org_id, tags, ' +
+    'calibration_prompt_decision, calibration_prompt_decided_at, hourly_rate_usd, calibration_status',
+  agent_executions:
+    'id, agent_id, execution_type, scheduled_at, started_at, completed_at, status, result, error_message, ' +
+    'execution_duration_ms, retry_count, next_retry_at, created_at, updated_at, progress, user_id, ' +
+    'cron_expression, next_scheduled_run, logs, run_mode, primary_model, primary_provider, routing_tier, ' +
+    'complexity_score',
+  agent_configurations:
+    'id, agent_id, user_id, status, input_values, input_schema, total_logs, confidence, quality_score, ' +
+    'duration_ms, plugins_used, business_context, data_processed, completed_at, created_at, updated_at',
+  plugin_connections:
+    'user_id, plugin_key, plugin_name, username, email, scope, status, connected_at, ' +
+    'created_at, updated_at, last_used, disconnected_at, profile_data',
+  user_subscriptions:
+    'id, user_id, balance, total_earned, total_spent, created_at, updated_at, status, ' +
+    'current_period_start, current_period_end, next_billing_date, credits_used_this_cycle, ' +
+    'credits_carried_over, payment_method_last4, payment_method_brand, billing_cycle, ' +
+    'pilot_credits_allocated_this_cycle, pilot_credits_used_this_cycle, pilot_credits_carried_over, ' +
+    'total_lifetime_credits, cancel_at_period_end, canceled_at, trial_ends_at, monthly_amount_usd, ' +
+    'monthly_credits, subscription_type, free_trial_used, trial_credits_granted, last_calculator_inputs, ' +
+    'agents_paused, payment_retry_count, last_payment_attempt, storage_quota_mb, storage_used_mb, ' +
+    'storage_alert_threshold, executions_quota, executions_used, executions_alert_threshold, ' +
+    'free_tier_granted_at, free_tier_expires_at, free_tier_initial_amount, account_frozen, ' +
+    'stripe_customer_id, stripe_subscription_id, stripe_price_id',
+  credit_transactions:
+    'id, user_id, credits_delta, transaction_type, description, related_agent_id, created_at, ' +
+    'token_usage_id, activity_type, balance_before, balance_after, boost_pack_id, reward_config_id, ' +
+    'stripe_payment_intent_id, metadata, activity_name, agent_id, session_id',
+  audit_trail:
+    'id, user_id, actor_id, action, entity_type, entity_id, resource_name, changes, details, ' +
+    'ip_address, user_agent, session_id, severity, compliance_flags, created_at',
+};
+
 const EXPECTED_CHAINS: Record<Table, Call[]> = {
-  profiles: [['select', '*'], ['eq', 'id', OWNER.id], ['single']],
-  agents: [['select', '*'], ['eq', 'user_id', OWNER.id], ['order', 'created_at', { ascending: false }]],
+  // DATA_EXPORT_FOLLOWUPS_WORKPLAN.md FU-P1: every ['select', SELECTS.x] below was ['select', '*'].
+  profiles: [['select', SELECTS.profiles], ['eq', 'id', OWNER.id], ['single']],
+  agents: [['select', SELECTS.agents], ['eq', 'user_id', OWNER.id], ['order', 'created_at', { ascending: false }]],
   agent_executions: [
-    ['select', '*'],
+    ['select', SELECTS.agent_executions],
     ['eq', 'user_id', OWNER.id],
     ['gte', 'created_at', NINETY_DAYS_AGO],
     ['order', 'created_at', { ascending: false }],
     ['limit', 1000],
   ],
-  agent_configurations: [['select', '*'], ['eq', 'user_id', OWNER.id], ['order', 'created_at', { ascending: false }]],
-  plugin_connections: [['select', 'user_id, plugin_key, created_at, updated_at, metadata'], ['eq', 'user_id', OWNER.id]],
-  user_subscriptions: [['select', '*'], ['eq', 'user_id', OWNER.id], ['single']],
+  agent_configurations: [['select', SELECTS.agent_configurations], ['eq', 'user_id', OWNER.id], ['order', 'created_at', { ascending: false }]],
+  // DATA_EXPORT_FOLLOWUPS_WORKPLAN.md NF-1 / SA C-1: was 'user_id, plugin_key, created_at, updated_at, metadata' (`metadata` does not exist).
+  plugin_connections: [['select', SELECTS.plugin_connections], ['eq', 'user_id', OWNER.id]],
+  user_subscriptions: [['select', SELECTS.user_subscriptions], ['eq', 'user_id', OWNER.id], ['single']],
   credit_transactions: [
-    ['select', '*'],
+    ['select', SELECTS.credit_transactions],
     ['eq', 'user_id', OWNER.id],
     ['gte', 'created_at', ONE_YEAR_AGO],
     ['order', 'created_at', { ascending: false }],
     ['limit', 5000],
   ],
   audit_trail: [
-    ['select', '*'],
+    ['select', SELECTS.audit_trail],
     ['eq', 'user_id', OWNER.id],
     ['not', 'entity_type', 'in', HIDDEN_TYPES],
     ['not', 'action', 'like', 'BUSINESS_AI_ACTION_%'],
-    // FU-1, unchanged on purpose: `timestamp` does not exist.
-    ['gte', 'timestamp', NINETY_DAYS_AGO],
-    ['order', 'timestamp', { ascending: false }],
+    // DATA_EXPORT_FOLLOWUPS_WORKPLAN.md FU-1 (intended change): was `timestamp`, which does not exist.
+    ['gte', 'created_at', NINETY_DAYS_AGO],
+    ['order', 'created_at', { ascending: false }],
     ['limit', 10000],
   ],
 };
@@ -157,16 +213,41 @@ const AGENTS = [
 ];
 const EXECUTIONS = [{ id: 'exec-1', agent_id: 'agent-1' }];
 const CONFIGURATIONS = [{ id: 'cfg-1', agent_id: 'agent-1' }];
+// DATA_EXPORT_FOLLOWUPS_WORKPLAN.md NF-1 / SA C-1 (intended change): the seed
+// carries the newly read columns instead of the non-existent `metadata`, and a
+// `profile_data` holding a token, a provider id and a nested object.
 const CONNECTIONS = [
   {
     user_id: OWNER.id,
     plugin_key: 'google-mail',
+    plugin_name: 'Gmail',
+    username: 'Ada Owner',
+    email: 'a@example.com',
+    scope: 'gmail.readonly',
+    status: 'active',
+    connected_at: '2026-01-31T00:00:00Z',
     created_at: '2026-02-01T00:00:00Z',
     updated_at: '2026-03-01T00:00:00Z',
-    metadata: { email: 'a@example.com' },
+    last_used: '2026-03-05T00:00:00Z',
+    disconnected_at: null,
+    profile_data: { name: 'Ada Owner', sub: 'provider-id-1', token: 'never-exported-profile-token', address: { city: 'X' } },
     access_token: 'never-exported',
   },
-  { user_id: OWNER.id, plugin_key: 'slack', created_at: '2026-02-02T00:00:00Z', updated_at: '2026-03-02T00:00:00Z', metadata: null },
+  {
+    user_id: OWNER.id,
+    plugin_key: 'slack',
+    plugin_name: null,
+    username: null,
+    email: null,
+    scope: null,
+    status: 'disconnected',
+    connected_at: null,
+    created_at: '2026-02-02T00:00:00Z',
+    updated_at: '2026-03-02T00:00:00Z',
+    last_used: null,
+    disconnected_at: '2026-03-02T00:00:00Z',
+    profile_data: null,
+  },
 ];
 const SUBSCRIPTION = { user_id: OWNER.id, status: 'active', balance: 100 };
 const TRANSACTIONS = [{ id: 'tx-1', amount: 5 }];
@@ -226,9 +307,36 @@ function expectedBody(sections: {
   return body;
 }
 
+// DATA_EXPORT_FOLLOWUPS_WORKPLAN.md NF-1 / OP-2 / SA C-1 (intended change): the
+// new per-connection keys; `metadata` dropped; `connected_at` falls back to
+// `created_at`; only allow-listed profile strings.
 const MAPPED_CONNECTIONS = [
-  { plugin_key: 'google-mail', connected_at: '2026-02-01T00:00:00Z', last_updated: '2026-03-01T00:00:00Z', metadata: { email: 'a@example.com' } },
-  { plugin_key: 'slack', connected_at: '2026-02-02T00:00:00Z', last_updated: '2026-03-02T00:00:00Z', metadata: null },
+  {
+    plugin_key: 'google-mail',
+    plugin_name: 'Gmail',
+    account_username: 'Ada Owner',
+    account_email: 'a@example.com',
+    account_profile: { name: 'Ada Owner' },
+    scope: 'gmail.readonly',
+    status: 'active',
+    connected_at: '2026-01-31T00:00:00Z',
+    last_updated: '2026-03-01T00:00:00Z',
+    last_used: '2026-03-05T00:00:00Z',
+    disconnected_at: null,
+  },
+  {
+    plugin_key: 'slack',
+    plugin_name: null,
+    account_username: null,
+    account_email: null,
+    account_profile: {},
+    scope: null,
+    status: 'disconnected',
+    connected_at: '2026-02-02T00:00:00Z',
+    last_updated: '2026-03-02T00:00:00Z',
+    last_used: null,
+    disconnected_at: '2026-03-02T00:00:00Z',
+  },
 ];
 
 const FULL_SECTIONS = {
@@ -450,11 +558,13 @@ describe('GET /api/user/data-export: characterization pin', () => {
     expect(routeLine('Data export audit logged')).toBeUndefined();
   });
 
-  it('an unexpected throw gives 500 with the pinned body (FU-P2: message is exposed as is)', async () => {
+  // DATA_EXPORT_FOLLOWUPS_WORKPLAN.md FU-P2 (intended change): the body no longer carries the error message outside development.
+  it('an unexpected throw gives 500 with the pinned body (FU-P2: no message, no details outside development)', async () => {
     mockGetUser.mockRejectedValue(new Error('auth service down'));
     const res = await GET(request());
     expect(res.status).toBe(500);
-    expect(JSON.parse(await res.text())).toEqual({ error: 'Data export failed', message: 'auth service down' });
+    // DATA_EXPORT_FOLLOWUPS_WORKPLAN.md FU-P2: was { error: 'Data export failed', message: 'auth service down' }.
+    expect(JSON.parse(await res.text())).toEqual({ success: false, error: 'Data export failed' });
     expect(routeLine('Data export failed')).toEqual({
       level: 'error',
       msg: 'Data export failed',

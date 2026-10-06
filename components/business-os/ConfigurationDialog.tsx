@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { configTabsForShape, shapeFromServices } from '@/lib/business-os/businessShape';
@@ -8,6 +8,7 @@ import { X, Settings, Clock, CreditCard, Loader2, Check, AlertTriangle, Clipboar
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
 import { AvailabilityEditor, DEFAULT_AVAILABILITY, parseAvailability, type WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
+import { TimeOffEditor } from '@/components/scheduling/TimeOffEditor';
 import { IntakeSettingsPanel } from '@/components/scheduling/IntakeSettingsPanel';
 import { CalendarSyncSettings } from '@/components/scheduling/CalendarSyncSettings';
 import { BusinessProfileSection } from '@/components/business-os/settings/BusinessProfileSection';
@@ -144,6 +145,15 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   const [availabilitySaved, setAvailabilitySaved] = useState(false);
   /** Why the last availability save did not take. See `saveAvailability`. */
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  /**
+   * The time-off section, so the working-days row can point at it.
+   *
+   * Time off saves its own rows and therefore sits as a separate component below
+   * the weekly hours — correct, but below the fold, where owners never found it.
+   * The link is rendered by `AvailabilityEditor` and the scrolling happens here,
+   * because this is the component that decided the two sit one above the other.
+   */
+  const timeOffRef = useRef<HTMLDivElement>(null);
 
   // Stripe state
   const [stripeConnected, setStripeConnected] = useState(false);
@@ -690,8 +700,48 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
       />
 
       {/* Dialog */}
+      {/*
+        ─────────────────────────────────────────────────────────────────────────
+        THE BOX THE PANEL IS MEASURED AND CENTRED AGAINST.
+
+        This was `fixed inset-0 … flex items-center justify-center`, and on a
+        phone an owner could not reach the fields of any tab — Services is where
+        it was reported, because that is the tab you have to type in.
+
+        Every piece was individually right, which is why it took finding. A
+        `position: fixed` box with `inset-0` is sized to the LARGE viewport: the
+        height the page would have with the address bar collapsed. The panel
+        below is correctly capped at `max-h-[100dvh]` — the DYNAMIC viewport,
+        what is actually visible. So a correctly-sized panel was being CENTRED
+        inside a box taller than the screen, and ended up offset by
+        `(100vh - 100dvh) / 2`: the header and the first fields above the top
+        edge, the footer below the bottom one.
+
+        Nothing could bring either back. The panel is `overflow-hidden`, this
+        container does not scroll, and the only scroll on the services tab
+        belongs to the list — which sits inside the region already clipped away.
+
+        Two changes, both mobile-only:
+
+        `inset-x-0 top-0 h-[100dvh]` rather than `inset-0` plus a height. A
+        fixed box given `top`, `bottom` AND a height is over-constrained and the
+        browser drops one of the three; naming the edges explicitly leaves no
+        question about which box the panel resolves against.
+
+        `items-stretch` so the panel fills that box rather than being centred in
+        it. The panel already asks for `h-full`, and this dialog is already
+        dressed as an edge-to-edge sheet on a phone — `border-0 sm:border`,
+        `sm:rounded-…`. Centring something that fills its container achieves
+        nothing except leaving room for the offset above.
+
+        From `sm:` up everything is as it was: inset, centred, capped at 95dvh.
+        The public booking dialog solved its own version of this; see the note in
+        components/website/blocks/BookingModal.tsx about `inset-0` with padding
+        keeping a promise that `inset-4` cannot.
+        ─────────────────────────────────────────────────────────────────────────
+      */}
       <div
-        className="fixed inset-0 sm:inset-4 md:inset-6 lg:inset-8 z-[70] flex items-center justify-center p-2 sm:p-0"
+        className="fixed inset-x-0 top-0 h-[100dvh] sm:inset-4 sm:top-auto sm:h-auto md:inset-6 lg:inset-8 z-[70] flex items-stretch sm:items-center justify-center p-2 sm:p-0"
         style={{ pointerEvents: 'auto' }}
         onPointerDown={(e) => e.stopPropagation()}
         onWheel={(e) => e.stopPropagation()}
@@ -764,7 +814,9 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
           <TabFooterSlotProvider value={footerSlot}>
           <div
             className={`flex-1 p-3 sm:p-4 md:p-6 ${
-              activeTab === 'services' ? 'overflow-hidden flex flex-col min-h-0' : 'overflow-y-auto'
+              activeTab === 'services'
+                ? 'overflow-hidden flex flex-col min-h-0'
+                : 'overflow-y-auto scrollbar-thin'
             }`}
           >
             {/* Services Tab */}
@@ -851,7 +903,42 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                   availability={availability}
                   onChange={setAvailability}
                   daysToAdd={availabilityDaysToAdd}
+                  /*
+                   * The scroll lives here because the layout does.
+                   *
+                   * `AvailabilityEditor` renders the link only when given this,
+                   * so it never points at a section that is not on screen — it
+                   * is used in one place today, and a hardcoded element lookup
+                   * inside it would become a link to nothing the moment it is
+                   * used in another.
+                   *
+                   * `block: 'nearest'` rather than `'start'`: the tab body is
+                   * the scrolling element, and `'start'` drags the section to
+                   * the very top, pushing the working hours the owner was just
+                   * editing out of view entirely. `'nearest'` brings it just
+                   * into frame, so both halves stay visible and the relationship
+                   * between them is still legible.
+                   */
+                  onJumpToTimeOff={() =>
+                    timeOffRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                  }
                 />
+
+                {/* Divider */}
+                <div className="border-t border-[var(--v2-border)]" />
+
+                {/*
+                  Time off: the exceptions to the week above.
+                  Its own component because it saves its own rows — the weekly
+                  hours are one JSON column with one Save button below, and the
+                  closed days are rows in their own table with their own create
+                  and delete. Sharing a save button would mean one of them saving
+                  when the owner pressed the other.
+                */}
+                {/* Wrapped only to give the link above somewhere to scroll to. */}
+                <div ref={timeOffRef} className="scroll-mt-4">
+                  <TimeOffEditor />
+                </div>
                 <TabFooter
                   message={availabilityError ? (
                     <span className="text-sm font-medium text-red-600 dark:text-red-400">
@@ -1152,8 +1239,6 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
             onPointerDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
             onTouchMove={(e) => e.stopPropagation()}
-        onWheel={(e) => e.stopPropagation()}
-        onTouchMove={(e) => e.stopPropagation()}
           >
             <div
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"
@@ -1212,8 +1297,6 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
             onPointerDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
             onTouchMove={(e) => e.stopPropagation()}
-        onWheel={(e) => e.stopPropagation()}
-        onTouchMove={(e) => e.stopPropagation()}
           >
             <div
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"
@@ -1272,8 +1355,6 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
             onPointerDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
             onTouchMove={(e) => e.stopPropagation()}
-        onWheel={(e) => e.stopPropagation()}
-        onTouchMove={(e) => e.stopPropagation()}
           >
             <div
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"

@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { resolveBlockLayout } from '@/lib/website-builder/pageTheme';
 import { ArrowRight, Calendar } from 'lucide-react';
 import { resolveBookingAction } from './bookingAction';
@@ -31,6 +32,16 @@ interface CTAContent {
   is_scheduled?: boolean | null;
   collection?: 'online' | 'invoice' | null;
   durationMinutes?: number;
+  /**
+   * How this service may be paid over time, and whether it is quoted first.
+   *
+   * Both are injected by the routes that build this block's content, and neither
+   * was declared here — so the TYPE was the point they were lost at. The fourth
+   * place that same fault has appeared: a service arrives complete and the block
+   * hands the dialog a narrower copy of it.
+   */
+  paymentPlan?: ServicePaymentPlan;
+  sale_mode?: 'direct' | 'proposal' | null;
 }
 
 export function CTABlock({ content, styles, theme, isRTL, className, locale = 'en', bookingUrl, isPreview, onOpenBooking }: BlockRendererProps) {
@@ -182,7 +193,17 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
       currency: rawContent.currency || 'USD',
       // Same as pricing: the journey is the service's, injected live.
       is_scheduled: rawContent.is_scheduled,
-      collection: rawContent.collection
+      collection: rawContent.collection,
+      /*
+       * The two the route supplies and this block dropped.
+       *
+       * A CTA that names a service is a way into the booking dialog like any
+       * other, so it has to describe that service the same way. Without the plan
+       * the client is quoted the whole price for something sold in instalments;
+       * without `sale_mode` a quoted job is asked for a card.
+       */
+      paymentPlan: rawContent.paymentPlan,
+      sale_mode: rawContent.sale_mode ?? undefined
     };
   };
 

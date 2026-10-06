@@ -137,6 +137,25 @@ export interface MoneyBooking {
    * Optional, so a caller that has not been updated still type-checks.
    */
   clientName?: string | null;
+  /**
+   * The package this booking is a session OF, if it is one.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A package or an accepted quote writes ONE booking to head it and one child
+   * booking per session, all pointing back at the head through
+   * `scheduling_bookings.parent_booking_id`. The payment plan then bills a
+   * session at a time, so each instalment names a different child.
+   *
+   * Grouped by booking alone, that renders as one row per session: a six-session
+   * quote worth 450 appeared as six rows of 74.99, each honestly labelled
+   * "payment plan · 1 payment", with the thing the client actually bought
+   * nowhere on the page. The sessions are not six orders; they are one.
+   *
+   * So rows are grouped by the HEAD of the package where there is one. Null for
+   * an ordinary standalone booking, which is its own head.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  parentId?: string | null;
 }
 
 export interface MoneyPeriod {
@@ -524,9 +543,62 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
   const invoices = input.invoices ?? [];
   const transactions = input.transactions ?? [];
   const bookings = input.bookings ?? [];
-  const plans = input.plansByBookingId ?? {};
+  const plansAsGiven = input.plansByBookingId ?? {};
 
   const bookingById = new Map(bookings.map(b => [b.id, b]));
+
+  /**
+   * Which booking heads the order a given booking belongs to.
+   *
+   * A session of a package resolves to the package; everything else is its own
+   * head. The parent has to be a booking we were actually given, or the row
+   * would be titled with nothing — the same rule the entry grouping below
+   * already applies to a booking id with no booking.
+   *
+   * One level only, deliberately: a package's child is never itself a package,
+   * and following the chain would turn a bad row of data into an infinite loop
+   * inside a money report.
+   */
+  const headOf = (bookingId: string): string => {
+    const parentId = bookingById.get(bookingId)?.parentId ?? null;
+    return parentId && bookingById.has(parentId) ? parentId : bookingId;
+  };
+
+  /**
+   * The plans, re-keyed onto the order that owns them.
+   *
+   * Callers key by the booking an instalment names, which for a package is a
+   * different session each time — so one six-instalment plan arrives as six
+   * plans of one period. Folded here rather than at each call site, so the CRM
+   * drawer and the orders page cannot disagree about what a package is.
+   *
+   * Periods are deduplicated by id: the same plan reached through two sessions
+   * must not count a period twice, which on this list would overstate what the
+   * client owes.
+   */
+  const plans: Record<string, MoneyPlan> = {};
+  for (const [bookingId, plan] of Object.entries(plansAsGiven)) {
+    const head = bookingById.has(bookingId) ? headOf(bookingId) : bookingId;
+    const existing = plans[head];
+
+    if (!existing) {
+      plans[head] = { ...plan, periods: [...plan.periods] };
+      continue;
+    }
+
+    const seen = new Set(existing.periods.map(period => period.id));
+    existing.periods.push(...plan.periods.filter(period => !seen.has(period.id)));
+    // A bound subscription anywhere in the package binds the package.
+    existing.subscriptionId = existing.subscriptionId ?? plan.subscriptionId ?? null;
+  }
+
+  for (const plan of Object.values(plans)) {
+    // Recomputed from the merged periods, so "2 of 6" cannot disagree with the
+    // schedule printed under it — the same rule the callers apply per booking.
+    plan.periods.sort((a, b) => a.installmentNumber - b.installmentNumber);
+    plan.installmentCount = plan.periods.length;
+    plan.periodsPaid = plan.periods.filter(period => period.status === 'paid').length;
+  }
 
   // Which booking each entry belongs to — taken from the invoice or from any of
   // its payments, since either may carry it.
@@ -555,8 +627,12 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
 
     // A booking id we were given no booking for cannot head a row — there would
     // be nothing to call it. Better standalone than a row titled with a uuid.
+    //
+    // Through `headOf`, so an invoice raised against one session of a package
+    // lands on the package's row rather than opening a second one beside it.
     if (bookingId && bookingById.has(bookingId)) {
-      grouped.set(bookingId, [...(grouped.get(bookingId) ?? []), entry]);
+      const head = headOf(bookingId);
+      grouped.set(head, [...(grouped.get(head) ?? []), entry]);
     } else {
       standalone.push(entry);
     }
@@ -753,6 +829,28 @@ export interface MoneyCurrencyTotals {
    * ───────────────────────────────────────────────────────────────────────────
    */
   cancelled: number;
+  /**
+   * The part of `outstanding` that is already late.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A SUBSET, NOT A FOURTH BUCKET.
+   *
+   * `overdue` money is also `outstanding` money — it has been asked for and has
+   * not arrived. Adding the two would double-count every late invoice, so the
+   * summary shows "waiting" as `outstanding - overdue` and the four figures
+   * still reconcile against the total.
+   *
+   * Kept separate because they are different problems: outstanding waits,
+   * overdue needs chasing. One figure for both means the owner cannot see which
+   * of the two they have.
+   *
+   * Counts an ENTRY the processor or the overdue sweep marked `overdue`, and a
+   * plan period whose own due date has passed — a period is never given that
+   * status, so without the second half a plan could be months late and report
+   * nothing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  overdue: number;
 }
 
 export interface MoneyTotals extends MoneyCurrencyTotals {
@@ -1002,15 +1100,137 @@ export function cancelledPlanMoneyOf(period: {
   return Math.max(0, Number(period.amount ?? 0));
 }
 
+/**
+ * One row's money, split the way the summary splits every row's.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS SHARED AND NOT DERIVED AT THE ROW.
+ *
+ * The list shows a bar per order and a figure per state above it. If the bar
+ * were computed from `item.amount` and the figures from `totalMoney`, the two
+ * would disagree the moment a rule changed — and the disagreement would be
+ * invisible, because each looks reasonable alone.
+ *
+ * So this is `totalMoney` for a single item, and `totalMoney` is this summed.
+ * The same entry rules, the same unpaid-period rule, the same cancelled-period
+ * rule. A number in the bar can always be found in the figure above it.
+ *
+ * `overdue` is a SUBSET of `outstanding` here too, so a bar drawn from these
+ * must take it off before measuring the waiting segment.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+/** Today as a calendar day, `YYYY-MM-DD`, for comparing against date-only values. */
+export function todayKey(): string {
+  return new Date().toLocaleDateString('en-CA');
+}
+
+/**
+ * This money is late.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NOT JUST `status === 'overdue'`.
+ *
+ * That status is written by a CRON — the overdue sweep — so between an invoice
+ * falling due and the next sweep it is late in fact and `sent` in the column.
+ * A figure that read the status alone would sit at zero all morning and jump
+ * when a job ran, which is a report about the scheduler rather than the money.
+ *
+ * `dateKind === 'due'` means `date` IS the due date, so an unsettled entry past
+ * it is late whatever the status says. Compared as calendar days: a due date
+ * carries no time, and parsing it into an instant reads as yesterday west of
+ * UTC.
+ *
+ * Exported so the summary, the row's bar and the API's filter apply one rule.
+ * When they drifted, clicking a figure showed fewer rows than it promised.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function isLateEntry(
+  entry: Pick<MoneyEntry, 'status' | 'date' | 'dateKind'>,
+  today: string = todayKey()
+): boolean {
+  if (entry.status === 'overdue') return true;
+  if (!OUTSTANDING_STATUSES.includes(entry.status)) return false;
+  return entry.dateKind === 'due' && String(entry.date).slice(0, 10) < today;
+}
+
+/**
+ * A plan period past its own due date. Periods never carry an overdue status.
+ *
+ * Takes only the field it reads, like `isLateEntry` above. Demanding a whole
+ * `MoneyPeriod` made every caller build `paidAt` and `transactionId` that this
+ * never looks at — which is noise at a call site and a lie about what the
+ * function depends on.
+ */
+export function isLatePeriod(
+  period: Pick<MoneyPeriod, 'dueDate'>,
+  today: string = todayKey()
+): boolean {
+  const due = period.dueDate ? String(period.dueDate).slice(0, 10) : null;
+  return due !== null && due < today;
+}
+
+export function itemFlow(item: MoneyItem): MoneyCurrencyTotals {
+  const flow: MoneyCurrencyTotals = {
+    collected: 0,
+    outstanding: 0,
+    refunded: 0,
+    cancelled: 0,
+    overdue: 0,
+  };
+  const today = todayKey();
+
+  for (const entry of item.entries) {
+    flow.refunded += entry.refunded;
+
+    if (COLLECTED_STATUSES.includes(entry.status)) {
+      flow.collected += entry.amount - entry.refunded;
+    } else if (OUTSTANDING_STATUSES.includes(entry.status)) {
+      flow.outstanding += entry.amount;
+      if (isLateEntry(entry, today)) flow.overdue += entry.amount;
+    } else {
+      flow.cancelled += cancelledMoneyOf(entry);
+    }
+  }
+
+  for (const period of unpaidPeriods(item)) {
+    flow.outstanding += period.amount;
+    if (isLatePeriod(period, today)) flow.overdue += period.amount;
+  }
+
+  for (const period of item.plan?.periods ?? []) {
+    flow.cancelled += cancelledPlanMoneyOf(period);
+  }
+
+  return flow;
+}
+
 export function totalMoney(items: MoneyItem[]): MoneyTotals {
   let collected = 0;
   let outstanding = 0;
   let refunded = 0;
   let cancelled = 0;
+  let overdue = 0;
   const byCurrency: Record<string, MoneyCurrencyTotals> = {};
 
   const bucketFor = (currency: string) =>
-    (byCurrency[currency] ??= { collected: 0, outstanding: 0, refunded: 0, cancelled: 0 });
+    (byCurrency[currency] ??= {
+      collected: 0,
+      outstanding: 0,
+      refunded: 0,
+      cancelled: 0,
+      overdue: 0,
+    });
+
+  /*
+   * Today, as a calendar day.
+   *
+   * `due_date` is a SQL DATE with no time and no zone, so it is compared as a
+   * day string rather than parsed into an instant — `new Date('2026-09-30')` is
+   * midnight UTC and reads as yesterday west of it, which would report a plan
+   * period as late on the morning it falls due. `en-CA` renders `YYYY-MM-DD`,
+   * which sorts lexicographically.
+   */
+  const today = todayKey();
 
   for (const entry of items.flatMap(item => item.entries)) {
     const bucket = bucketFor(entry.currency);
@@ -1024,6 +1244,12 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
     } else if (OUTSTANDING_STATUSES.includes(entry.status)) {
       outstanding += entry.amount;
       bucket.outstanding += entry.amount;
+
+      // A subset of what was just added, never a second addition to the total.
+      if (isLateEntry(entry, today)) {
+        overdue += entry.amount;
+        bucket.overdue += entry.amount;
+      }
     } else {
       // The shared rule decides, including whether this is cancelled at all.
       const written = cancelledMoneyOf(entry);
@@ -1051,6 +1277,16 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
       const currency = period.currency || item.currency;
       outstanding += period.amount;
       bucketFor(currency).outstanding += period.amount;
+
+      /*
+       * A period carries no `overdue` status — nothing sets one — so its own
+       * due date is the only thing that can say it is late. Without this a plan
+       * could be months behind and the overdue figure would read zero.
+       */
+      if (isLatePeriod(period, today)) {
+        overdue += period.amount;
+        bucketFor(currency).overdue += period.amount;
+      }
     }
 
     /*
@@ -1069,5 +1305,5 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
     }
   }
 
-  return { collected, outstanding, refunded, cancelled, byCurrency };
+  return { collected, outstanding, refunded, cancelled, overdue, byCurrency };
 }

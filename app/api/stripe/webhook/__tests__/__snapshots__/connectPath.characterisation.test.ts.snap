@@ -242,6 +242,23 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1a. invoic
     {
       "chain": [
         [
+          "select",
+          "user_id, client_email, client_name, invoice_number, currency, booking_id",
+        ],
+        [
+          "eq",
+          "id",
+          "pinv-0001",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
           "update",
           {
             "completed_at": "<NOW>",
@@ -264,7 +281,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1a. invoic
 }
 `;
 
-exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1b. invoice.paid, found through the metadata fallback, booking guessed by amount 1`] = `
+exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1b. invoice.paid with no booking_id is left unlinked — the booking is never guessed 1`] = `
 {
   "body": {
     "received": true,
@@ -499,92 +516,6 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1b. invoic
       "type": "db",
     },
     {
-      "chain": [
-        [
-          "select",
-          "id, service:scheduling_services(price)",
-        ],
-        [
-          "eq",
-          "user_id",
-          "owner-a",
-        ],
-        [
-          "eq",
-          "contact_id",
-          "ct-1",
-        ],
-        [
-          "in",
-          "payment_status",
-          [
-            "pending",
-            null,
-          ],
-        ],
-        [
-          "neq",
-          "status",
-          "cancelled",
-        ],
-        [
-          "order",
-          "created_at",
-          {
-            "ascending": false,
-          },
-        ],
-        [
-          "limit",
-          1,
-        ],
-      ],
-      "operation": "select",
-      "table": "scheduling_bookings",
-      "terminal": "single",
-      "type": "db",
-    },
-    {
-      "chain": [
-        [
-          "update",
-          {
-            "payment_status": "paid",
-            "updated_at": "<NOW>",
-          },
-        ],
-        [
-          "eq",
-          "id",
-          "bk-guess",
-        ],
-      ],
-      "operation": "update",
-      "table": "scheduling_bookings",
-      "terminal": "await",
-      "type": "db",
-    },
-    {
-      "chain": [
-        [
-          "update",
-          {
-            "booking_id": "bk-guess",
-            "updated_at": "<NOW>",
-          },
-        ],
-        [
-          "eq",
-          "id",
-          "pinv-0001",
-        ],
-      ],
-      "operation": "update",
-      "table": "payment_invoices",
-      "terminal": "await",
-      "type": "db",
-    },
-    {
       "args": [
         {
           "action": "INVOICE_PAID",
@@ -602,6 +533,23 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1b. invoic
         },
       ],
       "type": "auditLog",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "user_id, client_email, client_name, invoice_number, currency, booking_id",
+        ],
+        [
+          "eq",
+          "id",
+          "pinv-0001",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "maybeSingle",
+      "type": "db",
     },
     {
       "chain": [
@@ -993,6 +941,31 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
         },
       ],
       "type": "planRepo.recordPeriodPaid",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "payment_status": "paid",
+            "updated_at": "<NOW>",
+          },
+        ],
+        [
+          "eq",
+          "id",
+          "bk-plan-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "update",
+      "table": "scheduling_bookings",
+      "terminal": "await",
+      "type": "db",
     },
     {
       "chain": [
@@ -2321,9 +2294,10 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 8. custome
           "sub_plan_1",
         ],
         [
-          "eq",
+          "not",
           "status",
-          "pending",
+          "in",
+          "(paid,cancelled)",
         ],
       ],
       "operation": "update",

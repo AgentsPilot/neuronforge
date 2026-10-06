@@ -27,7 +27,32 @@ const logger = createLogger({ service: 'PaymentPlanRepository' });
  * (`payment_plans.installment_frequency` is plain TEXT with no constraint).
  */
 export type InstallmentFrequency = 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
-export type InstallmentStatus = 'pending' | 'paid' | 'overdue' | 'cancelled';
+
+/**
+ * The five states a stage or instalment can be in.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `'billed'` IS ONE OF THEM, AND THIS TYPE DENIED IT.
+ *
+ * It means: an invoice has been raised for this stage and is with the client,
+ * who has not paid it yet. It sits between `pending` (no invoice exists) and
+ * `paid`. Two places write it — `ProposalAcceptanceService` on acceptance and
+ * `PaymentStageBillingService.billStage` — and three read it, including the
+ * reminder sender, whose comment records that *not* listing it there "was a
+ * live hole".
+ *
+ * So the data has had five states for some time; only this union and the column
+ * comment in `20260723_enhance_payments.sql:149` still said four. The cost was
+ * not theoretical: writing it raised TS2322 at `ProposalAcceptanceService.ts:223`
+ * on a line that was correct, and any `switch` over this type compiled as
+ * exhaustive while silently having no arm for the state a stage is in for the
+ * whole window between being invoiced and being paid.
+ *
+ * `payment_plan_installments.status` is plain TEXT with no CHECK constraint, so
+ * the database never objected — which is why the drift went unnoticed.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export type InstallmentStatus = 'pending' | 'billed' | 'paid' | 'overdue' | 'cancelled';
 
 export interface PaymentPlan {
   id: string;
@@ -727,7 +752,12 @@ export class PaymentPlanRepository {
         .eq('payment_plan_id', planId)
         .eq('contact_id', contactId)
         .eq('user_id', userId)
-        .eq('status', 'pending')
+        /*
+         * Everything unsettled, not just `pending` — a billed period is still
+         * owed until its invoice is settled or voided, and scoping to `pending`
+         * left it open on a cancelled plan. `paid` is never rewritten.
+         */
+        .not('status', 'in', '(paid,cancelled)')
         .select();
 
       if (error) throw error;

@@ -12,16 +12,17 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
-import {
-  ISSUED_INVOICE_STATUSES,
-  paymentInvoiceRepository,
-  paymentTransactionRepository,
-  stripeConnectRepository,
-  type PaymentInvoice
-} from '@/lib/repositories/PaymentRepository';
-import { getStripeInvoiceService } from '@/lib/stripe/StripeInvoiceService';
-import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
+// The invoice repositories, the Stripe invoice service and `isSettledInvoice`
+// are gone with the delete logic: `deleteBooking` owns all of it now. Only the
+// issued-statuses list is still read here, by the payment update in PUT.
+import { ISSUED_INVOICE_STATUSES } from '@/lib/repositories/PaymentRepository';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
+import {
+  closedDayCheck,
+  deleteBooking,
+  BookingPaidError,
+  BookingHasPlanError,
+} from '@/lib/services/BookingLifecycleService';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
@@ -32,38 +33,16 @@ import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
 const logger = createLogger({ module: 'SchedulingBookingAPI' });
 const auditTrail = AuditTrailService.getInstance();
 
-/**
- * Void an invoice at Stripe so a deleted booking's invoice stops being payable.
+/*
+ * `voidStripeInvoice` lived here and is gone with the delete logic above.
  *
- * Best effort by design: the local row is going away either way, and a Stripe
- * invoice that is already void, paid or never finalized will reject the call.
- * Losing the void is worth a warning, not a failed delete.
+ * Its job — void at the processor before the local row goes, so nobody can open
+ * the hosted page and pay for a session that no longer exists — is done by
+ * `voidAtProcessor` inside `invoiceLifecycle.deleteInvoice`, which is what
+ * `BookingLifecycleService.deleteBooking` calls. Keeping this copy would have
+ * left a second answer to "how is an invoice retired" in a file that no longer
+ * retires any.
  */
-async function voidStripeInvoice(
-  invoice: PaymentInvoice,
-  userId: string,
-  // Structural, so any child logger shape fits without a cast.
-  requestLogger: { warn: (context: Record<string, unknown>, message: string) => void }
-): Promise<void> {
-  if (!invoice.stripe_invoice_id) return;
-
-  try {
-    const stripeAccount = await stripeConnectRepository.findByUserId(userId);
-    const connectAccountId = stripeAccount.data?.stripe_account_id;
-    if (!connectAccountId) {
-      requestLogger.warn({
-        invoiceId: invoice.id, stripeInvoiceId: invoice.stripe_invoice_id
-      }, 'No Stripe account to void the invoice through');
-      return;
-    }
-
-    await getStripeInvoiceService().voidInvoice(invoice.stripe_invoice_id, connectAccountId);
-  } catch (err) {
-    requestLogger.warn({
-      err, invoiceId: invoice.id, stripeInvoiceId: invoice.stripe_invoice_id
-    }, 'Failed to void Stripe invoice; deleting the local record anyway');
-  }
-}
 
 // Validation schema for updates
 // Note: client_* fields removed - client data is now only in crm_contacts (via contact_id)
@@ -87,7 +66,14 @@ const updateBookingSchema = z.object({
   reminder_24hr_sent: z.boolean().optional(),
   reminder_2hr_sent: z.boolean().optional(),
   // Intake form - allow sending intake form after initial booking
-  send_intake_form: z.boolean().optional()
+  send_intake_form: z.boolean().optional(),
+  /*
+   * The owner was shown "you are closed that day" and said move it anyway.
+   *
+   * Not a column: destructured out below with `send_intake_form`, for the same
+   * reason — it is an answer to a question, not a fact about the booking.
+   */
+  allow_closed_day: z.boolean().optional()
 });
 
 export async function GET(
@@ -168,8 +154,9 @@ export async function PUT(
     const body = await request.json();
     const validated = updateBookingSchema.parse(body);
 
-    // Extract send_intake_form flag (not a DB column, just a trigger to send email)
-    const { send_intake_form, ...bookingUpdateData } = validated;
+    // Extract the two flags that are not DB columns: one triggers an email, the
+    // other answers the closed-day question below.
+    const { send_intake_form, allow_closed_day, ...bookingUpdateData } = validated;
 
     const bookingId = params.id;
     requestLogger.info({ userId: user.id, bookingId, updates: Object.keys(bookingUpdateData), sendIntakeForm: send_intake_form }, 'Updating booking');
@@ -229,6 +216,51 @@ export async function PUT(
             error: `This booking is ${oldBooking.status} and cannot be changed.`,
             reason: 'booking_settled',
             fields: attempted,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * MOVING IT ONTO A DAY THE BUSINESS IS CLOSED.
+     *
+     * This route writes `start_time` itself instead of calling
+     * `rescheduleBooking`, so the gate that function now carries does not
+     * apply here — and the owner's dialog saves an edited time through this
+     * path. Without this, a booking could not be CREATED on a closed day and
+     * could be MOVED onto one, which is the same mistake by a different button.
+     *
+     * Only when the time is actually changing: a note written up after the
+     * session, or a status corrected, must not be refused because the day it
+     * happened on was a holiday.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const movingTo = bookingUpdateData.start_time;
+    const timeIsChanging = Boolean(movingTo && movingTo !== oldBooking.start_time);
+
+    if (timeIsChanging && !allow_closed_day) {
+      const closed = await closedDayCheck(
+        user.id,
+        movingTo as string,
+        bookingUpdateData.end_time || oldBooking.end_time,
+        bookingUpdateData.timezone || oldBooking.timezone,
+        requestLogger
+      );
+
+      if (closed) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'closed_day',
+            error: closed.error.message,
+            closed: {
+              kind: closed.error.kind,
+              date: closed.error.dateKey,
+              reason: closed.error.closedReason,
+              hours: closed.error.hours ?? null
+            }
           },
           { status: 409 }
         );
@@ -635,158 +667,123 @@ export async function DELETE(
     const bookingId = params.id;
     requestLogger.info({ userId: user.id, bookingId }, 'Deleting booking');
 
-    // 2. Get booking first (for audit trail)
-    const getResult = await schedulingBookingRepository.findById(bookingId, user.id);
-    if (getResult.error || !getResult.data) {
-      return NextResponse.json(
-        { success: false, error: 'Booking not found' },
-        { status: 404 }
-      );
-    }
-
-    // 3. Settle what was billed for this booking before touching the booking.
-    //
-    // payment_invoices.booking_id is ON DELETE SET NULL, so an invoice outlives
-    // its booking as an orphan: still owed, still payable through its Stripe
-    // link, and no longer traceable to anything. So an unpaid invoice goes with
-    // the booking, and a paid one blocks the delete outright — money that
-    // changed hands is a record to refund deliberately, not to erase.
-    const invoicesResult = await paymentInvoiceRepository.findByBookingId(bookingId, user.id);
-    if (invoicesResult.error) {
-      requestLogger.error({ err: invoicesResult.error, userId: user.id, bookingId }, 'Failed to load invoices for booking');
-      return NextResponse.json(
-        { success: false, error: 'Failed to delete booking' },
-        { status: 500 }
-      );
-    }
-
-    const bookingInvoices = invoicesResult.data || [];
-
-    // A refund leaves the invoice sitting at 'paid' — refunding updates the
-    // booking and the transaction, never the invoice — so the booking's own
-    // payment_status is what says whether the money went back.
-    const wasRefunded = getResult.data.payment_status === 'refunded';
-    const paidInvoices = wasRefunded
-      ? []
-      : bookingInvoices.filter(isSettledInvoice);
-
-    // Money can also have arrived without the invoice being marked paid.
-    const settledResult = await paymentTransactionRepository.findSettledForBooking(
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * ONE DELETE, IN `deleteBooking`.
+     *
+     * This route used to carry its own copy of the whole thing — the money
+     * guard, the invoice voiding, the delete and the audit — written
+     * independently of `BookingLifecycleService.deleteBooking`, which does the
+     * same job for the AI chat and for contact deletion. Two implementations,
+     * and the fixes landed in one of them:
+     *
+     *   • THE CLIENT WAS NEVER TOLD. A booking emails its client a confirmation
+     *     the moment it is made, so deleting it left somebody expecting to be
+     *     seen. Neither copy notified; the service does now.
+     *
+     *   • THE MONEY GUARD HERE WAS THE OLD, BROKEN ONE. It asked
+     *     `payment_status === 'refunded'` — a flag only the booking refund route
+     *     writes — and then refused on `settledPayments.length > 0`, which
+     *     subtracts no refunds at all. So a FULLY REFUNDED booking could not be
+     *     deleted, and the error told the owner to "refund the payment first"
+     *     about money they had just returned. `heldOnBooking` was written to fix
+     *     exactly that, deriving `netHeld` from the payments themselves, and its
+     *     comment says so. The route never picked it up.
+     *
+     *   • THE CALENDAR EVENT SURVIVED. Deleting the row frees the slot in our
+     *     availability, but the event in the owner's Google or Outlook calendar
+     *     is a separate object — so the platform offered the time to a new
+     *     client while the owner's own calendar still showed them busy.
+     *
+     * The service also now refuses a booking with a payment plan BEFORE
+     * destroying anything, instead of letting the `ON DELETE RESTRICT` on
+     * `payment_plan_subscriptions` surface as a flat 500.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const deleteResult = await deleteBooking({
       bookingId,
-      bookingInvoices.map(inv => inv.id),
-      user.id
-    );
-    if (settledResult.error) {
-      requestLogger.error({ err: settledResult.error, userId: user.id, bookingId }, 'Failed to check payments for booking');
-      return NextResponse.json(
-        { success: false, error: 'Failed to delete booking' },
-        { status: 500 }
-      );
-    }
-    const settledPayments = settledResult.data || [];
+      userId: user.id,
+      request,
+      logger: requestLogger,
+    });
 
-    if (paidInvoices.length > 0 || settledPayments.length > 0) {
-      requestLogger.info({
-        userId: user.id,
-        bookingId,
-        paidInvoices: paidInvoices.map(inv => inv.invoice_number),
-        settledPayments: settledPayments.length
-      }, 'Refused to delete booking that has been paid for');
+    if (deleteResult.error) {
+      const err = deleteResult.error;
 
-      return NextResponse.json(
-        {
-          success: false,
-          code: 'BOOKING_HAS_PAID_INVOICE',
-          error: 'This booking has already been paid for and cannot be deleted. Refund the payment first, or cancel the booking instead.',
-          details: {
-            paid_invoice_numbers: paidInvoices.map(inv => inv.invoice_number),
-            paid_amount: [
-              ...paidInvoices.map(inv => Number(inv.amount) || 0),
-              ...settledPayments
-                .filter(t => !t.invoice_id || !paidInvoices.some(inv => inv.id === t.invoice_id))
-                .map(t => Number(t.amount) || 0)
-            ].reduce((sum, amount) => sum + amount, 0)
-          }
-        },
-        { status: 409 }
-      );
-    }
-
-    // Nothing is owed to the client and nothing is held from them: drop the
-    // OPEN invoices raised for this booking, voiding each at the processor
-    // first so nobody can still open the hosted page and pay for a session that
-    // no longer exists. An invoice that was paid and later refunded is left
-    // alone — deleting a settled record would erase financial history.
-    const openInvoices = bookingInvoices.filter(inv => !isSettledInvoice(inv));
-    for (const invoice of openInvoices) {
-      await voidStripeInvoice(invoice, user.id, requestLogger);
-
-      const invoiceDeleteResult = await paymentInvoiceRepository.delete(invoice.id, user.id);
-      if (invoiceDeleteResult.error) {
-        requestLogger.error({
-          err: invoiceDeleteResult.error, userId: user.id, bookingId, invoiceId: invoice.id
-        }, 'Failed to delete invoice for booking');
+      if (err.message === 'Booking not found') {
         return NextResponse.json(
-          { success: false, error: 'Failed to delete the invoice for this booking' },
-          { status: 500 }
+          { success: false, error: 'Booking not found' },
+          { status: 404 }
         );
       }
 
-      auditTrail
-        .log({
-          action: 'PAYMENT_INVOICE_DELETED',
-          userId: user.id,
-          entityType: 'payment_invoice',
-          entityId: invoice.id,
-          resourceName: invoice.invoice_number,
-          severity: 'warning',
-          request
-        })
-        .catch(err => requestLogger.error({ err }, 'Audit failed'));
-    }
+      /*
+       * Money held. The `code` and `details` shape is the contract
+       * `SchedulingBookingModal` reads to show its explanation where the click
+       * was, so it is preserved exactly.
+       */
+      if (err instanceof BookingPaidError) {
+        requestLogger.info(
+          { userId: user.id, bookingId, invoiceNumbers: err.invoiceNumbers },
+          'Refused to delete booking that is holding money'
+        );
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'BOOKING_HAS_PAID_INVOICE',
+            error: err.message,
+            details: {
+              paid_invoice_numbers: err.invoiceNumbers,
+              paid_amount: err.paidAmount,
+            },
+          },
+          { status: 409 }
+        );
+      }
 
-    // 4. Delete booking
-    const result = await schedulingBookingRepository.delete(bookingId, user.id);
+      // A payment plan points at it, so the database will not let it go. Its own
+      // code, because the way out is different: stop the plan, not refund.
+      if (err instanceof BookingHasPlanError) {
+        requestLogger.info(
+          { userId: user.id, bookingId, planLive: err.planLive },
+          'Refused to delete booking with a payment plan attached'
+        );
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'BOOKING_HAS_PAYMENT_PLAN',
+            error: err.message,
+            details: { plan_live: err.planLive },
+          },
+          { status: 409 }
+        );
+      }
 
-    if (result.error) {
-      requestLogger.error({ err: result.error, userId: user.id, bookingId }, 'Failed to delete booking');
+      requestLogger.error({ err, userId: user.id, bookingId }, 'Failed to delete booking');
       return NextResponse.json(
         { success: false, error: 'Failed to delete booking' },
         { status: 500 }
       );
     }
 
-    // 5. Get contact name for audit log
-    let deleteContactName = 'Client';
-    if (getResult.data.contact_id) {
-      const deleteContactResult = await crmContactRepository.findById(getResult.data.contact_id, user.id);
-      if (deleteContactResult.data) {
-        deleteContactName = `${deleteContactResult.data.first_name || ''} ${deleteContactResult.data.last_name || ''}`.trim() || 'Client';
-      }
-    }
-
-    // 6. Audit log (non-blocking)
-    auditTrail
-      .log({
-        action: 'SCHEDULING_BOOKING_DELETED',
+    requestLogger.info(
+      {
+        bookingId,
         userId: user.id,
-        entityType: 'scheduling_booking',
-        entityId: bookingId,
-        resourceName: `Booking for ${deleteContactName}`,
-        request
-      })
-      .catch(err => requestLogger.error({ err }, 'Audit failed'));
-
-    // 7. Return success
-    requestLogger.info({
-      bookingId,
-      userId: user.id,
-      deletedInvoices: openInvoices.length
-    }, 'Booking deleted successfully');
+        deletedInvoices: deleteResult.data!.deletedInvoices.length,
+        clientNotified: deleteResult.data!.clientNotified,
+        calendarEventRemoved: deleteResult.data!.calendarEventRemoved,
+      },
+      'Booking deleted successfully'
+    );
     return NextResponse.json({
       success: true,
       message: 'Booking deleted successfully',
-      deleted_invoices: openInvoices.map(inv => inv.invoice_number)
+      deleted_invoices: deleteResult.data!.deletedInvoices,
+      // So the UI can say whether the client was actually told, rather than
+      // assuming it. False is a real answer: no client email, or a meeting that
+      // had already passed.
+      client_notified: deleteResult.data!.clientNotified,
     });
 
   } catch (error) {

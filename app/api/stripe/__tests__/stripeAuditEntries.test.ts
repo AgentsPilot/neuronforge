@@ -90,7 +90,8 @@ beforeEach(() => {
   mockGetUser.mockResolvedValue({ data: { user: USER }, error: null });
   fetchSpy.mockReset();
   mockSubscriptionUpdate.mockReset();
-  mockSubscriptionUpdate.mockResolvedValue({ id: 'sub_123', current_period_end: 1790000000 });
+  // Stripe at 2025-10-29.clover: the billing period lives on the subscription item.
+  mockSubscriptionUpdate.mockResolvedValue({ id: 'sub_123', items: { data: [{ current_period_end: 1790000000 }] } });
   mockStripeService.createPortalSession.mockResolvedValue({ id: 'bps_1', url: 'https://billing.stripe.test/x' });
   mockStripeService.createCustomCreditSubscription.mockResolvedValue({ id: 'cs_1', client_secret: 'secret_1' });
   mockStripeService.createBoostPackCheckout.mockResolvedValue({ id: 'cs_2', client_secret: 'secret_2' });
@@ -137,6 +138,31 @@ describe('Stripe routes keep writing their audit entries (Q-1)', () => {
     expect(res.status).toBe(200);
     expect(onlyEntry()).toMatchObject({ action: 'SUBSCRIPTION_REACTIVATED', entityType: 'subscription', entityId: 'sub_123', userId: USER.id });
     expectStored('SUBSCRIPTION_REACTIVATED', 'info', ['SOC2', 'FINANCIAL']);
+  });
+
+  // The period end is read from subscription.items.data[0] (Basil moved it off
+  // the Subscription object), into both the response and the audit details.
+  it.each([
+    ['cancel-subscription', cancelPOST, { cancel_at_period_end: false }],
+    ['reactivate-subscription', reactivatePOST, { cancel_at_period_end: true }],
+  ] as const)('%s reads current_period_end from the first subscription item', async (path, handler, extra) => {
+    mockRows.user_subscriptions = { stripe_subscription_id: 'sub_123', stripe_customer_id: 'cus_1', ...extra };
+    const res = await handler(req(`http://localhost/api/stripe/${path}`));
+    expect(res.status).toBe(200);
+    expect((await res.json()).current_period_end).toBe(1790000000);
+    expect(onlyEntry().details).toMatchObject({ current_period_end: 1790000000 });
+  });
+
+  it.each([
+    ['cancel-subscription', cancelPOST, { cancel_at_period_end: false }],
+    ['reactivate-subscription', reactivatePOST, { cancel_at_period_end: true }],
+  ] as const)('%s returns current_period_end null when the subscription has no items', async (path, handler, extra) => {
+    mockSubscriptionUpdate.mockResolvedValue({ id: 'sub_123', items: { data: [] } });
+    mockRows.user_subscriptions = { stripe_subscription_id: 'sub_123', stripe_customer_id: 'cus_1', ...extra };
+    const res = await handler(req(`http://localhost/api/stripe/${path}`));
+    expect(res.status).toBe(200);
+    expect((await res.json()).current_period_end).toBeNull();
+    expect(onlyEntry().details).toMatchObject({ current_period_end: null });
   });
 
   it('create-portal → CUSTOMER_PORTAL_ACCESSED under the session user', async () => {

@@ -53,9 +53,31 @@ import { generateInvoicePDFAsync } from '@/lib/pdf/InvoicePDFGenerator';
 import { supabaseServer } from '@/lib/supabaseServer';
 import type { Locale } from '@/lib/i18n/config';
 import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
+import { currentStripeMode } from '@/lib/business-os/billing/stripeMode';
 
 const logger = createLogger({ service: 'InvoiceDeliveryService' });
 const auditTrail = AuditTrailService.getInstance();
+
+/**
+ * Whether Stripe will actually put this invoice in front of the client.
+ *
+ * Only in live mode. Stripe does not email customers from a sandbox, so a
+ * test-mode send is accepted, finalised and delivered to nobody — see the note
+ * at the call site.
+ *
+ * Fails towards sending: an unreadable key means we cannot claim Stripe
+ * delivered, and an email the client did not strictly need is a far smaller
+ * fault than a bill they never saw. In practice this cannot be reached with a
+ * bad key, since the Stripe calls above would have thrown first.
+ */
+export function stripeEmailsTheClient(log: ContextLogger): boolean {
+  try {
+    return currentStripeMode() === 'live';
+  } catch {
+    log.warn({}, 'Stripe key mode unreadable; sending the invoice by email rather than assuming Stripe did');
+    return false;
+  }
+}
 
 type ContextLogger = {
   debug: (context: Record<string, unknown>, message: string) => void;
@@ -151,34 +173,13 @@ export function alreadyWithTheClient(status: string | null | undefined): boolean
   return status === 'sent' || status === 'overdue';
 }
 
-/**
- * Has any of this invoice's money been given back?
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * READS `refund_status`, NOT `status`.
- *
- * `20260828d_invoice_refund_state.sql` says it outright: "`refund_status` is the
- * field to read. `status` gains 'refunded' and 'partially_refunded' because that
- * is what the invoice list renders, but it is a projection." A first version of
- * this guard checked `status` and let a refunded invoice straight through —
- * live data proves why: INV-00011 carries `refund_status: 'full'` and
- * `refunded_amount: 300` while its `status` still reads `sent`, because it was
- * refunded without ever having been marked paid.
- *
- * `refunded_amount` is checked too, so a row whose projection and ledger have
- * drifted is still caught by whichever of them noticed.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-export function hasBeenRefunded(invoice: {
-  status?: string | null;
-  refund_status?: string | null;
-  refunded_amount?: number | string | null;
-}): boolean {
-  if (invoice.refund_status === 'full' || invoice.refund_status === 'partial') return true;
-  if (Number(invoice.refunded_amount ?? 0) > 0) return true;
-  // The projection, for completeness — it is the least reliable of the three.
-  return invoice.status === 'refunded' || invoice.status === 'partially_refunded';
-}
+// `hasBeenRefunded` now lives beside `isSettledInvoice` in `lib/payments/invoiceSettlement.ts`:
+// they answer the same question (has this money moved?) and belong together. It is
+// re-exported here because this file is where callers already look for it, and because
+// this module imports the PDF renderer — which Jest cannot transform, so a server file
+// that only wants the predicate must not have to pull the renderer in with it.
+import { hasBeenRefunded } from '@/lib/payments/invoiceSettlement';
+export { hasBeenRefunded };
 
 export async function sendInvoice(
   params: SendInvoiceParams
@@ -364,12 +365,42 @@ export async function sendInvoice(
     }
   }
 
-  if (!hostedInvoiceUrl) {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * DID STRIPE DELIVER, OR ONLY ACCEPT?
+   *
+   * A hosted invoice url used to be taken as proof the client had been written
+   * to, and the platform sent nothing of its own. That holds in live mode, where
+   * Stripe emails the invoice itself — and not in TEST mode, where Stripe
+   * accepts the invoice, finalises it, emits `invoice.sent`, and emails nobody.
+   *
+   * So "create and send" reported success for every sandbox invoice while no
+   * client ever received one. Measured on the reporting account: fifteen
+   * invoices in one evening, every one of them `sent_at` stamped within six
+   * seconds, not one email.
+   *
+   * In test mode the platform therefore sends its own branded email, carrying
+   * the hosted Stripe page as the pay link so the client can still settle it in
+   * one click. Live mode is untouched: Stripe delivers, and a second email from
+   * us would be a duplicate.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const stripeDelivered = Boolean(hostedInvoiceUrl) && stripeEmailsTheClient(log);
+
+  if (!stripeDelivered) {
+    /*
+     * The row was updated with the hosted url above; this in-memory copy was
+     * read before that and still says null. Without this the fallback email
+     * would offer the platform's own pay route for an invoice Stripe is already
+     * hosting — two pay pages for one bill.
+     */
+    if (hostedInvoiceUrl) invoice.stripe_hosted_invoice_url = hostedInvoiceUrl;
+
     const emailed = await sendByEmail(invoice, userId, params.language, log);
     if (emailed) return { data: null, error: emailed };
   }
 
-  const sentVia: 'stripe' | 'email' = hostedInvoiceUrl ? 'stripe' : 'email';
+  const sentVia: 'stripe' | 'email' = stripeDelivered ? 'stripe' : 'email';
   const sentAt = new Date().toISOString();
 
   auditTrail
@@ -476,6 +507,21 @@ export async function buildInvoiceAttachment(
        */
       isCopy: markAsCopy,
       invoice,
+      /*
+       * The plan this invoice bills one period of.
+       *
+       * A period invoice read alone describes a smaller sale than the client
+       * agreed to: ₪400 on the page, ₪800 in the arrangement, and nothing
+       * connecting them. The rows are the ones the money is billed from, so
+       * "paid", "this invoice" and "still to come" are facts rather than a
+       * projection of the service's configuration.
+       *
+       * Scoped to the booking, so a business with many plans on one service
+       * cannot leak another client's schedule onto this document. Non-fatal: an
+       * unreadable schedule returns undefined, exactly as no schedule does, and
+       * the PDF is then the document it was before.
+       */
+      planPeriods: await planPeriodsForInvoice(invoice, userId),
       businessSettings: settings as never,
       businessName,
       businessVertical: (settings as { vertical?: string }).vertical || undefined,
@@ -501,6 +547,53 @@ export async function buildInvoiceAttachment(
 
 function defaultDueDate(): Date {
   return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+}
+
+/**
+ * The instalment schedule an invoice belongs to, or undefined.
+ *
+ * Undefined rather than an empty array so the PDF's `data.planPeriods &&` gate
+ * reads as "there is no plan" rather than "there is a plan with no periods".
+ */
+async function planPeriodsForInvoice(
+  invoice: { id: string; booking_id?: string | null },
+  userId: string
+): Promise<
+  | Array<{
+      number: number;
+      amount: number;
+      dueDate: string | null;
+      status: string;
+      isThisInvoice: boolean;
+    }>
+  | undefined
+> {
+  if (!invoice.booking_id) return undefined;
+
+  const { data, error } = await supabaseServer
+    .from('payment_plan_installments')
+    .select('installment_number, amount, due_date, status, invoice_id')
+    .eq('booking_id', invoice.booking_id)
+    .eq('user_id', userId)
+    .order('installment_number');
+
+  if (error) {
+    logger.warn(
+      { err: error, invoiceId: invoice.id },
+      'Could not read the plan schedule; the invoice is sent without it'
+    );
+    return undefined;
+  }
+
+  if (!data?.length) return undefined;
+
+  return data.map(row => ({
+    number: Number(row.installment_number),
+    amount: Number(row.amount),
+    dueDate: (row.due_date as string | null) ?? null,
+    status: String(row.status),
+    isThisInvoice: row.invoice_id === invoice.id,
+  }));
 }
 
 /**
@@ -645,6 +738,15 @@ async function sendByEmail(
        */
       isCopy,
       invoice,
+      /*
+       * The same schedule `buildInvoiceAttachment` puts on the attached copy.
+       *
+       * There are two builders of this one document — this email path and the
+       * attachment path — and a client can receive both. Adding the plan to one
+       * of them would mean the invoice emailed on its own and the invoice
+       * attached to a confirmation describe the same sale differently.
+       */
+      planPeriods: await planPeriodsForInvoice(invoice, userId),
       businessSettings: {
         invoice_company_name: settings.invoice_company_name,
         invoice_address: settings.invoice_address,
@@ -655,6 +757,13 @@ async function sendByEmail(
         invoice_payment_instructions: settings.invoice_payment_instructions,
         invoice_footer_text: settings.invoice_footer_text,
         invoice_number_prefix: settings.invoice_number_prefix,
+        /*
+         * Required by `InvoiceSettings`, and omitted here since this literal was
+         * written — so the whole object failed to satisfy the type it is passed
+         * as. The document also USES it: the payment box prints how long the
+         * client has, and without the field it had nothing to print it from.
+         */
+        invoice_payment_terms_days: settings.invoice_payment_terms_days,
         logo_url: settings.logo_url,
         // The same three the email reads, so the attachment cannot state a
         // different tax from the mail carrying it.

@@ -240,6 +240,8 @@ import * as jobsQueuesDrain from '../jobs-queues/drain/route';
 
 // ── ADMIN_BOS_CLEANUP slice 7b (2026-10-04) — gated from birth ──────────────
 import * as jobsQueuesItemAction from '../jobs-queues/items/action/route';
+// Admin delete AD-1b: the read-only deletion preview (a POST, gated from birth).
+import * as userDeletionPreview from '../users/[id]/deletion/preview/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -387,6 +389,19 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
         })
       ),
   },
+
+  // ── Admin delete AD-1b (2026-10-04) ─────────────────────────────────────
+  // read-only POST (body must be `{}`); listed for the gate oracle (SA D-6).
+  // The identity read, the counts and the preview audit row must never happen
+  // before the gate. The admin case reaches the handler and gets a 500 from the
+  // fake client (no auth admin API), never a 401/403.
+  {
+    name: 'POST /api/admin/users/[id]/deletion/preview',
+    call: () =>
+      userDeletionPreview.POST(req('/api/admin/users/00000000-0000-4000-8000-000000000000/deletion/preview', 'POST', {}), {
+        params: { id: '00000000-0000-4000-8000-000000000000' },
+      }),
+  },
 ];
 
 beforeEach(() => {
@@ -414,10 +429,13 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  + 1  `jobs-queues/drain#POST` (ADMIN_BOS_CLEANUP slice 7d), gated from birth
     //  = 58
     //  + 1  `jobs-queues/items/action#POST` (ADMIN_BOS_CLEANUP slice 7b), gated from birth
-    //  = 59, which is every admin handler now on the canonical gate EXCEPT the
+    //  = 59
+    //  + 1  `users/[id]/deletion/preview#POST` (admin delete AD-1b), gated from birth;
+    //       a read-only POST (body must be `{}`)
+    //  = 60, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(59);
+    expect(CASES).toHaveLength(60);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

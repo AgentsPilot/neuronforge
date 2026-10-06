@@ -162,7 +162,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const schedulingRepo = new SchedulingServiceRepository(supabaseServer);
         // Both in one pass: a plan is a fact about a service, like its price.
         const [servicesResult, plansByService] = await Promise.all([
-          schedulingRepo.listAll(userId, true), // active only
+          // The shared base set: `BOOKABLE` plus the public columns only.
+          schedulingRepo.listBookable(userId),
           loadServicePaymentPlans(userId),
         ]);
         if (servicesResult.data && servicesResult.data.length > 0) {
@@ -409,6 +410,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 // editor's route had it in the right place, which is why the
                 // preview showed the plan and the public page did not.
                 paymentPlan: matchingService.paymentPlan,
+                sale_mode: matchingService.sale_mode,
                 serviceId: matchingService.id,
                 serviceName: matchingService.name
               }));
@@ -427,6 +429,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                   collection: matchingService.collection,
                   // The split, where the business offers one.
                   paymentPlan: matchingService.paymentPlan,
+                sale_mode: matchingService.sale_mode,
                   allServices: liveServices
                 }
               };

@@ -28,6 +28,7 @@ import {
 import type { PaymentInvoice, InvoiceLineItem, InvoiceAddress } from '@/lib/repositories/PaymentRepository';
 import type { InvoiceSettings } from '@/lib/repositories/BusinessProfileRepository';
 import { createLogger } from '@/lib/logger';
+import { formatAddressLines } from '@/lib/geo/address';
 import { registerThemeFont } from './themeFonts';
 import { taxLineFor } from '@/lib/payments/taxLine';
 import { documentTitle } from '@/lib/payments/documentType';
@@ -55,7 +56,7 @@ type Language = 'en' | 'es' | 'he';
 const PDF_LABELS: Record<Language, Record<string, string>> = {
   en: {
     invoiceNumber: 'Invoice Number',
-    copyWatermark: 'COPY',
+    copyBadge: 'COPY',
     date: 'Date',
     dueDate: 'Due Date',
     status: 'Status',
@@ -74,6 +75,11 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     account: 'Account',
     routing: 'Routing',
     notes: 'Notes',
+    planTitle: 'Payment plan',
+    planPaid: 'paid',
+    planDue: 'due',
+    planThisInvoice: 'this invoice',
+    planTotal: 'Plan total',
     taxId: 'Tax ID',
     currency: 'Currency',
     service: 'Service',
@@ -90,7 +96,7 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
   },
   es: {
     invoiceNumber: 'Número de Factura',
-    copyWatermark: 'COPIA',
+    copyBadge: 'COPIA',
     date: 'Fecha',
     dueDate: 'Fecha de Vencimiento',
     status: 'Estado',
@@ -109,6 +115,11 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     account: 'Cuenta',
     routing: 'CLABE/Ruta',
     notes: 'Notas',
+    planTitle: 'Plan de pagos',
+    planPaid: 'pagado',
+    planDue: 'a pagar',
+    planThisInvoice: 'esta factura',
+    planTotal: 'Total del plan',
     taxId: 'NIF/CIF',
     currency: 'Moneda',
     service: 'Servicio',
@@ -125,7 +136,7 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
   },
   he: {
     invoiceNumber: 'מספר חשבונית',
-    copyWatermark: 'העתק',
+    copyBadge: 'העתק',
     date: 'תאריך',
     dueDate: 'תאריך לתשלום',
     status: 'סטטוס',
@@ -144,6 +155,11 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     account: 'חשבון',
     routing: 'סניף',
     notes: 'הערות',
+    planTitle: 'תוכנית תשלומים',
+    planPaid: 'שולם',
+    planDue: 'לתשלום',
+    planThisInvoice: 'החשבונית הזו',
+    planTotal: 'סה״כ בתוכנית',
     taxId: 'ח.פ',
     currency: 'מטבע',
     service: 'שירות',
@@ -237,11 +253,38 @@ export interface InvoicePDFData {
    * client's bookkeeper is the person who needs it, not the client.
    *
    * It is the same invoice, not a new one: the number, the date and the amount
-   * are unchanged, and the watermark is the only difference. That is exactly
-   * what a copy is, and why this is a display flag rather than a new document.
+   * are unchanged, and the badge beside the invoice number is the only
+   * difference. That is exactly what a copy is, and why this is a display flag
+   * rather than a new document.
    * ───────────────────────────────────────────────────────────────────────────
    */
   isCopy?: boolean;
+  /**
+   * The instalment plan this invoice is one period OF.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WITHOUT IT THE DOCUMENT LOOKED LIKE THE WHOLE SALE.
+   *
+   * A period invoice is correct and complete on its own — INV-00013 asks for
+   * ₪400 and ₪400 is what is owed — but read alone it describes a ₪400 sale.
+   * The client has agreed to ₪800 across two dates, and nothing on the page
+   * said so: not which period this is, not what is still to come, not when.
+   *
+   * The line item carries "(1/2)" only because the caller happened to write it
+   * into the description. That is a string, not a schedule.
+   *
+   * Absent on every ordinary invoice, and then nothing below is drawn.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  planPeriods?: Array<{
+    number: number;
+    amount: number;
+    /** `YYYY-MM-DD`. */
+    dueDate: string | null;
+    status: string;
+    /** True for the period this very invoice bills. */
+    isThisInvoice: boolean;
+  }>;
   businessName?: string;
   businessVertical?: string;
   contactName?: string;
@@ -287,23 +330,26 @@ function getThankYouMessage(language: Language, vertical?: string): string {
 }
 
 /**
- * Format address for display
+ * Format address for display.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Delegates to the shared formatter because the COUNTRY IS NOW A CODE.
+ *
+ * This pushed `address.country` onto the page verbatim, which was right while
+ * the column held "Israel" and became wrong the moment the field became a
+ * picker storing 'IL' — this is a tax document, and it would have started
+ * printing "IL" to clients.
+ *
+ * `formatAddressLines` translates a real code into the invoice's own language
+ * and passes anything else through untouched, so a business that has not
+ * re-saved its settings keeps printing exactly what it typed.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-function formatAddress(address: InvoiceAddress | null | undefined): string[] {
-  if (!address) return [];
-
-  const lines: string[] = [];
-  if (address.line1) lines.push(address.line1);
-  if (address.line2) lines.push(address.line2);
-
-  const cityLine = [address.city, address.state, address.postal_code]
-    .filter(Boolean)
-    .join(', ');
-  if (cityLine) lines.push(cityLine);
-
-  if (address.country) lines.push(address.country);
-
-  return lines;
+function formatAddress(
+  address: InvoiceAddress | null | undefined,
+  language: Language = 'en'
+): string[] {
+  return formatAddressLines(address, language === 'he' ? 'he' : language === 'es' ? 'es' : 'en');
 }
 
 /**
@@ -323,18 +369,58 @@ function formatCurrency(amount: number, currency: string, language: Language): s
 /**
  * Format date for display
  */
+/** `YYYY-MM-DD` with nothing after it — a DATE, not an instant. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Hoisted so the date-only branch and the instant branch name one list. */
+const HEBREW_MONTHS = [
+  'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+  'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
+];
+
 function formatDate(dateString: string | null | undefined, language: Language): string {
   if (!dateString) return '-';
-  const date = new Date(dateString);
+
+  /*
+   * A DATE-ONLY COLUMN HAS NO TIMEZONE, SO NONE IS APPLIED.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `due_date` is a SQL DATE — `2026-09-30`, no time, no zone.
+   * `new Date('2026-09-30')` makes it midnight UTC, and every read below then
+   * resolves it wherever the renderer happens to be. One hour west of UTC turns
+   * it into the 29th: INV-00013, raised on the 30th and payable on receipt,
+   * printed "due 29 September", a day before the invoice existed.
+   *
+   * The common workaround is to anchor at noon UTC. That is not enough — a test
+   * in `dateOnlyIsNotMidnightUTC.guard` shows noon UTC on the 30th is already
+   * the 1st in Auckland (UTC+13). So the value is rendered AS the calendar date
+   * it is: built in UTC and formatted in UTC, which returns the stored date in
+   * every zone rather than in most of them.
+   *
+   * Timestamps keep their old treatment — `created_at` is a real instant and
+   * must be resolved, not frozen.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const dateOnly = DATE_ONLY.test(dateString);
+  const date = dateOnly ? new Date(`${dateString}T00:00:00Z`) : new Date(dateString);
+
+  if (dateOnly && language === 'he') {
+    const [y, m, d] = dateString.split('-').map(Number);
+    return `${d} ב${HEBREW_MONTHS[m - 1]} ${y}`;
+  }
+
+  if (dateOnly) {
+    return date.toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
+      timeZone: 'UTC',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  }
 
   if (language === 'he') {
-    // Hebrew months for proper display
-    const hebrewMonths = [
-      'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
-      'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'
-    ];
     const day = date.getDate();
-    const month = hebrewMonths[date.getMonth()];
+    const month = HEBREW_MONTHS[date.getMonth()];
     const year = date.getFullYear();
     return `${day} ב${month} ${year}`;
   }
@@ -443,9 +529,11 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
    * a "VAT 0.00" row would read to their client as a mistake.
    */
   const taxLine = taxLineFor(invoice.amount, invoice.currency, businessSettings);
-  const businessAddressLines = formatAddress(businessSettings.invoice_address);
+  // The invoice's own language, so a Hebrew invoice says ישראל and the same
+  // business's English one says Israel.
+  const businessAddressLines = formatAddress(businessSettings.invoice_address, language);
   const clientAddress = invoice.client_address || data.contactAddress;
-  const clientAddressLines = formatAddress(clientAddress);
+  const clientAddressLines = formatAddress(clientAddress, language);
 
   const subtotal = lineItems.reduce(
     (sum: number, item: InvoiceLineItem) => sum + (item.quantity || 1) * (item.unit_price || 0),
@@ -501,46 +589,56 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
       marginBottom: 2,
     },
     /*
-     * Under the content, not over it.
+     * The copy mark: a badge beside the invoice number, in the document's flow.
      *
-     * Absolutely positioned and behind everything drawn after it, so the figures
-     * stay fully legible — a watermark that obscures an amount defeats the
-     * document. Grey at low opacity for the same reason; it has to be noticed by
-     * a bookkeeper, not shouted at the client.
+     * ─────────────────────────────────────────────────────────────────────────
+     * IT REPLACES A DIAGONAL WATERMARK, AND NOT FOR TASTE.
+     *
+     * The watermark was absolutely positioned and drawn first so the figures
+     * would stay legible on top of it. They did — but so did everything else
+     * with a fill: the striped table rows, the notes block, the totals band.
+     * Those are opaque, so the word ran under them and came out in pieces, with
+     * whole letters missing where it crossed one. Rendered and looked at, it
+     * read as a printer fault rather than as a mark.
+     *
+     * A badge cannot do that: it is laid out, not overlaid, so nothing can be
+     * drawn across it and nothing it covers.
+     *
+     * Deliberately NOT the status colour. The status says what happened to the
+     * money; this says which SEND of the document you are holding, which is a
+     * different question, and colouring them alike invites reading one as the
+     * other. Grey on grey is the register of a filing mark.
+     * ─────────────────────────────────────────────────────────────────────────
      */
-    copyWatermark: {
+    copyBadge: {
+      fontSize: 8,
+      fontWeight: 700,
+      color: '#4B5563',
+      backgroundColor: '#F3F4F6',
+      borderWidth: 1,
+      borderStyle: 'solid',
+      borderColor: '#D1D5DB',
+      padding: '4 8',
       /*
-       * One diagonal strip across the page, behind everything.
-       *
-       * Absolutely positioned over the full sheet and drawn FIRST, so every
-       * figure stays legible on top of it. `justifyContent: center` puts the
-       * single band through the middle of the page rather than at the top.
+       * The gap between the two badges, written out per direction rather than
+       * as a logical `marginEnd`: the row is reversed for Hebrew, so the end
+       * side and the side the space is needed on are not the same thing.
        */
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      overflow: 'hidden',
-      alignItems: 'center',
-      justifyContent: 'center',
-      /*
-       * Faint enough to read straight through. A watermark that obscures an
-       * amount defeats the document; this needs to be seen by somebody checking
-       * whether they already have the invoice, not shouted at the client.
-       */
-      opacity: 0.1,
+      marginLeft: isRTL ? 0 : 4,
+      marginRight: isRTL ? 4 : 0,
+      textAlign: isRTL ? 'left' : 'right',
     },
-    copyWatermarkText: {
-      /*
-       * Large enough to span the page corner to corner at this angle. One word,
-       * not repeated: the mark says "this is a duplicate", and saying it once
-       * across the sheet is what a stamped copy looks like.
-       */
-      fontSize: 120,
-      fontWeight: 'bold',
-      color: '#000000',
-      transform: 'rotate(-35deg)',
+    /*
+     * The two badges on one line, in the order the language reads: the status
+     * first, the copy mark beside it. Carries the spacing and the edge
+     * alignment that used to sit on each badge, so that a row of one and a row
+     * of two sit in exactly the same place under the invoice number.
+     */
+    invoiceBadges: {
+      flexDirection: isRTL ? 'row-reverse' : 'row',
+      alignItems: 'center',
+      marginTop: 5,
+      alignSelf: isRTL ? 'flex-start' : 'flex-end',
     },
     invoiceNumber: {
       fontFamily: headingFontFamily,
@@ -555,9 +653,8 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
       color: '#FFFFFF',
       backgroundColor: getStatusColor(invoice.status),
       padding: '4 8',
-      marginTop: 5,
       textAlign: isRTL ? 'left' : 'right',
-      alignSelf: isRTL ? 'flex-start' : 'flex-end',
+      /* Spacing and edge alignment now belong to `invoiceBadges`, the row. */
     },
     detailsRow: {
       flexDirection: isRTL ? 'row-reverse' : 'row',
@@ -670,6 +767,42 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
       color: config.primaryColor,
       textAlign: isRTL ? 'left' : 'right',
     },
+    /* The plan block: quieter than the payment box, which is the call to
+       action. This is context for the figure above it, not a second demand. */
+    planSection: {
+      backgroundColor: '#F9FAFB',
+      padding: 10,
+      marginBottom: 20,
+    },
+    planHeader: {
+      fontSize: 10,
+      fontWeight: 700,
+      color: '#374151',
+      marginBottom: 5,
+      textAlign: isRTL ? 'right' : 'left',
+    },
+    planRow: {
+      flexDirection: isRTL ? 'row-reverse' : 'row',
+      justifyContent: 'space-between',
+      marginBottom: 3,
+    },
+    planTotalRow: {
+      flexDirection: isRTL ? 'row-reverse' : 'row',
+      justifyContent: 'space-between',
+      marginTop: 5,
+      paddingTop: 5,
+      borderTopWidth: 1,
+      borderTopColor: '#E5E7EB',
+    },
+    planRowText: {
+      fontSize: 9,
+      color: '#6B7280',
+    },
+    planRowTextStrong: {
+      fontSize: 9,
+      fontWeight: 700,
+      color: '#1F2937',
+    },
     paymentSection: {
       backgroundColor: '#FFFBEB',
       padding: 10,
@@ -728,19 +861,6 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        {/*
-          The copy mark, when this is a resend.
-          Drawn FIRST and absolutely positioned so it sits under the content: a
-          watermark over the figures makes the amount harder to read, which is
-          the one thing an invoice must never be. `fixed` so it repeats on a
-          second page rather than marking only the first.
-        */}
-        {data.isCopy && (
-          <View style={styles.copyWatermark} fixed>
-            <Text style={styles.copyWatermarkText}>{labels.copyWatermark}</Text>
-          </View>
-        )}
-
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.companySection}>
@@ -764,7 +884,21 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
           <View style={styles.invoiceSection}>
             <SmartText style={styles.invoiceLabel} isRTL={isRTL}>{headingLabel}</SmartText>
             <Text style={styles.invoiceNumber}>{invoice.invoice_number}</Text>
-            <SmartText style={styles.statusBadge} isRTL={isRTL}>{statusLabel}</SmartText>
+            {/*
+              The copy mark, when this is a resend — a badge beside the status,
+              not a stamp across the sheet. The diagonal watermark it replaces
+              was drawn first so it would sit UNDER the content, and that is
+              exactly what spoiled it: every row stripe, every tinted band and
+              the notes block are opaque, so the word was chopped into pieces
+              wherever it ran beneath one. A mark that arrives in fragments
+              reads as a printing fault, not as a mark.
+            */}
+            <View style={styles.invoiceBadges}>
+              <SmartText style={styles.statusBadge} isRTL={isRTL}>{statusLabel}</SmartText>
+              {data.isCopy && (
+                <SmartText style={styles.copyBadge} isRTL={isRTL}>{labels.copyBadge}</SmartText>
+              )}
+            </View>
           </View>
         </View>
 
@@ -894,6 +1028,64 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
             )}
           </View>
         </View>
+
+        {/* The plan this invoice is one period of.
+
+            A period invoice is complete on its own — this one asks for ₪400 and
+            ₪400 is owed — but read alone it describes a ₪400 sale. The client
+            agreed to a schedule, so the schedule is shown: which period this is,
+            what has been paid, and what is still to come with its date.
+
+            Drawn only when the caller supplies it, so every ordinary invoice is
+            byte-identical to before. */}
+        {data.planPeriods && data.planPeriods.length > 1 && (
+          <View style={styles.planSection}>
+            <SmartText style={styles.planHeader} isRTL={isRTL}>
+              {labels.planTitle}
+            </SmartText>
+
+            {data.planPeriods.map(period => {
+              const note = period.isThisInvoice
+                ? labels.planThisInvoice
+                : period.status === 'paid'
+                  ? labels.planPaid
+                  : labels.planDue;
+
+              // `formatDate` anchors a date-only value itself now, so the raw
+              // column goes in — one rule, in one place.
+              const when = period.dueDate ? formatDate(period.dueDate, language) : '';
+
+              return (
+                <View style={styles.planRow} key={period.number}>
+                  <SmartText
+                    style={period.isThisInvoice ? styles.planRowTextStrong : styles.planRowText}
+                    isRTL={isRTL}
+                  >
+                    {`${period.number}. ${when}${when ? ' · ' : ''}${note}`}
+                  </SmartText>
+                  <Text
+                    style={period.isThisInvoice ? styles.planRowTextStrong : styles.planRowText}
+                  >
+                    {formatCurrency(period.amount, invoice.currency, language)}
+                  </Text>
+                </View>
+              );
+            })}
+
+            <View style={styles.planTotalRow}>
+              <SmartText style={styles.planRowTextStrong} isRTL={isRTL}>
+                {labels.planTotal}
+              </SmartText>
+              <Text style={styles.planRowTextStrong}>
+                {formatCurrency(
+                  data.planPeriods.reduce((sum, p) => sum + p.amount, 0),
+                  invoice.currency,
+                  language
+                )}
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* Payment Information.
 
