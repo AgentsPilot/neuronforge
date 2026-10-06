@@ -376,9 +376,19 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
  */
 function formatMoney(amount: number | null | undefined, currency: string | null | undefined): string {
   const value = Number(amount) || 0;
-  const symbol = CURRENCY_SYMBOLS[currency?.toUpperCase()];
+  /*
+   * Normalised once, so there is a `string` to index with and to print.
+   *
+   * This read `CURRENCY_SYMBOLS[currency?.toUpperCase()]`, which is safe at
+   * RUNTIME — an undefined key just misses — but is `string | undefined` going
+   * into a `Record<string, string>`, which TypeScript refuses. Widening the
+   * parameter to the `string | null | undefined` the caller actually passes
+   * moved the error here rather than removing it.
+   */
+  const code = currency?.toUpperCase() ?? '';
+  const symbol = CURRENCY_SYMBOLS[code];
   // An unmapped currency reads better as "1,200 CHF" than as a guessed symbol.
-  return symbol ? `${symbol}${value.toLocaleString()}` : `${value.toLocaleString()} ${currency?.toUpperCase() || ''}`.trim();
+  return symbol ? `${symbol}${value.toLocaleString()}` : `${value.toLocaleString()} ${code}`.trim();
 }
 
 const VECTOR_NAMES: Record<VectorKey, string> = {
