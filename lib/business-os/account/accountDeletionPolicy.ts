@@ -1,9 +1,23 @@
 /**
+ * @deprecated Purge slice 3a (2026-10-05, SA OQ-3): do not extend or add
+ * consumers. What a business deletion removes is decided by the purge
+ * descriptors (`lib/business-os/purge/descriptors.ts`), and account deletion is
+ * superseded by the admin-delete design (D14: the auth user and `profiles`
+ * survive every purge level), whose hard-delete model this file predates. Its
+ * only consumers are four scripts (`test-account-deletion.ts`,
+ * `business-fixture.ts`, `verify-deletion-policy-tables.ts`,
+ * `audit-deletion-coverage.ts`) and its own test; no route or service imports
+ * it. Deletion of this file and those scripts is scheduled for AD-3.
+ *
+ * Correction (workplan §1.2): the business table list is NOT here. It is
+ * `BUSINESS_OWNED_TABLES` in `lib/business-os/businessOwnedTables.ts`; this
+ * file reads only its `USER_OWNED_TABLES`.
+ *
  * What happens to each ACCOUNT-level table when someone deletes their account.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * The business side needs no policy: deleting the `business_profiles` row
- * cascades all 55 tables in `BUSINESS_OWNED_TABLES`. This file is about the
+ * cascades every table in `BUSINESS_OWNED_TABLES`. This file is about the
  * other half — the rows that belong to the PERSON and survive that cascade by
  * design.
  *

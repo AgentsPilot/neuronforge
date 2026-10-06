@@ -36,9 +36,83 @@ interface PreviewResult {
   gate: { outcome: string; refusalReason?: string };
   gateCoverage: { headline: string; unchecked: string[] };
   limitations: string[];
+  /** Purge slice 3a. Optional on the wire type so an older payload renders as NOT verified, never clean (C-5). */
+  deleteGraph?: DeleteGraphView;
   canProceed: false;
   generatedAt: string;
   durationMs: number;
+}
+
+/** Mirror of `DeleteGraphResult` (lib/business-os/purge/deleteGraph.ts); this client file does not import server code. */
+interface DeleteGraphEdgeView {
+  constraint: string;
+  child: string;
+  parent: string;
+}
+
+interface DeleteGraphView {
+  status: 'ok' | 'refused' | 'unreadable';
+  blockingOrderViolations: DeleteGraphEdgeView[];
+  unlistedCascadeChildren: DeleteGraphEdgeView[];
+  unreviewedDeleteTriggers: Array<{ table: string; trigger: string }>;
+  cascadeAfterParent: Array<DeleteGraphEdgeView & { exempt: boolean }>;
+  error?: string;
+}
+
+/** Purge slice 3a (T3a-5): the delete-graph verdict, plain text. Anything but `ok` is shown as blocking. */
+function DeleteGraphPanel({ graph, boxStyle }: { graph: DeleteGraphView | undefined; boxStyle: React.CSSProperties }) {
+  const status = graph?.status ?? 'unreadable';
+  const isClean = status === 'ok';
+  const edges = (list: DeleteGraphEdgeView[]) =>
+    list.map((e) => `${e.parent} -> ${e.child} (${e.constraint})`);
+
+  const sections: Array<{ title: string; items: string[] }> = graph
+    ? [
+        { title: 'Child deleted after a parent it blocks (RESTRICT / NO ACTION)', items: edges(graph.blockingOrderViolations) },
+        { title: 'Tables a cascade would empty that this run does not list', items: edges(graph.unlistedCascadeChildren) },
+        {
+          title: 'DELETE triggers nobody has reviewed',
+          items: graph.unreviewedDeleteTriggers.map((t) => `${t.table}.${t.trigger}`),
+        },
+      ]
+    : [];
+
+  return (
+    <div
+      style={{
+        ...boxStyle,
+        borderColor: isClean ? '#28a745' : '#dc3545',
+        background: isClean ? '#f6fff8' : '#fff5f5',
+      }}
+    >
+      <h4 style={{ margin: '0 0 8px' }}>Delete graph (live foreign keys and triggers)</h4>
+      <p style={{ margin: '0 0 6px', fontSize: 14 }}>
+        Verdict:{' '}
+        <strong>
+          {status === 'ok' ? 'CLEAN' : status === 'refused' ? 'REFUSED' : 'NOT VERIFIED (treated as refused)'}
+        </strong>
+        {graph?.error ? ` (${graph.error})` : ''}
+      </p>
+      {sections
+        .filter((s) => s.items.length > 0)
+        .map((s) => (
+          <div key={s.title}>
+            <p style={{ margin: '6px 0 2px', fontSize: 13, fontWeight: 600 }}>{s.title}:</p>
+            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
+              {s.items.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      {graph && graph.cascadeAfterParent.length > 0 && (
+        <p style={{ margin: '6px 0 0', fontSize: 12, color: '#555' }}>
+          Counted after their cascade parent (statement count may read low; the snapshot count is the truth):{' '}
+          {graph.cascadeAfterParent.map((e) => `${e.child}${e.exempt ? ' (accepted)' : ''}`).join(', ')}
+        </p>
+      )}
+    </div>
+  );
 }
 
 type CommitOutcome =
@@ -187,6 +261,8 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
         onLog?.('error', `Could not count storage bucket ${s2.table}: ${s2.error ?? 'unknown'}`);
       }
       onLog?.('info', `Limitations reported: ${data.limitations.length}`);
+      const graphStatus = data.deleteGraph?.status ?? 'unreadable';
+      onLog?.(graphStatus === 'ok' ? 'info' : 'error', `Delete graph: ${graphStatus}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -425,6 +501,8 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
               </>
             )}
           </div>
+
+          <DeleteGraphPanel graph={result.deleteGraph} boxStyle={box} />
 
           <div style={box}>
             <h4 style={{ margin: '0 0 8px' }}>
