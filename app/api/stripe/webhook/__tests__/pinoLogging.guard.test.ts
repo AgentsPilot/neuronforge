@@ -126,10 +126,15 @@ describe('stripe webhook: Pino logging (P-0)', () => {
 
   // 173 at P-0. Plan payments P-1 deleted `handleInvoicePaid` and the
   // subscription-mode checkout conversion (with their log calls) and added the
-  // router's lines, leaving 134. The floor catches a conversion that silently
-  // drops logging; raise it, never lower it, unless code is deleted again.
-  it('logs only through log/logger at real levels (at least the 134 calls left after P-1)', () => {
-    expect(logCalls.length).toBeGreaterThanOrEqual(134);
+  // router's lines, leaving 134. Code was deleted again in two places that
+  // landed together, leaving 133: the Connect booking guess in
+  // `handleConnectInvoicePaid` (main, 2026-10-05, three calls) and the
+  // Pilot-Credit minting in `handleSubscriptionUpdated` (plan payments P-10a,
+  // five calls); each alone stayed above 134. The floor catches a conversion
+  // that silently drops logging; raise it, never lower it, unless code is
+  // deleted again.
+  it('logs only through log/logger at real levels (at least the 133 calls left after P-10a)', () => {
+    expect(logCalls.length).toBeGreaterThanOrEqual(133);
   });
 
   it('POST builds a request child carrying a correlationId, then binds the Stripe event id', () => {
