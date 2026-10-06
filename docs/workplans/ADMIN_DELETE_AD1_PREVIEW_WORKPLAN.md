@@ -5,7 +5,7 @@
 **Developer:** Dev
 **Requirement:** [ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md](/docs/requirements/ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md) §5 (AD-1), §6.1, §6.3, §8 (AC-A1…AC-A5), SA Review Notes (SC-1…SC-12)
 **Date:** 2026-10-04
-**Status:** AD-1a merged (PR #216, `0db9da62`). **AD-1b Code Complete (2026-10-04)** on `feature/admin-delete-ad1b-preview-route` (cut from `origin/main` `0db9da62`), SA-approved and QA-passed; PR #220 open. **AD-1c Code Complete (2026-10-05)**, uncommitted on `feature/admin-delete-ad1c-dialog` (stacked on `feature/admin-delete-ad1b-preview-route`; it needs AD-1b's route), waiting for SA code review.
+**Status:** ✅ **AD-1 COMPLETE (2026-10-05).** AD-1a PR #216 (`0db9da62`), AD-1b PR #220 (`208905b2`), AD-1c PR #222 (`4563fd69`). All three SA-approved and QA-passed; the user approved each diff.
 **Branch (AD-1a):** `feature/admin-delete-ad1a-reconciler`, cut from `origin/main` `1a9944a5` in worktree `neuronforge-admin-delete`. Original proposal for the whole slice: `feature/admin-delete-ad1-preview`. ⚠️ **It does not exist yet.** The working tree is on `main`, and local `main` is behind `origin/main`, which has 3,000+ lines of `app/admin/users` changes: the credits block, the dialog precedent and the source guard. RM must create the branch from **`origin/main`**. This plan was written against `origin/main` (`1a9944a5`), not the stale local tree.
 
 ## Overview
@@ -661,7 +661,13 @@ Hygiene: no DB was written and prod was not called. `git status --porcelain`, th
 
 ## Commit Info
 
-_(RM populates)_
+| Slice | Commit | PR | Notes |
+|---|---|---|---|
+| AD-1a | `a7bf7fee` (merge `0db9da62`) | #216 | Reconciler + 9 tables classified |
+| AD-1b | `208905b2` | #220 | Preview route, refusals, `checkAdminStatus`, preview audit event |
+| AD-1c | `4563fd69` | #221 → **#222** | #221 was stacked on the AD-1b branch and merged into it after #220 landed (the branch was not deleted, so GitHub did not retarget it). #222 carried the same commit to main |
+
+**AD-1c SA fix resolution (2026-10-05):** the one Medium (wire-type pin outside any CI type-check) was fixed by adding the test file to `SCOPED_DIRS` in `scripts/typecheck-bos-llm.ts` (planted drift → TS2344; runtime 114.4 s → 112.5 s). The coordinator verified the diff; there was no separate SA re-review, consistent with the proportionate-effort rule for a small, functionally verified fix.
 
 ---
 
@@ -681,3 +687,4 @@ _(RM populates)_
 | 2026-10-05 | SA code review (AD-1c) | Fix Required (one Medium). Deviations 1 and 3 accepted. Deviation 2 rejected as stated: no CI job type-checks the wire-type pin, so it must be added to `typecheck:bos-llm` scope and the drift proven. SC-9 read-only, no raw errors, client boundaries and a11y verified. Low: confirm's reason is empty in the error state. 265/265 |
 | 2026-10-05 | QA (AD-1c) | Pass (Jest half). Affected suites 23 / 781, authz guard 119 / 119, full npm test 0 non-quarantined failures. Wire-type pin fails on two planted drifts and was restored byte-identical. A temp test (deleted) verified reopen refetch, Esc / outside / both Close buttons, and that the disabled confirm takes no focus. 4 Low edge cases (empty reason in the error state = SA Low, no R-2 unverified render case, duplicate "Close" name, limitation keys). Manual visual pass owed |
 | 2026-10-05 | AD-1c SA/QA fixes (Dev) | Wire-type pin scoped into `typecheck:bos-llm` (single file) and proven by a planted drift; the confirm's reason is never empty; R-2 unverified render case; footer button renamed to "Close preview"; index-qualified limitation keys. 23 / 783 green, gate passed, runtime unchanged |
+| 2026-10-05 | AD-1 complete | Commit Info filled; status set to complete; AD-1c SA fix resolution recorded (verified by the coordinator) |

@@ -171,13 +171,18 @@ export interface DrainResult {
 /** Which rows the list shows (workplan §2.1). */
 export type QueueItemState = 'stuck' | 'failed' | 'dead_lettered' | 'waiting';
 
-/** Why an item cannot be re-sent (C7-5, C7-7, §E). 7c returns the same codes with a 422. */
+/**
+ * Why an item cannot be re-sent (C7-5, C7-7, §E). 7c returns the same codes
+ * with a 422. `retry_held`: lead-reply retry is switched off by
+ * `LEAD_RETRY_HELD` (SA fallback (b) for BL-7a); it ships off.
+ */
 export type QueueItemRetryRefusal =
   | 'retry_not_offered'
   | 'not_retryable_state'
   | 'retry_window_passed'
   | 'briefing_not_today'
-  | 'no_due_time';
+  | 'no_due_time'
+  | 'retry_held';
 
 /** Why an item cannot be cancelled (C7-2). */
 export type QueueItemCancelRefusal = 'leased' | 'not_cancellable_state';
@@ -256,8 +261,8 @@ export interface QueueItemsView {
 
 // ── One action on one queue item (ADMIN_BOS_CLEANUP slice 7b) ────────────────
 
-/** What `POST /api/admin/jobs-queues/items/action` can do. 7b: cancel only; 7c widens this union. */
-export type QueueItemAction = 'cancel';
+/** What `POST /api/admin/jobs-queues/items/action` can do: 7b cancel, 7c retry. */
+export type QueueItemAction = 'cancel' | 'retry';
 
 /** The body of `POST /api/admin/jobs-queues/items/action`. Exactly these keys (strict on the server). */
 export interface QueueItemActionRequest {
@@ -276,16 +281,33 @@ export interface QueueItemStatusWord {
   statusLabel: string;
 }
 
-/** `data` of a successful action. Exactly these keys: no account id, no content. */
-export interface QueueItemActionResult {
+/** `data` of a successful cancel. Exactly these keys: no account id, no content. */
+export interface QueueItemCancelResult {
   queue: string;
   itemId: string;
-  action: QueueItemAction;
+  action: 'cancel';
   before: QueueItemStatusWord;
   after: QueueItemStatusWord;
 }
 
-/** The `code` of a refused or failed action. */
+/**
+ * `data` of a successful retry (slice 7c, OP-14). Exactly these keys.
+ * `nextAttemptAt`: the reminder's next sending-hours time, ISO; null on the
+ * other queues (due at once). Never an account id, never content.
+ */
+export interface QueueItemRetryResult {
+  queue: string;
+  itemId: string;
+  action: 'retry';
+  before: QueueItemStatusWord;
+  after: QueueItemStatusWord;
+  nextAttemptAt: string | null;
+}
+
+/** `data` of a successful action, by `action`. */
+export type QueueItemActionResult = QueueItemCancelResult | QueueItemRetryResult;
+
+/** The `code` of a refused or failed action. The retry codes are the list's own (7a). */
 export type QueueItemActionRefusal =
   | 'invalid_input'
   | 'not_cancellable_state'
@@ -293,4 +315,5 @@ export type QueueItemActionRefusal =
   | 'item_not_found'
   | 'item_changed'
   | 'action_failed'
-  | 'outcome_unknown';
+  | 'outcome_unknown'
+  | QueueItemRetryRefusal;

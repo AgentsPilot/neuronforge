@@ -56,7 +56,7 @@ type Language = 'en' | 'es' | 'he';
 const PDF_LABELS: Record<Language, Record<string, string>> = {
   en: {
     invoiceNumber: 'Invoice Number',
-    copyWatermark: 'COPY',
+    copyBadge: 'COPY',
     date: 'Date',
     dueDate: 'Due Date',
     status: 'Status',
@@ -96,7 +96,7 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
   },
   es: {
     invoiceNumber: 'Número de Factura',
-    copyWatermark: 'COPIA',
+    copyBadge: 'COPIA',
     date: 'Fecha',
     dueDate: 'Fecha de Vencimiento',
     status: 'Estado',
@@ -136,7 +136,7 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
   },
   he: {
     invoiceNumber: 'מספר חשבונית',
-    copyWatermark: 'העתק',
+    copyBadge: 'העתק',
     date: 'תאריך',
     dueDate: 'תאריך לתשלום',
     status: 'סטטוס',
@@ -253,8 +253,9 @@ export interface InvoicePDFData {
    * client's bookkeeper is the person who needs it, not the client.
    *
    * It is the same invoice, not a new one: the number, the date and the amount
-   * are unchanged, and the watermark is the only difference. That is exactly
-   * what a copy is, and why this is a display flag rather than a new document.
+   * are unchanged, and the badge beside the invoice number is the only
+   * difference. That is exactly what a copy is, and why this is a display flag
+   * rather than a new document.
    * ───────────────────────────────────────────────────────────────────────────
    */
   isCopy?: boolean;
@@ -588,46 +589,56 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
       marginBottom: 2,
     },
     /*
-     * Under the content, not over it.
+     * The copy mark: a badge beside the invoice number, in the document's flow.
      *
-     * Absolutely positioned and behind everything drawn after it, so the figures
-     * stay fully legible — a watermark that obscures an amount defeats the
-     * document. Grey at low opacity for the same reason; it has to be noticed by
-     * a bookkeeper, not shouted at the client.
+     * ─────────────────────────────────────────────────────────────────────────
+     * IT REPLACES A DIAGONAL WATERMARK, AND NOT FOR TASTE.
+     *
+     * The watermark was absolutely positioned and drawn first so the figures
+     * would stay legible on top of it. They did — but so did everything else
+     * with a fill: the striped table rows, the notes block, the totals band.
+     * Those are opaque, so the word ran under them and came out in pieces, with
+     * whole letters missing where it crossed one. Rendered and looked at, it
+     * read as a printer fault rather than as a mark.
+     *
+     * A badge cannot do that: it is laid out, not overlaid, so nothing can be
+     * drawn across it and nothing it covers.
+     *
+     * Deliberately NOT the status colour. The status says what happened to the
+     * money; this says which SEND of the document you are holding, which is a
+     * different question, and colouring them alike invites reading one as the
+     * other. Grey on grey is the register of a filing mark.
+     * ─────────────────────────────────────────────────────────────────────────
      */
-    copyWatermark: {
+    copyBadge: {
+      fontSize: 8,
+      fontWeight: 700,
+      color: '#4B5563',
+      backgroundColor: '#F3F4F6',
+      borderWidth: 1,
+      borderStyle: 'solid',
+      borderColor: '#D1D5DB',
+      padding: '4 8',
       /*
-       * One diagonal strip across the page, behind everything.
-       *
-       * Absolutely positioned over the full sheet and drawn FIRST, so every
-       * figure stays legible on top of it. `justifyContent: center` puts the
-       * single band through the middle of the page rather than at the top.
+       * The gap between the two badges, written out per direction rather than
+       * as a logical `marginEnd`: the row is reversed for Hebrew, so the end
+       * side and the side the space is needed on are not the same thing.
        */
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      overflow: 'hidden',
-      alignItems: 'center',
-      justifyContent: 'center',
-      /*
-       * Faint enough to read straight through. A watermark that obscures an
-       * amount defeats the document; this needs to be seen by somebody checking
-       * whether they already have the invoice, not shouted at the client.
-       */
-      opacity: 0.1,
+      marginLeft: isRTL ? 0 : 4,
+      marginRight: isRTL ? 4 : 0,
+      textAlign: isRTL ? 'left' : 'right',
     },
-    copyWatermarkText: {
-      /*
-       * Large enough to span the page corner to corner at this angle. One word,
-       * not repeated: the mark says "this is a duplicate", and saying it once
-       * across the sheet is what a stamped copy looks like.
-       */
-      fontSize: 120,
-      fontWeight: 'bold',
-      color: '#000000',
-      transform: 'rotate(-35deg)',
+    /*
+     * The two badges on one line, in the order the language reads: the status
+     * first, the copy mark beside it. Carries the spacing and the edge
+     * alignment that used to sit on each badge, so that a row of one and a row
+     * of two sit in exactly the same place under the invoice number.
+     */
+    invoiceBadges: {
+      flexDirection: isRTL ? 'row-reverse' : 'row',
+      alignItems: 'center',
+      marginTop: 5,
+      alignSelf: isRTL ? 'flex-start' : 'flex-end',
     },
     invoiceNumber: {
       fontFamily: headingFontFamily,
@@ -642,9 +653,8 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
       color: '#FFFFFF',
       backgroundColor: getStatusColor(invoice.status),
       padding: '4 8',
-      marginTop: 5,
       textAlign: isRTL ? 'left' : 'right',
-      alignSelf: isRTL ? 'flex-start' : 'flex-end',
+      /* Spacing and edge alignment now belong to `invoiceBadges`, the row. */
     },
     detailsRow: {
       flexDirection: isRTL ? 'row-reverse' : 'row',
@@ -851,19 +861,6 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        {/*
-          The copy mark, when this is a resend.
-          Drawn FIRST and absolutely positioned so it sits under the content: a
-          watermark over the figures makes the amount harder to read, which is
-          the one thing an invoice must never be. `fixed` so it repeats on a
-          second page rather than marking only the first.
-        */}
-        {data.isCopy && (
-          <View style={styles.copyWatermark} fixed>
-            <Text style={styles.copyWatermarkText}>{labels.copyWatermark}</Text>
-          </View>
-        )}
-
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.companySection}>
@@ -887,7 +884,21 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
           <View style={styles.invoiceSection}>
             <SmartText style={styles.invoiceLabel} isRTL={isRTL}>{headingLabel}</SmartText>
             <Text style={styles.invoiceNumber}>{invoice.invoice_number}</Text>
-            <SmartText style={styles.statusBadge} isRTL={isRTL}>{statusLabel}</SmartText>
+            {/*
+              The copy mark, when this is a resend — a badge beside the status,
+              not a stamp across the sheet. The diagonal watermark it replaces
+              was drawn first so it would sit UNDER the content, and that is
+              exactly what spoiled it: every row stripe, every tinted band and
+              the notes block are opaque, so the word was chopped into pieces
+              wherever it ran beneath one. A mark that arrives in fragments
+              reads as a printing fault, not as a mark.
+            */}
+            <View style={styles.invoiceBadges}>
+              <SmartText style={styles.statusBadge} isRTL={isRTL}>{statusLabel}</SmartText>
+              {data.isCopy && (
+                <SmartText style={styles.copyBadge} isRTL={isRTL}>{labels.copyBadge}</SmartText>
+              )}
+            </View>
           </View>
         </View>
 

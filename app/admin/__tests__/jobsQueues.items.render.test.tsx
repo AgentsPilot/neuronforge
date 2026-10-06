@@ -581,40 +581,59 @@ describe('U-8 / U-9 / W7A-10: no leak, no action', () => {
   });
 
   // Amended by slice 7b (workplan §2.8): the four tabs, then one "Cancel item"
-  // per cancellable row, then Previous / Next. "Cancel item" is the ONE action
-  // word allowed, and only as a button inside a cell.
-  it('W7A-10 / 7b: the open panel\'s buttons are the four tabs, one Cancel item per cancellable row, and Previous / Next', async () => {
+  // per cancellable row, then Previous / Next. Amended by slice 7c (§2.9): one
+  // "Retry item" per re-sendable row, in its Re-send cell, before that row's
+  // "Cancel item". "Cancel item" and "Retry item" are the ONLY action words
+  // allowed, and only as buttons inside a cell.
+  it('W7A-10 / 7b / 7c: the open panel\'s buttons are the four tabs, one Retry item per re-sendable row, one Cancel item per cancellable row, and Previous / Next', async () => {
     itemsReply = (params) => ({
       status: 200,
       body: {
         success: true,
         data: itemsView(params, [
           item(),
-          item({ id: '22222222-aaaa-4bbb-8ccc-dddddddddddd', cancel: { allowed: false, code: 'not_cancellable_state' } }),
+          item({
+            id: '22222222-aaaa-4bbb-8ccc-dddddddddddd',
+            retry: { allowed: false, code: 'not_retryable_state' },
+            cancel: { allowed: false, code: 'not_cancellable_state' },
+          }),
           item({ id: '33333333-aaaa-4bbb-8ccc-dddddddddddd', cancel: { allowed: true } }),
+          item({ id: '44444444-aaaa-4bbb-8ccc-dddddddddddd', retry: { allowed: false, code: 'retry_window_passed' } }),
         ]),
       },
     });
     const panel = await openPanel('lead_responses');
-    await waitFor(() => expect(within(panel).getAllByTestId('queue-item-row')).toHaveLength(3));
+    await waitFor(() => expect(within(panel).getAllByTestId('queue-item-row')).toHaveLength(4));
     expect(within(panel).getAllByRole('button').map((b) => b.textContent)).toEqual([
       'Stuck',
       'Failed',
       'Dead-lettered',
       'Waiting',
+      'Retry item',
+      'Cancel item',
+      'Retry item',
       'Cancel item',
       'Cancel item',
       'Previous',
       'Next',
     ]);
     for (const button of within(panel).getAllByRole('button')) {
-      if (button.textContent === 'Cancel item') continue;
+      if (button.textContent === 'Cancel item' || button.textContent === 'Retry item') continue;
       expect(button.textContent).not.toMatch(/retry|re-send|cancel|requeue|release|drain/i);
     }
     // The column headers are header cells, not buttons.
     expect(within(panel).getByRole('columnheader', { name: 'Re-send' })).toBeInTheDocument();
     expect(within(panel).getByRole('columnheader', { name: 'Cancellable' })).toBeInTheDocument();
-    expect(panel.querySelectorAll('td button')).toHaveLength(2);
+    expect(panel.querySelectorAll('td button')).toHaveLength(5);
+    // Each Retry item sits in its row's Re-send cell (the second-to-last cell).
+    for (const row of within(panel).getAllByTestId('queue-item-row')) {
+      const cells = row.querySelectorAll('td');
+      for (const button of row.querySelectorAll('td button')) {
+        const cell = button.closest('td');
+        if (button.textContent === 'Retry item') expect(cell).toBe(cells[cells.length - 2]);
+        else expect(cell).toBe(cells[cells.length - 1]);
+      }
+    }
     expect(panel.querySelectorAll('td a, td input')).toHaveLength(0);
   });
 

@@ -1443,72 +1443,48 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       log.info({ bookingId: platformInvoice.booking_id }, 'Booking payment status updated to paid');
     }
   } else {
-    // Fallback: Try to find booking by contact_id, user_id, and matching amount
-    log.info({ invoiceId: platformInvoice.id }, 'Invoice has no booking_id, attempting to find matching booking');
-
     /*
-     * Guessing which booking a payment belongs to — and never guessing a
-     * CANCELLED one.
+     * ───────────────────────────────────────────────────────────────────────
+     * NO BOOKING ON THE INVOICE MEANS NO BOOKING. WE DO NOT GUESS.
      *
-     * ─────────────────────────────────────────────────────────────────────────
-     * Cancelling deliberately leaves `payment_status` alone: `paid` on a
-     * cancelled booking is true, because the business is still holding the
-     * money. So a cancelled appointment keeps whatever it had, and an unpaid
-     * one keeps `pending` — precisely what this guess looks for.
+     * This used to hunt for one: same contact, a booking whose SERVICE PRICE
+     * equalled the invoice amount, most recent unpaid one wins. On a match it
+     * marked that booking paid AND wrote its id onto the invoice.
      *
-     * That made this the one place the stale value could do harm. A client with
-     * a cancelled booking and a newer live one pays an invoice carrying no
-     * `booking_id`; the newer booking is already `paid` and so excluded by the
-     * filter below, leaving the CANCELLED one as the newest match. The money is
-     * then marked against it and `booking_id` written onto the invoice, binding
-     * a real payment to an appointment that is not happening — permanently,
-     * since the binding is what every later read follows.
+     * Those three signals cannot tell an invoice raised FOR a booking from a
+     * standalone invoice that happens to cost the same — which, for a business
+     * selling one service repeatedly at one price, is the normal shape of the
+     * data rather than an edge case.
      *
-     * `completed` and `no_show` stay eligible on purpose: paying after the
-     * service is an ordinary flow, and a no-show fee is a real charge.
-     * ─────────────────────────────────────────────────────────────────────────
+     * It did real damage, both halves silent:
+     *
+     *   A standalone invoice raised from the orders page was bound, on payment,
+     *   to an unrelated booking three days older that already had its own
+     *   invoice. The invoice left the "invoices without an order" tab, merged
+     *   into that booking's row, and the row read ₪600 overdue — one paid
+     *   invoice and one unpaid, totalled as if they were one job.
+     *
+     *   And the booking was marked PAID by money that was never for it. Nobody
+     *   checks a booking that says paid.
+     *
+     * The binding was permanent: `booking_id` is what every later read follows.
+     *
+     * The backfill that does this same matching over historical rows
+     * (20260825_backfill_invoice_booking_id.sql) learned this and guards hard —
+     * one-to-one in BOTH directions, within an hour, and only where the booking
+     * has no invoice yet. Its own words: "a booking showing ₪800 it never
+     * charged is worse than a booking showing nothing." That is the standard a
+     * guess has to meet, and three loose signals at payment time do not.
+     *
+     * The link belongs at CREATION, where it is known. An invoice raised
+     * against a booking carries `booking_id` from the start and takes the
+     * branch above; one raised standalone is standalone, and stays that way.
+     * ───────────────────────────────────────────────────────────────────────
      */
-    const { data: matchingBooking, error: matchError } = await supabaseAdmin
-      .from('scheduling_bookings')
-      .select('id, service:scheduling_services(price)')
-      .eq('user_id', platformInvoice.user_id)
-      .eq('contact_id', platformInvoice.contact_id)
-      .in('payment_status', ['pending', null])
-      .neq('status', 'cancelled')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (matchingBooking && !matchError) {
-      const servicePrice = (matchingBooking.service as { price?: number } | null)?.price || 0;
-      const invoiceAmount = platformInvoice.amount || invoice.amount_paid / 100;
-
-      if (Math.abs(servicePrice - invoiceAmount) < 0.01) {
-        // Update booking payment status
-        await supabaseAdmin
-          .from('scheduling_bookings')
-          .update({
-            payment_status: 'paid',
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', matchingBooking.id);
-
-        // Also update invoice with booking_id for future reference
-        await supabaseAdmin
-          .from('payment_invoices')
-          .update({
-            booking_id: matchingBooking.id,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', platformInvoice.id);
-
-        log.info({ bookingId: matchingBooking.id, invoiceId: platformInvoice.id }, 'Found and updated matching booking');
-      } else {
-        log.info({ servicePrice, invoiceAmount }, 'Found booking but amount mismatch');
-      }
-    } else {
-      log.info({ invoiceId: platformInvoice.id }, 'No matching pending booking found for invoice');
-    }
+    log.info(
+      { invoiceId: platformInvoice.id },
+      'Invoice has no booking_id; left unlinked rather than matched by guess'
+    );
   }
 
   // Log audit event

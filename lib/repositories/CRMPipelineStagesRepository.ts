@@ -7,7 +7,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
-import type { StageType } from '@/lib/crm/StageTypeUtils';
+import { TERMINAL_STAGE_TYPES, type StageType } from '@/lib/crm/StageTypeUtils';
 
 const logger = createLogger({ service: 'CRMPipelineStagesRepository' });
 
@@ -291,12 +291,38 @@ export class CRMPipelineStagesRepository {
   }
 
   /**
-   * Find the "active client" stage for a user's pipeline
-   * Looks for common stage keys: 'active_client', 'active', 'client', 'closed_won'
-   * Falls back to the stage at position 2+ (typically active/client stages)
+   * The stage that means "this person is a client of ours, now".
    *
-   * @deprecated Use findClientStage() from '@/lib/crm/StageTypeUtils' instead.
-   * This method uses heuristics; the new utility uses the semantic stage_type column.
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS WAS MOVING PEOPLE TO *INACTIVE*
+   *
+   * This asked the question by NAME. It matched a stage whose label contained
+   * "active" — and `'Inactive'.includes('active')` is true, because "inactive"
+   * ends with the word it negates. So a stage meaning *the relationship is
+   * over* answered the question *who is an active client*, and creating a paid
+   * booking moved the contact straight into it.
+   *
+   * Not hypothetical: the therapist pipeline ships `inactive` / "Inactive" /
+   * `stage_type: 'past_client'` at position 4, and any pipeline reaching the
+   * label test with such a stage hits it every time. It read as intermittent
+   * because pipelines whose keys match at step 1 never get that far.
+   *
+   * The failure was never the typo alone. It was asking by name at all, which
+   * `components/crm/contactStatus.ts` already warns about: pipelines are
+   * generated per business, so one calls the stage `inactive`, the next
+   * `הושלם`, the next `closed_lost`. The semantic columns exist precisely so
+   * nobody has to guess — `is_primary_client_stage`, then `stage_type`.
+   *
+   * THE NAME HEURISTICS SURVIVE, BEHIND THE SEMANTIC ONES AND FENCED.
+   * Rows written before `stage_type` existed may carry no usable type, and a
+   * business with such a pipeline still needs an answer. But no heuristic may
+   * now return a TERMINAL stage, whatever it is called: a stage meaning the
+   * relationship ended cannot be the stage meaning it began.
+   *
+   * Returns null when the pipeline genuinely has no client stage. The caller
+   * leaves the contact where they are, which is the right outcome — better than
+   * inventing a stage the business never defined.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   async findActiveClientStage(userId: string): Promise<CRMPipelineStagesRepositoryResult<CRMPipelineStage | null>> {
     try {
@@ -305,35 +331,57 @@ export class CRMPipelineStagesRepository {
         return { data: null, error: stagesResult.error };
       }
 
+      // `list` orders by position, so "first" below means first in the pipeline.
       const stages = stagesResult.data;
 
-      // Priority order for finding "active client" stage
-      const activeStageKeys = ['active_client', 'active', 'client', 'closed_won'];
+      /*
+       * A stage the business marked as where its clients live. The flag is the
+       * owner's own answer and outranks everything else.
+       */
+      const primary = stages.find(stage => stage.is_primary_client_stage);
+      if (primary) return { data: primary, error: null };
 
-      for (const key of activeStageKeys) {
-        const found = stages.find(s => s.stage_key === key);
-        if (found) {
-          return { data: found, error: null };
-        }
-      }
+      /* Otherwise the first stage classified as a client stage. */
+      const byType = stages.find(stage => stage.stage_type === 'client');
+      if (byType) return { data: byType, error: null };
 
-      // Fallback: find a stage with "active" or "client" in the label (case insensitive)
-      const byLabel = stages.find(s =>
-        s.stage_label.toLowerCase().includes('active') ||
-        s.stage_label.toLowerCase().includes('client')
+      /*
+       * No semantic answer. Everything below is a guess at a name, so none of
+       * it may land on a stage that means the relationship is over.
+       */
+      const candidates = stages.filter(
+        stage => !TERMINAL_STAGE_TYPES.includes(stage.stage_type)
       );
-      if (byLabel) {
-        return { data: byLabel, error: null };
+      if (candidates.length === 0) return { data: null, error: null };
+
+      const activeStageKeys = ['active_client', 'active', 'client', 'closed_won'];
+      for (const key of activeStageKeys) {
+        const found = candidates.find(stage => stage.stage_key === key);
+        if (found) return { data: found, error: null };
       }
 
-      // Last resort: use the second-to-last stage (often the "active" stage before completed)
-      if (stages.length >= 3) {
-        return { data: stages[stages.length - 2], error: null };
+      /*
+       * By label, as a last resort before counting positions.
+       *
+       * `includes('active')` is gone: it is the bug above, and a filter that
+       * needs an exclusion list to be safe is the wrong test. These match the
+       * WORD, so "Active Client" and "Client" qualify and "Inactive" does not.
+       */
+      const byLabel = candidates.find(stage => /\b(active|client)\b/i.test(stage.stage_label));
+      if (byLabel) return { data: byLabel, error: null };
+
+      /*
+       * Position, which says nothing about meaning and is why this is last.
+       * The second-to-last stage is usually the one before "completed" — taken
+       * from the non-terminal stages, so a pipeline ending in two terminal
+       * stages does not hand back one of them.
+       */
+      if (candidates.length >= 3) {
+        return { data: candidates[candidates.length - 2], error: null };
       }
 
-      // If only 2 stages, use the last one
-      if (stages.length >= 2) {
-        return { data: stages[1], error: null };
+      if (candidates.length >= 2) {
+        return { data: candidates[1], error: null };
       }
 
       return { data: null, error: null };

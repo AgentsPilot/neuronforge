@@ -1,6 +1,6 @@
 {
  "generated": "2026-10-04",
- "count": 146,
+ "count": 147,
  "levels": {
   "admin_users": "never",
   "advisor_reports": "never",
@@ -31,6 +31,7 @@
   "boost_pack_purchases": "never",
   "bos_cron_run_recording": "never",
   "bos_cron_runs": "never",
+  "business_addresses": "purge",
   "business_chat_action_log": "reset",
   "business_chat_conversation": "reset",
   "business_chat_plan_cache": "reset",
@@ -153,6 +154,7 @@
   "ais_scoring_weights": "2026-10-04 AD-1a SC-8: no tenancy column; updated_by -> auth.users SET NULL. Actor reference on platform data: never.",
   "ais_system_config": "2026-10-04 AD-1a SC-8: no tenancy column; updated_by -> auth.users SET NULL. Actor reference on platform data: never.",
   "auth_handoff_codes": "2026-10-04 AD-1a SC-8: live user_id column, user_id -> auth.users CASCADE, no inbound FK. Ephemeral identity-level sign-in handoff, not business data: never.",
+  "business_addresses": "2026-10-06: added by 20261036_business_addresses_book.sql; FK business_profiles CASCADE (20261037); inbound FKs business_profiles.address_id / invoice_address_id SET NULL. Business configuration kept by Reset with its profile: purge/CONFIG.",
   "exchange_rate_history": "2026-10-04 AD-1a SC-8: no tenancy column; changed_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK.",
   "exchange_rates": "2026-10-04 AD-1a SC-8: no tenancy column; updated_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK.",
   "insight_actions": "2026-10-04 AD-1a SC-8: live user_id column; FK business_profiles CASCADE; no inbound FK (measured by scripts/purge-schema-reconcile.ts). Business data, reset/LEAF (SA-1(a)).",

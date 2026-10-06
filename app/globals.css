@@ -345,6 +345,28 @@ html[data-public-surface] :focus-visible {
 /* Silent scrollbar styling for prompt inputs */
 .scrollbar-thin {
   scrollbar-width: thin;
+  /* ─────────────────────────────────────────────────────────────────────────
+     `scrollbar-color` IS THE RULE THAT ACTUALLY PAINTS THIS BAR.
+
+     Everything below is `::-webkit-scrollbar-*`, and Chrome has ignored all of
+     it since 121: once the STANDARD `scrollbar-width` is specified — which the
+     line above does — the browser renders its standard scrollbar and drops the
+     webkit pseudo-elements entirely. So the thumb colours below, light and dark
+     alike, were never reaching Chrome at all; it was drawing its own default,
+     and the default follows `color-scheme`, which this app only ever sets on
+     `input` (see the date-picker block further down). A dark dialog therefore
+     got a light scrollbar, and no amount of `::-webkit-scrollbar-thumb` could
+     change it.
+
+     Setting both is not belt-and-braces for nothing: the webkit rules still
+     serve Safari and older Chrome, and where both are honoured the standard
+     property wins — so the two are kept in agreement rather than left to
+     disagree silently. ───────────────────────────────────────────────────── */
+  scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+}
+
+.dark .scrollbar-thin {
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
 }
 
 .scrollbar-thin::-webkit-scrollbar {
@@ -369,6 +391,29 @@ html[data-public-surface] :focus-visible {
 
 .scrollbar-thin::-webkit-scrollbar-thumb:active {
   background: rgba(107, 114, 128, 0.8);
+}
+
+/* The same bar, legible on a dark surface instead of shouting from it.
+
+   The three rules above are a fixed LIGHT grey — `rgb(209, 213, 219)` is
+   Tailwind's grey-300. That reads as a quiet line on white and as a bright
+   stripe against `#0a0a0a`, which is the opposite of what a scrollbar is for:
+   the brightest thing in a dialog should not be the furniture.
+
+   Bound to the `.dark` CLASS, matching `@custom-variant dark` at the top of this
+   file and the date-picker fix below it — this project drives dark mode from the
+   class, never from `prefers-color-scheme`, so a media query here would miss
+   every manual toggle. */
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.dark .scrollbar-thin::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.38);
 }
 
 /* Make scrollbar fade in only when needed */

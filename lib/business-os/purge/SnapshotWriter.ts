@@ -68,6 +68,12 @@ export interface SnapshotResult {
   bytes?: number;
   tableCount?: number;
   rowCount?: number;
+  /**
+   * Rows captured per table (purge slice 3b, SA OQ-4). The orchestrator reports
+   * these as the truth for "rows removed": the RPC's statement counts miss rows
+   * a parent's cascade removed first, so they are diagnostics only.
+   */
+  tableCounts?: Record<string, number>;
   /** Present on failure. The run must abort on any of these. */
   error?: string;
   verified: boolean;
@@ -203,6 +209,7 @@ export async function writeVerifiedSnapshot(params: {
       bytes: body.length,
       tableCount: tables.length,
       rowCount,
+      tableCounts: Object.fromEntries(tables.map((t) => [t.table, t.count])),
     };
   } catch (error) {
     return {

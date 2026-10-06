@@ -126,7 +126,14 @@ describe('a job with no run yet', () => {
     // which is after this fixture's clock (2026-09-27): not measured yet.
     const isDated = (id: string) => findBosCronJob(id)!.addedOn !== undefined;
     expect(emptyView.jobs.filter((j) => !isDated(j.id)).every((j) => j.status === 'stopped')).toBe(true);
-    expect(emptyView.jobs.filter((j) => isDated(j.id)).map((j) => j.status)).toEqual(['no_run_yet']);
+    /* EVERY dated job reads "not measured yet", however many there are. This
+       asserted a one-element array, so adding a second dated cron
+       (`stripe-settlement-gap`) failed it on its length rather than on the
+       behaviour — which is that a job carrying its own "added on" day is not
+       called stopped before that day has ended. */
+    const datedStatuses = emptyView.jobs.filter((j) => isDated(j.id)).map((j) => j.status);
+    expect(datedStatuses.length).toBeGreaterThan(0);
+    expect(new Set(datedStatuses)).toEqual(new Set(['no_run_yet']));
     expect(tilesFor(empty).t6.status).toBe('red');
   });
 });
@@ -234,7 +241,9 @@ describe('tile numbers equal page numbers (A-8), over a mixed fixture', () => {
     const { view, t6, t7 } = tilesFor(inputs);
     const n = (s: string) => view.jobs.filter((j) => j.status === s).length;
     const fig = (tile: typeof t6, label: string) => tile.figures.find((f) => f.label === label)?.value;
-    expect(fig(t6, 'Jobs healthy')).toBe(`${n('healthy')} of 13`); // 13 jobs since credit deduction slice 4b
+    // Counted from the registry: the tile says `healthy of TOTAL`, and the
+    // total is however many jobs the platform runs today.
+    expect(fig(t6, 'Jobs healthy')).toBe(`${n('healthy')} of ${BOS_CRON_JOBS.length}`);
     expect(fig(t6, 'Jobs late')).toBe(String(n('late')));
     expect(fig(t6, 'Jobs stopped')).toBe(String(n('stopped')));
     expect(fig(t6, 'Jobs failing (last run, or run after run)')).toBe(String(n('last_run_failed') + n('keeps_failing')));

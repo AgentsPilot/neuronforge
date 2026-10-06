@@ -1,9 +1,10 @@
 'use client';
 
 import { FileText, CreditCard, CalendarClock, ChevronDown } from 'lucide-react';
-import { itemFlow, outstandingOf, type MoneyItem, type MoneyStatus } from '@/lib/payments/moneyItems';
+import { itemFlow, outstandingOf, type MoneyItem } from '@/lib/payments/moneyItems';
 import { planPeriodText } from './MoneyDetailDrawer';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
+import { STATUS_INK, STATUS_TONE, statusChipStyle } from '@/lib/payments/moneyStatusTone';
 import { moneyRowReference } from '@/lib/payments/moneyRowReference';
 
 /**
@@ -31,22 +32,13 @@ import { moneyRowReference } from '@/lib/payments/moneyRowReference';
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-/**
- * `chip` is the pill's ground, added when the state moved out of a column of
- * its own and in beside the amount: a coloured word floating next to a figure
- * reads as part of the figure, where a chip reads as a label on it.
+/*
+ * The status colours live in `lib/payments/moneyStatusTone`, with every surface
+ * that shows a money state reading the same map — this row's chip, the schedule
+ * under it, the cashflow bar beside it, the summary strip above it and the
+ * detail drawer it opens. Four of those used to disagree; the module's own note
+ * has the detail.
  */
-const STATUS_STYLE: Record<MoneyStatus, { text: string; dot: string; chip: string }> = {
-  paid: { text: 'text-emerald-600', dot: 'bg-emerald-500', chip: 'bg-emerald-500/10' },
-  // Orange, not red: a refund is a completed deliberate act, not a failure.
-  partially_refunded: { text: 'text-amber-600', dot: 'bg-amber-500', chip: 'bg-amber-500/10' },
-  refunded: { text: 'text-orange-600', dot: 'bg-orange-500', chip: 'bg-orange-500/10' },
-  awaiting_payment: { text: 'text-blue-600', dot: 'bg-blue-500', chip: 'bg-blue-500/10' },
-  overdue: { text: 'text-red-600', dot: 'bg-red-500', chip: 'bg-red-500/10' },
-  failed: { text: 'text-red-600', dot: 'bg-red-500', chip: 'bg-red-500/10' },
-  draft: { text: 'text-slate-500', dot: 'bg-slate-400', chip: 'bg-slate-400/10' },
-  cancelled: { text: 'text-slate-500', dot: 'bg-slate-400', chip: 'bg-slate-400/10' },
-};
 
 const METHOD_ICON = {
   direct: CreditCard,
@@ -90,7 +82,8 @@ export function MoneyRow({
   expanded = false,
   onToggleExpand,
 }: MoneyRowProps) {
-  const style = STATUS_STYLE[item.status];
+  const tone = STATUS_TONE[item.status] ?? REPORTS_COLORS.UNATTRIBUTED;
+  const chip = statusChipStyle(item.status);
   const MethodIcon = METHOD_ICON[item.method];
   const lead = item.entries[0];
 
@@ -229,16 +222,19 @@ export function MoneyRow({
                   : billed
                     ? t('payments.money_status.awaiting_payment') || 'awaiting payment'
                     : t('crm.payment.status_not_billed') || 'not billed yet',
+              // The same palette the chip above and the bar beside it use, so a
+              // period does not change colour on its way from the row into the
+              // schedule under it.
               tone: settled
-                ? 'text-emerald-600'
+                ? STATUS_TONE.paid
                 : stopped
-                  ? 'text-[var(--v2-text-muted)]'
+                  ? 'var(--v2-text-muted)'
                   : billed
-                    ? 'text-amber-600'
-                    : // Nothing has been asked for, so nothing is late. Amber
-                      // here would mark the owner's own unraised invoice as a
-                      // problem with the client.
-                      'text-[var(--v2-text-muted)]',
+                    ? STATUS_TONE.awaiting_payment
+                    : // Nothing has been asked for, so nothing is late. A warning
+                      // colour here would mark the owner's own unraised invoice
+                      // as a problem with the client.
+                      'var(--v2-text-muted)',
               amount: period.amount,
               struck: stopped,
             };
@@ -273,7 +269,7 @@ export function MoneyRow({
              rendered as the raw string.
           */
           state: t(`payments.money_status.${one.status}`) || one.status,
-          tone: STATUS_STYLE[one.status]?.text ?? 'text-[var(--v2-text-muted)]',
+          tone: STATUS_INK[one.status] ?? STATUS_TONE[one.status] ?? 'var(--v2-text-muted)',
           amount: one.amount,
           struck: one.status === 'cancelled',
         }))
@@ -450,15 +446,19 @@ export function MoneyRow({
             {formatCurrency(item.amount, item.currency)}
           </div>
           <div
-            className={`mt-1 inline-flex max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold ${style.chip} ${style.text}`}
+            className="mt-1 inline-flex max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold"
+            style={chip}
           >
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${style.dot}`} />
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: tone }} />
             <bdi className="truncate">{statusLabel}</bdi>
           </div>
 
           {/* A row reading "paid" with money returned is the misleading case. */}
           {item.refunded > 0 && (
-            <div className="mt-0.5 whitespace-nowrap text-[11px] tabular-nums text-orange-600">
+            <div
+              className="mt-0.5 whitespace-nowrap text-[11px] tabular-nums"
+              style={{ color: STATUS_TONE.refunded }}
+            >
               −{formatCurrency(item.refunded, item.currency)}
             </div>
           )}
@@ -532,7 +532,9 @@ export function MoneyRow({
                       {line.when}
                     </td>
                     <td className="py-1.5 pe-2">
-                      <span className={`text-[11px] font-semibold ${line.tone}`}>{line.state}</span>
+                      <span className="text-[11px] font-semibold" style={{ color: line.tone }}>
+                        {line.state}
+                      </span>
                     </td>
                     <td
                       className={`py-1.5 text-end font-semibold tabular-nums ${

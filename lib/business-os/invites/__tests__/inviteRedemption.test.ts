@@ -27,10 +27,12 @@ import { createGoogleIdTokenVerifier, type GoogleIdTokenVerification, type Googl
 import {
   completeGoogleSignup,
   completeSignup,
+  INVITER_NOTIFICATION_BACKSTOP_MS,
   requestSignupCode,
   type RedemptionAuditEntry,
   type RedemptionDeps,
 } from '../inviteRedemption';
+import type { NotifyInviterInput } from '../inviterNotification';
 import { refusalToHttp } from '../redemptionDeps';
 import { generateInviteToken, hashInviteToken } from '../inviteToken';
 import { hashSignupCode } from '../signupCode';
@@ -41,6 +43,8 @@ const EMAIL = 'invitee@example.com';
 const PASSWORD = 'correct horse battery';
 const CODE = '482913';
 const NEW_ID = '33333333-3333-4333-8333-333333333333';
+/** N-1: the admin who issued the (admin) invite: an auth user id. */
+const ADMIN_ID = '55555555-5555-4555-8555-555555555555';
 const TOKEN = generateInviteToken();
 const at = (offsetMs: number) => new Date(NOW.getTime() + offsetMs).toISOString();
 
@@ -51,6 +55,7 @@ function inviteRow(overrides: Partial<BusinessOsInviteRedemptionView> = {}): Bus
     invite_type: 'champion',
     issuer_kind: 'admin',
     issuer_account_id: null,
+    issuer_admin_id: ADMIN_ID,
     grant_kind: 'cohort',
     grant_id: 'champion',
     access_open_ended: true,
@@ -92,6 +97,8 @@ interface WorldOptions {
   issuerPlan?: { cohort: string | null; cohort_expires_at: string | null } | null | 'error';
   /** Slice 5b: what successive friend finalise calls answer (default: finalised at L2). */
   friendFinalise?: Array<FriendFinaliseOutcome | 'error'>;
+  /** N-1: what the inviter notification does (default: resolves). */
+  notify?: 'ok' | 'reject' | 'throw' | 'hang';
 }
 
 function world(options: WorldOptions = {}) {
@@ -107,6 +114,7 @@ function world(options: WorldOptions = {}) {
   const verified: Array<{ idToken: string; rawNonce: string }> = [];
   const notices: Array<{ to: string; language: string }> = [];
   const friendFinalised: Array<Record<string, unknown>> = [];
+  const notified: NotifyInviterInput[] = [];
   const friendAnswers = [...(options.friendFinalise ?? [])];
   let finaliseFailuresLeft = options.finaliseFailures ?? 0;
 
@@ -268,6 +276,20 @@ function world(options: WorldOptions = {}) {
       verified.push(input);
       return options.google ?? { kind: 'ok' as const, email: EMAIL };
     }),
+    // N-1: recorded apart from `calls`, so the existing call-order pins are unchanged.
+    notifyInviter: jest.fn((input: NotifyInviterInput) => {
+      notified.push(input);
+      switch (options.notify ?? 'ok') {
+        case 'reject':
+          return Promise.reject(new Error(`send failed for ${EMAIL}`));
+        case 'throw':
+          throw new Error(`threw for ${EMAIL}`);
+        case 'hang':
+          return new Promise<unknown>(() => undefined);
+        default:
+          return Promise.resolve({ outcome: 'sent' });
+      }
+    }),
     logger: {
       info: (...args: unknown[]) => logs.push(args),
       warn: (...args: unknown[]) => logs.push(args),
@@ -288,6 +310,7 @@ function world(options: WorldOptions = {}) {
     verified,
     notices,
     friendFinalised,
+    notified,
     row: () => row,
   };
 }
@@ -961,6 +984,7 @@ const friendInvite = (overrides: Partial<BusinessOsInviteRedemptionView> = {}) =
   inviteRow({
     issuer_kind: 'account',
     issuer_account_id: CHAMPION_ID,
+    issuer_admin_id: null,
     invite_type: INVITE_ISSUANCE_POLICY.account.inviteType,
     grant_kind: 'tier',
     grant_id: INVITE_ISSUANCE_POLICY.account.grantId,
@@ -1250,5 +1274,159 @@ describe('Slice 5b: switch ON', () => {
       expect(await google(w.deps)).toMatchObject({ status: 400, error: 'google_token_invalid' });
       expect(w.calls).not.toContain(`emailHasAccount:${EMAIL}`);
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// N-1: tell the inviter when the invite is accepted (FR-39; workplan §2.1, §5
+// tests 1 to 3; SA Q-1, C-1, C-2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('N-1: the inviter is notified after a successful finish, and only then', () => {
+  beforeEach(() => {
+    switchable.accountInvitesAvailable = true;
+  });
+  afterEach(() => {
+    switchable.accountInvitesAvailable = shippedSwitch;
+  });
+
+  const adminInput: NotifyInviterInput = {
+    event: 'accepted',
+    inviteId: INVITE_ID,
+    issuerKind: 'admin',
+    issuerAccountId: null,
+    issuerAdminId: ADMIN_ID,
+    inviteeEmail: EMAIL,
+    landing: 'onboarding',
+  };
+  const friendInput: NotifyInviterInput = {
+    event: 'accepted',
+    inviteId: INVITE_ID,
+    issuerKind: 'account',
+    issuerAccountId: CHAMPION_ID,
+    issuerAdminId: null,
+    inviteeEmail: EMAIL,
+    landing: 'awaiting_payment',
+  };
+
+  it.each([
+    ['password, admin invite', () => inviteRow(), (deps: RedemptionDeps) => complete(deps), adminInput],
+    ['Google, admin invite', () => inviteRow(), (deps: RedemptionDeps) => google(deps), adminInput],
+    ['password, friend invite', () => friendInvite(), (deps: RedemptionDeps) => complete(deps), friendInput],
+    ['Google, friend invite', () => friendInvite(), (deps: RedemptionDeps) => google(deps), friendInput],
+  ])('%s: called once, with the ids from the matched row and the landing', async (_label, row, run, expected) => {
+    const w = world({ row: row() });
+    expect(await run(w.deps)).toMatchObject({ ok: true });
+    expect(w.notified).toEqual([expected]);
+  });
+
+  it('C-2: the issuer id comes from the row (a request carries only the token, the code and the password)', async () => {
+    const otherAdmin = '66666666-6666-4666-8666-666666666666';
+    const w = world({ row: inviteRow({ issuer_admin_id: otherAdmin }) });
+    await complete(w.deps);
+    expect(w.notified[0].issuerAdminId).toBe(otherAdmin);
+  });
+
+  it.each<[string, WorldOptions, { signupCode?: string }]>([
+    ['issuer_not_eligible', { row: friendInvite(), friendFinalise: [{ outcome: 'issuer_not_eligible' }] }, {}],
+    ['a friend finalise failing twice', { row: friendInvite(), friendFinalise: ['error', 'error'] }, {}],
+    ['a champion finalise failing twice', { finaliseFailures: 2 }, {}],
+    ['an account creation failure', { create: 'other', userExists: false }, {}],
+    ['an id mismatch', { create: 'mismatch' }, {}],
+    ['a weak password', { create: 'weak_password' }, {}],
+    ['an existing account', { emailHasAccount: true }, {}],
+    ['a wrong code', {}, { signupCode: '000000' }],
+  ])('not called on %s', async (_label, options, overrides) => {
+    const w = world(options);
+    expect(await complete(w.deps, overrides)).toMatchObject({ ok: false });
+    expect(w.notified).toEqual([]);
+  });
+
+  it.each([
+    ['used', { redeemed_at: at(-1000) }],
+    ['revoked', { revoked_at: at(-1000) }],
+  ])('not called on a refusal before any claim (%s), by either method', async (_label, overrides) => {
+    const w = world({ row: inviteRow(overrides) });
+    expect(await complete(w.deps)).toMatchObject({ ok: false });
+    expect(await google(w.deps)).toMatchObject({ ok: false });
+    expect(w.notified).toEqual([]);
+  });
+
+  it('never on the code route', async () => {
+    const w = world({ row: inviteRow({ signup_code_last_sent_at: at(-10 * 60_000) }) });
+    expect(await requestSignupCode(TOKEN, w.deps)).toMatchObject({ ok: true });
+    expect(w.notified).toEqual([]);
+  });
+
+  it("already_finalised (the same request's own retry) still notifies, exactly once", async () => {
+    const w = world({
+      row: friendInvite(),
+      friendFinalise: [{ outcome: 'already_finalised', inviteId: INVITE_ID, level: 2 }],
+    });
+    expect(await complete(w.deps)).toMatchObject({ ok: true, landing: 'awaiting_payment' });
+    expect(w.notified).toHaveLength(1);
+  });
+
+  it('runs AFTER the success audits', async () => {
+    const order: string[] = [];
+    const w = world();
+    (w.deps.audit as jest.Mock).mockImplementation(async (entry: RedemptionAuditEntry) => {
+      order.push(entry.action);
+    });
+    (w.deps.notifyInviter as jest.Mock).mockImplementation(async () => {
+      order.push('notify');
+    });
+    await complete(w.deps);
+    expect(order).toEqual(['BOS_INVITE_REDEEMED', 'BOS_INVITE_PLAN_PROVISIONED', 'notify']);
+  });
+});
+
+describe('N-1: the notification can never fail or change the signup (test 2)', () => {
+  beforeEach(() => {
+    switchable.accountInvitesAvailable = true;
+  });
+  afterEach(() => {
+    switchable.accountInvitesAvailable = shippedSwitch;
+    jest.useRealTimers();
+  });
+
+  it.each(['reject', 'throw'] as const)(
+    'a notification that does "%s": the outcome is identical to the quiet one, logged with no address',
+    async (notify) => {
+      const quiet = world();
+      const failing = world({ notify });
+      const expected = await complete(quiet.deps);
+      expect(await complete(failing.deps)).toEqual(expected);
+      expect(expected).toEqual({ ok: true, email: EMAIL, accountId: NEW_ID, inviteId: INVITE_ID, landing: 'onboarding' });
+      expect(JSON.stringify(failing.logs)).toContain('Inviter notification failed');
+      expectNoSecrets(failing);
+    }
+  );
+
+  it("a friend's outcome is unchanged too", async () => {
+    const quiet = world({ row: friendInvite() });
+    const failing = world({ row: friendInvite(), notify: 'reject' });
+    expect(await complete(failing.deps)).toEqual(await complete(quiet.deps));
+  });
+
+  it('a notification that HANGS is abandoned at the backstop, and the outcome is unchanged', async () => {
+    jest.useFakeTimers();
+    const w = world({ notify: 'hang' });
+    let settled: unknown;
+    const pending = complete(w.deps).then((outcome) => {
+      settled = outcome;
+    });
+    await jest.advanceTimersByTimeAsync(INVITER_NOTIFICATION_BACKSTOP_MS - 1);
+    expect(settled).toBeUndefined();
+    await jest.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(settled).toEqual({ ok: true, email: EMAIL, accountId: NEW_ID, inviteId: INVITE_ID, landing: 'onboarding' });
+    expect(JSON.stringify(w.logs)).toContain('abandoned at the backstop');
+    expectNoSecrets(w);
+  });
+
+  it('the backstop sits just past the 4 s deadline (SA C-1)', () => {
+    expect(INVITER_NOTIFICATION_BACKSTOP_MS).toBeGreaterThan(4_000);
+    expect(INVITER_NOTIFICATION_BACKSTOP_MS).toBeLessThanOrEqual(5_000);
   });
 });

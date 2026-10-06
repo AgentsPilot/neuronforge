@@ -107,9 +107,61 @@ function matchesSuffix(host: string, suffix: string): boolean {
  * @param referrerDomain `crm_contacts.referrer_domain`
  * @param utmSource      `crm_contacts.utm_source`
  */
+/**
+ * Hosts that are the BUSINESS'S OWN, not somebody else's website.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A visitor who lands on the booking page, reads it, and submits the form
+ * arrives at the API with a referrer of the page they were just on — which is
+ * the business's own site. Falling through to `referral` filed every one of
+ * them as "another website", which is wrong twice over: it inflates the
+ * referral column with the business's own traffic, and it empties `direct`,
+ * which is where those people belong.
+ *
+ * `lib/utils/attribution.ts` already states the intended answer, in a comment
+ * about UTM tags being lost: "on a same-site referrer, which resolves to
+ * `direct`". It resolved to `direct` only because the referrer was dropped
+ * entirely. Once one is recorded, this is the rule that keeps that promise.
+ *
+ * Loopback and the local testing hosts are always self: a lead whose referrer
+ * is `localhost` came from a development machine, and on one live account that
+ * was EVERY lead — the channel card read "100% other websites, 2 leads" and
+ * showed a dash against Google, Instagram, Facebook and direct alike.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const ALWAYS_SELF = [
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '[::1]',
+  'lvh.me',
+  'localtest.me',
+];
+
+function isOwnHost(host: string, ownHosts: string[]): boolean {
+  const bare = host.replace(/:\d+$/, '');
+
+  if (ALWAYS_SELF.some(self => matchesSuffix(bare, self))) return true;
+
+  return ownHosts
+    .map(own => normalizeHost(own)?.replace(/:\d+$/, ''))
+    .filter((own): own is string => Boolean(own))
+    .some(own => matchesSuffix(bare, own));
+}
+
+/**
+ * Resolve a lead's channel from its stored attribution.
+ *
+ * @param referrerDomain `crm_contacts.referrer_domain`
+ * @param utmSource      `crm_contacts.utm_source`
+ * @param ownHosts       the platform's public host and the business's own
+ *   domain, so a visitor arriving from the booking page is counted as direct
+ *   rather than as a referral from a stranger's website.
+ */
 export function resolveChannel(
   referrerDomain?: string | null,
-  utmSource?: string | null
+  utmSource?: string | null,
+  ownHosts: string[] = []
 ): ChannelAttribution {
   // UTM wins when present: the user (or our own smart link) stated it explicitly.
   if (utmSource) {
@@ -132,6 +184,17 @@ export function resolveChannel(
       // After the email check above, a remaining google host is Search or Maps.
       if (isGoogleSearchHost(host)) {
         return { channel: 'google', basis: 'referrer', detail: host };
+      }
+
+      /*
+       * The business's own site is not a referral.
+       *
+       * Checked AFTER the named channels, so a business whose own domain
+       * somehow matched one of those still reports the channel — and before
+       * the catch-all, which is the branch that was swallowing it.
+       */
+      if (isOwnHost(host, ownHosts)) {
+        return { channel: 'direct', basis: 'referrer', detail: host };
       }
 
       // A referrer we don't recognise is still a referral from somewhere real —

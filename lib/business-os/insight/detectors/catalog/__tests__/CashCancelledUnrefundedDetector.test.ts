@@ -319,6 +319,59 @@ describe('what it deliberately leaves alone', () => {
   });
 });
 
+describe('what the narrator is told', () => {
+  it('says who called it off, so the card cannot guess', async () => {
+    /*
+     * The card read "2 פגישות שבוטלו על ידי הלקוח" while this row recorded
+     * `cancelled_by_client: false`. The model had no fact and filled the gap
+     * with the likelier-sounding half, and an owner read something untrue
+     * about their own client.
+     */
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'owner', cancellation_reason: null })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect(result!.narrationSubject).toContain('the business cancelled');
+    expect(result!.narrationSubject).not.toContain('the client cancelled');
+  });
+
+  it('says the client cancelled when they did', async () => {
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'client' })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect(result!.narrationSubject).toContain('the client cancelled');
+  });
+
+  it('carries the held amount, because the figure beside it is a count', async () => {
+    // Without this the model wrote "₪2 not refunded" — the count of bookings,
+    // rendered as money, beside a real ₪300.
+    const result = await detectorFor({
+      bookings: [booking()],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect(result!.currentValueUnit).toBe('count');
+    expect(result!.narrationSubject).toContain('300');
+  });
+
+  it('admits when nobody recorded the amount', async () => {
+    /*
+     * A cash payment marked on the booking and never written to the ledger.
+     * The card must not invent a figure for it, and saying so is better than
+     * a silent zero.
+     */
+    const result = await detectorFor({
+      bookings: [booking({ payment_status: 'paid' })],
+      transactions: [],
+    }).evaluate(U);
+
+    expect(result!.narrationSubject).toContain('nobody recorded');
+  });
+});
+
 describe('when the money cannot be read', () => {
   it('stays silent rather than reporting nothing as held', async () => {
     /*

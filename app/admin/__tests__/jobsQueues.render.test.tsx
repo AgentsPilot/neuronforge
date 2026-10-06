@@ -22,7 +22,7 @@ import { JOB_TONE, QUEUE_TONE, TONE_CLASSES, formatUtc } from '../components/job
 import { buildJobsQueuesView } from '@/lib/admin/jobs/buildJobsQueuesView';
 import type { CronRunSummaryRow } from '@/lib/admin/jobs/buildJobsQueuesView';
 import type { JobsQueuesView } from '@/lib/admin/jobs/jobsQueuesTypes';
-import { BOS_QUEUES, findBosCronJob } from '@/lib/cron/bosCronJobs';
+import { BOS_CRON_JOBS, BOS_QUEUES, findBosCronJob } from '@/lib/cron/bosCronJobs';
 import { fixtureRow, fixtureRun, quietQueueFigures, quietSummaryRows } from '@/tests/helpers/jobs-queues-fixtures';
 
 const GREEN = /\b(?:bg|text|border)-(?:green|emerald)-/;
@@ -74,12 +74,12 @@ describe('the Scheduled jobs & queues page', () => {
     expect(fetchMock.mock.calls[0]).toEqual(['/api/admin/jobs-queues', { cache: 'no-store' }]);
   });
 
-  it('lists all 13 jobs and all 5 queues, with a text status label each', async () => {
+  it('lists every job and all 5 queues, with a text status label each', async () => {
     mockRoute();
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('job-calendar-sync');
-    // 13 since credit deduction slice 4b added the nightly credit leak check.
-    expect(document.querySelectorAll('[data-testid^="job-"]')).toHaveLength(13);
+    // One row per registered job, counted rather than written down.
+    expect(document.querySelectorAll('[data-testid^="job-"]')).toHaveLength(BOS_CRON_JOBS.length);
     expect(document.querySelectorAll('[data-testid^="queue-"]')).toHaveLength(5);
     expect(within(screen.getByTestId('job-lead-response')).getByTestId('status-badge').textContent).toBe('Last run failed');
     expect(within(screen.getByTestId('job-calendar-sync')).getByTestId('status-badge').textContent).toBe('Healthy');

@@ -225,6 +225,45 @@ export interface DetectionResult {
   /** Current value of the metric */
   currentValue: number;
 
+  /**
+   * What `currentValue` is a quantity OF.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The narration prompt used to print it as `Amount involved: ₪X` for every
+   * detector, whatever the number measured. On one live account that produced,
+   * in the owner's own language:
+   *
+   *   ops_service_performance     currentValue 2  (services)   → "₪2 עלולים להפסיד ₪340"
+   *   cash_refund_pattern         currentValue 25 (per cent)   → "שיעור החזרות של 25 ₪"
+   *   cash_cancelled_unrefunded   currentValue 2  (bookings)   → "₪2 לא הוחזרו"
+   *
+   * The model was not hallucinating. It was told the number was money and
+   * wrote it as money.
+   *
+   * OMITTED means the figure is NOT sent to the narrator at all. That is the
+   * safe default and the reason this is optional: an unlabelled number the
+   * model has to guess the unit of is worse than a number it never saw, and
+   * `affectedCount` plus `estimatedImpactUsd` already carry the two quantities
+   * whose units are never in doubt.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  currentValueUnit?: 'money' | 'percent' | 'count' | 'days';
+
+  /**
+   * One short phrase naming WHAT this insight is about, built by the detector.
+   *
+   * The prompt carries counts and money and nothing else, so a card could say
+   * "one link you share does not open" and be unable to say WHICH — while the
+   * detector's own `processParameters` held the code, the name and the click
+   * count all along. The owner's reply to that card was "which link?".
+   *
+   * Written by the detector because only it knows which of its parameters are
+   * worth a sentence, and already in the reader's terms: "the booking link
+   * '5 שירותים', 25 clicks" rather than a parameter dump. Never include
+   * anything a client typed — this is handed to a model.
+   */
+  narrationSubject?: string;
+
   /** Baseline value for comparison */
   baselineValue: number;
 

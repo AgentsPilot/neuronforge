@@ -11,6 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WorkflowPilot } from '@/lib/pilot/WorkflowPilot';
@@ -5050,7 +5051,7 @@ export async function POST(req: NextRequest) {
         const agentRepo = new AgentRepository(runCtx.supabase);
         await agentRepo.setCalibrationStatus(runCtx.agentId, runCtx.userId, passed ? 'passed' : 'failed');
 
-        const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+        const base = new URL(req.url).origin || platformOrigin();
 
         // Email only for the background (post-creation) path — the manual sandbox
         // user is watching live and doesn't need an email.

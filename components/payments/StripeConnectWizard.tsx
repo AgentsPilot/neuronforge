@@ -367,7 +367,39 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
         if (!result?.success || !result.data || cancelled) return;
 
         const settings = result.data;
-        const address = settings.invoice_address ?? {};
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * BOTH ADDRESSES, NOT ONE.
+         *
+         * This read `invoice_address` alone — a screen most owners never open,
+         * since it exists for businesses that bill. An owner who had filled in
+         * their BUSINESS PROFILE and nothing else reached this step with an
+         * empty form and retyped an address the platform already held, on the
+         * one screen where typing it is most painful.
+         *
+         * The billing address still wins where both exist: it is the one a
+         * business states for money, which is what Stripe is asking about.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        let address = settings.invoice_address ?? {};
+
+        if (!address.line1 && !address.city) {
+          try {
+            const known = await fetch('/api/business-os/addresses', { cache: 'no-store' });
+            if (known.ok) {
+              const payload = await known.json();
+              if (cancelled) return;
+
+              const profile = (payload?.data?.addresses ?? []).find(
+                (entry: { source: string }) => entry.source === 'profile'
+              );
+              if (profile?.address) address = profile.address;
+            }
+          } catch {
+            // Still only a convenience; the form below is where it started.
+          }
+        }
 
         const candidate = String(address.country ?? '').trim().toUpperCase();
         const normalisedCountry = SUPPORTED_COUNTRIES.some(c => c.code === candidate)

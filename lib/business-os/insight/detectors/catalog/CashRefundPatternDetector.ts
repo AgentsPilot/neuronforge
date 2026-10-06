@@ -151,6 +151,12 @@ export class CashRefundPatternDetector extends BaseDetector {
       severity,
       metricKey: 'cashflow.refund_rate',
       currentValue: Math.round(refundRate * 10) / 10,
+
+      // A refund RATE. The card said "שיעור החזרות גבוה של 25 ₪" —
+
+      // twenty-five per cent, written as twenty-five shekels.
+
+      currentValueUnit: 'percent',
       baselineValue: this.definition.threshold,
       thresholdValue: this.definition.threshold,
       percentChange: Math.round(((refundRate - this.definition.threshold) / this.definition.threshold) * 100),

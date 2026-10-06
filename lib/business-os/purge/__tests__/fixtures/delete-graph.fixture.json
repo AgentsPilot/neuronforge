@@ -1,0 +1,20 @@
+{
+  "_comment": "SYNTHETIC delete graph for deleteGraph.test.ts (purge slice 3a). Not derived from any schema dump (parent plan C-1, SA OQ-6). on_delete codes are pg_constraint.confdeltype: a=NO ACTION, r=RESTRICT, c=CASCADE, n=SET NULL.",
+  "run": ["alpha_blocker", "alpha_leaf", "alpha_root", "alpha_tail"],
+  "foreign_keys": [
+    { "constraint_name": "alpha_blocker_root_fkey", "table_name": "alpha_blocker", "references": "alpha_root", "on_delete": "r" },
+    { "constraint_name": "alpha_leaf_root_fkey", "table_name": "alpha_leaf", "references": "alpha_root", "on_delete": "c" },
+    { "constraint_name": "alpha_tail_root_fkey", "table_name": "alpha_tail", "references": "alpha_root", "on_delete": "c" },
+    { "constraint_name": "alpha_root_parent_fkey", "table_name": "alpha_root", "references": "alpha_root", "on_delete": "c" },
+    { "constraint_name": "beta_nulled_root_fkey", "table_name": "beta_nulled", "references": "alpha_root", "on_delete": "n" },
+    { "constraint_name": "beta_kept_other_fkey", "table_name": "beta_kept", "references": "beta_other", "on_delete": "c" },
+    { "constraint_name": "alpha_root_user_fkey", "table_name": "alpha_root", "references": "users", "on_delete": "c" }
+  ],
+  "triggers": [
+    { "table_name": "alpha_leaf", "trigger_name": "alpha_leaf_reviewed", "definition": "CREATE TRIGGER alpha_leaf_reviewed AFTER INSERT OR DELETE OR UPDATE ON public.alpha_leaf FOR EACH ROW EXECUTE FUNCTION f()" },
+    { "table_name": "alpha_root", "trigger_name": "alpha_root_on_update", "definition": "CREATE TRIGGER alpha_root_on_update BEFORE UPDATE ON public.alpha_root FOR EACH ROW EXECUTE FUNCTION f()" },
+    { "table_name": "beta_kept", "trigger_name": "beta_kept_on_delete", "definition": "CREATE TRIGGER beta_kept_on_delete BEFORE DELETE ON public.beta_kept FOR EACH ROW EXECUTE FUNCTION f()" },
+    { "table_name": "beta_nulled", "trigger_name": "beta_nulled_on_delete", "definition": "CREATE TRIGGER beta_nulled_on_delete AFTER DELETE ON public.beta_nulled FOR EACH ROW EXECUTE FUNCTION f()" }
+  ],
+  "reviewed": [{ "table": "alpha_leaf", "trigger": "alpha_leaf_reviewed" }]
+}

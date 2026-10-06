@@ -468,6 +468,45 @@ export class StripeService {
   }
 
   /**
+   * Every invoice Stripe considers paid since a moment, for reconciliation.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Stripe is the authority on "money arrived"; our tables are only a record of
+   * it. This read exists so something can compare the two, because between
+   * 2026-09-26 and 2026-10-05 they disagreed for fourteen payments and nothing
+   * noticed: production held a signing secret no Stripe destination signs with,
+   * so every delivery was refused with a 400 and the money was recorded nowhere.
+   *
+   * `accountId` is the connected account to ask, or `null` for the platform's
+   * own. A direct charge on a connected account exists ONLY there, so asking
+   * the platform about it returns nothing — see `lib/payments/stripeAccountContext`.
+   *
+   * Filters on `created` rather than on the moment of payment, because Stripe
+   * offers no filter for the latter. An invoice created before the window can
+   * still be paid inside it, so callers get `created >= createdSince` and must
+   * narrow by `status_transitions.paid_at` themselves.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async listPaidInvoices(params: {
+    accountId: string | null;
+    createdSince: Date;
+    limit?: number;
+    startingAfter?: string;
+  }): Promise<{ invoices: Stripe.Invoice[]; hasMore: boolean }> {
+    const page = await this.stripe.invoices.list(
+      {
+        status: 'paid',
+        created: { gte: Math.floor(params.createdSince.getTime() / 1000) },
+        limit: params.limit ?? 100,
+        ...(params.startingAfter ? { starting_after: params.startingAfter } : {}),
+      },
+      params.accountId ? { stripeAccount: params.accountId } : undefined
+    );
+
+    return { invoices: page.data, hasMore: page.has_more };
+  }
+
+  /**
    * Construct webhook event from raw body
    */
   constructWebhookEvent(

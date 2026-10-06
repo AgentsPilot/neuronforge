@@ -118,7 +118,7 @@ describe('job status rules, first match wins', () => {
 });
 
 describe('the view', () => {
-  it('lists all 13 jobs and all 5 queues, healthy and clear on a quiet platform', () => {
+  it('lists every registered job and all 5 queues, healthy and clear on a quiet platform', () => {
     const view = buildJobsQueuesView(quietInputs(), NOW);
     expect(view.jobs.map((j) => j.id)).toEqual(BOS_CRON_JOBS.map((j) => j.id));
     expect(view.queues.map((q) => q.id)).toEqual(BOS_QUEUES.map((q) => q.id));
@@ -204,7 +204,13 @@ describe('A-8: the Health tiles show the page\'s own numbers', () => {
     expect(t6.status).toBe('red');
     expect(t6.headline).toBe('A job has stopped');
     expect(t6.figures.find((f) => f.label === 'Jobs stopped')?.value).toBe(String(jobs.stopped));
-    expect(t6.figures.find((f) => f.label === 'Jobs healthy')?.value).toBe(`${jobs.healthy} of 13`); // 13 jobs since credit deduction slice 4b
+    /* Counted from the registry, not written down. A hardcoded total turns
+        "somebody added a cron job" into a failing assertion about tile copy,
+        which is what adding `stripe-settlement-gap` did to this suite. The
+        behaviour under test is that the tile says `healthy of TOTAL`. */
+    expect(t6.figures.find((f) => f.label === 'Jobs healthy')?.value).toBe(
+      `${jobs.healthy} of ${BOS_CRON_JOBS.length}`
+    );
     expect(t7.status).toBe('red'); // a dead-letter in 24 h is red (OQ-7)
     expect(t7.headline).toBe('A message was dead-lettered in the last 24 hours');
     expect(t7.figures.find((f) => f.label === 'Items due now, all queues')?.value).toBe('4');
@@ -228,7 +234,7 @@ describe('C-10R on tiles 6 and 7', () => {
   };
   const byId = (tiles: ReturnType<typeof evaluateHealth>, id: string) => tiles.find((t) => t.id === id)!;
 
-  it('green only when all 13 jobs have a recorded run and all 5 queues were read', () => {
+  it('green only when every job has a recorded run and all 5 queues were read', () => {
     const tiles = tilesFor(quietInputs());
     expect(byId(tiles, 'scheduled_jobs').status).toBe('green');
     expect(byId(tiles, 'queues').status).toBe('green');
@@ -315,7 +321,13 @@ describe('QA4b-B1: a job added after run recording began is timed from its own "
 
   it('the registry dates the new job; the jobs that predate recording carry no date (global baseline, unchanged)', () => {
     expect(leak.addedOn).toBe('2026-09-30');
-    expect(BOS_CRON_JOBS.filter((j) => j.addedOn !== undefined).map((j) => j.id)).toEqual(['credit-leak-check']);
+    /* Every job that carries its own "added on" date, not a fixed list: a
+        second one (`stripe-settlement-gap`) is a normal addition, and the
+        property worth holding is that a dated job is dated from its own day
+        while the jobs predating run recording carry no date at all. */
+    const dated = BOS_CRON_JOBS.filter((j) => j.addedOn !== undefined).map((j) => j.id);
+    expect(dated).toContain('credit-leak-check');
+    expect(BOS_CRON_JOBS.filter((j) => j.addedOn === undefined).length).toBeGreaterThan(0);
   });
 
   it('is measured from the END of its added day, or the global baseline if that is later', () => {
@@ -349,7 +361,16 @@ describe('QA4b-B1: a job added after run recording began is timed from its own "
 
   it('the Health "Scheduled jobs" tile stays grey "Not measured yet" (never red) while the new job is within its grace', () => {
     const { facts, tile } = tileAt(new Date('2026-10-02T00:30:00.000Z'));
-    expect(facts).toMatchObject({ healthy: 12, stopped: 0, noRunYet: 1, worstJob: 'Credit leak check' });
+    /* Everything healthy EXCEPT the one job still inside its grace — counted
+       from the registry so a new cron does not restate itself as a failure
+       here. The property is the shape (one job unmeasured, none stopped), not
+       the size of the platform's job list. */
+    expect(facts).toMatchObject({
+      healthy: BOS_CRON_JOBS.length - 1,
+      stopped: 0,
+      noRunYet: 1,
+      worstJob: 'Credit leak check',
+    });
     expect(tile.status).toBe('not_measured');
     expect(tile.status).not.toBe('red');
     expect(tile.headline).not.toBe('A job has stopped');

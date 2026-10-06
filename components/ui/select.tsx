@@ -68,7 +68,23 @@ export const SelectLabel = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <SelectPrimitive.Label
     ref={ref}
-    className={cn('px-2 py-1.5 text-sm font-semibold text-foreground', className)}
+    /*
+     * `--v2-text-primary`, not `text-foreground`, like every sibling here.
+     *
+     * `--foreground` flips only inside `@media (prefers-color-scheme: dark)` —
+     * the operating system's preference — while this app has a dark mode of its
+     * own, a `.dark` class the theme provider sets from the toggle and
+     * localStorage. The two disagree the moment someone runs the app dark on a
+     * light phone, and a label coloured by the OS on a surface coloured by the
+     * app is unreadable: near-black on near-black.
+     *
+     * Latent today (nothing renders `SelectLabel` yet) and corrected before the
+     * first caller inherits the fault.
+     */
+    className={cn(
+      'px-2 py-1.5 text-sm font-semibold text-[var(--v2-text-primary,theme(colors.gray.900))]',
+      className
+    )}
     {...props}
   />
 ))

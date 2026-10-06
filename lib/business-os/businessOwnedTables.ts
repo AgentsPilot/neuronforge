@@ -12,6 +12,14 @@
  * covers, what an export includes, what a "start over" means) and cannot read a
  * migration. The test beside this file asserts the two never disagree.
  *
+ * It is ALSO checked against the purge descriptors
+ * (`lib/business-os/purge/descriptors.ts`, the single source of truth for what
+ * a Reset or Purge deletes). The same test asserts both directions: every table
+ * here is classified `reset` or `purge` there (deleting `business_profiles`
+ * cascades into all of them), and every `reset`/`purge` descriptor is named
+ * here or in USER_OWNED_TABLES, with listed, reasoned exceptions (purge slice
+ * 3a, §0.10 F-SA-3).
+ *
  * WHY THIS EXISTS AT ALL
  *
  * There was already a list, inside scripts/reset-onboarding.ts. It named 17
@@ -29,6 +37,13 @@
  * ordering right.
  */
 export const BUSINESS_OWNED_TABLES = [
+  // The addresses the business trades and bills from — its address book
+  // (20261036). Business data, not the person's: these are the addresses
+  // printed on its invoices and shown on its public booking and contact pages,
+  // and a new business must no more inherit the last one's address than its
+  // company name. `business_profiles.address_id` / `invoice_address_id` point
+  // in here, so the rows go when the profile they belong to does.
+  'business_addresses',
   // CRM
   'crm_activities',
   'crm_contacts',

@@ -27,6 +27,9 @@ import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsR
 import { channelConnectionRepository } from '@/lib/repositories/ChannelConnectionRepository';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
+// So a visitor arriving from the business's own booking page is counted as
+// direct rather than as a referral from a stranger's website.
+import { platformOrigin, publicSiteHost } from '@/lib/utils/origins';
 
 const logger = createLogger({ service: 'ChannelPerformanceService' });
 
@@ -269,8 +272,33 @@ export class ChannelPerformanceService {
     }
     const buckets = new Map<Channel, Bucket>();
 
+    /*
+     * The hosts that are this business's own.
+     *
+     * A visitor who reads the booking page and then submits it arrives with a
+     * referrer of that page, which without this lands in `referral` — the
+     * business's own traffic reported as somebody else's website. One live
+     * account read "100% other websites" with a dash against every named
+     * channel, from exactly this.
+     *
+     * The platform host covers every business, since a site is served at
+     * `{host}/c/{prefix}`; `publicSiteHost()` covers the subdomain shape where
+     * one is configured. A custom domain is not read here — it lives on
+     * `website_pages` and would cost a query per request for a case no account
+     * on this deployment uses yet. `ALWAYS_SELF` catches the loopback hosts
+     * regardless, which is what the development traffic carries.
+     */
+    const ownHosts = [
+      new URL(platformOrigin()).host,
+      publicSiteHost(),
+    ].filter((host): host is string => Boolean(host));
+
     for (const contact of contacts ?? []) {
-      const { channel, basis } = resolveChannel(contact.referrer_domain, contact.utm_source);
+      const { channel, basis } = resolveChannel(
+        contact.referrer_domain,
+        contact.utm_source,
+        ownHosts
+      );
       const bucket = buckets.get(channel) ?? { leads: 0, bookings: 0, revenue: 0, billed: 0, taggedLeads: 0 };
 
       bucket.leads += 1;

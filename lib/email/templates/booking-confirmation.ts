@@ -888,6 +888,35 @@ export function generateBookingRescheduledEmail(data: {
   bookingId: string;
   branding: BrandingData;
   locale?: Locale;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * STILL OWED, WHEN IT IS.
+   *
+   * A reschedule used to say nothing about money, so a client moving an unpaid
+   * appointment got a tidy email with no way to pay and no mention that they
+   * had not. Every field here is OPTIONAL and absent by default: a caller that
+   * does not pass them renders exactly the email it rendered before.
+   *
+   * The shape mirrors the confirmation deliberately — the same `plan`, the same
+   * `paymentStatus` vocabulary — so the amount-due rule below can be the same
+   * rule rather than a second one that drifts.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  price?: number;
+  currency?: string;
+  /** Only 'pending' shows anything; every other state renders nothing. */
+  paymentStatus?: 'pending' | 'paid' | 'refunded' | 'not_required';
+  /** Where to pay. Absent means no card route, and then no button is shown. */
+  paymentUrl?: string;
+  plan?: {
+    totalAmount: number;
+    periods: Array<{
+      number: number;
+      amount: number;
+      dueDate: string | null;
+      status: string;
+    }>;
+  };
 }, icsOptions: ICSOptions = {}): {
   subject: string;
   html: string;
@@ -922,6 +951,22 @@ export function generateBookingRescheduledEmail(data: {
     dateTime: data.newDateTime,
     endTime: data.newEndTime
   } as BookingConfirmationData);
+
+  /*
+   * What is owed NOW — the first unpaid period on a plan, never the total.
+   *
+   * Identical to the confirmation's rule a few hundred lines above, and
+   * deliberately so. That one carries the scar: using the full price meant a
+   * booking sold as "₪400 today, ₪400 on the 7th" asked for ₪800 in the same
+   * email as a ₪400 invoice. A second, subtly different calculation here is how
+   * that comes back.
+   */
+  const planPeriods = data.plan?.periods ?? [];
+  const dueNowPeriod = planPeriods.find(p => p.status !== 'paid' && p.status !== 'cancelled');
+  const amountDueNow = data.plan ? (dueNowPeriod?.amount ?? 0) : data.price;
+
+  const hasPendingPayment =
+    data.paymentStatus === 'pending' && Boolean(amountDueNow) && (amountDueNow as number) > 0;
 
   const content = `
     <!-- Greeting -->
@@ -966,6 +1011,29 @@ export function generateBookingRescheduledEmail(data: {
         </td>
       </tr>
     </table>
+
+    ${hasPendingPayment ? `
+    <!-- Still owed.
+         Placed AFTER the new time and before the calendar links: the client
+         came for the change, so the change is read first and the money second.
+         Shown only when the booking is genuinely unpaid and there is a figure
+         to name; the button only when there is somewhere to pay. -->
+    ${planPeriods.length ? emailPlanSchedule({
+      periods: planPeriods,
+      totalAmount: data.plan?.totalAmount ?? 0,
+      currency: data.currency || 'USD',
+      branding: brandingWithLocale,
+      highlightNumber: dueNowPeriod?.number,
+      labels: {
+        title: tConfirm.planTitle[locale],
+        paid: tConfirm.planPaid[locale],
+        highlight: tConfirm.planDueToday[locale],
+        total: tConfirm.planTotal[locale],
+      },
+    }) : ''}
+    ${emailNoticeBox(tConfirm.paymentRequired[locale](formatCurrency(amountDueNow as number, data.currency || 'USD')), 'warning', brandingWithLocale)}
+    ${data.paymentUrl ? emailButton(tConfirm.payNow[locale], data.paymentUrl, { branding: data.branding }) : ''}
+    ` : ''}
 
     <!-- Add to Calendar -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">

@@ -26,6 +26,20 @@ import { z } from 'zod';
 const logger = createLogger({ module: 'LeadResponseControlAPI' });
 
 /*
+ * "Send now" runs the lead drain inside this request, so this route is a claim
+ * path like the cron. Its runner must be provably dead before the reaper's
+ * lease expires: 60 s here, below `LEASE_SECONDS = 90` in
+ * LeadResponseDispatchService. Keep the two aligned (BL-7a part 2).
+ */
+export const maxDuration = 60;
+
+/*
+ * Rows the owner's click claims. Small, so the click waits for a few sends and
+ * not a full cron batch of 25; anything else that is due goes with the cron.
+ */
+const SEND_NOW_BATCH = 5;
+
+/*
  * An action and nothing else.
  *
  * No URL, no recipient, no `user_id`. The contact is in the path and is
@@ -71,15 +85,30 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     /*
-     * Kick the drain rather than waiting up to five minutes for the cron.
+     * Drain now rather than waiting up to five minutes for the cron, and WAIT
+     * for it.
      *
-     * Non-blocking, and it goes through the same claim RPC the cron uses, so
-     * the two cannot both send. "Send now" that takes five minutes is not
-     * send now.
+     * It goes through the same claim RPC the cron uses, so the two cannot both
+     * claim a row. It is awaited, under the 60 s `maxDuration` above, because
+     * a drain fired and forgotten can outlive this response: a frozen and
+     * resumed instance can still hold a claimed row after the 90 s lease, when
+     * the reaper has dead-lettered it. If an admin then retries that row, the
+     * cron sends it and the late runner sends it again (BL-7a). Awaited and
+     * capped, the runner is dead before the lease ends.
+     *
+     * The owner waits a few seconds; the user chose that over "send now" that
+     * means "within five minutes" (Q-SA7C-1, option A).
+     *
+     * A failed drain is not the owner's failure: the row is already due, stays
+     * pending, and the cron sends it. So it is logged and the answer is still
+     * success.
      */
-    dispatchLeadResponses().catch(err =>
-      requestLogger.warn({ err }, 'Immediate drain failed; the cron will pick it up')
-    );
+    try {
+      // No chase sweep: the cron sweeps every 5 minutes, and the sweep is every business's work, not this owner's.
+      await dispatchLeadResponses({ batch: SEND_NOW_BATCH, sweep: false });
+    } catch (err) {
+      requestLogger.warn({ err }, 'Immediate drain failed; the cron will pick it up');
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

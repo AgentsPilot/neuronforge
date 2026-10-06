@@ -230,6 +230,13 @@ export const AUDIT_EVENTS = {
   // invitee email, the link, the token, its hash or a provider's error text.
   BOS_INVITE_EMAIL_SENT: 'BOS_INVITE_EMAIL_SENT',
   BOS_INVITE_EMAIL_NOT_SENT: 'BOS_INVITE_EMAIL_NOT_SENT',
+  // N-1: the issuer of an accepted invite (the champion, or the one admin who
+  // issued it) was, or was not, emailed. A system event: no owner (userId and
+  // actorId null, SA Q-4), so it appears in neither person's own audit view;
+  // the recipient's account id, the status, the language and the reason class
+  // are in the details. Never an email address of anyone.
+  BOS_INVITE_INVITER_NOTIFIED: 'BOS_INVITE_INVITER_NOTIFIED',
+  BOS_INVITE_INVITER_NOT_NOTIFIED: 'BOS_INVITE_INVITER_NOT_NOTIFIED',
   // Slice 5a (F5a-13): a champion's friend invites. Actor = the champion
   // account. CREATED carries the language; REVOKED nothing beyond the invite
   // id; REFUSED the reason class only (`own_email`, `allowance_reached`,
@@ -261,6 +268,15 @@ export const AUDIT_EVENTS = {
   // nothing. The details carry exactly the reason, the queue, the action, the
   // correlation id and the due anchor; never content, error text or a name.
   BOS_QUEUE_ITEM_CANCELLED: 'BOS_QUEUE_ITEM_CANCELLED',
+  // ADMIN_BOS_CLEANUP slice 7c: an admin put ONE failed queue item back to
+  // pending for exactly one more send attempt (POST
+  // /api/admin/jobs-queues/items/action, action 'retry'). Same entity type,
+  // account and actor rules as the cancel above ('bos_queue_item', owner-hidden
+  // by migration 20261035). Written only AFTER the compare-and-set won; the
+  // send itself happens later, through the queue's own claim. changes.after
+  // carries the reminder's next sending-hours time (null on other queues); the
+  // details carry exactly the reason, queue, action, correlation id and due anchor.
+  BOS_QUEUE_ITEM_RETRIED: 'BOS_QUEUE_ITEM_RETRIED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -761,6 +777,17 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'A Business OS invitation email was not sent, or not confirmed in time; the admin was shown the link to copy (reason class only)',
   },
+  // N-1: 'info' for both. A skipped courtesy email is not an operator alert.
+  [AUDIT_EVENTS.BOS_INVITE_INVITER_NOTIFIED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'The issuer of an accepted Business OS invite was emailed (recipient kind, account id, status and language recorded)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_INVITER_NOT_NOTIFIED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'The issuer of an accepted Business OS invite was not emailed, or the send was not confirmed in time (reason class only)',
+  },
   // Credit deduction slice 11b. 'warning': an admin changed what an account can
   // spend. SOC2 and not FINANCIAL: FINANCIAL is reserved for AgentsPilot's own
   // platform-billing events (see PAYMENT_PLAN_CANCELLED below); every Business
@@ -795,6 +822,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin cancelled one Business OS queue item; it will not be sent',
+  },
+  // ADMIN_BOS_CLEANUP slice 7c. 'warning': an admin added one more send
+  // attempt to a real client's queued message.
+  [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin put one failed Business OS queue item back for exactly one more send attempt',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {

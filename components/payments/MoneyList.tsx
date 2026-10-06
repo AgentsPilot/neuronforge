@@ -214,6 +214,9 @@ export function MoneyList({
         offset: String(page * PAGE_SIZE),
         filter,
         sort,
+        // The view's kind, so the page window is cut from the rows actually on
+        // screen rather than from the mixed list.
+        kind: kindView === 'bookings' ? 'booking' : 'standalone',
       });
       if (searchQuery.trim()) params.set('search', searchQuery.trim());
 
@@ -241,7 +244,7 @@ export function MoneyList({
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, filter, sort, searchQuery]);
+  }, [page, filter, sort, searchQuery, kindView]);
 
   useEffect(() => {
     load();
@@ -274,10 +277,12 @@ export function MoneyList({
   }, [refreshKey]);
 
   // A new search or filter starts at the first page — staying on page 4 of a
-  // result set that now has one page shows nothing.
+  // result set that now has one page shows nothing. `kindView` belongs here for
+  // exactly that reason: the two views have their own page counts, and three
+  // pages of orders is commonly one page of standalone invoices.
   useEffect(() => {
     setPage(0);
-  }, [filter, sort, searchQuery]);
+  }, [filter, sort, searchQuery, kindView]);
 
   // A selection that survives a filter change would export rows the reader can
   // no longer see.
@@ -325,13 +330,24 @@ export function MoneyList({
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  // Bookings first. Everything else is money that belongs to no appointment —
-  // an ad-hoc invoice, or a website purchase — and saying so stops it looking
-  // like a booking whose details failed to load.
-  const bookingItems = items.filter(item => item.kind === 'booking');
-  const otherItems = items.filter(item => item.kind !== 'booking');
-  /** What the switch above is showing, and the only thing select-all can mean. */
-  const visibleItems = kindView === 'bookings' ? bookingItems : otherItems;
+  /**
+   * What the switch above is showing, and the only thing select-all can mean.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The kind now goes to the API, so this IS the chosen view — no second split
+   * here.
+   *
+   * It used to be `items.filter(item => item.kind === 'booking')` and its
+   * complement, applied to the ten rows the endpoint had already picked from
+   * the mixed list. Each view therefore showed its share of one page: with 19
+   * bookings and 3 standalone invoices, page 2 was ten bookings and nothing
+   * else, so "invoices without an order" rendered empty while the pager still
+   * offered three pages, and page 3 was the mirror image with the orders view
+   * blank. Paging per kind is the only arrangement where the count, the pages
+   * and the rows agree.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const visibleItems = items;
   /** Every row in view is chosen, so the select-all becomes a clear-all. */
   const allVisibleSelected =
     visibleItems.length > 0 && visibleItems.every(one => selected.has(one.key));
@@ -437,22 +453,41 @@ export function MoneyList({
 
   exportRef.current = exportCsv;
 
+  /*
+   * Both as booleans, and named, for two reasons.
+   *
+   * The effect below must re-announce when a count CROSSES zero and not on
+   * every change, or it fires on each keystroke of the search box. And a
+   * comparison written inline in a dependency array cannot be checked
+   * statically, which the hooks lint says out loud.
+   */
+  const hasRows = items.length > 0;
+  /**
+   * Whether this business has no money records AT ALL — a different question
+   * from "this view is empty", and the reason it reads `summaryCount`.
+   *
+   * It used to be `items.length === 0`, which stopped meaning the same thing
+   * the moment the kind went to the API: standing on an empty "invoices without
+   * an order" view, a business with nineteen orders looked like a business with
+   * nothing, and the LEDGER export — which spans its own date range and ignores
+   * this page's view entirely — went dark. `summaryCount` is the whole book
+   * under the search alone, with neither the KPI filter nor the kind applied,
+   * so it answers the question actually being asked.
+   */
+  const bookIsEmpty = summaryCount === 0;
+
   useEffect(() => {
     /*
      * A stable wrapper: the page keeps one function, and it always calls the
      * latest closure rather than one captured on first render with an empty
      * list.
-     *
-     * Re-announced when the row count crosses in or out of zero — not on every
-     * change — so the header's Export button can disable itself without this
-     * firing on each keystroke of the search box.
      */
     onReady?.({
       exportCsv: () => exportRef.current(),
-      hasRows: items.length > 0,
-      knownEmpty: items.length === 0 && !searchQuery.trim() && filter === 'all',
+      hasRows,
+      knownEmpty: bookIsEmpty && !searchQuery.trim(),
     });
-  }, [onReady, items.length > 0, searchQuery, filter]);
+  }, [onReady, hasRows, searchQuery, bookIsEmpty]);
 
   return (
     <div dir={isRTL ? 'rtl' : 'ltr'}>

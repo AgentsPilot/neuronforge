@@ -8,8 +8,17 @@ import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 export default function EmailAutomationPage() {
   const [activeTab, setActiveTab] = useState<'sequences' | 'stats'>('sequences');
 
+  /*
+   * `h-[100dvh]`, not `h-screen`.
+   *
+   * Tailwind's `h-screen` is `100vh`: the height the page would have with the
+   * browser's address bar collapsed. On a phone that is taller than the visible
+   * area, and this is a FIXED-height flex column whose body scrolls inside it —
+   * so the bottom of the page sat under the chrome with nothing able to bring it
+   * back. See the note in components/ui/dialog.tsx for the same distinction.
+   */
   return (
-    <div className="flex flex-col h-screen bg-[var(--v2-bg)]">
+    <div className="flex flex-col h-[100dvh] bg-[var(--v2-bg)]">
 
       <div className="flex-1 overflow-auto">
         <div className={`${PAGE_CONTAINER} py-8`}>

@@ -111,7 +111,19 @@ jest.mock('@/lib/services/PaymentReminderService', () => ({
   },
 }));
 jest.mock('@/lib/repositories/PaymentRepository', () => ({
-  paymentInvoiceRepository: { markAllOverdueInvoices: async () => ({ data: 0, error: null }) },
+  paymentInvoiceRepository: {
+    markAllOverdueInvoices: async () => ({ data: 0, error: null }),
+    // stripe-settlement-gap: no local invoice carries the id it asks about.
+    findSettlementStateByStripeInvoiceId: async () => ({ data: null, error: null }),
+  },
+  // stripe-settlement-gap: no business has connected an account.
+  stripeConnectRepository: { pageAccounts: async () => ({ data: [], error: null }) },
+}));
+// stripe-settlement-gap: Stripe reports no paid invoices. Mocked rather than
+// left to throw on an absent key, so "nothing to do" means a clean run here and
+// not a run whose every listing was refused.
+jest.mock('@/lib/stripe/StripeService', () => ({
+  getStripeService: () => ({ listPaidInvoices: async () => ({ invoices: [], hasMore: false }) }),
 }));
 
 import { BOS_CRON_JOBS } from '@/lib/cron/bosCronJobs';

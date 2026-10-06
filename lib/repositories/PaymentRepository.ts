@@ -1335,6 +1335,39 @@ export class PaymentInvoiceRepository {
   }
 
   /**
+   * The settlement state of one Stripe invoice id, where ABSENT IS AN ANSWER.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `findByStripeInvoiceId` above uses `.single()`, so "no such invoice" comes
+   * back as an error. That is right for the webhook, which has a row in mind,
+   * and wrong for the settlement gap check, whose whole purpose is to find
+   * Stripe payments with NO local row: every real finding would arrive
+   * indistinguishable from a database failure, and a check that cannot tell a
+   * finding from a fault reports neither.
+   *
+   * So: `maybeSingle`, and three columns rather than the whole row, because a
+   * reconciliation sweep needs no customer data to say "this is missing".
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findSettlementStateByStripeInvoiceId(
+    stripeInvoiceId: string
+  ): Promise<PaymentRepositoryResult<{ id: string; status: string; paid_at: string | null } | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_invoices')
+        .select('id, status, paid_at')
+        .eq('stripe_invoice_id', stripeInvoiceId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: data ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, stripeInvoiceId }, 'Failed to read settlement state by Stripe invoice ID');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Update Stripe invoice fields after invoice is finalized/sent
    */
   async updateStripeFields(
@@ -1542,6 +1575,43 @@ export class StripeConnectRepository {
       return { data: null, error: null };
     } catch (error) {
       logger.error({ err: error, id, userId }, 'Failed to delete Stripe Connect account');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * One page of connected accounts, across every business (keyset by user id).
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * DELIBERATELY NOT USER-SCOPED (CLAUDE.md rule 4). The settlement gap check
+   * has to ask every connected account whether Stripe took money we never
+   * recorded; an answer for one business cannot establish that. The caller is
+   * the fail-closed cron (`/api/cron/stripe-settlement-gap`), which no user can
+   * reach, and the read returns no money and no customer data: an account id
+   * and the user it belongs to, so a finding can name the business.
+   *
+   * Keyset rather than offset so a page cannot skip or repeat a row while the
+   * sweep is running, matching `pagePlans` in the credit leak check.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async pageAccounts(params: {
+    afterUserId: string | null;
+    limit: number;
+  }): Promise<PaymentRepositoryResult<Array<Pick<StripeConnectAccount, 'user_id' | 'stripe_account_id'>>>> {
+    try {
+      let query = this.supabase
+        .from('stripe_connect_accounts')
+        .select('user_id, stripe_account_id')
+        .order('user_id', { ascending: true })
+        .limit(params.limit);
+
+      if (params.afterUserId) query = query.gt('user_id', params.afterUserId);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return { data: data ?? [], error: null };
+    } catch (error) {
+      logger.error({ err: error, afterUserId: params.afterUserId }, 'Failed to page Stripe Connect accounts');
       return { data: null, error: error as Error };
     }
   }

@@ -25,6 +25,7 @@ import React, { useState, useEffect } from 'react';
 import { CountrySelect } from '@/components/ui/CountrySelect';
 import { AdminAreaField } from '@/components/ui/AdminAreaField';
 import { AddressAutocomplete } from '@/components/ui/AddressAutocomplete';
+import { SavedAddressPicker } from '@/components/ui/SavedAddressPicker';
 import { legacyCountryToCode } from '@/lib/geo/countries';
 import {
   formatAddressOneLine,
@@ -201,12 +202,36 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
   const { user } = useAuth();
   const { t, isRTL, language } = useLanguage();
 
+  /** Which saved address, if any, these fields still represent. */
+  /**
+   * Which entry in the address book this form is on.
+   *
+   * An id now, not a source — the book has identity, so "the billing one" is no
+   * longer a thing a form can be pointed at. `null` means the owner is adding a
+   * new address, which is the one state that shows the fields.
+   */
+  const [reusedAddress, setReusedAddress] = useState<string | null>(null);
+  /** Bumped after a save so the picker refetches and shows a new entry. */
+  const [addressBookVersion, setAddressBookVersion] = useState(0);
+  /**
+   * The saved entry open in the fields for correcting.
+   *
+   * Separate from the selection: the entry stays MARKED while it is edited, so
+   * the list keeps saying which address the form is on. `null` means nothing is
+   * being corrected, and the fields then show only for "add a new address".
+   */
+  const [editingAddress, setEditingAddress] = useState<string | null>(null);
+
+
   /** One part of the display address, leaving the rest alone. */
-  const updateAddressPart = (field: keyof StructuredAddress, value: string) =>
+  const updateAddressPart = (field: keyof StructuredAddress, value: string) => {
+    // Edited by hand, so it is no longer the saved one.
+    setReusedAddress(null);
     setBusinessProfile(b => ({
       ...b,
       address_parts: { ...b.address_parts, [field]: value },
     }));
+  };
 
 
   const [loading, setLoading] = useState(true);
@@ -273,6 +298,28 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
   const addressCountryMissing =
     hasAddressContent(businessProfile.address_parts) &&
     !legacyCountryToCode(businessProfile.address_parts.country);
+
+  /*
+   * The country as a CODE, for the two controls that reason about it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `address_parts.country` can still hold free text — "Israel", "United
+   * States" — written before the picker existed. `CountrySelect` copes: an
+   * unmatched value falls back to being displayed as typed, so the field looks
+   * right either way.
+   *
+   * `AdminAreaField` does not, and that asymmetry was the bug. It asks
+   * `addressRulesFor`, which returns UNKNOWN for anything that is not exactly
+   * two characters — so a legacy name produced `adminLabel: null` and the state
+   * control rendered as nothing at all. The country picker beside it looked
+   * perfectly healthy, which made the missing one read as a styling fault
+   * rather than a value this component never translated.
+   *
+   * `legacyCountryToCode` is the same translation the gap check above already
+   * trusts; it was simply never applied to what the fields were handed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const addressCountryCode = legacyCountryToCode(businessProfile.address_parts.country) ?? '';
   const [branding, setBranding] = useState<{ logo_url: string; show_logo_on_smart_links: boolean }>({
     logo_url: '',
     show_logo_on_smart_links: true,
@@ -562,6 +609,21 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
            */
           address: formatAddressOneLine(businessProfile.address_parts) ?? '',
           address_parts: businessProfile.address_parts,
+          /*
+           * WHICH ENTRY these parts belong to, so the server edits the right
+           * one.
+           *
+           * Without it the save falls back to the entry this FORM points at —
+           * so opening the billing address with the pencil, correcting it and
+           * saving would have rewritten the PROFILE's entry with the billing
+           * one's content, and left the billing entry untouched. The exact
+           * opposite of what was asked for, silently.
+           *
+           * `editingAddress` first: it is the entry the owner opened. The
+           * selection is the fallback, and `null` means a genuinely new
+           * address, which the server then adds to the book.
+           */
+          address_id: editingAddress ?? reusedAddress,
           organization: {
             name: orgSettings.name,
             // Null, not undefined: an answer the owner cleared has to be
@@ -585,6 +647,13 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
       // dialog tab now, and collapsing it would hide the confirmation.
       onSaved?.();
       setSuccessMessage(t('settings.business.saved'));
+      /* The address may have become a new entry in the book — a fork, or the
+         first one this business has saved. Refetch so the picker shows it
+         without a page reload. */
+      setAddressBookVersion(v => v + 1);
+      // The correction is saved; the fields close and the list stands again.
+      setEditingAddress(null);
+
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
       logger.error({ err: error }, 'Failed to save the business profile');
@@ -812,113 +881,191 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           <label htmlFor="business-address" className={FIELD_LABEL}>
             {t('settings.business.public_address')}
           </label>
-          {/* Type once, fill the lot. Renders nothing without an API key, and
-              the fields below remain the real record either way. */}
-          <AddressAutocomplete
+          {/*
+            The business's address book. Renders nothing while it is empty,
+            which is the right screen for a business adding its first address:
+            the fields below are all it needs.
+          */}
+          <SavedAddressPicker
+            use="profile"
+            current={businessProfile.address_parts}
+            selectedId={reusedAddress}
+            onSelectedChange={(id) => {
+              setReusedAddress(id);
+              // Choosing a different entry abandons whatever was being
+              // corrected, or its fields would stay open under a new selection.
+              setEditingAddress(null);
+            }}
             onSelect={(address) =>
               setBusinessProfile(b => ({ ...b, address_parts: { ...b.address_parts, ...address } }))
             }
-            country={businessProfile.address_parts.country}
-            language={language}
+            locale={language}
             isRTL={isRTL}
-            placeholder={t('settings.address.lookup') || 'Start typing your address…'}
-            hint={t('settings.address.lookup_hint') || undefined}
-            className={`${FIELD_BASE}`}
-            style={FIELD_RADIUS}
+            t={t}
+            refreshKey={addressBookVersion}
+            /*
+              Editing opens the entry in the fields below, with the selection
+              cleared so they are visible. Saving then goes through the same
+              path as any other save — which is what keeps the one rule in one
+              place rather than giving edit a second opinion.
+            */
+            onEdit={(option) => {
+              setBusinessProfile(b => ({ ...b, address_parts: { ...b.address_parts, ...option.address } }));
+              /*
+                The entry STAYS SELECTED while it is being corrected.
+                Clearing the selection here moved the mark to "add a new
+                address", which told the owner they were creating a second
+                address when they had asked to fix an existing one — and it is
+                not even what happens: saving a correction to an entry only this
+                form uses edits it in place. `editingAddress` is what opens the
+                fields; the selection says which entry they belong to.
+              */
+              setEditingAddress(option.id);
+            }}
           />
 
-          <div className="relative mt-2">
-            <MapPin className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`} />
-            <input
-              id="business-address"
-              type="text"
-              /*
-               * Follows what is typed, rather than the interface.
-               *
-               * An address is the one field here that can legitimately be in
-               * either script — a Hebrew business writes "רחוב דיזנגוף 50, תל
-               * אביב" but may equally write an English address for foreign
-               * clients. Pinning it to the interface direction mis-renders
-               * whichever case does not match; `auto` picks the direction from
-               * the first strong character, so both read correctly and the
-               * field flips as the owner types.
-               */
-              dir="auto"
-              value={businessProfile.address_parts.line1 || ''}
-              onChange={(e) => updateAddressPart('line1', e.target.value)}
-              placeholder={t('settings.business.public_address_placeholder')}
-              className={`${FIELD_BASE} ${isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'}`}
-              style={FIELD_RADIUS}
-            />
-          </div>
           {/*
-            The rest of the address.
-            ──────────────────────────────────────────────────────────────────
-            City, state and postcode stay free text: no package here supplies
-            subdivisions, and a hand-written list of states would be exactly the
-            invented data this change exists to remove.
+            Hidden while a saved address is chosen.
 
-            The country is the one that is picked, because it is the one the
-            platform reasons about — the refund disclaimer, tax, currency — and
-            the only one with a real list behind it.
+            The fields are the record either way — picking copies into them and
+            saving stores them — but showing a form under a chosen answer asks
+            the owner to read two statements about one address and work out which
+            is true. Choosing "enter a different address" opens them.
           */}
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            <input
-              type="text"
-              dir="auto"
-              value={businessProfile.address_parts.line2 || ''}
-              onChange={(e) => updateAddressPart('line2', e.target.value)}
-              placeholder={t('settings.business.address_line2') || 'Suite, unit, floor (optional)'}
-              className={`${FIELD_BASE} px-3`}
-              style={FIELD_RADIUS}
-            />
-            <input
-              type="text"
-              dir="auto"
-              value={businessProfile.address_parts.city || ''}
-              onChange={(e) => updateAddressPart('city', e.target.value)}
-              placeholder={t('settings.business.address_city') || 'City'}
-              className={`${FIELD_BASE} px-3`}
-              style={FIELD_RADIUS}
-            />
-            {/* Only for countries whose addresses carry one — nothing is
-                rendered for Israel, the UK or most of Europe. */}
-            <AdminAreaField
+          {(reusedAddress === null || editingAddress !== null) && (
+            /*
+              ONE CARD, because it is one address.
+              ────────────────────────────────────────────────────────────────
+              These six controls were loose siblings, each spaced from the last
+              with its own `mt-2`. Sitting in a form whose other rows are single
+              fields — company name, email, phone — they read as six more
+              unrelated settings that happened to land together, and the
+              autocomplete at the top looked like a seventh rather than the
+              shortcut that fills the other five.
+
+              A surface and a border say what the spacing could not: everything
+              inside is one answer. The margins move to `space-y-2` on the
+              container so the rhythm comes from one place instead of being
+              re-declared on each child.
+            */
+            <div
+              className="mt-2 space-y-2 border border-[var(--v2-border)] bg-[var(--v2-surface)] p-3"
+              style={{ borderRadius: 'var(--v2-radius-card)' }}
+            >
+            {/* Type once, fill the lot. Renders nothing without an API key, and
+                the fields below remain the real record either way. */}
+            <AddressAutocomplete
+              onSelect={(address) => {
+                // An address of your own ends the claim that a saved one is here.
+                setReusedAddress(null);
+                setBusinessProfile(b => ({ ...b, address_parts: { ...b.address_parts, ...address } }));
+              }}
               country={businessProfile.address_parts.country}
-              value={businessProfile.address_parts.state || ''}
-              onChange={(value) => updateAddressPart('state', value)}
-              label={(key) => t(`settings.address.admin.${key}`) || key}
-              emptyLabel={t('settings.address.admin_none') || 'No matches'}
+              language={language}
               isRTL={isRTL}
-              className={`${FIELD_BASE} px-3`}
+              placeholder={t('settings.address.lookup') || 'Start typing your address…'}
+              hint={t('settings.address.lookup_hint') || undefined}
+              className={`${FIELD_BASE}`}
               style={FIELD_RADIUS}
             />
-            <input
-              type="text"
-              dir="auto"
-              value={businessProfile.address_parts.postal_code || ''}
-              onChange={(e) => updateAddressPart('postal_code', e.target.value)}
-              placeholder={t('settings.business.address_postal_code') || 'Postal code'}
-              className={`${FIELD_BASE} px-3`}
-              style={FIELD_RADIUS}
-            />
-            <div className="col-span-2">
-              <CountrySelect
-                value={businessProfile.address_parts.country || ''}
-                onChange={(code) => updateAddressPart('country', code)}
-                locale={language === 'he' ? 'he' : language === 'es' ? 'es' : 'en'}
-                isRTL={isRTL}
-                placeholder={t('settings.business.address_country') || 'Country'}
-                emptyLabel={t('settings.business.address_country_none') || 'No countries found'}
+
+            <div className="relative">
+              <MapPin className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`} />
+              <input
+                id="business-address"
+                type="text"
+                /*
+                 * Follows what is typed, rather than the interface.
+                 *
+                 * An address is the one field here that can legitimately be in
+                 * either script — a Hebrew business writes "רחוב דיזנגוף 50, תל
+                 * אביב" but may equally write an English address for foreign
+                 * clients. Pinning it to the interface direction mis-renders
+                 * whichever case does not match; `auto` picks the direction from
+                 * the first strong character, so both read correctly and the
+                 * field flips as the owner types.
+                 */
+                dir="auto"
+                value={businessProfile.address_parts.line1 || ''}
+                onChange={(e) => updateAddressPart('line1', e.target.value)}
+                placeholder={t('settings.business.public_address_placeholder')}
+                className={`${FIELD_BASE} ${isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'}`}
+                style={FIELD_RADIUS}
               />
             </div>
-          </div>
+            {/*
+              The rest of the address.
+              ──────────────────────────────────────────────────────────────────
+              City, state and postcode stay free text: no package here supplies
+              subdivisions, and a hand-written list of states would be exactly the
+              invented data this change exists to remove.
 
-          {addressCountryMissing && (
-            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 leading-snug">
-              {t('settings.business.address_country_required') ||
-                'Choose the country for this address.'}
-            </p>
+              The country is the one that is picked, because it is the one the
+              platform reasons about — the refund disclaimer, tax, currency — and
+              the only one with a real list behind it.
+            */}
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="text"
+                dir="auto"
+                value={businessProfile.address_parts.line2 || ''}
+                onChange={(e) => updateAddressPart('line2', e.target.value)}
+                placeholder={t('settings.business.address_line2') || 'Suite, unit, floor (optional)'}
+                className={`${FIELD_BASE} px-3`}
+                style={FIELD_RADIUS}
+              />
+              <input
+                type="text"
+                dir="auto"
+                value={businessProfile.address_parts.city || ''}
+                onChange={(e) => updateAddressPart('city', e.target.value)}
+                placeholder={t('settings.business.address_city') || 'City'}
+                className={`${FIELD_BASE} px-3`}
+                style={FIELD_RADIUS}
+              />
+              {/* Only for countries whose addresses carry one — nothing is
+                  rendered for Israel, the UK or most of Europe. */}
+              <AdminAreaField
+                country={addressCountryCode}
+                value={businessProfile.address_parts.state || ''}
+                onChange={(value) => updateAddressPart('state', value)}
+                label={(key) => t(`settings.address.admin.${key}`) || key}
+                searchPlaceholder={t('settings.address.admin_search') || 'Type to search…'}
+                emptyLabel={t('settings.address.admin_none') || 'No matches'}
+                isRTL={isRTL}
+                className={`${FIELD_BASE} px-3`}
+                style={FIELD_RADIUS}
+              />
+              <input
+                type="text"
+                dir="auto"
+                value={businessProfile.address_parts.postal_code || ''}
+                onChange={(e) => updateAddressPart('postal_code', e.target.value)}
+                placeholder={t('settings.business.address_postal_code') || 'Postal code'}
+                className={`${FIELD_BASE} px-3`}
+                style={FIELD_RADIUS}
+              />
+              <div className="col-span-2">
+                <CountrySelect
+                  value={businessProfile.address_parts.country || ''}
+                  onChange={(code) => updateAddressPart('country', code)}
+                  locale={language === 'he' ? 'he' : language === 'es' ? 'es' : 'en'}
+                  isRTL={isRTL}
+                  placeholder={t('settings.business.address_country') || 'Country'}
+                  emptyLabel={t('settings.business.address_country_none') || 'No countries found'}
+                />
+              </div>
+            </div>
+
+            {/* Inside the card, under the country it is about — a warning
+                floating outside the group would point at nothing. */}
+            {addressCountryMissing && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-snug">
+                {t('settings.business.address_country_required') ||
+                  'Choose the country for this address.'}
+              </p>
+            )}
+            </div>
           )}
 
           <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 leading-snug">
@@ -947,7 +1094,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           {openDropdown === 'industry' && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setOpenDropdown(null)} />
-              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg max-h-48 overflow-y-auto" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg max-h-48 overflow-y-auto scrollbar-thin" style={{ borderRadius: 'var(--v2-radius-card)' }}>
                 {industryOptions.map((opt) => (
                   <button
                     key={opt.value}
@@ -982,7 +1129,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           {openDropdown === 'company_size' && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setOpenDropdown(null)} />
-              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg max-h-48 overflow-y-auto" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg max-h-48 overflow-y-auto scrollbar-thin" style={{ borderRadius: 'var(--v2-radius-card)' }}>
                 {companySizeOptions.map((opt) => (
                   <button
                     key={opt.value}
@@ -1017,7 +1164,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           {openDropdown === 'primary_goal' && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setOpenDropdown(null)} />
-              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg max-h-48 overflow-y-auto" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg max-h-48 overflow-y-auto scrollbar-thin" style={{ borderRadius: 'var(--v2-radius-card)' }}>
                 {primaryGoalOptions.map((opt) => (
                   <button
                     key={opt.value}
@@ -1052,7 +1199,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           {openDropdown === 'technical_level' && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setOpenDropdown(null)} />
-              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg max-h-48 overflow-y-auto" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg max-h-48 overflow-y-auto scrollbar-thin" style={{ borderRadius: 'var(--v2-radius-card)' }}>
                 {technicalLevelOptions.map((opt) => (
                   <button
                     key={opt.value}

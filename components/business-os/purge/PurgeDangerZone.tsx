@@ -10,6 +10,12 @@
  * "nothing will be deleted" beside a delete button. A reassuring banner that has
  * quietly become false is worse than no banner at all.
  *
+ * Purge slice 3b: the commit is offered for BOTH levels (Reset and Purge),
+ * after a preview of that level, with the two opt-in extras that preview used.
+ * There is deliberately NO "delete my agents" checkbox: the user decided
+ * (OQ-1 = (c), 2026-10-05) that a purge never deletes agents, and the server
+ * refuses the option with its own code regardless of what this page sends.
+ *
  * Two display rules, both deliberate:
  *   1. A count that could not be read renders as **unknown**, never as 0. Zero
  *      invites a decision; unknown withholds one.
@@ -36,19 +42,97 @@ interface PreviewResult {
   gate: { outcome: string; refusalReason?: string };
   gateCoverage: { headline: string; unchecked: string[] };
   limitations: string[];
+  /** Purge slice 3a. Optional on the wire type so an older payload renders as NOT verified, never clean (C-5). */
+  deleteGraph?: DeleteGraphView;
   canProceed: false;
   generatedAt: string;
   durationMs: number;
+}
+
+/** Mirror of `DeleteGraphResult` (lib/business-os/purge/deleteGraph.ts); this client file does not import server code. */
+interface DeleteGraphEdgeView {
+  constraint: string;
+  child: string;
+  parent: string;
+}
+
+interface DeleteGraphView {
+  status: 'ok' | 'refused' | 'unreadable';
+  blockingOrderViolations: DeleteGraphEdgeView[];
+  unlistedCascadeChildren: DeleteGraphEdgeView[];
+  unreviewedDeleteTriggers: Array<{ table: string; trigger: string }>;
+  cascadeAfterParent: Array<DeleteGraphEdgeView & { exempt: boolean }>;
+  error?: string;
+}
+
+/** Purge slice 3a (T3a-5): the delete-graph verdict, plain text. Anything but `ok` is shown as blocking. */
+function DeleteGraphPanel({ graph, boxStyle }: { graph: DeleteGraphView | undefined; boxStyle: React.CSSProperties }) {
+  const status = graph?.status ?? 'unreadable';
+  const isClean = status === 'ok';
+  const edges = (list: DeleteGraphEdgeView[]) =>
+    list.map((e) => `${e.parent} -> ${e.child} (${e.constraint})`);
+
+  const sections: Array<{ title: string; items: string[] }> = graph
+    ? [
+        { title: 'Child deleted after a parent it blocks (RESTRICT / NO ACTION)', items: edges(graph.blockingOrderViolations) },
+        { title: 'Tables a cascade would empty that this run does not list', items: edges(graph.unlistedCascadeChildren) },
+        {
+          title: 'DELETE triggers nobody has reviewed',
+          items: graph.unreviewedDeleteTriggers.map((t) => `${t.table}.${t.trigger}`),
+        },
+      ]
+    : [];
+
+  return (
+    <div
+      style={{
+        ...boxStyle,
+        borderColor: isClean ? '#28a745' : '#dc3545',
+        background: isClean ? '#f6fff8' : '#fff5f5',
+      }}
+    >
+      <h4 style={{ margin: '0 0 8px' }}>Delete graph (live foreign keys and triggers)</h4>
+      <p style={{ margin: '0 0 6px', fontSize: 14 }}>
+        Verdict:{' '}
+        <strong>
+          {status === 'ok' ? 'CLEAN' : status === 'refused' ? 'REFUSED' : 'NOT VERIFIED (treated as refused)'}
+        </strong>
+        {graph?.error ? ` (${graph.error})` : ''}
+      </p>
+      {sections
+        .filter((s) => s.items.length > 0)
+        .map((s) => (
+          <div key={s.title}>
+            <p style={{ margin: '6px 0 2px', fontSize: 13, fontWeight: 600 }}>{s.title}:</p>
+            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
+              {s.items.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      {graph && graph.cascadeAfterParent.length > 0 && (
+        <p style={{ margin: '6px 0 0', fontSize: 12, color: '#555' }}>
+          Counted after their cascade parent (statement count may read low; the snapshot count is the truth):{' '}
+          {graph.cascadeAfterParent.map((e) => `${e.child}${e.exempt ? ' (accepted)' : ''}`).join(', ')}
+        </p>
+      )}
+    </div>
+  );
 }
 
 type CommitOutcome =
   | {
       status: 'completed';
       correlationId: string;
+      /** Slice 3b. Optional so a slice-2 payload still renders. */
+      level?: 'reset' | 'purge';
       snapshotPath: string;
       rows: { total: number; byTable: Record<string, number> };
       storage: Array<{ bucket: string; deleted: number; failed: Array<{ path: string; reason: string }> }>;
       residue: string[];
+      /** Slice 3b: internal-surface result notes (FR-24, FR-25, AC-32, AC-42). */
+      notes?: string[];
       committedAt: string;
       durationMs: number;
     }
@@ -97,16 +181,17 @@ export interface PurgeDangerZoneProps {
 export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}) {
   const [access, setAccess] = useState<AccessState | null>(null);
   const [level, setLevel] = useState<'reset' | 'purge'>('reset');
+  // No `agents` key: the option is not offered (OQ-1 = (c)). The routes default
+  // it to false.
   const [options, setOptions] = useState({
     integrations: false,
-    agents: false,
     activityHistory: false,
   });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // ── Reset commit (slice 2) ──────────────────────────────────────────────
+  // ── Commit (Reset since slice 2, Purge since slice 3b) ──────────────────
   const [confirmText, setConfirmText] = useState('');
   const [committing, setCommitting] = useState(false);
   const [commitOutcome, setCommitOutcome] = useState<CommitOutcome | null>(null);
@@ -187,6 +272,8 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
         onLog?.('error', `Could not count storage bucket ${s2.table}: ${s2.error ?? 'unknown'}`);
       }
       onLog?.('info', `Limitations reported: ${data.limitations.length}`);
+      const graphStatus = data.deleteGraph?.status ?? 'unreadable';
+      onLog?.(graphStatus === 'ok' ? 'info' : 'error', `Delete graph: ${graphStatus}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -196,17 +283,33 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
     }
   }, [level, options, onLog, onResponse]);
 
-  const runReset = async () => {
+  const runCommit = async () => {
+    if (!result) return;
+    // Commit exactly what was previewed: the preview's level and its two extras.
+    const commitLevel = result.level;
+    const commitOptions = {
+      integrations: result.options.integrations === true,
+      activityHistory: result.options.activityHistory === true,
+    };
+    const label = commitLevel === 'purge' ? 'PURGE' : 'RESET';
     setCommitting(true);
     setCommitError(null);
     setCommitOutcome(null);
-    onLog?.('info', 'RESET requested — POST /api/business-os/purge/commit (typed confirmation supplied)');
+    onLog?.(
+      'info',
+      `${label} requested — POST /api/business-os/purge/commit (typed confirmation supplied; options=${
+        Object.entries(commitOptions)
+          .filter(([, v]) => v)
+          .map(([k]) => k)
+          .join(',') || 'none'
+      })`,
+    );
 
     try {
       const res = await fetch('/api/business-os/purge/commit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ level: 'reset', confirmText }),
+        body: JSON.stringify({ level: commitLevel, confirmText, options: commitOptions }),
       });
       const json = await res.json();
       onResponse?.(json);
@@ -214,7 +317,7 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
       if (!res.ok || !json.success) {
         const msg = json?.error || `Request failed (${res.status})`;
         setCommitError(msg);
-        onLog?.('error', `Reset rejected (${res.status}): ${msg}`);
+        onLog?.('error', `${label} rejected (${res.status}): ${msg}`);
         return;
       }
 
@@ -224,9 +327,10 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
       if (outcome.status === 'completed') {
         onLog?.(
           'success',
-          `RESET COMPLETED · ${outcome.rows.total} rows deleted · snapshot ${outcome.snapshotPath} · correlationId=${outcome.correlationId}`,
+          `${label} COMPLETED · ${outcome.rows.total} rows deleted · snapshot ${outcome.snapshotPath} · correlationId=${outcome.correlationId}`,
         );
         for (const r of outcome.residue) onLog?.('error', `Storage residue: ${r}`);
+        for (const n of outcome.notes ?? []) onLog?.('info', `Note: ${n}`);
         // The counts shown are now pre-reset and wrong. Clear them rather than
         // leave a table of numbers that describes data which no longer exists.
         setResult(null);
@@ -234,13 +338,13 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
       } else {
         onLog?.(
           'info',
-          `Reset refused (${outcome.reason}) · snapshotWritten=${outcome.snapshotWritten} · rowsDeleted=0 · ${outcome.message}`,
+          `${label} refused (${outcome.reason}) · snapshotWritten=${outcome.snapshotWritten} · rowsDeleted=0 · ${outcome.message}`,
         );
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setCommitError(msg);
-      onLog?.('error', `Reset threw: ${msg}`);
+      onLog?.('error', `${label} threw: ${msg}`);
     } finally {
       setCommitting(false);
     }
@@ -272,10 +376,13 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
       <div style={{ ...box, borderColor: '#dc3545', background: '#fff5f5', borderWidth: 2 }}>
         <h3 style={{ margin: '0 0 6px' }}>⚠️ This page can DELETE data</h3>
         <p style={{ margin: 0, fontSize: 14 }}>
-          <strong>Preview</strong> is read-only and changes nothing. <strong>Reset</strong> (offered
+          <strong>Preview</strong> is read-only and changes nothing. Once the server-side delete
+          function is applied (its status is shown below), <strong>Reset</strong> (offered
           after a Reset preview) permanently deletes this business&apos;s CRM, scheduling, payment,
-          website and insight data, behind a typed confirmation. A verified snapshot is written
-          first. <strong>There is no undo.</strong>
+          website and insight data. <strong>Purge</strong> (offered after a Purge preview) also
+          deletes the business profile, its configuration and its channel connections. Both sit
+          behind a typed confirmation, and a verified snapshot is written first.{' '}
+          <strong>There is no undo.</strong>
         </p>
         {/*
           M-4: driven by the server's live probe, never by a hard-coded sentence.
@@ -297,18 +404,19 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
               borderRadius: 4,
             }}
           >
-            ⚠️ Reset is LIVE — it will delete data.
+            ⚠️ Reset and Purge are LIVE — they will delete data.
           </p>
         )}
         {access.resetLive === false && (
           <p style={{ margin: '6px 0 0', fontSize: 13 }}>
-            Reset is currently <strong>refused — the destructive function is not applied</strong>.
-            Pressing Reset will be rejected by the server before anything is written.
+            Reset and Purge are currently <strong>refused — the destructive function is not
+            applied</strong>. Pressing either will be rejected by the server before anything is
+            written.
           </p>
         )}
         {(access.resetLive === null || access.resetLive === undefined) && (
           <p style={{ margin: '6px 0 0', fontSize: 13, color: '#b8860b' }}>
-            <strong>Could not determine whether Reset is live.</strong> Treat it as live: the server
+            <strong>Could not determine whether Reset and Purge are live.</strong> Treat them as live: the server
             re-checks before deleting and refuses if it cannot confirm.
           </p>
         )}
@@ -353,8 +461,7 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
           {(
             [
               ['integrations', 'Also disconnect integrations (plugin_connections)'],
-              ['agents', 'Also delete my agents (and their logs, memory, sessions)'],
-              ['activityHistory', 'Also delete my activity history (audit_trail)'],
+              ['activityHistory', 'Also delete my activity history (audit_trail and its archived copies)'],
             ] as const
           ).map(([key, label]) => (
             <label key={key} style={{ display: 'block' }}>
@@ -366,6 +473,11 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
               {label}
             </label>
           ))}
+          {/* AC-32 */}
+          <p style={{ margin: '6px 0 0', fontSize: 12, color: '#555' }}>
+            Purge always removes channel connections, whether or not integrations are disconnected.
+            There is no option to delete agents: a purge never deletes them.
+          </p>
         </div>
 
         <button
@@ -425,6 +537,8 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
               </>
             )}
           </div>
+
+          <DeleteGraphPanel graph={result.deleteGraph} boxStyle={box} />
 
           <div style={box}>
             <h4 style={{ margin: '0 0 8px' }}>
@@ -495,55 +609,100 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
             </ul>
           </div>
 
-          {result.level === 'reset' && (
-            <div style={{ ...box, borderColor: '#dc3545', borderWidth: 2 }}>
-              <h4 style={{ margin: '0 0 8px', color: '#b02a37' }}>Reset this business</h4>
-              <p style={{ margin: '0 0 8px', fontSize: 14 }}>
-                Permanently deletes the {result.totals.rows.toLocaleString()} rows counted above for{' '}
-                <code>{access.email ?? access.userId}</code>. A verified snapshot is written first.{' '}
-                <strong>There is no undo.</strong>
+          <div style={{ ...box, borderColor: '#dc3545', borderWidth: 2 }}>
+            <h4 style={{ margin: '0 0 8px', color: '#b02a37' }}>
+              {result.level === 'purge' ? 'Purge this business' : 'Reset this business'}
+            </h4>
+            {/*
+              SA G-1: this box renders after every preview, so its copy follows the
+              same probe as the banner. Only a LIVE function "deletes"; otherwise the
+              server refuses before any snapshot, and the box says so. The button
+              stays enabled on purpose: the audited refusal path is worth exercising.
+            */}
+            {access.resetLive === false && (
+              <p data-testid="commit-not-live" style={{ margin: '0 0 8px', fontSize: 13, color: '#b02a37', fontWeight: 600 }}>
+                The destructive function is not applied, so the server will refuse this run before anything
+                is snapshotted or deleted.
               </p>
-              <label htmlFor="purge-confirm" style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>
-                Type the <strong>business name</strong> (or, if the business has none, the{' '}
-                <strong>account email</strong>) to confirm:
-              </label>
-              <input
-                id="purge-confirm"
-                type="text"
-                value={confirmText}
-                onChange={(e) => setConfirmText(e.target.value)}
-                autoComplete="off"
-                style={{ width: '100%', padding: 6, marginBottom: 8, fontFamily: 'monospace' }}
-              />
-              <button
-                onClick={runReset}
-                disabled={committing || confirmText.trim().length === 0}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: 4,
-                  border: '1px solid #dc3545',
-                  background: committing || !confirmText.trim() ? '#ccc' : '#dc3545',
-                  color: 'white',
-                  fontWeight: 600,
-                  cursor: committing || !confirmText.trim() ? 'default' : 'pointer',
-                }}
-              >
-                {committing ? 'Resetting…' : 'Reset — delete permanently'}
-              </button>
-            </div>
-          )}
+            )}
+            {access.resetLive !== true && access.resetLive !== false && (
+              <p data-testid="commit-state-unknown" style={{ margin: '0 0 8px', fontSize: 13, color: '#b8860b', fontWeight: 600 }}>
+                Whether the destructive function is applied is unknown. The server re-checks first and refuses
+                if it cannot confirm; treat this button as live.
+              </p>
+            )}
+            <p style={{ margin: '0 0 8px', fontSize: 14 }}>
+              {access.resetLive === true ? 'Permanently deletes' : 'Would permanently delete'} the{' '}
+              {result.totals.rows.toLocaleString()} rows counted above for{' '}
+              <code>{access.email ?? access.userId}</code>. A verified snapshot is written first.{' '}
+              <strong>There is no undo.</strong>
+            </p>
+            {result.level === 'purge' && (
+              <ul style={{ margin: '0 0 8px', paddingLeft: 20, fontSize: 13 }}>
+                {/* FR-25 / AC-42 / AC-32 — stated BEFORE the confirmation, not only after. */}
+                <li>The business profile is deleted, so its subdomain is released and anyone can claim it.</li>
+                <li>
+                  Setting the business up again creates a new public code: old /c/ booking and contact links
+                  stop working for good.
+                </li>
+                <li>Channel connections are removed.</li>
+                {result.options.integrations && <li>Integrations are disconnected.</li>}
+                {result.options.activityHistory && (
+                  <li>Activity history is deleted; the record of this purge is written afterwards and kept.</li>
+                )}
+              </ul>
+            )}
+            {(result.deleteGraph?.status ?? 'unreadable') !== 'ok' && (
+              <p style={{ margin: '0 0 8px', fontSize: 13, color: '#b02a37', fontWeight: 600 }}>
+                The delete graph above is not CLEAN, so the server will refuse this run.
+              </p>
+            )}
+            <label htmlFor="purge-confirm" style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>
+              Type the <strong>business name</strong> (or, if the business has none, the{' '}
+              <strong>account email</strong>) to confirm:
+            </label>
+            <input
+              id="purge-confirm"
+              type="text"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              autoComplete="off"
+              style={{ width: '100%', padding: 6, marginBottom: 8, fontFamily: 'monospace' }}
+            />
+            <button
+              onClick={runCommit}
+              disabled={committing || confirmText.trim().length === 0}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 4,
+                border: '1px solid #dc3545',
+                background: committing || !confirmText.trim() ? '#ccc' : '#dc3545',
+                color: 'white',
+                fontWeight: 600,
+                cursor: committing || !confirmText.trim() ? 'default' : 'pointer',
+              }}
+            >
+              {committing
+                ? result.level === 'purge'
+                  ? 'Purging…'
+                  : 'Resetting…'
+                : result.level === 'purge'
+                  ? 'Purge — delete permanently'
+                  : 'Reset — delete permanently'}
+            </button>
+          </div>
         </>
       )}
 
       {commitError && (
         <div role="alert" style={{ ...box, borderColor: '#f5c6cb', background: '#fff5f5' }}>
-          <strong>Reset rejected:</strong> {commitError}
+          <strong>Commit rejected:</strong> {commitError}
         </div>
       )}
 
       {commitOutcome && commitOutcome.status === 'refused' && (
         <div role="alert" style={{ ...box, borderColor: '#ffc107', background: '#fffbe6' }}>
-          <strong>Reset refused — {commitOutcome.reason}</strong>
+          <strong>Commit refused — {commitOutcome.reason}</strong>
           <p style={{ margin: '6px 0 0', fontSize: 14 }}>{commitOutcome.message}</p>
           <p style={{ margin: '6px 0 0', fontSize: 13 }}>
             Rows deleted: <strong>0</strong> · Snapshot written:{' '}
@@ -555,7 +714,7 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
 
       {commitOutcome && commitOutcome.status === 'completed' && (
         <div role="status" style={{ ...box, borderColor: '#198754', background: '#f0fff4' }}>
-          <strong>Reset completed.</strong>
+          <strong>{commitOutcome.level === 'purge' ? 'Purge' : 'Reset'} completed.</strong>
           <p style={{ margin: '6px 0 0', fontSize: 14 }}>
             {commitOutcome.rows.total.toLocaleString()} rows deleted in {commitOutcome.durationMs}ms.
             Snapshot: <code>{commitOutcome.snapshotPath}</code>
@@ -568,6 +727,16 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
               <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12 }}>
                 {commitOutcome.residue.map((r, i) => (
                   <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </>
+          )}
+          {(commitOutcome.notes ?? []).length > 0 && (
+            <>
+              <p style={{ margin: '8px 0 2px', fontSize: 13, fontWeight: 600 }}>What this means:</p>
+              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
+                {(commitOutcome.notes ?? []).map((n, i) => (
+                  <li key={i}>{n}</li>
                 ))}
               </ul>
             </>

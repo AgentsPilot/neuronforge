@@ -586,7 +586,7 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
   return (
     <Dialog open={isOpen} onOpenChange={open => !open && onClose()}>
       <DialogContent
-        className="flex w-full sm:max-w-2xl h-[100vh] sm:h-auto max-h-[100dvh] sm:max-h-[90dvh] flex-col rounded-none sm:rounded-lg p-0 overflow-hidden"
+        className="flex w-full sm:max-w-2xl h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[90dvh] flex-col rounded-none sm:rounded-lg p-0 overflow-hidden"
         dir={isRTL ? 'rtl' : 'ltr'}
       >
         {gateMissing === null ? (
@@ -611,7 +611,7 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+            <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin px-5 py-5">
               <p className="text-sm leading-relaxed text-[var(--v2-text-secondary)]">
                 {t('invoice.gate.body')}
               </p>
@@ -722,8 +722,20 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
           </p>
         </div>
 
-          {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+          {/*
+            Scrollable Content.
+
+            `scrollbar-thin` is not decoration. Without it this gets the
+            platform's default bar — on macOS with a mouse, and on Windows
+            always, that is a wide opaque track pinned to the edge of a dialog
+            whose own content is 6px-radius cards and hairline borders. It was
+            the heaviest element on the form.
+
+            The class is defined in `globals.css` and now carries a dark variant,
+            so the bar stays a quiet line on either ground rather than a bright
+            stripe on the dark one.
+          */}
+          <div className="flex-1 overflow-y-auto scrollbar-thin px-5 py-5 space-y-5">
           {/* Client Selection */}
           <div className="space-y-3">
             <h3 className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
@@ -764,7 +776,9 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
                     </div>
 
                     {/* Contact List */}
-                    <div className="max-h-48 overflow-y-auto">
+                    {/* A 192px-tall list: the default bar eats a tenth of its
+                        width and sits on the rounded corner of the popover. */}
+                    <div className="max-h-48 overflow-y-auto scrollbar-thin">
                       {loadingContacts ? (
                         <div className="px-4 py-3 flex items-center justify-center">
                           <Loader2 className="w-4 h-4 animate-spin text-[var(--v2-primary)]" />
@@ -909,7 +923,7 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
                     {activeServiceDropdown === index && services.length > 0 && (
                       <>
                         <div className="fixed inset-0 z-[90]" onClick={() => { setActiveServiceDropdown(null); setServiceSearch(''); }} />
-                        <div className="absolute z-[95] w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        <div className="absolute z-[95] w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto scrollbar-thin">
                           {(() => {
                             const filteredServices = services.filter(service => {
                               if (!serviceSearch) return true;

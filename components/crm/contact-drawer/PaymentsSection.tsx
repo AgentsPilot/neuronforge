@@ -10,6 +10,7 @@ import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { buildEntryActions } from '@/lib/payments/entryActions';
 import { MoneyDetailDrawer } from '@/components/payments/MoneyDetailDrawer';
 import { MoneyRow } from '@/components/payments/MoneyRow';
+import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
 import type { SessionCardData } from './types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -459,6 +460,30 @@ export function PaymentsSection({
                     {t('payments.refunded') || 'Refunded'}{' '}
                     <b className="text-orange-600 tabular-nums">
                       {formatCurrency(totals.refunded, moneyItems[0].currency)}
+                    </b>
+                  </span>
+                )}
+                {/* Money this contact was billed for and called off.
+                    `totalMoney` has always computed it; this line was the only
+                    one of the four totals never rendered, so a contact whose
+                    bookings were cancelled read as having simply been billed
+                    less. The rows underneath already show it — `MoneyRow`
+                    paints a `cancelled` segment — so the figure was visible per
+                    booking and absent from the sum of them.
+
+                    Same key and same colour as the orders list, deliberately:
+                    `REPORTS_COLORS.LOST` is what the bars immediately below
+                    this line use, and the same money in two colours inches
+                    apart reads as two different figures.
+
+                    Only when there is some, matching the strip's rule — a
+                    permanent zero beside three live totals reads as a fourth
+                    problem the contact does not have. */}
+                {totals.cancelled > 0 && (
+                  <span>
+                    {t('payments.cancelled_total') || 'Cancelled'}{' '}
+                    <b className="tabular-nums" style={{ color: REPORTS_COLORS.LOST }}>
+                      {formatCurrency(totals.cancelled, moneyItems[0].currency)}
                     </b>
                   </span>
                 )}

@@ -1,5 +1,5 @@
 /**
- * POST /api/business-os/purge/commit — the Reset commit route.
+ * POST /api/business-os/purge/commit — the Reset / Purge commit route.
  *
  * B-2. Required by CLAUDE.md for every new API route (happy path, auth failure,
  * invalid input). This route is the one that DELETES, so the suite is built
@@ -7,7 +7,7 @@
  * must be "exactly once, for the session user" on the happy path, and "never"
  * everywhere else.
  *
- * `runReset` is mocked. This suite proves the route's gatekeeping — auth,
+ * `runPurgeCommit` is mocked. This suite proves the route's gatekeeping — auth,
  * authorisation, validation, typed confirmation — and nothing about the delete
  * itself, which is covered by `ResetService.order.test.ts`. (supabase-js has no
  * working fetch under this repo's Jest environment, so a real run is not
@@ -24,9 +24,11 @@ jest.mock('@/lib/business-os/purge/purgeAuthz', () => ({
   authorizePurge: (...a: unknown[]) => authorizePurge(...a),
 }));
 
+// Named `runReset` in this suite for continuity with slice 2: it is the
+// orchestrator the route calls, now `runPurgeCommit` (slice 3b).
 const runReset = jest.fn();
 jest.mock('@/lib/business-os/purge/ResetService', () => ({
-  runReset: (...a: unknown[]) => runReset(...a),
+  runPurgeCommit: (...a: unknown[]) => runReset(...a),
 }));
 
 const findByUserId = jest.fn();
@@ -128,7 +130,13 @@ describe('POST /api/business-os/purge/commit', () => {
       ['empty confirmation', { level: 'reset', confirmText: '' }],
       ['whitespace-only confirmation', { level: 'reset', confirmText: '     ' }],
       ['missing confirmation', { level: 'reset' }],
-      ['level: purge (slice 2 is Reset only)', { level: 'purge', confirmText: BUSINESS_NAME }],
+      ['unknown level', { level: 'erase', confirmText: BUSINESS_NAME }],
+      // Slice 3b: options is `.strict()` — an unknown key is a rejection.
+      ['unknown option key', { level: 'purge', confirmText: BUSINESS_NAME, options: { everything: true } }],
+      ['non-boolean option', { level: 'purge', confirmText: BUSINESS_NAME, options: { integrations: 'yes' } }],
+      ['options not an object', { level: 'purge', confirmText: BUSINESS_NAME, options: true }],
+      ['injected userId on a Purge', { level: 'purge', confirmText: BUSINESS_NAME, userId: 'someone-else' }],
+      ['injected user_id inside options', { level: 'purge', confirmText: BUSINESS_NAME, options: { user_id: 'x' } }],
       ['missing level', { confirmText: BUSINESS_NAME }],
       // FR-2 / AC-28: the target is always the session user. `.strict()` makes
       // an injected id a rejection, not a silently ignored field.
@@ -168,6 +176,65 @@ describe('POST /api/business-os/purge/commit', () => {
       const res = await POST(req({ level: 'reset', confirmText: 'anything' }));
 
       expect(res.status).toBe(409);
+      expect(runReset).not.toHaveBeenCalled();
+    });
+  });
+  describe('slice 3b — Purge level and opt-in extras (FR-3, FR-4)', () => {
+    it('runs Purge for the SESSION user with the options as sent', async () => {
+      const res = await POST(
+        req({ level: 'purge', confirmText: BUSINESS_NAME, options: { integrations: true, activityHistory: true } })
+      );
+
+      expect(res.status).toBe(200);
+      expect(runReset).toHaveBeenCalledTimes(1);
+      expect(runReset).toHaveBeenCalledWith({
+        userId: SESSION_USER.id,
+        actorEmail: SESSION_USER.email,
+        correlationId: expect.any(String),
+        level: 'purge',
+        options: { integrations: true, agents: false, activityHistory: true },
+      });
+    });
+
+    it('every option defaults to false when omitted (FR-4: all off by default)', async () => {
+      await POST(req({ level: 'purge', confirmText: BUSINESS_NAME }));
+      expect(runReset.mock.calls[0][0].options).toEqual({ integrations: false, agents: false, activityHistory: false });
+
+      runReset.mockClear();
+      await POST(req({ level: 'reset', confirmText: BUSINESS_NAME, options: {} }));
+      expect(runReset.mock.calls[0][0]).toMatchObject({
+        level: 'reset',
+        options: { integrations: false, agents: false, activityHistory: false },
+      });
+    });
+
+    it('agents: true is passed through, not silently dropped, so the orchestrator refuses it with its own code', async () => {
+      // OQ-1 = (c): the refusal lives in the orchestrator (audited, one place).
+      // Dropping the key here would turn a refusal into a quiet "ran without
+      // agents", which is not what the caller asked for.
+      runReset.mockResolvedValue({ status: 'refused', reason: 'agents_option_refused', rowsDeleted: 0 });
+
+      const res = await POST(req({ level: 'purge', confirmText: BUSINESS_NAME, options: { agents: true } }));
+      const body = await res.json();
+
+      expect(runReset.mock.calls[0][0].options.agents).toBe(true);
+      expect(body.data.reason).toBe('agents_option_refused');
+    });
+
+    it('403 for a non-admin on Purge — the orchestrator never runs', async () => {
+      authorizePurge.mockResolvedValue({ allowed: false, status: 403, reason: 'admins only' });
+
+      const res = await POST(req({ level: 'purge', confirmText: BUSINESS_NAME }));
+
+      expect(res.status).toBe(403);
+      expect(authorizePurge).toHaveBeenCalledWith(expect.anything(), 'purge', 'internal');
+      expect(runReset).not.toHaveBeenCalled();
+    });
+
+    it('a wrong confirmation on Purge is a 400 and the orchestrator never runs', async () => {
+      const res = await POST(req({ level: 'purge', confirmText: 'Not The Name' }));
+
+      expect(res.status).toBe(400);
       expect(runReset).not.toHaveBeenCalled();
     });
   });

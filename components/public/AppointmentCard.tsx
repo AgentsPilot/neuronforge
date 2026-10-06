@@ -1,6 +1,7 @@
 // components/public/AppointmentCard.tsx
 
 import { Calendar, Clock, Hourglass, Wallet } from 'lucide-react';
+import { BrandButton } from '@/components/public/BrandButton';
 
 import { formatPublicDate, formatPublicMoney, formatPublicTime, publicT } from '@/lib/i18n/public-pages';
 import type { PublicBrand } from '@/lib/branding/publicBranding';
@@ -69,6 +70,15 @@ interface AppointmentCardProps {
     dueDate: string | null;
     overdue: boolean;
     plan: { paid: number; total: number } | null;
+    /**
+     * Where this client can settle it.
+     *
+     * Absent when nothing is owed, when the only outstanding thing is a quote
+     * stage not yet invoiced, or when the invoice turns out to be settled after
+     * all — in every one of those a button would be a dead end or a demand for
+     * money already paid.
+     */
+    payUrl?: string | null;
   } | null;
   /**
    * What a client can DO with this appointment, rendered inside the card.
@@ -128,7 +138,26 @@ export function AppointmentCard({
   const price = booking.service?.price;
   const hasPrice = typeof price === 'number' && price > 0;
   const minutes = booking.service?.duration_minutes;
-  const stamp = paymentStatus ? PAYMENT_STAMP[paymentStatus] : undefined;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE ANSWER ABOUT THE MONEY, NOT TWO.
+   *
+   * The stamp used to read `scheduling_bookings.payment_status` while the line
+   * below it read the state the route DERIVES from the invoices and the plan.
+   * Those are two sources, and they disagree: one booking on the reporting
+   * account carries a paid invoice and an overdue one, and its row still says
+   * `paid` — so the card stamped a green PAID beside "₪300 to pay, overdue".
+   *
+   * The derived state wins wherever it is supplied, because it is the one
+   * computed from what actually happened. A booking with anything outstanding
+   * is not stamped paid, however its own column reads.
+   *
+   * `payment_status` remains the fallback for callers that have no derived
+   * state to give — it is still right for a booking with no invoices at all.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const settledState = payment ? (payment.state === 'paid' || payment.state === 'refunded' ? payment.state : null) : paymentStatus;
+  const stamp = settledState ? PAYMENT_STAMP[settledState] : undefined;
 
   return (
     <section
@@ -301,6 +330,30 @@ export function AppointmentCard({
                         })
                       )}
                 </span>
+              )}
+
+              {/*
+                BESIDE THE AMOUNT, not in a section of its own.
+                ──────────────────────────────────────────────────────────────
+                This line already told the client what they owe and whether it
+                is late; what it never did was let them do anything about it.
+                The button belongs on the same line as the figure it settles —
+                a separate payment panel would read as a second, different
+                demand.
+
+                Rendered only when there is an invoice behind it. An unbilled
+                quote stage has nothing to pay against, and says so below
+                instead — a figure with no button and no explanation reads as a
+                broken page, which is how this was reported.
+              */}
+              {!payment.payUrl && (
+                <span style={{ color: 'var(--ap-text-muted)' }}>{t('portal.not_billed_yet')}</span>
+              )}
+
+              {payment.payUrl && (
+                <BrandButton href={payment.payUrl} size="sm">
+                  {t('portal.pay_now')}
+                </BrandButton>
               )}
             </>
           )}

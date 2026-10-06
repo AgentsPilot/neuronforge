@@ -25,6 +25,16 @@
  * new `CancelQueueItemDialog.tsx` owns one POST, to the literal action URL,
  * with a pinned body, and is the only file here allowed the word "Cancel"
  * besides the drain dialog.
+ *
+ * Amended by ADMIN_BOS_CLEANUP slice 7c (SA OP-16, W7C-13), narrowly:
+ * `page.tsx` keeps every rule; the view keeps every rule except that its
+ * header sentence now also says a recently failed item can be retried (still
+ * one "Drain", no capital-C "Cancel", no "Retry" word, one fetch); the panel
+ * keeps EVERY read-only rule plus one more counted allowance, exactly one
+ * `<RetryQueueItemDialog` element, as the allowed branch of its Re-send cell
+ * (the second-to-last cell); the new `RetryQueueItemDialog.tsx` owns one POST,
+ * to the literal action URL, with a pinned body that carries no time, owner or
+ * account, and never says "Cancel", "Requeue" or "Drain".
  */
 
 import * as fs from 'fs';
@@ -35,13 +45,14 @@ const VIEW = 'app/admin/components/jobs/JobsQueuesView.tsx';
 const DIALOG = 'app/admin/components/jobs/DrainNowDialog.tsx';
 const PANEL = 'app/admin/components/jobs/QueueItemsPanel.tsx';
 const CANCEL_DIALOG = 'app/admin/components/jobs/CancelQueueItemDialog.tsx';
+const RETRY_DIALOG = 'app/admin/components/jobs/RetryQueueItemDialog.tsx';
 const FORMAT = 'app/admin/components/jobs/jobsFormat.ts';
 /** The read-only files: every original rule applies (W7D-2; the panel since slice 7a). */
 const FILES = [PAGE, VIEW, PANEL];
 /** Every client file on the page: client-only, C-21 imports, no console, no "OK". */
-const CLIENT_FILES = [PAGE, VIEW, DIALOG, PANEL, CANCEL_DIALOG];
+const CLIENT_FILES = [PAGE, VIEW, DIALOG, PANEL, CANCEL_DIALOG, RETRY_DIALOG];
 const VIEW_HEADER_SENTENCE =
-  "Each queue has a Drain now button, and a waiting, failed or orphaned item can be cancelled from its queue's list; everything else here is read-only.";
+  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; everything else here is read-only.";
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
 
 function codeOf(source: string): string {
@@ -179,6 +190,8 @@ describe('slice 7b: one item action, and nothing more (SA OP-15, §2.8)', () => 
     const last = cells[cells.length - 1];
     expect(last).toMatch(/^\s*\{\s*item\.cancel\.allowed\s*\?\s*\(?\s*<CancelQueueItemDialog\b/);
     for (const cell of cells.slice(0, -1)) expect(cell).not.toMatch(/CancelQueueItemDialog/);
+    // Slice 7c: and never in the Re-send cell's retry dialog's place.
+    expect(last).not.toMatch(/RetryQueueItemDialog/);
   });
 
   it('the allowance is a decision, not a regex accident: the identifier does not match \bCancel\b', () => {
@@ -220,5 +233,68 @@ describe('slice 7b: one item action, and nothing more (SA OP-15, §2.8)', () => 
   it('CancelQueueItemDialog.tsx never renders server text: no error or details field is read from a response', () => {
     const code = codeOf(read(CANCEL_DIALOG));
     expect(code).not.toMatch(/\.(error|details|message)\b(?!\s*\()/);
+  });
+});
+
+describe('slice 7c: one more item action, and nothing more (SA OP-16, W7C-13)', () => {
+  it('QueueItemsPanel.tsx: exactly one <RetryQueueItemDialog element, as the allowed branch of the Re-send (second-to-last) cell', () => {
+    const code = codeOf(read(PANEL));
+    expect(code.match(/<RetryQueueItemDialog\b/g)).toHaveLength(1);
+    const cells = [...code.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+    const resend = cells[cells.length - 2];
+    expect(resend).toMatch(/^\s*\{\s*item\.retry\.allowed\s*\?\s*\(?\s*<RetryQueueItemDialog\b/);
+    cells.forEach((cell, index) => {
+      if (index !== cells.length - 2) expect(cell).not.toMatch(/RetryQueueItemDialog/);
+    });
+  });
+
+  it('the allowance is a decision, not a regex accident: the identifier does not match \bRetry\b', () => {
+    expect('RetryQueueItemDialog').not.toMatch(/\bRetry\b/);
+    expect('<RetryQueueItemDialog />').not.toMatch(/\b(Retry|Requeue|Cancel|Drain)\b/);
+  });
+
+  it('JobsQueuesView.tsx never names the retry dialog; its header says retry without the word "Retry"', () => {
+    const code = codeOf(read(VIEW));
+    expect(code).not.toMatch(/RetryQueueItemDialog/);
+    expect(VIEW_HEADER_SENTENCE).toMatch(/can be retried/);
+    expect(VIEW_HEADER_SENTENCE).not.toMatch(/\b(Retry|Cancel|Requeue)\b/);
+    expect(VIEW_HEADER_SENTENCE.match(/\bDrain\b/g)).toHaveLength(1);
+  });
+
+  it('RetryQueueItemDialog.tsx makes exactly one POST, with one fetch, to the literal action URL', () => {
+    const code = codeOf(read(RETRY_DIALOG));
+    expect(code.match(/method:\s*['"](POST|PUT|PATCH|DELETE|GET)['"]/g)).toEqual(["method: 'POST'"]);
+    const fetches = [...code.matchAll(/fetch\(\s*([^,)]*)/g)].map((m) => m[1].trim());
+    expect(fetches).toEqual(["'/api/admin/jobs-queues/items/action'"]);
+  });
+
+  it('RetryQueueItemDialog.tsx builds the body from the row and the trimmed reason only: no time, owner or account', () => {
+    const code = codeOf(read(RETRY_DIALOG));
+    expect(code.match(/JSON\.stringify\(/g)).toHaveLength(1);
+    const body = code.match(
+      /body:\s*JSON\.stringify\(\{\s*queue:\s*queueId,\s*itemId:\s*item\.id,\s*action:\s*'retry',\s*expected:\s*\{\s*status:\s*item\.status,\s*attempts:\s*item\.attempts\s*\},\s*reason:\s*reason\.trim\(\),?\s*\}\)/
+    );
+    expect(body).not.toBeNull();
+    expect(body![0]).not.toMatch(/\b(userId|accountId|ownerUserId|user_id|nextAttemptAt|retryAt|scheduled\w*)\b/);
+    expect(code).not.toMatch(/\b(userId|accountId|ownerUserId|user_id)\b/);
+  });
+
+  it('RetryQueueItemDialog.tsx: no Cancel, Requeue or Drain; no green; never "OK"; no console; "Retry item" present', () => {
+    const code = codeOf(read(RETRY_DIALOG));
+    expect(code).not.toMatch(/\b(Cancel|Requeue|Drain)\b/);
+    expect(code).not.toMatch(GREEN_CLASS);
+    expect(code).not.toMatch(/\bOK\b/);
+    expect(code).not.toMatch(/console\./);
+    expect(code).toMatch(/\bRetry item\b/);
+  });
+
+  it('RetryQueueItemDialog.tsx never renders server text: no error or details field is read from a response', () => {
+    const code = codeOf(read(RETRY_DIALOG));
+    expect(code).not.toMatch(/\.(error|details|message)\b(?!\s*\()/);
+    expect(code).not.toMatch(/['"](error|details|message)['"]/);
+  });
+
+  it('CancelQueueItemDialog.tsx is untouched by 7c: it still never says Retry', () => {
+    expect(codeOf(read(CANCEL_DIALOG))).not.toMatch(/\bRetry\b/);
   });
 });

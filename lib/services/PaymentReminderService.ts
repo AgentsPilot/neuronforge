@@ -13,6 +13,7 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { platformOrigin } from '@/lib/utils/origins';
 import { createLogger } from '@/lib/logger';
 import { emitPaymentEvent, PaymentProcessorType } from '@/lib/services/PaymentEventService';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
@@ -135,10 +136,45 @@ export interface PaymentReminderServiceResult<T> {
 }
 
 // Default config
+/**
+ * The least time between two reminders about the SAME invoice.
+ *
+ * Three days. Two emails inside that read as chasing rather than reminding,
+ * whichever lists they came from, and the client cannot see that one was a
+ * courtesy and the next a chase.
+ *
+ * Deliberately not 24 hours. A 24-hour floor already existed and let day -1,
+ * day 0 and day +1 all through, because it was scoped to one reminder type at
+ * a time and the three were different types.
+ */
+const MIN_HOURS_BETWEEN_REMINDERS = 72;
+
 const DEFAULT_REMINDER_CONFIG: ReminderConfig = {
   enabled: true,
-  daysBefore: [3, 1], // 3 days and 1 day before
-  overdueDays: [1, 3, 7], // 1, 3, and 7 days after due
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE COURTESY BEFORE, THEN WIDENING INTERVALS AFTER.
+   *
+   * Was `[3, 1]` before and `[1, 3, 7]` after. Combined with the due-day
+   * reminder that produced five or six emails for one invoice, THREE OF THEM
+   * ON CONSECUTIVE MORNINGS: day -1, day 0, day +1. Each was a different
+   * reminder, correctly scheduled, and every guard passed — the 24-hour floor
+   * was scoped per reminder TYPE, so none of the three could see the others.
+   *
+   * To the client it read as daily chasing over ₪300, which is how an owner
+   * loses a client they were owed money by.
+   *
+   * The shape every invoicing tool converges on is sparse and widening: at most
+   * one courtesy before the date, then intervals that grow. Xero defaults to
+   * 7/14/21 after due with nothing before; Stripe and FreshBooks offer a single
+   * pre-due nudge; QuickBooks caps the whole thing at three.
+   *
+   * So: one reminder three days out, the due-day note, then 3, 7 and 14 days
+   * past due. Five touches over seventeen days, never two inside three.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  daysBefore: [3],
+  overdueDays: [3, 7, 14],
   channels: ['email'],
   defaultChannel: 'email',
   /*
@@ -203,7 +239,7 @@ function payLinkFor(entityDetails: Record<string, unknown>): string | null {
   const hosted = (entityDetails.payUrl as string | null) ?? null;
   if (hosted) return hosted;
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  const appUrl = platformOrigin();
   const invoiceId = entityDetails.invoiceId as string | undefined;
   return appUrl && invoiceId ? `${appUrl}/invoice/${invoiceId}` : null;
 }
@@ -253,6 +289,67 @@ export class PaymentReminderService {
               : 'Payment reminders are disabled'
           )
         };
+      }
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * NEVER TWO REMINDERS FOR ONE INVOICE INSIDE THE FLOOR.
+       *
+       * The schedules are three separate lists answering to two switches, and
+       * none of them could see the others: `payment_reminder_days_before`,
+       * the due-day note, and `payment_overdue_reminder_days`. Day -1, day 0
+       * and day +1 are all legitimate entries in their own list and all three
+       * fired, three mornings running, at the same client.
+       *
+       * Checked HERE because this is the one function every reminder passes
+       * through — the pre-due burst written when an invoice is raised, and the
+       * overdue cron hours before it sends. A floor in either one alone would
+       * leave the other free to land beside it.
+       *
+       * This also fixes accounts whose stored day lists are already tight,
+       * without rewriting a preference the owner may have set deliberately: the
+       * list stays as it is and the entries that would crowd simply do not get
+       * scheduled.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (params.invoiceId) {
+        const at = new Date(params.scheduledAt).getTime();
+        const floor = MIN_HOURS_BETWEEN_REMINDERS * 3_600_000;
+
+        const { data: crowding, error: crowdingError } = await this.reminderRepo
+          .findScheduledNearInvoice(
+            params.invoiceId,
+            new Date(at - floor + 1).toISOString(),
+            new Date(at + floor - 1).toISOString()
+          );
+
+        /*
+         * An unreadable check does NOT block the send. The cost of guessing
+         * wrong here is one reminder too many; the cost the other way is an
+         * invoice silently never chased, which is money.
+         */
+        if (crowdingError) {
+          logger.warn(
+            { err: crowdingError, userId, invoiceId: params.invoiceId },
+            'Could not check reminder spacing; scheduling anyway'
+          );
+        } else if ((crowding ?? []).length > 0) {
+          logger.info(
+            {
+              userId,
+              invoiceId: params.invoiceId,
+              reminderType: params.reminderType,
+              scheduledAt: params.scheduledAt,
+              nearest: crowding![0].scheduled_at,
+              floorHours: MIN_HOURS_BETWEEN_REMINDERS,
+            },
+            'Skipped a reminder that would crowd another for the same invoice'
+          );
+          return {
+            data: null,
+            error: new Error('Another reminder for this invoice lands too close to this one'),
+          };
+        }
       }
 
       logger.info({
@@ -1319,6 +1416,18 @@ export class PaymentReminderService {
   }
 
   // ==================== CONFIGURATION ====================
+
+  /**
+   * The soonest moment a reminder for this business may go out, for a desired
+   * time: exactly the rule `sendableAt` applies when a reminder is scheduled
+   * (08:00–20:00 where the business is). Public for the admin retry of one
+   * failed reminder (ADMIN_BOS_CLEANUP slice 7c, SA C7-8): reuse the rule,
+   * never copy the window. Reads the business's zone only; writes, sends and
+   * emits nothing.
+   */
+  async nextSendableAt(userId: string, desired: Date): Promise<Date> {
+    return new Date(await this.sendableAt(desired, userId));
+  }
 
   /**
    * Get user's reminder configuration

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { z } from 'zod';
 import { settlementCurrencyFor } from '@/lib/payments/countryCurrency';
 import { getUser } from '@/lib/auth';
@@ -134,7 +135,10 @@ export async function POST(request: NextRequest) {
 
     // 6. Generate Account Link for remaining verification steps
     // User can complete this later through "Complete Setup" button
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // `platformOrigin()`: this is a URL Stripe sends the OWNER back to, so a
+    // loopback address is a dead end on any deployed build. The resolver
+    // refuses one on Vercel; a laptop still gets localhost.
+    const appUrl = platformOrigin();
     const returnUrl = `${appUrl}/business-os/settings?tab=payments&stripe=connected`;
     const refreshUrl = `${appUrl}/business-os/settings?tab=payments&stripe=refresh`;
 
