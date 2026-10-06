@@ -2730,6 +2730,173 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 11. platfo
 }
 `;
 
+exports[`Stripe webhook, platform customer.subscription.updated (P-10) P10-1. legacy user_id + credits metadata: only the status mirror is written 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_platform_subscription_updated_legacy",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_platform_subscription_updated_legacy",
+            "event_type": "customer.subscription.updated",
+            "metadata": {
+              "created": 1790003000,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "cancel_at_period_end": true,
+            "canceled_at": "2026-09-21T14:55:00.000Z",
+            "status": "active",
+          },
+        ],
+        [
+          "eq",
+          "user_id",
+          "agent-platform-user",
+        ],
+      ],
+      "operation": "update",
+      "table": "user_subscriptions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_platform_subscription_updated_legacy",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, platform customer.subscription.updated (P-10) P10-2. no credits metadata: nothing is written 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_platform_subscription_updated_no_credits",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_platform_subscription_updated_no_credits",
+            "event_type": "customer.subscription.updated",
+            "metadata": {
+              "created": 1790003100,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_platform_subscription_updated_no_credits",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
 exports[`Stripe webhook, platform path through the Business OS router (P-1) P1. hazard: invoice.paid, unknown price, legacy user_id + credits metadata is denied, nothing credited 1`] = `
 {
   "body": {

@@ -486,6 +486,33 @@ export const BOS_QUEUES: readonly BosQueue[] = [
   { id: 'insight_actions', label: 'Insight actions', drainedBy: 'insight-actions', windowBasis: 'queued', note: null },
 ];
 
+/** A job that must never be scheduled, and the decision that says so. */
+export interface PermanentlyUnscheduledCron {
+  path: string;
+  /** Plain words: why it may not run. Shown in the failure if it is scheduled. */
+  reason: string;
+  /** When the decision was taken (YYYY-MM-DD). */
+  decidedOn: string;
+}
+
+/**
+ * Jobs that are deliberately NOT in `vercel.json`, for good (plan payments
+ * P-10, TK-3). `vercel.json` cannot carry a comment, so the decision lives
+ * here, next to the list of jobs that do run, and
+ * `lib/cron/__tests__/vercelCrons.test.ts` fails if any of these paths is
+ * scheduled, printing the reason.
+ */
+export const PERMANENTLY_UNSCHEDULED_CRONS: readonly PermanentlyUnscheduledCron[] = [
+  {
+    path: '/api/cron/check-free-tier-expiration',
+    reason:
+      'It froze every account whose free tier had expired and that never bought credits, and zeroed its balance. ' +
+      'A paying Business OS customer never buys credits, so scheduling it would freeze paying customers. ' +
+      'Decided for good on 2026-10-02 (BQ-P8: keep RD-9 permanently, F-17). The route is an inert 410 since plan payments P-10.',
+    decidedOn: '2026-10-02',
+  },
+];
+
 /** Minutes since the last Vercel cron start after which a job is late. */
 export function lateAfterMinutes(job: Pick<BosCronJob, 'intervalMinutes' | 'graceMinutes'>): number {
   return job.intervalMinutes + job.graceMinutes;

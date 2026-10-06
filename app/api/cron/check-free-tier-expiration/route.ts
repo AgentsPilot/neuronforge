@@ -1,129 +1,56 @@
-import { createClient } from '@supabase/supabase-js';
+// app/api/cron/check-free-tier-expiration/route.ts
+//
+// PERMANENTLY DISABLED (plan payments P-10, TK-3; decided by BQ-P8 on 2026-10-02).
+//
+// This job used to freeze every account whose `free_tier_expires_at` had passed
+// and that had never bought credits, and set its balance to zero. A paying
+// Business OS customer never buys credits, so the day it ran it would have
+// frozen paying customers (RD-9, F-17). BQ-P8 chose to keep it off for good
+// rather than redefine the field, so the freezing body is deleted (it is in git
+// history) and nothing in the codebase can freeze an account any more
+// (`lib/__tests__/accountFrozenWriters.guard.test.ts`).
+//
+// The file stays so whoever looks for the job at its path finds the decision
+// here (SA Q-5). Any caller that holds the secret gets 410 and an alert line,
+// because a call means someone scheduled it: remove it from `vercel.json`.
+// The decision is also recorded in `PERMANENTLY_UNSCHEDULED_CRONS`
+// (`lib/cron/bosCronJobs.ts`), which `vercelCrons.test.ts` enforces.
+
+import { createHash, timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { createLogger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for admin access
-);
+const logger = createLogger({ module: 'cron-check-free-tier-expiration' });
 
-/**
- * GET /api/cron/check-free-tier-expiration
- * Daily cron job to check for expired free tier accounts and freeze them
- *
- * This should be called by a scheduled task (e.g., Vercel Cron, GitHub Actions)
- * Authorization: Bearer token in CRON_SECRET environment variable
- */
-export async function GET(request: NextRequest) {
-  try {
-    // Verify cron secret for security
-    const authHeader = request.headers.get('authorization');
-    const expectedAuth = `Bearer ${process.env.CRON_SECRET}`;
+const sha256 = (value: string): Buffer => createHash('sha256').update(value).digest();
 
-    if (authHeader !== expectedAuth) {
-      console.error('[Free Tier Expiration] Unauthorized cron request');
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+/** Fail closed: no configured secret means no caller is authorised. */
+function hasCronSecret(request: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const header = request.headers.get('authorization') ?? '';
+  // Equal-length digests, so timingSafeEqual cannot throw on a length mismatch.
+  return timingSafeEqual(sha256(header), sha256(`Bearer ${secret}`));
+}
 
-    console.log('[Free Tier Expiration] Starting expiration check...');
-
-    const now = new Date().toISOString();
-
-    // Find users with expired free tier who never purchased tokens
-    // Logic: free_tier_expires_at < now AND balance == total_earned (never bought)
-    const { data: expiredUsers, error: fetchError } = await supabase
-      .from('user_subscriptions')
-      .select('user_id, balance, total_earned, free_tier_expires_at, free_tier_initial_amount, account_frozen')
-      .not('free_tier_expires_at', 'is', null)
-      .lt('free_tier_expires_at', now)
-      .eq('account_frozen', false)
-      .gt('balance', 0);
-
-    if (fetchError) {
-      console.error('[Free Tier Expiration] Error fetching expired users:', fetchError);
-      throw new Error('Failed to fetch expired users');
-    }
-
-    if (!expiredUsers || expiredUsers.length === 0) {
-      console.log('[Free Tier Expiration] No expired free tier accounts found');
-      return NextResponse.json({
-        success: true,
-        message: 'No expired accounts to process',
-        expired_count: 0
-      });
-    }
-
-    // Filter to only users who never purchased (balance == total_earned)
-    const usersToFreeze = expiredUsers.filter(
-      user => user.balance === user.total_earned
-    );
-
-    if (usersToFreeze.length === 0) {
-      console.log('[Free Tier Expiration] Found expired accounts, but all have purchased tokens');
-      return NextResponse.json({
-        success: true,
-        message: 'All expired users have purchased tokens',
-        expired_count: 0
-      });
-    }
-
-    console.log(`[Free Tier Expiration] Found ${usersToFreeze.length} accounts to freeze`);
-
-    // Freeze each account
-    const freezeResults = await Promise.allSettled(
-      usersToFreeze.map(async (user) => {
-        // Set balance to 0 and freeze account
-        const { error: updateError } = await supabase
-          .from('user_subscriptions')
-          .update({
-            balance: 0,
-            account_frozen: true,
-            free_tier_expires_at: null, // Clear expiration date (already processed)
-            updated_at: new Date().toISOString()
-          })
-          .eq('user_id', user.user_id);
-
-        if (updateError) {
-          console.error(`[Free Tier Expiration] Failed to freeze user ${user.user_id}:`, updateError);
-          throw updateError;
-        }
-
-        console.log(`[Free Tier Expiration] Froze account for user ${user.user_id}, cleared ${user.balance} tokens`);
-
-        // TODO: Send expiration email to user
-        // await sendExpirationEmail(user.user_id, user.balance);
-
-        return { user_id: user.user_id, tokens_cleared: user.balance };
-      })
-    );
-
-    const successful = freezeResults.filter(r => r.status === 'fulfilled').length;
-    const failed = freezeResults.filter(r => r.status === 'rejected').length;
-
-    console.log(`[Free Tier Expiration] Completed: ${successful} successful, ${failed} failed`);
-
-    return NextResponse.json({
-      success: true,
-      message: `Processed ${usersToFreeze.length} expired accounts`,
-      expired_count: usersToFreeze.length,
-      successful,
-      failed,
-      details: freezeResults.map((r, i) => ({
-        user_id: usersToFreeze[i].user_id,
-        status: r.status,
-        result: r.status === 'fulfilled' ? r.value : (r.reason?.message || 'Unknown error')
-      }))
-    });
-
-  } catch (error) {
-    console.error('[Free Tier Expiration] Error:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to check free tier expiration'
-      },
-      { status: 500 }
-    );
+function refuse(request: NextRequest, method: string): NextResponse {
+  if (!hasCronSecret(request)) {
+    logger.warn({ method }, 'Unauthorized call to the disabled free-tier expiration job');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // No database client is created: nothing is read or written.
+  logger.error(
+    { event: 'free_tier_expiration_disabled', method, alert: true },
+    'Disabled free-tier expiration job was called with the cron secret; it must not be scheduled (BQ-P8)'
+  );
+  return NextResponse.json({ success: false, error: 'Permanently disabled' }, { status: 410 });
+}
+
+// GET is the only method this route ever exported (SA P10-C6: every exported
+// method takes the same secret-check-then-410 path; the route test pins that).
+export async function GET(request: NextRequest) {
+  return refuse(request, 'GET');
 }
