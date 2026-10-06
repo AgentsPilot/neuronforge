@@ -700,8 +700,48 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
       />
 
       {/* Dialog */}
+      {/*
+        ─────────────────────────────────────────────────────────────────────────
+        THE BOX THE PANEL IS MEASURED AND CENTRED AGAINST.
+
+        This was `fixed inset-0 … flex items-center justify-center`, and on a
+        phone an owner could not reach the fields of any tab — Services is where
+        it was reported, because that is the tab you have to type in.
+
+        Every piece was individually right, which is why it took finding. A
+        `position: fixed` box with `inset-0` is sized to the LARGE viewport: the
+        height the page would have with the address bar collapsed. The panel
+        below is correctly capped at `max-h-[100dvh]` — the DYNAMIC viewport,
+        what is actually visible. So a correctly-sized panel was being CENTRED
+        inside a box taller than the screen, and ended up offset by
+        `(100vh - 100dvh) / 2`: the header and the first fields above the top
+        edge, the footer below the bottom one.
+
+        Nothing could bring either back. The panel is `overflow-hidden`, this
+        container does not scroll, and the only scroll on the services tab
+        belongs to the list — which sits inside the region already clipped away.
+
+        Two changes, both mobile-only:
+
+        `inset-x-0 top-0 h-[100dvh]` rather than `inset-0` plus a height. A
+        fixed box given `top`, `bottom` AND a height is over-constrained and the
+        browser drops one of the three; naming the edges explicitly leaves no
+        question about which box the panel resolves against.
+
+        `items-stretch` so the panel fills that box rather than being centred in
+        it. The panel already asks for `h-full`, and this dialog is already
+        dressed as an edge-to-edge sheet on a phone — `border-0 sm:border`,
+        `sm:rounded-…`. Centring something that fills its container achieves
+        nothing except leaving room for the offset above.
+
+        From `sm:` up everything is as it was: inset, centred, capped at 95dvh.
+        The public booking dialog solved its own version of this; see the note in
+        components/website/blocks/BookingModal.tsx about `inset-0` with padding
+        keeping a promise that `inset-4` cannot.
+        ─────────────────────────────────────────────────────────────────────────
+      */}
       <div
-        className="fixed inset-0 sm:inset-4 md:inset-6 lg:inset-8 z-[70] flex items-center justify-center p-2 sm:p-0"
+        className="fixed inset-x-0 top-0 h-[100dvh] sm:inset-4 sm:top-auto sm:h-auto md:inset-6 lg:inset-8 z-[70] flex items-stretch sm:items-center justify-center p-2 sm:p-0"
         style={{ pointerEvents: 'auto' }}
         onPointerDown={(e) => e.stopPropagation()}
         onWheel={(e) => e.stopPropagation()}
@@ -774,7 +814,9 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
           <TabFooterSlotProvider value={footerSlot}>
           <div
             className={`flex-1 p-3 sm:p-4 md:p-6 ${
-              activeTab === 'services' ? 'overflow-hidden flex flex-col min-h-0' : 'overflow-y-auto'
+              activeTab === 'services'
+                ? 'overflow-hidden flex flex-col min-h-0'
+                : 'overflow-y-auto scrollbar-thin'
             }`}
           >
             {/* Services Tab */}
