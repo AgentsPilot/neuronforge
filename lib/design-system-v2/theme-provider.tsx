@@ -167,6 +167,62 @@ export function V2ThemeProvider({ children }: { children: React.ReactNode }) {
     root.style.setProperty('--v2-error-text', errorColors.text)
     root.style.setProperty('--v2-error-icon', errorColors.icon)
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * THE STATUS FAMILY, WHICH NOTHING SET AT RUNTIME.
+     *
+     * These twelve were declared only in `app/v2/globals-v2.css`, and that
+     * stylesheet is imported by `/v2` and `/business-os/crm` — not by
+     * `/business-os`, where the advisor card lives. So on the dashboard every
+     * one of them was UNDEFINED.
+     *
+     * An undefined custom property with no fallback makes the whole declaration
+     * invalid, which fails quietly in both directions at once:
+     *
+     *   color       falls back to the inherited colour, so the advisor's "if I
+     *               handle it" line rendered as muted grey on a dark card and an
+     *               owner reported they could not read it
+     *   background  resolves to nothing, so the panel lost its tint and the two
+     *               outcomes looked identical
+     *
+     * Set here rather than by importing the stylesheet into one more layout: the
+     * provider is the only thing guaranteed to run on every page that uses these
+     * tokens, and it already owns `--v2-success-*` and `--v2-error-*` for
+     * exactly that reason. A stylesheet import fixes one route and leaves the
+     * next one to be discovered by a user.
+     *
+     * Values mirror `globals-v2.css` deliberately. Where both are present the
+     * stylesheet's `:root` loses to this inline style, so they must not drift —
+     * `statusTokensMatchStylesheet.guard.test.ts` holds them together.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const statusColors = isDark
+      ? {
+          successBg: '#1E293B', successBorder: '#15803D', successText: '#86EFAC',
+          executingBg: '#1E293B', executingBorder: '#1E40AF', executingText: '#93C5FD',
+          errorBg: '#1E293B', errorBorder: '#991B1B', errorText: '#FCA5A5',
+          warningBg: '#1E293B', warningBorder: '#92400E', warningText: '#FDE68A',
+        }
+      : {
+          successBg: '#F0FDF4', successBorder: '#BBF7D0', successText: '#15803D',
+          executingBg: '#EFF6FF', executingBorder: '#BFDBFE', executingText: '#1E40AF',
+          errorBg: '#FEF2F2', errorBorder: '#FECACA', errorText: '#991B1B',
+          warningBg: '#FFFBEB', warningBorder: '#FDE68A', warningText: '#92400E',
+        }
+
+    root.style.setProperty('--v2-status-success-bg', statusColors.successBg)
+    root.style.setProperty('--v2-status-success-border', statusColors.successBorder)
+    root.style.setProperty('--v2-status-success-text', statusColors.successText)
+    root.style.setProperty('--v2-status-executing-bg', statusColors.executingBg)
+    root.style.setProperty('--v2-status-executing-border', statusColors.executingBorder)
+    root.style.setProperty('--v2-status-executing-text', statusColors.executingText)
+    root.style.setProperty('--v2-status-error-bg', statusColors.errorBg)
+    root.style.setProperty('--v2-status-error-border', statusColors.errorBorder)
+    root.style.setProperty('--v2-status-error-text', statusColors.errorText)
+    root.style.setProperty('--v2-status-warning-bg', statusColors.warningBg)
+    root.style.setProperty('--v2-status-warning-border', statusColors.warningBorder)
+    root.style.setProperty('--v2-status-warning-text', statusColors.warningText)
+
     // Border radius
     root.style.setProperty('--v2-radius-panel', customTokens.borderRadius?.panel || v2Tokens.borderRadius.panel)
     root.style.setProperty('--v2-radius-card', customTokens.borderRadius?.card || v2Tokens.borderRadius.card)

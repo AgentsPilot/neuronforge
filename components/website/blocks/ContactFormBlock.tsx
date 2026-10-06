@@ -8,6 +8,11 @@ import { isValidPhoneNumber } from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
 import type { BlockRendererProps, FormField } from './types';
 import type { Country } from 'react-phone-number-input';
+import {
+  applyCountryToPhone,
+  phoneFieldValue,
+  publicFormCountry,
+} from '@/components/crm/phoneField';
 import { WebsiteCountrySelect } from './WebsiteCountrySelect';
 import { ConsentCheckbox } from '@/components/public/ConsentCheckbox';
 import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
@@ -166,7 +171,11 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [phoneCountry, setPhoneCountry] = useState<Country>('US');
+  /*
+   * The page's language decides, not a hardcoded US. A Hebrew site's visitors
+   * had to correct the dropdown before they could type their own number.
+   */
+  const [phoneCountry, setPhoneCountry] = useState<Country>(() => publicFormCountry(locale));
 
   /*
    * Marketing consent. Unticked, and it stays unticked unless the visitor acts.
@@ -392,17 +401,32 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                       <div dir="ltr" className="flex gap-2">
                         <WebsiteCountrySelect
                           value={phoneCountry}
-                          onChange={setPhoneCountry}
+                          /*
+                            Choosing a country is a statement about the NUMBER.
+                            Wired to the state alone, a visitor who picked their
+                            country saw the dropdown move and their number stay
+                            national — and a national number with a bare `+` in
+                            front of it dials somewhere else entirely.
+                          */
+                          onChange={(country) => {
+                            setPhoneCountry(country);
+                            setFormData({
+                              ...formData,
+                              [field.name]:
+                                applyCountryToPhone(formData[field.name], country) ??
+                                formData[field.name],
+                            });
+                          }}
                           isRTL={isRTL}
                           hasError={!!errors[field.name]}
                         />
                         <div className={`phone-input-contact flex-1 ${errors[field.name] ? 'has-error' : ''}`}>
                           <PhoneInput
-                            international
                             countryCallingCodeEditable={false}
                             country={phoneCountry}
-                            defaultCountry="US"
-                            value={formData[field.name] || ''}
+                            /* The page's own language decides, not a fixed US. */
+                            defaultCountry={phoneCountry}
+                            value={phoneFieldValue(formData[field.name], phoneCountry) ?? ''}
                             onChange={(value) => {
                               setFormData({ ...formData, [field.name]: value || '' });
                               if (errors[field.name]) {

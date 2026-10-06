@@ -7,6 +7,7 @@
 // with 410 before any Stripe or database call. The boost-pack branch stays (TK-5).
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { z } from 'zod';
 import { AuditTrail as auditTrail } from '@/lib/services/AuditTrailService';
 import { createLogger } from '@/lib/logger';
@@ -96,7 +97,7 @@ export async function POST(request: NextRequest) {
     const stripeService = getStripeService();
 
     // Construct URLs
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.headers.get('origin') || 'http://localhost:3000';
+    const baseUrl = request.headers.get('origin') || platformOrigin();
     const successUrl = `${baseUrl}/v2/billing?success=true`;
     const cancelUrl = `${baseUrl}/v2/billing?canceled=true`;
 

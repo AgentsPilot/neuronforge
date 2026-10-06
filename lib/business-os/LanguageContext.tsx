@@ -313,7 +313,7 @@ export const translations = {
     'automation.reminder_saved': 'Saved',
     'automation.reminder_needs_one': 'Pick at least one. A reminder with nobody to send it to does nothing.',
     'automation.chase_invoices': 'Chase unpaid invoices',
-    'automation.chase_invoices_hint': 'The reminders after an invoice falls due, by default on days 1, 3 and 7. Reminders before the due date are separate and always on, so one invoice can prompt up to six emails. All of them stop the moment it is paid.',
+    'automation.chase_invoices_hint': 'The reminders after an invoice falls due, by default 3, 7 and 14 days late. A courtesy reminder also goes out before the due date, which is a separate setting. No two reminders for one invoice are ever sent within three days of each other, and all of them stop the moment it is paid.',
     'automation.chase_intake': 'Remind clients about their form',
     'automation.chase_intake_hint': 'One nudge when an client form has gone unanswered and the appointment is still far enough off to be worth asking.',
     'gaps.card_title': 'Needs you',
@@ -2505,7 +2505,13 @@ export const translations = {
     'scheduling.service.inactive': 'Inactive',
     'scheduling.service.free': 'Free',
     'scheduling.service.minutes': 'min',
-    'scheduling.service.min_buffer': 'min',
+    /*
+     * A LABEL, not a unit. This read 'min' — the same string as
+     * `scheduling.service.minutes`, which already renders as a suffix beside the
+     * input — so the row came out as "min [15] min" with no field name at all.
+     * In Hebrew it was worse: "דק׳ [15] דק׳".
+     */
+    'scheduling.service.gap': 'Gap between meetings',
     'scheduling.service.notice': 'Notice',
     'scheduling.service.book_ahead': 'Book ahead',
     'scheduling.service.hours_short': 'h',
@@ -3538,6 +3544,30 @@ export const translations = {
      * country gets; this only translates it.
      */
     'settings.address.admin.state': 'State',
+    'settings.address.admin_search': 'Type to search…',
+    /* Offering an address the business already gave us, rather than a fourth
+       retyping of the same street. See `components/ui/SavedAddressPicker.tsx`. */
+    'settings.address.reuse_title': 'Use an address you already have',
+    /* The book, not a slot. "Use an address you already have" described a
+       one-off convenience; this is now the list the business picks from. */
+    'settings.address.book_title': 'Your addresses',
+    'settings.address.add_new': 'Add a new address',
+    'settings.address.edit': 'Edit this address',
+    'settings.address.delete_title': 'Remove this address?',
+    'settings.address.delete_action': 'Remove',
+    'settings.address.delete': 'Remove this address',
+    /* Says what deleting actually does. The pointers are ON DELETE SET NULL and
+       the rendered copy stays, so nothing a client sees changes — only the list
+       shrinks. "This cannot be undone" alone would read as "your booking page
+       is about to lose its address". */
+    'settings.address.delete_confirm':
+      'Remove this address from your saved list? Anywhere already using it keeps showing it — it just stops being offered here.',
+    'settings.address.used_by.profile': 'Shown to clients as your business address',
+    'settings.address.used_by.invoice': 'Your invoices go out with this one',
+    'settings.address.reuse_other': 'Enter a different address',
+    'settings.address.source.profile': 'Business address',
+    'settings.address.source.invoice': 'Billing address',
+    'settings.address.prefilled': 'Filled in from your business address. Change anything that is wrong.',
     'settings.address.lookup': 'Start typing your address…',
     'settings.address.lookup_hint': 'Pick a suggestion to fill the fields below, or enter them yourself.',
     'settings.address.admin.province': 'Province',
@@ -4308,7 +4338,7 @@ export const translations = {
     'automation.reminder_saved': 'Guardado',
     'automation.reminder_needs_one': 'Elige al menos uno. Un recordatorio sin destinatario no hace nada.',
     'automation.chase_invoices': 'Reclamar facturas impagadas',
-    'automation.chase_invoices_hint': 'Los recordatorios posteriores al vencimiento de una factura, por defecto los días 1, 3 y 7. Los recordatorios previos al vencimiento son aparte y están siempre activos, así que una factura puede generar hasta seis correos. Todos se detienen en cuanto se paga.',
+    'automation.chase_invoices_hint': 'Los recordatorios posteriores al vencimiento de una factura, por defecto a los 3, 7 y 14 días. También se envía un aviso de cortesía antes del vencimiento, que es un ajuste aparte. Nunca se envían dos recordatorios de la misma factura con menos de tres días de diferencia, y todos se detienen en cuanto se paga.',
     'automation.chase_intake': 'Recordar el formulario a los clientes',
     'automation.chase_intake_hint': 'Un aviso cuando un formulario sigue sin devolverse y la cita aún está lo bastante lejos como para que valga la pena pedirlo.',
     'gaps.card_title': 'Te necesita',
@@ -6417,7 +6447,7 @@ export const translations = {
     'scheduling.service.inactive': 'Inactivo',
     'scheduling.service.free': 'Gratis',
     'scheduling.service.minutes': 'min',
-    'scheduling.service.min_buffer': 'min',
+    'scheduling.service.gap': 'Intervalo entre citas',
     'scheduling.service.notice': 'Aviso',
     'scheduling.service.book_ahead': 'Reservar con',
     'scheduling.service.hours_short': 'h',
@@ -7413,6 +7443,22 @@ export const translations = {
     'settings.business.public_email': 'Correo electrónico',
     'settings.business.public_address': 'Dirección',
     'settings.address.admin.state': 'Estado',
+    'settings.address.admin_search': 'Escribe para buscar…',
+    'settings.address.reuse_title': 'Usa una dirección que ya tienes',
+    'settings.address.book_title': 'Tus direcciones',
+    'settings.address.add_new': 'Agregar una dirección nueva',
+    'settings.address.edit': 'Editar esta dirección',
+    'settings.address.delete_title': '¿Quitar esta dirección?',
+    'settings.address.delete_action': 'Quitar',
+    'settings.address.delete': 'Eliminar esta dirección',
+    'settings.address.delete_confirm':
+      '¿Quitar esta dirección de tu lista guardada? Donde ya se usa se sigue mostrando — solo deja de ofrecerse aquí.',
+    'settings.address.used_by.profile': 'La que ven tus clientes como dirección del negocio',
+    'settings.address.used_by.invoice': 'Tus facturas salen con esta',
+    'settings.address.reuse_other': 'Escribir otra dirección',
+    'settings.address.source.profile': 'Dirección del negocio',
+    'settings.address.source.invoice': 'Dirección de facturación',
+    'settings.address.prefilled': 'Rellenado con la dirección de tu negocio. Cambia lo que no sea correcto.',
     'settings.address.lookup': 'Empieza a escribir tu dirección…',
     'settings.address.lookup_hint': 'Elige una sugerencia para rellenar los campos, o escríbelos tú.',
     'settings.address.admin.province': 'Provincia',
@@ -8855,7 +8901,7 @@ export const translations = {
     'scheduling.service.inactive': 'לא פעיל',
     'scheduling.service.free': 'חינם',
     'scheduling.service.minutes': 'דק׳',
-    'scheduling.service.min_buffer': 'דק׳',
+    'scheduling.service.gap': 'מרווח בין פגישות',
     'scheduling.service.notice': 'הודעה מראש',
     'scheduling.service.book_ahead': 'הזמנה מראש',
     'scheduling.service.hours_short': ' שע׳',
@@ -9866,6 +9912,22 @@ export const translations = {
      * and mean different things.
      */
     'settings.address.admin.state': 'מדינה',
+    'settings.address.admin_search': 'הקלידו לחיפוש…',
+    'settings.address.reuse_title': 'שימוש בכתובת שכבר שמורה אצלכם',
+    'settings.address.book_title': 'הכתובות שלכם',
+    'settings.address.add_new': 'הוספת כתובת חדשה',
+    'settings.address.edit': 'עריכת הכתובת',
+    'settings.address.delete_title': 'להסיר את הכתובת?',
+    'settings.address.delete_action': 'להסיר',
+    'settings.address.delete': 'הסרת הכתובת',
+    'settings.address.delete_confirm':
+      'להסיר את הכתובת מהרשימה השמורה? במקומות שכבר משתמשים בה היא תמשיך להופיע — היא פשוט לא תוצע כאן יותר.',
+    'settings.address.used_by.profile': 'זו הכתובת שהלקוחות רואים',
+    'settings.address.used_by.invoice': 'החשבוניות שלכם יוצאות עם הכתובת הזו',
+    'settings.address.reuse_other': 'הזנת כתובת אחרת',
+    'settings.address.source.profile': 'כתובת העסק',
+    'settings.address.source.invoice': 'כתובת לחיוב',
+    'settings.address.prefilled': 'מולא מכתובת העסק שלכם. אפשר לשנות כל מה שלא מדויק.',
     'settings.address.lookup': 'התחילו להקליד את הכתובת…',
     'settings.address.lookup_hint': 'בחרו הצעה כדי למלא את השדות, או מלאו אותם ידנית.',
     'settings.address.admin.province': 'מחוז',
@@ -10359,7 +10421,7 @@ export const translations = {
     'automation.reminder_saved': 'נשמר',
     'automation.reminder_needs_one': 'צריך לבחור לפחות אחד. תזכורת בלי נמען לא עושה כלום.',
     'automation.chase_invoices': 'תזכורת על חשבוניות שלא שולמו',
-    'automation.chase_invoices_hint': 'התזכורות שנשלחות אחרי שחשבונית מאחרת, כברירת מחדל בימים 1, 3 ו-7. תזכורות שנשלחות לפני מועד התשלום הן נפרדות ותמיד פעילות, כך שחשבונית אחת יכולה להוביל לעד שש הודעות. הכול נפסק ברגע שהיא משולמת.',
+    'automation.chase_invoices_hint': 'התזכורות שנשלחות אחרי שחשבונית מאחרת, כברירת מחדל אחרי 3, 7 ו-14 ימים. לפני מועד התשלום נשלחת גם תזכורת אחת מקדימה, בהגדרה נפרדת. שתי תזכורות על אותה חשבונית לא נשלחות בהפרש של פחות משלושה ימים, והכול נפסק ברגע שהיא משולמת.',
     'automation.chase_intake': 'תזכורת ללקוחות על הטופס',
     'automation.chase_intake_hint': 'תזכורת אחת כשטופס לא הוחזר והפגישה עדיין רחוקה מספיק כדי שיהיה טעם לבקש.',
     'gaps.card_title': 'מחכה לך',

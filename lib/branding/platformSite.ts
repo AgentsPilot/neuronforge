@@ -31,6 +31,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { platformOrigin } from '@/lib/utils/origins';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'PlatformSite' });
@@ -72,8 +73,7 @@ export async function resolvePlatformWebsiteUrl(userId: string): Promise<string 
   const subdomain = await resolvePublishedWebsiteSubdomain(userId);
   if (!subdomain) return null;
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
-  return `${appUrl}/site/${subdomain}`;
+  return `${appUrl()}/site/${subdomain}`;
 }
 
 /**
@@ -126,7 +126,17 @@ export async function resolveBookingUrl(
   return undefined;
 }
 
-/** Read at call time: tests and previews set it after module load. */
+/**
+ * Read at call time: tests and previews set it after module load.
+ *
+ * `platformOrigin()` rather than `NEXT_PUBLIC_APP_URL` directly. Both links
+ * built from this reach a CLIENT — the business's website and the "book again"
+ * button in their email — and that variable is a single value per environment
+ * which a deployed build hands out verbatim, `http://localhost:3000` included,
+ * because that is what it holds when it has been copied out of `.env.local`.
+ * The resolver refuses a loopback address on Vercel and falls back to the
+ * deployment's own host. See lib/utils/origins.ts.
+ */
 function appUrl(): string {
-  return process.env.NEXT_PUBLIC_APP_URL || '';
+  return platformOrigin();
 }

@@ -62,6 +62,11 @@ export const publicMessages: Catalogue = {
        ends in a quote. The client should be able to see which half they are in
        without emailing to ask. ─────────────────────────────────────────────── */
     'portal.to_pay': 'To pay',
+    /* An agreed amount the business has not invoiced yet. Without this the
+       portal asked a client to pay a sum with no invoice behind it and no
+       button to press — a demand they could not act on. */
+    'portal.not_billed_yet': 'not invoiced yet',
+    'portal.pay_now': 'Pay now',
     'portal.due_by': 'due {date}',
     'portal.overdue': 'overdue',
     'portal.plan_progress': '{paid} of {total} payments made',
@@ -347,6 +352,8 @@ export const publicMessages: Catalogue = {
     'portal.upcoming': 'Próximas',
     'portal.past': 'Citas anteriores',
     'portal.to_pay': 'A pagar',
+    'portal.not_billed_yet': 'aún sin factura',
+    'portal.pay_now': 'Pagar ahora',
     'portal.due_by': 'para el {date}',
     'portal.overdue': 'vencido',
     'portal.plan_progress': '{paid} de {total} pagos realizados',
@@ -608,6 +615,8 @@ export const publicMessages: Catalogue = {
     'portal.upcoming': 'הפגישות הקרובות',
     'portal.past': 'פגישות קודמות',
     'portal.to_pay': 'לתשלום',
+    'portal.not_billed_yet': 'טרם הונפקה חשבונית',
+    'portal.pay_now': 'לתשלום עכשיו',
     'portal.due_by': 'עד {date}',
     'portal.overdue': 'באיחור',
     'portal.plan_progress': '{paid} מתוך {total} תשלומים שולמו',

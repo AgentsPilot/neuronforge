@@ -2,6 +2,7 @@
 // API route to create Stripe customer portal session for subscription management
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { AuditTrail as auditTrail } from '@/lib/services/AuditTrailService';
 import { createLogger } from '@/lib/logger';
 import { createServerClient } from '@supabase/ssr';
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
     const stripeService = getStripeService();
 
     // Construct return URL
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.headers.get('origin') || 'http://localhost:3000';
+    const baseUrl = request.headers.get('origin') || platformOrigin();
     const returnUrl = `${baseUrl}/settings?tab=billing`;
 
     // Create portal session

@@ -208,6 +208,12 @@ export class OpsServicePerformanceDetector extends BaseDetector {
       severity,
       metricKey: 'operations.service_performance',
       currentValue: allUnderperformers.length,
+
+      // Services, not shekels. Unlabelled, the prompt called it an
+
+      // "Amount involved" and the card read "₪2 עלולים להפסיד ₪340".
+
+      currentValueUnit: 'count',
       baselineValue: 0,
       thresholdValue: this.definition.threshold,
       percentChange: avgGapPercent,

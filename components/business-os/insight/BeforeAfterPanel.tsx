@@ -111,9 +111,12 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
        * on it and became unreadable. A hardcoded background and themed text on
        * top of it can never both be right.
        *
-       * `--v2-status-success-*` is the one green family defined for BOTH themes;
-       * `--v2-success-bg` and friends are declared only under `:root`, so they
-       * carry a light value into dark mode.
+       * `--v2-status-success-*` is the one green family defined for BOTH themes
+       * in the stylesheet — but the stylesheet is imported by `/v2` and
+       * `/business-os/crm` and by nothing else, so on `/business-os` every one
+       * of them was UNDEFINED and this panel lost its tint again, this time
+       * without even a wrong colour to notice. `V2ThemeProvider` now sets the
+       * whole family inline, which reaches every page that uses the provider.
        */}
       <div
         className="pj"
@@ -121,7 +124,17 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
           flex: 1,
           padding: '13px 15px',
           minWidth: 0,
-          background: 'var(--v2-status-success-bg)',
+          /*
+           * Fallback to the family the provider has always set.
+           *
+           * `--v2-status-*` was undefined on `/business-os` for as long as it
+           * existed: declared only in `app/v2/globals-v2.css`, which that route
+           * never imports. The provider now sets it, so this fallback should
+           * never be reached — it is here because the failure mode when it IS
+           * undefined is silent in both directions, and a reader of this file
+           * cannot tell which stylesheets a future route will load.
+           */
+          background: 'var(--v2-status-success-bg, var(--v2-success-bg))',
           borderInlineStart: '1px solid var(--v2-border)',
         }}
       >
@@ -152,7 +165,7 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
             // Reads on both grounds: a deep green on the light tint, a bright
             // one on the dark. `#22C58B` was fixed, so it sat mid-contrast on
             // each and comfortable on neither.
-            color: 'var(--v2-status-success-text)',
+            color: 'var(--v2-status-success-text, var(--v2-success-text))',
           }}
         >
           {right.value}

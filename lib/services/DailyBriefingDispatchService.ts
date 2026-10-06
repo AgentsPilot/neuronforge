@@ -12,6 +12,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { platformOrigin } from '@/lib/utils/origins';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import { dailyBriefingSendRepository } from '@/lib/repositories/DailyBriefingSendRepository';
@@ -255,7 +256,7 @@ async function dispatchOne(userId: string, day: BusinessDay): Promise<DispatchOu
   if (lines.length === 0) return { sent: false, reason: 'nothing_to_say' };
 
   const branding = await resolveEmailBranding(userId, language);
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+  const appUrl = platformOrigin();
 
   const { subject, html } = generateDailyBriefingEmail({
     lines,

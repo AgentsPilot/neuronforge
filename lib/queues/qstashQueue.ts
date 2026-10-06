@@ -2,6 +2,7 @@
 // Upstash QStash-based queue for agent executions (drop-in replacement for BullMQ)
 
 import { Client } from '@upstash/qstash';
+import { platformOrigin } from '@/lib/utils/origins';
 import { v4 as uuidv4 } from 'uuid';
 import { createServerClient } from '@supabase/ssr';
 
@@ -47,21 +48,23 @@ export interface AgentJobData {
 }
 
 /**
- * Get the base URL for the application
+ * Get the base URL for the application: the host QStash will call back.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This was a second implementation of the same policy — `VERCEL_URL`, then
+ * `NEXT_PUBLIC_APP_URL`, then localhost — and it got the production case
+ * subtly wrong by preferring the per-deployment host over the stable domain.
+ * A callback aimed at `neuronforge-<hash>.vercel.app` works until that
+ * deployment is superseded.
+ *
+ * `platformOrigin()` is the one place that answers this, and it answers it with
+ * the stable production domain in production, the deployment's own host on a
+ * preview, and localhost on a laptop. Resolving every address in one place is
+ * what that module exists for.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 function getBaseUrl(): string {
-  // Vercel production/preview
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-
-  // Custom domain
-  if (process.env.NEXT_PUBLIC_APP_URL) {
-    return process.env.NEXT_PUBLIC_APP_URL;
-  }
-
-  // Local development
-  return 'http://localhost:3000';
+  return platformOrigin();
 }
 
 /**

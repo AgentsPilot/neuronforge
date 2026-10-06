@@ -40,6 +40,11 @@ import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/Sc
 import { journeySteps } from '@/lib/business-os/clientJourney';
 import type { WeeklyAvailability } from './AvailabilityEditor';
 import type { Country } from 'react-phone-number-input';
+import {
+  applyCountryToPhone,
+  phoneFieldCountry,
+  phoneFieldValue,
+} from '@/components/crm/phoneField';
 
 const logger = createLogger({ module: 'SchedulingBookingModal' });
 
@@ -591,7 +596,15 @@ export function SchedulingBookingModal({
   const [newClientSource, setNewClientSource] = useState<string>('');
   const [newClientNotes, setNewClientNotes] = useState('');
   const [newTagInput, setNewTagInput] = useState('');
-  const [phoneCountry, setPhoneCountry] = useState<Country>('US');
+  /*
+   * Seeded from the client's own number rather than hardcoded to US — the same
+   * fault the CRM screens carried: a business outside the US opened every
+   * booking on the wrong country, and the calling code it applied belonged
+   * somewhere else. See `components/crm/phoneField.ts`.
+   */
+  const [phoneCountry, setPhoneCountry] = useState<Country>(() =>
+    phoneFieldCountry(formData.client_phone)
+  );
   const [sendIntakeForm, setSendIntakeForm] = useState(false);
 
   // Intake form configuration status
@@ -1650,7 +1663,7 @@ export function SchedulingBookingModal({
           quick-pick slot cards, the service summary and the intake panel, and at
           2xl those sat in a column narrow enough to wrap every one of them. */}
       <DialogContent
-        className="w-full sm:max-w-3xl lg:max-w-4xl h-[100vh] sm:h-auto sm:max-h-[92dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden"
+        className="w-full sm:max-w-3xl lg:max-w-4xl h-[100dvh] sm:h-auto sm:max-h-[92dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden"
         /* While settings are open, every click lands "outside" this dialog —
            including the ones inside settings. Dismissing on those would close
            the booking form out from under the person fixing the thing it asked
@@ -2078,14 +2091,26 @@ export function SchedulingBookingModal({
                   <div className="flex gap-2" dir="ltr">
                     <SearchableCountrySelect
                       value={phoneCountry}
-                      onChange={setPhoneCountry}
+                      /*
+                        Choosing a country is a statement about the NUMBER, so it
+                        rewrites the number. Wired to `setPhoneCountry` alone, picking
+                        "United States" moved a dropdown and left `2013643030` national
+                        — and the value that reached the database, `+2013643030`, reads
+                        as Egypt.
+                      */
+                      onChange={(country) => {
+                        setPhoneCountry(country);
+                        setFormData(prev => ({
+                          ...prev,
+                          client_phone: applyCountryToPhone(prev.client_phone, country) ?? prev.client_phone,
+                        }));
+                      }}
                       labels={en}
                     />
                     <PhoneInput
-                      international
                       countryCallingCodeEditable={false}
                       country={phoneCountry}
-                      value={formData.client_phone}
+                      value={phoneFieldValue(formData.client_phone, phoneCountry)}
                       onChange={(value) => setFormData(prev => ({ ...prev, client_phone: value || '' }))}
                       className="phone-input-scheduling flex-1"
                     />

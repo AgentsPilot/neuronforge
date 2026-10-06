@@ -53,9 +53,31 @@ import { generateInvoicePDFAsync } from '@/lib/pdf/InvoicePDFGenerator';
 import { supabaseServer } from '@/lib/supabaseServer';
 import type { Locale } from '@/lib/i18n/config';
 import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
+import { currentStripeMode } from '@/lib/business-os/billing/stripeMode';
 
 const logger = createLogger({ service: 'InvoiceDeliveryService' });
 const auditTrail = AuditTrailService.getInstance();
+
+/**
+ * Whether Stripe will actually put this invoice in front of the client.
+ *
+ * Only in live mode. Stripe does not email customers from a sandbox, so a
+ * test-mode send is accepted, finalised and delivered to nobody — see the note
+ * at the call site.
+ *
+ * Fails towards sending: an unreadable key means we cannot claim Stripe
+ * delivered, and an email the client did not strictly need is a far smaller
+ * fault than a bill they never saw. In practice this cannot be reached with a
+ * bad key, since the Stripe calls above would have thrown first.
+ */
+export function stripeEmailsTheClient(log: ContextLogger): boolean {
+  try {
+    return currentStripeMode() === 'live';
+  } catch {
+    log.warn({}, 'Stripe key mode unreadable; sending the invoice by email rather than assuming Stripe did');
+    return false;
+  }
+}
 
 type ContextLogger = {
   debug: (context: Record<string, unknown>, message: string) => void;
@@ -343,12 +365,42 @@ export async function sendInvoice(
     }
   }
 
-  if (!hostedInvoiceUrl) {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * DID STRIPE DELIVER, OR ONLY ACCEPT?
+   *
+   * A hosted invoice url used to be taken as proof the client had been written
+   * to, and the platform sent nothing of its own. That holds in live mode, where
+   * Stripe emails the invoice itself — and not in TEST mode, where Stripe
+   * accepts the invoice, finalises it, emits `invoice.sent`, and emails nobody.
+   *
+   * So "create and send" reported success for every sandbox invoice while no
+   * client ever received one. Measured on the reporting account: fifteen
+   * invoices in one evening, every one of them `sent_at` stamped within six
+   * seconds, not one email.
+   *
+   * In test mode the platform therefore sends its own branded email, carrying
+   * the hosted Stripe page as the pay link so the client can still settle it in
+   * one click. Live mode is untouched: Stripe delivers, and a second email from
+   * us would be a duplicate.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const stripeDelivered = Boolean(hostedInvoiceUrl) && stripeEmailsTheClient(log);
+
+  if (!stripeDelivered) {
+    /*
+     * The row was updated with the hosted url above; this in-memory copy was
+     * read before that and still says null. Without this the fallback email
+     * would offer the platform's own pay route for an invoice Stripe is already
+     * hosting — two pay pages for one bill.
+     */
+    if (hostedInvoiceUrl) invoice.stripe_hosted_invoice_url = hostedInvoiceUrl;
+
     const emailed = await sendByEmail(invoice, userId, params.language, log);
     if (emailed) return { data: null, error: emailed };
   }
 
-  const sentVia: 'stripe' | 'email' = hostedInvoiceUrl ? 'stripe' : 'email';
+  const sentVia: 'stripe' | 'email' = stripeDelivered ? 'stripe' : 'email';
   const sentAt = new Date().toISOString();
 
   auditTrail

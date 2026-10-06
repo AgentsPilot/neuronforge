@@ -26,6 +26,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { platformOrigin } from '@/lib/utils/origins';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { proposalRepository, type Proposal } from '@/lib/repositories/ProposalRepository';
@@ -137,7 +138,7 @@ export async function sendProposal(
   const branding = await resolveEmailBranding(userId, locale);
 
   const token = generateProposalToken(proposal.id, contact.email);
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+  const appUrl = platformOrigin();
   const viewUrl = `${appUrl}/proposal/${token}`;
 
   // The stages as money, so the email states a schedule rather than a count.

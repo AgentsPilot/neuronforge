@@ -277,6 +277,44 @@ export class CashCancelledUnrefundedDetector extends BaseDetector {
       severity: this.definition.severityFn(unrefunded.length, value),
       metricKey: 'cashflow.held_on_cancelled',
       currentValue: unrefunded.length,
+      /*
+       * Bookings, not money. The money on this card is
+       * `estimatedImpactUsd`, and conflating the two produced
+       * "2 פגישות מבוטלות - ₪2 לא הוחזרו" beside a real ₪150.
+       */
+      currentValueUnit: 'count',
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * WHO CALLED IT OFF, SAID OUT LOUD.
+       *
+       * The card read "2 פגישות שבוטלו על ידי הלקוח" — two appointments
+       * cancelled BY THE CLIENT — while this detector's own parameters recorded
+       * `cancelled_by_client: false` for one of them. The model was not told
+       * who cancelled, so it filled the gap with the likelier-sounding half,
+       * and the owner read a fact about their client that was not true.
+       *
+       * It matters more here than on most cards. A client who cancelled and is
+       * owed money back may be waiting for it; an owner who cancelled has left
+       * a client out of pocket without meaning to. Those are different
+       * conversations, and the card was picking one at random.
+       *
+       * Amounts included because the figure beside them is a COUNT: "2
+       * appointments" and "₪150 held" are the two numbers, and without the
+       * split the model wrote "₪2 not refunded".
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      narrationSubject: unrefunded
+        .slice(0, 3)
+        .map(row => {
+          // Not `held` — that is the outer map this reads from.
+          const onThisBooking = held.get(row.id);
+          const money = onThisBooking?.amount
+            ? `${onThisBooking.amount} ${onThisBooking.currency ?? ''}`.trim()
+            : 'an amount nobody recorded';
+          const who = isClientCancellation(row) ? 'the client cancelled' : 'the business cancelled';
+          return `${who}, ${money} still held`;
+        })
+        .join('; '),
       baselineValue: 0,
       thresholdValue: 0,
       /*

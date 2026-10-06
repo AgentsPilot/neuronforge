@@ -34,6 +34,7 @@
  */
 
 import { supabaseServer } from '@/lib/supabaseServer';
+import { platformOrigin } from '@/lib/utils/origins';
 import { createLogger } from '@/lib/logger';
 import { sendEmail } from '@/lib/notifications/emailTransport';
 import { resolveEmailBranding } from '@/lib/email/branding';
@@ -155,7 +156,7 @@ export async function notifyOwnerOfLead(input: LeadAlertInput): Promise<LeadAler
 
     const branding = await resolveEmailBranding(input.ownerId, locale, profile);
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+    const appUrl = platformOrigin();
     const { subject, html } = generateNewEnquiryEmail({
       kind: input.kind,
       contactName: input.contactName,

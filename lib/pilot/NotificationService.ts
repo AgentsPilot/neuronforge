@@ -12,6 +12,7 @@
  */
 
 import type { ApprovalRequest, HumanApprovalStep } from './types';
+import { platformOrigin } from '@/lib/utils/origins';
 import { sendEmail } from '@/lib/notifications/emailTransport';
 import { createLogger } from '@/lib/logger';
 
@@ -337,8 +338,9 @@ export class NotificationService {
    * Generate approval URL
    */
   private generateApprovalUrl(approvalId: string): string {
-    // Use environment variable or default
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // `platformOrigin()`: a notification link has to be reachable by whoever
+    // receives it, which a loopback address never is on a deployed build.
+    const baseUrl = platformOrigin();
     return `${baseUrl}/approvals/${approvalId}`;
   }
 
