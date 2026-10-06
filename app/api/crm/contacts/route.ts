@@ -10,6 +10,7 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { z } from 'zod';
+import { blankAsAbsent } from '@/lib/validation/blankFields';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -38,8 +39,9 @@ const auditTrail = AuditTrailService.getInstance();
  * exactly this again.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-const blankAsAbsent = <T extends z.ZodTypeAny>(schema: T) =>
-  z.preprocess(value => (typeof value === 'string' && value.trim() === '' ? undefined : value), schema);
+/* Lifted to `lib/validation/blankFields` when the UPDATE route turned out to
+   have the same bug and no helper. The reasoning above still belongs here —
+   this is where it was found. */
 
 const createContactSchema = z.object({
   first_name: blankAsAbsent(z.string().min(1).optional()),
