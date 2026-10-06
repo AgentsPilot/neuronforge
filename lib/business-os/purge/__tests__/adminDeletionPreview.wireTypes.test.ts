@@ -11,8 +11,14 @@
  * runtime body is deliberately trivial.
  */
 
-import type { DeletionAreaView, DeletionPreviewPayload } from '@/app/admin/users/types';
+import type {
+  DeletionAreaView,
+  DeletionCommitCodeView,
+  DeletionCommitResultView,
+  DeletionPreviewPayload,
+} from '@/app/admin/users/types';
 import type { AdminDeletionArea, AdminDeletionPreview } from '../AdminDeletionPreview';
+import type { AdminDeletionCommitCode, AdminDeletionCommitCompleted } from '../AdminDeletionCommit';
 
 /** Fails to compile if `Actual` is not assignable to `Expected`. */
 type Satisfies<Expected, Actual extends Expected> = Actual;
@@ -26,11 +32,30 @@ type ClientSatisfiesServer = Satisfies<AdminDeletionPreview, DeletionPreviewPayl
 type AreaServerSatisfiesClient = Satisfies<DeletionAreaView, AdminDeletionArea['area']>;
 type AreaClientSatisfiesServer = Satisfies<AdminDeletionArea['area'], DeletionAreaView>;
 
+/**
+ * AD-2b: the commit route's `data` and its refusal codes, both ways. A new
+ * server code fails here, so the dialog's exhaustive code → sentence map can
+ * never fall through to the generic sentence for a known refusal.
+ */
+type CommitResult = AdminDeletionCommitCompleted['result'];
+type CommitServerSatisfiesClient = Satisfies<DeletionCommitResultView, CommitResult>;
+type CommitClientSatisfiesServer = Satisfies<CommitResult, DeletionCommitResultView>;
+type CodeServerSatisfiesClient = Satisfies<DeletionCommitCodeView, AdminDeletionCommitCode>;
+type CodeClientSatisfiesServer = Satisfies<AdminDeletionCommitCode, DeletionCommitCodeView>;
+
 describe('the deletion preview payload types match what the route sends', () => {
-  it('is assignable in both directions, and the area union is equal (checked by tsc, not Jest)', () => {
+  it('preview and commit payloads are assignable both ways; the area and commit-code unions are equal (checked by tsc, not Jest)', () => {
     const checks: Array<
-      ServerSatisfiesClient | ClientSatisfiesServer | AreaServerSatisfiesClient | AreaClientSatisfiesServer | null
-    > = [null, null, null, null];
-    expect(checks).toEqual([null, null, null, null]);
+      | ServerSatisfiesClient
+      | ClientSatisfiesServer
+      | AreaServerSatisfiesClient
+      | AreaClientSatisfiesServer
+      | CommitServerSatisfiesClient
+      | CommitClientSatisfiesServer
+      | CodeServerSatisfiesClient
+      | CodeClientSatisfiesServer
+      | null
+    > = [null, null, null, null, null, null, null, null];
+    expect(checks).toEqual([null, null, null, null, null, null, null, null]);
   });
 });

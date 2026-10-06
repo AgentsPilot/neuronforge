@@ -80,9 +80,17 @@ export const ADMIN_DELETION_OPTIONS: Readonly<PurgeOptions> = Object.freeze({
  */
 export const ADMIN_DELETION_GATE_VERSION = 1;
 
-/** Why the confirm control is disabled when no refusal applies. */
-export const PLATFORM_UNAVAILABLE_REASON =
-  'deleting a business ships in a later release (the key rotation is not done and the confirmation step is not built)';
+/** Why the confirm control is disabled when a token was minted: the admin has not typed the confirmation yet (AD-2b, SA-1). */
+export const CONFIRMATION_PENDING_REASON = 'the typed confirmation below has not been entered yet';
+
+/**
+ * With a token while `purge_business_data` is not applied: honest that the
+ * commit will refuse (G-1 precedent). Worded without "nothing will be deleted",
+ * which `descriptors.invariant`'s FALSE_REASSURANCE scan forbids on the purge
+ * surface (a static string must never claim deletion is impossible).
+ */
+export const DELETE_FUNCTION_NOT_INSTALLED_REASON =
+  'the delete function is not installed on this server, so a confirmed deletion will be refused before any data is removed';
 
 /** BQ-1: the admin off switch is off. */
 export const ADMIN_DELETE_DISABLED_REASON =
@@ -364,8 +372,8 @@ export async function buildAdminDeletionPreview(params: {
   else if (confirmKind === null) deletionUnavailableReason = 'what to type to confirm could not be determined';
   else if (!schema.fingerprint) deletionUnavailableReason = 'the database structure could not be fingerprinted';
   else if (preview.resetLive === false)
-    deletionUnavailableReason = `${PLATFORM_UNAVAILABLE_REASON}; the delete function is not installed`;
-  else deletionUnavailableReason = PLATFORM_UNAVAILABLE_REASON;
+    deletionUnavailableReason = DELETE_FUNCTION_NOT_INSTALLED_REASON;
+  else deletionUnavailableReason = CONFIRMATION_PENDING_REASON;
 
   // Ids, statuses and counts only (SC-10). Never the token (C-12).
   log.info(
