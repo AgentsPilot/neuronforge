@@ -35,7 +35,7 @@ const dbWriters = read(DB_WRITERS);
 const REVOKE_ALL_TABLES = ['billing_events', 'boost_pack_purchases', 'subscription_invoices', 'processed_webhook_events'];
 const WRITES_ONLY_TABLE = 'boost_packs';
 const CLIENT_ROLES = ['anon', 'authenticated'];
-const WRITE_PRIVILEGES = 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER';
+const WRITE_PRIVILEGES = 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN';
 
 function literalsOf(sql: string): string[] {
   return [...sql.matchAll(/'([^']*)'/g)].map((match) => match[1]);
@@ -171,15 +171,18 @@ describe('the checker and the pre-check cover what the migration does', () => {
     expect(checker).toContain('ORDER BY report.sort_order');
   });
 
-  it('the checker watches all five tables and all seven table privileges for both browser roles', () => {
+  it('the checker watches all five tables and all eight table privileges (incl. PG17 MAINTAIN) for both browser roles', () => {
     for (const table of [...REVOKE_ALL_TABLES, WRITES_ONLY_TABLE]) expect(checker).toContain(`'${table}'`);
     for (const role of CLIENT_ROLES) expect(checker).toContain(`('${role}'`);
-    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) {
       expect(checker).toContain(`('${privilege}'`);
     }
     // Only boost_packs keeps client reads.
-    expect(checker).toContain("('boost_packs', 5, true)");
-    for (const table of REVOKE_ALL_TABLES) expect(checker).toMatch(new RegExp(`\\('${table}', \\d, false\\)`));
+    expect(checker).toContain("('boost_packs', 5, true, true)");
+    for (const table of REVOKE_ALL_TABLES) expect(checker).toMatch(new RegExp(`\\('${table}', \\d, false, (true|false)\\)`));
+    // RLS is compared with production before the migration (pre-check Q-1, 2026-10-06):
+    // processed_webhook_events has RLS off, and this migration does not change RLS.
+    expect(checker).toContain("('processed_webhook_events', 4, false, false)");
   });
 
   it('the checker fails closed on service_role: a missing privilege or table is FAIL, not skipped (P10-C7)', () => {
@@ -200,8 +203,9 @@ describe('the checker and the pre-check cover what the migration does', () => {
     expect(checker).toContain("WHEN expected_policy_counts.policy_count < 0 THEN 'FAIL'");
   });
 
-  it('the checker checks RLS is still on and that no column-level grant reaches the browser roles', () => {
-    expect(checker).toContain("'C2 rls still on '");
+  it('the checker checks RLS is unchanged and that no column-level grant reaches the browser roles', () => {
+    expect(checker).toContain("'C2 rls unchanged '");
+    expect(checker).toContain('table_state.rls_on = table_state.rls_expected');
     expect(checker).toContain("'C4 no column grant to anon or authenticated or PUBLIC '");
   });
 

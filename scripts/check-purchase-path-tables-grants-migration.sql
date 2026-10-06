@@ -1,14 +1,14 @@
 SET default_transaction_read_only = on;
 
 WITH watched_tables AS (
-  SELECT watched.table_name, watched.table_order, watched.client_reads_kept
+  SELECT watched.table_name, watched.table_order, watched.client_reads_kept, watched.rls_expected
   FROM (VALUES
-    ('billing_events', 1, false),
-    ('boost_pack_purchases', 2, false),
-    ('subscription_invoices', 3, false),
-    ('processed_webhook_events', 4, false),
-    ('boost_packs', 5, true)
-  ) AS watched (table_name, table_order, client_reads_kept)
+    ('billing_events', 1, false, true),
+    ('boost_pack_purchases', 2, false, true),
+    ('subscription_invoices', 3, false, true),
+    ('processed_webhook_events', 4, false, false),
+    ('boost_packs', 5, true, true)
+  ) AS watched (table_name, table_order, client_reads_kept, rls_expected)
 ),
 expected_policy_counts AS (
   SELECT expected.table_name, expected.policy_count
@@ -24,6 +24,7 @@ table_state AS (
   SELECT watched_tables.table_name,
          watched_tables.table_order,
          watched_tables.client_reads_kept,
+         watched_tables.rls_expected,
          pg_class.oid AS table_oid,
          COALESCE(pg_class.relrowsecurity, false) AS rls_on
   FROM watched_tables
@@ -45,7 +46,8 @@ privilege_list AS (
     ('DELETE', 4),
     ('TRUNCATE', 5),
     ('REFERENCES', 6),
-    ('TRIGGER', 7)
+    ('TRIGGER', 7),
+    ('MAINTAIN', 8)
   ) AS privilege (privilege_name, privilege_order)
 ),
 client_privileges AS (
@@ -96,9 +98,9 @@ checks AS (
 
   UNION ALL
   SELECT table_state.table_order * 1000 + 1,
-         'C2 rls still on ' || table_state.table_name,
-         CASE WHEN table_state.rls_on THEN 'PASS' ELSE 'FAIL' END,
-         'rls ' || table_state.rls_on::text
+         'C2 rls unchanged ' || table_state.table_name,
+         CASE WHEN table_state.rls_on = table_state.rls_expected THEN 'PASS' ELSE 'FAIL' END,
+         'rls ' || table_state.rls_on::text || ' expected ' || table_state.rls_expected::text
   FROM table_state
 
   UNION ALL
