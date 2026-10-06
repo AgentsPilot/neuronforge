@@ -1,5 +1,5 @@
 /**
- * Guard over migration 20261036 (plan payments P-10, workplan
+ * Guard over migration 20261038 (plan payments P-10, workplan
  * BUSINESS_OS_PLAN_PAYMENTS_P10_WORKPLAN.md §5, SA rulings Q-7 and P10-C1,
  * P10-C7): the browser roles lose their table grants on four purchase-path
  * tables no browser code uses, and their WRITE grants on `boost_packs` (whose
@@ -18,8 +18,8 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 const ROOT = process.cwd();
-const MIGRATION = join(ROOT, 'supabase', 'migrations', '20261036_purchase_path_tables_client_grants.sql');
-const ROLLBACK = join(ROOT, 'supabase', 'SQL Scripts', '20261036_purchase_path_tables_client_grants_rollback.sql');
+const MIGRATION = join(ROOT, 'supabase', 'migrations', '20261038_purchase_path_tables_client_grants.sql');
+const ROLLBACK = join(ROOT, 'supabase', 'SQL Scripts', '20261038_purchase_path_tables_client_grants_rollback.sql');
 const CHECKER = join(ROOT, 'scripts', 'check-purchase-path-tables-grants-migration.sql');
 const PRECHECK = join(ROOT, 'scripts', 'precheck-purchase-path-tables-grants.sql');
 const DB_WRITERS = join(ROOT, 'scripts', 'check-billing-events-db-writers.sql');

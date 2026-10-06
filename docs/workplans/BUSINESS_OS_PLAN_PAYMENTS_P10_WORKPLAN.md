@@ -18,7 +18,7 @@ The work is split in two PRs so each stays small and reviewable:
 
 | PR | Scope | Size |
 |---|---|---|
-| **P-10a** | Server: webhook, `StripeService`, `CreditService` stubs, `sync-subscription`, `create-checkout`, the freeze job (TK-3), boost switch-off (TK-5), RD-2 read guard (TK-6), migration **20261036** | 1.5 to 2 days |
+| **P-10a** | Server: webhook, `StripeService`, `CreditService` stubs, `sync-subscription`, `create-checkout`, the freeze job (TK-3), boost switch-off (TK-5), RD-2 read guard (TK-6), migration **20261038** | 1.5 to 2 days |
 | **P-10b** | Agent-platform billing UI (F-19, F-20, L-33, L-35): dead files deleted, `/v2/billing` redirected, the buy flow removed from `BillingSettings` | 1 to 1.5 days |
 
 P-10b depends on P-10a (the UI stops calling routes that P-10a turns into 410s). Neither touches Connect.
@@ -31,7 +31,7 @@ P-10b depends on P-10a (the UI stops calling routes that P-10a turns into 410s).
 2. [Confirmed inventory (TK-2)](#2-confirmed-inventory-tk-2)
 3. [Design decisions](#3-design-decisions)
 4. [What must keep working](#4-what-must-keep-working)
-5. [The migration (20261036)](#5-the-migration-20261036)
+5. [The migration (20261038)](#5-the-migration-20261038)
 6. [Files to create / modify / delete](#6-files-to-create--modify--delete)
 7. [Task list](#7-task-list)
 8. [Test plan](#8-test-plan)
@@ -155,7 +155,7 @@ Each row of reuse plan §4.6 checked against `f9448054`. "P-10 action" is what t
 | Item | Disposition |
 |---|---|
 | `billing_events` writers all send non-existent columns (§1.3) | Recorded. The writers P-10 deletes lose nothing; the survivors (`handleInvoicePaymentFailed`, `handleSubscriptionDeleted`, `CreditService`) are left alone (RD-16) and flagged as follow-up F-1 |
-| Browser grants on purchase-path tables (`billing_events` measured; `boost_pack_purchases`, `subscription_invoices`, `processed_webhook_events` by inference from the same Supabase default) | Migration 20261036 (§5) |
+| Browser grants on purchase-path tables (`billing_events` measured; `boost_pack_purchases`, `subscription_invoices`, `processed_webhook_events` by inference from the same Supabase default) | Migration 20261038 (§5) |
 | `components/billing/PilotCreditCalculator.tsx` | Used by the marketing landing page `app/page.tsx`; takes no money and calls no route. **Out of scope**, noted |
 | Help texts naming `/v2/billing` and "add more credits" (`components/v2/HelpBot.tsx:26`, `ModernHelpDialog.tsx:59,79`, `app/api/help-bot-v2/route.ts:534`) | Left: `/v2/billing` keeps resolving through the redirect. Rewording would pull 35 `console.*` conversions into P-10 for text on a parked product. Follow-up F-2 |
 | Migration number collision: plan-payments reserved **20261026** for P-3b, but `main` already has `20261026_business_os_credit_charges_activity_indexes.sql` | Not P-10's to fix. Reported to TL (§15); P-3b needs a new number |
@@ -246,11 +246,13 @@ New `lib/business-os/__tests__/noPilotCreditTableReads.guard.test.ts`: no non-te
 
 ---
 
-## 5. The migration (20261036)
+## 5. The migration (20261038)
 
 ### 5.1 Number
 
-**20261036** (`supabase/migrations/20261036_purchase_path_tables_client_grants.sql`). Checked on 2026-10-05: on `main` and every remote branch and local worktree, the highest used numbers are 20261026 (credit deduction, not P-3b), 20261030 (boost, worktree), 20261035 (admin delete). 20261036 is free everywhere. I did **not** take 20261029 (payments' spare): P-3b's reserved 20261026 is already taken on `main` (§2.4), so the payments block will need its spare. Recorded with the other sessions per G-11 (§15).
+**20261038** (`supabase/migrations/20261038_purchase_path_tables_client_grants.sql`). **Renumbered 2026-10-06:** the branch was rebased on `origin/main` `4c1b630a`, which already holds `20261036_business_addresses_book.sql` and `20261037_business_addresses_ownership_fk.sql` (address book, PR #229). 20261038 was checked free on `main` and on every remote branch the same day. The original check below is kept as written.
+
+*As written 2026-10-05:* **20261036** (`supabase/migrations/20261036_purchase_path_tables_client_grants.sql`). Checked on 2026-10-05: on `main` and every remote branch and local worktree, the highest used numbers are 20261026 (credit deduction, not P-3b), 20261030 (boost, worktree), 20261035 (admin delete). 20261036 is free everywhere. I did **not** take 20261029 (payments' spare): P-3b's reserved 20261026 is already taken on `main` (§2.4), so the payments block will need its spare. Recorded with the other sessions per G-11 (§15).
 
 ### 5.2 Scope
 
@@ -271,9 +273,9 @@ The user's rules for anything pasted in the Supabase SQL editor apply to all fou
 | File | Content |
 |---|---|
 | `scripts/precheck-purchase-path-tables-grants.sql` | Read-only (`SET default_transaction_read_only = on`). Q-1 each table exists, RLS on, FORCE RLS off. Q-2 every grant on the five tables from `information_schema.role_table_grants` for `anon`, `authenticated`, `service_role`, `PUBLIC`. Q-3 column-level grants for `anon`/`authenticated` (expect none). Q-4 policies with `qual`, `with_check`, `roles` (backup). Q-5 row counts. Q-6 `boost_packs` id, name, `is_active` (TK-5 previous values). Q-7 frozen accounts: total, and those with a `business_os_account_plans` row (TK-3). Each query is a separate statement so the editor shows its result |
-| `supabase/migrations/20261036_purchase_path_tables_client_grants.sql` | `BEGIN;` then 10 statements of the form `REVOKE ALL ON TABLE public.billing_events FROM anon;` (four tables × two roles), then 2 for `boost_packs` (`REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.boost_packs FROM anon;` and the same for `authenticated`), then `COMMIT;`. Nothing else |
+| `supabase/migrations/20261038_purchase_path_tables_client_grants.sql` | `BEGIN;` then 10 statements of the form `REVOKE ALL ON TABLE public.billing_events FROM anon;` (four tables × two roles), then 2 for `boost_packs` (`REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.boost_packs FROM anon;` and the same for `authenticated`), then `COMMIT;`. Nothing else |
 | `scripts/check-purchase-path-tables-grants-migration.sql` | Read-only. One result set, columns `check_name`, `result` (`PASS`/`FAIL`), `detail`, then a `VERDICT` row (`PASS` only if every row passes). Checks: for each of the four tables and both roles, `has_table_privilege` false for SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER (counts PUBLIC inheritance); `boost_packs` both roles SELECT true and the six write privileges false; no column-level grant to `anon`/`authenticated` on the five tables; RLS still on for all five; policy count per table equal to the pre-check (literal numbers filled in from the pre-check output before running); `service_role` still holds SELECT, INSERT, UPDATE on `processed_webhook_events`, INSERT on `billing_events` and `boost_pack_purchases`, SELECT on `boost_packs` |
-| `supabase/SQL Scripts/20261036_purchase_path_tables_client_grants_rollback.sql` | `BEGIN;` separate `GRANT ... TO anon;` / `TO authenticated;` statements restoring what pre-check Q-2 showed (written out for the measured default set; trim to Q-2 before use), `COMMIT;` |
+| `supabase/SQL Scripts/20261038_purchase_path_tables_client_grants_rollback.sql` | `BEGIN;` separate `GRANT ... TO anon;` / `TO authenticated;` statements restoring what pre-check Q-2 showed (written out for the measured default set; trim to Q-2 before use), `COMMIT;` |
 
 ### 5.4 Static test
 
@@ -298,7 +300,7 @@ Recorded 2026-10-06 13:16 UTC (user ran the pre-check on production):
 | Item | Result |
 |---|---|
 | Q-1 | All five tables exist. RLS on for `billing_events`, `boost_pack_purchases`, `subscription_invoices`, `boost_packs`; **RLS OFF for `processed_webhook_events`**; FORCE RLS off on all |
-| Q-2 | `anon` and `authenticated` hold DELETE INSERT MAINTAIN REFERENCES SELECT TRIGGER TRUNCATE UPDATE on all five tables; `service_role` the same; `PUBLIC` none. With RLS off, `processed_webhook_events` was readable and writable by anyone holding the anon key until 20261036 |
+| Q-2 | `anon` and `authenticated` hold DELETE INSERT MAINTAIN REFERENCES SELECT TRIGGER TRUNCATE UPDATE on all five tables; `service_role` the same; `PUBLIC` none. With RLS off, `processed_webhook_events` was readable and writable by anyone holding the anon key until 20261038 |
 | Q-3 | 0 column grants to anon or authenticated on all five |
 | Q-4 | Policy counts: `billing_events` 2, `boost_pack_purchases` 2, `subscription_invoices` 1, `processed_webhook_events` 0, `boost_packs` 2 (copied into the checker's C5 list) |
 | Q-5 | Rows: `billing_events` 0, `boost_pack_purchases` 2, `subscription_invoices` 0, `processed_webhook_events` 1191, `boost_packs` 3 |
@@ -336,12 +338,12 @@ Recorded 2026-10-06 13:16 UTC (user ran the pre-check on production):
 | `app/api/stripe/webhook/__tests__/pinoLogging.guard.test.ts` | modify | Log-call floor lowered by the deleted calls |
 | `lib/repositories/__tests__/userSubscriptionsWriteLockdown.qa.test.ts` | modify | `sync-subscription` leaves the writer list; webhook `QuotaAllocationService` sites 2 → 1; `createCustomCreditSubscription` index check removed |
 | `lib/repositories/__tests__/userSubscriptionsWriteLockdownMigration.test.ts`, `paymentTablesWriteLockdownMigration.test.ts` | modify if they pin `sync-subscription` | Pin that it stays gone |
-| `supabase/migrations/20261036_purchase_path_tables_client_grants.sql` | create | §5 |
+| `supabase/migrations/20261038_purchase_path_tables_client_grants.sql` | create | §5 |
 | `scripts/precheck-purchase-path-tables-grants.sql`, `scripts/check-purchase-path-tables-grants-migration.sql` | create | §5 |
-| `supabase/SQL Scripts/20261036_purchase_path_tables_client_grants_rollback.sql` | create | §5 |
+| `supabase/SQL Scripts/20261038_purchase_path_tables_client_grants_rollback.sql` | create | §5 |
 | `supabase/migrations/__tests__/purchase-path-tables-client-grants.migration.test.ts` | create | §5.4 |
 | `docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md` | modify | §4.6 TK-2 confirmation note; TK-3, TK-5, TK-6 rows closed; F-18/F-19/F-20 corrections (BillingSettingsV2 is dead, V2_NEW was live); Change History |
-| `docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` | modify | §9.1 P-10 row (split a/b, migration 20261036), §9.3 migration table, §9.4 CF-3 closed, Change History |
+| `docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` | modify | §9.1 P-10 row (split a/b, migration 20261038), §9.3 migration table, §9.4 CF-3 closed, Change History |
 | `docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md` | modify | R-7 outcome: P-10 owns FR-40, slice 7 verify-only (one row + Change History; after SA confirms Q-1) |
 
 ### P-10b
@@ -388,7 +390,7 @@ Recorded 2026-10-06 13:16 UTC (user ran the pre-check on production):
 - [x] ✅ E1. Tests updated; harness: Connect 17 byte-identical, every other entry identical, P10-1 changed by design.
 - [x] ✅ E2. Function-text check with the new `--exact` mode (C-5).
 - [x] ✅ E3. Regression set, `test:bos-entitlements`, scoped `tsc`, `eslint`.
-- [x] ✅ E4. Payments requirement (renumbering per C-2, P-10 row, 20261036, CF-3). Reuse plan and boost requirement rows **deferred**, see §16.8. Status Code Complete, uncommitted.
+- [x] ✅ E4. Payments requirement (renumbering per C-2, P-10 row, 20261038, CF-3). Reuse plan and boost requirement rows **deferred**, see §16.8. Status Code Complete, uncommitted.
 
 **Phase F: P-10b (after P-10a is merged)**
 - [ ] F1. Delete the dead and V2 billing files; `/v2/billing` redirect.
@@ -530,7 +532,7 @@ Recorded 2026-10-06 13:16 UTC (user ran the pre-check on production):
 | Who | What | When |
 |---|---|---|
 | TL → Credits Boost session | P-10 takes FR-40 (if SA confirms Q-1); boost slice 7 becomes verify-only | After SA review |
-| TL → all sessions with migrations | 20261036 claimed by plan-payments P-10 | Now |
+| TL → all sessions with migrations | 20261038 claimed by plan-payments P-10 | Now |
 | TL → plan-payments (P-3b) | 20261026 is already used on `main` by `business_os_credit_charges_activity_indexes`; P-3b needs a new number (20261029 is the natural one) | Now |
 | User | Pre-check Q-2/Q-4/Q-6/Q-7 output saved before apply; migration; checker; TK-5 data step after P-10a deploys | At apply |
 
@@ -708,10 +710,10 @@ exports[`Stripe webhook, platform customer.subscription.updated (P-10) P10-1. le
 
 | File | Notes |
 |---|---|
-| `supabase/migrations/20261036_purchase_path_tables_client_grants.sql` | `BEGIN;`, exactly the 12 REVOKEs of §5.3 (one table, one role each), `COMMIT;` |
+| `supabase/migrations/20261038_purchase_path_tables_client_grants.sql` | `BEGIN;`, exactly the 12 REVOKEs of §5.3 (one table, one role each), `COMMIT;` |
 | `scripts/precheck-purchase-path-tables-grants.sql` | Read-only. **Deviation:** **one** result set (`sort_order`, `item`, `detail`) with rows Q1 to Q7, not one statement per query. The Supabase SQL editor shows only the last statement's result, so separate statements would hide Q1 to Q6. Q2 reads the ACL itself (`aclexplode` of `relacl`, PUBLIC shown as `PUBLIC`), not `information_schema.role_table_grants`, which hides grants the current role is not part of. Q4 has a count row and a backup row (name, command, permissive, roles, `qual`, `with_check`). Q5 counts rows with direct `count(*)`, so **a missing table makes the whole pre-check error**. That error is itself the "stop" signal of §5.5 step 1. Q7 has both counts (C-1). First row: "run the migration in a NEW tab" |
 | `scripts/check-purchase-path-tables-grants-migration.sql` | Read-only; `VERDICT` first. C1 exists, C2 RLS on, C3 `has_table_privilege` for 2 roles × 7 privileges × 5 tables (boost_packs SELECT must be true, its writes false; the other four all false), C4 no column grant to anon/authenticated/PUBLIC, C5 policy count vs literal, C6 `service_role` needs, **fail closed** (missing privilege or table → FAIL). **The user fills C5's literals from pre-check Q4 before running:** `billing_events` is pre-filled with **2** (§1.3); the other four are `-1`, which is a FAIL ("fill in the policy count from pre check Q4 first") until replaced |
-| `supabase/SQL Scripts/20261036_purchase_path_tables_client_grants_rollback.sql` | Separate GRANTs to `anon` / `authenticated` only, restoring the measured default set; trim to Q-2 before use |
+| `supabase/SQL Scripts/20261038_purchase_path_tables_client_grants_rollback.sql` | Separate GRANTs to `anon` / `authenticated` only, restoring the measured default set; trim to Q-2 before use |
 | `supabase/migrations/__tests__/purchase-path-tables-client-grants.migration.test.ts` | 36 tests: no `--` or `/*`, **no word "into"** (case-insensitive) in all four files, literals only letters/digits/underscores/spaces, no single-letter alias, read-only first statement, the 12 REVOKEs exactly and in order, one table + one role per REVOKE, never `service_role` / PUBLIC / `postgres` / GRANT / DROP / ALTER / CREATE, boost_packs keeps SELECT, rollback mirrors the pairs, checker VERDICT + fail-closed `service_role` + unfilled-count FAIL, pre-check Q1–Q7 markers, neither check file writes |
 
 ### 16.7 Tests run
@@ -843,7 +845,7 @@ scripts/__tests__/check-logging-only-diff.test.ts: 24 passed
 
 1. **Merge gate (C-1):** run `scripts/precheck-purchase-path-tables-grants.sql`. Q7 must show **both counts = 0**. Record the result in §5.6. Any non-zero Business OS count stops the merge.
 2. From pre-check Q4, replace the four `-1` values in C5 of `scripts/check-purchase-path-tables-grants-migration.sql` and confirm `billing_events` = 2.
-3. In a **new tab**, apply `supabase/migrations/20261036_purchase_path_tables_client_grants.sql`.
+3. In a **new tab**, apply `supabase/migrations/20261038_purchase_path_tables_client_grants.sql`.
 4. Run the checker. Its first row must read **VERDICT PASS**.
 5. Run `scripts/check-billing-events-db-writers.sql`. Record the trigger count and the functions that reference `billing_events`. A trigger or SECURITY INVOKER function called by a client role would now hit "permission denied".
 6. After apply and deploy, check Vercel logs for the Stripe webhook. There must be **no "permission denied"** (42501).
