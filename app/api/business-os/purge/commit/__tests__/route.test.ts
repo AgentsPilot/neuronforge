@@ -238,4 +238,24 @@ describe('POST /api/business-os/purge/commit', () => {
       expect(runReset).not.toHaveBeenCalled();
     });
   });
+
+  describe('AD-2a — shared confirmation helper (SA AC2-8, T-9)', () => {
+    it('a business-profile READ ERROR is a 500, never the email fallback, and nothing runs', async () => {
+      findByUserId.mockResolvedValue({ data: null, error: new Error('db down') });
+
+      // The email would have matched under the old fail-open fallback.
+      const res = await POST(req({ level: 'reset', confirmText: SESSION_USER.email }));
+
+      expect(res.status).toBe(500);
+      expect(runReset).not.toHaveBeenCalled();
+    });
+
+    it('the route source logs no email before the destructive sequence (ids only)', () => {
+      const fs = jest.requireActual<typeof import('fs')>('fs');
+      const path = jest.requireActual<typeof import('path')>('path');
+      const src = fs.readFileSync(path.join(__dirname, '..', 'route.ts'), 'utf8');
+      const warn = src.slice(src.indexOf('requestLogger.warn('), src.indexOf("'Commit confirmed"));
+      expect(warn).not.toMatch(/email/);
+    });
+  });
 });

@@ -7,7 +7,9 @@
  * ADMIN ONLY, and a deliberate CROSS-ACCOUNT read of one admin-selected
  * account: what deleting its business would remove and keep, and every reason
  * the deletion would be refused (R-1 … R-8). NOTHING IS DELETED: there is no
- * commit route, no token and no destructive call on this path (SC-9). A POST
+ * destructive call on this path (SC-9). Since AD-2a it may return a signed
+ * commit token (`commitToken`, AC-29) for the commit route; the token is in the
+ * response only, never in a log or the audit row (`tokenMinted` only). A POST
  * only because the admin explicitly asks for it (the dialog opens), and so the
  * shared gate oracle covers it (`adminGate.writes`, SA D-6).
  *
@@ -146,6 +148,8 @@ export async function POST(request: NextRequest, context: { params: { id: string
     counted: preview.counted,
     refusals: preview.refusals.map((r) => `${r.id}:${r.status}`),
     deletionAvailable: preview.deletionAvailable,
+    // AC2-10: whether a token was minted, never the token (C-12).
+    tokenMinted: preview.commitToken !== null,
   });
 
   requestLogger.info(

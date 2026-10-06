@@ -181,6 +181,7 @@ This is the most important thing in the parking state. Each step checks the one 
 
 1. **Rotate the `service_role` key** in the Supabase dashboard.
 2. **Update the key** in Vercel and in `.env.local`.
+   *Admin delete AD-2a:* if the rotation moves to Supabase's new secret-key format and the env var NAME changes from `SUPABASE_SERVICE_ROLE_KEY`, change `KEY_ENV` in `lib/business-os/purge/previewToken.ts` to match, or every admin delete commit answers 500 `token_key_unavailable` (fails closed, but needs a code change).
 3. **Confirm the OLD key is actually rejected.** Rotation that hasn't taken looks identical to rotation that has, until tested. The old key hashes to `sha256[:12] = 0b022ec57c77`.
 4. **Remove the key from `docs/VERCEL_DEPLOYMENT_SETUP.md`.** Not sufficient on its own — the old key is in public git history, which is why rotation comes first.
 5. **Move the migration back:** `supabase/held/20260916b_purge_business_data.sql` → `supabase/migrations/`.

@@ -16,6 +16,7 @@ import {
 } from '../audit/types';
 import { getEventMetadata } from '../audit/events';
 import { sanitizeChanges, summarizeChanges } from '../audit/diff';
+import { AUDIT_FLUSH_TIMEOUT_MS } from '../audit/auditTimeouts';
 import { createLogger } from '@/lib/logger';
 import { archiveRepository } from '@/lib/repositories/ArchiveRepository';
 
@@ -124,6 +125,68 @@ class AuditTrailService {
       }
     } catch (error) {
       this.handleError('Failed to queue audit log', error, input);
+    }
+  }
+
+  /**
+   * Write ONE entry now and report whether it landed (admin delete AD-2a; SA
+   * T-2 / AC2-3, signed off under CLAUDE.md rule 7).
+   *
+   * ONLY for a confirmed write-ahead row ("we are about to delete") and a
+   * destructive outcome row, where the caller must know. Everything else uses
+   * `log()` / `logAndFlush`, which never report and are right for that.
+   *
+   * Additive: `log()`, `flush()`, the queue and `isFlushing` are untouched. It
+   * reuses `buildLogEntry`, so the entry (and its per-entry hash, when tamper
+   * detection is on) is exactly what the queued path would write, and inserts
+   * it through this service's existing client: the service's pre-existing
+   * direct write, not a new one.
+   *
+   * NEVER THROWS. Bounded by AUDIT_FLUSH_TIMEOUT_MS. `{ written: false }` on an
+   * error, on a timeout, AND when the service is disabled (fail closed: a
+   * disabled audit trail cannot confirm anything). A timeout may still land
+   * the row later; that is safe for its callers (a `BUSINESS_DELETION_STARTED`
+   * with no `BUSINESS_DATA_PURGED` is never read as "deleted").
+   */
+  public async writeNow(input: AuditLogInput): Promise<{ written: boolean }> {
+    if (!this.config.enabled) return { written: false };
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const entry = await this.buildLogEntry(input);
+      // Settles to a boolean and never rejects, so a late failure after the
+      // timeout cannot become an unhandled rejection.
+      const insert = Promise.resolve(this.supabase.from('audit_trail').insert([entry])).then(
+        ({ error }) => {
+          if (error) {
+            logger.error({ err: error, action: input.action, userId: input.userId ?? null }, 'Confirmed audit write failed');
+            return false;
+          }
+          return true;
+        },
+        (err: unknown) => {
+          logger.error({ err, action: input.action, userId: input.userId ?? null }, 'Confirmed audit write threw');
+          return false;
+        }
+      );
+      const timeout = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), AUDIT_FLUSH_TIMEOUT_MS);
+      });
+      const outcome = await Promise.race([insert, timeout]);
+      if (outcome === 'timeout') {
+        logger.warn(
+          { action: input.action, userId: input.userId ?? null, timeoutMs: AUDIT_FLUSH_TIMEOUT_MS },
+          'Confirmed audit write timed out; reporting not written'
+        );
+        return { written: false };
+      }
+      return { written: outcome };
+    } catch (err) {
+      // buildLogEntry or the client call threw synchronously.
+      logger.error({ err, action: input.action, userId: input.userId ?? null }, 'Confirmed audit write failed');
+      return { written: false };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

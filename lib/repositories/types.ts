@@ -673,6 +673,21 @@ export interface RevokeFriendInviteInput {
   claimLeaseCutoff: Date;
 }
 
+/**
+ * Admin delete AD-2a: revoke every PENDING invite one account issued, after an
+ * admin deleted that account's business (SA AC2-9). `issuerAccountId` is the
+ * deleted business's account (validated as a UUID by the repository).
+ */
+export interface RevokePendingIssuerInvitesByAdminInput {
+  issuerAccountId: string;
+  adminId: string;
+  /** At least 3 characters (CHECK `business_os_invites_revocation_complete`). */
+  reason: string;
+  now: Date;
+  /** A claim made at or after this instant is LIVE: that invite is skipped (BQ-3). */
+  claimLeaseCutoff: Date;
+}
+
 /** A revoke, as the conditional UPDATE needs it. */
 export interface RevokeBusinessOsInviteInput {
   id: string;

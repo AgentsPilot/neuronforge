@@ -45,6 +45,11 @@
 //      itself. `findHoldFactsById` reads two facts (`grant_kind`, `language`)
 //      of the ONE invite named by that account's own lineage row, which the
 //      caller read with the session's account id. Never a caller-supplied id.
+//   6. ADMIN DELETE (AD-2a, behind `requireAdmin`), after an admin deleted one
+//      business: `revokePendingForIssuerAccountByAdmin` (one status UPDATE,
+//      equality-scoped to that account's `issuer_account_id`, UUID-checked,
+//      live claims skipped) and `countPendingForIssuerAccountByAdmin` (what was
+//      skipped). The account id is the deleted target's, from the route path.
 //
 // `token_hash` is written once per invite, by `createForAdmin` or (Slice 5a)
 // by the SQL send function behind `createForIssuerAccount`, and never selected
@@ -82,7 +87,14 @@ import type {
   RecordRedemptionFailureInput,
   RevokeBusinessOsInviteInput,
   RevokeFriendInviteInput,
+  RevokePendingIssuerInvitesByAdminInput,
 } from './types';
+
+/** Admin delete AD-2a: a bulk revoke is keyed by ids that must be well-formed (AC2-9). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_RE.test(value);
+}
 
 const INVITES = 'business_os_invites';
 
@@ -593,6 +605,108 @@ export class BusinessOsInviteRepository {
       return { data: typeof redeemedAt === 'string' && redeemedAt.length > 0, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to read whether a friend invite was accepted');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  // ============ Admin delete (AD-2a, behind requireAdmin) ============
+
+  /**
+   * ADMIN DELETE: revoke every PENDING invite that `issuerAccountId` sent,
+   * after an admin deleted that account's business (admin delete AD-2a; SA
+   * AC2-9, T-3: called only after the destructive RPC committed).
+   *
+   * Service role, deliberately (see the header): invites have no `user_id`.
+   * Scoped by EQUALITY on `issuer_kind = 'account'` AND `issuer_account_id`,
+   * which must be a UUID (checked before any query, so a missing or malformed
+   * id can never widen the UPDATE to "every account invite"). Pending means
+   * not accepted, not already revoked, and no LIVE signup claim: a friend in
+   * the middle of signing up keeps their invite (BQ-3), and accepted invites
+   * (friends who already joined) are never touched.
+   *
+   * A status UPDATE, never a DELETE (SA-6). `revoked_by_admin_id` is set, so
+   * the admin list reads "revoked by an admin", not "by the inviter". Counted
+   * with `{ count: 'exact' }` and NO `.select()` (see `casWon`): the
+   * `mutationOrSelect` guard keeps its single exemption. Returns how many rows
+   * were revoked (any number is honest here: it is not a single-row CAS).
+   */
+  async revokePendingForIssuerAccountByAdmin(
+    input: RevokePendingIssuerInvitesByAdminInput
+  ): Promise<RepositoryResult<number>> {
+    const methodLogger = this.logger.child({
+      method: 'revokePendingForIssuerAccountByAdmin',
+      accountId: input.issuerAccountId,
+      adminId: input.adminId,
+    });
+    if (!isUuid(input.issuerAccountId) || !isUuid(input.adminId)) {
+      methodLogger.error('Refusing a bulk revoke without a valid issuer and admin id');
+      return { data: null, error: new Error('issuerAccountId and adminId must be UUIDs') };
+    }
+    if (typeof input.reason !== 'string' || input.reason.trim().length < 3) {
+      // The CHECK would reject it anyway; refusing here keeps the error ours.
+      return { data: null, error: new Error('revoke reason must be at least 3 characters') };
+    }
+    const at = input.now.toISOString();
+    try {
+      const { error, count } = await this.supabase
+        .from(INVITES)
+        .update(
+          {
+            revoked_at: at,
+            revoked_by_admin_id: input.adminId,
+            revoke_reason: input.reason,
+            updated_at: at,
+          },
+          // A count, not the rows: see `casWon` for why `.select` is not used here.
+          { count: 'exact' }
+        )
+        .eq('issuer_kind', 'account')
+        .eq('issuer_account_id', input.issuerAccountId)
+        .is('redeemed_at', null)
+        .is('revoked_at', null)
+        .or(noLiveClaim(input.claimLeaseCutoff));
+
+      if (error) throw error;
+      if (typeof count !== 'number') {
+        throw Object.assign(new Error('Bulk revoke returned no row count'), { code: 'COUNT_MISSING' });
+      }
+      methodLogger.info({ revoked: count }, 'Pending invites of a deleted business revoked by an admin');
+      return { data: count, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to revoke the pending invites of a deleted business');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * ADMIN DELETE: how many of `issuerAccountId`'s invites are still pending
+   * (not accepted, not revoked), read-only (SA AC2-9). Asked right AFTER
+   * `revokePendingForIssuerAccountByAdmin`: the revoke's predicate minus the
+   * claim filter, so what remains is exactly the invites skipped for a live
+   * signup claim (BQ-3). Counted, never inferred. Its own method, so it never
+   * shares a block with an `.update(`.
+   */
+  async countPendingForIssuerAccountByAdmin(issuerAccountId: string): Promise<RepositoryResult<number>> {
+    const methodLogger = this.logger.child({ method: 'countPendingForIssuerAccountByAdmin', accountId: issuerAccountId });
+    if (!isUuid(issuerAccountId)) {
+      return { data: null, error: new Error('issuerAccountId must be a UUID') };
+    }
+    try {
+      const { error, count } = await this.supabase
+        .from(INVITES)
+        .select('id', { count: 'exact', head: true })
+        .eq('issuer_kind', 'account')
+        .eq('issuer_account_id', issuerAccountId)
+        .is('redeemed_at', null)
+        .is('revoked_at', null);
+
+      if (error) throw error;
+      if (typeof count !== 'number') {
+        throw Object.assign(new Error('Pending-invite count returned no row count'), { code: 'COUNT_MISSING' });
+      }
+      return { data: count, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to count the pending invites of a deleted business');
       return { data: null, error: toError(error) };
     }
   }

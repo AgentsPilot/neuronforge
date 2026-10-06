@@ -83,12 +83,15 @@
 
 import { AuditTrail } from '@/lib/services/AuditTrailService';
 import type { AuditLogInput } from './types';
+import { AUDIT_FLUSH_TIMEOUT_MS } from './auditTimeouts';
 
 /**
  * How long a request waits for the audit queue to be written. Bounded, so a
- * slow database delays a response but can never hold one open.
+ * slow database delays a response but can never hold one open. Defined in the
+ * zero-import `auditTimeouts.ts` (shared with `AuditTrailService.writeNow`
+ * without the two modules importing each other) and re-exported here.
  */
-export const AUDIT_FLUSH_TIMEOUT_MS = 2000;
+export { AUDIT_FLUSH_TIMEOUT_MS };
 
 /**
  * Only the levels this helper uses, typed structurally so a Pino `Logger`, a

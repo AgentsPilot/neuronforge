@@ -49,7 +49,7 @@ function payload(overrides: Partial<DeletionPreviewPayload> = {}): DeletionPrevi
     target: { userId: ACCOUNT, email: 'owner@example.com', businessName: 'Acme Therapy', joinedAt: '2026-03-05T10:00:00.000Z' },
     counted: true,
     level: 'purge',
-    options: { integrations: true, agents: true, activityHistory: false },
+    options: { integrations: true, agents: false, activityHistory: false },
     areas: [
       {
         area: 'crm',
@@ -75,6 +75,8 @@ function payload(overrides: Partial<DeletionPreviewPayload> = {}): DeletionPrevi
     resetLive: false,
     limitations: ['1 table(s) could not be counted: shown as "unknown", not as zero.'],
     deletionAvailable: false,
+    commitToken: null,
+    confirmKind: 'business name',
     deletionUnavailableReason: 'deleting a business ships in a later release (the Purge level and the key rotation are not done)',
     correlationId: 'corr-123',
     generatedAt: '2026-10-05T00:00:00.000Z',

@@ -218,3 +218,56 @@ describe('AdminAccessService.checkAdminStatus', () => {
     expect(JSON.stringify(logged)).not.toContain('secret-env@x.com');
   });
 });
+
+/**
+ * Admin delete AD-2 (SA T-8 / AC2-7): the fresh read a destructive caller
+ * uses. It bypasses the cache AND the stale fallback, and never refills the
+ * shared cache. The tests above are unmodified.
+ */
+describe('AdminAccessService.checkAdminStatus({ fresh: true })', () => {
+  it('reads the repository every time, even with a warm cache', async () => {
+    const repo = fakeRepo({ data: [row({ user_id: 'u1', email: 'a@x.com' })], error: null });
+    const svc = makeService(repo);
+
+    expect(await svc.checkAdminStatus({ id: 'u1' })).toBe(true); // warms the cache
+    expect(repo.listActive).toHaveBeenCalledTimes(1);
+    expect(await svc.checkAdminStatus({ id: 'u1' }, { fresh: true })).toBe(true);
+    expect(await svc.checkAdminStatus({ id: 'u1' }, { fresh: true })).toBe(true);
+    expect(repo.listActive).toHaveBeenCalledTimes(3);
+  });
+
+  it('sees a just-revoked admin that the cached path still reports', async () => {
+    const repo = fakeRepo({ data: [row({ user_id: 'u1', email: 'a@x.com' })], error: null });
+    const svc = makeService(repo);
+    expect(await svc.checkAdminStatus({ id: 'u1' })).toBe(true);
+
+    repo.listActive.mockResolvedValue({ data: [], error: null });
+    expect(await svc.checkAdminStatus({ id: 'u1' })).toBe(true); // cached
+    expect(await svc.checkAdminStatus({ id: 'u1' }, { fresh: true })).toBe(false);
+  });
+
+  it('a read error is null even when a stale cache exists (no stale fallback)', async () => {
+    const repo = fakeRepo({ data: [row({ user_id: 'u1', email: 'a@x.com' })], error: null });
+    const svc = makeService(repo);
+    expect(await svc.checkAdminStatus({ id: 'u1' })).toBe(true); // a cache now exists
+
+    repo.listActive.mockResolvedValue({ data: null, error: new Error('db down') });
+    expect(await svc.checkAdminStatus({ id: 'u1' }, { fresh: true })).toBeNull();
+  });
+
+  it('does not refill the shared cache', async () => {
+    const repo = fakeRepo({ data: [row({ user_id: 'u1', email: 'a@x.com' })], error: null });
+    const svc = makeService(repo);
+    expect(await svc.checkAdminStatus({ id: 'u1' }, { fresh: true })).toBe(true);
+    expect(await svc.checkAdminStatus({ id: 'u1' })).toBe(true);
+    // One fresh read + one cache fill: the fresh read did not populate the cache.
+    expect(repo.listActive).toHaveBeenCalledTimes(2);
+  });
+
+  it('never self-heals on the fresh path either', async () => {
+    const repo = fakeRepo({ data: [row({ user_id: null, email: 'b@x.com' })], error: null });
+    const svc = makeService(repo);
+    expect(await svc.checkAdminStatus({ id: 'u2', email: 'b@x.com' }, { fresh: true })).toBe(true);
+    expect(repo.bindUserId).not.toHaveBeenCalled();
+  });
+});

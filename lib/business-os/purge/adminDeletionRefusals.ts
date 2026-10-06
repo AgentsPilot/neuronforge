@@ -25,6 +25,7 @@
 import type { BusinessOsSubscriptionStatus } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import type { LocalPreconditionResult } from './localPrecondition';
 import type { SchemaReconcileStatus } from './SchemaReconciler';
+import type { DeleteGraphStatus } from './deleteGraph';
 
 export type AdminDeletionRefusalId = 'R-1' | 'R-2' | 'R-3' | 'R-4' | 'R-5' | 'R-6' | 'R-7' | 'R-8';
 
@@ -89,6 +90,13 @@ export interface AdminDeletionLaterFacts {
   /** `decideLocalPrecondition(countLocalBlockingState(target))`. */
   localBlocking: LocalPreconditionResult;
   schema: { status: SchemaReconcileStatus; unclassified: readonly string[]; missingDeletable: readonly string[] };
+  /**
+   * AD-2a: the delete-graph verdict for the admin run's level and options.
+   * R-8 refuses unless it is `ok` (a cascade, delete order or trigger outside
+   * the run). The orchestrator refuses the same verdict; R-8 shows it before
+   * the admin types anything. Missing at runtime = `unverified` (fail closed).
+   */
+  deleteGraph: { status: DeleteGraphStatus };
 }
 
 export interface AdminDeletionFacts {
@@ -245,10 +253,53 @@ function evaluateR7(): AdminDeletionRefusal {
   };
 }
 
-function evaluateR8(schema: AdminDeletionLaterFacts['schema']): AdminDeletionRefusal {
+/**
+ * AD-2a: R-7 for real, at the moment of deletion. The RPC's advisory lock is
+ * the only thing that knows; its `already_running` answer maps here (AC-A11).
+ */
+export function r7AlreadyRunning(): AdminDeletionRefusal {
+  return {
+    id: 'R-7',
+    status: 'applies',
+    message: 'A deletion of this business is already running. Nothing was deleted by this attempt.',
+    clearingAction: 'Wait for the running deletion to finish, then open the preview again.',
+  };
+}
+
+function evaluateR8(
+  schema: AdminDeletionLaterFacts['schema'],
+  deleteGraph: AdminDeletionLaterFacts['deleteGraph'] | undefined,
+): AdminDeletionRefusal {
   const clearingAction = 'This is a platform problem, not something wrong with this business: contact engineering.';
   if (schema.status === 'ok') {
-    return { id: 'R-8', status: 'clear', message: 'Every table that holds business data is classified.' };
+    // AD-2a: a classified schema is not enough. The live delete graph must
+    // also be clean for this run, or the run would reach rows it does not list.
+    const graphStatus = deleteGraph?.status;
+    if (graphStatus === 'refused') {
+      return {
+        id: 'R-8',
+        status: 'applies',
+        message:
+          'The live database structure would make this deletion remove or block rows outside what it lists (a cascade, a delete order or an unreviewed trigger).',
+        clearingAction,
+        detail: { deleteGraph: 'refused' },
+      };
+    }
+    if (graphStatus !== 'ok') {
+      return {
+        id: 'R-8',
+        status: 'unverified',
+        message:
+          'Could not verify what this deletion would remove by cascade: the live database structure could not be read. Refusing.',
+        clearingAction,
+        detail: { deleteGraph: graphStatus ?? 'not_read' },
+      };
+    }
+    return {
+      id: 'R-8',
+      status: 'clear',
+      message: 'Every table that holds business data is classified, and the delete graph is clean.',
+    };
   }
   if (schema.status === 'drift') {
     return {
@@ -317,7 +368,7 @@ export function evaluateAdminDeletionRefusals(facts: AdminDeletionFacts): AdminD
       evaluateR5(later.connectAccounts),
       evaluateR6(later.localBlocking),
       evaluateR7(),
-      evaluateR8(later.schema),
+      evaluateR8(later.schema, later.deleteGraph),
     ],
   };
 }

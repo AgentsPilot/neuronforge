@@ -83,6 +83,8 @@ const preview = (overrides: Record<string, unknown> = {}) => ({
   limitations: [],
   deletionAvailable: false,
   deletionUnavailableReason: 'live plan',
+  commitToken: null,
+  confirmKind: 'business name',
   correlationId: 'c',
   generatedAt: '2026-10-04T00:00:00.000Z',
   ...overrides,
@@ -253,6 +255,7 @@ describe('audit row and logs (user-added 2026-10-04; SC-10)', () => {
         targetId: TARGET,
         counted: true,
         deletionAvailable: false,
+        tokenMinted: false,
         refusals: refusals.map((r) => `${r.id}:${r.status}`),
       },
     });
@@ -293,3 +296,19 @@ describe('audit row and logs (user-added 2026-10-04; SC-10)', () => {
     expect(text).not.toContain(BUSINESS);
   });
 });
+
+describe('AD-2a: the commit token is returned, never audited or logged (AC2-10, C-12)', () => {
+  it('the token reaches the response; the audit row says only tokenMinted: true', async () => {
+    asAdmin();
+    const TOKEN = 'eyJzZWNyZXQiOiJ0b2tlbiJ9.c2lnbmF0dXJlLXZhbHVl';
+    mockBuild.mockResolvedValue({ kind: 'ok', preview: preview({ commitToken: TOKEN, deletionAvailable: true }) });
+    const res = await call(TARGET, '{}');
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.commitToken).toBe(TOKEN);
+    const [entry] = mockLogAndFlush.mock.calls[0];
+    expect(entry.details.tokenMinted).toBe(true);
+    expect(JSON.stringify(entry)).not.toContain(TOKEN);
+    expect(JSON.stringify(logged)).not.toContain(TOKEN);
+  });
+});
+
