@@ -754,7 +754,7 @@ The five P-10a commits were rebased from `f9448054` onto `origin/main` `4c1b630a
 |---|---|
 | Connect harness, entry by entry vs `origin/main`'s snapshot | `main` 26 entries, branch 28. **All 26 byte-identical** (LF-normalised), including `main`'s rewritten 1b (*"invoice.paid with no booking_id is left unlinked — the booking is never guessed"*); the branch carries `main`'s new value, not P-0's. The 2 extra are P10-1 and P10-2, both new relative to `main`. SHA-256 over the 26 shared entries (sorted, name + body): `f1f8de62ce3852869cd25ca4853a6445ab34994252d3976a6c167d6cfbdeecc4` on both |
 | Connect 17 entries 1a–9c, §16.2 method | `main` `e3c1150e47dccb8cbff5f3d5d3d50606333407554da555e315043a8e16b96aa6` = branch `e3c1150e…6aa6`. (Changed from `77eaca41…ec3f` because of `main`'s 1b, not P-10a: the same method gives `77eaca41…` on `f9448054` and on pre-rebase P-10a) |
-| `check-logging-only-diff.ts --base origin/main --file app/api/stripe/webhook/route.ts --functions <17 names of §16.4> --exact` | **exit 0, all 17 identical** to `main`'s new text, including `handleConnectInvoicePaid` (so P-10a keeps Offir's no-guess change). `--functions handleSubscriptionUpdated --exact` reports `differs` with the intended diff. 18 top-level functions on both sides. `git diff origin/main` of the route: 5 hunks, all in `handleSubscriptionUpdated` and its JSDoc |
+| `check-logging-only-diff.ts --base origin/main --file app/api/stripe/webhook/route.ts --functions <17 names of §16.4> --exact` | **exit 0, all 17 identical** to `main`'s new text, including `handleConnectInvoicePaid` (so P-10a keeps Offir's no-guess change). `--functions handleSubscriptionUpdated --exact` reports `differs` with the intended diff. 18 top-level functions on both sides. `git diff origin/main` of the route: 3 hunks, all in `handleSubscriptionUpdated` and its JSDoc |
 | `main` did not touch P-10a's function | `--base f9448054 --head origin/main --exact`: `handleSubscriptionUpdated` and `handleCheckoutCompleted` identical; only `handleConnectInvoicePaid` differs. So §16.3's P10-1 *before* recording is still valid |
 | `npx jest app/api/stripe lib/stripe lib/services lib/business-os/billing lib/cron lib/__tests__ supabase/migrations/__tests__ app/api/cron --ci` | Before the floor fix: 89/90 suites, 1,910/1,911 (only the floor). After: **90 suites, 1,911 tests, 35 snapshots green** |
 | Scoped `tsc --noEmit` over the 23 changed TS files | **0 errors in changed files**; the same 64 pre-existing errors in transitively imported files, none touched |
@@ -810,6 +810,22 @@ Sizing (3 to 3.5 d, two PRs, P-10b after P-10a merges) accepted.
 
 ### Approval
 [x] Workplan approved — proceed to P-10a implementation under C-1 to C-8; P-10b after P-10a merges
+
+### Re-check after rebase — 2026-10-06
+
+**Status:** ✅ Approved (HEAD `12d2486b` on `origin/main` `4c1b630a`). SA re-ran each proof itself; only what the rebase changed was checked.
+
+| Check | Result |
+|---|---|
+| `create-checkout` conflict | ✅ `git diff d851a660 HEAD` on the file is empty: byte-identical to pre-rebase P-10a, `platformOrigin` import gone |
+| Connect snapshot, per entry vs `git show origin/main:` | ✅ main 26, branch 28; all 26 identical (incl. main's rewritten 1b); only P10-1 and P10-2 new |
+| `--exact --functions` (17 names) | ✅ all 17 identical to main's text, incl. `handleConnectInvoicePaid`; only `handleSubscriptionUpdated` differs |
+| Log-call floor 134 → 133 (`53c81619`) | ✅ Acceptable. 141 − 3 (main) − 5 (P-10a) = 133, both deletions named in the comment, which is the case the floor's rule allows. No mechanism change needed |
+| Renumber 20261036 → 20261038 | ✅ Migration, rollback, test paths, requirement §9 and this workplan all on 20261038; not on main or any remote branch. Remaining 20261036 mentions are the address-book migration or dated history. First commit subject left as is: acceptable (history row explains it); RM uses 20261038 in the PR title and body |
+| Main's 31 new commits vs the 5 revoked tables | ✅ `git diff f9448054 origin/main` names none of them. Settlement-gap cron uses `PaymentInvoiceRepository` / `StripeConnectRepository`; `listPaidInvoices` calls only the Stripe API |
+| Jest (scoped command) | ✅ 90 suites, 1,911 tests, 35 snapshots passed |
+
+**Nit (fix in passing, does not block):** §16.9 says the route diff has "5 hunks"; it has 3, as §16.4 says.
 
 ---
 
