@@ -9,7 +9,7 @@
 **Worktree:** `neuronforge-boost`
 **Branch:** `feature/bos-credits-boost-slice-2b`, cut from `origin/main` `1fbccab8` (includes #233). Not stacked. The worktree was clean before the switch, confirmed with `git branch --show-current` on 2026-10-06.
 **Date:** 2026-10-06
-**Status:** **2b approved and committed 2026-10-06, [PR #235](https://github.com/AgentsPilot/neuronforge/pull/235) open; PROD apply pending (user, §6.5) — do NOT run the boost checker on PROD before 20261031 is applied.** **QA follow-ups applied 2026-10-06** (D1, D2 and R-1 to R-6, §7.5). Earlier: **2b QA 2026-10-06: PASS WITH NOTES** (two Low defects, QA2b-D1/D2; see QA Testing Report). **2b SA code review 2026-10-06: Code Approved for QA** (doc must-fixes CR-1 before the PR is merged, CR-2 before the PROD apply). Previously: **Code Complete 2026-10-06, awaiting SA code review.** SA workplan review: approved with conditions C-1 to C-6 (C-7 a note), applied in §3.0. The local Jest bar, the scoped tsc and the PGlite runs are green (§7.5). Nothing is committed.
+**Status:** **2b applied to PROD 2026-10-06 16:44:09 UTC and verified (§6.6); [PR #235](https://github.com/AgentsPilot/neuronforge/pull/235) awaiting merge.** **QA follow-ups applied 2026-10-06** (D1, D2 and R-1 to R-6, §7.5). Earlier: **2b QA 2026-10-06: PASS WITH NOTES** (two Low defects, QA2b-D1/D2; see QA Testing Report). **2b SA code review 2026-10-06: Code Approved for QA** (doc must-fixes CR-1 before the PR is merged, CR-2 before the PROD apply). Previously: **Code Complete 2026-10-06, awaiting SA code review.** SA workplan review: approved with conditions C-1 to C-6 (C-7 a note), applied in §3.0. The local Jest bar, the scoped tsc and the PGlite runs are green (§7.5). Nothing is committed.
 
 ## Overview
 
@@ -354,6 +354,20 @@ The 2a values were recomputed on 2026-10-06 from the applied `20261030` file, as
 7. Paste the results into this workplan.
 
 ---
+
+### 6.6 2b PROD apply results (2026-10-06)
+
+Run by the user in the Supabase SQL editor on PROD, following §6.5. The probe ran on the user's own account. Every step passed.
+
+| Step | Time (UTC) | Result |
+|---|---|---|
+| Pre-check | — | 9 rows; every md5 equals the §6.5 table; no 2b function present. PostgreSQL 17.4 on aarch64 ✅ |
+| Apply `20261031` | 2026-10-06 16:44:09.648637 | Success ✅ |
+| Boost checker | 16:45:53 | **VERDICT PASS 22/0.** B3 31: 18 insertable and 19 updatable service_role columns. B5/B6: 8 functions, service_role only. B7 71, 72 and 74 PASS. B8 INFO yes, including the slice 2a functions 5 of 5. B9: 0 purchases, 0 overrides ✅ |
+| Lots checker | 16:46:53 | **VERDICT PASS 23/0.** L9: 1 lot (admin_grant) and 1 draw (reversal), 0 unexpired credits, 0 boost_purchase lots. The reversal of the 200-credit admin test grant happened between the 2a apply and this run and is **not** from boost (boost writes no draws); presumed to be the credit-deduction session's take-back test ✅ |
+| Charges checker | 16:47:42 | **VERDICT PASS 19/0.** C7: 0 mismatched; 216 charge rows, 7 totals rows ✅ |
+| Probe (user's own account) | after checkers | **PROBE PASS.** P00 INFO: 1 lot, 1 draw. P01–P12 and P07b PASS. P13 INFO: `account_deleted` is proven locally only. P14 INFO: concurrency; the row lock is pinned by a test ✅ |
+| Recheck | 17:20:05 | **VERDICT PASS 22/0**, 0 purchases, 0 overrides. The probe kept nothing ✅ |
 
 ## 7. Test Plan
 
@@ -832,3 +846,4 @@ Scoped tsc:    7 errors, all outside the diff (countries.ts 3, MemoryManager.ts 
 | 2026-10-06 | QA (2b) follow-ups applied | D1: a lower refund is `stale` before the refunded-to-partial rule. D2: an already-recorded lot is linked only if it is the purchase's own lot (otherwise `lot_key_conflict`). Probe P07b, plus P08, P09 and P11 additions (R-1 to R-5); the R-6 checker plant in PGlite; notes I-1 and I-3 in §9. 13 suites / 719 tests; `qa2b` 147/147; `qa2a` 133/134 (by design); `dev2b` 16/16; md5 pre-check unchanged. Nothing committed |
 | 2026-10-06 | SA re-check of the QA follow-ups D1 and D2: still Code Approved | The lots read in `credit` is lock-free and append-only-safe inside the row-locked transaction. A lot that is not the purchase's own is flagged `lot_key_conflict`, not linked or thrown. Replay is unaffected. `stale` ordering is correct. 161 tests and PGlite (checker 22/0, probe incl. P07b, dev2b 16/16) re-run green |
 | 2026-10-06 | 2b approved and committed, PR #235 open | The user saw the diff and approved the commit (2026-10-06). RM committed on `feature/bos-credits-boost-slice-2b` and opened [PR #235](https://github.com/AgentsPilot/neuronforge/pull/235) to `main`. PROD apply of 20261031 is pending: the user runs §6.5 after merge. Do NOT run `scripts/check-bos-boost-purchases-migration.sql` on PROD before 20261031 is applied (SA CR-1) |
+| 2026-10-06 | 2b applied to PROD and verified | The user applied 20261031 at 16:44:09 UTC (PG 17.4; the pre-check md5s matched §6.5). Boost checker PASS 22/0, lots (23/0) and charges (19/0) checkers PASS, probe PASS on the user's own account, recheck PASS 22/0 with 0 rows kept. The one lot draw (a reversal of the admin test grant) is not from boost. Results in §6.6. PR #235 awaiting merge |
