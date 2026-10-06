@@ -89,7 +89,7 @@ boost_columns AS (
          (boost_tables.table_name = 'business_os_boost_purchases' AND pg_attribute.attname::text IN ('id', 'user_id', 'livemode', 'status', 'package_id', 'package_version', 'credits_base', 'credits_bonus', 'credits_total', 'price_minor', 'currency', 'tax_exclusive', 'amount_tax_minor', 'amount_total_minor', 'amount_refunded_minor', 'receipt_url', 'paid_at', 'created_at')) AS owner_may_read,
          (boost_tables.table_name = 'business_os_boost_purchases' AND pg_attribute.attname::text IN ('user_id', 'livemode', 'package_id', 'package_version', 'retail_version', 'credit_value_version', 'price_minor', 'currency', 'tax_exclusive', 'credits_base', 'credits_bonus', 'credits_total', 'checkout_expires_at'))
            OR (boost_tables.table_name = 'business_os_boost_cap_overrides' AND pg_attribute.attname::text IN ('user_id', 'cap_minor', 'currency', 'reason', 'actor_admin_id')) AS service_may_insert,
-         (boost_tables.table_name = 'business_os_boost_purchases' AND pg_attribute.attname::text IN ('status', 'stripe_checkout_session_id', 'checkout_expires_at', 'status_changed_at', 'updated_at'))
+         (boost_tables.table_name = 'business_os_boost_purchases' AND pg_attribute.attname::text IN ('status', 'stripe_checkout_session_id', 'checkout_expires_at', 'status_changed_at', 'updated_at', 'stripe_payment_intent_id', 'stripe_charge_id', 'receipt_url', 'amount_subtotal_minor', 'amount_tax_minor', 'amount_total_minor', 'amount_refunded_minor', 'stripe_dispute_id', 'flag_reason', 'lot_id', 'paid_at'))
            OR (boost_tables.table_name = 'business_os_boost_cap_overrides' AND pg_attribute.attname::text IN ('ended_at', 'ended_by_admin_id', 'ended_reason')) AS service_may_update,
          has_column_privilege('authenticated', boost_tables.table_oid, pg_attribute.attname::text, 'SELECT') AS owner_can_read,
          has_column_privilege('authenticated', boost_tables.table_oid, pg_attribute.attname::text, 'INSERT')
@@ -199,11 +199,20 @@ boost_functions AS (
             AND array_to_string(pg_proc.proargnames, ' ') = 'p_user_id p_cap_minor p_currency p_reason p_actor_admin_id out_status out_override_id out_previous_override_id')
          OR (pg_proc.proname = 'business_os_end_boost_cap_override'
             AND array_to_string(pg_proc.proargtypes::regtype[], ' ') = 'uuid uuid text'
-            AND array_to_string(pg_proc.proargnames, ' ') = 'p_user_id p_actor_admin_id p_reason out_status out_override_id') AS signature_matches
+            AND array_to_string(pg_proc.proargnames, ' ') = 'p_user_id p_actor_admin_id p_reason out_status out_override_id')
+         OR (pg_proc.proname = 'business_os_credit_boost_purchase'
+            AND array_to_string(pg_proc.proargtypes::regtype[], ' ') = 'uuid text text integer integer integer text boolean'
+            AND array_to_string(pg_proc.proargnames, ' ') = 'p_purchase_id p_session_id p_payment_intent_id p_amount_subtotal p_amount_tax p_amount_total p_currency p_livemode out_status out_user_id out_lot_id out_flag_reason')
+         OR (pg_proc.proname = 'business_os_transition_boost_purchase'
+            AND array_to_string(pg_proc.proargtypes::regtype[], ' ') = 'uuid text text integer text text'
+            AND array_to_string(pg_proc.proargnames, ' ') = 'p_purchase_id p_to_status p_payment_intent_id p_amount_refunded_minor p_dispute_id p_flag_reason out_status out_user_id out_from_status')
+         OR (pg_proc.proname = 'business_os_record_boost_receipt'
+            AND array_to_string(pg_proc.proargtypes::regtype[], ' ') = 'uuid text text'
+            AND array_to_string(pg_proc.proargnames, ' ') = 'p_purchase_id p_charge_id p_receipt_url out_status out_user_id') AS signature_matches
   FROM pg_proc
   JOIN pg_namespace ON pg_namespace.oid = pg_proc.pronamespace
   WHERE pg_namespace.nspname = 'public'
-    AND pg_proc.proname IN ('business_os_reserve_boost_purchase', 'business_os_attach_boost_checkout', 'business_os_abandon_boost_purchase', 'business_os_set_boost_cap_override', 'business_os_end_boost_cap_override')
+    AND pg_proc.proname IN ('business_os_reserve_boost_purchase', 'business_os_attach_boost_checkout', 'business_os_abandon_boost_purchase', 'business_os_set_boost_cap_override', 'business_os_end_boost_cap_override', 'business_os_credit_boost_purchase', 'business_os_transition_boost_purchase', 'business_os_record_boost_receipt')
 ),
 function_acl_entries AS (
   SELECT boost_functions.function_name AS function_name,
@@ -256,17 +265,36 @@ integrity_summary AS (
          (SELECT count(*)
           FROM public.business_os_credit_lots AS lot_row
           WHERE lot_row.source = 'boost_purchase'
-            AND NOT EXISTS (SELECT 1 FROM public.business_os_boost_purchases AS purchase_row WHERE purchase_row.lot_id = lot_row.id)) AS orphan_boost_lots
+            AND NOT EXISTS (SELECT 1 FROM public.business_os_boost_purchases AS purchase_row WHERE purchase_row.lot_id = lot_row.id)) AS orphan_boost_lots,
+         (SELECT count(*)
+          FROM public.business_os_boost_purchases AS purchase_row
+          WHERE purchase_row.status IN ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM public.business_os_credit_lots AS lot_row
+              WHERE lot_row.id = purchase_row.lot_id
+                AND lot_row.source = 'boost_purchase'
+                AND lot_row.actor_kind = 'stripe_webhook'
+                AND lot_row.source_ref = purchase_row.id
+                AND lot_row.user_id IS NOT DISTINCT FROM purchase_row.user_id
+                AND lot_row.idempotency_key = ('boost' || chr(58) || purchase_row.stripe_checkout_session_id)
+                AND lot_row.credits_granted = purchase_row.credits_total
+                AND lot_row.expires_at IS NULL)) AS paid_without_own_lot
 ),
 baseline_bodies AS (
   SELECT count(*) FILTER (WHERE pg_proc.proname = 'business_os_record_credit_lot' AND md5(replace(pg_proc.prosrc, chr(13), '')) = '89c46b47f1fc57f7080ba8064c28fd63') AS record_lot_matches,
          count(*) FILTER (WHERE pg_proc.proname = 'business_os_reverse_credit_lot' AND md5(replace(pg_proc.prosrc, chr(13), '')) = 'da020d2d87ebfae366b19ea6b0c7b5be') AS reverse_lot_matches,
          count(*) FILTER (WHERE pg_proc.proname = 'business_os_record_credit_charge' AND md5(replace(pg_proc.prosrc, chr(13), '')) = 'a7aa425de95fe06da72d31257f7818a2') AS record_charge_matches,
-         count(*) FILTER (WHERE pg_proc.proname = 'business_os_credit_period_start' AND md5(replace(pg_proc.prosrc, chr(13), '')) = 'b00af2d2c4738e51e08e2ec92195077e') AS period_matches
+         count(*) FILTER (WHERE pg_proc.proname = 'business_os_credit_period_start' AND md5(replace(pg_proc.prosrc, chr(13), '')) = 'b00af2d2c4738e51e08e2ec92195077e') AS period_matches,
+         count(*) FILTER (WHERE pg_proc.proname = 'business_os_reserve_boost_purchase' AND md5(replace(pg_proc.prosrc, chr(13), '')) = '1a643ef0bebb158b644d27341361b9e7')
+           + count(*) FILTER (WHERE pg_proc.proname = 'business_os_attach_boost_checkout' AND md5(replace(pg_proc.prosrc, chr(13), '')) = '11220b2ba6002f70f966edd6a1344c82')
+           + count(*) FILTER (WHERE pg_proc.proname = 'business_os_abandon_boost_purchase' AND md5(replace(pg_proc.prosrc, chr(13), '')) = '8fa06355c38894c93671477cdde01e2b')
+           + count(*) FILTER (WHERE pg_proc.proname = 'business_os_set_boost_cap_override' AND md5(replace(pg_proc.prosrc, chr(13), '')) = 'fb45a45590ecc998341cdc2c64ac0069')
+           + count(*) FILTER (WHERE pg_proc.proname = 'business_os_end_boost_cap_override' AND md5(replace(pg_proc.prosrc, chr(13), '')) = 'c1d52130512f757ad5f14f6767b14fe1') AS boost_2a_matches
   FROM pg_proc
   JOIN pg_namespace ON pg_namespace.oid = pg_proc.pronamespace
   WHERE pg_namespace.nspname = 'public'
-    AND pg_proc.proname IN ('business_os_record_credit_lot', 'business_os_reverse_credit_lot', 'business_os_record_credit_charge', 'business_os_credit_period_start')
+    AND pg_proc.proname IN ('business_os_record_credit_lot', 'business_os_reverse_credit_lot', 'business_os_record_credit_charge', 'business_os_credit_period_start', 'business_os_reserve_boost_purchase', 'business_os_attach_boost_checkout', 'business_os_abandon_boost_purchase', 'business_os_set_boost_cap_override', 'business_os_end_boost_cap_override')
 ),
 baseline_columns AS (
   SELECT (SELECT string_agg(pg_attribute.attname::text, ' ' ORDER BY pg_attribute.attnum)
@@ -324,7 +352,7 @@ checks AS (
   UNION ALL
   SELECT 31, 'B3 service_role inserts and updates exactly the listed columns',
          CASE WHEN column_summary.service_insertable = 18 AND column_summary.insert_mismatches = 0
-               AND column_summary.service_updatable = 8 AND column_summary.update_mismatches = 0
+               AND column_summary.service_updatable = 19 AND column_summary.update_mismatches = 0
                AND column_summary.service_referencing = 0 THEN 'PASS' ELSE 'FAIL' END,
          column_summary.service_insertable || ' insertable and ' || column_summary.service_updatable || ' updatable columns and mismatches ' || column_summary.write_listing
   FROM column_summary
@@ -373,14 +401,14 @@ checks AS (
          trigger_summary.total || ' triggers'
   FROM trigger_summary
   UNION ALL
-  SELECT 50, 'B5 five functions with the exact signatures invoker volatile and a pinned empty search path',
-         CASE WHEN function_summary.total = 5 AND function_summary.distinct_names = 5 AND function_summary.signatures = 5
-               AND function_summary.invoker = 5 AND function_summary.volatile_count = 5 AND function_summary.pinned_path = 5 THEN 'PASS' ELSE 'FAIL' END,
+  SELECT 50, 'B5 eight functions with the exact signatures invoker volatile and a pinned empty search path',
+         CASE WHEN function_summary.total = 8 AND function_summary.distinct_names = 8 AND function_summary.signatures = 8
+               AND function_summary.invoker = 8 AND function_summary.volatile_count = 8 AND function_summary.pinned_path = 8 THEN 'PASS' ELSE 'FAIL' END,
          function_summary.total || ' functions ' || function_summary.signatures || ' exact signatures ' || function_summary.invoker || ' invoker ' || function_summary.volatile_count || ' volatile ' || function_summary.pinned_path || ' pinned'
   FROM function_summary
   UNION ALL
   SELECT 60, 'B6 only service_role may execute',
-         CASE WHEN function_summary.total = 5 AND function_summary.explicit_acl = 5 AND function_summary.service_can_execute = 5
+         CASE WHEN function_summary.total = 8 AND function_summary.explicit_acl = 8 AND function_summary.service_can_execute = 8
                AND function_summary.client_can_execute = 0 AND function_client_entries.total = 0 THEN 'PASS' ELSE 'FAIL' END,
          function_summary.service_can_execute || ' executable by service_role and client entries ' || function_client_entries.listing
   FROM function_summary
@@ -401,9 +429,14 @@ checks AS (
          integrity_summary.mismatched_lots || ' purchases whose lot does not match'
   FROM integrity_summary
   UNION ALL
-  SELECT 72, 'B7 boost lots without a purchase',
-         'INFO',
+  SELECT 72, 'B7 every boost lot belongs to a purchase',
+         CASE WHEN integrity_summary.orphan_boost_lots = 0 THEN 'PASS' ELSE 'FAIL' END,
          integrity_summary.orphan_boost_lots || ' boost purchase lots linked to no purchase'
+  FROM integrity_summary
+  UNION ALL
+  SELECT 74, 'B7 every paid purchase has exactly its own lot',
+         CASE WHEN integrity_summary.paid_without_own_lot = 0 THEN 'PASS' ELSE 'FAIL' END,
+         integrity_summary.paid_without_own_lot || ' paid purchases without their own boost lot'
   FROM integrity_summary
   UNION ALL
   SELECT 80, 'B8 lot and charge paths match slice 2 baseline',
@@ -414,6 +447,7 @@ checks AS (
                AND baseline_columns.draws_columns = 'id lot_id user_id kind credits reason actor_admin_id idempotency_key created_at' THEN 'yes' ELSE 'no' END
            || ' with record lot ' || baseline_bodies.record_lot_matches || ' reverse lot ' || baseline_bodies.reverse_lot_matches
            || ' record charge ' || baseline_bodies.record_charge_matches || ' period start ' || baseline_bodies.period_matches
+           || ' and slice 2a functions ' || baseline_bodies.boost_2a_matches || ' of 5'
   FROM baseline_bodies
   CROSS JOIN baseline_columns
   UNION ALL

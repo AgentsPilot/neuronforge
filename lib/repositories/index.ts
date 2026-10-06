@@ -150,6 +150,11 @@ export {
   BOOST_CAP_OVERRIDE_COLUMNS,
   BOOST_PURCHASE_READ_LIMITS,
   BOOST_PURCHASE_STATUSES,
+  BOS_CREDIT_BOOST_PURCHASE_RPC,
+  BOS_TRANSITION_BOOST_PURCHASE_RPC,
+  BOS_RECORD_BOOST_RECEIPT_RPC,
+  BOOST_FLAG_REASONS,
+  BOOST_TRANSITION_TARGETS,
 } from './BusinessOsBoostPurchaseRepository';
 export type {
   BusinessOsBoostPurchase,
@@ -162,6 +167,14 @@ export type {
   BusinessOsBoostCapOverrideInput,
   BusinessOsBoostSetCapOverrideResult,
   BusinessOsBoostEndCapOverrideResult,
+  BusinessOsBoostCreditInput,
+  BusinessOsBoostCreditResult,
+  BusinessOsBoostFlagReason,
+  BusinessOsBoostTransitionInput,
+  BusinessOsBoostTransitionResult,
+  BusinessOsBoostTransitionStatus,
+  BusinessOsBoostTransitionTarget,
+  BusinessOsBoostReceiptStatus,
 } from './BusinessOsBoostPurchaseRepository';
 export {
   OrganizationRepository,
