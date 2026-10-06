@@ -139,14 +139,21 @@ export class AdminAccessService {
    * resolver with isAdmin, never writes, and logs ids only. `email` may be null:
    * the bound-id source still decides.
    *
-   * Shares isAdmin's 60 s cache, so a just-added admin may read `false` until
-   * it expires. Acceptable for a read-only preview; a destructive caller must
-   * invalidate the cache first (workplan Risk 5, carried to AD-2).
+   * By default it shares isAdmin's 60 s cache, so a just-added admin may read
+   * `false` until it expires. Acceptable for a read-only preview.
+   *
+   * `{ fresh: true }` (admin delete AD-2, SA T-8 / AC2-7) is for a DESTRUCTIVE
+   * caller: it reads the admin set straight from the repository, bypassing
+   * BOTH the cache and its stale fallback, and never refills the shared cache.
+   * A read error is `null` (unknown, which refuses), never a stale answer.
+   * Not `invalidateCache()` + read: that races other requests on the shared
+   * singleton and degrades every concurrent isAdmin caller.
    */
-  async checkAdminStatus(user: AdminCheckUser): Promise<boolean | null> {
+  async checkAdminStatus(user: AdminCheckUser, opts: { fresh?: boolean } = {}): Promise<boolean | null> {
     if (!user?.id) return null;
     try {
-      const match = await this.resolveAdminMatch(user.id, normaliseEmail(user.email));
+      const loader = opts.fresh === true ? () => this.readAdminSetFresh() : () => this.getCache();
+      const match = await this.resolveAdminMatch(user.id, normaliseEmail(user.email), loader);
       return match !== null;
     } catch (error) {
       logger.error({ err: error, userId: user.id }, 'Admin status check failed — status unknown');
@@ -209,13 +216,35 @@ export class AdminAccessService {
    */
   private async resolveAdminMatch(
     userId: string,
-    email: string | null
+    email: string | null,
+    loader: () => Promise<AdminCache> = () => this.getCache()
   ): Promise<{ source: 'bound_id' | 'db_email' | 'env_email'; cache: AdminCache } | null> {
-    const cache = await this.getCache();
+    const cache = await loader();
     if (cache.userIds.has(userId)) return { source: 'bound_id', cache };
     if (email && cache.emails.has(email)) return { source: 'db_email', cache };
     if (email && this.envAdminEmails.has(email)) return { source: 'env_email', cache };
     return null;
+  }
+
+  /** Build an admin set from rows (shared by the cached and the fresh path). */
+  private static toCache(admins: AdminUser[], fetchedAt: number): AdminCache {
+    return {
+      admins,
+      userIds: new Set(admins.map((a) => a.user_id).filter((v): v is string => !!v)),
+      emails: new Set(admins.map((a) => a.email)),
+      fetchedAt,
+    };
+  }
+
+  /**
+   * The admin set read now, for a destructive caller (`checkAdminStatus` with
+   * `fresh`). No cache read, no stale fallback, no cache refill: an error THROWS
+   * (the caller maps it to `null`).
+   */
+  private async readAdminSetFresh(): Promise<AdminCache> {
+    const { data, error } = await this.repo.listActive();
+    if (error) throw error;
+    return AdminAccessService.toCache(data ?? [], Date.now());
   }
 
   private async getCache(): Promise<AdminCache> {
@@ -231,13 +260,7 @@ export class AdminAccessService {
       throw error;
     }
 
-    const admins = data ?? [];
-    this.cache = {
-      admins,
-      userIds: new Set(admins.map((a) => a.user_id).filter((v): v is string => !!v)),
-      emails: new Set(admins.map((a) => a.email)),
-      fetchedAt: now,
-    };
+    this.cache = AdminAccessService.toCache(data ?? [], now);
     return this.cache;
   }
 }

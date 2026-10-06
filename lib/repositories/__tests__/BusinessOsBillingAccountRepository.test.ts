@@ -308,9 +308,12 @@ describe('source guards', () => {
       // Admin delete AD-1b (SC-5): R-3 reads BOTH livemode rows of the target's
       // plan billing account (findByUser only); the evaluator imports the status
       // type. Their tests name it to fake it. No entitlements import.
-      'lib/business-os/purge/AdminDeletionPreview.ts',
       'lib/business-os/purge/__tests__/AdminDeletionPreview.test.ts',
       'lib/business-os/purge/__tests__/adminDeletionRefusals.test.ts',
+      // AD-2a: the read moved verbatim to adminDeletionFacts.ts (shared by the
+      // preview and the commit gate). Kept in sorted order: the guard compares
+      // against found.sort().
+      'lib/business-os/purge/adminDeletionFacts.ts',
       'lib/business-os/purge/adminDeletionRefusals.ts',
       'lib/repositories/BusinessOsBillingAccountRepository.ts',
       'lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts',

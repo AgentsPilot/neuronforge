@@ -213,9 +213,19 @@ export interface DeletionPreviewPayload {
   } | null;
   resetLive: boolean | null;
   limitations: string[];
-  /** Always false in AD-1: the confirm control is disabled. */
-  deletionAvailable: false;
+  /**
+   * True exactly when `commitToken` is set (AD-2a). The confirm control stays
+   * disabled until AD-2b wires the typed confirmation.
+   */
+  deletionAvailable: boolean;
   deletionUnavailableReason: string;
+  /**
+   * AD-2a: the signed commit token, or null. Hold it in component state only:
+   * never a URL, never storage, never a log (SA AC2-5).
+   */
+  commitToken: string | null;
+  /** What the admin must type to confirm; null when it could not be determined. */
+  confirmKind: 'business name' | 'account email' | null;
   correlationId: string;
   generatedAt: string;
 }

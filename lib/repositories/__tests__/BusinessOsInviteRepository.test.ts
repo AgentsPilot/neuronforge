@@ -990,6 +990,9 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         'findRedeemedForIssuerAccount',
         // Slice 5b: the payment hold's two facts of the signed-in account's own invite.
         'findHoldFactsById',
+        // Admin delete AD-2a: a deleted business's pending invites, scoped by its issuing account id.
+        'revokePendingForIssuerAccountByAdmin',
+        'countPendingForIssuerAccountByAdmin',
       ].sort()
     );
   });
@@ -1073,6 +1076,13 @@ describe('M-1 (C-3): a database error never carries row values into a log or a r
     ],
     // Slice 5b: the revoke's second read.
     ['findRedeemedForIssuerAccount', (repo) => repo.findRedeemedForIssuerAccount(ID, ACCOUNT)],
+    // Admin delete AD-2a.
+    [
+      'revokePendingForIssuerAccountByAdmin',
+      (repo) =>
+        repo.revokePendingForIssuerAccountByAdmin({ issuerAccountId: ACCOUNT, adminId: ADMIN, reason: 'Issuer business deleted by an admin', now: NOW, claimLeaseCutoff: CUTOFF }),
+    ],
+    ['countPendingForIssuerAccountByAdmin', (repo) => repo.countPendingForIssuerAccountByAdmin(ACCOUNT)],
   ];
 
   for (const [label, dbError] of rowLeakingErrors()) {
@@ -1104,3 +1114,92 @@ describe('M-1 (C-3): a database error never carries row values into a log or a r
     expect(safeDbError('boom')).toEqual({ code: null, message: 'Unknown database error' });
   });
 });
+
+describe('Admin delete AD-2a: revokePendingForIssuerAccountByAdmin (SA AC2-9)', () => {
+  const input = { issuerAccountId: ACCOUNT, adminId: ADMIN, reason: 'Issuer business deleted by an admin', now: NOW, claimLeaseCutoff: CUTOFF };
+
+  it('is ONE count-only status UPDATE, equality-scoped to the issuing account, skipping live claims, with no .select', async () => {
+    const { client, calls } = recordingClient({ data: null, error: null, count: 3 });
+    const result = await new BusinessOsInviteRepository(client).revokePendingForIssuerAccountByAdmin(input);
+    expect(result).toEqual({ data: 3, error: null });
+    expectCountOnlyUpdate(calls);
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_invites'] },
+      {
+        method: 'update',
+        args: [
+          {
+            revoked_at: NOW.toISOString(),
+            revoked_by_admin_id: ADMIN,
+            revoke_reason: 'Issuer business deleted by an admin',
+            updated_at: NOW.toISOString(),
+          },
+          { count: 'exact' },
+        ],
+      },
+      { method: 'eq', args: ['issuer_kind', 'account'] },
+      { method: 'eq', args: ['issuer_account_id', ACCOUNT] },
+      { method: 'is', args: ['redeemed_at', null] },
+      { method: 'is', args: ['revoked_at', null] },
+      { method: 'or', args: [`claimed_at.is.null,claimed_at.lt."${CUTOFF.toISOString()}"`] },
+    ]);
+  });
+
+  it('0 rows is 0, not an error (nothing pending)', async () => {
+    const { client } = recordingClient({ data: null, error: null, count: 0 });
+    expect(await new BusinessOsInviteRepository(client).revokePendingForIssuerAccountByAdmin(input)).toEqual({ data: 0, error: null });
+  });
+
+  it('a missing count is an error, never a silent 0', async () => {
+    const { client } = recordingClient({ data: null, error: null, count: null });
+    const result = await new BusinessOsInviteRepository(client).revokePendingForIssuerAccountByAdmin(input);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+  });
+
+  it.each([
+    ['a missing issuer id', { issuerAccountId: '' }],
+    ['a non-UUID issuer id', { issuerAccountId: 'not-a-uuid' }],
+    ['a PostgREST-shaped injection', { issuerAccountId: `${ACCOUNT},issuer_kind.eq.admin` }],
+    ['a non-UUID admin id', { adminId: 'nope' }],
+    ['a reason under 3 characters (the CHECK)', { reason: 'no' }],
+  ])('refuses %s BEFORE any query', async (_label, override) => {
+    const { client, calls } = recordingClient({ data: null, error: null, count: 1 });
+    const result = await new BusinessOsInviteRepository(client).revokePendingForIssuerAccountByAdmin({ ...input, ...override });
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(calls).toEqual([]);
+  });
+
+  it('never DELETEs, never uses .in(), never touches redeemed rows (source)', () => {
+    const fs = jest.requireActual<typeof import('fs')>('fs');
+    const path = jest.requireActual<typeof import('path')>('path');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'BusinessOsInviteRepository.ts'), 'utf8');
+    const body = src.slice(src.indexOf('async revokePendingForIssuerAccountByAdmin('), src.indexOf('async countPendingForIssuerAccountByAdmin('));
+    expect(body).not.toMatch(/\.delete\(|\.in\(|\.select\(/);
+    expect(body).toContain(".is('redeemed_at', null)");
+  });
+});
+
+describe('Admin delete AD-2a: countPendingForIssuerAccountByAdmin (BQ-3, counted not inferred)', () => {
+  it('a head-only exact count, with the revoke predicate minus the claim filter, and no mutation', async () => {
+    const { client, calls } = recordingClient({ data: null, error: null, count: 2 });
+    expect(await new BusinessOsInviteRepository(client).countPendingForIssuerAccountByAdmin(ACCOUNT)).toEqual({ data: 2, error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_invites'] },
+      { method: 'select', args: ['id', { count: 'exact', head: true }] },
+      { method: 'eq', args: ['issuer_kind', 'account'] },
+      { method: 'eq', args: ['issuer_account_id', ACCOUNT] },
+      { method: 'is', args: ['redeemed_at', null] },
+      { method: 'is', args: ['revoked_at', null] },
+    ]);
+  });
+
+  it('refuses a non-UUID before any query', async () => {
+    const { client, calls } = recordingClient({ data: null, error: null, count: 2 });
+    const result = await new BusinessOsInviteRepository(client).countPendingForIssuerAccountByAdmin('x');
+    expect(result.data).toBeNull();
+    expect(calls).toEqual([]);
+  });
+});
+

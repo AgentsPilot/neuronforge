@@ -11,44 +11,49 @@
 //   2. R-1 (self) and R-2 (`checkAdminStatus`, tri-state, read-only, SA D-3).
 //      If either refuses — including R-2 unverified — NOTHING is counted;
 //   3. otherwise the existing `buildPurgePreview`, UNCHANGED (SA D-2), at a
-//      FIXED level and option set (SC-2), then the reconciler (R-8), both
-//      `livemode` billing rows (R-3), Connect (R-5) and the local blocking
-//      state (R-6), sequentially (each is cheap);
+//      FIXED level and option set (SC-2), then the shared facts (reconciler
+//      and delete graph for R-8, both `livemode` billing rows for R-3, Connect
+//      for R-5 and the local blocking state for R-6), sequentially;
 //   4. `evaluateAdminDeletionRefusals` returns every refusal (SC-4).
 //
+// ── AD-2a changes ───────────────────────────────────────────────────────────
+//   * the fixed options are `agents: false` (OQ-1 (c), BQ-2; SA amended SC-2):
+//     a purge never deletes agents, so they are listed as kept;
+//   * the read helpers live in `adminDeletionFacts.ts`, shared with the
+//     commit's two evaluations (FR-A7), and R-8 includes the delete-graph
+//     verdict;
+//   * it MINTS the signed commit token (`previewToken.ts`, AC-29) when
+//     deletion is offerable: counted, no blocking refusal, a fingerprint, a
+//     confirmation target, a signing key, AND the admin off switch on (BQ-1,
+//     SA T-10). Minting is a pure HMAC: not a write and not the lock. The
+//     token goes in the response only, never in a log or an audit row.
+//
 // ── What this file never does ───────────────────────────────────────────────
-//   * delete, snapshot, read whole rows, mint a token or take the advisory
-//     lock. Its only purge-engine entry points are the preview service, the
-//     reconciler and two read methods of `BusinessPurgeRepository`. The one
-//     RPC on the path is the preview's existing null-id existence probe, which
-//     SA D-2 permits (SC-9 = no DESTRUCTIVE RPC). A Jest test spies on every
-//     destructive method and asserts none is reached;
+//   * delete, snapshot, read whole rows or take the advisory lock. Its only
+//     purge-engine entry points are the preview service and the shared read
+//     helpers. The one RPC on the path is the preview's existing null-id
+//     existence probe, which SA D-2 permits (SC-9 = no DESTRUCTIVE RPC). A
+//     Jest test spies on every destructive method and asserts none is reached;
 //   * import a Supabase client or name a table in a query position (B-1, B-2):
 //     every read is a repository (service role, documented at each
 //     repository) or `AdminAccessService`;
-//   * log an email or a business name (SC-10). They go in the result only,
-//     for the admin's dialog (FR-A2).
+//   * log an email, a business name or the token (SC-10, C-12). The first two
+//     go in the result only, for the admin's dialog (FR-A2).
 //
 // The target id is the route path's, validated as a UUID before this runs.
 // Every count stays equality-scoped to it by the repository (SC-10).
 
 import { createLogger } from '@/lib/logger';
-import { AdminAccessService } from '@/lib/services/AdminAccessService';
+import { isAdminBusinessDeleteEnabled } from '@/lib/utils/featureFlags';
 import { authAccountRepository } from '@/lib/repositories/AuthAccountRepository';
-import { businessOsBillingAccountRepository } from '@/lib/repositories/BusinessOsBillingAccountRepository';
-import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
-import { businessPurgeRepository, type TableCount } from '@/lib/repositories/BusinessPurgeRepository';
+import type { TableCount } from '@/lib/repositories/BusinessPurgeRepository';
 import { buildPurgePreview } from './PreviewService';
-import { runSchemaReconciler, type SchemaReconcileStatus } from './SchemaReconciler';
-import { decideLocalPrecondition, type LocalPreconditionResult } from './localPrecondition';
+import type { SchemaReconcileStatus } from './SchemaReconciler';
 import { PURGE_DESCRIPTORS } from './descriptors';
-import {
-  blockingRefusals,
-  evaluateAdminDeletionRefusals,
-  type AdminDeletionLaterFacts,
-  type AdminDeletionRefusal,
-  type PlanBillingFact,
-} from './adminDeletionRefusals';
+import { gatherAdminDeletionLaterFacts, readBusinessName, readAdminStatus } from './adminDeletionFacts';
+import { resolveConfirmationTarget, type ConfirmKind } from './confirmation';
+import { mintPreviewToken, PreviewTokenKeyError } from './previewToken';
+import { blockingRefusals, evaluateAdminDeletionRefusals, type AdminDeletionRefusal } from './adminDeletionRefusals';
 import type { PurgeArea, PurgeDescriptor, PurgeOptions } from './types';
 
 const logger = createLogger({ module: 'AdminDeletionPreview' });
@@ -57,18 +62,34 @@ const logger = createLogger({ module: 'AdminDeletionPreview' });
 export const ADMIN_DELETION_LEVEL = 'purge' as const;
 
 /**
- * SC-2 / D15 / UD-7: integrations disconnected and AgentsPilot agents deleted;
- * activity history kept (its name is removed when the login closes, AD-3).
+ * SC-2 as amended by SA (2026-10-06) after OQ-1 (c) and BQ-2: integrations
+ * disconnected; AgentsPilot agents KEPT (a purge never deletes agents, and the
+ * orchestrator refuses `agents: true` permanently); activity history kept (its
+ * name is removed when the login closes, AD-3).
  */
 export const ADMIN_DELETION_OPTIONS: Readonly<PurgeOptions> = Object.freeze({
   integrations: true,
-  agents: true,
+  agents: false,
   activityHistory: false,
 });
 
+/**
+ * C-11: bump whenever R-1 … R-8, the level or the fixed options change.
+ * Bumping voids every outstanding admin token. Per surface: purge slice 5
+ * keeps its own.
+ */
+export const ADMIN_DELETION_GATE_VERSION = 1;
+
 /** Why the confirm control is disabled when no refusal applies. */
 export const PLATFORM_UNAVAILABLE_REASON =
-  'deleting a business ships in a later release (the Purge level and the key rotation are not done)';
+  'deleting a business ships in a later release (the key rotation is not done and the confirmation step is not built)';
+
+/** BQ-1: the admin off switch is off. */
+export const ADMIN_DELETE_DISABLED_REASON =
+  'admin delete is switched off on this server (it stays off until closing the login and the data export ship)';
+
+/** The note on the agents line of the kept list (BQ-2). */
+export const AGENTS_KEPT_NOTE = 'AgentsPilot agents and their history are kept: a purge never deletes agents.';
 
 export interface AdminDeletionArea {
   /** `unassigned` only if a deletable descriptor lacks an area (the invariant suite forbids it). */
@@ -100,7 +121,7 @@ export interface AdminDeletionPreview {
   areas: AdminDeletionArea[];
   storage: TableCount[];
   totals: { rows: number; tablesWithRows: number; tablesUnknown: number } | null;
-  /** Tables that hold this account's rows and are never deleted (`never`, user-scoped). */
+  /** Tables that hold this account's rows and are never deleted (`never`, user-scoped), plus the kept agents area. */
   keptTables: AdminDeletionKeptTable[];
   refusals: AdminDeletionRefusal[];
   schema: {
@@ -113,10 +134,18 @@ export interface AdminDeletionPreview {
   /** The preview's own probe: is the destructive database function installed? `null` = unknown or not asked. */
   resetLive: boolean | null;
   limitations: string[];
-  /** Always false in AD-1. */
-  deletionAvailable: false;
+  /** True exactly when `commitToken` is set (AD-2a). The AD-1c dialog keeps its confirm disabled until AD-2b. */
+  deletionAvailable: boolean;
   /** Shown as "Deletion not yet available: <reason>". */
   deletionUnavailableReason: string;
+  /**
+   * AD-2a: the signed commit token (AC-29), or null when deletion is not
+   * offerable. For the admin's dialog only: never logged, never audited (only
+   * `tokenMinted`), held in component state, never persisted (AC2-5).
+   */
+  commitToken: string | null;
+  /** What the admin must type (FR-A6); null when it could not be determined or nothing was counted. */
+  confirmKind: ConfirmKind | null;
   correlationId: string;
   generatedAt: string;
 }
@@ -127,11 +156,20 @@ export type AdminDeletionPreviewOutcome =
   /** The identity read failed: the route answers 500 (SA D-1). */
   | { kind: 'identity_error' };
 
-/** `never` descriptors that hold this account's rows: what stays, and why. */
+/**
+ * `never` descriptors that hold this account's rows: what stays, and why.
+ * Plus one line for the agents area while the fixed options keep agents
+ * (BQ-2): the descriptor area's name, not its table list.
+ */
 function keptTables(): AdminDeletionKeptTable[] {
-  return PURGE_DESCRIPTORS.filter((d) => d.level === 'never' && d.scope.kind !== 'global')
-    .map((d) => ({ table: d.table, notes: d.notes ?? null }))
-    .sort((a, b) => (a.table < b.table ? -1 : a.table > b.table ? 1 : 0));
+  const kept = PURGE_DESCRIPTORS.filter((d) => d.level === 'never' && d.scope.kind !== 'global').map((d) => ({
+    table: d.table,
+    notes: d.notes ?? null,
+  }));
+  if (!ADMIN_DELETION_OPTIONS.agents && PURGE_DESCRIPTORS.some((d) => d.level === 'optional:agents')) {
+    kept.push({ table: 'agents', notes: AGENTS_KEPT_NOTE });
+  }
+  return kept.sort((a, b) => (a.table < b.table ? -1 : a.table > b.table ? 1 : 0));
 }
 
 /** Group the preview's per-table counts by descriptor area (D-5). */
@@ -147,54 +185,6 @@ function groupByArea(tables: readonly TableCount[]): AdminDeletionArea[] {
     groups.set(area, group);
   }
   return [...groups.values()].sort((a, b) => (a.area < b.area ? -1 : a.area > b.area ? 1 : 0));
-}
-
-/** One `livemode` row of the plan billing account, reduced to R-3's facts. */
-async function readPlanBilling(targetId: string, livemode: boolean): Promise<PlanBillingFact> {
-  try {
-    const { data, error } = await businessOsBillingAccountRepository.findByUser(targetId, livemode);
-    if (error) return 'unreadable';
-    if (!data) return { row: null };
-    return {
-      row: { status: data.subscriptionStatus, stripeSubscriptionId: data.stripeSubscriptionId, endedAt: data.endedAt },
-    };
-  } catch {
-    // The repository never throws; if it ever does, a failed read is a refusal.
-    return 'unreadable';
-  }
-}
-
-async function readConnectAccountCount(targetId: string): Promise<number | 'unreadable'> {
-  try {
-    const accounts = await businessPurgeRepository.resolveConnectAccounts(targetId);
-    return accounts.length;
-  } catch {
-    // The resolver throws on a failed read so that `[]` always means "none".
-    return 'unreadable';
-  }
-}
-
-async function readLocalBlocking(targetId: string): Promise<LocalPreconditionResult> {
-  try {
-    return decideLocalPrecondition(await businessPurgeRepository.countLocalBlockingState(targetId));
-  } catch (err) {
-    // A fixed reason, never `err.message`: this string reaches the admin's
-    // response in R-6's message, with no dev-only guard (AD-1b QA Low-1).
-    // The error itself goes to the log, with ids only.
-    logger.error({ err, targetId }, 'Admin deletion preview: local blocking-state read threw');
-    return { outcome: 'refused', reason: 'the read failed' };
-  }
-}
-
-/** The business name for the dialog header. A failed read is not a refusal: it is display only. */
-async function readBusinessName(targetId: string): Promise<{ name: string | null; unreadable: boolean }> {
-  try {
-    const { data, error } = await businessProfileRepository.findByUserId(targetId);
-    if (error) return { name: null, unreadable: true };
-    return { name: data?.company_name ?? null, unreadable: false };
-  } catch {
-    return { name: null, unreadable: true };
-  }
 }
 
 /**
@@ -223,10 +213,9 @@ export async function buildAdminDeletionPreview(params: {
   }
 
   // 2. R-1 / R-2. The email may be null; the bound-id source still decides.
-  const targetIsAdmin = await AdminAccessService.getInstance().checkAdminStatus({
-    id: targetId,
-    email: identity.data.email,
-  });
+  // The cached read: a preview deletes nothing, and the commit re-checks R-2
+  // with a fresh read, twice (SA AC2-7).
+  const targetIsAdmin = await readAdminStatus({ id: targetId, email: identity.data.email }, { fresh: false });
   const identityOnly = evaluateAdminDeletionRefusals({ adminId, targetId, targetIsAdmin });
 
   // Read before the R-1 / R-2 short-circuit on purpose: display only, so the dialog header names the business even when it is refused.
@@ -246,7 +235,6 @@ export async function buildAdminDeletionPreview(params: {
     level: ADMIN_DELETION_LEVEL,
     options: { ...ADMIN_DELETION_OPTIONS },
     keptTables: keptTables(),
-    deletionAvailable: false as const,
     correlationId,
   };
 
@@ -274,7 +262,10 @@ export async function buildAdminDeletionPreview(params: {
         schema: null,
         resetLive: null,
         limitations,
+        deletionAvailable: false,
         deletionUnavailableReason: first.message,
+        commitToken: null,
+        confirmKind: null,
         generatedAt: new Date().toISOString(),
       },
     };
@@ -288,22 +279,17 @@ export async function buildAdminDeletionPreview(params: {
     correlationId,
   });
 
-  // Never throws: an unreadable schema is R-8 `unverified`, and the counts and
-  // the other refusals still render (SA further condition 3).
-  const schema = await runSchemaReconciler({ correlationId });
-  const billing = {
-    test: await readPlanBilling(targetId, false),
-    live: await readPlanBilling(targetId, true),
-  };
-  const connectAccounts = await readConnectAccountCount(targetId);
-  const localBlocking = await readLocalBlocking(targetId);
-
-  const later: AdminDeletionLaterFacts = {
-    billing,
-    connectAccounts,
-    localBlocking,
-    schema: { status: schema.status, unclassified: schema.unclassified, missingDeletable: schema.missingDeletable },
-  };
+  // The shared facts (FR-A7). Never throws: an unreadable schema is R-8
+  // `unverified`, and the counts and the other refusals still render (SA
+  // further condition 3). The preview already holds the delete-graph verdict
+  // for the same level and options, so it is passed in rather than read twice.
+  const { later, schema } = await gatherAdminDeletionLaterFacts({
+    targetId,
+    level: ADMIN_DELETION_LEVEL,
+    options: { ...ADMIN_DELETION_OPTIONS },
+    correlationId,
+    deleteGraph: preview.deleteGraph,
+  });
   const { refusals } = evaluateAdminDeletionRefusals({ adminId, targetId, targetIsAdmin, later });
 
   // 4. Limitations: what this preview could not verify, stated, not implied.
@@ -325,23 +311,63 @@ export async function buildAdminDeletionPreview(params: {
       `${schema.missingNever.length} never-deleted table(s) in the classification do not exist on this database (not blocking, nothing is lost): ${schema.missingNever.join(', ')}.`
     );
   }
-  limitations.push(
-    'The Purge level counted here is preview-only: its deletion step is not built yet (purge slice 3).'
-  );
-  if (preview.resetLive === false) {
-    limitations.push('The destructive database function is not installed on this database.');
-  } else if (preview.resetLive === null) {
+  // The honest live / not-applied line (G-1 precedent). It replaces AD-1's
+  // "preview-only" line: the Purge level's deletion step exists since 3b.
+  if (preview.resetLive === true) {
+    limitations.push('The destructive database function is installed on this database: a confirmed deletion would run.');
+  } else if (preview.resetLive === false) {
+    limitations.push(
+      'The destructive database function is not installed on this database, so the server would refuse a deletion before anything is copied or deleted.'
+    );
+  } else {
     limitations.push('Could not determine whether the destructive database function is installed.');
   }
 
+  // 5. The commit token (AC-29; BQ-1, SA T-10).
   const firstBlocking = blockingRefusals(refusals)[0];
-  const deletionUnavailableReason = firstBlocking
-    ? firstBlocking.message
-    : preview.resetLive === false
-      ? `${PLATFORM_UNAVAILABLE_REASON}; the delete function is not installed`
-      : PLATFORM_UNAVAILABLE_REASON;
+  const confirmation = await resolveConfirmationTarget(targetId, identity.data.email);
+  const confirmKind: ConfirmKind | null = confirmation.status === 'ok' ? confirmation.kind : null;
+  if (confirmation.status === 'unverified') {
+    limitations.push('What to type to confirm could not be determined (the business profile could not be read).');
+  } else if (confirmation.status === 'none') {
+    limitations.push('This account has no business name and no email, so a deletion cannot be confirmed.');
+  }
+  const switchOn = isAdminBusinessDeleteEnabled();
 
-  // Ids, statuses and counts only (SC-10).
+  let commitToken: string | null = null;
+  let tokenKeyUnavailable = false;
+  if (!firstBlocking && switchOn && confirmKind !== null && schema.fingerprint) {
+    try {
+      commitToken = mintPreviewToken({
+        surface: 'admin',
+        actorId: adminId,
+        targetId,
+        level: ADMIN_DELETION_LEVEL,
+        options: { ...ADMIN_DELETION_OPTIONS },
+        confirmKind,
+        gateVersion: ADMIN_DELETION_GATE_VERSION,
+        schemaFingerprint: schema.fingerprint,
+        correlationId,
+      });
+    } catch (err) {
+      // C-7: never "no token needed". No token, and the reason says why.
+      if (!(err instanceof PreviewTokenKeyError)) throw err;
+      tokenKeyUnavailable = true;
+      log.error({ adminId, targetId }, 'Admin deletion preview: the commit token key is unavailable');
+    }
+  }
+
+  let deletionUnavailableReason: string;
+  if (firstBlocking) deletionUnavailableReason = firstBlocking.message;
+  else if (!switchOn) deletionUnavailableReason = ADMIN_DELETE_DISABLED_REASON;
+  else if (tokenKeyUnavailable) deletionUnavailableReason = 'the server cannot sign a confirmation';
+  else if (confirmKind === null) deletionUnavailableReason = 'what to type to confirm could not be determined';
+  else if (!schema.fingerprint) deletionUnavailableReason = 'the database structure could not be fingerprinted';
+  else if (preview.resetLive === false)
+    deletionUnavailableReason = `${PLATFORM_UNAVAILABLE_REASON}; the delete function is not installed`;
+  else deletionUnavailableReason = PLATFORM_UNAVAILABLE_REASON;
+
+  // Ids, statuses and counts only (SC-10). Never the token (C-12).
   log.info(
     {
       adminId,
@@ -350,7 +376,10 @@ export async function buildAdminDeletionPreview(params: {
       rows: preview.totals.rows,
       tablesUnknown: preview.totals.tablesUnknown,
       schemaStatus: schema.status,
+      deleteGraph: preview.deleteGraph.status,
       refusals: refusals.map((r) => `${r.id}:${r.status}`),
+      tokenMinted: commitToken !== null,
+      adminDeleteSwitchOn: switchOn,
     },
     'Admin deletion preview built'
   );
@@ -373,7 +402,10 @@ export async function buildAdminDeletionPreview(params: {
       },
       resetLive: preview.resetLive,
       limitations,
+      deletionAvailable: commitToken !== null,
       deletionUnavailableReason,
+      commitToken,
+      confirmKind,
       generatedAt: new Date().toISOString(),
     },
   };
