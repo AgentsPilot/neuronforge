@@ -1603,8 +1603,8 @@ Still uncommitted on `feature/admin-queue-retry` @ `1a9944a5`. No database acces
 1. **P2 (BL-7a(2), `fix/lead-route-awaited-drain`) merged first**, or SA's fallback (b) ruled and `LEAD_RETRY_HELD` set to `true` in this PR.
 2. **Run the §6 zero-row probe once**, from a clean PowerShell window, after SA's code review:
    ```powershell
-   cd "C:\Users\Barak\My Projects\AgentsPilot\neuronforge-admin-queues"
-   .\node_modules\.bin\tsx.cmd --tsconfig tsconfig.json "C:\Users\Barak\AppData\Local\Temp\claude\C--Users-Barak-My-Projects-AgentsPilot-neuronforge\13333d69-85f2-4f8a-8578-946d6a876a59\scratchpad\dev7c\probe-retry-cas.ts"
+   cd "C:/Users/Barak/My Projects/AgentsPilot/neuronforge-admin-queues"
+   ./node_modules/.bin/tsx.cmd --tsconfig tsconfig.json "C:/Users/Barak/AppData/Local/Temp/claude/C--Users-Barak-My-Projects-AgentsPilot-neuronforge/13333d69-85f2-4f8a-8578-946d6a876a59/scratchpad/dev7c/probe-retry-cas.ts"
    ```
    Expect 4 × `not_matched`, the controls `PGRST204` / `42703`, and `PROBE PASS`, with Pino log lines in between (QA-4). Any other result stops the merge (W7C-14). Paste the output here.
 3. Steps 1–5 of the browser checklist above.
