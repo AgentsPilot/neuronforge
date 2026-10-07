@@ -111,6 +111,9 @@ const GROUP_RULES: readonly GroupRule[] = [
   // ADMIN_BOS_CLEANUP slice 7d: an admin pressing Drain now on a queue. Slices
   // 7b/7c's per-item events (BOS_QUEUE_ITEM_*) will land in the same group.
   { prefix: 'BOS_QUEUE_', label: 'Business OS Queues' },
+  // Plan payments P-3a: an owner opening a plan checkout. P-3b's payment and
+  // plan-change events land in the same group.
+  { prefix: 'BOS_BILLING_', label: 'Business OS Billing' },
   { prefix: 'AGENTKIT_', label: 'AgentKit' },
   { prefix: 'AIS_', label: 'Agent Intelligence Score' },
   { prefix: 'AI_PRICING_', label: 'AI Pricing' },
