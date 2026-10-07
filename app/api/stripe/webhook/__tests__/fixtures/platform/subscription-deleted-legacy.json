@@ -1,0 +1,22 @@
+{
+  "id": "evt_platform_subscription_deleted_legacy",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "customer.subscription.deleted",
+  "livemode": false,
+  "created": 1790004000,
+  "data": {
+    "object": {
+      "id": "sub_platform_legacy_1",
+      "object": "subscription",
+      "customer": "cus_platform_1",
+      "status": "canceled",
+      "cancel_at_period_end": false,
+      "canceled_at": 1790003900,
+      "metadata": {
+        "user_id": "agent-platform-user",
+        "credits": "5000"
+      }
+    }
+  }
+}
