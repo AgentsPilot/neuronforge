@@ -59,7 +59,17 @@ const mockState = {
   owned: new Set<string>(),
   /** Fix-1b: tables whose ownership read fails. */
   readError: new Set<string>(),
+  /** CF-5 PR 0 (CR-1): the error an awaited update answers. Null = success, as before. */
+  updateError: null as unknown,
+  /** CF-5 PR 0 (CR-1): the booking contact read (`select('contact_id')`) fails. */
+  contactReadError: false,
 };
+
+/** CF-5 PR 0 (CR-1): every awaited update, with its table, payload and full chain. */
+const mockUpdates: Array<{ table: string; payload: unknown; calls: unknown[][] }> = [];
+
+/** CF-5 PR 0 (QA note): every read awaited on the builder itself (the period count), with its chain. */
+const mockAwaitedReads: Array<{ table: string; calls: unknown[][] }> = [];
 
 /** Every `maybeSingle()` query: its table and full chain (Fix-1b, C-5). */
 const mockQueries: Array<{ table: string; calls: unknown[][] }> = [];
@@ -87,6 +97,7 @@ jest.mock('@/lib/supabaseServer', () => ({
         // infer a plan from the service's configuration.
         update: (payload: unknown) => {
           mockUpdate(table, payload);
+          calls.push(['update', payload]);
           return chain;
         },
         maybeSingle: async () => {
@@ -103,13 +114,23 @@ jest.mock('@/lib/supabaseServer', () => ({
             return { data: mockState.planRowId ? { id: mockState.planRowId } : null, error: null };
           }
           if (table === 'scheduling_bookings') {
+            if (mockState.contactReadError) {
+              return { data: null, error: { code: 'XX000', message: 'contact read failed' } };
+            }
             return { data: { contact_id: mockState.bookingContact }, error: null };
           }
           return { data: null, error: null };
         },
         // The period count is awaited on the builder itself.
-        then: (resolve: (v: unknown) => unknown) =>
-          resolve({ data: [], count: mockState.installmentCount, error: null }),
+        then: (resolve: (v: unknown) => unknown) => {
+          const update = calls.find(c => c[0] === 'update');
+          if (update) {
+            mockUpdates.push({ table, payload: update[1], calls: [...calls] });
+            return resolve({ data: [], count: mockState.installmentCount, error: mockState.updateError ?? null });
+          }
+          mockAwaitedReads.push({ table, calls: [...calls] });
+          return resolve({ data: [], count: mockState.installmentCount, error: null });
+        },
       });
 
       return chain;
@@ -184,6 +205,10 @@ beforeEach(() => {
   mockState.bookingContact = 'contact_1';
   mockState.owned = new Set([BOOKING, SERVICE, PLAN_FROM_META]);
   mockState.readError = new Set();
+  mockState.updateError = null;
+  mockState.contactReadError = false;
+  mockUpdates.length = 0;
+  mockAwaitedReads.length = 0;
   mockQueries.length = 0;
   mockFindBySubscriptionId.mockResolvedValue({ data: null, error: null });
   mockCreate.mockResolvedValue({ data: { id: 'plan_1', user_id: 'user_1' }, error: null });
@@ -679,5 +704,117 @@ describe('bindPlanSubscription link ownership (Fix-1b)', () => {
 
     expect(mockQueries).toEqual([]);
     expect(dropped()).toEqual([]);
+  });
+});
+
+/**
+ * CF-5 PR 0, SA condition CR-1: the three error arms PR 4 moves behind
+ * repositories (installments insert, booking plan-link update, booking contact
+ * read). Written against the inline queries; PR 4 must pass them unedited.
+ */
+describe('bindPlanSubscription, write and read errors (CF-5 PR 0, CR-1)', () => {
+  it('installments insert fails: bind still resolves and still links the booking, scoped to its owner', async () => {
+    mockInsert.mockResolvedValue({ error: { code: 'XX000', message: 'insert rejected' } });
+    const { stripe } = fakeStripe();
+
+    await expect(bindPlanSubscription({ stripe: stripe as never, ...INPUT })).resolves.toMatchObject({
+      scheduleId: 'sched_1',
+    });
+
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(mockLogError).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: 'plan_1' }),
+      'Plan recorded but periods not projected'
+    );
+    const links = mockUpdates.filter(u => u.table === 'scheduling_bookings');
+    expect(links).toHaveLength(1);
+    expect(links[0].payload).toMatchObject({ payment_plan_id: 'plan_row_1' });
+    expect(links[0].calls).toContainEqual(['eq', 'id', BOOKING]);
+    expect(links[0].calls).toContainEqual(['eq', 'user_id', 'user_1']);
+  });
+
+  it('booking plan-link update fails: bind resolves without throwing', async () => {
+    mockState.updateError = { code: 'XX000', message: 'update rejected' };
+    const { stripe } = fakeStripe();
+
+    await expect(bindPlanSubscription({ stripe: stripe as never, ...INPUT })).resolves.toMatchObject({
+      scheduleId: 'sched_1',
+    });
+
+    expect(mockUpdates.filter(u => u.table === 'scheduling_bookings')).toHaveLength(1);
+    expect(mockLogError).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: 'plan_1', bookingId: BOOKING }),
+      'Plan periods written but the booking was not linked to its plan'
+    );
+  });
+
+  it('booking contact read fails: the periods are projected with contact_id null, and bind resolves', async () => {
+    mockState.contactReadError = true;
+    const { stripe } = fakeStripe();
+
+    await expect(bindPlanSubscription({ stripe: stripe as never, ...INPUT })).resolves.toMatchObject({
+      scheduleId: 'sched_1',
+    });
+
+    // The read was actually issued (and failed), not skipped.
+    expect(
+      mockQueries.filter(q => q.table === 'scheduling_bookings' && q.calls.some(c => c[0] === 'select' && c[1] === 'contact_id'))
+    ).toHaveLength(1);
+
+    const rows = mockInsert.mock.calls[0][0] as Array<{ contact_id: unknown }>;
+    expect(rows).toHaveLength(3);
+    expect(rows.every(r => r.contact_id === null)).toBe(true);
+  });
+});
+
+/**
+ * CF-5 PR 0, QA note: the full chain of bind's three reads, so that dropping a
+ * filter (the contact read's tenant filter above all) fails a test. PR 4 moves
+ * these reads behind repositories and must pass this unedited.
+ */
+describe('bindPlanSubscription, read chains pinned (CF-5 PR 0)', () => {
+  it('the booking contact read is scoped to the booking AND its owner', async () => {
+    const { stripe } = fakeStripe();
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    const reads = mockQueries.filter(
+      q => q.table === 'scheduling_bookings' && q.calls.some(c => c[0] === 'select' && c[1] === 'contact_id')
+    );
+    expect(reads).toHaveLength(1);
+    expect(reads[0].calls).toEqual([
+      ['select', 'contact_id'],
+      ['eq', 'id', BOOKING],
+      ['eq', 'user_id', 'user_1'],
+    ]);
+  });
+
+  it('the fallback plan read takes the oldest ACTIVE plan of this owner for the service', async () => {
+    const { stripe } = fakeStripe();
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    const reads = mockQueries.filter(q => q.table === 'payment_plans');
+    expect(reads).toHaveLength(1);
+    expect(reads[0].calls).toEqual([
+      ['select', 'id'],
+      ['eq', 'user_id', 'user_1'],
+      ['eq', 'service_id', SERVICE],
+      ['eq', 'is_active', true],
+      ['order', 'created_at', { ascending: true }],
+      ['limit', 1],
+    ]);
+  });
+
+  it('the already-bound check counts the periods of THIS plan only', async () => {
+    mockFindBySubscriptionId.mockResolvedValue({ data: { id: 'plan_1', stripe_schedule_id: 'sched_1' }, error: null });
+    mockState.installmentCount = 3;
+    const { stripe } = fakeStripe();
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    const counts = mockAwaitedReads.filter(r => r.table === 'payment_plan_installments');
+    expect(counts).toHaveLength(1);
+    expect(counts[0].calls).toEqual([
+      ['select', 'id', { count: 'exact', head: true }],
+      ['eq', 'subscription_id', 'plan_1'],
+    ]);
   });
 });

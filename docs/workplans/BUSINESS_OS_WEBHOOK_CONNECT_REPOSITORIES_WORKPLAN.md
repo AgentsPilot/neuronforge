@@ -7,7 +7,8 @@
 **Prior slices read:** P-0 (Connect characterisation harness, `check-logging-only-diff`), P-1 (router, deny by default), [P-10](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P10_WORKPLAN.md) (P-10a #234, P-10b #238).
 **Date:** 2026-10-06
 **Branch:** `feature/bos-webhook-connect-repos` (worktree `neuronforge-webhook-repos`), created by RM off `origin/main` `248de6be`. `origin/main` is now `05815f69`; the only change since is one requirement doc (#239), so `route.ts` and every file this plan touches are identical on both.
-**Status:** Planning. Workplan only, no production code. Waiting for the SA workplan review.
+**PR 0 branch:** `feature/webhook-repos-pr0-harness`, off `origin/main` `0c3c1800` (includes Fix-1 #242, Fix-1b #246, FU-5 #250, P-3a #248), same worktree.
+**Status:** SA approved (C-1 to C-9). Fix-1, Fix-1b and FU-5 merged. **PR 0 code complete 2026-10-07**, uncommitted; waiting for SA code review. Evidence in §7.3.1.
 
 ## Overview
 
@@ -298,8 +299,8 @@ node node_modules/jest/bin/jest.js --ci \
 ### 7.2 After each step: byte-identical, and how `-u` is prevented
 
 - Always `node node_modules/jest/bin/jest.js --ci --runTestsByPath <files>`; never a bare path (it ran every suite in every worktree) and never `-u` / `--updateSnapshot` / `-i` interactive mode. `--ci` makes a missing snapshot a failure instead of a write; a mismatch is a failure without `-u` anyway.
-- Belt and braces, after every run: `git hash-object <snap>` must equal the recorded blob (`4f5f223e…` until PR 0 merges, then PR 0's blob), and `git diff --exit-code -- app/api/stripe/webhook/__tests__/__snapshots__/` must exit 0. A hash mismatch is a stop, whatever Jest printed.
-- The harness file itself is not edited after PR 0. Its blob after PR 0 is recorded and checked in PR 1 to PR 5 the same way.
+- Belt and braces, after every run: `git hash-object <snap>` must equal the recorded blob (`5cc8789c…` on `0c3c1800` until PR 0 merges, then PR 0's `a673a901…`, §7.3.1), and `git diff --exit-code -- app/api/stripe/webhook/__tests__/__snapshots__/` must exit 0. A hash mismatch is a stop, whatever Jest printed.
+- The harness file itself is not edited after PR 0. Its blob after PR 0 (`a7cc9992…`, §7.3.1) is checked in PR 1 to PR 5 the same way.
 
 ### 7.3 Does the harness cover every converted site? Gaps and proposed additions
 
@@ -335,6 +336,207 @@ From the coverage run, every DB site is executed by at least one scenario **exce
 PR 0 also makes the `PaymentPlanSubscriptionRepository` mock **fall through** to the real module for any method it does not list (a `Proxy` over `jest.requireActual`), so PR 4's two new methods run against `mockSupabase` and record their chains exactly as the inline queries do today. The same fall-through goes into `routerEdgeCases.qa.test.ts`, which mocks the same module. Neither change alters an existing scenario (no existing scenario calls an unlisted method), which PR 0's proof shows: the 28 old `exports[...]` entries must be byte-identical (compared entry by entry, by a short script, not by eye).
 
 Adding scenarios writes new snapshot entries, so PR 0 runs once **without** `--ci` to write them, then again with `--ci`, then the entry-by-entry comparison. That is the one run in the whole plan allowed to write the file.
+
+### 7.3.1 PR 0 refresh (2026-10-07, against `0c3c1800`)
+
+§7.3 was written on `248de6be` (28 entries). Fix-1 (#242), Fix-1b (#246) and FU-5 (#250) have merged since, so the gap list is re-derived from a fresh coverage run on `0c3c1800`. Line numbers below are `route.ts` at `0c3c1800` (blob `df671c4a…`, 2,668 lines, 51 `.from(`).
+
+**What changed against §7.3:**
+
+- **Already covered now, dropped:** none of X1–X11 was closed by the fixes. Fix-1 added entries for the refusals at H2/H3, J, K, L, I5 and F2's links, so those branches are not added again.
+- **Kept:** X1–X11. X2/X3 stay: `handleInvoicePaymentFailed` is **not reachable through `POST`** today (the Business OS router decides every platform `invoice.payment_failed`, deny or flow, before the switch). It is covered with the `dispatch` knob (SA Q-6 accepted it), and the entries say so in their names. Listing it instead would leave A1–A4, four PR 5 sites, unpinned.
+- **Added:** every result-handling branch of a site PRs 1–5 convert that the run shows unexecuted: the miss, the error and the hit arms. The repository has to hand the route the same `data` / `error` on each arm, and only an executed arm proves it. Plus the early returns that sit between a moved read and a moved write.
+- **Not harness-observable, so not added here** (both modules are mocked in the harness, on purpose): bind's five queries (PR 4) and `resolveAccountOwner`'s two reads (PR 5). Their proof is their own unit tests; their coverage is recorded in the evidence below.
+
+**Mechanism (SA Q-6 / C-4, no `Proxy`):**
+
+| Knob / change | Scope | Effect on the 45 existing entries |
+|---|---|---|
+| `eventPatch` | Deep-merged into the fixture (plain objects merge; anything else, `null` included, replaces). Used only by new scenarios | None: absent means the fixture as read |
+| `dispatch: 'not_business_os'` | `@/lib/business-os/billing/webhookDispatcher` is mocked as the real module, with `dispatchBusinessOsEvent` overridden **only** when a scenario sets `dispatch`. The override is recorded as an effect, so an entry that used it shows it | None: unset delegates to the real dispatcher with the same arguments and records nothing |
+| `PaymentPlanSubscriptionRepository` mock: explicit delegation list | Two named methods, `findEndStateBySubscriptionId` and `endFromStripe` (PR 4's, §3), delegate to `jest.requireActual(…).paymentPlanSubscriptionRepository`, resolved at call time, recording nothing of their own (their DB chain records through `mockSupabase`, as the inline query does today). Nothing else delegates; the four recorded methods are unchanged | None: no route code calls them before PR 4 |
+| The same two delegations in `fix1Ownership.qa.test.ts` | **Deviation from §10**, which named `routerEdgeCases.qa.test.ts`. No scenario there reaches `handlePlanSubscriptionEnded`. `fix1Ownership.qa` (written after §10) does (`:2151 Connect customer.subscription.deleted`), so without the delegation PR 4 would turn that site into a `TypeError` | None (QA suite, no snapshots) |
+
+**New scenarios (one snapshot entry each, in a new `describe`, "CF-5 PR 0"):**
+
+| # | Scenario | Sites / lines it executes | For PR |
+|---|---|---|---|
+| X10 | Claim insert answers `23505` → duplicate, 200 | P3 `:2418` | 1 |
+| X12 | Claim insert answers another error → logged, processing continues, completed at the end | P3 `:2422`, O1 | 1 |
+| X13 | Claim lookup answers an error → logged, processing continues | P1 `:2378` | 1 |
+| X53 | Claim insert fails, then the handler throws → 500, nothing to release (P4 skipped) | `:2636` false arm | 1 |
+| X48 | `invoice.paid` found neither by Stripe id nor by the metadata id → no write | H2 miss `:1309` | 2 |
+| X49 | Checkout for an invoice with no booking → paid, no booking write | `:1826` false arm (I4 skipped) | 2 |
+| X52 | `invoice.payment_failed`, owner has no business profile → activity in English | J4 miss, `\|\| 'en'` `:1994` (the equivalence SA relied on for `findLanguage`) | 2 |
+| X50 | `invoice.payment_failed` whose subscription names no plan → falls through to J1 | `:1927` false arm | 4 |
+| X51 | Connect subscription deleted, not our plan → no write | M1 miss `:2158` | 4 |
+| X9 | Checkout for an invoice already `paid` → return | I1 hit, `:1737` | 2 |
+| X14 | Checkout for an invoice not found | I1 miss `:1722` | 2 |
+| X15 | Checkout for an invoice another business owns → refused | `:1729` (between I1 and I2) | 2 |
+| X16 | Checkout: marking the invoice paid fails → 500 | I3 error `:1804` | 2 |
+| X17 | `invoice.paid`: marking the invoice paid fails → 500 | H6 error `:1489` | 2 |
+| X18 | `invoice.payment_failed`: no platform invoice | J1 miss `:1946` | 2 |
+| X19 | `invoice.payment_failed`: the overdue update fails | J2 error `:1971` | 2 |
+| X20 | `invoice.payment_failed`: invoice has no contact → no profile read, no activity | J3 data, J4 skipped (`:1988`) | 2 |
+| X21 / X22 | `invoice.finalized`: no invoice / update fails | K1 miss `:2040`, K2 error `:2065` | 2 |
+| X23 / X24 | `invoice.marked_uncollectible`: no invoice / update fails | L1 miss `:2090`, L2 error `:2114` | 2 |
+| X4 | Platform `charge.refunded`, no payment intent | E1 charge-id arm `:524`, E2 with `stripe_connect_account_id: null` | 3 |
+| X5 | `charge.dispute.closed`, won, charge id only, `status_before_dispute` set | D1 charge-id arm `:426`, D2 restore | 3 |
+| X25 / X26 | `charge.refunded`: unknown payment / refund upsert fails → 500 | E1 miss `:532`, E2 error `:583` | 3 |
+| X27 / X28 | Dispute: unknown payment / update fails | D1 miss `:434`, D2 error `:474` | 3 |
+| X29 | `payment_intent.succeeded` already recorded | F1 hit `:703` | 3 |
+| X30 | Plan period: transaction insert fails → 500 (raw error thrown) | G2 error `:943` | 3 |
+| X31 / X32 | `invoice.paid`: payment already recorded / transaction insert fails → 500 | H4 hit `:1383`, H5 error `:1464` | 3 |
+| X33 | Checkout invoice: transaction insert fails → 500 | I2 error `:1782` | 3 |
+| X6 | Connect subscription deleted, plan complete → `completed_at`, no M3 | M2 completed arm `:2176`, M3 skipped | 4 |
+| X7 | Last plan period, no booking → `close`, no booking write | G1 miss, `:1000`, G5 skipped | 4 |
+| X8 | Plan period already recorded | G1 hit `:850` | 4 |
+| X11 | Connect `invoice.payment_failed` for an owned plan → `recordFailure`, return | `:1925–1934` (before J1) | 4 |
+| X34 | Plan period: booking update fails → logged, 200 | G5 error `:1027` | 4 |
+| X35 | Plan period from an account that does not own the plan → refused, no G1 | `:810` | 4 |
+| X36 | Plan invoice that collected nothing → no G1 | `:836` | 4 |
+| X37 | `invoice.paid`: booking update fails → logged | H7 error `:1507` | 4 |
+| X38 | Checkout invoice: booking confirm fails → logged | I4 error `:1850` | 4 |
+| X39 | Checkout booking: update fails → logged | I5 error `:1890` | 4 |
+| X40 | Connect subscription deleted, plan owned by another business → refused, no M2 | `:2161` | 4 |
+| X41 | Connect subscription deleted, plan already `cancelled` → no write | `:2168` | 4 |
+| X1 | Platform `customer.subscription.deleted`, legacy `user_id` | N1, N2 (`:2209–2238`) | 5 |
+| X42 | Same, no `user_id` → nothing written | `:2214` | 5 |
+| X2 | Platform `invoice.payment_failed` via `dispatch`, grace from the user row | A1, A3, A4 | 5 |
+| X3 | Same, grace null → system config | A2 | 5 |
+| X43 | Same, no `user_id` → nothing written | `:74` | 5 |
+| X55 | Same, no user row and no config row → grace defaults to 3 | A1 miss `:86–103`, A2 miss `:99` | 5 |
+| X44 | Boost checkout, no `user_id` → nothing written | `:183` | 5 |
+| X54 | Boost checkout on an existing balance → the credit transaction's id reaches the purchase row | B2 hit `:214–215`, B4 data `:257`, `:267` | 5 |
+| X45 | Boost checkout: credit transaction and boost purchase inserts both fail → logged, not thrown | B4 error `:255`, B5 error `:281` | 5 |
+| X46 | Boost checkout without `boost_pack_id` → B5 skipped | `:286` | 5 |
+| X47 | Platform `customer.subscription.updated`, no `user_id` → nothing written | `:344` | 5 |
+
+**55 new entries**: the 11 from §7.3, 36 from the first coverage pass, X48–X53 from reviewing the cold branch arms after it, and X54–X55 from a second pass over the arms that read a query result (rows grouped by PR above). Time-dependent values are kept out on purpose: X2/X3/X55 use `current_period_end: null` (or no row), so `days_since_period_end` is 0 on any day.
+
+**Proof steps (C-7 included):** record the 45 entry hashes and the suite time on the untouched tree; write the new entries only with `--ci=false` and `-t` anchored to the new entries (three such runs, below; §7.3 planned one); re-run everything with `--ci`; compare entry by entry (45 identical, 55 new, 0 changed or missing); record coverage and time again; `route.ts` blob unchanged.
+
+
+#### PR 0 evidence (2026-10-07)
+
+Tree: worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr0-harness`, `HEAD` `0c3c1800`, Node 22.19.0. Every Jest run is `node node_modules/jest/bin/jest.js --ci --runTestsByPath …`, except the three write runs listed below.
+
+**Before (untouched `0c3c1800`):**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, 47 tests, **45 snapshots**, all passed |
+| Snapshot blob | `5cc8789c09b887bef4181acd281e1153ae457861` (= `HEAD`), 6,011 lines, 45 `exports[` |
+| `route.ts` | blob `df671c4addda96f59c4d01b463ceb59c994aa2ec`, 2,668 lines, 51 `.from(` |
+| Harness / `fix1Ownership.qa` blobs | `e172c18e988d37f9c55a93eb8aabcc8dc5b4f3db` / `5fc0bf242a9c6d55c8ef0d54cc26453578b2bb3a` |
+| Route coverage by the harness (same command as §7.1) | statements **73.09 %** (421/576), branches **59.02 %** (438/742), functions 76.66 %, lines 73.8 %. Cold `.from(` sites: **6** (`:81`, `:94`, `:108`, `:119`, `:2219`, `:2229`, i.e. A1–A4, N1, N2) |
+| Per-entry hashes | sha256 of each `exports[…]` value (a script evaluates the `.snap` and hashes each entry): 45 entries, kept in the session scratchpad. Three pairs are equal on purpose, because their effects are the same: 9a = 9b, F1-1 = F1-2, F4-1 = F4-4 |
+
+**Writing the new entries (the only runs allowed to write; each anchored with `-t`, none with `-u`):**
+
+1. `--ci=false -t "^Stripe webhook, CF-5 PR 0: arms the repository moves will touch "`: 47 written, the 47 other tests skipped, 0 updated.
+2. After a review of the cold branch arms added X48–X53: `-t "… touch X(48|49|50|51|52|53)\. "`: 6 written, 94 skipped, 0 updated.
+3. After a second pass over arms that read a query result added X54–X55: `-t "… touch X(54|55)\. "`: 2 written, 100 skipped, 0 updated.
+
+Before step 1, a `--ci` run with the new knobs and mocks in place passed all 45 existing entries and wrote nothing (blob still `5cc8789c…`). After each write run the entry comparison was repeated: 45 → 92 → 98 → 100 entries, with every earlier entry identical each time.
+
+**After:**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, **102 tests, 100 snapshots**, all passed with `--ci` |
+| Snapshot blob | `a673a9019e8486375aaf240575f325f701870413`, 13,418 lines, 100 `exports[`. `git diff --numstat`: **7,407 insertions, 0 deletions** |
+| Entry by entry | **45 identical, 0 changed or missing, 55 new** (script comparison, not by eye) |
+| Each new entry read | Condensed to its effect sequence and checked against its name. For example: X4 filters `stripe_charge_id = ch_connect_1` and upserts both refunds with `stripe_connect_account_id: null`; X5 writes `status: 'refunded'` back; X10 answers `{ received, duplicate }`; X2/X3 reach `user_subscriptions` select → (`system_settings_config`) → update → `billing_events` insert → audit with `days_since_period_end: 0`; X55 falls back to 3 grace days; X6 writes `completed_at` and no `payment_plan_installments` update; X52's activity title is `Payment failed: $120.00`; X54 writes `transaction_id: 'ctx-1'` and `balance_before: 2500`; X53 has no claim update after the throw |
+| `route.ts` | blob **`df671c4a…`, unchanged**; `git diff --exit-code` on it exits 0 |
+| Harness blob | `a7cc9992a002780e876a6f7ef82d73b9aff32d99` (PR 1 to PR 5 check it, §7.2) |
+| `fix1Ownership.qa.test.ts` blob | `f509e75e53c96d3c920f25aabdf7da0c9bb3ff59` (after CR-1 / PR0-Q6: the two delegations plus the `:595` annotation) |
+| `bindPlanSubscription.test.ts` blob (CR-1 + QA note) | `2e7b97317b6ca22c1c3b0f64347317c7f6b59fc6` (was `e233ac01…` on `0c3c1800`; `e87c78f2…` after CR-1 alone). PR 4 checks it the same way (§7.2) and must pass it unedited |
+| New fixture `fixtures/platform/subscription-deleted-legacy.json` | blob `f8473c63c4b2dd304356ee72358cea17035c256d` |
+| Route coverage by the harness | statements **91.49 %** (527/576), branches **75.6 %** (561/742), functions 86.66 % (26/30), lines 92.21 % (521/565). **Cold `.from(` sites: 0 of 51** |
+
+**Suite run time (C-7).** Measured interleaved, so both sides saw the same machine load: the `origin/main` harness and snapshot were copied to a temporary file in the same folder, run alternately with the final new file, then deleted. Pairs 1–3 ran while the machine was loaded (the base alone took up to 23.8 s) and are discarded:
+
+| Pair | Base (47 tests) Jest time | New (102 tests) Jest time |
+|---|---|---|
+| 4 | 4.32 s | 4.91 s |
+| 5 | 4.05 s | 5.02 s |
+| 6 | 3.97 s | 4.45 s |
+| 7 | 3.77 s | 4.49 s |
+| 8 | 3.49 s | 5.16 s |
+| **Median** | **3.97 s** | **4.91 s** |
+
+So about **+0.9 s** per run of this suite (about 17 ms per new scenario), measured on this Windows machine. The suite runs in one shard of the Jest gate, which already finishes ahead of `Build`, so the critical path should not move. SA to confirm against the shard timings on the PR.
+
+**Regression set** (`--ci --runTestsByPath`, 55 files: every `app/api/stripe/webhook/__tests__/*.test.ts`, every `lib/payments/__tests__/*.test.ts`, `app/api/stripe/__tests__/noBookingGuess.guard` and `stripeAuditEntries`, `lib/repositories/__tests__/userSubscriptionsWriteLockdown.qa`, `userSubscriptionsWriteLockdownMigration`, `bookingPaymentStatusReaders.guard`, `lib/business-os/__tests__/noPilotCreditTableReads.guard`): **55 suites, 931 tests, 100 snapshots, all passed.** Snapshot blob still `a673a901…` after it.
+
+After CR-1 and the PR0-Q6 fix, the same 55 files: **55 suites, 934 tests, 100 snapshots, all passed**; snapshot blob still `a673a901…`; `bindPlanSubscription.ts` blob `23a38fdd…` = `HEAD` (untouched).
+
+**Scoped checks.** ESLint on the two changed test files: 0 problems. `tsc` (scratch tsconfig, `files` = the two test files, 8 GB heap): **0 errors in the harness**. 1 error in `fix1Ownership.qa.test.ts:596` (`withMetadata(…, metadata)` argument type). It is pre-existing from FU-5 (the same line is `origin/main:586`; my edit is 10 lines at `:135`) and is not fixed here.
+
+After CR-1 and PR0-Q6: scoped `tsc` with `files` = the harness, `fix1Ownership.qa.test.ts` and `bindPlanSubscription.test.ts`: **0 errors** (exit 0). ESLint on all three: 0 problems.
+
+**Not harness-observable (mocked modules), covered by their own unit tests instead.** Coverage of the two files by `bindPlanSubscription.test.ts` + `stripeAccountContext.test.ts`: `bindPlanSubscription.ts` lines 94.36 %, cold lines **431** (installments insert error), **454** (booking plan-link update error) and **483–484** (`resolveContactId` read error); `stripeAccountContext.ts` lines 100 %, only branch arms cold. The bind error arms are PR 4 sites (open question for SA below).
+
+**CR-1 (SA PR 0 code review), done.** Three tests added to `lib/payments/__tests__/bindPlanSubscription.test.ts` in a new `describe` ("write and read errors (CF-5 PR 0, CR-1)"), against the untouched bind, through the existing `@/lib/supabaseServer` mock. The mock gained two knobs, both off by default (`updateError`, `contactReadError`), and records every awaited update with its full chain (`mockUpdates`). With the knobs off it answers exactly as before, and the 28 existing tests pass unchanged.
+
+| Test | Arm | Asserts |
+|---|---|---|
+| installments insert fails | `:431` | bind resolves (`scheduleId: 'sched_1'`); the error line is logged; the booking plan-link update is still sent, with `eq('id', bookingId)` and `eq('user_id', ownerId)` |
+| booking plan-link update fails | `:454` | bind resolves without throwing; the update was sent once; the error line is logged |
+| booking contact read fails | `:483–484` | all three projected periods carry `contact_id: null`; bind resolves |
+
+Result: 31 tests (28 + 3), all passed. Coverage of `bindPlanSubscription.ts` by that file alone: **lines 100 %** (was 94.36 %, with 431, 454 and 483–484 cold); statements 100 %, functions 100 %, branches 85.89 % (only value-fallback arms left).
+
+**QA note (Medium), done.** QA showed that three bind read filters were pinned by no test: removing any one left all 31 green. A new `describe`, "read chains pinned (CF-5 PR 0)", asserts the **full** recorded chain of each read against the untouched bind. The mock also records reads awaited on the builder (`mockAwaitedReads`, needed for the period count, which is not a `maybeSingle`). As SA suggested, the `:483–484` test now also asserts that the `select('contact_id')` read was actually issued.
+
+| Test | Read | Chain asserted (`toEqual`) |
+|---|---|---|
+| contact read scoped to booking and owner | `:476–480` | `select('contact_id')`, `eq('id', booking)`, `eq('user_id', owner)` |
+| fallback plan read | `:508–516` | `select('id')`, `eq('user_id')`, `eq('service_id')`, `eq('is_active', true)`, `order('created_at', asc)`, `limit(1)` |
+| already-bound period count | `:143–146` | `select('id', { count: 'exact', head: true })`, `eq('subscription_id', plan id)` |
+
+**Mutant proof.** A temporary copy of bind (its `./` imports rewritten to `@/lib/payments/`) and a copy of the test file were placed in a temp folder, run once per mutant, then deleted. The real bind was never touched (blob `23a38fdd…` = `HEAD` before and after).
+
+| Mutant | Result |
+|---|---|
+| Control (copy, no mutation) | 34 / 34 passed |
+| M1: `:479` `.eq('user_id', ownerId)` removed (contact read tenant filter) | **1 failed**: "the booking contact read is scoped to the booking AND its owner" |
+| M2: `:146` `.eq('subscription_id', …)` removed | **1 failed**: "the already-bound check counts the periods of THIS plan only" |
+| M3: `:513` `.eq('is_active', true)` removed | **1 failed**: "the fallback plan read takes the oldest ACTIVE plan of this owner for the service" |
+
+Each mutant is killed by exactly its own test. The file now has 34 tests, all passing; ESLint is clean and scoped `tsc` on it gives 0 errors. Regression set (same 55 files): **55 suites, 937 tests, 100 snapshots**, all passed. Snapshot blob still `a673a901…`.
+
+**Still cold in `route.ts` after PR 0, each with its reason.** None is a DB site; every `.from(` executes.
+
+| Lines | What | Why not added |
+|---|---|---|
+| 158 | Audit failure catch in the legacy dunning | The `auditLog` mock never throws; no DB site |
+| 306–317 | Quota allocation failure; a platform subscription checkout that bypassed the router | No DB site; the router denies subscription sessions first |
+| 505, 2016 | Fire-and-forget failure catches (dispute alert, CRM activity) | No DB site |
+| 669–680 | `payment_intent.succeeded` with no `owner_id` | No DB site; returns before F1. The "Stripe-generated" arm needs `metadata: {}`, which `eventPatch` cannot express (it merges) |
+| 872–873, 877 | Plan payment intent not resolved | Resolver mock; no DB site |
+| 1115–1119, 1245–1246, 1702–1706 | `bindPlanSubscription` throws | Bind is mocked; no DB site. The Fix-1 and FU-5 QA suites cover the rethrow |
+| 1577 | Audit failure catch on `invoice.paid` | The `auditLog` mock never throws |
+| 1608–1627 | Receipt sent (`client_email` present) | H8's query **is** executed in every paid scenario; only its data arm is cold. Covering it needs a `BookingEmailService` mock inside a fire-and-forget IIFE that one `setImmediate` does not reliably settle, so the entries could flake. PR 2's unit test for `readFieldsUnscoped(id, RECEIPT)` pins the shape instead (§7.5) |
+| 1904 | Connect checkout with neither invoice nor booking | No DB site |
+| 2287, 2303–2309, 2325–2326, 2341, 2348–2349 | Signature, body and secret guards | No DB site, before the claim; `emptyBody.guard` covers 2303 |
+| 2479–2481 | A registered Business OS flow handler | Unreachable: `BUSINESS_OS_FLOW_HANDLERS` is empty until P-3b. Its `completeClaim` is the same O1 every other path runs |
+| 2495, 2598–2599, 2619 | Platform `invoice.paid` past the router, `charge.dispute.funds_reinstated`, unhandled type | No DB site of their own; the `completeClaim` after them is O1, which runs everywhere |
+| 2648 | The claim release itself throws | supabase-js does not throw on a failed query (§1), and the mock models that. A throw here needs a network-level failure |
+
+**Branch arms still cold: 181 of 742** (from 304). Almost all are `?.` / `??` / `||` value fallbacks inside payloads. Two sit on a query result and are left on purpose, because the shape cannot occur: `:968` (G2 succeeded but returned no row; `insert().select('id').single()` without an error always returns one) and `:1988` (J3 found no row for the invoice J1 found a moment earlier). Every other miss, error and hit arm of a moved query executes, except the H8 data arm above.
+
+#### PR 0: deviations and questions for SA
+
+| # | Item | Dev's position |
+|---|---|---|
+| PR0-Q1 | **Bind's error arms are cold** (`bindPlanSubscription.ts:431`, `:454`, `:483–484`), and PR 4 moves exactly those queries. They are not harness-observable (bind is mocked), so PR 0 does not cover them | PR 4's first task: add the three error-path unit tests to `bindPlanSubscription.test.ts` against the **untouched** bind, then convert. Alternatively PR 0 grows by those three tests. SA to choose |
+| PR0-Q2 | **Three anchored write runs, not one** (§7.3 planned one). Each was `-t`-anchored to new names only, wrote only new entries (47, 6, 2) and updated none, and the entry comparison was repeated after each | Accept as recorded |
+| PR0-Q3 | **§10 deviation**: the two named delegations went into `fix1Ownership.qa.test.ts`, not `routerEdgeCases.qa.test.ts`. The QA suite reaches `handlePlanSubscriptionEnded` through its mocked plan repository; the edge-case suite never does | Accept |
+| PR0-Q4 | **Dead code pinned**: X2, X3, X43 and X55 reach `handleInvoicePaymentFailed` only through the `dispatch` override. The entries say so in their names. They are what lets PR 5 prove A1–A4 | Accept; deleting the dead handler stays FU-1 |
+| PR0-Q5 | **Snapshot size**: 6,011 → 13,418 lines. Every entry is a full effect trace by design (P-0) | Accept; trimming the format would change the 45 existing entries |
+| PR0-Q6 | **Pre-existing type error** `fix1Ownership.qa.test.ts:596` (from FU-5), seen in the scoped `tsc` | **Fixed in PR 0** (SA: optional, single annotation): `as Record<string, string>[]` on the `for … of` array (now `:595`). No runtime change; scoped `tsc` 0 errors |
 
 ### 7.4 What `check-logging-only-diff.ts` can and cannot prove here
 
@@ -404,10 +606,10 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 
 | File | Action | PR | Reason |
 |---|---|---|---|
-| `app/api/stripe/webhook/__tests__/connectPath.characterisation.test.ts` | modify | 0 | Scenarios X1–X11, knobs `dispatch` and `eventPatch`, fall-through mock |
-| `app/api/stripe/webhook/__tests__/__snapshots__/connectPath.characterisation.test.ts.snap` | modify (append only) | 0 | New entries; old 28 byte-identical |
-| `app/api/stripe/webhook/__tests__/fixtures/platform/subscription-deleted-legacy.json` (+ any fixture X2 needs) | create | 0 | Platform scenarios |
-| `app/api/stripe/webhook/__tests__/routerEdgeCases.qa.test.ts` | modify | 0 | Same fall-through mock |
+| `app/api/stripe/webhook/__tests__/connectPath.characterisation.test.ts` | modify | 0 | 55 scenarios (§7.3.1), knobs `dispatch` and `eventPatch`, two named delegations on the plan subscription repository mock (C-4) |
+| `app/api/stripe/webhook/__tests__/__snapshots__/connectPath.characterisation.test.ts.snap` | modify (append only) | 0 | 55 new entries; the 45 existing ones byte-identical |
+| `app/api/stripe/webhook/__tests__/fixtures/platform/subscription-deleted-legacy.json` | create | 0 | X1, X42. X2/X3/X43/X55 reuse `invoice-payment-failed-unknown-price.json` |
+| `app/api/stripe/webhook/__tests__/fix1Ownership.qa.test.ts` | modify | 0 | The same two named delegations. **Replaces** `routerEdgeCases.qa.test.ts`, which never reaches `handlePlanSubscriptionEnded` (§7.3.1) |
 | `app/api/stripe/webhook/route.ts` | modify | 1–5 | The conversion |
 | `lib/repositories/ProcessedWebhookEventRepository.ts` | create | 1 | §3 |
 | `lib/repositories/PaymentRepository.ts` | modify | 2, 3 | `PaymentInvoiceRepository`, `PaymentTransactionRepository` methods |
@@ -437,13 +639,21 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 - **Sequence (C-1, extended by the Fix-1 SA review C-5 and the FU-5 SA review Q-5): Fix-1 → Fix-1b → FU-5 → PR 0 → PR 1 → PR 2 → PR 3 → (Fix-2 if decided) → PR 4 → PR 5.** Each off fresh `main` after the previous one merged.
 - [x] Fix-1: refuse foreign ids (F-1, F-2, F-4, J/K/L). **Merged 2026-10-07 (#242).** Was on `fix/webhook-connect-tenant-ownership`. Plan and evidence: [BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md).
 - [x] Fix-1b (F-5) — **merged 2026-10-07 (#246)**: inside `bindPlanSubscription`, keep `bookingId` / `serviceId` / `paymentPlanId` only if `ownerId` owns them; drop, never refuse. Covers the three call sites (`route.ts:1031`, `:1142`, `:1581` at `248de6be`). Code complete 2026-10-07, uncommitted, on `fix/webhook-plan-booking-ownership`: [BUSINESS_OS_WEBHOOK_PLAN_BOOKING_OWNERSHIP_FIX1B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_PLAN_BOOKING_OWNERSHIP_FIX1B_WORKPLAN.md). Uses separate `findOwnedId` reads rather than the `resolveContactId` fold (SA accepted). Harness snapshot grows from 40 to 44 entries.
-- [ ] FU-5 (webhook reliability, infra, no business-logic change): `resolveAccountOwner` throws on a read error (claim released, 500, Stripe retries) and the route's owner cache never holds `null` and is cleared at the start of every request. Code complete 2026-10-07, uncommitted, on `fix/webhook-owner-cache-retry`: [BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md). Harness snapshot grows from 44 to 45 entries (+FU5-1, the 44 others byte-identical).
-- [ ] PR 0: harness additions; the "before-with-additions" recorded on post-FU-5 `main` (the snapshot then has 45 entries, not 28); the existing entries proven identical.
+- [x] FU-5 (webhook reliability, infra, no business-logic change) — **merged 2026-10-07 (#250)**: `resolveAccountOwner` throws on a read error (claim released, 500, Stripe retries) and the route's owner cache never holds `null` and is cleared at the start of every request. Was on `fix/webhook-owner-cache-retry`: [BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md). Harness snapshot grows from 44 to 45 entries (+FU5-1, the 44 others byte-identical).
+- [ ] PR 0: harness additions; the "before-with-additions" recorded on post-FU-5 `main` (the snapshot then has 45 entries, not 28); the existing entries proven identical. **Code complete 2026-10-07, uncommitted**, on `feature/webhook-repos-pr0-harness` off `0c3c1800`. Plan refresh and evidence: §7.3.1.
+  - [x] ✅ Plan refreshed against `0c3c1800` (§7.3.1): gap list re-derived from a fresh coverage run; SA Q-6/C-4 explicit delegation list (`findEndStateBySubscriptionId`, `endFromStripe`); C-7 timing step.
+  - [x] ✅ Before recorded: 45 entries hashed, coverage 73.09 % / 59.02 %, 6 cold `.from(` sites.
+  - [x] ✅ 55 scenarios added (X1–X55), written only by `-t`-anchored runs; the 45 existing entries byte-identical.
+  - [x] ✅ After recorded: coverage 91.49 % / 75.6 %, 0 cold `.from(` sites, each remaining cold line with its reason; about +0.9 s suite time.
+  - [x] ✅ Regression set (55 suites, 931 tests, 100 snapshots), ESLint, scoped `tsc`.
+  - [x] ✅ SA code review: approved with CR-1. CR-1 done (three bind error-path tests, §7.3.1); PR0-Q6 fixed.
+  - [ ] SA re-check of the CR-1 test diff; QA; user sees the diff; RM commits.
 - [ ] PR 1: claim repository, client alias, `routerPlacement` guard moved.
   - *Note (FU-5 SA review, Q-2 observation; pre-existing, not a behaviour change for PR 1):* when the database is fully down, `POST`'s catch can fail to release the claim (`status: 'failed'`). The row then stays `processing`, and later deliveries are answered 200 "duplicate", so the event is not retried. This holds for every handler throw today. FU-5 did not introduce or widen it. Record it when the claim moves behind its repository, and keep the release's failure logged. Any fix (e.g. a stale-`processing` reclaim) is its own change, not part of the byte-identical PR 1.
 - [ ] PR 2: invoices.
 - [ ] PR 3: money rows.
 - [ ] PR 4: plans and bookings; two guards moved; plus bind's five inline queries (scope addition, Fix-1b C-4). Also (FU-5 SA Q-3): move the owner check at the plan checkout site (route.ts ~1669) above its `try`, so a lookup failure is no longer logged as "Could not bound a payment plan" before it is rethrown.
+  - *PR 0 CR-1 contract:* PR 4 must pass the three CR-1 tests in `bindPlanSubscription.test.ts` **unedited** (and the three read-chain tests from the QA note; blob `2e7b9731…`, §7.3.1). That file also mocks `PaymentPlanSubscriptionRepository` (only `create`, `attachStripe`, `findBySubscriptionId`). If PR 4 moves a bind query behind a `PaymentPlanSubscriptionRepository` method that mock does not list, it needs an explicit delegation there in the shape PR 0 used, and must bring that edit to SA before making it. The method names for bind's five queries are not fixed in §3 yet, so PR 0 does not plan it. Queries moved into `PaymentPlanRepository` / `SchedulingRepository` need no mock change, since that file does not mock them.
 - [ ] PR 5: legacy tables, alias removed, rule-1 guard added, lockdown test updated.
   - *Scope addition (FU-5 SA review, rule 1; supersedes Q-2's "tracked follow-up"):* `resolveAccountOwner`'s two direct reads (`lib/payments/stripeAccountContext.ts`) move behind the **existing** repositories. No new repository:
     - `StripeConnectRepository.findOwnerIdByStripeAccountId(stripeAccountId)` (`lib/repositories/PaymentRepository.ts:1498`): `select('user_id').eq('stripe_account_id', …).maybeSingle()`;
@@ -599,11 +809,281 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 ### Approval
 [x] Workplan approved with conditions C-1 to C-9. Proceed in the order above.
 
+### PR 0 code review
+
+**Code Review by SA — 2026-10-07**
+**Status:** ✅ Code Approved, with one condition (CR-1) to meet before commit
+
+Scope: worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr0-harness`, base `0c3c1800`, uncommitted. The edit to `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` belongs to TL and was not reviewed here.
+
+#### What SA checked itself (not taken from §7.3.1)
+
+| Claim | SA's own evidence | Verdict |
+|---|---|---|
+| No production file changed | `git status` / `git diff --numstat`: the harness, its snapshot, `fix1Ownership.qa.test.ts`, one new fixture, two docs. Nothing else | ✅ |
+| `route.ts` untouched | `git rev-parse HEAD:…route.ts` = `origin/main:…route.ts` = `git hash-object` of the working file = `df671c4a…` | ✅ |
+| 45 identical, 55 new, 0 changed | SA's own script: evaluates the base `.snap` (`git show 0c3c1800:…`) and the working `.snap` in a `vm` context, compares each `exports[…]` by string equality and sha256. **base 45, new 100, identical 45, changed 0, missing 0, added 55**, and all 55 are in the `CF-5 PR 0` describe. `git diff --numstat` on the snapshot: 7,407 / 0 | ✅ |
+| Blobs | snapshot `a673a901…`, harness `a7cc9992…`, `fix1Ownership.qa` `03b61e89…`, fixture `f8473c63…`: all match §7.3.1. The snapshot blob was unchanged after each of SA's three runs | ✅ |
+| Only deletion is the `mockEvent` line | `git diff` of the harness: one `-` line, `mockEvent = JSON.parse(`, replaced by `fixtureEvent` plus the `eventPatch` merge. `fix1Ownership.qa`: 10 added lines, 0 removed. No assertion removed | ✅ |
+| Q-6 / C-4 met | Both repository mocks list the four recorded methods plus two named delegations to `jest.requireActual(…).paymentPlanSubscriptionRepository`, resolved at call time and called as methods, so `this` binds. No catch-all: any other method is `undefined`, so a call is a `TypeError`. The only `Proxy` in either file is the pre-existing PostgREST builder. The delegation is sound: `createClient` is mocked file-wide and the real repository's `supabaseServer` is built from it, so a delegated query records through `mockSupabase` | ✅ |
+| Coverage | SA's own run, same command as §7.1: **statements 91.49 %, branches 75.6 %, functions 86.66 %, lines 92.21 %**. Per `.from(` line, using the smallest enclosing statement (not the whole-line count, which an enclosing `if` would satisfy): **51 sites, 0 with a zero count** | ✅ |
+| Fixture | `fixtures/platform/subscription-deleted-legacy.json`: synthetic ids (`evt_…legacy`, `sub_platform_legacy_1`, `cus_platform_1`, `agent-platform-user`), `livemode: false`. No key, token, e-mail or real id. The harness additions have no secret-shaped strings either | ✅ |
+| Determinism | No timers, `Date` or random in the new code. Timestamps go through the existing `sanitise` (`<NOW>` within 10 minutes of `runStartedAt`), as in the 45 old entries. X2/X3/X55: with `current_period_end: null` the route computes `new Date()` and then `Date.now()`, so `days_since_period_end` is `floor(≥0 ms / day) = 0` on any day. The `due_date: '2026-12-01'` in `PLAN_PERIOD_DB` is passed through as `chargeAt` and never compared with the clock (`route.ts:995`), the same as the existing `:508` use. Settling is the existing single `setImmediate`. The H8 receipt arm was left out because it could flake, which is the right call. The suites passed on all three of SA's runs | ✅ |
+
+**SA's runs** (each `node node_modules/jest/bin/jest.js --ci --runTestsByPath …`):
+
+- harness + `fix1Ownership.qa`: 2 suites, **149 tests, 100 snapshots** passed;
+- every `app/api/stripe/webhook/__tests__/*.test.ts`: **9 suites, 251 tests, 100 snapshots** passed;
+- the harness with coverage: 102 tests, 100 snapshots passed.
+
+#### Sample of new entries read as effect sequences (at least one per PR group)
+
+| PR | Entry | Effect sequence matches the name? |
+|---|---|---|
+| 1 | X10 | Claim select, then claim insert; body `{ received, duplicate }`, 200, nothing after. ✅ |
+| 1 | X12, X13 | Claim select, insert, K1, `resolveAccountOwner`, K2 update, claim `completed`. The run goes on past the failed claim. ✅ The two traces are identical; they differ only in the DB answer and the log, which the snapshot does not carry (see O-1) |
+| 1 | X53 | Ends at the failed `payment_transactions` insert with 500. No claim update follows. ✅ |
+| 2 | X15 | I1 select, `resolveAccountOwner`, claim completed; no transaction, no invoice write. ✅ |
+| 2 | X16 | Transaction insert, then the invoice paid update, then claim `failed` with `Failed to mark invoice pinv-0002 paid: write rejected`; 500. ✅ |
+| 2 | X48 | H2 by Stripe id, then by `id = pinv-0001`, both PGRST116; claim completed, no write. ✅ |
+| 2 | X52 | J4 `business_profiles` `language` read answers nothing; the activity title is `Payment failed: $120.00`. ✅ |
+| 3 | X4 | E1 is `eq('stripe_charge_id','ch_connect_1')`, the charge-id arm; both refund upserts carry `stripe_connect_account_id: null`; then sync, claim completed. ✅ |
+| 3 | X5 | D1 by charge id; D2 writes `status: 'refunded'` with `phase: 'closed'`, `status: 'won'` in the dispute metadata. ✅ |
+| 3 | X26 | First refund upsert fails, then claim `failed`, `Failed to record refund re_1`; 500. ✅ |
+| 3 | X29 | F1 hit, then claim completed; no link reads. ✅ |
+| 4 | X6 | M1, owner check, M2 `{ completed_at, status: 'completed' }`; no `payment_plan_installments` update. ✅ |
+| 4 | X7 | G1 miss, G2 insert with `booking_id: null`, G3, next-period read, `recordPeriodPaid`, `close('completed')`; no `scheduling_bookings` write. ✅ |
+| 4 | X11 | `findBySubscriptionId`, owner, `recordFailure('plan-1','card_declined')`, claim completed; no J1. ✅ |
+| 4 | X35, X40, X41, X51 | Refusal or early return after the read; no write. ✅ (X40 and X41 have identical traces, O-1) |
+| 5 | X1 | N1 `user_subscriptions` update `status: 'canceled'`, N2 `billing_events` insert. ✅ |
+| 5 | X2, X55 | The recorded `dispatchBusinessOsEvent (scenario override)`, A1, then A2 in X55 only, A3, A4, audit. Grace 5 days in X2, the default 3 in X55, `days_since_period_end: 0`. ✅ |
+| 5 | X43 | Override recorded, then claim completed; nothing written. ✅ |
+| 5 | X54, X46 | X54: `balance_before: 2500`, purchase row `transaction_id: 'ctx-1'`. X46: `boost_pack_id: null` and no `boost_pack_purchases` insert. ✅ |
+
+#### Rulings on PR0-Q1 to PR0-Q6 and C-7
+
+| # | Ruling |
+|---|---|
+| **PR0-Q1** | **In PR 0 (condition CR-1).** A test added as PR 4's first commit gives a weaker "before": once squash-merged, nothing on `main` ever ran it against the untouched bind, and the reviewer has to trust the commit order. Landed in PR 0, CI runs it on `main` against today's inline queries, and PR 4 then has to pass it unchanged. That matches how the harness is treated (frozen after PR 0) |
+| PR0-Q2 | **Accepted.** Three `-t`-anchored write runs, 0 updated each time, the comparison repeated after each, and SA's own comparison of the final file agrees. No `-u` was used |
+| PR0-Q3 | **Accepted.** `routerEdgeCases.qa` never reaches `handlePlanSubscriptionEnded`. `fix1Ownership.qa` does, so it is the suite that would turn into a `TypeError` in PR 4. SA also checked `ownerCacheRetry.qa`, which reaches `:2160`. It does not mock the repository (real module over a mocked `createClient`), so it needs no delegation and will run PR 4's real methods |
+| PR0-Q4 | **Accepted.** Pinning the dead `handleInvoicePaymentFailed` through a recorded override is the only way PR 5 can prove A1–A4. Every such entry names the override and records it as an effect, so nobody can read it as reachable. Deleting the handler stays FU-1 |
+| PR0-Q5 | **Accepted.** 13,418 lines is the cost of full traces, and reformatting would change the 45 baseline entries |
+| PR0-Q6 | **Accepted as a follow-up; fixing it here is optional.** `:596` is a pre-existing error from FU-5, and ts-jest does not type-check here. Because the file is already in this diff and the fix is a single annotation on the `for … of` array (`as Record<string, string>[]`) that changes no runtime behaviour, Dev may fix it in PR 0. If not, record it as a named follow-up in §11. Not blocking |
+| **C-7** | **Met.** About +0.9 s median (interleaved pairs, loaded runs discarded: sound method), all inside the existing suite, in one of the three `Gate tests` shards. No new suite, no new job. The Jest gate already finishes well ahead of `Build`, so the critical path does not move. Confirmation step: RM or QA reads the PR run and records that the shard holding this suite still finishes before `Build`. If it does not, stop and come back to SA |
+
+#### Code Review Comments
+
+1. **CR-1 (condition, before commit). `lib/payments/__tests__/bindPlanSubscription.test.ts`: add the three error-path tests in PR 0. Priority: High (they are PR 4's only "before" for those arms).**
+   - Write them against the untouched bind, through the existing `@/lib/supabaseServer` mock.
+   - Assert the outcomes the route depends on, not just that the code ran:
+     - `:431`, installments insert errors: bind still resolves, and the booking link update is still sent with `eq('id', bookingId)` and `eq('user_id', ownerId)`;
+     - `:454`, booking link update errors: bind resolves and does not throw;
+     - `:483–484`, contact read errors: the installments insert carries `contact_id: null`, and bind resolves.
+   - Record the test file's blob after PR 0 in §7.3.1, next to the harness blob. PR 4 checks it the same way (§7.2).
+   - PR 4 must pass these three tests **unedited**. That test file mocks `PaymentPlanSubscriptionRepository` too. If PR 4 moves a bind query behind a method that file's mock does not list, PR 4 needs an explicit delegation there, in the same shape as this PR's. Planning it in PR 0 is better, but only if the method names are fixed in §3; otherwise PR 4 brings it to SA before it edits that file.
+   - Coverage evidence after CR-1: `bindPlanSubscription.ts` lines 431, 454 and 483–484 executed.
+   - SA re-checks only that test diff. No new review cycle.
+2. **O-1. Identical traces: X12 = X13 and X40 = X41.** Each pair differs only in the DB answer and the log line, neither of which is in the snapshot (P0-C1). Each entry still earns its place: it executes its arm, and it would catch a repository that throws or returns a different shape on that arm. But the snapshot cannot tell the two arms of a pair apart. Not a change request. If PR 1 or PR 4 wants to prove which branch logged, the `mockLogLines` side channel is the tool, as P-1 used it. Priority: Low.
+3. **O-2. The delegation names are now a contract with PR 4.** `findEndStateBySubscriptionId` and `endFromStripe` are frozen into a harness that is not edited after PR 0. If PR 4 picks other names, the harness breaks loudly with a `TypeError` (safe), but fixing it means editing the frozen file. PR 4 keeps the §3 names, or comes back to SA first. Priority: Low (process note).
+
+#### Optimisation Suggestions
+
+- The new `describe`'s header comment states that entries pin today's behaviour, holes included (C-9). Keep that wording; it stops a later reader from taking X40 or X15 as a spec.
+
+#### Code Approved for QA: Yes, once CR-1 is in
+
+SA spot-checks the bind test diff, then QA proceeds. Nothing else is required. The PR0-Q6 one-liner is Dev's choice.
+
+#### CR-1 re-check (SA, 2026-10-07)
+
+**Status:** ✅ CR-1 met. **Code Approved for QA: Yes.**
+
+| Check | SA's evidence | Verdict |
+|---|---|---|
+| No production file in the diff | `git diff --name-only`: only `__tests__/` files and docs. `bindPlanSubscription.test.ts` blob `e87c78f2…` | ✅ |
+| Knobs off, the mock answers as before | `updateError` defaults to `null` and is reset in `beforeEach`. An awaited update answers `{ data: [], count, error: null }`, the same object as before. `contactReadError` is checked only after the ownership-read branch (`select('id')` plus an id filter), so Fix-1b's booking ownership read is untouched and only the `select('contact_id')` read can fail. The new `calls.push(['update', …])` appears only on update chains; bind never ends an update with `maybeSingle`, so no existing `mockQueries` assertion can see it | ✅ |
+| The 28 old tests are unedited | The diff touches only the mock (the `then` rewrite is the 2 `−` lines), `beforeEach` (3 resets) and a new trailing `describe`. No existing `it` is changed | ✅ |
+| The new assertions pin the branches | `:431`: insert error → bind resolves, the error is logged with its exact message, and the booking link update is still sent with `eq('id', BOOKING)` and `eq('user_id', 'user_1')`. `:454`: update error → bind resolves, exactly one link update, the error is logged with `bookingId`. `:483–484`: read error → 3 rows, all `contact_id: null`, where the default would be `contact_1`. Each test fails if PR 4 makes its arm throw, skip the next step, or carry a different value | ✅ |
+| Coverage | SA's run: `bindPlanSubscription.ts` lines **100 %** (branches 85.89 %). Lines 431, 454 and 483–484 are executed; 487 is the `data?.contact_id ?? null` value fallback | ✅ |
+| Runs (`--ci --runTestsByPath`) | bind: **31/31** passed. Harness + `fix1Ownership.qa`: **149 tests, 100 snapshots** passed. Snapshot blob still `a673a901…` | ✅ |
+| PR0-Q6 | `fix1Ownership.qa.test.ts:595`: `as Record<string, string>[]` on the loop array. Type-only; no runtime change | ✅ |
+
+**Optimisation (Low, not blocking):** in the `:483–484` test, also assert that the `scheduling_bookings` `select('contact_id')` read was issued (in `mockQueries`). Today `contact_id: null` would also follow if a later change dropped the booking before the read; the extra assertion would tell the two causes apart. If it is added, update the blob recorded in §7.3.1.
+
 ---
 
 ## QA Testing Report
 
-*(QA to populate.)*
+### PR 0: Harness, close the coverage gaps
+
+**QA — 2026-10-07**
+**Test mode:** full
+**Strategy used:** A (Jest) plus mutation testing. PR 0 is tests only, so the main test is whether the harness catches real changes to `route.ts`. Mutants were temporary copies of `route.ts` (and of `bindPlanSubscription.ts`), loaded through a scratch Jest config whose `moduleNameMapper` sent `../route` (or `../bindPlanSubscription`) to the copy. The real harness, snapshot and test files were used unedited.
+**Focus:** pipeline of PRs 1 to 5 (api, schema of the recorded chains, security for the tenant filters)
+**Skipped:** e2e (no UI). `npm run test:bos-entitlements` not needed: the diff imports nothing from `lib/business-os/entitlements/`.
+**Input source:** prompt from TL, plus workplan §7.3.1, the PR 0 code review and the CR-1 re-check.
+
+**Tree:** worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr0-harness`, `HEAD` = `origin/main` = `0c3c1800`, uncommitted, Node 22.19.0. Every Jest run used `--ci --runTestsByPath`. None used `-u`.
+
+#### Invariants (checked before, during and after)
+
+| Check | Result |
+|---|---|
+| Snapshot blob | `a673a901…` before, after every mutant run (the runner checked it each time and would have stopped) and at the end ✅ |
+| `route.ts` blob | `df671c4a…`, never edited ✅ |
+| Harness / `fix1Ownership.qa` / `bindPlanSubscription.test.ts` blobs | `a7cc9992…` / `f509e75e…` / `e87c78f2…`, as recorded in §7.3.1 ✅ |
+| `bindPlanSubscription.ts` blob | `23a38fdd…` = `HEAD` ✅ |
+| Production files in the diff | none: three test files, one new fixture, two docs ✅ |
+| Coverage of `route.ts` by the harness (QA's own run) | statements 91.49 % (527/576), branches 75.6 % (561/742), functions 86.66 %, lines 92.21 %. **51 of 51 `.from(` sites executed.** Matches Dev and SA ✅ |
+
+#### Test coverage
+
+| Acceptance criterion (PR 0, §9 / §7.3.1) | Tested? | Result | Notes |
+|---|---|---|---|
+| Tests only; `route.ts` unchanged | ✅ | Pass | Blob `df671c4a` |
+| 45 old entries byte-identical, 55 new | ✅ | Pass | The 47 old tests pass against the new snapshot file. SA's entry-by-entry comparison was not re-run |
+| Every `.from(` site executed | ✅ | Pass | 51/51 |
+| The harness catches behaviour changes in PR 1–5 sites | ✅ | Pass | 35/35 behaviour mutants killed (below) |
+| The harness is not pinned to the text | ✅ | Pass | 4/4 behaviour-preserving refactors green, plus a PR 4 simulation |
+| CR-1 bind error arms pinned | ✅ | Pass | 5/5 error-arm mutants killed. **Note:** 3 bind chain filters are not pinned (Edge case 1) |
+| Not flaky | ✅ | Pass | 5 of 5 runs: 102/102 tests and 100/100 snapshots each time, blob unchanged |
+| C-7 time | ✅ | Pass | About +0.85 s per run (below) |
+| Regression | ✅ | Pass | 56 suites, 937 tests, 100 snapshots |
+
+#### Mutation results: `route.ts` (harness)
+
+"New" is the PR 0 harness. "Base" is the `0c3c1800` harness and snapshot, copied temporarily to show which kills come from PR 0's new entries.
+
+| # | PR | Mutation | New: red tests | Base: red |
+|---|---|---|---|---|
+| M01 | 1 | Claim insert `23505` check changed | 1 (X10) | 0 |
+| M02 | 1 | Claim lookup `.maybeSingle()` → `.single()` | 100 | 45 |
+| M03 | 1 | Claim insert, any other error: returns 500 instead of continuing | 2 (X12, X53) | 0 |
+| M04 | 1 | `completeClaim` drops `completed_at` | 87 | 40 |
+| N01 | 1 | Retry of a failed claim drops `failure_message: null` | 1 (9c) | 1 |
+| N02 | 1 | Release writes `'error'` instead of `'failed'` | 9 | 3 |
+| N03 | 1 | Claim lookup error treated as a duplicate | 1 (X13) | 0 |
+| M05 | 2 | J1 select column list changed | 7 | 2 |
+| M06 | 2 | J4 drops `.eq('user_id')` on `business_profiles` | 2 | 1 |
+| M07 | 2 | J4 language fallback `'en'` → `'he'` | 1 (X52) | 0 |
+| M08 | 2 | I3 error swallowed (no throw, so 200) | 1 (X16) | 0 |
+| M09 | 2 | H1 `.single()` → `.maybeSingle()` | 11 | 6 |
+| N04 | 2 | H8 receipt read column list changed | 3 | 2 |
+| N05 | 2 | K2 update drops `stripe_invoice_pdf` | 5 | 2 |
+| M10 | 3 | Refund upsert `onConflict` changed | 3 | 1 |
+| M11 | 3 | E1 charge-id arm filters another column | 1 (X4) | 0 |
+| M12 | 3 | F1 drops `.limit(1)` | 10 | 8 |
+| M13 | 3 | H5 insert error swallowed | 1 (X32) | 0 |
+| N06 | 3 | D2 `status_before_dispute` always overwritten | 1 (X5) | 0 |
+| N07 | 3 | G2 throws a wrapped error, not the raw one | 1 (X30) | 0 |
+| M14 | 4 | M2 drops the plan `completed_at` write | 1 (X6) | 0 |
+| M15 | 4 | G5 booking update drops `.eq('user_id')` | 2 | 1 |
+| M16 | 4 | G5 booking error thrown (was logged, 200) | 1 (X34) | 0 |
+| M17 | 4 | M1 `.maybeSingle()` → `.single()` | 5 | 1 |
+| M18 | 4 | I5 drops `.eq('user_id', owner)` | 4 | 3 |
+| N08 | 4 | I4 drops `.eq('status', 'pending')` | 2 | 1 |
+| N09 | 4 | G3 drops the `installment_number` filter | 3 | 1 |
+| N10 | 4 | M3 settles only `pending` | 1 | 1 |
+| M19 | 5 | Legacy grace default 3 → 7 | 1 (X55) | 0 |
+| M20 | 5 | A1 `.single()` → `.maybeSingle()` | 3 (X2, X3, X55) | 0 |
+| M21 | 5 | B5 `transaction_id` no longer carries the credit transaction id | 1 (X54) | 0 |
+| M22 | 5 | B4 error thrown (was logged) | 1 (X45) | 0 |
+| M23 | 5 | N1 drops `cancel_at_period_end` | 1 (X1) | 0 |
+| N11 | 5 | A2 config key renamed | 2 | 0 |
+| N12 | 5 | B2 select column list changed | 4 | 1 |
+
+**35 of 35 behaviour mutants killed**: every PR group 1–5, each by at least one snapshot entry, under `--ci`. The pre-PR 0 harness lets **16 of the 35 survive**: M01, M03, N03, M07, M08, M11, M13, N06, N07, M14, M16, M19–M23 and N11. So PR 0 closes real holes in every PR group.
+
+**Survivors (all expected, none a PR 0 gap):**
+
+| # | PR | Mutation | Why it survives |
+|---|---|---|---|
+| L01 | 2 | Remove the I3 `log.error` (the throw is kept) | Logging is excluded from the snapshot on purpose (SA P0-C1) |
+| L02 | 4 | Remove the G5 `log.error`, so the booking error is swallowed silently | Same. Note for PRs 2–4: a repository that stops logging a discarded write error (FU-9, Q-4) is invisible to the harness. Only review and `check-logging-only-diff` (§7.4) can see it |
+| E01 | 2 | K2 error arm: `return` removed | Equivalent: only a `log.info` follows the arm, so the behaviour does not change |
+
+(E02, the D2 error arm with its `return` removed, was killed by X28: the dispute alert then fires.)
+
+#### Behaviour-preserving refactors (must stay green)
+
+| # | PR | Refactor | Result |
+|---|---|---|---|
+| R1 | 1 | Claim lookup and `completeClaim` moved behind a local repository-shaped object (identical chains, patch built in a variable with its keys reordered) | 102/102, 100/100 ✅ |
+| R2 | 4 | M1 read and M2 write moved into local helpers; the M2 patch built key by key in another order | 102/102 ✅ |
+| R3 | 3 | Refund upsert through a wrapper that passes `onConflict` from a local constant | 102/102 ✅ |
+| R4 | 5 | A1 and A2 into arrow helpers (one-line chains); the grace fallback rewritten as `!configData ? DEFAULT_GRACE : …` | 102/102 ✅ |
+| PR4-sim | 4 | **The O-2 contract, end to end:** a temporary copy of `PaymentPlanSubscriptionRepository` with `findEndStateBySubscriptionId` and `endFromStripe` (same chains), and a route copy calling them. Run through the harness **and** `fix1Ownership.qa` | Faithful: 149/149, 100/100 ✅. With one column dropped from the repository's select: 5 red, so the delegation really routes through `mockSupabase` |
+
+#### Mutation results: `bindPlanSubscription.ts` (CR-1 tests, `bindPlanSubscription.test.ts`)
+
+| # | Mutation | Result |
+|---|---|---|
+| B1 | `:431` insert error thrown | killed (CR-1 test 1) |
+| B2 | `:431` insert error returns before the booking link | killed (CR-1 test 1) |
+| B3 | `:454` link error thrown | killed (CR-1 test 2) |
+| B4 | `:483` contact read error thrown | killed (CR-1 test 3) |
+| B5 | Link update drops `.eq('user_id', ownerId)` | killed (CR-1 test 1) |
+| B9 | `resolvePlanRowId` drops `.eq('user_id', ownerId)` | killed (Fix-1b B-3) |
+| **B6** | **`resolveContactId` drops `.eq('user_id', ownerId)`** | **survives** |
+| **B8** | **Installment count drops `.eq('subscription_id', …)`** | **survives** |
+| **B10** | **`resolvePlanRowId` drops `.eq('is_active', true)`** | **survives** |
+| B11 | `resolveContactId` selects `'id, contact_id'` | survives (benign under the mock; same gap as B6) |
+| B7 | Contact read error: falls through to `data?.contact_id ?? null` | survives, equivalent (data is null on error) |
+
+### Issues found
+
+#### Bugs (must fix before commit)
+
+None.
+
+#### Performance issues
+
+None. **C-7 timing**, interleaved runs of a temporary copy of the `0c3c1800` harness and snapshot against the new harness, on the same machine. Pairs 1–3 were noisy (the base took up to 6.1 s) and are left out:
+
+| Pair | Base (47 tests) Jest / wall | New (102 tests) Jest / wall |
+|---|---|---|
+| 4 | 2.92 s / 7.44 s | 4.00 s / 9.62 s |
+| 5 | 2.90 s / 7.28 s | 3.74 s / 7.96 s |
+| 6 | 3.02 s / 7.25 s | 3.80 s / 8.11 s |
+| **Median** | **2.92 s / 7.28 s** | **3.80 s / 8.11 s** |
+
+So about **+0.9 s Jest time and +0.8 s wall time**, which agrees with Dev's +0.9 s. The temporary copies were deleted.
+
+#### Edge cases (recommended; a gap for PR 4, not a PR 0 defect)
+
+1. **Three of bind's query chains are not pinned by any test, and PR 4 moves all three** (`lib/payments/__tests__/bindPlanSubscription.test.ts`). Severity: Medium (B6 is a tenant filter). PR affected: **PR 4**.
+   - Steps to reproduce: in a copy of `bindPlanSubscription.ts`, drop `.eq('user_id', ownerId)` from `resolveContactId` (`:479`). Or drop `.eq('subscription_id', …)` from the installment count (`:146`), or `.eq('is_active', true)` from `resolvePlanRowId` (`:513`). Run the bind tests.
+   - Expected: at least one test goes red, because these are PR 4 sites whose "before" should live on `main`, like the harness.
+   - Actual: all 31 pass. The bind mock answers by table, and no test asserts these chains. Only `mockQueries` (ownership reads) and CR-1's `mockUpdates` are checked.
+   - Why it matters: if PR 4 writes a repository method that is missing one of these filters, and that method's own new unit test (§7.5) pins the same wrong chain, nothing on `main` catches it. B6 would make the contact read unscoped: a booking id from another business would leak its `contact_id` into this owner's periods. Today Fix-1b's vetting of `bookingId` (`vetLinkId`, before this read) hides the hole. The read's own filter is the second line of defence, and no test holds it in place.
+   - Suggested fix (Dev, SA to rule): extend SA's optional CR-1 note. Add one test asserting the full chains of the three reads: count `eq('subscription_id')`; contact `select('contact_id')`, `eq('id')`, `eq('user_id')`; plan fallback `eq('user_id')`, `eq('service_id')`, `eq('is_active', true)`, order and limit. Then re-record the test file's blob in §7.3.1. Doing it in PR 0 keeps that file frozen afterwards. If it waits, PR 4 must add it as its first commit, against the untouched bind.
+2. **Logging is invisible to the harness** (L01, L02). This is by design (P0-C1) and listed only so PRs 2–4 reviewers know the harness cannot prove that a repository keeps logging a discarded write error. §7.4 and code review cover it.
+
+### Test outputs / logs
+
+```text
+Flakiness (5 runs, --ci): each 102 passed / 100 snapshots passed; blob a673a901 after each
+Mutation runner, route.ts: S0 sanity (identical copy) 102/102; 35 behaviour mutants all red; L01, L02, E01 green (expected)
+Base-harness comparison: S0 47/47; 16 of 35 behaviour mutants green on the 0c3c1800 harness
+PR4-sim faithful: Test Suites 2 passed; Tests 149 passed; Snapshots 100 passed
+PR4-sim wrong select: Tests 5 failed, 144 passed; Snapshots 5 failed
+Regression (--ci --runTestsByPath):
+  webhook __tests__ (9 files):       9 suites, 251 tests, 100 snapshots, all passed
+  lib/payments __tests__ (40 files): 40 suites, 636 tests, all passed
+  guards (noBookingGuess, stripeAuditEntries, userSubscriptionsWriteLockdown.qa,
+          userSubscriptionsWriteLockdownMigration, bookingPaymentStatusReaders,
+          noPilotCreditTableReads, mutationOrSelect): 7 suites, 50 tests, all passed
+  Total 56 suites, 937 tests, 100 snapshots (Dev's 55-file set + mutationOrSelect.guard)
+After everything: snapshot a673a901, route.ts df671c4a, every temporary file deleted
+```
+
+### Final status
+
+**Verdict: PASS WITH NOTES.**
+
+- [x] All acceptance criteria pass. The harness kills every behaviour mutant in PR groups 1–5 and stays green under refactors that keep behaviour, so it is fit to prove PRs 1 to 5.
+- [ ] Note for SA/Dev before commit (not blocking): Edge case 1, the three bind query chains PR 4 moves. Recommended in PR 0, so that the frozen test file is the "before". Otherwise it becomes PR 4's first commit.
 
 ---
 
@@ -623,3 +1103,9 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 | 2026-10-07 | Fix-1 implemented (Dev); sequence updated | Fix-1 SA review: F-5 confirmed High, goes to its own PR **Fix-1b** right after Fix-1. Order recorded in §11: Fix-1 → Fix-1b → PR 0 to PR 5 (Fix-2 placed as before). Fix-1 grows the harness snapshot from 28 to 40 entries, so PR 0's "before" is re-recorded on post-Fix-1b `main` |
 | 2026-10-07 | Fix-1b scope addition (Dev) | Fix-1b SA condition C-4: the five pre-existing inline `supabaseServer` queries in `lib/payments/bindPlanSubscription.ts` (CLAUDE.md rule 1) are not fixed in Fix-1b; they join **PR 4** (plans), §9 / §10 / §11 updated. Fix-1b grows the harness snapshot from 40 to 44 entries, so PR 0's "before" counts 44 |
 | 2026-10-07 | FU-5 sequenced; PR 1 note; PR 5 rule-1 scope (Dev, per the FU-5 SA review) | §11: sequence is now Fix-1 → Fix-1b → **FU-5** → PR 0 … PR 5 (FU-5 SA Q-5). FU-5 grows the harness snapshot from 44 to 45 entries, so PR 0's "before" counts 45. PR 1 note: a failed claim release when the DB is fully down leaves the row `processing` (pre-existing). PR 5 scope addition: `resolveAccountOwner`'s reads move behind the existing `StripeConnectRepository` + `PluginConnectionRepository` (new methods, no status filter, resolver signature unchanged), superseding Q-2's tracked follow-up. FU-5 plan and evidence: [BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md) |
+| 2026-10-07 | PR 0 implemented (Dev): harness coverage gaps closed, tests only | §7.3.1 added: plan refreshed against `0c3c1800` (gap list re-derived from a coverage run; X1–X11 kept, 44 more), SA Q-6/C-4 explicit delegation list (`findEndStateBySubscriptionId`, `endFromStripe`, no `Proxy`), `eventPatch` and `dispatch` knobs. 55 new snapshot entries, the 45 existing byte-identical (entry-by-entry hashes), `route.ts` blob unchanged (`df671c4a`). Route coverage 73.09 % / 59.02 % → 91.49 % / 75.6 % (statements / branches); cold `.from(` sites 6 → 0. Suite +0.9 s (C-7). Snapshot blob `a673a901`, harness blob `a7cc9992`. Deviations and questions PR0-Q1 to PR0-Q6 for SA (bind error arms for PR 4; three anchored write runs; delegations in `fix1Ownership.qa` instead of `routerEdgeCases.qa`). Header, §7.2, §10 and §11 updated |
+| 2026-10-07 | SA code review of PR 0 | Approved with one condition (CR-1). SA re-verified on its own: `route.ts` blob `df671c4a` = `origin/main`, no production file in the diff, an entry-by-entry snapshot comparison (45 identical, 55 new, 0 changed), 51/51 `.from(` sites executed, coverage 91.49 % / 75.6 %, 9 webhook suites (251 tests, 100 snapshots) passing, effect sequences sampled across PR groups 1–5. PR0-Q1: the bind error-path tests go **into PR 0** (CR-1), so PR 4 has a "before" on `main`. PR0-Q2–Q5 accepted. PR0-Q6 is a follow-up; Dev may fix it here. C-7 met (+0.9 s, inside an existing shard; confirm on the PR run). O-1 (identical trace pairs) and O-2 (the delegation names are a contract with PR 4) noted |
+| 2026-10-07 | PR 0: SA CR-1 and PR0-Q6 done (Dev) | Three error-path tests in `bindPlanSubscription.test.ts` against the untouched bind (`:431` insert error still links the booking scoped to id + owner; `:454` link error resolves; `:483–484` contact read error projects `contact_id: null`), through the existing mock plus two default-off knobs. 31 tests pass; bind lines 94.36 % → 100 %. Test blob `e87c78f2`, recorded in §7.3.1; PR 4 contract note in §11. PR0-Q6: `as Record<string, string>[]` at `fix1Ownership.qa:595`, scoped `tsc` 0 errors. Regression 55 suites / 934 tests / 100 snapshots; snapshot blob still `a673a901` |
+| 2026-10-07 | SA re-check of CR-1 | CR-1 met. With the knobs off the mock answers as before; the 28 old tests are unedited; the three new tests pin `:431`, `:454` and `:483–484` by outcome. On SA's runs: bind lines 100 %, 31/31 bind tests, and harness + `fix1Ownership.qa` at 149 tests / 100 snapshots, snapshot blob `a673a901`. PR0-Q6 annotation accepted. One optional assertion suggested (the contact read was issued). **Code approved for QA** |
+| 2026-10-07 | QA of PR 0 | **PASS WITH NOTES.** Mutation-tested through temporary copies of `route.ts` loaded by a scratch `moduleNameMapper`, with the real harness unedited. 35/35 behaviour mutants across PR groups 1–5 killed under `--ci`; the `0c3c1800` harness lets 16 of them survive. 4 behaviour-preserving refactors and a PR 4 simulation of the two named delegations (harness + `fix1Ownership.qa`) stay green. Only expected survivors: 2 log-only (P0-C1) and 1 equivalent. Harness 5/5 stable; about +0.9 s (C-7); 51/51 `.from(` executed; regression 56 suites / 937 tests / 100 snapshots. Snapshot `a673a901` and `route.ts` `df671c4a` unchanged. Note: three bind query chains PR 4 moves are not pinned (contact read `user_id`, installment count `subscription_id`, plan fallback `is_active`); recommended in PR 0 |
+| 2026-10-07 | PR 0: QA note (bind read filters) done (Dev) | Three read-chain tests in `bindPlanSubscription.test.ts` pin the full chain of the contact read (`:479` tenant filter), the period count (`:146`) and the plan fallback read (`:513`). The `:483–484` test also asserts that the contact read was issued (SA suggestion). Mutants on a temp copy of bind: each filter removed → exactly its test fails; real bind untouched (`23a38fdd`). 34 tests; regression 55 suites / 937 tests / 100 snapshots; snapshot blob still `a673a901`. Test blob `2e7b9731`, re-recorded in §7.3.1 and the §11 PR 4 note |
