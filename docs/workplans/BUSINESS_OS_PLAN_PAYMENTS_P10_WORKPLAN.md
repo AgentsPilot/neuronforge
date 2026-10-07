@@ -7,8 +7,8 @@
 **Depends on:** P-1 merged (#188, done). `billing_events` live shape answered by the user on 2026-10-04 (C-4, done, §1.3).
 **Prior slices read:** [P-0](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md) (Connect characterisation harness, AST check), [P-1](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P1_WORKPLAN.md) (router, deny by default, what P-1 removed, SA Q-1), [Payment tables lockdown](/docs/workplans/PAYMENT_TABLES_WRITE_LOCKDOWN_WORKPLAN.md) (grant revoke pattern).
 **Date:** 2026-10-05
-**Branch:** `feature/bos-plan-payments-p10` (worktree `neuronforge-invite-s1`), on `origin/main` `f9448054`, **rebased 2026-10-06 onto `origin/main` `4c1b630a`** (§16.9). Created by RM at kickoff. Committed locally on the branch (not pushed) at the user's instruction of 2026-10-06.
-**Status:** P-10a Code Complete (2026-10-05); rebased on `main` and migration renumbered to 20261038 (2026-10-06), waiting for the SA re-check. P-10b not started (after P-10a merges). Evidence: [§16](#16-p-10a-implementation-and-evidence-log).
+**Branch:** `feature/bos-plan-payments-p10` (worktree `neuronforge-invite-s1`), on `origin/main` `f9448054`, **rebased 2026-10-06 onto `origin/main` `4c1b630a`** (§16.9). Created by RM at kickoff. **P-10b:** `feature/bos-plan-payments-p10b` from `origin/main` `49c2e001` (after #234 merged), same worktree (§16b). **Follow-up:** `fix/boost-packs-revoke-browser-select` from `origin/main` `248de6be` (migration 20261039).
+**Status:** **P-10a merged** (PR #234, merge `49c2e001`, 2026-10-06; migration 20261038). **P-10b merged** (PR #238, merge `248de6be`, 2026-10-06). Follow-up migration 20261039 (browser SELECT on `boost_packs` revoked, B-4 / SA Q-7) written, pending review and manual apply. Evidence: [§16](#16-p-10a-implementation-and-evidence-log), [§16b](#16b-p-10b-implementation-and-evidence-log).
 
 ## Overview
 
@@ -43,6 +43,7 @@ P-10b depends on P-10a (the UI stops calling routes that P-10a turns into 410s).
 14. [Questions for SA](#14-questions-for-sa)
 15. [Coordination](#15-coordination)
 16. [P-10a implementation and evidence log](#16-p-10a-implementation-and-evidence-log)
+    - 16b. [P-10b implementation and evidence log](#16b-p-10b-implementation-and-evidence-log)
 17. [SA Review](#sa-review)
 18. [QA Testing Report](#qa-testing-report)
 19. [Commit Info](#commit-info)
@@ -393,9 +394,9 @@ Recorded 2026-10-06 13:16 UTC (user ran the pre-check on production):
 - [x] ✅ E4. Payments requirement (renumbering per C-2, P-10 row, 20261038, CF-3). Reuse plan and boost requirement rows **deferred**, see §16.8. Status Code Complete, uncommitted.
 
 **Phase F: P-10b (after P-10a is merged)**
-- [ ] F1. Delete the dead and V2 billing files; `/v2/billing` redirect.
-- [ ] F2. Reduce `BillingSettings` (§3.7); flag and convert `console.*` on approval.
-- [ ] F3. Read-only guard test; `next build` type check of the touched pages; manual check of `/settings?tab=billing` and `/v2/billing` in the dev server (no purchase controls, history and invoices render, portal button present).
+- [x] ✅ F1. Delete the dead and V2 billing files; `/v2/billing` redirect (§16b.1, importer proof §16b.2).
+- [x] ✅ F2. Reduce `BillingSettings` (§3.7); 69 `console.*` → 0, client Pino logger (Q-6; user told, did not decline).
+- [x] ✅ F3. Read-only guard test + mocked render test; scoped type check of the touched pages (§16b.4). ⬜ **Manual dev-server check owed** (no `.env` in the worktree, so not run by Dev; see §16b.5).
 
 ---
 
@@ -762,6 +763,77 @@ The five P-10a commits were rebased from `f9448054` onto `origin/main` `4c1b630a
 
 **Offir's change and P-10a's surfaces.** Checked across all 31 new commits: no new reader or writer of `billing_events`, `boost_pack_purchases`, `subscription_invoices`, `processed_webhook_events` or `boost_packs` (every `.from()` on them is the same set as at `f9448054`; browser reads of `boost_packs` are still only the two billing components, which keep SELECT). No change to `CreditService`, `sync-subscription`, the freeze route, `user_subscriptions` writes or the Pilot-Credit path. The new `stripe-settlement-gap` cron and `StripeService.listPaidInvoices` are read-only and do not touch the revoked tables. Purge slices 3a/3b classify the four revoked tables `never` and run on the service role, so the grant revoke does not reach them. P-10a's `noPilotCreditTableReads` and `accountFrozenWriters` guards pass over the rebased tree.
 
+## 16b. P-10b implementation and evidence log
+
+Branch `feature/bos-plan-payments-p10b` from `origin/main` `49c2e001` (P-10a, #234, merged). Uncommitted. Scope as §3.7 and §6 P-10b, under SA Q-6 (reduce, keep portal, cancel and reactivate; convert the reduced file's `console.*`).
+
+### 16b.1 What changed, against the plan
+
+| File | Action | Note |
+|---|---|---|
+| `components/settings/PlanManagementTab.tsx` | deleted | 0 importers (§16b.2) |
+| `components/v2/settings/BillingSettingsV2.tsx`, `.css` | deleted | 0 importers; the `.css` was imported only by the `.tsx` |
+| `components/v2/settings/BillingSettingsV2_NEW.tsx` | deleted | only importer was `app/v2/billing/page.tsx` (and the `.bak`) |
+| `components/v2/billing/ModalsV2.tsx`, `StatsCardsV2.tsx` | deleted | only importer was `BillingSettingsV2_NEW` |
+| `components/v2/billing/StorageUsageV2.tsx` | deleted | 0 importers. The `components/v2/billing/` folder is now empty |
+| `app/v2/billing/page.tsx.bak` | deleted | |
+| `app/v2/billing/page.tsx` | replaced | Server component, `redirect('/settings?tab=billing')`. No `'use client'`. The five inbound links (dashboard Pilot Credits card `:775`, run page "Go to Billing" `:1035`, user menu `:180` for non-Business-OS users, two help texts) are untouched and resolve through it |
+| `components/settings/BillingSettings.tsx` | reduced, 2,004 → 1,059 lines (1,108 before B-2) | See below |
+| `components/settings/__tests__/billingSettingsReadOnly.guard.test.ts` | new | §16b.3 |
+| `components/settings/__tests__/BillingSettings.readOnly.render.test.tsx` | new | §16b.3 (not in §6; added to show the screen, jsdom + mocked Supabase and fetch) |
+
+**`BillingSettings` removed:** the Credits tab (custom-credit slider, presets, price breakdown, Start/Update Subscription button calling `create-checkout` / `update-subscription`), the boost-pack list and its Buy Now (`create-checkout`), the browser read of `boost_packs`, the embedded Stripe checkout (Stripe.js `<Script>`, `window.Stripe`, checkout modal), both `sync-subscription` calls (the `?success=true` effect and the checkout `onComplete`), the "Payment Successful" toast (only purchases raised it), the currency lookup and its call to `api.exchangerate-api.com` (it only fed the calculator's converted price), `min_subscription_usd` from the config read, and the unused `UsageAnalytics` import (it was imported but never rendered, so nothing visible changes).
+
+**Kept:** the six figure cards (status, available balance, monthly, boost credits bought earlier, rewards, used: read-only history from `user_subscriptions` and `credit_transactions`), the Subscription tab (dates, next cycle, Update Payment → `create-portal`, Cancel → `cancel-subscription`, the cancel banner with Reactivate → `reactivate-subscription`), both modals, and the Invoices tab (`/api/stripe/invoices`). The default tab is now Subscription. A one-line notice says purchases are no longer available. Copy and styling of the kept parts are unchanged.
+
+**Logging and types:** 69 `console.*` → 0; `createLogger({ module: 'BillingSettings' })` from `@/lib/logger` (as `CreditHistoryPanel`), errors as `{ err }`, invoice failures log the status only. The `any`-typed props and `useState<any[]>` became `SubscriptionInfoTab` prop types and an `InvoiceRow` interface; `catch (error: any)` became `unknown` with a message helper. The three copies of the date formatter became one (`formatLongDate`, accepts `undefined`, which the call sites already passed). `eslint` on the file: 26 warnings → 6 (all pre-existing apostrophes in kept copy), 0 errors.
+
+### 16b.2 Importer proof (before deleting, on `49c2e001`)
+
+`git grep -n -E "PlanManagementTab|BillingSettingsV2|StorageUsageV2|ModalsV2|StatsCardsV2" -- ':!docs'` returned only self-references and these imports: `app/v2/billing/page.tsx:8` and `page.tsx.bak:7` → `BillingSettingsV2_NEW`; `BillingSettingsV2_NEW.tsx:26-27` → `StatsCardsV2`, `ModalsV2`; `BillingSettingsV2.tsx:8` → `./BillingSettingsV2.css`. No importer of `PlanManagementTab`, `BillingSettingsV2` (the `.tsx`) or `StorageUsageV2`. After the change the same grep (excluding the new guard, which lists the paths) returns nothing (exit 1).
+
+Retired routes: `git grep -n -E "/api/stripe/(create-checkout|update-subscription|sync-subscription)" -- app components hooks lib`, excluding the three stub folders and the new tests, returns nothing (exit 1). Before: 5 hits in `BillingSettings.tsx`, 5 in `BillingSettingsV2_NEW.tsx`.
+
+`boost_packs`: the only browser reads were the two billing components; both are gone. Remaining `.from('boost_packs')`: `app/api/admin/boost-packs/route.ts` (service role behind `requireAdmin`) and `StripeService.createBoostPackCheckout` (kept by FR-40, no caller while `create-checkout` answers 410). So the browser SELECT that 20261038 kept (Q-7) has no first-party user left. **Not changed here** (no grant change in P-10b); revoking it is the one-line follow-up SA named in Q-7.
+
+### 16b.3 Tests
+
+| Suite | Cases |
+|---|---|
+| `billingSettingsReadOnly.guard.test.ts` (7) | Non-vacuity (scans `app`, `components`, `hooks`, `lib` incl. `lib/client`; the three stubs are present); no non-test file outside the three stub folders names a retired route; `BillingSettings` has no `boost_packs` read, no Stripe embedded checkout, no `console.*`, imports `createLogger`; it still names `create-portal`, `cancel-subscription`, `reactivate-subscription`, `invoices`; the 8 deleted files stay deleted; `/v2/billing` is a non-client `redirect('/settings?tab=billing')`; negative controls for each offence shape plus two that must pass (a stub's own header, a `create-portal` call) |
+| `BillingSettings.readOnly.render.test.tsx` (7 after B-2) | Renders the notice, balance (120,000 tokens → "12,000"), Subscription and Invoices tabs, Update Payment and Cancel; no Start/Update Subscription, Buy Now, "Need Credits Now", slider or Credits tab. Tables read: `user_subscriptions`, `credit_transactions`, `ais_system_config`, never `boost_packs`; no retired route fetched; no Stripe.js script. `?success=true` no longer triggers a sync. Cancel → `cancel-subscription`; canceling subscription → Reactivate → `reactivate-subscription`; Invoices tab → `/api/stripe/invoices`, empty state |
+
+**Mutation checks.** (a) A probe file `components/__p10b_mutation_probe.tsx` calling `fetch('/api/stripe/sync-subscription')`: the guard FAILED naming it; probe deleted. (b) The pre-P-10b `BillingSettings.tsx` (from `origin/main`) put in place, both suites run: 6 of 13 FAILED (retired-route guard, buy-flow guard, and 4 of 6 render cases); the reduced file copied back and `cmp`-identical.
+
+```text
+npx jest components/settings app/v2 app/settings "app/(protected)/settings" app/api/stripe app/__tests__/tailwind-css-escape --ci
+Test Suites: 17 passed, 17 total
+Tests:       138 passed, 138 total
+Snapshots:   28 passed, 28 total
+
+npx jest components/v2 lib/business-os/__tests__/noPilotCreditTableReads --ci
+Test Suites: 2 passed, 2 total
+Tests:       46 passed, 46 total
+```
+
+(No test exists under `app/settings` or `app/(protected)/settings`; the patterns match nothing and are harmless.)
+
+### 16b.4 Type check and lint
+
+Full-project `tsc --noEmit` runs out of heap on this machine (4 GB default), so the check was scoped: a temporary tsconfig extending the repo's, including `BillingSettings.tsx`, `app/v2/billing/page.tsx`, both new tests and `app/(protected)/settings/page.tsx` (the page that renders the component), run with an 8 GB heap. **0 errors in those files.** 26 errors in files pulled in transitively and not touched (`lib/business-os/LanguageContext.tsx` 24, `components/settings/NotificationsTab.tsx` 1, `ProfileTab.tsx` 1). `eslint` on the changed and new files: 0 errors, 6 warnings (pre-existing apostrophes). Tailwind escape guard green (in the run above).
+
+### 16b.5 Open items and deviations
+
+| # | Item | Owner |
+|---|---|---|
+| B-1 | **Manual check not run by Dev:** the worktree has no `.env*`, so `next dev` cannot reach Supabase. Owed: `/v2/billing` lands on `/settings?tab=billing`; no purchase controls; figures, Subscription tab (portal button) and Invoices render. The mocked render test covers the component, not the page chrome | QA / user |
+| B-2 | ✅ **Resolved (user decision 2026-10-06, "a, delete it").** The hard-coded "Platform Usage" block (fake "Agents 20 / 5 (400.0% used)", "Executions Today 0 / 100", "Storage 150 MB / 500 MB") is deleted from the Subscription tab. It was inline JSX only, so no constant, import or i18n string went with it. The render test now asserts the block is gone and that the Subscription tab still shows Started, Next Billing, Next Cycle Credits, Next Cycle Cost and Active Subscription (7 render cases). `npx jest components/settings app/v2 app/api/stripe --ci`: 16 suites, 133 tests, 28 snapshots green; eslint 0 errors, 6 warnings | Done |
+| B-3 | `fetchBillingData` still reads `user_subscriptions`, `credit_transactions` and `ais_system_config` from the browser client (CLAUDE.md rule 1; pre-existing, RLS-scoped by `user_id`). Not moved behind a route in P-10b (scope); unchanged queries | ✅ Resolved: [PR #240](https://github.com/AgentsPilot/neuronforge/pull/240). Reads moved behind `GET /api/billing/summary` |
+| B-4 | Browser SELECT on `boost_packs` now has no first-party reader (§16b.2). Revoke is a later one-liner per Q-7 | Follow-up |
+| B-5 | `/settings` is the old V1 settings page: a user arriving from the V2 dashboard's Pilot Credits card or the run page's "Go to Billing" lands in different page chrome. As planned (§3.7); noted for the demo | — |
+| B-6 | D-5 (§16.8) deferred docs (reuse plan §4.6 rows and F-18 to F-20 corrections, boost requirement R-7) are still not edited; not part of this task | TL |
+| B-7 | `components/settings/CurrencySelector.tsx:65` comment names `BillingSettings` as a listener of `currencyChanged`; it no longer listens. Harmless (the event is a broadcast); comment left to avoid touching a file with `console.*` outside scope | — |
+
 ---
 
 ## SA Review
@@ -826,6 +898,28 @@ Sizing (3 to 3.5 d, two PRs, P-10b after P-10a merges) accepted.
 | Jest (scoped command) | ✅ 90 suites, 1,911 tests, 35 snapshots passed |
 
 **Nit (fix in passing, does not block):** §16.9 says the route diff has "5 hunks"; it has 3, as §16.4 says.
+
+---
+
+### Code Review — P-10b — 2026-10-06
+
+**Status:** ✅ Code Approved (uncommitted worktree on `origin/main` `49c2e001`, 13 files, +476/−4,197). No must-fix items.
+
+| Check | Result |
+|---|---|
+| Importer proof | ✅ SA grep of `app/ components/ hooks/ lib/` for all 8 deleted paths (incl. `BillingSettingsV2_NEW`, `ModalsV2`, `StatsCardsV2`, `StorageUsageV2`): the only hits are the guard test's `DELETED_FILES` list |
+| Retired routes | ✅ No client code names `create-checkout` / `update-subscription` / `sync-subscription`; the remaining hits are the 410 stubs, server comments and tests |
+| Read-only still works (B-3) | ✅ Queries are the pre-existing ones, unchanged. `user_subscriptions` SELECT is asserted kept by 20261001's post-condition; `credit_transactions` SELECT is kept by 20261004 ("SELECT is kept"); `ais_system_config` is touched by no migration in the repo, and 20261038 touches only `billing_events`, `boost_pack_purchases`, `subscription_invoices`, `processed_webhook_events` and writes on `boost_packs`. Nothing in this diff can newly break them. Rule-1 debt stays a follow-up |
+| Logger (Q-6) | ✅ `createLogger` from `@/lib/logger` is the established client pattern (44 `'use client'` components use it). `@/lib/logger/client` is only a re-export of the same module, so the bundle is identical; `lib/logger.ts` imports only `pino` (browser build) and `./logger/config` (pino only). No server-only module enters the bundle. 0 `console.*`, guard enforces it |
+| Redirect | ✅ Server `redirect('/settings?tab=billing')`; `/settings` is under `(protected)`, whose layout handles signed-out users, and `fetchBillingData` returns early with no user. Settings page reads `?tab=billing` |
+| B-2 fake "Platform Usage" | **Recommend delete.** It shows every paying customer invented figures ("20 / 5, 400% used, −15 remaining") that read as an over-limit warning; wiring real data is a separate feature on a parked surface. Business decision for the user |
+| B-4 `boost_packs` SELECT | Follow-up only (Q-7 one-liner revoke) |
+| Tests | ✅ Guard: non-vacuous tree scan, retired-route callers, buy-flow offences, deletions stay deleted, redirect shape. Render: balances, no purchase controls, no `boost_packs` read, no retired call on `?success=true`, cancel/reactivate/invoices go through their routes. Meaningful |
+| Jest | ✅ `npx jest components/settings app/v2 app/api/stripe components/v2 --ci`: 17 suites, 174 tests, 28 snapshots passed. Full `tsc` OOMs here too (exit 134); relying on Dev's scoped 8 GB run (§16b.4) |
+
+**QA:** only the manual B-1 click-through (signed in: `/v2/billing` → `/settings?tab=billing`, figures + Subscription/portal + Invoices render against real RLS; signed out: lands on login). No further QA cycle warranted.
+
+### Code Approved for QA: Yes (B-1 manual check only)
 
 ---
 
@@ -911,3 +1005,6 @@ scripts/__tests__/check-logging-only-diff.test.ts: 24 passed
 | 2026-10-05 | Created (Dev) | P-10 workplan: TK-2 inventory confirmed against `f9448054`; TK-3 per BQ-P8 (freeze job inert and recorded in the cron registry, no `account_frozen` writer); TK-5 per FR-40 (boost checkout 410, kept); TK-6 already closed, guard added; `sync-subscription` closed (CF-3); migration 20261036 revoking browser grants on four purchase-path tables (plus `boost_packs` writes); split into P-10a (server) and P-10b (UI) |
 | 2026-10-05 | P-10a implemented (Dev) | Code complete, uncommitted, under SA C-1 to C-8: webhook status mirror, three 410 stubs, `StripeService` / `CreditService` deletions and Pino conversion, freeze job inert and permanently unscheduled, TK-6 and `account_frozen` writer guards, migration 20261036 with pre-check, checker, rollback and static test, `--exact` mode for the function-text check. Evidence in §16 (Connect 17 entries identical, `77eaca41…cbfec3f` before and after; P10-1 before-text kept). §3.4 C-8 note; §5.6 C-1 merge gate. Deviations D-1 to D-5 in §16.8 |
 | 2026-10-06 | Rebased on `main` `4c1b630a`; migration renumbered to 20261038 (Dev) | One conflict (`create-checkout`, resolved to P-10a's 410 version). 20261036/37 taken on `main` by the address book. Webhook log floor 134 → 133 (both sides deleted code). Proofs re-run against the new `main`: §16.9 |
+| 2026-10-06 | P-10b implemented (Dev) | Branch `feature/bos-plan-payments-p10b` from `49c2e001`, uncommitted: 8 dead or replaced billing files deleted, `/v2/billing` → server redirect to `/settings?tab=billing`, `BillingSettings` reduced to read-only (no buy, upgrade, boost or sync; portal, cancel, reactivate, invoices kept; 69 `console.*` → Pino), guard + render tests. Evidence and open items B-1 to B-7: §16b |
+| 2026-10-06 | `boost_packs` browser SELECT revoke; doc corrections (Dev) | Branch `fix/boost-packs-revoke-browser-select` from `248de6be`. Migration **20261039** revokes SELECT on `boost_packs` from `anon` and `authenticated` (B-4, SA Q-7 one-liner); policies, RLS and `service_role` unchanged. Pre-check `scripts/precheck-boost-packs-client-select.sql`, checker `scripts/check-boost-packs-client-select-migration.sql`, rollback `supabase/SQL Scripts/20261039_boost_packs_revoke_client_select_rollback.sql`, static test `boost-packs-revoke-client-select.migration.test.ts`. **Pending manual apply.** Once applied, the 20261038 checker's C3 `boost_packs` SELECT rows read FAIL by design (it expects SELECT kept); use the 20261039 checker. Header corrected: P-10a merged (#234), P-10b merged (#238); stale "uncommitted" wording removed. Reuse plan TK-2/3/5/6 outcomes and F-18 to F-20 corrected |
+| 2026-10-07 | B-3 resolved (RM) | `BillingSettings` browser reads of `user_subscriptions`, `credit_transactions` and `ais_system_config` moved behind `GET /api/billing/summary`: [PR #240](https://github.com/AgentsPilot/neuronforge/pull/240). B-4: confirmed `boost_packs` has no browser reader any more (the grant revoke stays in the tidy-up task) |

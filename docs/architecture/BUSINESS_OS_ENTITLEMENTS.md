@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-10-04
+> **Last Updated**: 2026-10-06
 
 ## Overview
 
@@ -77,7 +77,8 @@ Eyal's draft matrix still lives in `__fixtures__/exampleTierMatrix.ts`. It is a 
 3. Add its entry to `presentation` — the customer-facing name per locale and the monthly list price. The config does not validate without one, and the price is for display and admins only: **Stripe is the source of truth from Slice 4**. It also carries three required flags: `shownToCustomers`, `availableToBuy` and `active`. **`active` is FYI only** — an admin marker shown on the Tiers card, and read only through `planActive()`. It changes nothing: `planActive.noEffect.test.ts` proves resolution, the customer view, the pill, the shadow report, invites and the offer are identical with every plan inactive. Deciding what inactive *does* means removing that file's check for each affected surface in the same change.
 4. **Check every capability you are granting against its `lifecycle` in `catalog.ts`.** A tier may **not** grant one that is `not_built`, and the config will **refuse to load** if it does — see below, because this is the step most likely to stop you.
 5. `npm run entitlements:snapshot` to refresh the drift snapshot, and read the diff: it is the record of what the new tier includes.
-6. `npm run test:bos-entitlements`.
+6. **If the tier is sold:** add its Stripe lookup key in `config/planPrices.ts` (a sold tier does not compile without one), run `scripts/setup-bos-plan-prices.ts` against each Stripe account that sells it, then `npm run check-bos-plan-prices`. See [Plan prices in Stripe](#plan-prices-in-stripe-p-2b).
+7. `npm run test:bos-entitlements`.
 
 > ### ⚠️ Step 4 in full: you cannot sell what does not exist
 >
@@ -317,12 +318,25 @@ Plan payments P-2a ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P2_WORK
 
 Plan lookup keys are **code, not env**: the same keys exist in each mode (Q-T1; P-2b).
 
+### Plan prices in Stripe (P-2b)
+
+| Object | What it is |
+|---|---|
+| `config/planPrices.ts` | `PLAN_STRIPE_PRICES`: per tier, the **lookup key** it is sold under (`bos_plan_basic_monthly_usd`, `bos_plan_pro_monthly_usd`) and its **retired** keys (CF-1). Keys only: no price, product or account id anywhere in app code, so the same code serves the sandbox, test mode and live mode. `allPlanLookupKeys()` (at most 10, tested) and `tierForPlanLookupKey()` |
+| `lib/business-os/billing/planPriceCatalog.ts` | The webhook's catalog: the configured keys → the price ids Stripe holds for them. Uses the keys **only while `BUSINESS_OS_PLAN_PRICES_ENABLED` is on** (server-only, default off; [feature flags](/docs/FEATURE_FLAGS.md)). Off is P-1's deny-all, with no Stripe call |
+| `lib/business-os/billing/planPriceCheck.ts` | Pure comparison of each tier's Stripe price with its display price (`presentation.monthlyPriceUsd`): one price, active, monthly, usd, amount in cents, tax exclusive, expected mode |
+| `scripts/setup-bos-plan-prices.ts` | Creates products `bos_plan_<tier>` and the prices, idempotently by lookup key. `sk_test_` only, `--expect-account` required, `--env` file outside every git checkout, dry run unless `--apply`. Refuses to change a price that differs |
+| `npm run check-bos-plan-prices` | Read-only; any key kind; PASS/FAIL per tier and a VERDICT |
+
+**Changing a plan price** (CF-1). A subscriber renews on the price they bought, so the old price must stay recognised: (1) in the PR that changes the display price, add `<lookupKey>_retired_<yyyymmdd>` to that tier's `retiredLookupKeys` and deploy it; (2) in Stripe, move the current price to that retired key (`prices.update({ lookup_key })`); (3) run `setup-bos-plan-prices` to create the new price under the main key; (4) `check-bos-plan-prices` must PASS. Between (2) and (3) checkouts fail closed and renewals still resolve through the retired key.
+
 ---
 
 ## Change History
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-06 | Plan prices in Stripe (plan payments P-2b) | Tier procedure gains step 6 (lookup key in `config/planPrices.ts`, setup script, price check). New § Plan prices in Stripe: lookup-key config with retired keys (CF-1), the catalog's server switch `BUSINESS_OS_PLAN_PRICES_ENABLED`, the price check and the two scripts, and the price-change procedure |
 | 2026-09-26 | S-0 moved two switch-on gates | The missing-plan-row scan is now an exhaustive SQL anti-join (`20261010`), so the admin report and checker row B1 answer from one place; the trim list is worked as a `dormantChampions` report section that proposes an end-access call and cuts nobody |
 | 2026-09-22 | Created | Slice 1 as built: catalog/config, resolver, plan records, shadow mode, report and the admin surface (workplan §4, S1-T16) |
 | 2026-09-27 | Production mode corrected: `shadow`, on purpose | The Overview and the mode table said `BOS_ENTITLEMENTS_MODE` is unset (off) in production. Production resolves it to **`shadow`**, set deliberately to collect data first (admin reorganisation slice 5, RC-5.3 / OQ-8). Added the caveat that a refused `enforce` also runs as `shadow`, and how the Health tile tells the two apart |

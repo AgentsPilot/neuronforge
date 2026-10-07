@@ -1174,7 +1174,7 @@ export default function UsersPage() {
                                     Danger area
                                   </h3>
                                   <p className="text-sm text-slate-400 mb-4">
-                                    Preview what deleting this business would remove and keep, and what refuses it. Nothing is deleted from here.
+                                    Preview what deleting this business would remove and keep, and what refuses it. Deleting needs a typed confirmation in the dialog, and is offered only when nothing refuses it.
                                   </p>
                                   <button
                                     type="button"
@@ -1191,6 +1191,10 @@ export default function UsersPage() {
                                     open={deleteDialogUserId === user.id}
                                     onOpenChange={(next) => setDeleteDialogUserId(next ? user.id : null)}
                                     accountId={user.id}
+                                    onDeleted={() => {
+                                      // FR-A9: after a deletion the row reads "No Business OS business".
+                                      void fetchUsers();
+                                    }}
                                   />
                                 </div>
                               </motion.div>

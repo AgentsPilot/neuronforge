@@ -6,9 +6,9 @@
 **Requirement:** [ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md](/docs/requirements/ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md) §5 AD-2, FR-A4…FR-A9, FR-A11…FR-A13, R-1…R-8, AC-A6…AC-A11 (+ AC-A13's ledger half), D13, UD-1…UD-10, SA-3, SA Review Notes "Notes for AD-2"
 **Engine:** [BUSINESS_OS_BUSINESS_DATA_PURGE_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_BUSINESS_DATA_PURGE_REQUIREMENT.md) (AC-29, FR-28, D4, D7) · [PURGE_SLICE3_PURGE_LEVEL_WORKPLAN.md](/docs/workplans/PURGE_SLICE3_PURGE_LEVEL_WORKPLAN.md) (3b orchestrator `runPurgeCommit`, controls 5–7, OQ-1 (c)) · parent [business-os-business-data-purge.md](/docs/workplans/business-os-business-data-purge.md) §2.5 (token conditions C-6…C-12)
 **Previous slice:** [ADMIN_DELETE_AD1_PREVIEW_WORKPLAN.md](/docs/workplans/ADMIN_DELETE_AD1_PREVIEW_WORKPLAN.md) (D-3 `checkAdminStatus`, Risk 5, SA note on AD-2 audit placement)
-**Branch:** `feature/admin-delete-ad2-commit` (worktree `neuronforge-purge-s3`, from `origin/main` @ `4c1b630a`, which contains purge 3b PR #231)
+**Branch:** `feature/admin-delete-ad2-commit` (worktree `neuronforge-purge-s3`, from `origin/main` @ `4c1b630a`, which contains purge 3b PR #231). AD-2b: `feature/admin-delete-ad2b-dialog`, branched from the AD-2a branch (PR #236, open); its PR targets `main` after #236 merges
 **Date:** 2026-10-06
-**Status:** **AD-2a Code Complete (Dev, 2026-10-06)** — uncommitted on the branch, awaiting SA code review. AD-2b not started. SA workplan review: APPROVED WITH CONDITIONS (below).
+**Status:** **AD-2a Code Complete (Dev, 2026-10-06)** — uncommitted on the branch, awaiting SA code review. **AD-2b Code Complete (Dev, 2026-10-06)** on `feature/admin-delete-ad2b-dialog`, uncommitted, awaiting SA code review + QA. SA workplan review: APPROVED WITH CONDITIONS (below).
 
 ## Overview
 
@@ -276,12 +276,13 @@ The full slice is about **4.5 days**, above the ~4-day limit. Each half ships al
 - [x] ✅ **T13** Requirement splice (insert-only): AD-2a status in §0 / §5; D15 / UD-7 agents note (BQ-2); FR-A12 / AC-A10 wording (T-1); Change History
 
 ### AD-2b
-- [ ] **T14** Dialog: typed input (label names the business or email; compared server-side), commit, progress, keyboard and screen-reader states
-- [ ] **T15** Not-applied line and unknown-state line (G-1 precedent); refusal code → plain message map
-- [ ] **T16** Result screen (FR-A9): rows per area (from snapshot counts, grouped as the preview groups them), storage removed or failed, invites revoked or skipped, what was kept, snapshot reference; row refresh
-- [ ] **T17** Source guards; requirement splice for AD-2b
+- [x] ✅ **T14** Dialog: typed input (label names the business or email; compared server-side), commit, progress, keyboard and screen-reader states
+- [x] ✅ **T15** Not-applied line and unknown-state line (G-1 precedent); refusal code → plain message map
+- [x] ✅ **T16** Result screen (FR-A9): rows per area (from snapshot counts, grouped as the preview groups them), storage removed or failed, invites revoked or skipped, what was kept, snapshot reference; row refresh
+- [x] ✅ **T17** Source guards; requirement splice for AD-2b
 
 ### Post-rotation (not in either PR; owned by the purge T28 sweep plus QA)
+- [ ] **AD-3 scope (SA-2, added 2026-10-06):** when AD-3 closes the login, switch `DELETION_KEPT_CATEGORIES` (preferences, activity history, the login) and `DELETION_RESULT_KEPT`'s login line in `app/admin/users/deletionCopy.ts` back to "closed" wording
 - [ ] Live on a **throwaway** account after B-1 + B-2: AC-A6…AC-A11, AC-A9's purge AC-2/4/22/23/24, AC-A13 ledger half, invites revoked, write-ahead + outcome rows readable by an admin and not by the owner
 
 ---
@@ -440,6 +441,26 @@ Order followed: T4 → T2 → T3 → T5 → T1 → T6 → T7 → T8 → T9 → T
 
 ---
 
+### AD-2b implementation notes (Dev, 2026-10-06)
+
+| Item | What was built |
+|---|---|
+| Offered only with a token (FR-A3) | `confirmableValue(preview)`: a `commitToken`, no `applies` / `unverified` refusal, and a non-empty value to type (`confirmKind` → `target.businessName` or `target.email`). Otherwise the AD-1c footer is unchanged: the confirm is hard-`disabled`, described by "Deletion not yet available: <server reason>" (the switched-off reason is already plain words) |
+| Typed match | Mirrors the server's `normaliseConfirmation` (trim, collapse spaces, lower-case) in `deletionCopy.ts` (`lib/business-os` is forbidden here). Convenience only: the server compares again. Enter cannot bypass it: `onSubmit` returns early unless `canSubmit` |
+| Body | `{ token, confirmText }`. The route is `.strict()` on `confirmText` (AC2-11), so the field is `confirmText`, not `confirmation` |
+| Token | Read from the preview held in component state, sent only in the POST body. Source guard: no storage, cookie, URL params, router or logger in the dialog; no URL template mentions a token |
+| Progress | Button "Deleting…", input and Close disabled, `aria-busy`, status region announces it; Esc / overlay close are ignored while the request runs |
+| Outcomes | **completed** (rows per area grouped by the preview's table → area map, unmapped tables as "Other tables"; storage removed / still stored; invites revoked or "could not be revoked", mid-signup count or "unknown"; a client-side kept list incl. agents; audit yes, or a `role="alert"` NO; snapshot path + correlation id). **refused**: one sentence per code from an exhaustive `Record<DeletionCommitCodeView, string>`, blocking refusal *titles* only, a snapshot-written line, "Reopen the preview" for stale / mismatch / changed codes. **unknown** (a 500, an unknown code, a network failure): "not known whether anything was deleted" — never "nothing was deleted" |
+| Never server text | The server's `message`, `details`, `residue`, `kept` and `notes` are not rendered (source guard + render tests with planted raw strings) |
+| Row refresh | The page passes `onDeleted={() => void fetchUsers()}`, called when the dialog closes after a completed or unknown outcome. Not on success itself: `fetchUsers` sets `loading`, which unmounts the table and would take the result screen with it |
+| Focus | The title receives focus when an outcome renders; the input is labelled (`<Label htmlFor>`) and described by the hint |
+| Wire types | `DeletionCommitCodeView`, `DeletionCommitResultView`, `DeletionCommitRefusalView` in `app/admin/users/types.ts`; the existing `adminDeletionPreview.wireTypes.test.ts` (already in `typecheck:bos-llm` SCOPED_DIRS) now also pins the result and the code union both ways. No new SCOPED_DIRS entry, no added CI time |
+| Preview copy | The kept categories gain "AgentsPilot agents" (UD-14), so the preview shows it too |
+
+**For SA / follow-ups (not changed here, outside AD-2b's files):**
+- `PLATFORM_UNAVAILABLE_REASON` in `AdminDeletionPreview.ts` still says "the confirmation step is not built". With a token the dialog no longer shows it, but it is the reason sent whenever a token is minted. Reword in #236 or a follow-up.
+- `DELETION_KEPT_CATEGORIES` (AD-1c) still says the login is "Closed, not deleted". That is AD-3's behaviour; AD-2 keeps the login open (the result screen says so). Consider rewording the preview line before the switch is flipped.
+
 ## SA Review Notes
 
 **Reviewed by SA — 2026-10-06**
@@ -556,6 +577,60 @@ Reviewed the uncommitted worktree `neuronforge-purge-s3` (`feature/admin-delete-
 
 ---
 
+**Code Review by SA (AD-2b): 2026-10-06**
+**Status:** ✅ Code Approved, on condition that the two copy fixes (comments 1 and 2) land in AD-2b before the user sees the diff
+
+Reviewed the uncommitted worktree `neuronforge-purge-s3` on `feature/admin-delete-ad2b-dialog`, diffed against `feature/admin-delete-ad2-commit` (PR #236). That is 9 files, +1122 / −78. Re-ran `jest app/admin/users`: 10 suites and 278 tests, all green. A first run done in parallel with tsc had load timeouts, and the rerun was clean. Ran `typecheck:bos-llm`: 429 files, 28 baseline errors, **0 new**, passed.
+
+#### Rulings on Dev's choices
+- **Body `{ token, confirmText }`:** accepted. It matches the AD-2a route's `.strict()` schema (AC2-11), and the source guard pins the exact `JSON.stringify`.
+- **List reload when the dialog closes, not when the delete succeeds:** accepted. `fetchUsers` sets `loading`, which unmounts the table along with the result screen. Reloading on close is the only order that lets the admin read the result. Reloading after `unknown` as well is correct.
+- **Client-side match using the server's normalisation:** accepted. `normaliseConfirmText` is identical to `normaliseConfirmation` (trim, collapse whitespace, lower-case). It only enables a button. The server compares again against its own value and is authoritative. The copy is required because the page guard forbids `lib/business-os` imports.
+- **500, unknown code, network failure or unreadable body → "not known whether anything was deleted":** accepted, and it is the right default for a destructive call. `commitRefusalSentence` returns `null` for anything that is neither a commit code nor a route code, and `postCommit` maps that to `unknown`. A 500's `'Internal server error'` is in neither map, so it falls through to `unknown`, as it should.
+
+#### Checks requested by TL (all pass)
+| Check | Verdict | Evidence |
+|---|---|---|
+| No raw server text on the commit path | ✅ | `RefusedBody` renders the copy sentence, refusal *titles*, a fixed snapshot line and the correlation id. `CompletedBody` builds every line from numbers. `message`, `details`, `residue`, `kept` and `notes` are never read (source guard, plus render tests with planted strings). The preview's own `refusal.message` / `clearingAction` remain the AD-1c-approved server wording |
+| Input only with a token and no refusals | ✅ | `confirmableValue` requires `commitToken`, no `applies`/`unverified`, and a non-empty value. `isConfirmable` also requires no outcome. The one `<Input>` sits in the confirmable branch, and the guard pins it |
+| Delete disabled until a match; Enter cannot submit | ✅ | `disabled={!canSubmit}`, and `submit` calls `preventDefault()` then returns unless `canSubmit && commitToken`. The no-token footer is a hard `disabled` with no `onClick` |
+| "Deleting…" blocks close | ✅ | `handleOpenChange` ignores `false` while submitting, which covers Esc, the overlay and the primitive's corner X. Close, the input and the button are disabled, `aria-busy` is set, and the status region announces it |
+| Focus and labels | ✅ | `<Label htmlFor>` names the input, including the value to type, and the hint is linked through `aria-describedby`. Both confirm buttons are described by the single `role="status"` region. The outcome title (`tabIndex=-1`) receives focus. Failures use `role="alert"` |
+| Page source guard (no `lib/business-os` imports) | ✅ | The dialog and `deletionCopy.ts` stay in `SCREEN_FILES`, and the only `lib/business-os` mentions are comments. The guard passes |
+| `'use client'` boundary | ✅ | The dialog's first line, pinned. `deletionCopy.ts` and `types.ts` import types only |
+| Wire-type pin | ✅ | `AdminDeletionCommitCompleted['result']` ↔ `DeletionCommitResultView` and `AdminDeletionCommitCode` ↔ `DeletionCommitCodeView`, checked both ways, in the existing `adminDeletionPreview.wireTypes.test.ts`, which is already in `typecheck:bos-llm` scope. No new scope entry, so **no added CI time**. `Record<DeletionCommitCodeView, string>` makes the copy exhaustive |
+| Token handling (AC2-5) | ✅ | The token is held in component state and the POST body only. The guard bans storage, cookies, URL params, the router and loggers |
+
+#### Code Review Comments
+1. **`lib/business-os/purge/AdminDeletionPreview.ts:84-85, 366-368`: stale reason. Fix in AD-2b (no objection). Priority: Medium (copy is false).** This branch is reached only when a token **was** minted. Prod never reaches it while the switch is off. Replace as follows:
+   - Rename `PLATFORM_UNAVAILABLE_REASON` to `CONFIRMATION_PENDING_REASON`, value `'the typed confirmation below has not been entered yet'`. JSDoc: "The reason sent when a token was minted: only the admin's typed confirmation is missing."
+   - Line 367 (`resetLive === false`): replace the whole template, not just the appended part, with `'the delete function is not installed on this server, so a confirmed deletion will be refused and nothing will be deleted'`. This matches `notAppliedLine`.
+   - Update the render-test fixture (`deleteBusinessDialog.render.test.tsx:332`) and its `not.toHaveTextContent` assertion (`:425`) to the new string. Add one `AdminDeletionPreview.test.ts` pin: token minted → reason `=== CONFIRMATION_PENDING_REASON`.
+2. **`app/admin/users/deletionCopy.ts:71-101` (`DELETION_KEPT_CATEGORIES`): "Closed" login. Fix in AD-2b. Priority: Medium (states AD-3 behaviour under AD-2).** It should read:
+   - Account preferences: `'Language, time zone and notification settings belong to the login, which this deletion leaves in place.'`
+   - Activity history: `'The activity record is kept, with the name on it. Removing the name is part of closing the login, a later step.'`
+   - The login itself: `'Stays open: this deletion does not close the login, so the person can still sign in (to an account with no business) and the email stays taken. Closing the login is a later step.'`
+   - In the doc comment on line 72-73, change "the closed login" to "the login (kept open by AD-2; AD-3 closes it)". AD-3 must flip these lines back, so add a one-line note to that effect in the requirement's AD-3 scope. Update any render assertion on the old text.
+3. `deletionCopy.ts:252` (`commit_failed`): "rolled it back. Nothing was deleted" is certain only when the database itself errored. `!result` also covers a transport failure after the commit. A retry is harmless, so the impact is small. Recommended wording: `'The delete did not report success. A failed delete is rolled back, so nothing should have been deleted. Reload this page to confirm.'`, plus calling `onDeleted` on close for this code. **Priority: Low**, not blocking.
+4. `DeleteBusinessDialog.tsx:460`: `DELETION_REFUSAL_TITLES[r.id] ?? r.id`. The fallback is unreachable under the pinned union. Harmless. **Priority: Low**, optional.
+
+#### Optimisation Suggestions
+- `CompletedBody` trusts the shape of `record.data` on a 200. This is acceptable because it is our route and the type is pinned. A guard such as `Array.isArray(data.storage) && data.rows` would turn a malformed 200 into `unknown` instead of a render crash.
+
+### Code Approved for QA: Yes (comments 1 and 2 to be applied in AD-2b; 3 and 4 optional)
+
+#### Dev fixes for the AD-2b review and QA edges (2026-10-06)
+- [x] ✅ **Comment 1 (SA-1).** Fixed by Dev: `PLATFORM_UNAVAILABLE_REASON` renamed `CONFIRMATION_PENDING_REASON` = 'the typed confirmation below has not been entered yet'; the `resetLive === false` branch now uses a new constant `DELETE_FUNCTION_NOT_INSTALLED_REASON`. **One wording deviation:** it reads "…so a confirmed deletion will be refused before any data is removed", not "…and nothing will be deleted". `descriptors.invariant.test.ts`'s FALSE_REASSURANCE scan forbids "nothing will be deleted" anywhere on the purge surface, and the exact wording failed it. Render fixture and assertion updated. Two new pins in `AdminDeletionPreview.test.ts`: a minted token gets the not-installed reason (probe false) or the pending one (probe true), never "later release / not built".
+- [x] ✅ **Comment 2 (SA-2).** Fixed by Dev: SA's exact wording for preferences, activity history and the login; doc comment now says "the login (kept open by AD-2; AD-3 closes it)". The AD-3 flip-back is noted in AD-3's scope (§5 Post-rotation, and the requirement's AD-3 row, insert-only). Render test pins the "stays open" wording.
+- [x] ✅ **Comment 3 (SA-3).** Fixed by Dev: `commit_failed` copy hedges ("not known whether anything was deleted… Reload this page") and maps to the unknown outcome, so closing reloads the list.
+- [x] ✅ **Comment 4.** Fixed by Dev: unreachable `?? r.id` removed.
+- [x] ✅ **QA: a malformed 200.** Fixed by Dev: `isCommitResult` checks every field the result screen reads before it renders. Anything else is "not known whether anything was deleted" and reloads the list on close. Six malformed shapes are tested.
+- [x] ✅ **QA: double submit.** Fixed by Dev: an `inFlight` ref blocks a second POST in the same tick. Tested with two submits in one `act`, plus a source pin.
+- [x] ✅ **QA: raw-message guard.** Fixed by Dev: the source guard now finds every `message` read (`x.message`, `x?.message`, `(x as T)?.message`, `x['message']`, a destructured `{ message }`), and the only one allowed is the preview's `refusal.message`. Planted samples pin each spelling. A `details` read is caught in the same ways. `residue`, `kept` and `notes` are allowed only as the preview's `t.notes`. `postCommit` must not mention any of them. The preview error state's field is renamed `sentence`.
+- Re-run: `app/admin/users` + `lib/business-os/purge` + `app/api/admin/users` (incl. the commit and preview routes): 31 suites / 710 tests pass. `typecheck:bos-llm` passes (exit 0). Scoped tsc over the 9 touched source and test files: exit 0, 0 errors. eslint exit 0, 0 errors (the 9 pre-existing `page.tsx` warnings).
+
+---
+
 ## QA Testing Report
 
 **QA: 2026-10-06 (AD-2a)**
@@ -625,6 +700,76 @@ No live call was made to any route, and nothing was written to any DB. The temp 
 
 ---
 
+**QA: 2026-10-06 (AD-2b)**
+**Test mode:** full
+**Strategy used:** A + D-substitute. Jest render tests (jsdom + RTL) and the source guard, plus a temporary QA-only render suite (deleted afterwards) and a mutation check. I also read the dialog, the copy and the route's status mapping. **No browser and no live calls**: they need an admin session, and the switch is off in prod. The manual checks are listed below.
+**Focus:** ui, security (token handling, no server text)
+**Skipped:** the browser click-through (§6.5 AD-2b), which is owed by the user. No call was made to any route and nothing was written to any DB.
+**Input source:** prompt keywords (coordinator brief) + workplan §6
+**Code under test:** the tree **before** SA AD-2b comments 1 and 2 were applied. `DELETION_KEPT_CATEGORIES` still says the login is "Closed, not deleted", and `PLATFORM_UNAVAILABLE_REASON` is still the old value. Once those fixes land, re-run `app/admin/users` + `lib/business-os/purge`.
+
+### Test Coverage
+
+| Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| No input without a token, or with any blocking refusal | ✅ | Pass | Render tests "no token (switched off)" and "a token with a blocking refusal" check that there is no input and no form. The source guard pins `confirmableValue`, which requires a token, no `applies`/`unverified` refusal and a non-empty value |
+| The switched-off reason is plain words | ✅ | Pass | Status reads "Deletion not yet available: admin delete is switched off on this server (it stays off until …)". A commit-time `admin_delete_disabled` reads "Admin delete is switched off on this server. Nothing was deleted." |
+| Delete disabled until the normalised match | ✅ | Pass | `Acme`, `Acme Therapy Ltd` and whitespace keep it disabled. `'  acme   THERAPY '` enables it. `normaliseConfirmText` is identical to the server's `normaliseConfirmation` |
+| Enter blocked while disabled | ✅ | Pass | `fireEvent.submit` on a mismatch posts nothing. `submit` returns early unless `canSubmit && commitToken` |
+| POST body is exactly `{ token, confirmText }` to `/api/admin/users/{id}/deletion/commit`, once; no token in any URL | ✅ | Pass | Render test plus source guard. **QA extra:** a double click and an extra submit post once when React flushes between events, as browsers do |
+| Each refusal code → one plain sentence | ✅ | Pass | 11 codes are rendered (`it.each`). **QA extra:** every key of `DELETION_COMMIT_REFUSAL_COPY` and every route code returns a sentence. `Record<DeletionCommitCodeView, string>` plus the both-ways wire pin keeps the map exhaustive |
+| 500, unknown code or network error → "not known whether anything was deleted", and close refreshes | ✅ | Pass | Three render cases. **QA extra:** a 200 with `success:false` and no code, and a 502 with an unparseable body, also give `unknown` |
+| No raw server text | ✅ | Pass | Planted `message`, `details`, `residue`, `kept` and `notes` are absent from the body. The preview's `refusal.message`, `clearingAction` and `limitations` are still rendered: that is server wording approved in AD-1c, not commit text |
+| "Deleting…" blocks Esc, the overlay, the corner X and Close | ✅ | Pass | Esc is in the render test. **QA extra:** overlay pointer-down/click, the primitive's corner "Close" and "Close preview" during a pending commit: `onOpenChange(false)` is never called |
+| Result screen: counts per area, kept list (incl. agents), invites revoked + mid-signup (or unknown), residue, audit recorded | ✅ | Pass | Rows per area plus "Other tables", storage "7 files removed; 2 could not be removed", invites 3 / 1 or "could not be revoked" / "unknown", kept list including AgentsPilot agents, audit "yes" or a `role="alert"` "NO", snapshot path and correlation id. Focus moves to the title |
+| Reopen re-fetches the preview | ✅ | Pass | "Reopen the preview" fetches the preview a second time and clears the input. **QA extra:** closing the dialog and opening it again after a refusal also re-fetches; the stale refusal was gone by the first act-flushed render |
+| The list reloads on close | ✅ | Pass | `onDeleted` fires once on close after success or `unknown`. **QA extra:** it does not fire after a refusal. `page.tsx` passes `() => void fetchUsers()` |
+| Mutation: render the raw server error | ✅ | Pass | In `postCommit` I planted `record.message ?? commitRefusalSentence(...)`. Render suite: **13 failed / 80 passed**. Restored from a backup copy, and `cmp` confirms the file is byte-identical. Note: the **source guard stayed green** on this plant, because its regex `record\.message` does not match `(record as …)?.message`. The render tests are the real net |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+- None in AD-2b's code. SA comments 1 and 2 are still pending. They are SA conditions rather than QA findings, but until they land the preview kept list ("The login itself: Closed, not deleted") contradicts the result screen ("The login: it stays open") **inside the same dialog**. Re-run QA's suites after they land.
+
+#### Performance Issues (should fix)
+- None. One preview POST per open or reopen, and one commit POST per confirm.
+
+#### Edge Cases (nice to fix)
+1. **`commit_failed` claims certainty** (= SA comment 3, Low). `BusinessPurgeRepository.executePurge` returns `result: null` on *any* RPC error, including a transport failure after a server-side commit. The dialog then says "rolled it back. Nothing was deleted" and does not refresh the list on close. Take SA's hedged wording, and add `commit_failed` to the codes that call `onDeleted`.
+2. **A malformed 200 crashes the render** (= SA optimisation). `CompletedBody` reads `result.rows.byTable` and `result.storage` without checking them. A shape guard → `unknown` would be safer.
+3. **Double submit relies on the re-render.** There is no ref or in-flight guard in `submit`. A real browser flushes between clicks, so this is not reproducible there, but two submits batched in one React task do post twice (shown in a QA test that wrapped both clicks in one `act`). The server's R-7 lock and the single-use flow bound the damage. Optional: a `useRef` in-flight flag.
+4. **The source guard's no-server-text regex is shape-sensitive** (see the mutation row). Optional: also ban `\.message\b` reads outside `PreviewBody`, or rely on the render tests by design.
+
+### Manual checks left for the user (browser, admin session; switch ON only on a non-prod or throwaway setup)
+1. Switch off (prod today): open Delete… on a business. There is no input, the confirm is disabled, and the status reads "Deletion not yet available: admin delete is switched off…".
+2. Switch on, nothing blocking: the input appears, labelled with the business name (or the email if there is no name), and the "delete function is not installed" line shows. Delete enables only on a match. Enter does nothing on a mismatch.
+3. Confirm against an environment where the RPC is not applied: "Deleting…" shows and Esc / overlay / X do nothing. Then "Nothing was deleted" with the not-installed sentence. Close: the row is unchanged.
+4. Keyboard only: Tab order is input → Close → Delete; focus lands on the outcome title; a screen reader announces the status region.
+5. Dark styling of the input, the rose confirm box and the result screen on the admin shell (no light fallback).
+6. Post-rotation (throwaway account): the real result screen counts, invites and audit line, and the row reads "No Business OS business" after close.
+
+### Test Outputs / Logs
+
+| Run | Result |
+|---|---|
+| `jest app/admin/users lib/business-os/purge app/api/admin/users/[id]/deletion` | **27 suites / 638 tests, all green** (incl. `deleteBusinessDialog.render`, `source.guard`, `adminDeletionPreview.wireTypes`, commit + preview route tests) |
+| QA temporary suite (`zz.qa-ad2b.test.tsx`, deleted) | 7/7 after the double-click case was corrected to per-event flushing; the batched variant posts twice (Edge Case 3) |
+| Mutation (raw server message) | render 13 failed / source guard green; restored, `cmp` identical |
+| `npm run typecheck:bos-llm` | passed: 429 files, 28 baseline, **0 new** (the `onboarding/build` baseline entry is fixed, as before) |
+| `npm run test:authz-guard` | 119/119 |
+| `npx tsc --noEmit -p .` (8 GB heap; the default heap OOMs with exit 134) | exit 2, 1,938 pre-existing errors, **0 in any changed file** |
+| eslint, the 7 changed source and test files | exit 0, 0 errors. 9 warnings in `page.tsx`, all on lines outside the AD-2b hunk (pre-existing) |
+| `npm run test:bos-entitlements` | not required: no import from `lib/business-os/entitlements/` |
+| Full `npm test` | 17 failed suites. 11 are in `jest-quarantine.json`. Of the 6 outside it: `oneAddressPolicy.guard`, `addressFormat` and `AdminAreaField.render`/`.search` are the known Windows-environment failures. `app/admin/archiving/page.render` and `jobs-queues/qa-slice5-pr2.route` failed under load and **pass alone** (39/39). None come from AD-2b |
+
+`git status` is unchanged apart from this report. No commit, no stash, no DB writes.
+
+### Final Status
+- [x] All acceptance criteria tested in Jest pass. AD-2b is ready for the user's diff view **once SA comments 1 and 2 land and the `app/admin/users` + `lib/business-os/purge` suites are re-run green**. Edge Cases 1–4 are optional (1 = SA Low 3). The browser checks above are owed by the user.
+- [ ] Issues found: Dev must address before commit
+
+---
+
 ## Commit Info
 
 *(RM populates. Dev leaves all changes uncommitted until the user has seen the diff.)*
@@ -640,3 +785,7 @@ No live call was made to any route, and nothing was written to any DB. The temp 
 | 2026-10-06 | **AD-2a code complete (Dev)** | BQ-1…BQ-4 answered by the user and recorded (requirement UD-12…UD-15). T1–T13 done, uncommitted: preview token + canonical JSON, shared facts, preview mints the token (switch on only), `agents: false`, R-8 delete graph, fresh admin read, shared fail-closed confirmation (internal route's email log removed), orchestrator admin arm with the required gate, `writeNow`, `BUSINESS_DELETION_STARTED`, invite bulk revoke + skipped count, commit composition + route, off switch, census row 98 (95 / 89 + 6 / 66). Inactive: switch default off, RPC held; `supabase/migrations` untouched |
 | 2026-10-06 | **SA code review AD-2a: ✅ Code Approved** | All AC2-1…AC2-14 met. Dev rulings accepted (stale token 409 / wrong 400; profile read error 500 on both surfaces; flag in `featureFlags.ts`; `auditDetail` stripped on the admin arm). The 202 deleted lines are verified as moves (helpers to `adminDeletionFacts.ts`, confirmation to `confirmation.ts`) plus planned replacements. `oneAddressPolicy.guard` failure confirmed environment-only (Windows path separator in the guard's `relative()`). 1 Low: `skippedMidSignup` should be null when the revoke failed |
 | 2026-10-06 | QA Medium fixed (coordinator) | The two repository allow-list guards updated: `authAccountRepository.callers.guard` adds `AdminDeletionCommit.ts`, its test and the commit route test; the billing guard names `adminDeletionFacts.ts` (the read moved there verbatim) in sorted position. `lib/repositories` + purge + admin users = 83 suites / 1,723 tests green; `test:authz-guard` 119/119; eslint exit 0. SA Low (`skippedMidSignup` null on revoke failure) applied by the coordinator, test added by QA |
+| 2026-10-06 | **AD-2b code complete (Dev)** | T14–T17 on `feature/admin-delete-ad2b-dialog` (from the AD-2a branch), uncommitted, no PR. Typed confirmation only with a token and no blocking refusal; `{ token, confirmText }` to the commit route; progress, completed / refused / unknown outcomes, every code a plain sentence, no server text rendered; row refresh on close; commit wire types pinned in the existing wire-type test. Render tests +27, source guard rewritten for AD-2b. Follow-ups noted for SA (stale `PLATFORM_UNAVAILABLE_REASON`, preview's "login closed" kept line) |
+| 2026-10-06 | **SA code review AD-2b: ✅ Code Approved (conditional)** | Rulings accepted: `{ token, confirmText }`, reload on close, client match on the server's normalisation (server authoritative), 500/unknown/network → "not known". All TL checks pass; 278/278 admin users tests; `typecheck:bos-llm` 0 new. Conditions, both to land IN AD-2b: (1) `PLATFORM_UNAVAILABLE_REASON` becomes `CONFIRMATION_PENDING_REASON` = "the typed confirmation below has not been entered yet", and the not-installed variant is reworded; (2) the preview kept list says the login stays open under AD-2. Low: hedge the `commit_failed` copy |
+| 2026-10-06 | **QA AD-2b: pass (pending SA comments 1–2)** | 27 suites / 638 tests green; QA extras (overlay/X/Close blocked while deleting, refused close does not reload, every code has a sentence, 200-no-code and unparseable 502 → unknown, close+reopen re-fetches); mutation (raw message) → 13 render failures, restored byte-exact; `typecheck:bos-llm` 0 new; authz 119/119; tsc 0 in changed files; eslint 0 errors; full `npm test` nothing new outside quarantine. Edge: `commit_failed` certainty (= SA 3), malformed-200 crash, no in-flight ref, guard regex shape-sensitive. Browser checks owed by user |
+| 2026-10-06 | **AD-2b review fixes (Dev)** | SA comments 1–4 and QA edges applied, uncommitted: confirmation-pending / not-installed preview reasons (one wording deviation, forced by the FALSE_REASSURANCE invariant), "login stays open" kept lines (AD-3 flip-back noted), hedged `commit_failed`, malformed-200 guard, in-flight ref, stricter raw-message source guard. 31 suites / 710 tests, `typecheck:bos-llm`, scoped tsc and eslint all exit 0 |

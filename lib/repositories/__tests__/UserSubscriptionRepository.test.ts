@@ -232,3 +232,42 @@ describe('UserSubscriptionRepository.applyFreeTierGrant (U3)', () => {
     expect(res.error).toBe(dbErr);
   });
 });
+
+describe('UserSubscriptionRepository.findBillingSummaryByUserId (billing summary, B-3)', () => {
+  const ROW = {
+    balance: 120000,
+    total_spent: 80000,
+    status: 'active',
+    created_at: '2026-01-01T00:00:00.000Z',
+    current_period_start: '2026-09-01T00:00:00.000Z',
+    current_period_end: '2026-11-01T00:00:00.000Z',
+    cancel_at_period_end: false,
+    monthly_credits: 20000,
+    monthly_amount_usd: 10,
+  };
+
+  it('reads the allow-listed columns of the caller row, with maybeSingle', async () => {
+    const { client, calls } = mockSupabase({ data: ROW, error: null });
+    const res = await new UserSubscriptionRepository(client).findBillingSummaryByUserId(USER);
+    expect(res).toEqual({ data: ROW, error: null });
+    expect(calls.table).toBe('user_subscriptions');
+    expect(calls.filters).toEqual([['eq', 'user_id', USER]]);
+    expect(calls.terminal).toBe('maybeSingle');
+    // Exactly the columns the billing screen shows: no select('*'), no Stripe ids.
+    expect(calls.select!.split(',').map((c) => c.trim()).sort()).toEqual(Object.keys(ROW).sort());
+  });
+
+  it('no row is data: null with no error', async () => {
+    const { client } = mockSupabase({ data: null, error: null });
+    const res = await new UserSubscriptionRepository(client).findBillingSummaryByUserId(USER);
+    expect(res).toEqual({ data: null, error: null });
+  });
+
+  it('returns { error } on a DB error, never throws', async () => {
+    const dbErr = { code: 'PGRST116', message: 'more than one row' };
+    const { client } = mockSupabase({ data: null, error: dbErr });
+    const res = await new UserSubscriptionRepository(client).findBillingSummaryByUserId(USER);
+    expect(res.data).toBeNull();
+    expect(res.error).toBe(dbErr);
+  });
+});

@@ -404,6 +404,17 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['codeBoostPackageSource', 'BOOST_PURCHASE_CAP_DEFAULT'],
       why: 'Credits boost slice 3: the production wiring of the boost checkout hands it the catalogue loader and the default purchase cap. Neither reads a plan or a capability; the checkout refuses an invalid catalogue and a purchase over the cap, never a plan. If this file ever reads a snapshot or calls `check()`, it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Plan payments P-2b, 2026-10-06 — plan prices in Stripe ─────────────
+    {
+      file: 'lib/business-os/billing/planPriceCatalog.ts',
+      symbols: ['TierId', 'allPlanLookupKeys', 'tierForPlanLookupKey'],
+      why: 'Plan payments P-2b (workplan §3.3): the webhook price catalog reads the configured plan LOOKUP KEYS (`allPlanLookupKeys`) to ask Stripe which price ids are plan prices, and re-exports the key-to-tier mapping (`tierForPlanLookupKey`, `TierId` type) for P-3b. It maps Stripe price ids to plan names for the router and resolves no account; it refuses nothing by plan. If it ever calls `check()` / `decide()`, it is a gate and moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/billing/planPriceCheck.ts',
+      symbols: ['PLAN_STRIPE_PRICES', 'PlanStripePrice', 'TIER_MATRIX', 'TIER_ORDER', 'TierId'],
+      why: 'Plan payments P-2b (workplan §3.4, SA-P12): a pure comparison of each tier\'s Stripe price with its DISPLAY price (`TIER_MATRIX.presentation.monthlyPriceUsd`), used by the price scripts and later by the P-3a checkout check. It reads configuration for comparison, resolves no account and refuses nothing by plan.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */

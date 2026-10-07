@@ -1,5 +1,6 @@
 // lib/repositories/UserSubscriptionRepository.ts
-// Repository for `user_subscriptions` — currently only the once-only free-tier grant.
+// Repository for `user_subscriptions` — the once-only free-tier grant, plus two
+// reads (the GDPR export and the Settings billing summary).
 //
 // SERVICE ROLE, ON PURPOSE. This repository defaults to `supabaseServer`, which
 // bypasses RLS. A user must never be able to write their own `balance`, so the
@@ -11,6 +12,10 @@
 //      Nothing is spread from caller or DB objects, `id` is never written, and
 //      `account_frozen` is written only on a brand-new row (as `false`).
 // See docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md §2.4 / §2.8.
+//
+// The billing-summary read is the exception to the service-role default: its
+// route injects the caller's RLS client (createAuthenticatedServerClient), so
+// RLS still applies on top of the `.eq('user_id', userId)` scope.
 //
 // Server-only: never import from a 'use client' file.
 
@@ -24,6 +29,7 @@ import type {
   FreeTierNewRow,
   FreeTierNewRowValues,
   FreeTierUpdateOutcome,
+  UserSubscriptionBillingSummary,
   UserSubscriptionGrantState,
 } from './types';
 
@@ -54,6 +60,16 @@ const SUBSCRIPTION_DATA_EXPORT_COLUMNS =
 
 /** Postgres unique_violation. Matched on the code only, never the message (SA RC-2). */
 const PG_UNIQUE_VIOLATION = '23505';
+
+/**
+ * What the Settings billing screen shows (findBillingSummaryByUserId). Exactly
+ * the columns BillingSettings reads — the browser used to `select('*')`, which
+ * also handed it the Stripe ids. Every name here is also in
+ * SUBSCRIPTION_DATA_EXPORT_COLUMNS, which a live route already selects.
+ */
+const BILLING_SUMMARY_COLUMNS =
+  'balance, total_spent, status, created_at, current_period_start, current_period_end, ' +
+  'cancel_at_period_end, monthly_credits, monthly_amount_usd';
 
 const GRANT_STATE_COLUMNS =
   'user_id, balance, total_earned, storage_quota_mb, executions_quota, account_frozen, free_tier_granted_at';
@@ -222,6 +238,30 @@ export class UserSubscriptionRepository {
       return { data: data as unknown as Record<string, unknown>, error: null };
     } catch (error) {
       this.logger.error({ err: error, userId, method: 'findForUserDataExport' }, 'Failed to read the subscription for the data export');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Settings billing screen (GET /api/billing/summary). A READ of the caller's
+   * row, BILLING_SUMMARY_COLUMNS only. `data: null` with no error = no row, which
+   * the screen shows as "no subscription" (the browser's old `.single()` read
+   * also yielded null there). `maybeSingle()` errors on more than one row.
+   */
+  async findBillingSummaryByUserId(
+    userId: string
+  ): Promise<RepositoryResult<UserSubscriptionBillingSummary | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('user_subscriptions')
+        .select(BILLING_SUMMARY_COLUMNS)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data as UserSubscriptionBillingSummary | null) ?? null, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId, method: 'findBillingSummaryByUserId' }, 'Failed to read the billing summary');
       return { data: null, error: error as Error };
     }
   }

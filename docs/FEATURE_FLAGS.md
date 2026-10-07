@@ -11,7 +11,8 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
-| 2026-10-06 | 1.7.0 | Dev | Added `BUSINESS_OS_CREDITS_BOOST_ENABLED` and `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` (credits boost slice 3): the boost checkout's server-only kill switch, default off, and an optional allow-list of account UUIDs. **Stays unset on Vercel until slice 4a is deployed** (SA C-1). |
+| 2026-10-06 | 1.8.0 | Dev | Added `BUSINESS_OS_CREDITS_BOOST_ENABLED` and `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` (credits boost slice 3): the boost checkout's server-only kill switch, default off, and an optional allow-list of account UUIDs. **Stays unset on Vercel until slice 4a is deployed** (SA C-1). |
+| 2026-10-06 | 1.7.0 | Dev | Added `BUSINESS_OS_PLAN_PRICES_ENABLED` (plan payments P-2b, merge safety): server-only, default off. While off the webhook's plan price catalog looks up no lookup key and calls no Stripe API, exactly P-1's deny-all. Turned on per environment only after `npm run check-bos-plan-prices` passes against that environment's Stripe account. |
 | 2026-10-06 | 1.6.0 | Dev | Added `ADMIN_BUSINESS_DELETE_ENABLED` (admin delete AD-2a, BQ-1): admin delete's **own off switch**, server-only, default off. Checked by `POST /api/admin/users/[id]/deletion/commit` before token verification; while off the preview mints no commit token and the commit refuses `admin_delete_disabled`. Stays off for real customers until AD-3 (close the login) and the data export ship, even after the delete function is applied. |
 | 2026-10-02 | 1.5.0 | Dev | Added `NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY` (credit deduction slice 7a). The owner's Credit history is **parked by the user's decision of 2026-10-02 — shipped dark behind this flag**, default off: the Credits card draws no link and `GET /api/business-os/credits/history` answers 404. Two readers: `isBusinessOsCreditHistoryEnabled()` (client, rendering) and `isCreditHistoryRouteEnabled()` (server, the route). |
 | 2026-09-29 | 1.4.0 | Dev | Added `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (invite-only signup Slice 3b, "Continue with Google" on a champion invite). A client id rather than a boolean: set means on. Deliberately separate from the plugin's `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (SA Q-3, R-6). |
@@ -54,6 +55,7 @@ Feature flag functions are defined in:
 | **Business OS: Credit history** (parked) | `NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY` | Client + Server | `false` (unset = off) | `/business-os` Credits card, `/api/business-os/credits/history` |
 | **Admin delete (admin surface)** | `ADMIN_BUSINESS_DELETE_ENABLED` | **Server only** | `false` (unset = off) | `/api/admin/users/[id]/deletion/preview` (token minting), `/api/admin/users/[id]/deletion/commit` |
 | **Business OS: Credits boost checkout** | `BUSINESS_OS_CREDITS_BOOST_ENABLED` (+ optional `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS`) | **Server only** | `false` (unset = off) | `POST /api/business-os/credits/boost/checkout` |
+| **Business OS: plan price recognition** | `BUSINESS_OS_PLAN_PRICES_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/stripe/webhook` (plan price catalog in the Business OS router) |
 
 ---
 
@@ -279,6 +281,39 @@ ADMIN_BUSINESS_DELETE_ENABLED=false
 BUSINESS_OS_CREDITS_BOOST_ENABLED=false
 # BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS=<uuid>,<uuid>
 ```
+
+---
+
+### Business OS: plan price recognition — `BUSINESS_OS_PLAN_PRICES_ENABLED`
+
+Plan payments P-2b. **Default: off. Server-only.** Reader:
+`isPlanPriceRecognitionEnabled()` in `lib/business-os/billing/planPricesFlag.ts`
+(`parseBooleanFlag`; imports nothing else), read on every catalog load.
+
+The plan lookup keys (`bos_plan_basic_monthly_usd`, `bos_plan_pro_monthly_usd`)
+are code, in `lib/business-os/entitlements/config/planPrices.ts`. This switch
+decides whether the webhook's plan price catalog **uses** them:
+
+| State | What the webhook does on a platform `invoice.paid` / `invoice.payment_failed` |
+|---|---|
+| Off (default) | Looks up nothing and calls no Stripe API. Every platform plan invoice is denied (`unknown_price`), exactly as in P-1 |
+| On | One cached `prices.list` call by lookup key against the account behind `STRIPE_SECRET_KEY`. A Stripe error throws, so the webhook answers 500 and Stripe retries; it never becomes a deny. A configured key with no price logs `bos_billing_lookup_key_missing` at `error` with `alert: true`. **Until P-3b ships** no plan handler is registered: a RECOGNISED plan invoice is logged `bos_billing_plan_unhandled`, released, answered 500 and retried by Stripe for days |
+
+**Keep it OFF in production until P-3b ships** (SA P-2b review F-1), unless that retry loop is intended (the P-3a demo). The reader is `isPlanPriceRecognitionEnabled()`.
+
+**Turn it on in an environment only after** `npm run check-bos-plan-prices --
+--env <file outside the repo> --expect-account acct_...` shows `VERDICT PASS`
+against **that environment's** Stripe account. Local development uses the
+"AgentsPilot sandbox" account (user decision 2026-10-06). Production stays off
+until production's own Stripe account has the prices (plan payments
+requirement §9.5).
+
+```bash
+# .env.local — on only when this key's account passes check-bos-plan-prices
+BUSINESS_OS_PLAN_PRICES_ENABLED=false
+```
+
+---
 
 ### Invite: Continue with Google — `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`
 

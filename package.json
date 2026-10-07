@@ -29,6 +29,7 @@
     "package:smoke": "tsx --env-file=.env.local scripts/package-quote-smoke.ts",
     "typecheck:bos-llm": "tsx scripts/typecheck-bos-llm.ts",
     "check:bos-llm-literals": "tsx scripts/check-bos-llm-literals.ts",
+    "check-bos-plan-prices": "tsx scripts/check-bos-plan-prices.ts",
     "bos:llm-settings": "tsx --import ./scripts/env-preload.ts scripts/bos-llm-settings.ts",
     "backfill:intensity": "tsx scripts/backfill-agent-intensity.ts",
     "backfill:intensity:history": "tsx scripts/backfill-intensity-from-history.ts",
