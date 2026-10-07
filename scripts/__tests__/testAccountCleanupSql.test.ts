@@ -17,7 +17,8 @@
  * Workplan: docs/workplans/TEST_ACCOUNT_CLEANUP_SCRIPT_WORKPLAN.md
  */
 
-import { readFileSync } from 'fs';
+import { createHash } from 'crypto';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {
   ACTOR_FOREIGN_KEYS,
@@ -32,8 +33,12 @@ import {
   INBOUND_FOREIGN_KEYS,
   MUST_BE_EMPTY,
   PARENT_OWNED_REASONS,
+  FUNCTION_REQUIRED_TABLES,
   FUNCTION_SIGNATURE,
+  INITIAL_FUNCTION_MIGRATION,
   MIGRATION_FILE,
+  PREVIOUS_FUNCTION_MIGRATION,
+  PREVIOUS_MIGRATION_FILE,
   PLACEHOLDER_EMAIL,
   ROLLBACK_FILE,
   SECRET_ROW_NAME,
@@ -46,6 +51,7 @@ import {
   buildDeleteReportJson,
   buildDeleteReportQuery,
   cleanupFunctionVersion,
+  previousFunctionSql,
   renderCheckSql,
   renderDeleteSql,
   renderMigrationSql,
@@ -74,6 +80,7 @@ const FILES: ReadonlyArray<[string, string]> = [
 ];
 const migrationSql = readSql(MIGRATION_FILE);
 const rollbackSql = readSql(ROLLBACK_FILE);
+const previousMigrationSql = readSql(PREVIOUS_MIGRATION_FILE);
 
 const plan = buildCleanupPlan();
 const position = (table: string) => plan.findIndex((entry) => entry.table === table);
@@ -469,21 +476,21 @@ describe('SQL editor hygiene (SA C-6, C-10, C-11)', () => {
 });
 
 describe('the secret-gated function (SA re-ruling R-2 to R-4, R-6)', () => {
-  const fn = migrationSql.slice(migrationSql.indexOf('CREATE FUNCTION'), migrationSql.indexOf('$operator_cleanup$;'));
+  const fn = migrationSql.slice(migrationSql.indexOf('CREATE OR REPLACE FUNCTION'), migrationSql.indexOf('$operator_cleanup$;'));
   const head = fn.slice(0, fn.indexOf('IF p_mode = \'check\' THEN\n    v_result'));
 
   it('is SECURITY DEFINER with search_path pg_catalog, public, pg_temp (pg_temp last), returning jsonb', () => {
     // Not '': the reviewed delete triggers (refund recompute, storage quota) name
     // their tables without a schema and must resolve them as they do today (SA review).
     expect(fn).toContain(
-      'CREATE FUNCTION public.operator_test_account_cleanup(p_mode text, p_email text, p_tag text, p_confirm text, p_actor uuid, p_secret text)\nRETURNS jsonb\nLANGUAGE plpgsql\nVOLATILE\nSECURITY DEFINER\nSET search_path = pg_catalog, public, pg_temp\n'
+      'CREATE OR REPLACE FUNCTION public.operator_test_account_cleanup(p_mode text, p_email text, p_tag text, p_confirm text, p_actor uuid, p_secret text)\nRETURNS jsonb\nLANGUAGE plpgsql\nVOLATILE\nSECURITY DEFINER\nSET search_path = pg_catalog, public, pg_temp\n'
     );
   });
 
   it('starts by aborting when anon or authenticated may CREATE in schema public (SA review)', () => {
     const guard = migrationSql.indexOf('DO $create_guard$');
     expect(guard).toBeGreaterThan(0);
-    expect(guard).toBeLessThan(migrationSql.indexOf('CREATE SCHEMA operator_private;'));
+    expect(guard).toBeLessThan(migrationSql.indexOf('CREATE OR REPLACE FUNCTION'));
     expect(migrationSql).toContain(
       "IF pg_catalog.has_schema_privilege('anon', 'public', 'CREATE') OR pg_catalog.has_schema_privilege('authenticated', 'public', 'CREATE') THEN"
     );
@@ -498,13 +505,39 @@ describe('the secret-gated function (SA re-ruling R-2 to R-4, R-6)', () => {
     expect(fn).not.toMatch(/(FROM|JOIN|INSERT INTO|DELETE FROM)\s+(audit_trail|admin_users|secrets|users|objects)\b/);
   });
 
-  it('creates its private schema loudly and locks the secret table', () => {
-    expect(migrationSql).toContain('CREATE SCHEMA operator_private;');
+  it('replaces only the function: never creates, alters or drops the schema or the secret table', () => {
+    // The schema, the secret table and its RLS were created by the applied
+    // initial migration (pinned below). Re-running them would fail, or worse,
+    // drop the stored hash and disarm the routes.
+    expect(migrationSql).not.toMatch(/CREATE (SCHEMA|TABLE)|ALTER TABLE|DROP |TRUNCATE|DELETE FROM operator_private/i);
     expect(migrationSql).not.toMatch(/IF NOT EXISTS/i);
-    expect(migrationSql).toContain('REVOKE ALL ON SCHEMA operator_private FROM PUBLIC, anon, authenticated, service_role;');
-    expect(migrationSql).toContain('ALTER TABLE operator_private.secrets ENABLE ROW LEVEL SECURITY;');
-    expect(migrationSql).toContain('REVOKE ALL ON TABLE operator_private.secrets FROM PUBLIC, anon, authenticated, service_role;');
     expect(migrationSql).not.toMatch(/CREATE POLICY/i);
+    expect(migrationSql.match(/CREATE OR REPLACE FUNCTION/g)).toHaveLength(1);
+  });
+
+  it('refuses, before replacing anything, until the initial migration and every required table are applied', () => {
+    const guard = migrationSql.slice(migrationSql.indexOf('DO $order_guard$'), migrationSql.indexOf('$order_guard$;'));
+    expect(migrationSql.indexOf('DO $order_guard$')).toBeGreaterThan(0);
+    expect(migrationSql.indexOf('$order_guard$;')).toBeLessThan(migrationSql.indexOf('CREATE OR REPLACE FUNCTION'));
+    expect(guard).toContain(
+      `IF pg_catalog.to_regclass('operator_private.secrets') IS NULL OR pg_catalog.to_regprocedure('${FUNCTION_SIGNATURE}') IS NULL THEN\n    RAISE EXCEPTION 'Apply ${INITIAL_FUNCTION_MIGRATION} first  Nothing was applied';`
+    );
+    for (const required of FUNCTION_REQUIRED_TABLES) {
+      expect(guard).toContain(
+        `IF pg_catalog.to_regclass('public.${required.table}') IS NULL THEN\n    RAISE EXCEPTION 'Apply ${required.migration} first  Nothing was applied';`
+      );
+    }
+  });
+
+  it('names each required table with the migration that really creates it, and really uses it', () => {
+    expect(FUNCTION_REQUIRED_TABLES.length).toBeGreaterThan(0);
+    for (const required of FUNCTION_REQUIRED_TABLES) {
+      const file = `supabase/migrations/${required.migration}.sql`;
+      expect([file, existsSync(join(REPO, ...file.split('/')))]).toEqual([file, true]);
+      expect(readSql(file)).toContain(`CREATE TABLE public.${required.table} (`);
+      expect(fn).toContain(`public.${required.table}`);
+      expect(required.reason.length).toBeGreaterThan(20);
+    }
   });
 
   it('grants EXECUTE to service_role only, then reloads the schema cache last', () => {
@@ -550,18 +583,55 @@ describe('the secret-gated function (SA re-ruling R-2 to R-4, R-6)', () => {
     expect(fn).toContain(`pg_catalog.jsonb_build_object('version', '${CLEANUP_FUNCTION_VERSION}', 'mode', p_mode, 'rows'`);
   });
 
-  it('the rollback drops the function, the table and the schema, then reloads', () => {
-    expect(rollbackSql).toContain(`DROP FUNCTION IF EXISTS ${FUNCTION_SIGNATURE};`);
-    expect(rollbackSql).toContain('DROP TABLE IF EXISTS operator_private.secrets;');
-    expect(rollbackSql).toContain('DROP SCHEMA IF EXISTS operator_private;');
+  it('the rollback restores the previous applied function byte for byte, keeps the secret, then reloads', () => {
+    const restored = previousFunctionSql(previousMigrationSql);
+    // The previous function, only its CREATE turned into CREATE OR REPLACE.
+    const close = '\n$operator_cleanup$';
+    expect(restored.replace('CREATE OR REPLACE FUNCTION', 'CREATE FUNCTION')).toBe(
+      previousMigrationSql.slice(previousMigrationSql.indexOf('CREATE FUNCTION'), previousMigrationSql.indexOf(`${close};`) + close.length)
+    );
+    expect(rollbackSql).toContain(`\n${restored};\n`);
+    expect(rollbackSql).toBe(renderRollbackSql(previousMigrationSql));
+    // It restores an older stamp, never the one this build pins.
+    expect(restored).not.toContain(`'${CLEANUP_FUNCTION_VERSION}'`);
+    expect(restored).toMatch(/jsonb_build_object\('version', '[0-9a-f]{16}', 'mode'/);
+    expect(rollbackSql).not.toMatch(/DROP |CREATE (SCHEMA|TABLE)|operator_private\.secrets\s*\(/i);
+    expect(rollbackSql).toContain(`ALTER FUNCTION ${FUNCTION_SIGNATURE} OWNER TO postgres;`);
+    expect(rollbackSql).toContain(`REVOKE ALL ON FUNCTION ${FUNCTION_SIGNATURE} FROM PUBLIC, anon, authenticated;`);
+    expect(rollbackSql.match(/^GRANT .*$/gm) ?? []).toEqual([`GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE} TO service_role;`]);
     expect(rollbackSql.trimEnd().endsWith("NOTIFY pgrst, 'reload schema';")).toBe(true);
+  });
+});
+
+describe('applied history: a function migration is never edited once applied', () => {
+  // sha256 of the LF-normalised file as applied to prod. If this fails, the
+  // applied file was edited: put it back from origin/main, and put the change
+  // in a NEW dated FUNCTION_MIGRATION instead. When a newer migration becomes
+  // applied history, add it here with its own hash.
+  const APPLIED: ReadonlyArray<[string, string]> = [
+    [`supabase/migrations/${INITIAL_FUNCTION_MIGRATION}.sql`, '19df58138f21362ed57f8f6bba4af889067ba2b2dd64a305ae56cc9fe08ec15e'],
+    [`supabase/SQL Scripts/${INITIAL_FUNCTION_MIGRATION}_rollback.sql`, 'f8573a4d29f35e131a369f77e072a27b08822ef06dcb94c7fd39d01c27ea62f1'],
+  ];
+
+  it.each(APPLIED)('%s is byte-identical to what was applied', (file, sha256) => {
+    expect(createHash('sha256').update(readSql(file)).digest('hex')).toBe(sha256);
+  });
+
+  it('the generator writes a newer file than every applied one, and rolls back to the previous', () => {
+    const applied = APPLIED.map(([file]) => file);
+    expect(applied).not.toContain(MIGRATION_FILE);
+    expect(applied).not.toContain(ROLLBACK_FILE);
+    expect(applied).toContain(PREVIOUS_MIGRATION_FILE);
+    // Dated names sort by date: the new file must be later than the one it replaces.
+    expect(MIGRATION_FILE > PREVIOUS_MIGRATION_FILE).toBe(true);
   });
 });
 
 describe('paste safety of the migration and rollback (SA C-6, R-1)', () => {
   const SQL: ReadonlyArray<[string, string, number]> = [
     [MIGRATION_FILE, migrationSql, 1],
-    [ROLLBACK_FILE, rollbackSql, 0],
+    // The restored previous function carries the same single audit insert.
+    [ROLLBACK_FILE, rollbackSql, 1],
   ];
 
   it.each(SQL)('%s has "into" only as the audit INSERT INTO keyword', (_file, sql, expected) => {

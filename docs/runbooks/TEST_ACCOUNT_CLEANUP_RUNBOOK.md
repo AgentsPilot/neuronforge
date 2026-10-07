@@ -90,7 +90,31 @@ The admin routes call one database function, `public.operator_test_account_clean
 
 ### 6.1 Apply the migration
 
-Paste `supabase/migrations/20261041_operator_test_account_cleanup.sql` into the Supabase SQL editor and run it once. It ends with `NOTIFY pgrst, 'reload schema'`. It fails loudly if the schema `operator_private` already exists: stop and ask engineering.
+Paste `supabase/migrations/20261041_operator_test_account_cleanup.sql` into the Supabase SQL editor and run it once. It ends with `NOTIFY pgrst, 'reload schema'`. It fails loudly if the schema `operator_private` already exists: stop and ask engineering. Then apply every newer function version in date order (6.1.1).
+
+### 6.1.1 Apply a newer function version
+
+When the cleanup plan changes after 20261041 was applied, the change ships as a NEW dated migration that replaces only the function (`CREATE OR REPLACE`). The schema, the secret table and the stored hash stay, so 6.2 to 6.4 are not repeated. The generator constant `FUNCTION_MIGRATION` names the newest one; the applied files are never edited (a test pins their bytes).
+
+| Version | Adds | Apply after |
+|---|---|---|
+| `20261042_operator_test_account_cleanup_billing_events.sql` | `business_os_billing_events` (plan payments P-3b.1): guard G-5 counts its live rows, and the plan removes its rows | `20261041_operator_test_account_cleanup.sql` **and** `20261027_business_os_billing_events.sql` |
+
+The migration checks this itself: it refuses, and applies nothing, with `Apply <migration> first` until both are in place.
+
+**Timing with the deploy.** The app pins the stamp the function returns (`lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts`). While the database function and the deployed build disagree, the Danger Zone check and delete refuse (they fail closed, nothing is removed). So apply the new version right before the build that pins it goes to Production (for 20261042: after 20261027, before the P-3b.1 deploy). The pasted check and delete files of that build also need the new tables, so do not paste them before 20261027 either.
+
+To see which version the database holds, run this read-only query and compare `applied_version` with `CLEANUP_FUNCTION_VERSION` in the file above:
+
+```sql
+SELECT
+  pg_catalog.split_part(pg_catalog.split_part(proc.prosrc, 'jsonb_build_object(''version'', ''', 2), '''', 1) AS applied_version,
+  pg_catalog.strpos(proc.prosrc, 'business_os_billing_events') > 0 AS knows_billing_events
+FROM pg_catalog.pg_proc AS proc
+WHERE proc.oid = 'public.operator_test_account_cleanup(text, text, text, text, uuid, text)'::regprocedure;
+```
+
+After 20261042 the expected answer is the 20261042 stamp and `true`. Then rerun the lock check (6.5): it must still answer `false, false, true, false`.
 
 ### 6.2 Make the secret and its hash, on your own computer
 
@@ -166,7 +190,9 @@ On a `+test` account only: run one check, then one delete, from the Danger Zone 
 
 ### 6.7 Roll back
 
-Run `supabase/SQL Scripts/20261041_operator_test_account_cleanup_rollback.sql` in the SQL editor. It drops the function, the secret table and the schema. Then remove `TEST_CLEANUP_SECRET` from Vercel and redeploy. The pasted files above keep working without either.
+**One version back.** Run the newest version's rollback, for example `supabase/SQL Scripts/20261042_operator_test_account_cleanup_billing_events_rollback.sql`. It restores the previous function byte for byte and keeps the schema, the secret table and the hash. Redeploy a build that pins the previous stamp, or the Danger Zone refuses.
+
+**The whole feature.** Roll back each newer version first (newest first), then run `supabase/SQL Scripts/20261041_operator_test_account_cleanup_rollback.sql` in the SQL editor. It drops the function, the secret table and the schema. Then remove `TEST_CLEANUP_SECRET` from Vercel and redeploy. The pasted files above keep working without either.
 
 ## What blocks, and why
 
@@ -197,6 +223,7 @@ Run `supabase/SQL Scripts/20261041_operator_test_account_cleanup_rollback.sql` i
 
 | Date | Change | Details |
 |---|---|---|
+| 2026-10-07 | Section 6.1.1, function versions | 20261041 is applied history (bytes pinned by test). Plan changes ship as a new dated `CREATE OR REPLACE` migration: 20261042 adds `business_os_billing_events` (plan payments P-3b.1), refuses until 20261041 and 20261027 are applied, keeps the secret. Version query, deploy timing, one-version-back rollback |
 | 2026-10-07 | Section 6.6 introspection | Required read-only step before the first live delete (login triggers, storage-quota trigger source), first target with a refund and a quota row (SA review) |
 | 2026-10-07 | OX-1r, section 6 | The same logic also runs from the admin-only `/api/admin/test-account-cleanup/*` routes through one secret-gated function (SA re-ruling R-7, R-9). Section 6: migration, secret and hash (PowerShell), Vercel Production only, lock checks, timeout check, one live run, rollback. The audit row reads the actor and the source from settings; pasted, it writes `actor_id` NULL and `source` `operator_sql` as before |
 | 2026-10-07 | Per-table report | The delete ends with one row per removed table and a TOTAL row (user request) |
