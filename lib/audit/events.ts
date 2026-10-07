@@ -146,6 +146,13 @@ export const AUDIT_EVENTS = {
   // that timed out can also land late. Only BUSINESS_DATA_PURGED records a
   // completed deletion.
   BUSINESS_DELETION_STARTED: 'BUSINESS_DELETION_STARTED',
+  // Operator exception OX-1: one TEST account (its email contains the test tag)
+  // removed completely, login included, by scripts/test-account-cleanup-delete.sql
+  // pasted by hand. Never written by app code. Entity type 'user', id = the
+  // removed login. user_id and actor_id are NULL (no signed-in operator, and
+  // the login no longer exists). Details carry table and row counts, never an
+  // email. The SQL literal is pinned to this registration by test.
+  BUSINESS_TEST_ACCOUNT_REMOVED: 'BUSINESS_TEST_ACCOUNT_REMOVED',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -876,6 +883,12 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['GDPR', 'SOC2'],
     description: 'An admin started deleting a business (write-ahead; only BUSINESS_DATA_PURGED records completion)',
+  },
+  // OX-1. 'warning': a login and all its data were removed outside the product.
+  [AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An operator removed a test account completely, login included (operator SQL)',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',
