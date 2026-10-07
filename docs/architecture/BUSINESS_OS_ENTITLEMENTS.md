@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-10-06
+> **Last Updated**: 2026-10-07
 
 ## Overview
 
@@ -287,17 +287,19 @@ What is left of a lot is **always rebuilt from rows**: credits granted minus its
 
 **Boost crediting (credits boost slice 2b).** Migration `20261031` adds three `SECURITY INVOKER` functions, EXECUTE to `service_role` only, and none takes an account id: each returns the purchase row's own account. `business_os_credit_boost_purchase` locks the purchase row and cross-checks what Stripe reported against the row's snapshot (session, payment intent, mode, currency, amounts), never the catalogue. It then writes exactly one lot through `business_os_record_credit_lot` (source `boost_purchase`, key `boost:<session id>`, actor `stripe_webhook`) and marks the row `paid`. A replay answers `already_credited`. Every deterministic problem, including a lot key already used for other credits, flags the row `flagged_mismatch` with a code and returns normally; only a database failure raises. `business_os_transition_boost_purchase` moves unpaid, failed, expired, refund and dispute states along a fixed table and never touches a lot. A dispute won restores the status from the refunded amount. `business_os_record_boost_receipt` fills the charge id and receipt link once. No boost function takes the lots lock `business_os_credit_lots:<user_id>`, and no lots writer locks a purchase row. [Workplan](/docs/workplans/BUSINESS_OS_CREDITS_BOOST_SLICE_2B_WORKPLAN.md).
 
+**Boost checkout (credits boost slice 3).** `POST /api/business-os/credits/boost/checkout` with `{ packageId }` starts a purchase. Behind the server-only flag `BUSINESS_OS_CREDITS_BOOST_ENABLED` (default off; **unset on Vercel until slice 4a is deployed**) and an optional test-account list, it checks the payment hold (fail closed), reads the package through `codeBoostPackageSource()`, and reserves it under `BOOST_PURCHASE_CAP_DEFAULT`. It then creates a Stripe embedded checkout session (USD, inline price, tax-exclusive, Adaptive Pricing off, no customer, our purchase id as the reference) and attaches the session to the reservation. Two files import from this module, both registered non-gates: `lib/business-os/boost/boostCheckout.ts` (types) and `boostCheckoutDeps.ts` (the loader and the cap). They refuse by catalogue validity and the cap, never by plan. [Workplan](/docs/workplans/BUSINESS_OS_CREDITS_BOOST_SLICE_3_WORKPLAN.md).
+
 ---
 
 ## Billing: the plan billing record and Stripe settings
 
-Plan payments P-2a ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P2_WORKPLAN.md), [requirement](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) SA-P1 as amended by P-2 Q-1/Q-2). **Status: inert.** No route reads or writes the table; the migration `20261025` is applied by hand (pre-check, migration in a new tab, checker) before P-2a merges.
+Plan payments P-2a ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P2_WORKPLAN.md), [requirement](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) SA-P1 as amended by P-2 Q-1/Q-2). **Status:** the migration `20261025` is applied (checker PASS, user, 2026-10-04). Since P-3a the plan checkout route reads and writes the table, behind a server switch that is off in production (§ Plan checkout below).
 
 | Object | What it is |
 |---|---|
 | `business_os_billing_accounts` | One row **per account per Stripe mode** (UNIQUE `user_id, livemode`; surrogate `id` primary key). The Business OS Stripe customer (`stripe_customer_id`, UNIQUE, never the agent-platform customer) and, from P-3a/P-3b, the plan subscription and a display mirror of its state. RLS on with **no policy and no client grant**; `service_role` holds SELECT, INSERT, and UPDATE on 17 columns only, so `id`, `user_id`, `livemode` and `created_at` can never be rewritten. No DELETE. Checker: `scripts/check-bos-billing-accounts-migration.sql` |
-| `BusinessOsBillingAccountRepository` | `findByUser(userId, livemode)` and `recordCustomer` only (three-field insert). A source guard lists the files allowed to name it |
-| `ensureBusinessOsStripeCustomer` (`lib/business-os/billing/businessOsStripeCustomer.ts`) | The account's Business OS Stripe customer in the current mode: the stored row, or one Stripe create (idempotency key `bos-customer:<userId>`, metadata `product`/`bos_user_id`, never `user_id`) through the shared `StripeService.findOrCreatePlatformCustomer`. No route calls it until P-3a |
+| `BusinessOsBillingAccountRepository` | `findByUser(userId, livemode)`, `recordCustomer` (three-field insert), and since P-3a the compare-and-set `acquireCheckoutLock` and `replaceCustomer`. A source guard lists the files allowed to name it |
+| `ensureBusinessOsStripeCustomer` (`lib/business-os/billing/businessOsStripeCustomer.ts`) | The account's Business OS Stripe customer in the current mode: the stored row, or one Stripe create (idempotency key `bos-customer:<userId>`, metadata `product`/`bos_user_id`, never `user_id`) through the shared `StripeService.findOrCreatePlatformCustomer`. Called by the plan checkout (P-3a), which passes the session's user id and email |
 | `stripeModeFromKey` / `currentStripeMode` (`stripeMode.ts`) | `test` for `sk_test_`/`rk_test_`, `live` for `sk_live_`/`rk_live_`; anything else throws |
 
 **Lifecycle.** `never` in the purge registry and keyed to `auth.users`, so a business Reset cannot reach it (it would orphan a subscription that keeps charging). On account deletion it is **minimised**: `user_id` is set to NULL by the foreign key, and `stripe_customer_id` is kept for reconciliation with Stripe.
@@ -328,12 +330,29 @@ Plan lookup keys are **code, not env**: the same keys exist in each mode (Q-T1; 
 
 **Changing a plan price** (CF-1). A subscriber renews on the price they bought, so the old price must stay recognised: (1) in the PR that changes the display price, add `<lookupKey>_retired_<yyyymmdd>` to that tier's `retiredLookupKeys` and deploy it; (2) in Stripe, move the current price to that retired key (`prices.update({ lookup_key })`); (3) run `setup-bos-plan-prices` to create the new price under the main key; (4) `check-bos-plan-prices` must PASS. Between (2) and (3) checkouts fail closed and renewals still resolve through the retired key.
 
+### Plan checkout (P-3a)
+
+Plan payments P-3a ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P3A_WORKPLAN.md)). **Status: behind `BUSINESS_OS_PLAN_CHECKOUT_ENABLED`, off in production.** It opens a checkout; it assigns no plan (P-3b).
+
+| Object | What it is |
+|---|---|
+| `POST /api/business-os/billing/plan/checkout` | Strict body `{ tier, returnTo }`; `returnTo` names one of three surfaces (`settings_plan`, `awaiting_payment`, `test_harness`) mapped to fixed server paths, never a URL. Account, user and email from the session only. 404 while the flag is off. Audits `BOS_BILLING_CHECKOUT_STARTED` with `logAndFlush` before the 200; refusals are logged, not audited |
+| `lib/business-os/billing/planCheckout.ts` | The orchestration. Order (every database read before any Stripe call): price switch on, Stripe mode known, payment hold, plan row present, billing row; then the record's live subscription or unexpired lock; then the runtime price check, the customer, Stripe's own live-subscription list (all pages; a partial answer refuses), the session, and the lock |
+| `planCheckoutEligibility.ts` | Not held: every tier with a Stripe price. Held by a friend invite: the friend tier only (`INVITE_ISSUANCE_POLICY.account.grantId`). Held by an admin Paid invite: refused until P-9. Hold unreadable: refused (fail closed) |
+| `planCheckoutPrice.ts` | The tier's current lookup key must resolve to exactly one Stripe price equal to the display price (`planPriceCheck.priceProblems`); a passing price is cached 60 s |
+| The checkout lock | `open_checkout_session_id` / `open_checkout_expires_at`, written by **compare-and-set** (`acquireCheckoutLock`: same customer, and no lock or an expired one) **after** the session exists, holding **Stripe's** returned expiry. The session is created with `expires_at` = now + 31 minutes. A lost race expires the new session at Stripe and never returns its client secret |
+| Customer replacement | When Stripe answers `resource_missing` for the stored customer (from the subscription list or the session create), `replaceBusinessOsStripeCustomer` creates a new one under `bos-customer:<userId>:replaces:<oldId>` and swaps it by compare-and-set on the old id (clearing the subscription mirror and the lock). Once per request, then one retry |
+| The session | `mode: subscription`, `ui_mode: embedded`, card only, `adaptive_pricing.enabled: false`, metadata and subscription metadata exactly `product` + `bos_user_id`. No anchor, proration, trial, promotion, tax or currency parameter |
+
+Both repository updates use `{ count: 'exact' }` and **no `.select()`**: UPDATE + `.or()` + `.select()` fails with 42703 in production.
+
 ---
 
 ## Change History
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-07 | Plan checkout (plan payments P-3a) | New § Plan checkout: the route behind `BUSINESS_OS_PLAN_CHECKOUT_ENABLED`, the check order, held-friend eligibility, the runtime price check, the compare-and-set checkout lock and customer replacement, and the session parameters. Billing status line updated (the table is now written by a route) |
 | 2026-10-06 | Plan prices in Stripe (plan payments P-2b) | Tier procedure gains step 6 (lookup key in `config/planPrices.ts`, setup script, price check). New § Plan prices in Stripe: lookup-key config with retired keys (CF-1), the catalog's server switch `BUSINESS_OS_PLAN_PRICES_ENABLED`, the price check and the two scripts, and the price-change procedure |
 | 2026-09-26 | S-0 moved two switch-on gates | The missing-plan-row scan is now an exhaustive SQL anti-join (`20261010`), so the admin report and checker row B1 answer from one place; the trim list is worked as a `dormantChampions` report section that proposes an end-access call and cuts nobody |
 | 2026-09-22 | Created | Slice 1 as built: catalog/config, resolver, plan records, shadow mode, report and the admin surface (workplan §4, S1-T16) |
@@ -370,3 +389,4 @@ Plan lookup keys are **code, not env**: the same keys exist in each mode (Q-T1; 
 | 2026-10-04 | Metering: the retail rate and the boost catalogue (credits boost slice 1) | One paragraph at the end of § Metering: `creditRetail.ts`, `retailRate.ts`, `boostPackages.ts`, `boostCatalogue.ts`, lazy fail-closed validation, the append-only package snapshot; no importer outside the module yet |
 | 2026-10-05 | Metering: boost purchases (credits boost slice 2a) | One paragraph at the end of § Metering: `business_os_boost_purchases` and `business_os_boost_cap_overrides` (migration 20261030), the five write functions and the boost cap lock, column-level grants, owner column read, lifecycle verdicts; lots untouched |
 | 2026-10-06 | Metering: boost crediting (credits boost slice 2b) | One paragraph at the end of § Metering: migration 20261031, the credit, transition and receipt functions, flag-not-throw for deterministic problems, no lots lock |
+| 2026-10-06 | Metering: boost checkout (credits boost slice 3) | One paragraph at the end of § Metering: the checkout route, its flag and allow-list, and the two registered non-gate importers |

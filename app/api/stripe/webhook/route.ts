@@ -12,6 +12,7 @@ import { resolveAccountOwner } from '@/lib/payments/stripeAccountContext';
 import { notifyOwnerOfDispute } from '@/lib/services/DisputeAlertService';
 import { subscriptionIdFromInvoice, subscriptionMetadataFromInvoice } from '@/lib/payments/invoiceSubscription';
 import { bindPlanSubscription } from '@/lib/payments/bindPlanSubscription';
+import { vetLinkId } from '@/lib/payments/ownedLinkId';
 import { fromMinorUnits } from '@/lib/payments/refundMath';
 import { resolveInvoicePaymentIntent } from '@/lib/payments/invoicePaymentIntent';
 import { syncBookingsForTransactions } from '@/lib/payments/syncBookingPaymentState';
@@ -602,9 +603,12 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
 /**
  * A link id from metadata, kept only if `ownerId` owns the row it names.
  *
- * Absent → null, nothing read. Not owned, or not readable → null and one error
- * line saying which (`reason`), so a dropped link can be found and, if it was a
- * transient failure, repaired. The id is logged; it is ours, not personal data.
+ * Absent → null, nothing read. Not UUID-shaped → null, nothing read, reason
+ * `malformed`: it cannot name a row, and only its LENGTH is logged, because an
+ * arbitrary metadata value is not one of our ids. Not owned, or not readable →
+ * null and one error line saying which (`reason`), so a dropped link can be
+ * found and, if it was a transient failure, repaired. A UUID-shaped id is
+ * logged; it is ours, not personal data.
  */
 async function ownedOrNull(
   rawId: string | undefined,
@@ -614,13 +618,16 @@ async function ownedOrNull(
   context: { connectAccountId: string; paymentIntentId: string },
   log: Logger
 ): Promise<string | null> {
-  if (!rawId) return null;
-
-  const { data, error } = await findOwnedId(rawId, ownerId);
-  if (data) return data;
+  const { id, reason } = await vetLinkId(rawId, ownerId, findOwnedId);
+  if (!reason) return id;
 
   log.error(
-    { ...context, field, id: rawId, reason: error ? 'read_failed' : 'not_owned' },
+    {
+      ...context,
+      field,
+      ...(reason === 'malformed' ? { idLength: (rawId ?? '').length } : { id: rawId }),
+      reason,
+    },
     'payment_intent.succeeded link not proved to belong to the owner - dropping it'
   );
   return null;

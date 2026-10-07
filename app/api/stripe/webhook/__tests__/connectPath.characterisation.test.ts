@@ -337,13 +337,22 @@ const PLATFORM_INVOICE = {
 };
 
 /**
- * Fix-1 (F-4): `payment-intent-succeeded.json` names contact `ct-1`, booking
- * `bk-0002` and service `svc-2`; these answers say `owner-a` owns all three.
+ * Fix-1 (F-4): `payment-intent-succeeded.json` names contact `LINK_CONTACT`,
+ * booking `LINK_BOOKING` and service `LINK_SERVICE`; these answers say
+ * `owner-a` owns all three.
+ *
+ * UUID-shaped since Fix-1b: a non-UUID link id is now dropped as `malformed`
+ * before any read. The values appear nowhere in the pre-Fix-1b
+ * snapshot, so mapping them back to the old `ct-1` / `bk-0002` / `svc-2`
+ * reproduces the pre-Fix-1b snapshot entries exactly (SA C-2).
  */
+const LINK_CONTACT = 'c7c7c7c7-0001-4000-8000-00000000c701';
+const LINK_BOOKING = 'b7b7b7b7-0002-4000-8000-00000000b702';
+const LINK_SERVICE = 'e7e7e7e7-0002-4000-8000-00000000e702';
 const OWNED_LINKS: Record<string, Answer> = {
-  'crm_contacts:select': ok({ id: 'ct-1' }),
-  'scheduling_bookings:select': ok({ id: 'bk-0002' }),
-  'scheduling_services:select': ok({ id: 'svc-2' }),
+  'crm_contacts:select': ok({ id: LINK_CONTACT }),
+  'scheduling_bookings:select': ok({ id: LINK_BOOKING }),
+  'scheduling_services:select': ok({ id: LINK_SERVICE }),
 };
 
 // ─── Scenarios ───────────────────────────────────────────────────────────────
@@ -939,10 +948,10 @@ describe('Stripe webhook, Fix-1: ids the sending business cannot prove it owns',
     expect(result).toMatchSnapshot();
     expect(statusOf(result)).toBe(200);
     const row = insertPayload(result, 'payment_transactions');
-    expect(row).toMatchObject({ user_id: 'owner-a', contact_id: 'ct-1', booking_id: null, service_id: 'svc-2' });
-    expect(row?.metadata).toMatchObject({ booking_id: null, service_id: 'svc-2' });
+    expect(row).toMatchObject({ user_id: 'owner-a', contact_id: LINK_CONTACT, booking_id: null, service_id: LINK_SERVICE });
+    expect(row?.metadata).toMatchObject({ booking_id: null, service_id: LINK_SERVICE });
     expect(errorsLogged(LINK_DROPPED)).toEqual([
-      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'booking_id', id: 'bk-0002', reason: 'not_owned' },
+      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'booking_id', id: LINK_BOOKING, reason: 'not_owned' },
     ]);
   });
 
@@ -955,11 +964,11 @@ describe('Stripe webhook, Fix-1: ids the sending business cannot prove it owns',
     expect(result).toMatchSnapshot();
     expect(insertPayload(result, 'payment_transactions')).toMatchObject({
       contact_id: null,
-      booking_id: 'bk-0002',
-      service_id: 'svc-2',
+      booking_id: LINK_BOOKING,
+      service_id: LINK_SERVICE,
     });
     expect(errorsLogged(LINK_DROPPED)).toEqual([
-      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'contact_id', id: 'ct-1', reason: 'not_owned' },
+      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'contact_id', id: LINK_CONTACT, reason: 'not_owned' },
     ]);
   });
 
@@ -971,10 +980,10 @@ describe('Stripe webhook, Fix-1: ids the sending business cannot prove it owns',
     });
     expect(result).toMatchSnapshot();
     const row = insertPayload(result, 'payment_transactions');
-    expect(row).toMatchObject({ contact_id: 'ct-1', booking_id: 'bk-0002', service_id: null });
-    expect(row?.metadata).toMatchObject({ booking_id: 'bk-0002', service_id: null });
+    expect(row).toMatchObject({ contact_id: LINK_CONTACT, booking_id: LINK_BOOKING, service_id: null });
+    expect(row?.metadata).toMatchObject({ booking_id: LINK_BOOKING, service_id: null });
     expect(errorsLogged(LINK_DROPPED)).toEqual([
-      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'service_id', id: 'svc-2', reason: 'not_owned' },
+      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'service_id', id: LINK_SERVICE, reason: 'not_owned' },
     ]);
   });
 
@@ -990,9 +999,9 @@ describe('Stripe webhook, Fix-1: ids the sending business cannot prove it owns',
     expect(result).toMatchSnapshot();
     expect(statusOf(result)).toBe(200);
     expect(claimStatus(result)).toBe('completed');
-    expect(insertPayload(result, 'payment_transactions')).toMatchObject({ booking_id: null, contact_id: 'ct-1' });
+    expect(insertPayload(result, 'payment_transactions')).toMatchObject({ booking_id: null, contact_id: LINK_CONTACT });
     expect(errorsLogged(LINK_DROPPED)).toEqual([
-      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'booking_id', id: 'bk-0002', reason: 'read_failed' },
+      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'booking_id', id: LINK_BOOKING, reason: 'read_failed' },
     ]);
   });
 
@@ -1009,5 +1018,109 @@ describe('Stripe webhook, Fix-1: ids the sending business cannot prove it owns',
       service_id: null,
     });
     expect(errorsLogged(LINK_DROPPED)).toEqual([]);
+  });
+});
+
+// ─── Fix-1b: link ids on the payment-plan path (F-5) ─────────────────────────
+//
+// The plan path vets its link ids INSIDE `bindPlanSubscription` (SA C-5), which
+// this harness mocks. So these entries pin the ROUTE's half of the contract at
+// each of the three plan sites: bind is reached only after the account's owner
+// is proved from the signed `event.account`, it is handed that owner, and the
+// raw metadata link ids are passed through for bind to vet (its unit tests and
+// the QA suite prove the vetting). F5-1 pins the route's own `malformed` label.
+
+const F5_BOOKING = 'f5f5f5f5-0b0b-4000-8000-0000000000b1';
+const F5_SERVICE = 'f5f5f5f5-05e5-4000-8000-0000000000e1';
+const F5_PLAN = 'f5f5f5f5-0a1a-4000-8000-0000000000a1';
+
+/** The single argument object of every `bindPlanSubscription` call. */
+function bindCalls(result: unknown): Array<Record<string, unknown>> {
+  return effectsOf(result)
+    .filter((e) => e.type === 'bindPlanSubscription')
+    .map((e) => (e.args as unknown[])[0] as Record<string, unknown>);
+}
+
+describe('Stripe webhook, Fix-1b: plan link ids', () => {
+  it('F5-1. payment_intent.succeeded with non-UUID link ids: no ownership read, dropped as malformed, only the length logged', async () => {
+    const result = await run({ fixture: 'payment-intent-succeeded-malformed-links.json', owners: OWNER_A });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(tablesRead(result)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^(crm_contacts|scheduling_bookings|scheduling_services)$/)])
+    );
+    expect(insertPayload(result, 'payment_transactions')).toMatchObject({
+      contact_id: null,
+      booking_id: null,
+      service_id: null,
+    });
+    const context = { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_malformed', reason: 'malformed' };
+    expect(errorsLogged(LINK_DROPPED)).toEqual([
+      { ...context, field: 'contact_id', idLength: 4 },
+      { ...context, field: 'booking_id', idLength: 17 },
+      { ...context, field: 'service_id', idLength: 38 },
+    ]);
+    // The raw values reach no log line at all.
+    const logged = JSON.stringify(mockLogLines);
+    expect(logged).not.toContain('drop table');
+    expect(logged).not.toContain(F5_SERVICE);
+  });
+
+  it('F5-2. trialling plan subscription: bind gets the proved owner and the raw link ids', async () => {
+    const result = await run({ fixture: 'subscription-created-trialing-plan.json', owners: OWNER_A });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(bindCalls(result)).toEqual([
+      expect.objectContaining({
+        connectAccountId: 'acct_owner_a',
+        ownerId: 'owner-a',
+        bookingId: F5_BOOKING,
+        serviceId: F5_SERVICE,
+        paymentPlanId: F5_PLAN,
+        planCount: 3,
+      }),
+    ]);
+  });
+
+  it('F5-3. invoice.paid first plan period: bind gets the proved owner and the raw link ids', async () => {
+    const result = await run({ fixture: 'invoice-paid-plan-first-period-foreign-links.json', owners: OWNER_A });
+    expect(result).toMatchSnapshot();
+    expect(bindCalls(result)).toEqual([
+      expect.objectContaining({
+        connectAccountId: 'acct_owner_a',
+        ownerId: 'owner-a',
+        bookingId: F5_BOOKING,
+        serviceId: F5_SERVICE,
+        paymentPlanId: F5_PLAN,
+        planCount: 3,
+      }),
+    ]);
+  });
+
+  it('F5-4. plan checkout: bind gets the proved owner and the raw link ids', async () => {
+    const result = await run({ fixture: 'checkout-completed-plan-foreign-links.json', owners: OWNER_A });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(bindCalls(result)).toEqual([
+      expect.objectContaining({
+        connectAccountId: 'acct_owner_a',
+        ownerId: 'owner-a',
+        bookingId: F5_BOOKING,
+        serviceId: F5_SERVICE,
+        planCount: 3,
+      }),
+    ]);
+  });
+
+  it('F5-5. a plan naming an owner the account does not own never reaches bind, at any of the three sites', async () => {
+    for (const fixture of [
+      'subscription-created-trialing-plan.json',
+      'invoice-paid-plan-first-period-foreign-links.json',
+      'checkout-completed-plan-foreign-links.json',
+    ]) {
+      const result = await run({ fixture, owners: OWNED_BY_OTHER });
+      expect(bindCalls(result)).toEqual([]);
+    }
   });
 });

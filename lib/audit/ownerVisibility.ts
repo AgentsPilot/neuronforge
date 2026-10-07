@@ -78,6 +78,14 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
   bos_queue_item: 'operator',
   // BD-26 / KI-25: slice 8b's system-written low-line event.
   business_os_credit_period: 'operator',
+  // Plan payments P-3a: the owner's own checkout start, written against their
+  // account with no internal reason. The owner may read it; no migration change
+  // (only 'operator' types are in the owner policy's NOT IN list).
+  business_os_billing_account: 'owner',
+  // Credits boost slice 3: the owner's own purchase start, written against
+  // their account with no internal reason; theirs to see (no owner-policy
+  // migration change: the hidden set is unchanged).
+  business_os_boost_purchase: 'owner',
 } as const satisfies Record<EntityType, AuditOwnerVisibility>;
 
 /**

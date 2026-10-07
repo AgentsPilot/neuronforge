@@ -223,6 +223,18 @@ const VICTIM_TABLES = ['payment_invoices', 'payment_transactions', 'scheduling_b
 const LINK_DROPPED = 'payment_intent.succeeded link not proved to belong to the owner - dropping it';
 const INVOICE_PAID_REFUSAL = 'Connect invoice.paid names an invoice owned by a different business - refusing';
 
+/**
+ * The link ids `payment-intent-succeeded.json` carries. UUID-shaped since
+ * Fix-1b: any other shape is now dropped as `malformed` before a read.
+ */
+const LINK_CONTACT = 'c7c7c7c7-0001-4000-8000-00000000c701';
+const LINK_BOOKING = 'b7b7b7b7-0002-4000-8000-00000000b702';
+const LINK_SERVICE = 'e7e7e7e7-0002-4000-8000-00000000e702';
+/** Rows of another business (A-10). */
+const VICTIM_CONTACT = 'deadbeef-0c0c-4000-8000-00000000000c';
+const VICTIM_BOOKING = 'deadbeef-0b0b-4000-8000-00000000000b';
+const VICTIM_SERVICE = 'deadbeef-0e0e-4000-8000-00000000000e';
+
 const VICTIM_INVOICE = { id: 'pinv-0001', user_id: 'owner-a', contact_id: 'ct-1', invoice_number: 'INV-001', booking_id: 'bk-0001', amount: 150 };
 
 beforeAll(() => {
@@ -294,16 +306,16 @@ describe('Fix-1 QA: the rightful owner still gets today\'s result', () => {
     const r = await run(fixture('payment-intent-succeeded.json'), {
       owners: OWNER_A,
       db: {
-        'crm_contacts:select': ok({ id: 'ct-1' }),
-        'scheduling_bookings:select': ok({ id: 'bk-0002' }),
-        'scheduling_services:select': ok({ id: 'svc-2' }),
+        'crm_contacts:select': ok({ id: LINK_CONTACT }),
+        'scheduling_bookings:select': ok({ id: LINK_BOOKING }),
+        'scheduling_services:select': ok({ id: LINK_SERVICE }),
       },
     });
     expect(r.status).toBe(200);
     expect(claimStatus(r)).toBe('completed');
     const row = insertPayload(r, 'payment_transactions');
-    expect(row).toMatchObject({ user_id: 'owner-a', contact_id: 'ct-1', booking_id: 'bk-0002', service_id: 'svc-2' });
-    expect(row?.metadata).toEqual({ booking_id: 'bk-0002', service_id: 'svc-2', source: 'payment_intent_webhook' });
+    expect(row).toMatchObject({ user_id: 'owner-a', contact_id: LINK_CONTACT, booking_id: LINK_BOOKING, service_id: LINK_SERVICE });
+    expect(row?.metadata).toEqual({ booking_id: LINK_BOOKING, service_id: LINK_SERVICE, source: 'payment_intent_webhook' });
     // Every ownership read is user-scoped to the proved owner.
     for (const table of ['crm_contacts', 'scheduling_bookings', 'scheduling_services']) {
       const [q] = reads(r, table);
@@ -432,7 +444,7 @@ describe('Fix-1 QA: attacks and failures write nothing to another business', () 
   it('A-10. payment_intent.succeeded with ALL three links foreign: all dropped, no raw foreign id anywhere in the row', async () => {
     const r = await run(
       withMetadata('payment-intent-succeeded.json', {
-        owner_id: 'owner-a', contact_id: 'ct-victim', booking_id: 'bk-victim', service_id: 'svc-victim',
+        owner_id: 'owner-a', contact_id: VICTIM_CONTACT, booking_id: VICTIM_BOOKING, service_id: VICTIM_SERVICE,
       }),
       { owners: OWNER_A, db: { 'crm_contacts:select': NOT_FOUND, 'scheduling_bookings:select': NOT_FOUND, 'scheduling_services:select': NOT_FOUND } }
     );
@@ -441,7 +453,7 @@ describe('Fix-1 QA: attacks and failures write nothing to another business', () 
     const row = insertPayload(r, 'payment_transactions');
     expect(row).toMatchObject({ user_id: 'owner-a', contact_id: null, booking_id: null, service_id: null });
     expect(row?.metadata).toEqual({ booking_id: null, service_id: null, source: 'payment_intent_webhook' });
-    expect(JSON.stringify(row)).not.toMatch(/victim/);
+    expect(JSON.stringify(row)).not.toMatch(/deadbeef/);
     expect(errorsLogged(LINK_DROPPED).map((c) => [c.field, c.reason])).toEqual([
       ['contact_id', 'not_owned'], ['booking_id', 'not_owned'], ['service_id', 'not_owned'],
     ]);
@@ -453,9 +465,9 @@ describe('Fix-1 QA: attacks and failures write nothing to another business', () 
     const r = await run(fixture('payment-intent-succeeded.json'), {
       owners: OWNER_A,
       db: {
-        'crm_contacts:select': ok({ id: 'ct-1' }),
+        'crm_contacts:select': ok({ id: LINK_CONTACT }),
         'scheduling_bookings:select': NOT_FOUND,
-        'scheduling_services:select': ok({ id: 'svc-2' }),
+        'scheduling_services:select': ok({ id: LINK_SERVICE }),
         'payment_transactions:insert': { data: null, error: { code: 'XX000', message: 'insert rejected' } },
       },
     });
@@ -500,30 +512,36 @@ describe('Fix-1 QA: id shape edge cases', () => {
     expect(errorsLogged(LINK_DROPPED)).toEqual([]);
   });
 
-  it('E-2. malformed / whitespace link ids: read with the raw value, a uuid-cast error drops them (fail closed)', async () => {
+  it('E-2. malformed / whitespace link ids: dropped as malformed with NO read, only their length logged (Fix-1b)', async () => {
     const r = await run(
       withMetadata('payment-intent-succeeded.json', {
-        owner_id: 'owner-a', contact_id: '   ', booking_id: ' bk-0002 ', service_id: "x'); drop table--",
+        owner_id: 'owner-a', contact_id: '   ', booking_id: ` ${LINK_BOOKING} `, service_id: "x'); drop table--",
       }),
       { owners: OWNER_A, db: { 'crm_contacts:select': UUID_CAST, 'scheduling_bookings:select': UUID_CAST, 'scheduling_services:select': UUID_CAST } }
     );
     expect(r.status).toBe(200);
     expect(claimStatus(r)).toBe('completed');
-    expect(reads(r, 'scheduling_bookings')[0].chain).toContainEqual(['eq', 'id', ' bk-0002 ']);
+    // Fix-1b: a non-UUID cannot name a row, so it is never sent to the database.
+    for (const t of ['crm_contacts', 'scheduling_bookings', 'scheduling_services']) expect(reads(r, t)).toEqual([]);
     expect(insertPayload(r, 'payment_transactions')).toMatchObject({ contact_id: null, booking_id: null, service_id: null });
-    // Observation: a malformed id is labelled read_failed, the label C-2 meant for a transient error.
-    expect(errorsLogged(LINK_DROPPED).map((c) => c.reason)).toEqual(['read_failed', 'read_failed', 'read_failed']);
+    // Was `read_failed` (QA observation on Fix-1); now its own label, with the length instead of the value.
+    expect(errorsLogged(LINK_DROPPED).map((c) => [c.field, c.reason, c.idLength, c.id])).toEqual([
+      ['contact_id', 'malformed', 3, undefined],
+      ['booking_id', 'malformed', 38, undefined],
+      ['service_id', 'malformed', 17, undefined],
+    ]);
+    expect(JSON.stringify(mockLogLines)).not.toMatch(/drop table|b7b7b7b7/);
   });
 
   it('E-3. different-case link id: the stored value is the id the repository returned, not the raw metadata', async () => {
     const r = await run(
-      withMetadata('payment-intent-succeeded.json', { owner_id: 'owner-a', booking_id: 'BK-0002' }),
-      { owners: OWNER_A, db: { 'scheduling_bookings:select': ok({ id: 'bk-0002' }) } }
+      withMetadata('payment-intent-succeeded.json', { owner_id: 'owner-a', booking_id: LINK_BOOKING.toUpperCase() }),
+      { owners: OWNER_A, db: { 'scheduling_bookings:select': ok({ id: LINK_BOOKING }) } }
     );
-    expect(reads(r, 'scheduling_bookings')[0].chain).toContainEqual(['eq', 'id', 'BK-0002']);
+    expect(reads(r, 'scheduling_bookings')[0].chain).toContainEqual(['eq', 'id', LINK_BOOKING.toUpperCase()]);
     const row = insertPayload(r, 'payment_transactions');
-    expect(row).toMatchObject({ booking_id: 'bk-0002' });
-    expect((row?.metadata as Record<string, unknown>).booking_id).toBe('bk-0002');
+    expect(row).toMatchObject({ booking_id: LINK_BOOKING });
+    expect((row?.metadata as Record<string, unknown>).booking_id).toBe(LINK_BOOKING);
   });
 
   it('E-4. different-case owner_id: refused by the pre-existing strict owner equality (fail closed, unchanged)', async () => {

@@ -11,6 +11,7 @@ export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
 export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
+export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
@@ -290,6 +291,9 @@ export type {
   CreateAiModelPricingInput,
   AiModelPricingSyncEntry,
   AiModelPricingSyncResult,
+  // Boost pack (agent-platform catalog) types
+  BoostPack,
+  BoostPackWriteInput,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';

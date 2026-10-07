@@ -14,7 +14,7 @@
       "currency": "jpy",
       "created": 1790000390,
       "description": null,
-      "metadata": { "owner_id": "owner-a", "contact_id": "ct-1", "booking_id": "bk-0002", "service_id": "svc-2" }
+      "metadata": { "owner_id": "owner-a", "contact_id": "c7c7c7c7-0001-4000-8000-00000000c701", "booking_id": "b7b7b7b7-0002-4000-8000-00000000b702", "service_id": "e7e7e7e7-0002-4000-8000-00000000e702" }
     }
   }
 }

@@ -1360,7 +1360,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 5a. paymen
         [
           "eq",
           "id",
-          "ct-1",
+          "c7c7c7c7-0001-4000-8000-00000000c701",
         ],
         [
           "eq",
@@ -1382,7 +1382,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 5a. paymen
         [
           "eq",
           "id",
-          "bk-0002",
+          "b7b7b7b7-0002-4000-8000-00000000b702",
         ],
         [
           "eq",
@@ -1404,7 +1404,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 5a. paymen
         [
           "eq",
           "id",
-          "svc-2",
+          "e7e7e7e7-0002-4000-8000-00000000e702",
         ],
         [
           "eq",
@@ -1437,15 +1437,15 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 5a. paymen
           {
             "account_resolution": "recorded",
             "amount": 500000,
-            "booking_id": "bk-0002",
+            "booking_id": "b7b7b7b7-0002-4000-8000-00000000b702",
             "charge_account_kind": "connect",
-            "contact_id": "ct-1",
+            "contact_id": "c7c7c7c7-0001-4000-8000-00000000c701",
             "currency": "JPY",
             "description": "Website payment",
             "fee_currency": "JPY",
             "metadata": {
-              "booking_id": "bk-0002",
-              "service_id": "svc-2",
+              "booking_id": "b7b7b7b7-0002-4000-8000-00000000b702",
+              "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
               "source": "payment_intent_webhook",
             },
             "net_amount": 4820,
@@ -1455,7 +1455,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 5a. paymen
             "processor_type": "stripe",
             "refund_status": "none",
             "refunded_amount": 0,
-            "service_id": "svc-2",
+            "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
             "status": "succeeded",
             "stripe_connect_account_id": "acct_owner_a",
             "stripe_payment_intent_id": "pi_website_1",
@@ -2702,7 +2702,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 10. a hand
         [
           "eq",
           "id",
-          "ct-1",
+          "c7c7c7c7-0001-4000-8000-00000000c701",
         ],
         [
           "eq",
@@ -2724,7 +2724,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 10. a hand
         [
           "eq",
           "id",
-          "bk-0002",
+          "b7b7b7b7-0002-4000-8000-00000000b702",
         ],
         [
           "eq",
@@ -2746,7 +2746,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 10. a hand
         [
           "eq",
           "id",
-          "svc-2",
+          "e7e7e7e7-0002-4000-8000-00000000e702",
         ],
         [
           "eq",
@@ -2779,14 +2779,14 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 10. a hand
           {
             "account_resolution": "recorded",
             "amount": 500000,
-            "booking_id": "bk-0002",
+            "booking_id": "b7b7b7b7-0002-4000-8000-00000000b702",
             "charge_account_kind": "connect",
-            "contact_id": "ct-1",
+            "contact_id": "c7c7c7c7-0001-4000-8000-00000000c701",
             "currency": "JPY",
             "description": "Website payment",
             "metadata": {
-              "booking_id": "bk-0002",
-              "service_id": "svc-2",
+              "booking_id": "b7b7b7b7-0002-4000-8000-00000000b702",
+              "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
               "source": "payment_intent_webhook",
             },
             "paid_at": "2026-09-21T14:19:50.000Z",
@@ -2794,7 +2794,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 10. a hand
             "processor_type": "stripe",
             "refund_status": "none",
             "refunded_amount": 0,
-            "service_id": "svc-2",
+            "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
             "status": "succeeded",
             "stripe_connect_account_id": "acct_owner_a",
             "stripe_payment_intent_id": "pi_website_1",
@@ -3697,7 +3697,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "ct-1",
+          "c7c7c7c7-0001-4000-8000-00000000c701",
         ],
         [
           "eq",
@@ -3719,7 +3719,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "bk-0002",
+          "b7b7b7b7-0002-4000-8000-00000000b702",
         ],
         [
           "eq",
@@ -3741,7 +3741,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "svc-2",
+          "e7e7e7e7-0002-4000-8000-00000000e702",
         ],
         [
           "eq",
@@ -3776,12 +3776,12 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
             "amount": 500000,
             "booking_id": null,
             "charge_account_kind": "connect",
-            "contact_id": "ct-1",
+            "contact_id": "c7c7c7c7-0001-4000-8000-00000000c701",
             "currency": "JPY",
             "description": "Website payment",
             "metadata": {
               "booking_id": null,
-              "service_id": "svc-2",
+              "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
               "source": "payment_intent_webhook",
             },
             "paid_at": "2026-09-21T14:19:50.000Z",
@@ -3789,7 +3789,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
             "processor_type": "stripe",
             "refund_status": "none",
             "refunded_amount": 0,
-            "service_id": "svc-2",
+            "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
             "status": "succeeded",
             "stripe_connect_account_id": "acct_owner_a",
             "stripe_payment_intent_id": "pi_website_1",
@@ -3912,7 +3912,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "ct-1",
+          "c7c7c7c7-0001-4000-8000-00000000c701",
         ],
         [
           "eq",
@@ -3934,7 +3934,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "bk-0002",
+          "b7b7b7b7-0002-4000-8000-00000000b702",
         ],
         [
           "eq",
@@ -3956,7 +3956,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "svc-2",
+          "e7e7e7e7-0002-4000-8000-00000000e702",
         ],
         [
           "eq",
@@ -3989,14 +3989,14 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
           {
             "account_resolution": "recorded",
             "amount": 500000,
-            "booking_id": "bk-0002",
+            "booking_id": "b7b7b7b7-0002-4000-8000-00000000b702",
             "charge_account_kind": "connect",
             "contact_id": null,
             "currency": "JPY",
             "description": "Website payment",
             "metadata": {
-              "booking_id": "bk-0002",
-              "service_id": "svc-2",
+              "booking_id": "b7b7b7b7-0002-4000-8000-00000000b702",
+              "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
               "source": "payment_intent_webhook",
             },
             "paid_at": "2026-09-21T14:19:50.000Z",
@@ -4004,7 +4004,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
             "processor_type": "stripe",
             "refund_status": "none",
             "refunded_amount": 0,
-            "service_id": "svc-2",
+            "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
             "status": "succeeded",
             "stripe_connect_account_id": "acct_owner_a",
             "stripe_payment_intent_id": "pi_website_1",
@@ -4127,7 +4127,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "ct-1",
+          "c7c7c7c7-0001-4000-8000-00000000c701",
         ],
         [
           "eq",
@@ -4149,7 +4149,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "bk-0002",
+          "b7b7b7b7-0002-4000-8000-00000000b702",
         ],
         [
           "eq",
@@ -4171,7 +4171,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "svc-2",
+          "e7e7e7e7-0002-4000-8000-00000000e702",
         ],
         [
           "eq",
@@ -4204,13 +4204,13 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
           {
             "account_resolution": "recorded",
             "amount": 500000,
-            "booking_id": "bk-0002",
+            "booking_id": "b7b7b7b7-0002-4000-8000-00000000b702",
             "charge_account_kind": "connect",
-            "contact_id": "ct-1",
+            "contact_id": "c7c7c7c7-0001-4000-8000-00000000c701",
             "currency": "JPY",
             "description": "Website payment",
             "metadata": {
-              "booking_id": "bk-0002",
+              "booking_id": "b7b7b7b7-0002-4000-8000-00000000b702",
               "service_id": null,
               "source": "payment_intent_webhook",
             },
@@ -4342,7 +4342,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "ct-1",
+          "c7c7c7c7-0001-4000-8000-00000000c701",
         ],
         [
           "eq",
@@ -4364,7 +4364,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "bk-0002",
+          "b7b7b7b7-0002-4000-8000-00000000b702",
         ],
         [
           "eq",
@@ -4386,7 +4386,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
         [
           "eq",
           "id",
-          "svc-2",
+          "e7e7e7e7-0002-4000-8000-00000000e702",
         ],
         [
           "eq",
@@ -4421,12 +4421,12 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
             "amount": 500000,
             "booking_id": null,
             "charge_account_kind": "connect",
-            "contact_id": "ct-1",
+            "contact_id": "c7c7c7c7-0001-4000-8000-00000000c701",
             "currency": "JPY",
             "description": "Website payment",
             "metadata": {
               "booking_id": null,
-              "service_id": "svc-2",
+              "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
               "source": "payment_intent_webhook",
             },
             "paid_at": "2026-09-21T14:19:50.000Z",
@@ -4434,7 +4434,7 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
             "processor_type": "stripe",
             "refund_status": "none",
             "refunded_amount": 0,
-            "service_id": "svc-2",
+            "service_id": "e7e7e7e7-0002-4000-8000-00000000e702",
             "status": "succeeded",
             "stripe_connect_account_id": "acct_owner_a",
             "stripe_payment_intent_id": "pi_website_1",
@@ -4609,6 +4609,511 @@ exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4
           "eq",
           "event_id",
           "evt_connect_pi_succeeded_no_links",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1b: plan link ids F5-1. payment_intent.succeeded with non-UUID link ids: no ownership read, dropped as malformed, only the length logged 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_malformed_links",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_pi_malformed_links",
+            "event_type": "payment_intent.succeeded",
+            "metadata": {
+              "created": 1790000500,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_malformed",
+        ],
+        [
+          "limit",
+          1,
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "type": "stripe.client",
+    },
+    {
+      "args": [
+        {
+          "account": "acct_owner_a",
+          "paymentIntentId": "pi_website_malformed",
+          "stripe": "<stripe-client>",
+        },
+      ],
+      "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "account_resolution": "recorded",
+            "amount": 120,
+            "booking_id": null,
+            "charge_account_kind": "connect",
+            "contact_id": null,
+            "currency": "USD",
+            "description": "Website payment",
+            "metadata": {
+              "booking_id": null,
+              "service_id": null,
+              "source": "payment_intent_webhook",
+            },
+            "paid_at": "2026-09-21T14:21:30.000Z",
+            "payment_method": "card",
+            "processor_type": "stripe",
+            "refund_status": "none",
+            "refunded_amount": 0,
+            "service_id": null,
+            "status": "succeeded",
+            "stripe_connect_account_id": "acct_owner_a",
+            "stripe_payment_intent_id": "pi_website_malformed",
+            "user_id": "owner-a",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_malformed_links",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1b: plan link ids F5-2. trialling plan subscription: bind gets the proved owner and the raw link ids 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_plan_trialing",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_plan_trialing",
+            "event_type": "customer.subscription.created",
+            "metadata": {
+              "created": 1790000600,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "type": "stripe.client",
+    },
+    {
+      "args": [
+        {
+          "bookingId": "f5f5f5f5-0b0b-4000-8000-0000000000b1",
+          "connectAccountId": "acct_owner_a",
+          "customerId": "cus_client_f5",
+          "ownerId": "owner-a",
+          "paymentPlanId": "f5f5f5f5-0a1a-4000-8000-0000000000a1",
+          "planCount": 3,
+          "planCurrency": "USD",
+          "planFrequency": "monthly",
+          "planTotal": 900,
+          "serviceId": "f5f5f5f5-05e5-4000-8000-0000000000e1",
+          "stripe": "<stripe-client>",
+          "subscriptionId": "sub_plan_trial_f5",
+        },
+      ],
+      "type": "bindPlanSubscription",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_plan_trialing",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1b: plan link ids F5-3. invoice.paid first plan period: bind gets the proved owner and the raw link ids 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_plan_first_period_f5",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_plan_first_period_f5",
+            "event_type": "invoice.paid",
+            "metadata": {
+              "created": 1790000700,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "type": "stripe.client",
+    },
+    {
+      "args": [
+        {
+          "bookingId": "f5f5f5f5-0b0b-4000-8000-0000000000b1",
+          "connectAccountId": "acct_owner_a",
+          "customerId": "cus_client_f5",
+          "ownerId": "owner-a",
+          "paymentPlanId": "f5f5f5f5-0a1a-4000-8000-0000000000a1",
+          "planCount": 3,
+          "planCurrency": "USD",
+          "planFrequency": "monthly",
+          "planTotal": 900,
+          "serviceId": "f5f5f5f5-05e5-4000-8000-0000000000e1",
+          "stripe": "<stripe-client>",
+          "subscriptionId": "sub_plan_first_f5",
+        },
+      ],
+      "type": "bindPlanSubscription",
+    },
+    {
+      "args": [
+        "sub_plan_first_f5",
+      ],
+      "type": "planRepo.findBySubscriptionId",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_first_f5",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_plan_first_period_f5",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1b: plan link ids F5-4. plan checkout: bind gets the proved owner and the raw link ids 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_checkout_plan_f5",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_checkout_plan_f5",
+            "event_type": "checkout.session.completed",
+            "metadata": {
+              "created": 1790000800,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "type": "stripe.client",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "args": [
+        {
+          "bookingId": "f5f5f5f5-0b0b-4000-8000-0000000000b1",
+          "connectAccountId": "acct_owner_a",
+          "customerId": "cus_client_f5",
+          "ownerId": "owner-a",
+          "planCount": 3,
+          "planCurrency": "USD",
+          "planFrequency": "monthly",
+          "planTotal": 900,
+          "serviceId": "f5f5f5f5-05e5-4000-8000-0000000000e1",
+          "stripe": "<stripe-client>",
+          "subscriptionId": "sub_plan_checkout_f5",
+        },
+      ],
+      "type": "bindPlanSubscription",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "payment_status": "paid",
+            "updated_at": "<NOW>",
+          },
+          {
+            "count": "exact",
+          },
+        ],
+        [
+          "eq",
+          "id",
+          "f5f5f5f5-0b0b-4000-8000-0000000000b1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "update",
+      "table": "scheduling_bookings",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_checkout_plan_f5",
         ],
       ],
       "operation": "update",

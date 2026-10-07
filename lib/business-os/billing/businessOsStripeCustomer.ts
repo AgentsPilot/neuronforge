@@ -9,9 +9,15 @@
  * or writes `user_subscriptions` (RD-2), so a person who also paid on the agent
  * platform gets a second Stripe customer, which SA-P1 accepted.
  *
- * NO ROUTE CALLS THIS IN P-2a. P-3a wires it into the plan checkout and must
- * pass `userId` AND `email` from the session, never from the request body
- * (SA Q-11).
+ * CALLER: the plan checkout (`planCheckout.ts`, P-3a), which passes `userId`
+ * AND `email` from the session, never from the request body (SA Q-11).
+ *
+ * `replaceBusinessOsStripeCustomer` (P-3a, workplan §3.5; P-2 SA Q-2, Q-6;
+ * P-3a SA Q-8, C-3) is the one path that replaces a customer Stripe reports
+ * missing: a new customer under its OWN idempotency key
+ * (`bos-customer:<userId>:replaces:<oldCustomerId>`, never `bos-customer:<userId>`,
+ * which Stripe would replay as the deleted customer within 24 h), then a
+ * compare-and-set on the old id.
  *
  * Behaviour:
  * - a billing row for (account, current mode) exists → its customer id, with
@@ -144,4 +150,125 @@ export async function ensureBusinessOsStripeCustomer(
     customerId: recorded.data.account.stripeCustomerId,
     created: recorded.data.created && customer.created,
   };
+}
+
+/**
+ * The Stripe idempotency key of the customer that REPLACES `oldCustomerId`.
+ * Never `bos-customer:<userId>`: within 24 h Stripe would replay the deleted
+ * customer under that key (P-2a code review carry-forward).
+ */
+export function businessOsReplacementCustomerIdempotencyKey(userId: string, oldCustomerId: string): string {
+  return `${businessOsCustomerIdempotencyKey(userId)}:replaces:${oldCustomerId}`;
+}
+
+const CUSTOMER_ID_PATTERN = /^cus_[A-Za-z0-9]{1,251}$/;
+
+export interface ReplaceBusinessOsStripeCustomerDeps {
+  repo?: Pick<BusinessOsBillingAccountRepository, 'findByUser' | 'replaceCustomer'>;
+  stripe?: Pick<StripeService, 'findOrCreatePlatformCustomer'>;
+  mode?: () => StripeMode;
+  now?: () => Date;
+}
+
+/**
+ * Replace the account's Business OS customer after Stripe answered
+ * `resource_missing` for it (P-3a C-3: whichever Stripe call surfaced it).
+ *
+ * - one Stripe create with the replacement key and the same Business OS
+ *   metadata as `ensure…`; concurrent replacers send the same key and the same
+ *   parameters, so Stripe hands them the SAME new customer;
+ * - a mode disagreement throws `stripe_mode_mismatch` and records nothing;
+ * - compare-and-set on the old id: won → the new id; lost → re-read and use
+ *   the stored id (someone else replaced it first);
+ * - any write failure, including the new id held by another account, throws
+ *   `billing_row_not_recorded` (the caller refuses, never retries in a loop).
+ */
+export async function replaceBusinessOsStripeCustomer(
+  input: { userId: string; email: string; name?: string; oldCustomerId: string },
+  deps: ReplaceBusinessOsStripeCustomerDeps = {}
+): Promise<{ customerId: string; replaced: boolean }> {
+  const { userId, email, name, oldCustomerId } = input;
+  if (
+    typeof userId !== 'string' ||
+    !UUID_PATTERN.test(userId) ||
+    typeof email !== 'string' ||
+    email.trim() === '' ||
+    typeof oldCustomerId !== 'string' ||
+    !CUSTOMER_ID_PATTERN.test(oldCustomerId)
+  ) {
+    throw new BusinessOsStripeCustomerError('invalid_input');
+  }
+
+  const repo = deps.repo ?? businessOsBillingAccountRepository;
+  const mode = (deps.mode ?? currentStripeMode)();
+  const livemode = isLiveMode(mode);
+  const stripe = deps.stripe ?? getStripeService();
+
+  let customer: { customerId: string; created: boolean; livemode: boolean | null };
+  try {
+    customer = await stripe.findOrCreatePlatformCustomer({
+      email,
+      name,
+      metadata: {
+        [BOS_PRODUCT_METADATA_KEY]: BOS_PLAN_PRODUCT_MARKER,
+        [BOS_USER_ID_METADATA_KEY]: userId,
+      },
+      idempotencyKey: businessOsReplacementCustomerIdempotencyKey(userId, oldCustomerId),
+    });
+  } catch (err) {
+    logger.error({ err, userId, livemode, oldCustomerId }, 'Replacement Stripe customer create failed; nothing recorded');
+    throw err;
+  }
+
+  if (customer.livemode !== livemode) {
+    logger.error(
+      { userId, expectedLivemode: livemode, stripeLivemode: customer.livemode, stripeCustomerId: customer.customerId, alert: true },
+      'Replacement Stripe customer mode disagrees with the server key; nothing recorded'
+    );
+    throw new BusinessOsStripeCustomerError('stripe_mode_mismatch');
+  }
+
+  const nowIso = (deps.now ?? (() => new Date()))().toISOString();
+  const replaced = await repo.replaceCustomer({
+    userId,
+    livemode,
+    oldCustomerId,
+    newCustomerId: customer.customerId,
+    nowIso,
+  });
+  if (replaced.error || !replaced.data) {
+    logger.error(
+      { err: replaced.error, userId, livemode, oldCustomerId, stripeCustomerId: customer.customerId, alert: true },
+      'Business OS Stripe customer not replaced'
+    );
+    throw new BusinessOsStripeCustomerError('billing_row_not_recorded');
+  }
+  if (replaced.data.replaced) {
+    logger.warn(
+      { event: 'bos_billing_customer_replaced', userId, livemode, oldCustomerId, stripeCustomerId: customer.customerId },
+      'Business OS Stripe customer replaced (the stored one is missing at Stripe)'
+    );
+    return { customerId: customer.customerId, replaced: true };
+  }
+
+  // Lost the compare-and-set: someone else replaced it first. Use what is stored.
+  const stored = await repo.findByUser(userId, livemode);
+  if (stored.error) {
+    logger.error({ err: stored.error, userId, livemode }, 'Business OS billing row unreadable after a lost customer replacement');
+    throw new BusinessOsStripeCustomerError('billing_row_unreadable');
+  }
+  if (!stored.data || stored.data.stripeCustomerId === oldCustomerId) {
+    logger.error(
+      { userId, livemode, oldCustomerId, rowPresent: Boolean(stored.data), alert: true },
+      'Customer replacement lost its compare-and-set but the stored customer did not change'
+    );
+    throw new BusinessOsStripeCustomerError('billing_row_not_recorded');
+  }
+  if (stored.data.stripeCustomerId !== customer.customerId) {
+    logger.warn(
+      { userId, livemode, storedCustomerId: stored.data.stripeCustomerId, unusedCustomerId: customer.customerId },
+      'Customer replacement lost the race; the stored replacement wins and this one is unused'
+    );
+  }
+  return { customerId: stored.data.stripeCustomerId, replaced: false };
 }

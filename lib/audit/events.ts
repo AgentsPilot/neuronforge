@@ -226,6 +226,13 @@ export const AUDIT_EVENTS = {
   // trigger; never owner text, tokens or dollars. "Once per period" is derived,
   // not stored (KI-21, KI-22): count distinct (account, periodStart).
   BOS_CREDIT_LOW_LINE_CROSSED: 'BOS_CREDIT_LOW_LINE_CROSSED',
+  // Credits boost slice 3: an owner started a boost purchase (a reservation
+  // under the cap and a Stripe checkout session attached to it). Written only
+  // by POST /api/business-os/credits/boost/checkout, then flushed (WC-7).
+  // Entity type 'business_os_boost_purchase', id = the purchase id. The details
+  // carry the package id and version, the price in minor units, the currency
+  // and the Stripe mode; never the client secret, the session id or the email.
+  BOS_BOOST_CHECKOUT_STARTED: 'BOS_BOOST_CHECKOUT_STARTED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -306,6 +313,20 @@ export const AUDIT_EVENTS = {
   // carries the reminder's next sending-hours time (null on other queues); the
   // details carry exactly the reason, queue, action, correlation id and due anchor.
   BOS_QUEUE_ITEM_RETRIED: 'BOS_QUEUE_ITEM_RETRIED',
+
+  // ==========================================
+  // BUSINESS OS PLAN BILLING (owner-initiated, server-written)
+  // ==========================================
+  // Plan payments P-3a (AM-7, SA-P3): an owner opened a Business OS plan
+  // checkout (POST /api/business-os/billing/plan/checkout) and the session was
+  // recorded as the account's checkout lock. Entity type
+  // 'business_os_billing_account', id = the ACCOUNT id (the billing record is
+  // one row per account and Stripe mode; the mode is in the details). Written
+  // with logAndFlush before the response (WC-7). Nothing is paid or assigned
+  // yet: payment and the plan change are P-3b's events. Refusals are logged,
+  // never audited (SA Q-9). Details: tier, lookup key, session id, livemode,
+  // held, expiresAt, actor 'owner'; never the client secret or an email.
+  BOS_BILLING_CHECKOUT_STARTED: 'BOS_BILLING_CHECKOUT_STARTED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -838,6 +859,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     description: "A Business OS account's plan credits dropped below the low line (percentage before / after recorded)",
   },
+  // Credits boost slice 3: 'info' — the owner's own action; nothing is paid yet.
+  [AUDIT_EVENTS.BOS_BOOST_CHECKOUT_STARTED]: {
+    severity: 'info',
+    description: 'A Business OS owner started a credits boost purchase (package, price and Stripe mode recorded)',
+  },
   // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
   // (and possibly send) queued items across every account, outside the schedule.
   [AUDIT_EVENTS.BOS_QUEUE_DRAIN_STARTED]: {
@@ -854,6 +880,14 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   },
   // ADMIN_BOS_CLEANUP slice 7c. 'warning': an admin added one more send
   // attempt to a real client's queued message.
+  // Plan payments P-3a. 'info': an owner opened a checkout; nothing was paid.
+  // SOC2 alone, as every Business OS money event (SA W11b-3: FINANCIAL is
+  // reserved for AgentsPilot's own platform-billing events).
+  [AUDIT_EVENTS.BOS_BILLING_CHECKOUT_STARTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner opened a plan checkout (tier, session and mode recorded; nothing paid yet)',
+  },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',
     complianceFlags: ['SOC2'],

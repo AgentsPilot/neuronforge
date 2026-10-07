@@ -9,7 +9,7 @@
  * | Platform event                              | Recognised            | Not recognised                    |
  * |---------------------------------------------|-----------------------|-----------------------------------|
  * | `invoice.paid`, `invoice.payment_failed`    | `flow: 'plan'`        | `deny` (SA Q-1: payment_failed too)|
- * | `checkout.session.completed`, subscription  | (P-3a adds this)      | `deny legacy_subscription_checkout`|
+ * | `checkout.session.completed`, subscription  | (P-3b adds this)      | `deny legacy_subscription_checkout`|
  * | `checkout.session.completed`, payment       | n/a                   | `not_business_os` (boost pack)    |
  * | anything else                               | n/a                   | `not_business_os`                 |
  *
@@ -143,8 +143,9 @@ export function createPlanResolver(deps: { catalog: PlanPriceCatalog }): Busines
         case 'checkout.session.completed': {
           const session = event.data.object as Stripe.Checkout.Session;
           if (session.mode !== 'subscription') return NOT_OURS; // boost pack (TK-5)
-          // SA Q-2: the session-time Pilot-Credit conversion is gone. P-3a adds
-          // Business OS session recognition ahead of this deny.
+          // SA Q-2: the session-time Pilot-Credit conversion is gone. P-3b adds
+          // Business OS session recognition ahead of this deny (P-3a SA Q-1:
+          // until then a Business OS plan session is denied here, 200).
           return deny('legacy_subscription_checkout', {
             eventType: event.type,
             objectId: session.id ?? null,

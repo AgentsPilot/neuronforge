@@ -38,7 +38,9 @@ function walk(node: ts.Node, visit: (n: ts.Node) => void): void {
  * repository. It reaches the database through `BusinessOsBillingAccountRepository`
  * (CLAUDE.md rule 1). The router, catalog and resolver must stay DB-free.
  */
-const BILLING_REPOSITORY_CALLERS = ['businessOsStripeCustomer.ts'];
+// P-3a: planCheckout.ts records the checkout lock and reads the billing row
+// (workplan BUSINESS_OS_PLAN_PAYMENTS_P3A_WORKPLAN.md §4).
+const BILLING_REPOSITORY_CALLERS = ['businessOsStripeCustomer.ts', 'planCheckout.ts'];
 
 const REPOSITORIES_DIR = path.join(ROOT, 'lib', 'repositories');
 
@@ -222,11 +224,14 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
         repositoryImports: BILLING_REPOSITORY_CALLERS.includes(file) ? [] : repositoryImportsOf(full, text),
       }).toEqual({ file, supabase: false, from: false, repositoryImports: [] });
     }
-    // The allow-listed caller exists and really is the one that imports a repository.
-    const caller = path.join(dir, 'businessOsStripeCustomer.ts');
-    expect(repositoryImportsOf(caller, fs.readFileSync(caller, 'utf8'))).toEqual([
-      '@/lib/repositories/BusinessOsBillingAccountRepository',
-    ]);
+    // The allow-listed callers exist and really are the ones that import a
+    // repository: the billing repository and nothing else.
+    for (const name of BILLING_REPOSITORY_CALLERS) {
+      const caller = path.join(dir, name);
+      expect(repositoryImportsOf(caller, fs.readFileSync(caller, 'utf8'))).toEqual([
+        '@/lib/repositories/BusinessOsBillingAccountRepository',
+      ]);
+    }
   });
 
   it('the repository-import check bites: barrel, file, relative path, type-only, re-export, dynamic import and require (M-1 negative control)', () => {

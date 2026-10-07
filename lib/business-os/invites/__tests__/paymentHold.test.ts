@@ -129,7 +129,7 @@ describe('readPaymentHold (D-7, SA R-3, Q-2)', () => {
   it('R-3: an unpaid friend is held on the lineage alone; the invite is never read, so its failure cannot release them', async () => {
     store.lineage = friendLineage();
     store.invite = 'error';
-    expect(await readPaymentHold(ACCOUNT, readers())).toEqual({ ok: true, held: true, inviteId: INVITE });
+    expect(await readPaymentHold(ACCOUNT, readers())).toEqual({ ok: true, held: true, inviteId: INVITE, source: 'account_invite' });
     expect(store.inviteReads).toEqual([]);
   });
 
@@ -141,7 +141,7 @@ describe('readPaymentHold (D-7, SA R-3, Q-2)', () => {
   it('5c case: an unpaid admin Paid invite is held; an admin champion is not', async () => {
     store.lineage = friendLineage({ source: 'admin_invite' });
     store.invite = { grant_kind: 'tier', language: 'en' };
-    expect(await readPaymentHold(ACCOUNT, readers())).toEqual({ ok: true, held: true, inviteId: INVITE });
+    expect(await readPaymentHold(ACCOUNT, readers())).toEqual({ ok: true, held: true, inviteId: INVITE, source: 'admin_invite' });
     store.invite = { grant_kind: 'cohort', language: 'en' };
     expect(await readPaymentHold(ACCOUNT, readers())).toEqual({ ok: true, held: false });
   });
