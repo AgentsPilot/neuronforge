@@ -154,6 +154,56 @@ Shadowing risk, assessed: built-ins cannot be shadowed (pg_catalog first), temp 
 3. Runbook §6.6 gained the required read-only introspection before the first delete, and the advice to pick a first target with a refund row and a storage-quota row. The "relation does not exist, escalate" note is gone. ✅
 4. G-17 open item recorded in the requirement (insert-only). ✅
 
+---
+
+**Code Review by SA, 2026-10-07 (slice 2, Danger Zone panel, UI short path)**
+**Status:** 🔄 Fix Required (small; QA may run in parallel, SA re-check needs only items 1 and 2)
+
+Scope: `components/business-os/purge/TestAccountCleanupPanel.tsx`, `lib/business-os/test-account-cleanup/cleanupApiTypes.ts`, `components/business-os/purge/__tests__/TestAccountCleanupPanel.render.test.tsx` (31 tests, passing locally), the 4-line mount in `PurgeDangerZone.tsx`, `docs/BUSINESS_OS_TEST_PAGE_SCOPE.md`, requirement change-history row.
+
+### Ruling on Dev's flag (hand-copied client types)
+
+A wire-type pin is required, and the pin is leaner than a shared types file. A shared file would make the client import from the repository module (`server-only`) or move the repository's types out of it. The precedent is `lib/business-os/purge/__tests__/adminDeletionPreview.wireTypes.test.ts`: add **one file**, `lib/business-os/test-account-cleanup/__tests__/cleanupApiTypes.wireTypes.test.ts`, and list that single path in `SCOPED_DIRS` in `scripts/typecheck-bos-llm.ts`. That puts it in the required type-check job, which already runs, so CI time does not grow. `cleanupApiTypes.ts` keeps importing nothing. The pin is a test that the client never imports, and it imports the repository with `import type` only.
+
+### Code Review Comments
+
+1. `cleanupApiTypes.ts` — add the wire-type pin above, assignable in both directions (`Satisfies<A, B>` both ways), for:
+   - `CleanupCheckView` ⇔ `CleanupCheckResult & { functionUpToDate: boolean }`
+   - `CleanupCheckRowView` ⇔ `CleanupCheckRow`
+   - `CleanupBlockerView` ⇔ `CleanupBlocker`
+   - `CleanupStorageObjectView` ⇔ `StorageObjectRef`
+   - `CleanupReportView` ⇔ `CleanupReport`
+   - `CleanupDeleteView` ⇔ `Omit<Extract<CleanupDeleteOutcome, { kind: 'removed' }>, 'kind'>`
+
+   Also export a `CleanupDeleteErrorCode` union from the client file (`confirmation_mismatch | blocked | not_configured | not_authorised | function_missing | function_out_of_date | check_failed | storage_failed | delete_failed | invalid_body`). Pin it both ways against the server's `refused['reason'] | CleanupUnavailableReason | \`${failed['stage']}_failed\`` plus the route's `invalid_body` / `not_configured`. Without that pin, a new server code falls through to the generic sentence and nothing tells anyone. — Priority: **High** (Dev flag)
+2. `TestAccountCleanupPanel.tsx:53-56` `canOfferDelete`: `every()` is true on an empty list, so a BLOCKED verdict with zero blockers would offer Delete. The server still refuses, but this does not meet the rule "OK, or BLOCKED with only G-12". Change it to `verdict === 'OK' || (blockers.length > 0 && blockers.every(G-12))`, and add one render test for BLOCKED with no blockers. — Priority: Medium
+3. Dependency on `fix/test-account-cleanup-insight-links` (its worktree has no diff vs main yet, so judged from the description). The panel renders rows **by section name**: `remove`, `trigger` (shows only `row.item`) and `kept`. Storage comes from `storageObjects` and guards come from `blockers`. Any other section is **dropped without notice**. So:
+   - (a) Changed trigger-event wording flows through if it stays in `item`. It disappears if it moves to `detail`, so render `detail` for trigger rows too.
+   - (b) "New reviewed links" will not show if they arrive under a new `section` value. Add a generic fallback list for unrecognised sections now, or the fix branch must add its section to the panel.
+   - (c) The new migration/version needs nothing from the client, because `functionUpToDate` is computed on the server. Between that merge and the migration apply, Delete is not offered and the out-of-date note shows. That is expected and the runbook should say so.
+   - Whichever branch merges second should re-run this render test, because its fixtures copy the current row shapes. — Priority: Medium
+
+### Verified (no change needed)
+- **Admin only.** The mount is inside the `access.allowed` branch, and `allowed` comes from `AdminAccessService.isAdmin` (`admin_users`). Non-admins return earlier, so no probe is sent (tested). The panel's own 401/403 probe returns `null`. Every route gates with `requireAdmin` first.
+- **Not configured.** The note points at runbook §6, and the inputs and Check are disabled. If the probe fails, the panel shows "unknown" and stays disabled.
+- **Tag.** Free text; only an empty or whitespace-only tag is refused, on the client and in the Zod `min(1)`.
+- **Delete gating.** Delete needs a current check, `functionUpToDate`, and a non-null `targetUserId`. Editing the email or the tag discards the check. The confirmation must equal the email after trimming and lower-casing. A shared `useRef` in-flight guard covers both Check and Delete, and the button shows "Deleting…".
+- **Server text.** Errors are one sentence chosen from the error code. `message` and `details` are never rendered (pinned by a source test). `clears` and `detail` are rendered, but they are check content from the generated function, not error text.
+- **No email leaks.** `onLog` carries only codes and counts. `onResponse` is not passed, so nothing reaches the shared viewer.
+- **No server imports.** Guarded by a source test: the only `@/` import is the types file.
+- **Accessibility.** Inputs sit inside their labels, the section has `aria-labelledby`, and outcomes use `role="alert"` / `role="status"`.
+- **Styling** matches the Danger Zone: the same `box`, the `#dc3545` border and the same palette. There are no `console.*` calls in either touched component.
+
+### Optimisation Suggestions
+- `PurgeDangerZone.tsx:212` (existing code, outside this diff) logs the **admin's own** email to the debug console on access. It is not the target's email, so no action is needed for this slice.
+
+### Code Approved for QA: Yes, in parallel. Not approved for commit until items 1 and 2 are done. Item 3 can be done here (recommended: the fallback and trigger `detail`) or handed to the fix branch, but the decision must be written down.
+
+**SA re-check, 2026-10-07 (slice 2): Code Approved.**
+- Item 1 is done. `__tests__/cleanupApiTypes.wireTypes.test.ts` pins seven pairs in both directions: check, blocker, row, storage, report, delete and the delete error codes. That is 14 `Satisfies`. It is listed as a single path in `SCOPED_DIRS`, and a planted drift failed with TS2344. The panel's sentences are now `Record<CleanupDeleteErrorCode, …>`, so the compiler rejects a missing code.
+- Item 2 is done on the client (`verdict==='OK' || (≥1 blocker && all G-12)`). It is also done on the server in `runCleanupDelete.ts`, using the same predicate, and this only makes the server stricter. The new route test asserts a 409 and that only the check RPC runs: storage is not called and the delete does not run.
+- Item 3 is done here. `KNOWN_SECTIONS` sends every unrecognised section to "Other rows", and trigger rows now show `detail`. The fix branch no longer needs to change the panel; it only re-runs the render test.
+
 ## QA Testing Report
 
 **QA — 2026-10-07**
@@ -225,6 +275,89 @@ Scratch contract test (real repo + runCleanupDelete on replica jsonb)     6 pass
 - [x] All acceptance criteria pass — ready for commit (after the user has seen the diff). The live prod steps stay with the user per runbook §6
 - [ ] Issues found — Dev must address before commit
 
+## QA Testing Report, slice 2 (Danger Zone UI)
+
+**QA — 2026-10-07**
+**Test mode:** full
+**Strategy used:** A (Jest + RTL, jsdom, mocked `fetch`: the Dev render suite, a QA scratch probe suite of 23 extra cases deleted after the run, affected suites, guards, full suite). D (browser check) not run, see below
+**Focus:** ui, security
+**Skipped:** D, by instruction (no browser, no live calls). The visual checks are listed under Final Status for the user
+**Input source:** prompt keywords
+**Scope:** branch `feature/test-account-cleanup-danger-zone-ui`, uncommitted: `TestAccountCleanupPanel.tsx`, `cleanupApiTypes.ts`, the render test, the mount in `PurgeDangerZone.tsx`, docs. Run in parallel with the SA review; SA items 1 to 3 were not yet fixed when QA ran
+
+### Test Coverage
+
+| Acceptance Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| Nothing renders for a non-admin | ✅ | Pass | `PurgeDangerZone` with `allowed: false` (Dev) and with a 403 access response (QA): no section, and **no request** to `test-account-cleanup/*`. Mount sits after the `!access.allowed` early return |
+| Panel renders nothing when its own probe answers 401 / 403 | ✅ | Pass | Empty container (Dev) |
+| Probe says not configured | ✅ | Pass | "Not set up on this deployment" + runbook §6 pointer; email input and Check disabled (Dev). Probe network failure: "Could not tell whether this is set up", actions disabled (QA) |
+| OK check renders verdict, per-table counts (`unknown`, never 0), triggers, kept items; confirm appears | ✅ | Pass | Dev. The VERDICT row's pasted-SQL instruction is not shown |
+| BLOCKED renders every blocker with its clearing action | ✅ | Pass | Two blockers, each `G-n item (found) — to clear: …` (Dev) |
+| Storage paths listed (`bucket/path`) | ✅ | Pass | G-12-only fixture (Dev) |
+| Any non-empty tag accepted, empty refused | ✅ | Pass | Cleared tag disables Check; `@walla.co.il` posted as-is (Dev). Body is `{ email, tag }`, trimmed |
+| Editing the email clears the check | ✅ | Pass | Dev; editing the **tag** also clears the check and the confirm (QA) |
+| Delete hidden unless OK or BLOCKED-with-only-G-12 | ⚠️ | **Partial** | Hidden for hard blockers, G-12 + another guard (QA), `targetUserId` null (QA), out-of-date function (Dev). **Offered for BLOCKED with zero blockers** — Bug 1 (QA probe red) |
+| Confirm needs the exact normalised email | ✅ | Pass | Trimmed + case-insensitive enables (Dev, and QA with upper case); one char short, a trailing `.`, whitespace only all stay disabled (QA) |
+| Double-submit blocked | ✅ | Pass | dblClick on Delete posts once (Dev); dblClick on Check posts once (QA). Shared `useRef` guard |
+| "Deleting…" / "Checking…" states | ✅ | Pass | Both shown and disabled while in flight (Dev / QA) |
+| Result: per-table rows + TOTAL / CLEAN + files removed + login | ✅ | Pass | Dev; the stale check is cleared after success |
+| Every refusal is one plain sentence, no raw server text | ✅ | Pass | Dev: check 503 not_configured / function_missing, 400, 500; delete blocked (0 / >0 files), confirmation_mismatch, 503 not_configured, function_out_of_date, 42501 (`not_authorised`) with files, storage_failed, delete_failed, unexpected 500. QA added: check 42501, 401, 403, unexpected 500, network; delete not_authorised and function_missing with 0 files, function_out_of_date **with files** ("Files removed, account kept"), check_failed, 400, 401, 403, unexpected 500, network. Each asserted as the **exact** sentence, no blocker list, and the planted server `message`/`details` absent from the page |
+| No email in the debug console / Last API Response viewer | ✅ | Pass | QA: `onLog` across success, refusal and network error never contains the target email or any `@`. `onResponse` is not passed to the panel, so nothing reaches the shared viewer (read) |
+| No server module in the client bundle | ✅ | Pass | Dev source guard: only `@/` import is the types file; types file imports nothing |
+| Regression proof (planted) | ✅ | Pass | Check error changed to render `json.message` first: **5 tests red** (4 check-refusal cases + the source guard). Restored; `cmp` byte-identical |
+| Entitlements registration | ⬜ | n/a | No import from `lib/business-os/entitlements/` |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+1. **Delete offered on a BLOCKED check with no blockers** (= SA item 2, independently confirmed) — File: `components/business-os/purge/TestAccountCleanupPanel.tsx:53-56` — Severity: Medium
+   - Steps to reproduce: check returns `verdict: 'BLOCKED'`, `blockers: []`, `functionUpToDate: true`, a login id.
+   - Expected: no confirm field, no Delete.
+   - Actual: confirm + Delete render (`every()` on an empty list is true). The SQL function's own guards would still refuse, but the UI breaks the "OK, or BLOCKED by G-12 only" rule. The route's `runCleanupDelete` has the same shape (hard-blocker count, not the verdict), so the database is the only stop there.
+
+#### Performance Issues (should fix)
+None in the component. The render suite takes 80 to 90 s on this Windows machine (largest in the purge set); not a CI blocker, noted only.
+
+#### Edge Cases (nice to fix)
+1. **Dev suite does not pin several refusal paths** that QA verified with a scratch probe: network error (check and delete), check 42501 / 401 / 403, delete with 0 files for not_authorised / function_missing, function_out_of_date with files, and "onLog never carries the email". Adding the network and onLog cases would keep the last two requirements pinned after QA's probe is gone. Severity: Low.
+2. **`ready()` in the render test swallows its timeout** (`.catch(() => undefined)`), so a probe that never configures shows up as a later, misleading failure. Severity: Low.
+3. **Unrecognised check sections are dropped** (= SA item 3): only `remove`, `trigger` (item only) and `kept` rows render. Needs the decision SA asked for. Severity: Low now, Medium once the insight-links fix branch lands.
+4. **After a failed delete the check and typed confirmation stay**, so Delete can be pressed again without a fresh check. The server re-runs the check each time, so it is safe; just noting the UX. Severity: Low.
+
+### Test Outputs / Logs
+
+```text
+Panel + Danger Zone / purge + slice-1 route, repository, pasted-SQL suites   24 suites, 536 passed
+QA scratch probe (23 cases, deleted after)                                    22 passed, 1 failed = Bug 1
+Planted regression (render json.message on a check refusal)                   5 failed (expected red); restored, cmp identical
+Tailwind CSS-escape guard                                                     6 passed
+npm run test:authz-guard                                                      119 passed, exit 0
+eslint on the 4 changed/new TS files                                          exit 0; 0 errors, 1 pre-existing warning
+                                                                              (PurgeDangerZone.tsx:224 exhaustive-deps, not in the diff)
+tsc scoped to the 4 files (temp tsconfig extending the project's)             exit 0 (full-project tsc ran out of memory here)
+Full npm test                                                                 986 passed / 15 failed / 8 skipped suites; 11 = quarantine list;
+  4 outside it, the same Windows-env set as slice 1: oneAddressPolicy.guard, geo/addressFormat,
+  AdminAreaField.render, AdminAreaField.search. None touched by this diff
+```
+
+### Final Status
+- [ ] All acceptance criteria pass — ready for commit
+- [x] Issues found — Dev must address before commit: Bug 1 (Medium, already SA item 2) plus SA items 1 and 3. No High bug. Re-run the render suite after the fix
+
+**Manual visual checks for the user** (on `/test-business-os` → Danger Zone, signed in as a platform admin; no live delete needed for 1 to 4):
+1. Signed in as a non-admin: no "Remove a test account" section anywhere.
+2. On a deployment without `TEST_CLEANUP_SECRET`: "Not set up on this deployment" note, inputs and Check greyed out.
+3. Configured: Check a non-test email → BLOCKED in red, each guard on its own line with "to clear", no confirm box. Check a `+test` account → OK in green, rows table readable, `unknown` where a count failed, files list, kept list; the red border box sits below the existing Danger Zone without layout breakage.
+4. Type a different email in the confirm box: Delete stays grey; edit the main email: the result disappears.
+5. Only when you choose to run a real delete on a throwaway `+test` account: "Deleting…" then the green report with TOTAL · CLEAN and files removed; the debug console and Last API Response show no email.
+
+### Dev fixes (slice 2, 2026-10-07)
+- SA 1: Fixed by Dev: `lib/business-os/test-account-cleanup/__tests__/cleanupApiTypes.wireTypes.test.ts` pins check, blocker, row, storage, report, delete and the new exported `CleanupDeleteErrorCode` both ways (server codes built from `runCleanupDelete`'s types plus the route's two literals); listed in `SCOPED_DIRS`. Planted drift (extra field + dropped `check_failed`) gave two TS2344s; restored. The panel's code-to-sentence map is now a `Record<CleanupDeleteErrorCode, …>`.
+- SA 2 / QA Bug 1: Fixed by Dev: `canOfferDelete` requires `verdict === 'OK'` or at least one blocker, all G-12. Same gap closed in `runCleanupDelete` (storage only on OK or non-empty all-G-12), route test "BLOCKED with no parsed blocker: storage never called".
+- SA 3 / QA Edge 3: Fixed by Dev: unrecognised sections go to an "Other rows" list; trigger rows show `detail`.
+- QA Edges 1-2: Fixed by Dev: tests for network errors (probe, check, delete) and no email or tag in `onLog`; `ready()` now fails on its own timeout.
+
 ## Commit Info
 
 _RM to populate._
@@ -238,3 +371,7 @@ _RM to populate._
 | 2026-10-07 | SA code review (option A) | Fix Required: `search_path = ''` breaks the refund and storage-quota triggers; switch to `pg_catalog, public, pg_temp` + public-CREATE abort guard |
 | 2026-10-07 | SA re-check | Fixes verified (search_path, CREATE guard, stamp 99c4c83979a96efc, runbook §6.6, OI-1); Code Approved for QA |
 | 2026-10-07 | QA | Full pass: Jest (targeted 1436, guards, full suite no new failures), migration + function executed on a PGlite replica (create guard, grants, 42501 paths, null actor, read-only check, CLEAN with real refund/quota triggers, 10 blocked paths zero rows, version stamp, rollback), contract test on real jsonb. No bugs; one Low edge case |
+| 2026-10-07 | SA code review (slice 2) | Fix Required: wire-type pin (scoped tsc, adminDeletionPreview precedent) + error-code union pin; canOfferDelete empty-blockers edge; unrecognised check sections dropped (fix-branch dependency). QA may proceed in parallel |
+| 2026-10-07 | SA re-check (slice 2) | Items 1-3 verified (wire pin in scoped tsc, Record-typed sentences, G-12-only predicate client + server with route test, Other-rows fallback + trigger detail); Code Approved |
+| 2026-10-07 | QA (slice 2) | Full Jest pass of the panel (Dev suite + 23-case QA probe), purge and slice-1 suites, guards, scoped tsc, eslint, full suite (no new failures); planted raw-message regression went red, restored byte-exact. One Medium bug (Delete offered on BLOCKED with zero blockers, = SA item 2); Low test-gap edge cases; manual visual checks listed for the user |
+| 2026-10-07 | Dev fixes (slice 2) | SA items 1-3 and QA bug 1 / edges 1-3: wire-type pin in the bos-llm gate, empty-blockers gap in the panel and in runCleanupDelete, unknown-section fallback + trigger detail, extra tests |
