@@ -210,6 +210,28 @@ export function isAdminBusinessDeleteEnabled(): boolean {
 }
 
 /**
+ * The Business OS credits boost checkout's kill switch (credits boost slice 3,
+ * SA F-14): may an owner start a boost purchase at all?
+ *
+ * **SERVER-ONLY. Default off** — unset, blank or anything unrecognised is off.
+ * No `NEXT_PUBLIC_` prefix: it decides whether money can be taken, so it is
+ * never compiled into a client bundle.
+ *
+ * ⚠️ **SA C-1: leave it unset on Vercel (Preview and Production) until slice 4a
+ * is merged and deployed.** Before 4a, a paid boost session reaches the
+ * agent-platform webhook handler, which no-ops and marks the event completed,
+ * so the payment would never be credited. The optional allow-list
+ * `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` (lib/business-os/boost/
+ * boostCheckoutAccess.ts) narrows who passes; it does not change this rule.
+ *
+ * @returns {boolean} True only when `BUSINESS_OS_CREDITS_BOOST_ENABLED` is `true` / `1`
+ */
+export function isBusinessOsCreditsBoostEnabled(): boolean {
+  const flag = process.env.BUSINESS_OS_CREDITS_BOOST_ENABLED;
+  return parseBooleanFlag(flag, false);
+}
+
+/**
  * Get all feature flags status.
  *
  * ⚠️ **Debug helper only — it has NO production consumer**, by design. Nothing
