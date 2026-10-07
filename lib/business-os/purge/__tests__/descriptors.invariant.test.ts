@@ -800,7 +800,8 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     expect(Object.keys(baseline.levels).length).toBe(baseline.count);
     // 144 at the SC-8 pass; +1 business_addresses (2026-10-06, PR #229's table);
     // +2 credits boost slice 2a: business_os_boost_purchases and business_os_boost_cap_overrides (both never).
-    expect(baseline.count).toBe(147);
+    // +1 plan payments P-3b.1: business_os_billing_events, the money history (never).
+    expect(baseline.count).toBe(148);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

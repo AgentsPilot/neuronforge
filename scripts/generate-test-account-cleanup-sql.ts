@@ -134,6 +134,7 @@ export const FULL_REMOVAL_EXTRAS: ReadonlyArray<{ table: string; reason: string 
   { table: 'business_os_credit_lots', reason: 'Credits added to the test account (BQ-2).' },
   { table: 'business_os_credit_charges', reason: 'The credit bill of the test account (BQ-2). SET NULL to the login, so it would otherwise survive with no owner.' },
   { table: 'business_os_credit_totals', reason: 'Running totals derived from the bill (BQ-2).' },
+  { table: 'business_os_billing_events', reason: 'Plan money history (BQ-2). Append-only, but the owner may delete. G-5 refuses any live-mode row.' },
   { table: 'business_os_billing_accounts', reason: 'Plan billing rows (BQ-2). G-5 refuses live mode, G-6 refuses a live subscription in either mode.' },
   { table: 'business_os_boost_cap_overrides', reason: 'Admin boost cap changes for the test account (BQ-2).' },
   { table: 'business_os_account_plans', reason: 'Plan state. A re-signup gets a fresh plan, which is the point of the cleanup.' },
@@ -736,7 +737,8 @@ function guardRowsCte(): string {
       'G-5',
       'nothing ever ran in Stripe live mode',
       `(SELECT count(*) FROM public.business_os_billing_accounts AS billing WHERE billing.user_id = ${uid} AND billing.livemode)
-      + (SELECT count(*) FROM public.business_os_boost_purchases AS boosts WHERE boosts.user_id = ${uid} AND boosts.livemode)`,
+      + (SELECT count(*) FROM public.business_os_boost_purchases AS boosts WHERE boosts.user_id = ${uid} AND boosts.livemode)
+      + (SELECT count(*) FROM public.business_os_billing_events AS money WHERE money.user_id = ${uid} AND money.livemode)`,
       'Real money. This account is not a test account and must not be removed.'
     ),
     guard(
