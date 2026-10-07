@@ -1,0 +1,421 @@
+/**
+ * The test-account cleanup SQL (operator exception OX-1).
+ *
+ * Two pasted files remove ONE test account completely, login included. They
+ * run as `postgres`, so RLS protects nothing and these files ARE the safety.
+ * This suite pins them to their generator and to the purge descriptors:
+ *
+ *   - drift:    the committed SQL is exactly what the generator writes now, so
+ *               a new descriptor or a changed band cannot be missed silently
+ *   - coverage: every user-scoped descriptor is deleted, must be empty, or is
+ *               handled in the final steps (SA C-3)
+ *   - order:    bands, blocking edges and `via` children (SA C-12)
+ *   - guards:   present in both files, checked before the first DELETE
+ *   - hygiene:  the SQL editor hazards (SA C-6, C-11, the paste rules)
+ *
+ * Pure: reads files and imports the generator. No database, no network.
+ * Workplan: docs/workplans/TEST_ACCOUNT_CLEANUP_SCRIPT_WORKPLAN.md
+ */
+
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  ACTOR_FOREIGN_KEYS,
+  AUDIT_ACTION,
+  AUDIT_COMPLIANCE_FLAGS,
+  AUDIT_SEVERITY,
+  CHECK_FILE,
+  DEFAULT_TEST_TAG,
+  DELETE_FILE,
+  FINAL_STEPS,
+  FULL_REMOVAL_EXTRAS,
+  INBOUND_FOREIGN_KEYS,
+  MUST_BE_EMPTY,
+  PARENT_OWNED_REASONS,
+  PLACEHOLDER_EMAIL,
+  STEP_B_BLOCKING_EDGES,
+  buildCleanupPlan,
+  renderCheckSql,
+  renderDeleteSql,
+} from '../generate-test-account-cleanup-sql';
+import {
+  BLOCKING_EDGES,
+  PURGE_DESCRIPTORS,
+  STORAGE_DESCRIPTORS,
+  descriptorsForRun,
+} from '@/lib/business-os/purge/descriptors';
+import { BUSINESS_OWNED_TABLES } from '@/lib/business-os/businessOwnedTables';
+import { AUDIT_EVENTS, EVENT_METADATA } from '@/lib/audit/events';
+
+const REPO = join(__dirname, '..', '..');
+/** Windows checkouts may hold CRLF. The generator always writes LF (SA C-9). */
+const readSql = (file: string) => readFileSync(join(REPO, ...file.split('/')), 'utf8').replace(/\r\n/g, '\n');
+
+const checkSql = readSql(CHECK_FILE);
+const deleteSql = readSql(DELETE_FILE);
+const FILES: ReadonlyArray<[string, string]> = [
+  [CHECK_FILE, checkSql],
+  [DELETE_FILE, deleteSql],
+];
+
+const plan = buildCleanupPlan();
+const position = (table: string) => plan.findIndex((entry) => entry.table === table);
+
+// ── A small, correct SQL scanner: comments, string literals, dollar bodies ──
+
+interface Token {
+  kind: 'comment' | 'string';
+  text: string;
+}
+
+/** Comments and string literals, recursing into `$tag$` bodies (a DO body is itself a literal). */
+function scan(sql: string): { tokens: Token[]; unterminated: boolean } {
+  const tokens: Token[] = [];
+  let i = 0;
+  while (i < sql.length) {
+    if (sql.startsWith('--', i)) {
+      const end = sql.indexOf('\n', i);
+      tokens.push({ kind: 'comment', text: sql.slice(i, end === -1 ? sql.length : end) });
+      i = end === -1 ? sql.length : end;
+      continue;
+    }
+    if (sql.startsWith('/*', i)) {
+      const end = sql.indexOf('*/', i + 2);
+      if (end === -1) return { tokens, unterminated: true };
+      tokens.push({ kind: 'comment', text: sql.slice(i, end + 2) });
+      i = end + 2;
+      continue;
+    }
+    const tag = /^\$[A-Za-z_]*\$/.exec(sql.slice(i));
+    if (tag) {
+      const close = sql.indexOf(tag[0], i + tag[0].length);
+      if (close === -1) return { tokens, unterminated: true };
+      const inner = scan(sql.slice(i + tag[0].length, close));
+      if (inner.unterminated) return { tokens, unterminated: true };
+      tokens.push(...inner.tokens);
+      i = close + tag[0].length;
+      continue;
+    }
+    if (sql[i] === "'") {
+      let j = i + 1;
+      let text = '';
+      for (;;) {
+        if (j >= sql.length) return { tokens, unterminated: true };
+        if (sql[j] === "'" && sql[j + 1] === "'") {
+          text += "''";
+          j += 2;
+          continue;
+        }
+        if (sql[j] === "'") break;
+        text += sql[j];
+        j += 1;
+      }
+      tokens.push({ kind: 'string', text });
+      i = j + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return { tokens, unterminated: false };
+}
+
+describe('drift: the committed SQL is what the generator writes', () => {
+  it.each(FILES)('%s matches the generator output', (file, committed) => {
+    const generated = file === CHECK_FILE ? renderCheckSql() : renderDeleteSql();
+    // If this fails: run `npx tsx scripts/generate-test-account-cleanup-sql.ts`
+    // and review the diff. Never hand-edit the SQL.
+    expect(committed).toBe(generated);
+  });
+
+  it('is deterministic', () => {
+    expect(renderCheckSql()).toBe(renderCheckSql());
+    expect(renderDeleteSql()).toBe(renderDeleteSql());
+    expect(renderDeleteSql()).not.toMatch(/\r/);
+  });
+});
+
+describe('coverage (SA C-3)', () => {
+  it('handles every user-scoped descriptor: deleted, must be empty, or a final step', () => {
+    const handled = new Set([...plan.map((entry) => entry.table), ...Object.keys(MUST_BE_EMPTY)]);
+    const missing = PURGE_DESCRIPTORS.filter((d) => d.scope.kind !== 'global' && !handled.has(d.table)).map((d) => d.table);
+    expect(missing).toEqual([]);
+  });
+
+  it('deletes every table a purge deletes, with every option on', () => {
+    const run = descriptorsForRun('purge', { integrations: true, agents: true, activityHistory: true }).map((d) => d.table);
+    expect(run.filter((table) => position(table) === -1)).toEqual([]);
+  });
+
+  it('deletes every business-owned table', () => {
+    // Named in the ownership migration but measured ABSENT from the database,
+    // so they have no descriptor (businessOwnedTables.test.ts, requirement §8.9).
+    // Were one re-created, the business_profiles cascade would still clear it.
+    const MEASURED_ABSENT = ['insight_outcomes', 'websites'];
+    for (const table of MEASURED_ABSENT) {
+      expect(PURGE_DESCRIPTORS.some((d) => d.table === table)).toBe(false);
+    }
+    expect(BUSINESS_OWNED_TABLES.filter((table) => position(table) === -1 && !MEASURED_ABSENT.includes(table))).toEqual([]);
+  });
+
+  it('names each table once', () => {
+    const tables = plan.map((entry) => entry.table);
+    expect(new Set(tables).size).toBe(tables.length);
+  });
+
+  it('only extends `never` descriptors that exist, each with a reason', () => {
+    const never = new Set(PURGE_DESCRIPTORS.filter((d) => d.level === 'never').map((d) => d.table));
+    for (const extra of FULL_REMOVAL_EXTRAS) {
+      expect(never.has(extra.table)).toBe(true);
+      expect(extra.reason.length).toBeGreaterThan(10);
+    }
+  });
+
+  it('never deletes platform data: global descriptors, actor-column tables, must-be-empty tables', () => {
+    // The two invite tables are global and are the reviewed exception (BQ-3).
+    const allowedGlobal = new Set(['business_os_account_lineage', 'business_os_invites']);
+    const globals = PURGE_DESCRIPTORS.filter((d) => d.scope.kind === 'global' && !allowedGlobal.has(d.table)).map((d) => d.table);
+    const actorOnly = ACTOR_FOREIGN_KEYS.filter((fk) => fk.ownerColumn === null).map((fk) => fk.table);
+    for (const table of [...globals, ...actorOnly, ...Object.keys(MUST_BE_EMPTY)]) {
+      expect(position(table)).toBe(-1);
+    }
+  });
+});
+
+describe('order (SA C-12)', () => {
+  it('runs step A in the descriptor bands, then step B, then step C', () => {
+    const steps = plan.map((entry) => entry.step).join('');
+    expect(steps).toMatch(/^A+B+C+$/);
+    const order = new Map(PURGE_DESCRIPTORS.map((d) => [d.table, d.order]));
+    const bands = plan.filter((entry) => entry.step === 'A').map((entry) => order.get(entry.table) ?? -1);
+    expect(bands).toEqual([...bands].sort((a, b) => a - b));
+  });
+
+  it('puts every blocking child before its parent', () => {
+    for (const edge of [...BLOCKING_EDGES, ...STEP_B_BLOCKING_EDGES]) {
+      if (position(edge.child) === -1 || position(edge.parent) === -1) continue;
+      expect([edge.child, position(edge.child) < position(edge.parent)]).toEqual([edge.child, true]);
+    }
+  });
+
+  it('puts every `via` child before its parent, so the sub-select still finds the parent rows', () => {
+    const via = plan.filter((entry) => entry.parent !== null);
+    expect(via.length).toBeGreaterThan(0);
+    for (const entry of via) {
+      expect([entry.table, position(entry.table) < position(entry.parent as string)]).toEqual([entry.table, true]);
+    }
+  });
+
+  it('ends with business_profiles, profiles, organizations, then the circle and the invites', () => {
+    expect(plan.slice(-FINAL_STEPS.length).map((entry) => entry.table)).toEqual(FINAL_STEPS.map((step) => step.table));
+    expect(plan.filter((entry) => entry.table === 'business_profiles')).toHaveLength(1);
+  });
+
+  it('deletes the login last, after the plan loop and before the audit row', () => {
+    const loop = deleteSql.indexOf('END LOOP');
+    const login = deleteSql.indexOf('DELETE FROM auth.users');
+    const audit = deleteSql.indexOf('INSERT INTO public.audit_trail (');
+    expect(loop).toBeGreaterThan(0);
+    expect(login).toBeGreaterThan(loop);
+    expect(audit).toBeGreaterThan(login);
+  });
+});
+
+describe('the delete proves CLEAN before it commits (SA F-1)', () => {
+  const block = deleteSql.slice(deleteSql.indexOf('DO $cleanup$'), deleteSql.indexOf('$cleanup$;'));
+  const after = deleteSql.slice(deleteSql.indexOf('$cleanup$;'));
+
+  it('scans for survivors inside the block, between the login delete and the audit row, and raises on any', () => {
+    const login = block.indexOf('DELETE FROM auth.users');
+    const scan = block.indexOf('v_survivors := (');
+    const raise = block.indexOf("RAISE EXCEPTION 'Rows still name the login after the delete, so everything was rolled back: %', v_survivors");
+    const audit = block.indexOf('INSERT INTO public.audit_trail (');
+    expect(login).toBeGreaterThan(0);
+    expect(scan).toBeGreaterThan(login);
+    expect(raise).toBeGreaterThan(scan);
+    expect(audit).toBeGreaterThan(raise);
+  });
+
+  it('scans every plan table and every link to the login', () => {
+    const scan = block.slice(block.indexOf('v_survivors := ('), block.indexOf('IF v_survivors IS NOT NULL'));
+    expect(scan).toContain("con.confrelid = 'auth.users'::regclass");
+    expect(scan).toContain('FROM auth.users AS users WHERE users.id = v_user_id');
+    for (const entry of plan.filter((e) => e.parent === null)) expect(scan).toContain(`'${entry.table}'`);
+  });
+
+  it('keeps the final SELECT informational: the latest removal in 15 minutes, with same_run', () => {
+    expect(after).not.toMatch(/\bDELETE\b|\bINSERT\b|NOT RUN/);
+    expect(after).toContain("'NO RECENT REMOVAL'");
+    expect(after).toContain("audit.created_at >= now() - interval '15 minutes'");
+    expect(after).toContain('ORDER BY audit.created_at DESC');
+    expect(after).toContain('AS same_run');
+  });
+
+  it('reports one row per removed table, by name, from the audit counts, then a TOTAL row', () => {
+    // User request 2026-10-07: show what was removed, table by table.
+    expect(after).toContain("jsonb_each_text(coalesce(recent.details -> 'counts', '{}'::jsonb))");
+    expect(after).toContain(
+      'SELECT report.line, report.rows_removed, report.result, report.tables_removed, report.removed_login, report.removed_at, report.same_run'
+    );
+    expect(after).toContain("SELECT 1, 'TOTAL', summary.rows_removed, summary.result");
+    expect(after).toContain('ORDER BY report.sort_order, report.line;');
+    expect(after).toContain('(SELECT coalesce(sum(per_table.rows_removed), 0) FROM per_table)::bigint AS rows_removed');
+    expect(after).toContain('(SELECT count(*) FROM per_table)::bigint AS tables_removed');
+    // The block records the counts the report reads.
+    expect(deleteSql).toContain("'tables', v_tables, 'rows', v_total, 'counts', v_counts");
+  });
+});
+
+describe('links pointing at removed tables (SA F-2, F-3)', () => {
+  it('reviews each inbound link once, and explains every child without an owner column', () => {
+    const keys = INBOUND_FOREIGN_KEYS.map(([child, constraint]) => `${child}.${constraint}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const [child, , owner] of INBOUND_FOREIGN_KEYS) {
+      if (owner === null) expect([child, typeof PARENT_OWNED_REASONS[child]]).toEqual([child, 'string']);
+    }
+    expect(Object.keys(PARENT_OWNED_REASONS).filter((child) => !INBOUND_FOREIGN_KEYS.some(([c, , o]) => c === child && o === null))).toEqual([]);
+  });
+
+  it.each(FILES)('%s reads inbound links from the catalog and blocks unreviewed or foreign-owned ones', (_file, sql) => {
+    expect(sql).toContain('parent_rel.relname IN (SELECT plan.table_name FROM plan)');
+    expect(sql).toContain('WHERE NOT inbound_rows.reviewed OR inbound_rows.key_width <> 1 OR NOT inbound_rows.owner_ok OR inbound_rows.found > 0');
+    expect(sql).toContain('child_rows.%I IS DISTINCT FROM %L');
+  });
+
+  it.each(FILES)('%s reviews delete triggers on plan tables, login children and inbound children', (_file, sql) => {
+    const g17 = sql.slice(sql.indexOf("'G-17'::text AS guard"), sql.indexOf("'G-18'::text AS guard"));
+    expect(g17).toContain('rel.relname IN (SELECT plan.table_name FROM plan)');
+    expect(g17).toContain("fk_con.confrelid = 'auth.users'::regclass");
+    expect(g17).toContain('inbound_catalog.child_table FROM inbound_catalog');
+  });
+});
+
+describe('guards', () => {
+  const ids = ['G-1', 'G-2', 'G-4', 'G-5', 'G-6', 'G-7', 'G-8', 'G-9', 'G-10', 'G-11', 'G-12', 'G-13', 'G-14', 'G-15', 'G-16', 'G-17', 'G-18'];
+
+  it.each(ids)('%s is in both files', (id) => {
+    expect(checkSql).toContain(`'${id}'::text AS guard`);
+    expect(deleteSql).toContain(`'${id}'::text AS guard`);
+  });
+
+  it('checks every guard and the typed confirmation before the first DELETE (SA TQ-1 b)', () => {
+    const blockedRaise = deleteSql.indexOf("RAISE EXCEPTION 'BLOCKED, nothing was removed: %'");
+    const confirm = deleteSql.indexOf('IF v_confirm IS DISTINCT FROM v_email THEN');
+    const marker = deleteSql.indexOf("'G-2'::text AS guard");
+    expect(blockedRaise).toBeGreaterThan(0);
+    expect(confirm).toBeGreaterThan(0);
+    expect(marker).toBeGreaterThan(0);
+    // "DELETE FROM", not "DELETE": the header comment names the file "DELETE".
+    const firstStatementDelete = deleteSql.indexOf('DELETE FROM');
+    expect(firstStatementDelete).toBeGreaterThan(blockedRaise);
+    expect(marker).toBeLessThan(blockedRaise);
+  });
+
+  it('qualifies a test account by the email CONTAINING the tag, case-insensitive, never an empty tag', () => {
+    for (const [, sql] of FILES) {
+      expect(sql).toContain("NULLIF(lower(btrim(coalesce(current_setting('cleanup.test_tag', true), ''))), '') AS test_tag");
+      expect(sql).toContain('sign(strpos(params.target_email, params.test_tag))');
+      expect(sql).toContain('counted.test_tag IS NULL OR counted.found <> 1');
+      // strpos, not LIKE: a `%` or `_` in the tag must be read as itself.
+      expect(sql).not.toMatch(/LIKE\s+params\.test_tag/i);
+    }
+  });
+
+  it('has the tag and the email on their own edit lines at the top of both files', () => {
+    for (const [, sql] of FILES) {
+      const lines = sql.split('\n');
+      const emailLine = lines.findIndex((line) => line.startsWith("SELECT set_config('cleanup.target_email'"));
+      const tagLine = lines.findIndex((line) => line.startsWith("SELECT set_config('cleanup.test_tag'"));
+      expect(emailLine).toBeGreaterThan(-1);
+      expect(tagLine).toBeGreaterThan(-1);
+      expect(lines[emailLine]).toContain(`'${PLACEHOLDER_EMAIL}', true)`);
+      expect(lines[tagLine]).toContain(`'${DEFAULT_TEST_TAG}', true)`);
+      expect(lines[tagLine - 1]).toMatch(/^-- 2\. The test tag/);
+      expect(tagLine).toBeLessThan(lines.findIndex((line) => line.startsWith('WITH') || line.startsWith('DO ')));
+    }
+    expect(deleteSql).toContain("SELECT set_config('cleanup.confirm_email', 'type-the-email-again', true)");
+  });
+
+  it('sets settings transaction-local and reads them fail-closed (SA C-5)', () => {
+    for (const [, sql] of FILES) {
+      for (const call of sql.match(/set_config\([^)]*\)/g) ?? []) expect(call).toMatch(/, true\)$/);
+      expect(sql).not.toMatch(/current_setting\('cleanup\.[a-z_]+'\)/);
+    }
+  });
+
+  it('blocks on stored files in every bucket the descriptors list (SA C-4)', () => {
+    for (const bucket of STORAGE_DESCRIPTORS.map((s) => s.bucket)) {
+      expect(checkSql).toContain(`'${bucket}'`);
+      expect(deleteSql).toContain(`'${bucket}'`);
+    }
+  });
+});
+
+describe('audit row (SA TQ-5, C-7)', () => {
+  it('uses a registered event whose severity and flags match the SQL', () => {
+    expect(AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED).toBe(AUDIT_ACTION);
+    const meta = EVENT_METADATA[AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED];
+    expect(meta.severity).toBe(AUDIT_SEVERITY);
+    expect([...(meta.complianceFlags ?? [])]).toEqual([...AUDIT_COMPLIANCE_FLAGS]);
+    expect(deleteSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, NULL,`);
+    expect(deleteSql).toContain(`'${AUDIT_SEVERITY}', ARRAY['SOC2']::text[], now()`);
+  });
+});
+
+describe('SQL editor hygiene (SA C-6, C-10, C-11)', () => {
+  it.each(FILES)('%s has exactly one "into", the audit insert', (_file, sql) => {
+    const allowed = 'INSERT INTO public.audit_trail (';
+    const occurrences = sql.split(allowed).length - 1;
+    expect(occurrences).toBe(_file === DELETE_FILE ? 1 : 0);
+    expect(sql.split(allowed).join('').match(/\binto\b/gi)).toBeNull();
+  });
+
+  it.each(FILES)('%s closes every string, comment and dollar quote', (_file, sql) => {
+    expect(scan(sql).unterminated).toBe(false);
+    const tags = sql.match(/\$[A-Za-z_]*\$/g) ?? [];
+    expect(tags.length % 2).toBe(0);
+  });
+
+  it.each(FILES)('%s keeps comments to the header, without semicolons or apostrophes', (_file, sql) => {
+    const lines = sql.split('\n');
+    const firstCode = lines.findIndex((line) => line.startsWith('WITH') || line.startsWith('DO '));
+    lines.forEach((line, index) => {
+      if (line.includes('--')) {
+        expect([index, line.startsWith('-- ') && index < firstCode]).toEqual([index, true]);
+      }
+    });
+    for (const token of scan(sql).tokens.filter((t) => t.kind === 'comment')) {
+      expect(token.text).not.toMatch(/[;']/);
+    }
+  });
+
+  it.each(FILES)('%s has no semicolon or "--" inside a string literal', (_file, sql) => {
+    const offenders = scan(sql)
+      .tokens.filter((t) => t.kind === 'string' && (t.text.includes(';') || t.text.includes('--')))
+      .map((t) => t.text.slice(0, 60));
+    expect(offenders).toEqual([]);
+  });
+
+  it.each(FILES)('%s never assigns with SELECT ... INTO, never disables triggers, never deletes storage', (_file, sql) => {
+    expect(sql).not.toMatch(/session_replication_role/i);
+    expect(sql).not.toMatch(/DISABLE\s+TRIGGER/i);
+    expect(sql).not.toMatch(/DELETE\s+FROM\s+storage\./i);
+    expect(sql).not.toMatch(/raw_app_meta_data|raw_user_meta_data/i);
+    expect(sql).not.toMatch(/\bUPDATE\s+(auth|public)\./i);
+  });
+
+  it.each(FILES)('%s has no single-letter aliases', (_file, sql) => {
+    expect(sql).not.toMatch(/\bAS\s+[a-z]\b/i);
+  });
+
+  it.each(FILES)('%s contains no email except the placeholder', (_file, sql) => {
+    const emails = sql.match(/[A-Za-z0-9.+_-]+@[A-Za-z0-9.-]+/g) ?? [];
+    expect(new Set(emails)).toEqual(new Set([PLACEHOLDER_EMAIL]));
+  });
+
+  it.each(FILES)('%s is several standalone statements', (_file, sql) => {
+    // Statement ends at a line that ends with ";" outside the DO body.
+    const outsideDo = sql.replace(/DO \$cleanup\$[\s\S]*?\$cleanup\$;/, 'DO_BLOCK;');
+    const statements = outsideDo.split(/;\n/).map((part) => part.trim()).filter(Boolean);
+    expect(statements.length).toBeGreaterThanOrEqual(3);
+  });
+});
