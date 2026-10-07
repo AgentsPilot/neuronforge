@@ -133,16 +133,16 @@ jest.mock('@/lib/logger', () => {
   return { createLogger: () => make() };
 });
 
-// P-1: the plan catalog is the real one unless a scenario says which prices it knows.
+// The plan catalog knows exactly the prices a scenario names, and none otherwise
+// (P-2b, workplan §3.3). Never the real catalog: once the lookup keys are filled
+// and the recognition switch is on, it would ask Stripe.
 jest.mock('@/lib/business-os/billing/planPriceCatalog', () => {
   const actual = jest.requireActual('@/lib/business-os/billing/planPriceCatalog');
   return {
     ...actual,
     planPriceCatalog: {
-      load: (...args: unknown[]) =>
-        mockScenario.knownPlanPrices
-          ? Promise.resolve({ byPriceId: new Map(Object.entries(mockScenario.knownPlanPrices)), fromCache: false })
-          : actual.planPriceCatalog.load(...args),
+      load: () =>
+        Promise.resolve({ byPriceId: new Map(Object.entries(mockScenario.knownPlanPrices ?? {})), fromCache: false }),
     },
   };
 });
