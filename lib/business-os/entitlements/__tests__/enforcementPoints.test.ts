@@ -404,6 +404,32 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['PLAN_STRIPE_PRICES', 'PlanStripePrice', 'TIER_MATRIX', 'TIER_ORDER', 'TierId'],
       why: 'Plan payments P-2b (workplan §3.4, SA-P12): a pure comparison of each tier\'s Stripe price with its DISPLAY price (`TIER_MATRIX.presentation.monthlyPriceUsd`), used by the price scripts and later by the P-3a checkout check. It reads configuration for comparison, resolves no account and refuses nothing by plan.',
     },
+    // ── Plan payments P-3a, 2026-10-07 — the plan checkout (SA Q-4, Q-10) ──
+    {
+      file: 'app/api/business-os/billing/plan/checkout/route.ts',
+      symbols: ['TIER_ORDER', 'getEntitlementService', 'resolveAccountId'],
+      why: 'Plan payments P-3a (SA Q-4, Q-10): the plan checkout route. `TIER_ORDER` builds the body schema (which tier the owner names), `resolveAccountId` is the account seam for the session account, and `getEntitlementService().getSnapshot` is read ONLY to refuse an account with NO plan row (P-3b cannot apply a payment to one). It never calls `check()` / `decide()` and refuses nothing by tier or capability, so it is not a gate. If it ever does, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/billing/planCheckout.ts',
+      symbols: ['TierId'],
+      why: 'Plan payments P-3a (SA Q-4, Q-10): the checkout orchestration borrows the `TierId` TYPE for the tier the owner names. It refuses on a MISSING plan row (a P-3b precondition, read through an injected snapshot port), a live subscription, an open checkout or a price mismatch, never by tier or capability, and calls no `check()` / `decide()`. If it ever imports a value from the module, this suite asks again.',
+    },
+    {
+      file: 'lib/business-os/billing/planCheckoutEligibility.ts',
+      symbols: ['INVITE_ISSUANCE_POLICY', 'PLAN_STRIPE_PRICES', 'TIER_ORDER', 'TierId'],
+      why: 'Plan payments P-3a (SA-P11, SA Q-10): which tiers an account may BUY. Not held: every tier with a Stripe price (`PLAN_STRIPE_PRICES`, `TIER_ORDER`). Held by a friend invite: the friend tier only (`INVITE_ISSUANCE_POLICY.account.grantId`, FR-30). That applies invite policy to a purchase; it is not a plan or capability refusal and calls no `check()` / `decide()`, so it is not a gate.',
+    },
+    {
+      file: 'lib/business-os/billing/planCheckoutPrice.ts',
+      symbols: ['PLAN_STRIPE_PRICES', 'PlanStripePrices', 'TierId'],
+      why: 'Plan payments P-3a (SA-P12 b): resolves the tier lookup key (`PLAN_STRIPE_PRICES`) to one Stripe price and compares it with the display price. It compares two prices, resolves no account and refuses nothing by plan; it is the runtime twin of planPriceCheck.ts.',
+    },
+    {
+      file: 'components/test-business-os/PlanCheckoutPanel.tsx',
+      symbols: ['TIER_ORDER'],
+      why: 'Plan payments P-3a (SA Q-10): the internal /test-business-os Billing panel builds its tier select from `TIER_ORDER`, so the component holds no tier name. It is the demo trigger for the checkout route, displays nothing about a plan and refuses nothing.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */

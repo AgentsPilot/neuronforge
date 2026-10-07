@@ -38,6 +38,7 @@ import {
   BOS_BILLING_ACCOUNTS_TABLE,
   BusinessOsBillingAccountRepository,
   businessOsBillingAccountRepository,
+  checkoutLockFreeFilter,
   type BusinessOsBillingCustomerInput,
 } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 
@@ -46,7 +47,7 @@ const USER = '11111111-1111-4111-8111-111111111111';
 const ROW_ID = '22222222-2222-4222-8222-222222222222';
 
 type Call = { method: string; args: unknown[] };
-type Answer = { data: unknown; error: unknown };
+type Answer = { data: unknown; error: unknown; count?: number | null };
 
 /** Records every from() query; each terminal call answers `respond(calls, index)`. */
 function recordingClient(respond: (calls: Call[], index: number) => Answer) {
@@ -57,7 +58,7 @@ function recordingClient(respond: (calls: Call[], index: number) => Answer) {
       const index = queries.length;
       queries.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'insert', 'update', 'upsert', 'delete']) {
+      for (const method of ['select', 'eq', 'or', 'insert', 'update', 'upsert', 'delete']) {
         builder[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return builder;
@@ -69,6 +70,12 @@ function recordingClient(respond: (calls: Call[], index: number) => Answer) {
           return Promise.resolve(respond(calls, index));
         };
       }
+      // P-3a: the compare-and-set UPDATEs end in a filter and are awaited as
+      // the builder itself (no `.select()`, no `.single()`).
+      builder.then = (resolve: (value: Answer) => unknown, reject: (reason: unknown) => unknown) => {
+        calls.push({ method: 'await', args: [] });
+        return Promise.resolve(respond(calls, index)).then(resolve, reject);
+      };
       return builder;
     },
     rpc: () => {
@@ -262,6 +269,164 @@ describe('recordCustomer', () => {
   });
 });
 
+// ── P-3a: the checkout lock and the customer replacement (workplan §3.5) ──
+
+const NOW_ISO = '2026-10-07T10:00:00.000Z';
+const EXPIRES_ISO = '2026-10-07T10:31:00.000Z';
+const SESSION = 'cs_test_a1B2c3D4';
+
+describe('acquireCheckoutLock (SR-5 / SA-P14 layer 1, compare-and-set)', () => {
+  const INPUT = {
+    userId: USER,
+    livemode: false,
+    stripeCustomerId: 'cus_abc123',
+    sessionId: SESSION,
+    expiresAtIso: EXPIRES_ISO,
+    nowIso: NOW_ISO,
+  };
+
+  it('updates exactly the three lock columns, count exact, scoped by user_id, livemode and the customer, free-lock filter pinned, no select', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    const result = await new BusinessOsBillingAccountRepository(client).acquireCheckoutLock(INPUT);
+    expect(result).toEqual({ data: { acquired: true }, error: null });
+    expect(queries).toHaveLength(1);
+    expect(argsOf(queries[0], 'from')).toEqual([[BOS_BILLING_ACCOUNTS_TABLE]]);
+    expect(argsOf(queries[0], 'update')).toEqual([
+      [{ open_checkout_session_id: SESSION, open_checkout_expires_at: EXPIRES_ISO, updated_at: NOW_ISO }, { count: 'exact' }],
+    ]);
+    expect(argsOf(queries[0], 'eq')).toEqual([
+      ['user_id', USER],
+      ['livemode', false],
+      ['stripe_customer_id', 'cus_abc123'],
+    ]);
+    expect(argsOf(queries[0], 'or')).toEqual([[`open_checkout_session_id.is.null,open_checkout_expires_at.lte.${NOW_ISO}`]]);
+    expect(checkoutLockFreeFilter(NOW_ISO)).toBe(
+      'open_checkout_session_id.is.null,open_checkout_expires_at.lte.2026-10-07T10:00:00.000Z'
+    );
+    expect(argsOf(queries[0], 'select')).toEqual([]);
+    expect(argsOf(queries[0], 'single')).toEqual([]);
+    expect(argsOf(queries[0], 'maybeSingle')).toEqual([]);
+  });
+
+  it('count 0 → acquired: false (another unexpired lock holds, or the customer changed)', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: null, count: 0 }));
+    expect(await new BusinessOsBillingAccountRepository(client).acquireCheckoutLock(INPUT)).toEqual({
+      data: { acquired: false },
+      error: null,
+    });
+  });
+
+  it('a database error is returned, never thrown', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { code: '23514', message: 'check violation' }, count: null }));
+    const result = await new BusinessOsBillingAccountRepository(client).acquireCheckoutLock(INPUT);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('check violation');
+  });
+
+  it('an impossible count (more than one row) is an error, never "acquired"', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: null, count: 2 }));
+    const result = await new BusinessOsBillingAccountRepository(client).acquireCheckoutLock(INPUT);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('unexpected_update_count');
+  });
+
+  it('drops injected fields at runtime: the patch stays the three lock columns', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    await new BusinessOsBillingAccountRepository(client).acquireCheckoutLock({
+      ...INPUT,
+      user_id: '88888888-8888-4888-8888-888888888888',
+      subscription_status: 'active',
+    } as unknown as typeof INPUT);
+    expect(Object.keys(argsOf(queries[0], 'update')[0][0] as Record<string, unknown>).sort()).toEqual([
+      'open_checkout_expires_at',
+      'open_checkout_session_id',
+      'updated_at',
+    ]);
+  });
+
+  it.each([
+    ['a non-uuid account', { ...INPUT, userId: 'nope' }],
+    ['a non-boolean mode', { ...INPUT, livemode: 'false' as unknown as boolean }],
+    ['a non-customer id', { ...INPUT, stripeCustomerId: 'sub_1' }],
+    ['a non-session id', { ...INPUT, sessionId: 'pi_123' }],
+    ['a session id carrying a filter', { ...INPUT, sessionId: 'cs_test_x,open_checkout_session_id.is.null' }],
+    ['an offset time (a + would become a space)', { ...INPUT, nowIso: '2026-10-07T10:00:00+00:00' }],
+    ['a time carrying a filter', { ...INPUT, nowIso: '2026-10-07T10:00:00.000Z,user_id.neq.x' }],
+    ['an unreadable expiry', { ...INPUT, expiresAtIso: 'tomorrow' }],
+  ])('refuses %s before querying', async (_label, input) => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    const result = await new BusinessOsBillingAccountRepository(client).acquireCheckoutLock(input);
+    expect(result.error?.message).toBe('invalid_input');
+    expect(queries).toHaveLength(0);
+  });
+});
+
+describe('replaceCustomer (compare-and-set on the old customer id)', () => {
+  const INPUT = { userId: USER, livemode: false, oldCustomerId: 'cus_old', newCustomerId: 'cus_new', nowIso: NOW_ISO };
+
+  it('swaps the customer and clears the subscription mirror and the lock, CAS on the old id, count exact, no select', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    const result = await new BusinessOsBillingAccountRepository(client).replaceCustomer(INPUT);
+    expect(result).toEqual({ data: { replaced: true }, error: null });
+    expect(argsOf(queries[0], 'update')).toEqual([
+      [
+        {
+          stripe_customer_id: 'cus_new',
+          stripe_subscription_id: null,
+          subscription_status: null,
+          open_checkout_session_id: null,
+          open_checkout_expires_at: null,
+          updated_at: NOW_ISO,
+        },
+        { count: 'exact' },
+      ],
+    ]);
+    expect(argsOf(queries[0], 'eq')).toEqual([
+      ['user_id', USER],
+      ['livemode', false],
+      ['stripe_customer_id', 'cus_old'],
+    ]);
+    expect(argsOf(queries[0], 'select')).toEqual([]);
+    expect(argsOf(queries[0], 'or')).toEqual([]);
+  });
+
+  it('count 0 → replaced: false (someone else replaced it first)', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: null, count: 0 }));
+    expect(await new BusinessOsBillingAccountRepository(client).replaceCustomer(INPUT)).toEqual({
+      data: { replaced: false },
+      error: null,
+    });
+  });
+
+  it("a unique violation (the new customer is another account's) → an error with an alert, never a row", async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { code: '23505', message: 'duplicate key' }, count: null }));
+    const result = await new BusinessOsBillingAccountRepository(client).replaceCustomer(INPUT);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('stripe_customer_held_by_another_account');
+    expect(mockError).toHaveBeenCalledWith(expect.objectContaining({ alert: true }), expect.any(String));
+  });
+
+  it('any other error → returned, never thrown', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { message: 'down' }, count: null }));
+    const result = await new BusinessOsBillingAccountRepository(client).replaceCustomer(INPUT);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('down');
+  });
+
+  it.each([
+    ['a non-uuid account', { ...INPUT, userId: 'nope' }],
+    ['a non-customer old id', { ...INPUT, oldCustomerId: 'sub_1' }],
+    ['an empty new id', { ...INPUT, newCustomerId: 'cus_' }],
+    ['the same id twice', { ...INPUT, newCustomerId: 'cus_old' }],
+    ['an unreadable time', { ...INPUT, nowIso: 'now' }],
+  ])('refuses %s before querying', async (_label, input) => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    const result = await new BusinessOsBillingAccountRepository(client).replaceCustomer(input);
+    expect(result.error?.message).toBe('invalid_input');
+    expect(queries).toHaveLength(0);
+  });
+});
+
 describe('source guards', () => {
   const source = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsBillingAccountRepository.ts'), 'utf8');
   const code = source.replace(/\/\/.*$/gm, '');
@@ -271,18 +436,32 @@ describe('source guards', () => {
     expect(BILLING_ACCOUNT_COLUMNS.split(', ')).toEqual(migrationColumns());
   });
 
-  it('P-2a scope (SA Q-9): one insert, no update, no delete, no upsert, no rpc, no spread into a payload', () => {
+  it('scope (P-2a SA Q-9, P-3a §3.5): one insert, two compare-and-set updates, no delete, no upsert, no rpc, no spread into a payload', () => {
     expect(code.match(/\.insert\(/g)).toHaveLength(1);
-    expect(code).not.toMatch(/\.(update|delete|upsert|rpc)\(/);
+    expect(code.match(/\.update\(/g)).toHaveLength(2);
+    expect(code).not.toMatch(/\.(delete|upsert|rpc)\(/);
+    expect(code).not.toMatch(/\.update\(\{\s*\.\.\./);
+    // UPDATE + .or() + .select() fails 42703 in production (2026-09-29): the
+    // two compare-and-set methods must never select.
+    const lf = code.replace(/\r\n/g, '\n');
+    for (const method of ['acquireCheckoutLock', 'replaceCustomer']) {
+      const start = lf.indexOf(`async ${method}(`);
+      const end = lf.indexOf('\n  }\n', start);
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      const body = lf.slice(start, end);
+      expect(body).toContain("{ count: 'exact' }");
+      expect(body).not.toMatch(/\.select\(|\.single\(|\.maybeSingle\(/);
+    }
     expect(code).not.toMatch(/\.insert\(\{\s*\.\.\./);
     expect(code).not.toMatch(/select\(\s*['"]\*['"]/);
   });
 
-  it('the one read scopes by user_id and livemode; the other from() is the three-field insert', () => {
-    expect(code.match(/\.from\(/g)).toHaveLength(2);
+  it('the read and both updates scope by user_id and livemode; the other from() is the three-field insert', () => {
+    expect(code.match(/\.from\(/g)).toHaveLength(4);
     expect(code.match(/\.maybeSingle\(\)/g)).toHaveLength(1);
-    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(1);
-    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(1);
+    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(3);
+    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(3);
     expect(code).toContain('.insert({ user_id: userId, livemode, stripe_customer_id: stripeCustomerId })');
   });
 
@@ -295,16 +474,26 @@ describe('source guards', () => {
   /**
    * EXACTLY these files may name the billing repository: the repository, its
    * test, the barrel (a re-export, not a caller), the Business OS customer
-   * function and its test (SA Q-11). A new caller is added here, in a
+   * function and its test (SA Q-11), the P-3a plan checkout and its tests, and
+   * the admin deletion reads. A new caller is added here, in a
    * reviewable diff, or this test fails.
    */
   it('only the listed files name the repository', () => {
     const ALLOWED = [
+      // Plan payments P-3a: the checkout route's integration test fakes the
+      // repository module by name. The route itself does not name it.
+      'app/api/business-os/billing/plan/checkout/__tests__/route.test.ts',
       // Not a caller: the P1-C6 / M-1 placement guard names the repository's
-      // module path to assert businessOsStripeCustomer.ts is its only billing importer.
+      // module path to assert the allow-listed billing files are its only billing importers.
       'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
       'lib/business-os/billing/__tests__/businessOsStripeCustomer.test.ts',
+      // P-3a: imports the billing row TYPE to build fakes.
+      'lib/business-os/billing/__tests__/planCheckout.test.ts',
       'lib/business-os/billing/businessOsStripeCustomer.ts',
+      // Plan payments P-3a: the checkout reads the billing row and records the
+      // lock (findByUser, acquireCheckoutLock; replaceCustomer via the customer
+      // function).
+      'lib/business-os/billing/planCheckout.ts',
       // Admin delete AD-1b (SC-5): R-3 reads BOTH livemode rows of the target's
       // plan billing account (findByUser only); the evaluator imports the status
       // type. Their tests name it to fake it. No entitlements import.
