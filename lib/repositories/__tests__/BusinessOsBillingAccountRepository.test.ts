@@ -480,6 +480,9 @@ describe('source guards', () => {
    */
   it('only the listed files name the repository', () => {
     const ALLOWED = [
+      // Plan payments P-3b.1 (SA C-8 ruling): the admin entitlements route suite
+      // fakes this repository (no subscription) for the PF-13 billing read.
+      'app/api/admin/business-os/entitlements/__tests__/routes.test.ts',
       // Plan payments P-3a: the checkout route's integration test fakes the
       // repository module by name. The route itself does not name it.
       'app/api/business-os/billing/plan/checkout/__tests__/route.test.ts',
@@ -499,13 +502,21 @@ describe('source guards', () => {
       // type. Their tests name it to fake it. No entitlements import.
       'lib/business-os/purge/__tests__/AdminDeletionPreview.test.ts',
       'lib/business-os/purge/__tests__/adminDeletionRefusals.test.ts',
+      // P-3b.1 (QA Bug 1): fakes the repository to test hasLivePlanSubscription.
+      'lib/business-os/purge/__tests__/hasLivePlanSubscription.test.ts',
       // AD-2a: the read moved verbatim to adminDeletionFacts.ts (shared by the
       // preview and the commit gate). Kept in sorted order: the guard compares
       // against found.sort().
       'lib/business-os/purge/adminDeletionFacts.ts',
       'lib/business-os/purge/adminDeletionRefusals.ts',
       'lib/repositories/BusinessOsBillingAccountRepository.ts',
+      // Plan payments P-3b.1: imports the subscription status TYPE only, for
+      // the apply function's input. Not a caller of this repository.
+      'lib/repositories/BusinessOsBillingEventRepository.ts',
       'lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts',
+      // Not a caller: the money history repository's caller guard names this
+      // test file's path (the two guards list each other).
+      'lib/repositories/__tests__/BusinessOsBillingEventRepository.test.ts',
       'lib/repositories/index.ts',
     ];
     const SYMBOLS = ['BusinessOsBillingAccountRepository', 'businessOsBillingAccountRepository'];

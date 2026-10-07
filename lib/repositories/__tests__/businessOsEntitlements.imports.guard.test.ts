@@ -95,6 +95,11 @@ const ALLOWED = new Set(
     'app/api/admin/business-os/entitlements/launch/route.ts',
     'lib/business-os/entitlements/adminOps.ts',
     'lib/business-os/entitlements/__tests__/adminOps.test.ts',
+    // Plan payments P-3b.1 (SA-P3 a): the pure pre-write checks moved out of
+    // adminOps.ts so the webhook's plan write can share them. TYPES ONLY (the
+    // plan row and its patch); it calls nothing, so it is a reader below.
+    'lib/business-os/entitlements/planWriteChecks.ts',
+    'lib/business-os/entitlements/__tests__/planWriteChecks.test.ts',
     'app/api/admin/business-os/entitlements/__tests__/routes.test.ts',
     // ── S-0, 2026-09-26 ─ the trim-list section test ────────────────────
     // A test of `report.ts` (already allowed). It names the repository only in
@@ -231,6 +236,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/credits/adminCreditPercentDeps.ts',
   // Credit deduction slice 8b: the low-line check — READ ONLY, `findPeriodAnchor` and nothing else.
   'lib/business-os/credits/creditLowLineDeps.ts',
+  // Plan payments P-3b.1: the shared pre-write checks — pure, types only, no repository call at all.
+  'lib/business-os/entitlements/planWriteChecks.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {

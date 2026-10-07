@@ -25,7 +25,7 @@ import { businessPurgeRepository } from '@/lib/repositories/BusinessPurgeReposit
 import { runSchemaReconciler, type SchemaReconcileResult } from './SchemaReconciler';
 import { runDeleteGraphCheck, type DeleteGraphStatus } from './deleteGraph';
 import { decideLocalPrecondition, type LocalPreconditionResult } from './localPrecondition';
-import type { AdminDeletionLaterFacts, PlanBillingFact } from './adminDeletionRefusals';
+import { isPlanSubscriptionLive, type AdminDeletionLaterFacts, type PlanBillingFact } from './adminDeletionRefusals';
 import type { PurgeLevel, PurgeOptions } from './types';
 
 const logger = createLogger({ module: 'AdminDeletionFacts' });
@@ -43,6 +43,25 @@ export async function readPlanBilling(targetId: string, livemode: boolean): Prom
     // The repository never throws; if it ever does, a failed read is a refusal.
     return 'unreadable';
   }
+}
+
+/**
+ * Plan payments P-3b.1 (PF-13, SA Q-6): does the account hold a plan
+ * subscription Stripe may still bill, in EITHER mode?
+ *
+ * The same reads and the same rule as deletion's R-3 (`readPlanBilling` +
+ * `isPlanSubscriptionLive`), so "subscribed" means one thing on the platform.
+ * The admin entitlements route uses it to keep the credit-period anchor of a
+ * subscribed account. Both modes, because test and live rows share this
+ * database and a test-mode subscription re-asserts the same plan row; and so
+ * the answer never depends on which Stripe key this deployment holds.
+ *
+ * `null` = could not tell (either read failed): the caller refuses.
+ */
+export async function hasLivePlanSubscription(accountId: string): Promise<boolean | null> {
+  const [test, live] = await Promise.all([readPlanBilling(accountId, false), readPlanBilling(accountId, true)]);
+  if (test === 'unreadable' || live === 'unreadable') return null;
+  return [test.row, live.row].some((row) => row !== null && isPlanSubscriptionLive(row));
 }
 
 export async function readConnectAccountCount(targetId: string): Promise<number | 'unreadable'> {
