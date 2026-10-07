@@ -152,7 +152,17 @@ export const AUDIT_EVENTS = {
   // removed login. user_id and actor_id are NULL (no signed-in operator, and
   // the login no longer exists). Details carry table and row counts, never an
   // email. The SQL literal is pinned to this registration by test.
+  // OX-1r (2026-10-07): the same logic also runs from the admin-only
+  // /api/admin/test-account-cleanup/delete route, through one secret-gated
+  // database function; the row is still written inside it, with actor_id =
+  // the admin and details.source = 'admin_page'.
   BUSINESS_TEST_ACCOUNT_REMOVED: 'BUSINESS_TEST_ACCOUNT_REMOVED',
+  // OX-1r: a delete of a test account from the admin Danger Zone that was
+  // refused or failed (a guard, the typed confirmation, the storage step, or an
+  // error). Written by POST /api/admin/test-account-cleanup/delete. Carries the
+  // guard ids, the resolved login id if any and the correlationId. Never the
+  // email and never the tag (the tag is free text and can itself be an email).
+  BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED: 'BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -889,6 +899,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An operator removed a test account completely, login included (operator SQL)',
+  },
+  [AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin test-account removal was refused or failed; nothing or only storage files were removed',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',

@@ -1,0 +1,240 @@
+# Workplan: Test-Account Cleanup from the Danger Zone, slice 1 (server path)
+
+> **Last Updated**: 2026-10-07
+
+**Developer:** Dev
+**Requirement:** [TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md](/docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md) (§8.1 user decisions and §12 SA-1 to SA-12 are binding)
+**Branch:** `feature/test-account-cleanup-danger-zone`
+**Date:** 2026-10-07
+**Status:** Code Complete (uncommitted, awaiting SA code review)
+
+## Overview
+
+Slice 1 of the requirement: the whole server path for running the generated test-account cleanup from admin-only routes over a direct Postgres connection (option (c)). The design is already ruled in detail by SA, so this workplan is a short task list mapped to the SA conditions. Slice 2 (the Danger Zone UI) is not part of it.
+
+## Task List
+
+| # | Task | SA | Status |
+|---|---|---|---|
+| 1 | `pg` + `@types/pg` dependency (lockfile: only the pg packages added) | SA-2 | ✅ |
+| 2 | `lib/server/operatorPostgres.ts`: the only reader of `SUPABASE_DB_URL`, `server-only`, one `Client` per request, SSL on, URL `ssl*` params stripped, 10 s connect timeout, `end()` on a failed connect; unset = not configured | SA-1, SA-2, SA-11 | ✅ |
+| 3 | Generator split into exported builders (`buildCheckBody`, `buildDeleteBody`, `buildDeleteReport`); also writes `lib/business-os/test-account-cleanup/cleanupSql.generated.ts`; the audit insert reads `cleanup.actor_id` / `cleanup.source` (pasted SQL unchanged in behaviour); drift test covers the TS file; OX-1r header | SA-4, SA-5, SA-7 | ✅ |
+| 4 | `lib/repositories/TestAccountCleanupRepository.ts`: `check` (`BEGIN READ ONLY`), `remove` (`BEGIN`, block, report before `COMMIT`), both with `SET LOCAL statement_timeout = '45s'` / `lock_timeout = '5s'`, values only via bound `set_config($n)`, `ROLLBACK` + `end()` on every failure, `P0001` = blocked; `emptyStorage` (exact check paths, descriptor buckets, target folder only, batches of 1000, service-role storage documented) | SA-3, SA-6, SA-10 | ✅ |
+| 5 | `lib/business-os/test-account-cleanup/runCleanupDelete.ts`: G-3 first, check, storage only when every blocker is G-12, then the delete (its own G-12 re-check); residue case "files removed, account kept" | SA-6 | ✅ |
+| 6 | Routes `GET`/`POST /api/admin/test-account-cleanup/check` (GET = the "configured" probe) and `POST .../delete`: `requireAdmin` first, Zod `.strict()` (free-text tag, only empty refused), 503 when unset, `runtime = 'nodejs'`, `maxDuration = 60`, pg detail only behind the development guard | SA-9, SA-11, SA-12 | ✅ |
+| 7 | New event `BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED` (warning, SOC2, `bos`), written by the delete route via `logAndFlush` on every refused / failed attempt; guard ids, target id, correlationId; no email, no tag; pinned counts 184 → 185, bos 39 → 40 | SA-5 | ✅ |
+| 8 | `adminGate.writes.test.ts`: 3 handlers added (61 → 64), `pg.Client` and storage removals recorded as touches. Authz census: no count to update (floor only) | SA-9 | ✅ |
+| 9 | `no-deletion-paths` guard family 4 (`DELETE FROM auth.users`, any case), own allow-list of exactly `cleanupSql.generated.ts`, plus a negative fixture | SA-8 | ✅ |
+| 10 | OX-1r splices (insert-only) next to D3, D14, UD-1; runbook; generator header | SA-7 | ✅ |
+| 11 | `.env.example` with a placeholder and "Production only, never Preview" | SA-1 | ✅ |
+| 12 | Jest only, no DB: fake `pg` and Storage; new + affected suites, authz guard, `typecheck:bos-llm`, scoped tsc, eslint | SA-12 | ✅ |
+
+## Deviations and notes for SA
+
+- **`.env.example` did not exist** and `.gitignore` ignores `.env*`. Created it and added `!.env.example` to `.gitignore`.
+- **SSL verification:** `ssl: { rejectUnauthorized: false }`. The connection is encrypted, but the certificate chain is not verified, because the Supabase pooler certificate comes from Supabase's own CA, which is not in Node's trust store. Verifying it would need the CA certificate as one more setting. SA to rule whether that is needed.
+- **G-3 is checked by the route as well, before the storage step**, so a wrong confirmation can never remove files. The SQL block still checks it too.
+- **Partial storage failures do not stop the run.** The delete's own G-12 re-check decides, as SA-6 describes. Only an exception from the storage step stops it.
+- **A delete attempt refused with 503 (not configured) is audited too**, under the same refused event (BQ-5). Checks are never audited.
+
+## SA Review Notes
+
+**Code Review by SA — 2026-10-07 (slice 1, server path)**
+**Status:** 🔄 Fix Required (one High; approve on fix, no re-review of the rest)
+
+### Rulings on Dev's flagged items
+
+1. **TLS: verification is required.** `rejectUnauthorized: false` on a database-owner connection is MITM-able (anyone on the path can present any certificate and read the password plus every row). Implement:
+   - Download the Supabase root CA (Dashboard > Database > SSL Configuration > Download certificate, `prod-ca-2021.crt`). It is public, not a secret.
+   - Commit it as `lib/server/supabaseRootCa.ts`, `export const SUPABASE_ROOT_CA_PEM` as a template literal with **real newlines, no `\n` escapes** (backslash escapes in Tailwind-scanned files have broken `next build` before). Put the cert's SHA-256 fingerprint and download date in the header comment. A `.ts` constant, not a `.crt` read with `fs`, so Vercel file tracing cannot drop it.
+   - `ssl: { ca: SUPABASE_ROOT_CA_PEM, rejectUnauthorized: true }`. Do not pass `checkServerIdentity`: Node's default hostname check must stay on. Keep the `sslmode`-stripping.
+   - Test: the constructed config has `rejectUnauthorized === true` and a `ca` containing `BEGIN CERTIFICATE`; and `rejectUnauthorized: false` appears nowhere under `lib/server/`.
+   - Runbook line: the first prod check must connect. If the pooler certificate does not chain to that CA, stop and escalate to SA. Never fall back to `false`.
+2. **package-lock.json:** verified. 151 lines added, 0 removed. Only `pg`, `@types/pg` and their deps (`pg-*`, `pgpass`, `postgres-*`, `xtend`). Nothing else touched. No regeneration needed.
+3. **Shared node_modules:** add-only copy accepted. Every CI workflow runs `npm ci` from the lockfile, so the shared folder has no effect on CI.
+4. **`.env.example`:** placeholders only (`<project-ref>`, `<password>`, `<region>`). `!.env.example` re-includes that one file only: `.env`, `.env.local` and `.env.production` are still ignored (checked with `git check-ignore`).
+5. **Behaviour:** all as SA-6 / BQ-5 require. G-3 runs before the check and the storage step. Partial storage failures continue and the delete's G-12 decides. A 503 delete is audited. Check and probe are never audited.
+
+### Verified against SA-1..SA-12
+
+`SUPABASE_DB_URL` read only in `operatorPostgres.ts` (guard test, assembled name). One `Client` per request, `end()` in `finally` on every path, ROLLBACK on error. `BEGIN READ ONLY` for the check, then `SET LOCAL` 45 s statement / 5 s lock. Values only via bound `set_config($n)`; the generated bodies have no `set_config`, no comments, no placeholder (drift test). Report is read before COMMIT. `requireAdmin` first, Zod `.strict()` before connect. Writes gate 61 -> 64, no-deletion-paths family 4 with its own allow-list + staleness check, audit pin 185/40. OX-1r splices in the two requirements are insert-only. Pino logs only ids, guard ids, counts, elapsed and `{code,message}`. No error details outside the dev guard. No new CI job. The 6 affected suites pass (440 tests).
+
+### Code Review Comments
+
+1. `lib/server/operatorPostgres.ts` (ssl option): see ruling 1. Priority: **High**
+2. `app/api/admin/test-account-cleanup/delete/route.ts` outer `catch`: an unexpected throw (for example from `runCleanupDelete` after files were removed) is logged but not audited, and has no `correlationId`. Call `auditRefused` with `reason: 'unexpected_failed'` and return `correlationId`. Priority: Low (fix with item 1)
+
+### Optimisation Suggestions
+
+- `connectOperatorPostgres`: refuse a URL on port 6543 (transaction pooler) with `OperatorPostgresNotConfiguredError`, so SA-2's session-pooler rule is enforced, not only documented.
+
+### Code Approved for QA: No. Yes once item 1 is done (item 2 alongside). SA only needs the `operatorPostgres` diff and its test.
+
+### Dev response to SA review (2026-10-07)
+
+1. TLS: `lib/server/supabaseRootCa.ts` (`SUPABASE_ROOT_CA_PEM`, real newlines, no backslashes); `ssl: { ca, rejectUnauthorized: true }`, no `checkServerIdentity`; tests pin `rejectUnauthorized === true`, a `ca` with `BEGIN CERTIFICATE`, no `rejectUnauthorized: false` under `lib/server/`, and no backslash in the CA file; runbook line added. ⬜ **The PEM is still a PLACEHOLDER**: `prod-ca-2021.crt` has not arrived yet. Fingerprint and download date go in the header when it does. Until then every connection fails verification (the safe failure).
+2. Delete route outer catch: writes the refused row (`unexpected_failed`, through `logAndFlush`) and returns `correlationId`. Test added. ✅
+3. Port 6543 (transaction pooler) counts as not configured: `isOperatorPostgresConfigured()` is false, `connectOperatorPostgres` throws `OperatorPostgresNotConfiguredError`, the routes answer 503. Tests added. ✅
+
+### SA re-ruling: option A, secret-gated RPC (2026-10-07)
+
+**Status:** 🔄 Revision Required. The user replaced option (c) (2026-10-07). Rework slice 1 to requirement §12 "SA re-ruling" R-1 to R-9, which is binding. Do not commit. After the rework, SA code review covers only the delta.
+1. Delete: `pg`/`@types/pg` (lockfile back to main for them), `lib/server/operatorPostgres.ts`, `lib/server/supabaseRootCa.ts`, `lib/server/__tests__/operatorPostgres.test.ts`, `SUPABASE_DB_URL` (`.env.example`, runbook), the 6543 rule, `cleanupSql.generated.ts`. The earlier TLS ruling and the placeholder PEM are moot (R-5).
+2. Generator: builders without the `DO` wrapper or trailing `;`. They emit the migration and rollback (R-1 to R-4) and a generated `CLEANUP_FUNCTION_VERSION`. The drift and paste-safety tests cover the migration and rollback, and a migration test pins the grants, `SECURITY DEFINER`, `search_path = ''` and the absence of any secret literal.
+3. Repository: `supabaseServer.rpc` with the client and secret injected, the jsonb parsed with Zod, `P0001` as blocked and `42501` as 503. `runCleanupDelete` checks the version before storage (R-6). SA-6 ordering is unchanged.
+4. Routes: 503 when `TEST_CLEANUP_SECRET` is unset. One server-only reader with its Jest guard. `adminGate.writes`: "no rpc call and no storage call" is the nothing-happened assertion. The secret is never logged or returned (R-5).
+5. Guards and docs: family 4 roots plus the rpc-name assertion (R-7). OX-1r reworded in the generator header, runbook, D3, D14 and UD-1 splices (insert-only). The runbook gets the R-3 hash steps and the R-9 ops and rollback steps, including the timeout check.
+
+### Dev response to the option A re-ruling (2026-10-07)
+
+| Item | Done |
+|---|---|
+| 1. Removed `pg`/`@types/pg` (package.json and lockfile identical to the branch base), `operatorPostgres.ts`, `supabaseRootCa.ts`, their test, `SUPABASE_DB_URL`, the 6543 rule, `cleanupSql.generated.ts`. The 14 pg folders copied into the shared node_modules were removed (none is in main's lockfile; `split2` was already there and stays) | ✅ |
+| 2. Generator builders without the `DO` wrapper or trailing `;`; the pasted files wrap them (byte-identical apart from the earlier audit line). Emits `supabase/migrations/20261041_operator_test_account_cleanup.sql` (`FUNCTION_MIGRATION`; origin/main's latest is 20261040), its rollback in `supabase/SQL Scripts/`, and `cleanupFunctionVersion.generated.ts` (only `CLEANUP_FUNCTION_VERSION`, the first 16 hex of the sha256 of the function SQL). Drift, paste-safety and function pins (definer, `search_path = pg_catalog, public, pg_temp` with `pg_temp` last (SA review), the opening guard that aborts when anon or authenticated may CREATE in schema public, plain `CREATE SCHEMA`, grants, secret first by sha256, 42501, read-only check, five settings, `admin_page`, null actor refused, `lock_timeout`, no `statement_timeout`, no hex literal, `NOTIFY` last) | ✅ |
+| 3. Repository: `supabaseServer.rpc` (client and secret injected), jsonb parsed with Zod, P0001 = blocked, 42501 = `not_authorised`, PGRST202 = `function_missing`. `runCleanupDelete` refuses `function_out_of_date` before storage (R-6) | ✅ |
+| 4. Routes: 503 when `TEST_CLEANUP_SECRET` is unset, refused (42501) or the function is missing (delete: audited as refused). `lib/server/testCleanupSecret.ts` is the only reader (Jest guard). Writes gate: "no rpc call and no storage call" | ✅ |
+| 5. Family 4 also scans `.sql` under `supabase/migrations` and `supabase/held` (not their `__tests__`, which plant the shape as fixtures); allow-list = the migration. Function name only in the repository (guard). OX-1r reworded (my uncommitted splices rewritten, still insert-only vs main), runbook §6 (migration, PowerShell secret + hash, hash-only insert, Vercel Production only, privilege, schema and timeout checks, live run, rollback) | ✅ |
+
+Notes for SA:
+- `business-os-credit-lots.migration.test.ts` L8 had to be re-pinned on purpose: the new migration names `business_os_credit_charges`/`_totals` (deletes by user_id only, no charge function, column or grant).
+
+**Code Review by SA, 2026-10-07 (option A rework, secret-gated RPC)**
+**Status:** Fix Required (one High item, mechanical)
+
+### Ruling on the flagged risk: `search_path = ''` (measured, repo-only, no prod access needed)
+
+G-17 blocks every non-allow-listed DELETE trigger on plan tables, on tables with an FK to `auth.users`, and on inbound child tables. So the DELETE triggers that can fire are bounded to the four allow-listed ones, plus anything on `auth.users` (reported as info only, never blocked):
+
+| Trigger (table) | Function | Own search_path? | Unqualified names | Under `''` |
+|---|---|---|---|---|
+| `recompute_transaction_refund_state_trigger` (payment_refunds, AFTER DELETE, plan step 6) | `recompute_transaction_refund_state()` (20260903b) | No (INVOKER) | `payment_transactions`, `payment_refunds` | **Fails** for any account with a refund row |
+| `trigger_update_storage_used` (storage_usage) | `update_user_storage_used()` (SQL Scripts/20251117) | No (SECURITY DEFINER does not change the path) | `user_subscriptions`, `storage_usage` | **Fails** for any account with a quota row |
+| `trigger_update_storage_on_delete` (storage_usage) | dashboard-only, not in the repo | Unknown | Unknown | Treat as unsafe |
+| `trg_mce_guard` (marketing_consent_events) | `marketing_consent_events_guard()` | No | none relevant | Never fires (G-14) |
+| Second order: the refund trigger's `UPDATE payment_transactions` fires its UPDATE triggers (`log_payment_activity`, `update_invoice_on_payment`, INVOKER per 20261004 notes); the storage trigger updates `user_subscriptions` | n/a | No | Likely | Not covered by G-17 (DELETE bit only) |
+| `auth.users` DELETE triggers | prod-only, if any | Unknown | Unknown | Reported, not guarded |
+
+"Fails closed" is true, but it means the tool cannot remove any test account that ever recorded a refund or a file upload, which is the normal test account. That is a functional defect, not an edge case.
+
+**Decision: do not keep `''`, and do not edit the live trigger functions in this slice.** Use a fixed path that matches the SQL-editor session in which the pasted operator script (the reviewed baseline) runs:
+
+`SET search_path = pg_catalog, public, pg_temp`. `pg_temp` must be named **last**: if left out, it is searched first for relations.
+
+Shadowing risk, assessed: built-ins cannot be shadowed (pg_catalog first), temp objects cannot shadow (pg_temp last), and every table the function itself names stays schema-qualified. Unqualified names inside the trigger functions resolve to `public`, which is exactly how they resolve for every normal caller today. So this adds no exposure beyond the existing baseline. anon/authenticated reach the database only through PostgREST, which cannot run DDL. To make that measured rather than assumed, the migration must start with a guard that aborts if `has_schema_privilege('anon', 'public', 'CREATE')` or the same for `authenticated` is true. Write the abort message without the word "into" (SQL editor bug).
+
+### Code Review Comments
+1. `scripts/generate-test-account-cleanup-sql.ts:1139`: change to `SET search_path = pg_catalog, public, pg_temp`, add the CREATE-privilege abort guard at the top of the migration, regenerate (the version stamp changes; the drift test pins it), and update the pin at `scripts/__tests__/testAccountCleanupSql.test.ts:475-477` plus workplan item 2 and runbook §6. Delete the "stop and escalate" risk note once it is fixed. Priority: **High**
+2. Runbook §6 live run: before the first live delete, run one read-only introspection and paste the result here: `SELECT tgname, tgtype, tgfoid::regproc FROM pg_trigger WHERE tgrelid = 'auth.users'::regclass AND NOT tgisinternal`, plus the `proconfig`/`prosrc` of `trigger_update_storage_on_delete`'s function. Pick the first live target with at least one `payment_refunds` row and one `storage_usage` row, so the trigger path is exercised deliberately and not by accident. Priority: Medium
+3. Follow-up, not this slice: G-17 checks only the DELETE bit, so UPDATE triggers reached through the refund/quota recomputes or `ON DELETE SET NULL` are not reviewed. Record this as an open item in the requirement. Priority: Low
+
+### Verified (no change needed)
+- package.json / lockfile byte-identical to origin/main. No `pg` / `@types/pg` / `pg-*` in the shared node_modules (worktree uses the junction). No `pg` import anywhere.
+- L8 re-pin in `business-os-credit-lots.migration.test.ts`: justified. It is an exact-file allow-list entry for the one generated migration, with the reason in a comment, and the pinned charge function, columns and grants are untouched.
+- Grants: function REVOKE PUBLIC/anon/authenticated, GRANT service_role, OWNER postgres. `operator_private` schema and table REVOKE ALL incl. service_role, RLS on, not a PostgREST-exposed schema. Secret check is first: sha256 compare, length ≥ 32, 42501. Mode validated. Null actor refused on delete. Check sets `transaction_read_only`. Settings are set only from parameters, `source = admin_page`, `lock_timeout` 5s, no statement_timeout. No secret, hash or hex literal in the migration. `NOTIFY pgrst` last in both files. "into" appears only as the `INSERT INTO` keyword.
+- `TEST_CLEANUP_SECRET` is read only in `lib/server/testCleanupSecret.ts`, and the function name appears only in the repository (both guarded). The rpc args are never logged, and audit/log fields carry ids, guards and counts only.
+- Routes: `requireAdmin` first, Zod `.strict()`, 503 before any DB call when unset, 42501/PGRST202 become 503 (delete audited as refused via `logAndFlush`). The version check refuses before `emptyStorage` (R-6). Error format and dev-only details are correct. The adminGate.writes fake now records storage touches.
+- 8 affected suites green locally (573 tests). All are Jest in the existing shards, so no added CI time.
+
+### Code Approved for QA: No. Yes once item 1 is done and the regenerated drift and pin tests pass. SA needs only the generator diff, the migration head and the test pin. Item 2 is a pre-live-run gate for the runbook, not a QA blocker.
+
+**SA re-check, 2026-10-07: Code Approved for QA.**
+- Item 1 is done:
+  - The function has `SET search_path = pg_catalog, public, pg_temp`, with `pg_temp` last.
+  - `DO $create_guard$` is first, before `CREATE SCHEMA`, and its message does not contain "into".
+  - The regenerated stamp `99c4c83979a96efc` matches the TS constant.
+  - The pins at L475+ cover the path, the guard order and the schema-qualified names. The suite passes (84 tests).
+- Item 2 is in runbook §6.6 as a step before the first live delete.
+- Item 3 is open item OI-1 in the requirement.
+- Line 83 above still reads `search_path = ''`. It is the original re-ruling text, kept as history.
+
+### Dev response to the SA code review (search_path)
+
+1. `SET search_path = pg_catalog, public, pg_temp` (pg_temp last); every table the function names stays schema-qualified (pinned by test). Regenerated: the version stamp changed, pinned by the drift test. ✅
+2. The migration opens with a `DO $create_guard$` block that aborts when `anon` or `authenticated` holds CREATE on schema public (no "into" in its message). Pinned. ✅
+3. Runbook §6.6 gained the required read-only introspection before the first delete, and the advice to pick a first target with a refund row and a storage-quota row. The "relation does not exist, escalate" note is gone. ✅
+4. G-17 open item recorded in the requirement (insert-only). ✅
+
+## QA Testing Report
+
+**QA — 2026-10-07**
+**Test mode:** full
+**Strategy used:** A (Jest: new and affected suites, guards, full suite) + C (the migration and the function **executed** on a local PGlite 0.5.8 / PG 18 replica rebuilt from the existing read-only prod schema dump, in session scratch space outside the repo) + B-lite (a scratch Jest contract test feeding the replica's real jsonb into the real repository and `runCleanupDelete`). Nothing ran against prod, not even introspection.
+**Focus:** security, schema, api
+**Skipped:** D (no UI in slice 1). The live prod run stays with the user (runbook §6, incl. the §6.6 introspection gate)
+**Input source:** prompt keywords
+
+### Replica setup
+
+Roles `anon`, `authenticated`, `service_role` (BYPASSRLS) with Supabase's shape: USAGE on public, ALL on tables, and **default privileges granting anon/authenticated/service_role EXECUTE on new public functions**, so the migration's REVOKE is actually tested. The harness no-op triggers on `payment_refunds` and `storage_usage` were replaced by the **real, unqualified** `recompute_transaction_refund_state()` (20260903b) and `update_user_storage_used()` (SQL Scripts/20251117). `trigger_update_storage_on_delete` stays a no-op (dashboard-only, source not in the repo). Calls are PostgREST-shaped: one transaction, `SET LOCAL ROLE service_role`, ROLLBACK on any error. The secret is 32 random bytes, hashed client-side, only the hash inserted.
+
+### Test Coverage
+
+| Acceptance Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| Create guard aborts when anon/authenticated may CREATE on public | ✅ | Pass | Granted CREATE to `anon`, to `authenticated`, and to `PUBLIC` in turn: each aborts with "Revoke that first", and neither `operator_private` nor the function exists afterwards. Message has no "into" |
+| Grants (R-4) | ✅ | Pass | `has_function_privilege` false for anon and authenticated (despite default privileges), true for service_role; an anon/authenticated call is refused 42501. `prosecdef` true, `proconfig` = `search_path=pg_catalog, public, pg_temp`, owner postgres |
+| service_role cannot read or change the secret | ✅ | Pass | No USAGE on `operator_private`; SELECT and UPDATE on `operator_private.secrets` refused 42501; `ALTER FUNCTION ... SECURITY INVOKER` as service_role refused 42501; RLS on |
+| Wrong or missing secret = 42501, nothing changed | ✅ | Pass | null, empty, 31 chars, wrong 64-hex, trailing space, upper-cased, wrong secret in delete mode: all `42501 not authorised`. No secret or email in any error text. Fingerprint (row count + md5 of every table in public/auth/storage) unchanged |
+| Mode and actor checks | ✅ | Pass | unknown mode and null mode 22023; **null actor on delete refused 22023**, zero rows changed |
+| Check mode cannot write | ✅ | Pass | After the check, `transaction_read_only` = on and an INSERT in the same transaction fails 25006; the next transaction is read-write again. Check changed zero rows |
+| Happy path, account with a `payment_refunds` row and a `storage_usage` row | ✅ | Pass | Check OK (lists both tables). Delete (confirmation `'  NAME+test1@gmail.com '`, normalised) returns `version` + per-table report: 130 tables summing to 141 = TOTAL, `CLEAN`, `same_run` true, `removed_login` = target. The **real** refund and storage-quota triggers fired and resolved their tables. Audit row: `actor_id` = admin, `source` = `admin_page`. Other account's `payment_transactions`, quota and login untouched. A second delete is refused G-1 with zero rows changed |
+| The search_path fix is what makes it work (control) | ✅ | Pass | Same migration with `search_path = ''`: the delete fails `42P01 relation "payment_transactions" does not exist` and rolls back fully. With the shipped path it is CLEAN |
+| Every blocked path changes zero rows | ✅ | Pass (10/10) | Via the RPC, check then delete, fingerprint before/after: G-2 non-test email, empty tag, blank tag; G-3 wrong and empty confirmation (check OK by design, delete refused); G-1 unknown email; G-4 admin; G-6 active test-mode subscription; G-9 pending payment; G-12 storage object (check returns the full `bucket/name` path). Every delete refusal is `P0001` naming the guard |
+| Version stamp = `CLEANUP_FUNCTION_VERSION` | ✅ | Pass | Check and delete both return `99c4c83979a96efc`; recomputed independently as sha256 of the migration's function SQL with the token substituted (matches); stamp occurs once in the migration |
+| Rollback removes everything cleanly | ✅ | Pass | Function and `operator_private` (schema + table) gone; no public/auth/storage row changed; rollback re-runs (IF EXISTS); migration re-applies after it; a second apply without rollback fails loudly (`schema "operator_private" already exists`) |
+| Pasted SQL unchanged in behaviour | ✅ | Pass | Regenerated `scripts/test-account-cleanup-*.sql` on the replica: check OK, delete CLEAN 141/130, audit `actor_id` NULL, `source` `operator_sql`. Diff vs main is the audit line only |
+| Real function output vs real parser (contract) | ✅ | Pass (6/6) | Replica jsonb fed to the real repository + `runCleanupDelete`: OK check parses login id, no blockers; delete report parses CLEAN with per-table sum = TOTAL; G-12-only check removes `website-images` and `contact-documents` paths **before** the delete (`check, storage, storage, delete`); G-12 + G-4 refuses with no storage call and no delete; a real P0001 after files went says "Files removed, account kept"; a real 42501 is `not_authorised` with no storage call |
+| Routes: 401/403 first, Zod 400, 503 paths, ordering, refused audit, no secret/email/tag in logs or audit | ✅ | Pass | `route.test.ts` (gate first, Zod `.strict()` 400 incl. missing `confirmEmail`, free-text tag, 503 unset with no rpc call, 42501 and PGRST202 = 503 with delete audited and no storage call, version mismatch 503 before storage or delete, G-12-only storage first, other blockers 409 no storage, G-3 400 audited, residue 409, delete_failed and unexpected_failed 500 with correlationId, secret/email/tag never logged, audited or returned); `adminGate.writes` 401/403 x4 with "no rpc and no storage call" |
+| Single readers (secret, function name) | ✅ | Pass | `testCleanupSecret.test.ts` |
+| New-api-route minimum cases (happy, 401, 400) | ✅ | Pass | Present for both routes |
+| Entitlements registration | ⬜ | n/a | No import from `lib/business-os/entitlements/` in the diff |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues (should fix)
+None found. Not measurable here: the prod run time of the delete (G-10/G-18 scan the full FK catalog) against `maxDuration = 60` and the `service_role`/`authenticator` statement_timeout. Runbook §6 already makes that a check before the first live delete.
+
+#### Edge Cases (nice to fix)
+1. **"Nothing was removed" can be wrong in one race** — File: `app/api/admin/test-account-cleanup/delete/route.ts` (unavailable branch) — Severity: Low. If the check succeeds and files are removed, and then the delete call returns 42501 / PGRST202 (secret row rotated or function dropped mid-run), the 503 message says "Nothing was removed" while `filesRemoved` > 0 is in the same body. The `refused` and `failed` branches already say "Files removed, account kept". Same wording would fit here.
+2. **Replica fidelity** (carried from the script QA): loose column types, no CHECK/NOT NULL, minimal `auth`. Not modelled: the dashboard-only `trigger_update_storage_on_delete` body, any `auth.users` triggers, and the second-order UPDATE triggers on `payment_transactions` reached by the refund recompute (OI-1). The runbook §6.6 introspection and a first target with a refund and a quota row cover them on the live run, and the function is atomic, so a failure there rolls back.
+3. **Create guard on prod is unmeasured.** If prod grants CREATE on public to anon/authenticated (or PUBLIC), the migration aborts by design. That is safe, but the user then needs the REVOKE first; the abort message says so.
+
+### Test Outputs / Logs
+
+```text
+Targeted Jest (41 suites: route, repository, secret guard, testAccountCleanupSql drift + pins, adminGate.writes,
+  lib/audit/__tests__, no-deletion-paths, supabase/migrations/__tests__)   41 passed, 1436 tests passed
+Tailwind CSS-escape guard                                                 6 passed
+npm run test:authz-guard                                                   119 passed
+npm run typecheck:bos-llm                                                  passed (28 baseline, 0 new)
+tsc --noEmit (full project) filtered to the changed files                  0 errors
+eslint on the 14 changed/new TS files                                      0 errors, 1 pre-existing warning (lib/audit/events.ts:1373, not in the diff)
+Generator re-run (accidental, by QA)                                       all 5 outputs byte-identical (md5), git status unchanged
+Full npm test                                                              968 passed / 15 failed suites; 11 = quarantine list;
+  4 outside it, all Windows-env and untouched by this diff: oneAddressPolicy.guard (backslash paths),
+  geo/addressFormat, AdminAreaField.render, AdminAreaField.search (Intl/ICU region data)
+Replica qa-rpc.mjs                                                         104 PASS, FAILURES: 0
+Replica pasted files                                                       check OK, delete CLEAN 141/130, actor NULL, source operator_sql
+Scratch contract test (real repo + runCleanupDelete on replica jsonb)     6 passed
+```
+
+### Final Status
+- [x] All acceptance criteria pass — ready for commit (after the user has seen the diff). The live prod steps stay with the user per runbook §6
+- [ ] Issues found — Dev must address before commit
+
+## Commit Info
+
+_RM to populate._
+
+## Change History
+
+| Date | Change | Details |
+|---|---|---|
+| 2026-10-07 | Created, slice 1 code complete (Dev) | Tasks 1 to 12 done, uncommitted |
+| 2026-10-07 | SA re-ruling (option A) | User replaced option (c) with a secret-gated RPC; rework items 1-5 against requirement §12 R-1..R-9; pg/TLS path removed |
+| 2026-10-07 | SA code review (option A) | Fix Required: `search_path = ''` breaks the refund and storage-quota triggers; switch to `pg_catalog, public, pg_temp` + public-CREATE abort guard |
+| 2026-10-07 | SA re-check | Fixes verified (search_path, CREATE guard, stamp 99c4c83979a96efc, runbook §6.6, OI-1); Code Approved for QA |
+| 2026-10-07 | QA | Full pass: Jest (targeted 1436, guards, full suite no new failures), migration + function executed on a PGlite replica (create guard, grants, 42501 paths, null actor, read-only check, CLEAN with real refund/quota triggers, 10 blocked paths zero rows, version stamp, rollback), contract test on real jsonb. No bugs; one Low edge case |
