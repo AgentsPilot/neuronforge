@@ -61,10 +61,21 @@
  * reason (S11-D-4 A). It arrives in the same payload, so it re-reads on the
  * same triggers as the rest of the card. The admin view formats its own figure,
  * so the two can differ below one credit by design (SA W11d-11).
+ *
+ * ── TOP UP (credits boost slice 5a, user decision B 2026-10-07) ─────────────
+ * The last row of the card, pushed to the bottom: a "Top up" button that opens
+ * the package picker (`BoostPackagesPanel`). Every owner sees it, with no
+ * switch. It is shown once the first read has settled — including on the error
+ * line, because buying does not depend on reading usage (SA Q-6) — and hidden
+ * only while that first read runs, so the card does not jump. The picker is
+ * mounted on first open, so the card's own mount makes no extra request. It
+ * reads nothing from the card and changes nothing on it: the percentage, the
+ * band and "Extra credits" are untouched (FR-24, BD-25).
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { Plus, RefreshCw } from 'lucide-react';
+import { BoostPackagesPanel } from '@/components/business-os/BoostPackagesPanel';
 import { CreditHistoryPanel } from '@/components/business-os/CreditHistoryPanel';
 import { isBusinessOsCreditHistoryEnabled } from '@/lib/utils/featureFlags';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -132,6 +143,10 @@ export function UsageCard() {
   const [explainOpen, setExplainOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyMounted, setHistoryMounted] = useState(false);
+  const [topUpOpen, setTopUpOpen] = useState(false);
+  const [topUpMounted, setTopUpMounted] = useState(false);
+  // Focus returns here when the picker closes (QA5a-D1).
+  const topUpRef = useRef<HTMLButtonElement | null>(null);
   // Parked behind a flag (default off): off, nothing below is drawn or mounted.
   const historyEnabled = isBusinessOsCreditHistoryEnabled();
   const explainId = useId();
@@ -542,6 +557,41 @@ export function UsageCard() {
       )}
 
       {historyEnabled && historyMounted && <CreditHistoryPanel open={historyOpen} onOpenChange={setHistoryOpen} />}
+
+      {/* Top up (boost slice 5a): after the first read settles, error line included (SA Q-6). */}
+      {(usage || failed) && (
+        <div style={{ marginTop: 'auto', paddingTop: 12 }}>
+          <button
+            ref={topUpRef}
+            type="button"
+            data-testid="credits-top-up"
+            onClick={() => {
+              setTopUpMounted(true);
+              setTopUpOpen(true);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              width: '100%',
+              height: 34,
+              borderRadius: 10,
+              border: '1px solid var(--v2-border)',
+              background: 'var(--v2-surface)',
+              color: 'var(--v2-primary)',
+              fontSize: '12.5px',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            <Plus size={14} aria-hidden="true" />
+            {t('usage.boost.top_up')}
+          </button>
+        </div>
+      )}
+
+      {topUpMounted && <BoostPackagesPanel open={topUpOpen} onOpenChange={setTopUpOpen} returnFocusRef={topUpRef} />}
     </div>
   );
 }

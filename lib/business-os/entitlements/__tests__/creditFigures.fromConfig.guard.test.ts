@@ -25,6 +25,9 @@ import { join } from 'path';
 import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
+import { validateBoostCatalogue } from '@/lib/business-os/entitlements/boostCatalogue';
+import { BOOST_PACKAGES, BOOST_PURCHASE_CAP_DEFAULT } from '@/lib/business-os/entitlements/config/boostPackages';
+import { currentRetailRate } from '@/lib/business-os/entitlements/retailRate';
 
 /** The user's list (2026-10-01): Essentials, Autopilot / Founding Partner, trial. */
 const USER_LISTED = [19750, 32250, 2000];
@@ -39,7 +42,37 @@ const CONFIGURED = [...config.tierOrder, ...Object.keys(config.cohorts)].flatMap
   return [value?.perMonth, value?.total].filter((n): n is number => typeof n === 'number' && n >= 1000);
 });
 
-const FIGURES = [...new Set([...USER_LISTED, ...CONFIGURED])];
+/**
+ * Credits boost slice 5a (SA Q-5): the boost packages' credit figures, derived
+ * through the catalogue's own validation, never typed. ALL of them are guarded
+ * (QA5a-D2: the entry package's figure is the one most likely to be typed).
+ *
+ * A figure that also equals a package price in cents (Starter's credits equal
+ * Max's `priceMinor`) is a common bare number elsewhere — a paging ceiling of
+ * `5_000` in `adminCreditPercent.ts` was the dry run's one hit — so it is
+ * caught only where it reads as credits: followed by a credits word in en, es
+ * or he (`WORDED_ONLY`). Every other figure is caught bare. And a price in
+ * minor units is never a credit figure (slice 1 C-1): the value of a
+ * `priceMinor:` / `amountMinor:` property is skipped (`stripMinorAmounts`).
+ */
+const BOOST_CATALOGUE = validateBoostCatalogue(BOOST_PACKAGES, currentRetailRate(), BOOST_PURCHASE_CAP_DEFAULT);
+const BOOST_PRICE_MINOR = new Set<number>(BOOST_PACKAGES.map((pkg) => pkg.priceMinor));
+const BOOST_CONFIGURED = BOOST_CATALOGUE.ok
+  ? BOOST_CATALOGUE.packages
+      .flatMap((pkg) => [pkg.baseCredits, pkg.bonusCredits, pkg.totalCredits])
+      .filter((n) => n >= 1000)
+  : [];
+
+/** Slice 1 C-1 rule: the value of a `priceMinor:` or `amountMinor:` property is a price, not credits. */
+function stripMinorAmounts(source: string): string {
+  return source.replace(/\b(priceMinor|amountMinor)(\s*:\s*)[\d_,.]+/g, '$1$2');
+}
+
+const WORDED_ONLY = [...new Set(BOOST_CONFIGURED.filter((n) => BOOST_PRICE_MINOR.has(n)))];
+const FIGURES = [...new Set([...USER_LISTED, ...CONFIGURED, ...BOOST_CONFIGURED.filter((n) => !BOOST_PRICE_MINOR.has(n))])];
+
+/** A credits word right after the figure, in the three product languages. */
+const CREDIT_WORD = '[\\s\\u00a0\\u202f]*(?:credits?|créditos?|קרדיטים|קרדיט)';
 
 /**
  * A figure in any of the ways it could be typed: `19750`, `19,750`, `19.750`,
@@ -54,7 +87,9 @@ function figurePattern(n: number): RegExp {
 }
 
 function findFigures(text: string): string[] {
-  return FIGURES.filter((n) => figurePattern(n).test(text)).map(String);
+  const bare = FIGURES.filter((n) => figurePattern(n).test(text));
+  const worded = WORDED_ONLY.filter((n) => new RegExp(`${figurePattern(n).source}${CREDIT_WORD}`, 'i').test(text));
+  return [...bare, ...worded].map(String);
 }
 
 /** Block comments, whole-line `//` comments and trailing ` // …` comments. */
@@ -117,6 +152,10 @@ const SOURCES = [
   'app/api/admin/business-os/credits/accounts/[accountId]/route.ts',
   'lib/business-os/credits/adminCreditPositionDeps.ts',
   'app/admin/users/components/CreditsBlock.tsx',
+  // Credits boost slice 5a — the owner's package picker and what builds its payload (slice 1 C-7).
+  'app/api/business-os/credits/boost/packages/route.ts',
+  'lib/business-os/boost/boostPackagesView.ts',
+  'components/business-os/BoostPackagesPanel.tsx',
 ];
 
 /** The builders whose output carries a credit allowance to a reader. */
@@ -171,6 +210,30 @@ function dictionaryStringsAboutCredits(): Array<{ key: string; value: string }> 
 }
 
 describe('credit figures come only from configuration (user requirement, 2026-10-01)', () => {
+  it('the boost figures are real: derived from a valid catalogue, prices in cents skipped (boost slice 5a)', () => {
+    expect(BOOST_CATALOGUE.ok).toBe(true);
+    expect(BOOST_CONFIGURED.length).toBeGreaterThan(0);
+    for (const n of BOOST_CONFIGURED) expect([...FIGURES, ...WORDED_ONLY]).toContain(n);
+    // Planted: each boost figure, typed the way copy would type it, is caught.
+    for (const n of BOOST_CONFIGURED) expect(findFigures(`${n.toLocaleString('en-US')} credits`)).toContain(String(n));
+  });
+
+  it('R-2 (QA5a-D2): a hand-typed "5,000 credits" is caught; a price in cents in a priceMinor property is not', () => {
+    // Non-vacuity: the collision QA found is real today (a credit figure equal to a price in cents).
+    const collisions = BOOST_CONFIGURED.filter((n) => BOOST_PRICE_MINOR.has(n));
+    expect(collisions.length).toBeGreaterThan(0);
+    for (const n of collisions) {
+      const typed = n.toLocaleString('en-US');
+      expect(findFigures(stripMinorAmounts(`const copy = '${typed} credits';`))).toContain(String(n));
+      expect(findFigures(stripMinorAmounts(`'usage.boost.intro': 'Get ${typed} créditos',`))).toContain(String(n));
+      expect(findFigures(stripMinorAmounts(`{ priceMinor: ${n}, currency: 'USD' }`))).toEqual([]);
+      expect(findFigures(stripMinorAmounts(`{ amountMinor: ${n} }`))).toEqual([]);
+      expect(findFigures(stripMinorAmounts(`'usage.boost.credits': '${typed} קרדיטים',`))).toContain(String(n));
+      // A bare collision number (a paging ceiling) is not a credit figure.
+      expect(findFigures(stripMinorAmounts(`const PAGING = { ceiling: ${n} };`))).toEqual([]);
+    }
+  });
+
   it('the figure list is real: the config holds the user-listed figures today', () => {
     // Non-vacuity. If the plans are re-priced this fails loudly, and the fix is to
     // update USER_LISTED — the guard still checks the new figures via CONFIGURED.
@@ -229,7 +292,7 @@ describe('credit figures come only from configuration (user requirement, 2026-10
   });
 
   it.each(SOURCES)('%s contains no literal credit figure', (file) => {
-    expect(findFigures(stripComments(read(file)))).toEqual([]);
+    expect(findFigures(stripMinorAmounts(stripComments(read(file))))).toEqual([]);
   });
 
   it('no dictionary string about plans, usage or credits contains a figure — they are templates', () => {

@@ -405,6 +405,17 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['codeBoostPackageSource', 'BOOST_PURCHASE_CAP_DEFAULT'],
       why: 'Credits boost slice 3: the production wiring of the boost checkout hands it the catalogue loader and the default purchase cap. Neither reads a plan or a capability; the checkout refuses an invalid catalogue and a purchase over the cap, never a plan. If this file ever reads a snapshot or calls `check()`, it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Credits boost slice 5a, 2026-10-07 — the owner's package picker ─────
+    {
+      file: 'app/api/business-os/credits/boost/packages/route.ts',
+      symbols: ['codeBoostPackageSource'],
+      why: 'Credits boost slice 5a: the packages read lists the active boost packages for display to every signed-in owner. It reads no plan, snapshot or capability, and refuses nothing by plan: its only refusals are 401 (signed out) and 503 (an invalid catalogue). If it ever calls `check()` or reads a snapshot, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/boost/boostPackagesView.ts',
+      symbols: ['BoostPackage'],
+      why: 'Credits boost slice 5a: a pure mapper that borrows the `BoostPackage` TYPE to pick the fields the picker shows. It resolves no account and refuses nothing. If it ever imports a value from the module, it is being asked to gate and this suite says so.',
+    },
     // ── Plan payments P-2b, 2026-10-06 — plan prices in Stripe ─────────────
     {
       file: 'lib/business-os/billing/planPriceCatalog.ts',
