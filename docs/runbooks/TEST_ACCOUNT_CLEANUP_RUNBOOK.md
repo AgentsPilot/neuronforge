@@ -102,6 +102,8 @@ When the cleanup plan changes after 20261041 was applied, the change ships as a 
 
 The migration checks this itself: it refuses, and applies nothing, with `Apply <migration> first` until both are in place.
 
+If two branches both change the cleanup plan, whichever lands second rebases onto the first one's generator, takes the next free number, sets `PREVIOUS_FUNCTION_MIGRATION` to the first one's file, adds the first one's sha256 to the `APPLIED` pins in `scripts/__tests__/testAccountCleanupSql.test.ts` once it is applied, and regenerates.
+
 **Timing with the deploy.** The app pins the stamp the function returns (`lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts`). While the database function and the deployed build disagree, the Danger Zone check and delete refuse (they fail closed, nothing is removed). So apply the new version right before the build that pins it goes to Production (for 20261042: after 20261027, before the P-3b.1 deploy). The pasted check and delete files of that build also need the new tables, so do not paste them before 20261027 either.
 
 To see which version the database holds, run this read-only query and compare `applied_version` with `CLEANUP_FUNCTION_VERSION` in the file above:

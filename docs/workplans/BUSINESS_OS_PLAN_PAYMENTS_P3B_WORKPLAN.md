@@ -582,6 +582,15 @@ Tenant isolation is acceptable. `p_user_id` always comes from our own row, which
 
 ### Code Approved for QA: Yes, after F-1 to F-3 (Dev re-runs the same Jest scope, expecting 0 failures, plus PGlite for F-1). No SA re-review needed unless the diff goes beyond F-1 to F-3.
 
+### SA check — 20261042 (commit 2849fa40, 2026-10-07)
+
+**Status:** APPROVED WITH FIXES. Jest scope (testAccountCleanupSql, purge, migrations/__tests__): 41 suites, 1388 tests, 0 failures.
+
+1. **Pattern (rule 7) approved:** applied cleanup-function migrations are sha256-pinned history; each plan change ships as a `CREATE OR REPLACE` migration with `$order_guard$` + `FUNCTION_REQUIRED_TABLES`; rollback restores the previous applied function and keeps the secret. SECURITY DEFINER, `search_path`, owner, REVOKE/service_role-only GRANT identical to 20261041. Paste rules met (comments only in the header, no stray "into").
+2. **Deploy timing confirmed:** 20261027, then 20261042, then merge/deploy P-3b.1.
+3. **Allow-list edits legitimate** (no-deletion-paths, L8 pin).
+4. **FIX-1 (blocks merge, not QA): the collision is live.** Worktree `neuronforge-cleanup-fix` already generates `20261042_operator_test_account_cleanup_v2.sql` with an older generator shape (no PREVIOUS/REQUIRED constants, no order guard). Whichever lands second: rebase on the other's generator, take 20261043, set `PREVIOUS_FUNCTION_MIGRATION` to the first one, add the first's files to the sha256 `APPLIED` pins once applied, regenerate. Tell the other session now. Add one sentence saying this to the generator comment on `FUNCTION_MIGRATION` and to runbook 6.1.1.
+
 ---
 
 ## QA Testing Report

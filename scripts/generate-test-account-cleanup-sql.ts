@@ -98,6 +98,12 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * name below, and the drift test then expects the new file. The old file stays
  * as applied history.
  *
+ * If two branches both change the cleanup plan, whichever lands second
+ * rebases onto the first one's generator, takes the next free number, sets
+ * PREVIOUS_FUNCTION_MIGRATION to the first one's file, adds the first one's
+ * sha256 to the APPLIED pins (scripts/__tests__/testAccountCleanupSql.test.ts)
+ * once it is applied, and regenerates.
+ *
  * 20261042: the plan gained business_os_billing_events (plan payments P-3b.1).
  */
 export const FUNCTION_MIGRATION = '20261042_operator_test_account_cleanup_billing_events';
