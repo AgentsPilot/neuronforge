@@ -1,0 +1,20 @@
+{
+  "id": "evt_connect_pi_succeeded_no_links",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "payment_intent.succeeded",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000400,
+  "data": {
+    "object": {
+      "id": "pi_website_no_links",
+      "object": "payment_intent",
+      "amount_received": 500000,
+      "currency": "jpy",
+      "created": 1790000390,
+      "description": null,
+      "metadata": { "owner_id": "owner-a" }
+    }
+  }
+}

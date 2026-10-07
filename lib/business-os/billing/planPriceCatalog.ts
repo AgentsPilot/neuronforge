@@ -6,9 +6,16 @@
  * keys are the same in test and live mode (Q-T1), so this list is not per
  * environment.
  *
- * P-1: the list is EMPTY, so nothing is recognised and every platform
- * subscription invoice is denied by the router. That is the intended state:
- * protective only. P-2 fills the list when it creates the prices.
+ * P-1 shipped the list EMPTY, so nothing was recognised and every platform
+ * subscription invoice was denied by the router. P-2b fills the list from
+ * `entitlements/config/planPrices.ts` (current and retired keys, CF-1).
+ *
+ * MERGE SAFETY (P-2b). The process catalog uses the configured keys only
+ * while `BUSINESS_OS_PLAN_PRICES_ENABLED` is on (`planPricesFlag.ts`, default
+ * off). Off is P-1's state exactly: no key, no Stripe call, every plan invoice
+ * denied. It is turned on per environment once `check-bos-plan-prices` passes
+ * against that environment's Stripe account, so production never asks an
+ * account that lacks the prices.
  *
  * FAILURE RULE. A Stripe error while loading THROWS. It must never degrade to
  * "nothing recognised": the router would then deny a paying customer's invoice
@@ -25,11 +32,34 @@
 import Stripe from 'stripe';
 
 import { createLogger } from '@/lib/logger';
+import {
+  allPlanLookupKeys,
+  tierForPlanLookupKey,
+} from '@/lib/business-os/entitlements/config/planPrices';
+import type { TierId } from '@/lib/business-os/entitlements/config/tierMatrix';
+import { isPlanPriceRecognitionEnabled } from '@/lib/business-os/billing/planPricesFlag';
 
 const logger = createLogger({ module: 'business-os-billing' });
 
-/** Lookup keys of Business OS plan prices. Empty until P-2 creates the prices. */
-export const BOS_PLAN_LOOKUP_KEYS: readonly string[] = [];
+/** Every configured plan lookup key, current and retired (from the entitlements config). */
+export const BOS_PLAN_LOOKUP_KEYS: readonly string[] = allPlanLookupKeys();
+
+/**
+ * The keys the process catalog looks up now: the configured ones while
+ * plan-price recognition is switched on, none while it is off (see MERGE SAFETY).
+ * Read on every load, so a flipped variable needs no module reload.
+ */
+export function activePlanLookupKeys(enabled: boolean = isPlanPriceRecognitionEnabled()): readonly string[] {
+  return enabled ? BOS_PLAN_LOOKUP_KEYS : [];
+}
+
+/**
+ * The tier a plan lookup key sells (current or retired), or `null`. P-3b reads
+ * tiers from here rather than from the entitlements config directly.
+ */
+export function planTierForLookupKey(lookupKey: string): TierId | null {
+  return tierForPlanLookupKey(lookupKey);
+}
 
 /** How long a loaded map is served before Stripe is asked again. */
 export const PLAN_PRICE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -62,7 +92,8 @@ export interface PlanPriceCatalog {
 }
 
 export interface PlanPriceCatalogDeps {
-  lookupKeys?: readonly string[];
+  /** A fixed list, or a function read on every load. Default: `activePlanLookupKeys`. */
+  lookupKeys?: readonly string[] | (() => readonly string[]);
   /** Called lazily, only when there is something to look up. */
   stripe?: () => PriceLister;
   now?: () => number;
@@ -79,17 +110,23 @@ function defaultStripe(): PriceLister {
 const EMPTY: KnownPlanPrices = { byPriceId: new Map(), fromCache: false };
 
 export function createPlanPriceCatalog(deps: PlanPriceCatalogDeps = {}): PlanPriceCatalog {
-  const lookupKeys = deps.lookupKeys ?? BOS_PLAN_LOOKUP_KEYS;
+  const keysSource = deps.lookupKeys ?? (() => activePlanLookupKeys());
+  const currentKeys = (): readonly string[] => (typeof keysSource === 'function' ? keysSource() : keysSource);
   const now = deps.now ?? Date.now;
   const ttlMs = deps.ttlMs ?? PLAN_PRICE_CACHE_TTL_MS;
   const getStripe = deps.stripe ?? defaultStripe;
 
-  let cached: { map: ReadonlyMap<string, string>; loadedAt: number } | null = null;
+  // `keys` records which list the map answers, so a changed list (the switch
+  // turned on, a retired key added) is never served from an older map.
+  let cached: { map: ReadonlyMap<string, string>; loadedAt: number; keys: string } | null = null;
 
   return {
     async load(options = {}) {
+      const lookupKeys = currentKeys();
       // Nothing configured: nothing to recognise, and no reason to call Stripe.
       if (lookupKeys.length === 0) return EMPTY;
+      // Lookup keys hold no spaces, so this joins them unambiguously.
+      const keysId = lookupKeys.join(' ');
 
       if (lookupKeys.length > STRIPE_MAX_LOOKUP_KEYS) {
         throw new Error(
@@ -97,7 +134,7 @@ export function createPlanPriceCatalog(deps: PlanPriceCatalogDeps = {}): PlanPri
         );
       }
 
-      if (!options.bypassCache && cached && now() - cached.loadedAt < ttlMs) {
+      if (!options.bypassCache && cached && cached.keys === keysId && now() - cached.loadedAt < ttlMs) {
         return { byPriceId: cached.map, fromCache: true };
       }
 
@@ -120,7 +157,7 @@ export function createPlanPriceCatalog(deps: PlanPriceCatalogDeps = {}): PlanPri
         );
       }
 
-      cached = { map, loadedAt: now() };
+      cached = { map, loadedAt: now(), keys: keysId };
       return { byPriceId: map, fromCache: false };
     },
   };
