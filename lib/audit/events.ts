@@ -209,6 +209,13 @@ export const AUDIT_EVENTS = {
   // trigger; never owner text, tokens or dollars. "Once per period" is derived,
   // not stored (KI-21, KI-22): count distinct (account, periodStart).
   BOS_CREDIT_LOW_LINE_CROSSED: 'BOS_CREDIT_LOW_LINE_CROSSED',
+  // Credits boost slice 3: an owner started a boost purchase (a reservation
+  // under the cap and a Stripe checkout session attached to it). Written only
+  // by POST /api/business-os/credits/boost/checkout, then flushed (WC-7).
+  // Entity type 'business_os_boost_purchase', id = the purchase id. The details
+  // carry the package id and version, the price in minor units, the currency
+  // and the Stripe mode; never the client secret, the session id or the email.
+  BOS_BOOST_CHECKOUT_STARTED: 'BOS_BOOST_CHECKOUT_STARTED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -820,6 +827,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_CREDIT_LOW_LINE_CROSSED]: {
     severity: 'info',
     description: "A Business OS account's plan credits dropped below the low line (percentage before / after recorded)",
+  },
+  // Credits boost slice 3: 'info' — the owner's own action; nothing is paid yet.
+  [AUDIT_EVENTS.BOS_BOOST_CHECKOUT_STARTED]: {
+    severity: 'info',
+    description: 'A Business OS owner started a credits boost purchase (package, price and Stripe mode recorded)',
   },
   // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
   // (and possibly send) queued items across every account, outside the schedule.

@@ -1,7 +1,7 @@
 # Feature Flags
 
 > **Last Updated**: 2026-10-06
-> **Version**: 1.6.0
+> **Version**: 1.7.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-06 | 1.7.0 | Dev | Added `BUSINESS_OS_CREDITS_BOOST_ENABLED` and `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` (credits boost slice 3): the boost checkout's server-only kill switch, default off, and an optional allow-list of account UUIDs. **Stays unset on Vercel until slice 4a is deployed** (SA C-1). |
 | 2026-10-06 | 1.6.0 | Dev | Added `ADMIN_BUSINESS_DELETE_ENABLED` (admin delete AD-2a, BQ-1): admin delete's **own off switch**, server-only, default off. Checked by `POST /api/admin/users/[id]/deletion/commit` before token verification; while off the preview mints no commit token and the commit refuses `admin_delete_disabled`. Stays off for real customers until AD-3 (close the login) and the data export ship, even after the delete function is applied. |
 | 2026-10-02 | 1.5.0 | Dev | Added `NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY` (credit deduction slice 7a). The owner's Credit history is **parked by the user's decision of 2026-10-02 — shipped dark behind this flag**, default off: the Credits card draws no link and `GET /api/business-os/credits/history` answers 404. Two readers: `isBusinessOsCreditHistoryEnabled()` (client, rendering) and `isCreditHistoryRouteEnabled()` (server, the route). |
 | 2026-09-29 | 1.4.0 | Dev | Added `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (invite-only signup Slice 3b, "Continue with Google" on a champion invite). A client id rather than a boolean: set means on. Deliberately separate from the plugin's `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (SA Q-3, R-6). |
@@ -52,6 +53,7 @@ Feature flag functions are defined in:
 | **Invite: Continue with Google** | `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (a client id, not a boolean) | Client + Server | unset (off) | `/invite`, `/api/public/invites/signup/google` |
 | **Business OS: Credit history** (parked) | `NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY` | Client + Server | `false` (unset = off) | `/business-os` Credits card, `/api/business-os/credits/history` |
 | **Admin delete (admin surface)** | `ADMIN_BUSINESS_DELETE_ENABLED` | **Server only** | `false` (unset = off) | `/api/admin/users/[id]/deletion/preview` (token minting), `/api/admin/users/[id]/deletion/commit` |
+| **Business OS: Credits boost checkout** | `BUSINESS_OS_CREDITS_BOOST_ENABLED` (+ optional `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS`) | **Server only** | `false` (unset = off) | `POST /api/business-os/credits/boost/checkout` |
 
 ---
 
@@ -260,6 +262,23 @@ ADMIN_BUSINESS_DELETE_ENABLED=false
 ```
 
 ---
+
+### Business OS: Credits boost checkout — `BUSINESS_OS_CREDITS_BOOST_ENABLED`
+
+**Reader:** `isBusinessOsCreditsBoostEnabled()` in `lib/utils/featureFlags.ts`; the allow-list is in `lib/business-os/boost/boostCheckoutAccess.ts`. **Server only, default off.**
+
+| Setting | Effect |
+|---|---|
+| `BUSINESS_OS_CREDITS_BOOST_ENABLED` unset / `false` | `POST /api/business-os/credits/boost/checkout` answers 404 to every caller, before the session is read |
+| `true` / `1`, `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` unset | **Open to every account** (the launch switch) |
+| `true` / `1`, `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` = comma-separated account UUIDs | Only those accounts; everyone else gets 404. Blanks are ignored; an invalid entry is logged once at `warn` and ignored. **A set list with no valid UUID (a typo, or emails) closes the checkout to everyone** and logs an `error` once: only unset or blank means open |
+
+> ⚠️ **Do not set `BUSINESS_OS_CREDITS_BOOST_ENABLED` on Vercel (Preview or Production) until credits boost slice 4a is merged and deployed** (SA C-1). Before 4a, a paid boost session reaches the agent-platform webhook handler, which no-ops and marks the event completed, so the payment would never be credited. The allow-list does not change this. A local manual check must not complete a payment either.
+
+```bash
+BUSINESS_OS_CREDITS_BOOST_ENABLED=false
+# BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS=<uuid>,<uuid>
+```
 
 ### Invite: Continue with Google — `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`
 

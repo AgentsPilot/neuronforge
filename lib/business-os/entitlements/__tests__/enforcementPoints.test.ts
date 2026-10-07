@@ -393,6 +393,17 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['getEntitlementConfig'],
       why: 'Invite-only signup Slice 1b: the production wiring hands the config to the redemption flow so it can re-check the grant (GR-1). It resolves no account and refuses no capability.',
     },
+    // ── Credits boost slice 3, 2026-10-06 — the boost checkout (slice 1 SA C-7) ─
+    {
+      file: 'lib/business-os/boost/boostCheckout.ts',
+      symbols: ['BoostPackage', 'BoostPackageSource', 'BoostPurchaseCap'],
+      why: 'Credits boost slice 3: the checkout orchestration borrows the boost catalogue TYPES only (the package, its loader seam and the cap shape). It refuses by catalogue validity, by the purchase cap and by the payment hold, never by plan, tier or capability, so it is not a capability gate. If it ever reads a snapshot or calls `check()`, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/boost/boostCheckoutDeps.ts',
+      symbols: ['codeBoostPackageSource', 'BOOST_PURCHASE_CAP_DEFAULT'],
+      why: 'Credits boost slice 3: the production wiring of the boost checkout hands it the catalogue loader and the default purchase cap. Neither reads a plan or a capability; the checkout refuses an invalid catalogue and a purchase over the cap, never a plan. If this file ever reads a snapshot or calls `check()`, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */
