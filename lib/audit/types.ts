@@ -106,6 +106,10 @@ export const AUDIT_ENTITY_TYPES = [
   // ACCOUNT id, the mode is in the details. Owner-visible: it records the
   // owner's own action (lib/audit/ownerVisibility.ts).
   'business_os_billing_account',
+  // One Business OS boost purchase (a row in business_os_boost_purchases).
+  // Written by the owner's boost checkout route (credits boost slice 3); the
+  // entity id is the purchase id. Owner-visible: it is the owner's own action.
+  'business_os_boost_purchase',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

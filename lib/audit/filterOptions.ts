@@ -114,6 +114,8 @@ const GROUP_RULES: readonly GroupRule[] = [
   // Plan payments P-3a: an owner opening a plan checkout. P-3b's payment and
   // plan-change events land in the same group.
   { prefix: 'BOS_BILLING_', label: 'Business OS Billing' },
+  // Credits boost slice 3: BOS_BOOST_CHECKOUT_STARTED (and the 4a/4b boost events to come).
+  { prefix: 'BOS_BOOST_', label: 'Business OS Credits Boost' },
   { prefix: 'AGENTKIT_', label: 'AgentKit' },
   { prefix: 'AIS_', label: 'Agent Intelligence Score' },
   { prefix: 'AI_PRICING_', label: 'AI Pricing' },

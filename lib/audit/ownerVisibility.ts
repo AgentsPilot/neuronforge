@@ -82,6 +82,10 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
   // account with no internal reason. The owner may read it; no migration change
   // (only 'operator' types are in the owner policy's NOT IN list).
   business_os_billing_account: 'owner',
+  // Credits boost slice 3: the owner's own purchase start, written against
+  // their account with no internal reason; theirs to see (no owner-policy
+  // migration change: the hidden set is unchanged).
+  business_os_boost_purchase: 'owner',
 } as const satisfies Record<EntityType, AuditOwnerVisibility>;
 
 /**

@@ -391,7 +391,7 @@ All six touch `route.ts`, so they are **strictly sequential**: each branches off
 | **1** | **Claim table and client** | P1–P4, O1; `createClient` → `supabaseServer` alias | Any handler other than `POST` and `completeClaim` (16 functions `--exact` identical); claim semantics (two-phase, `23505`, release on failure) | 0.5 d |
 | **2** | **Connect invoices** (`payment_invoices`, `business_profiles`) | H1–H3, H6, H8, I1, I3, J1–J4, K1, K2, L1, L2 | Money-row inserts (H5, I2), bookings, plans; F-1 is **not** fixed (the order of H3 and `accountOwns` stays). Untouched set: every function except the four invoice handlers and `handleConnectCheckoutCompleted` | 1 d |
 | **3** | **Money rows** (`payment_transactions`, `payment_refunds`) | D1, D2, E1, E2, F1, F2, G2, H4, H5, I2 | Invoice and booking writes, plan instalments; F-4 not fixed | 1 d |
-| **4** | **Plans and bookings** (`payment_plan_installments`, `payment_plan_subscriptions`, `scheduling_bookings`) | G1, G3, G4, G5, H7, I4, I5, M1–M3 | F-2 and F-3 **not** fixed (I5 stays unscoped, M3 keeps the Stripe id; the snapshot proves both). Platform handlers | 1 d |
+| **4** | **Plans and bookings** (`payment_plan_installments`, `payment_plan_subscriptions`, `scheduling_bookings`) | G1, G3, G4, G5, H7, I4, I5, M1–M3; **scope addition (Fix-1b SA C-4, 2026-10-07):** the five inline `supabaseServer` queries in `lib/payments/bindPlanSubscription.ts` (installment count, installments insert, booking plan-link update, `resolveContactId` read, `resolvePlanRowId` fallback read; L123, L371, L403, L431, L462 at `2a88f0bc`, shifted by Fix-1b) | F-2 and F-3 **not** fixed (I5 stays unscoped, M3 keeps the Stripe id; the snapshot proves both). Platform handlers. bind's Fix-1b link vetting (`vetLinkId` + `findOwnedId`) is not changed | 1 d (+0.25 d for bind) |
 | **5** | **Agent-platform legacy tables, remove the alias, add the rule-1 guard** | A1–A4, B2–B5, C1, N1, N2; helpers to `supabaseServer`; alias removed | No deletion of FU-1/FU-2 code; the Connect handlers (`--exact` identical); RD-16 guard keeps passing | 0.75 d |
 
 Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) still keep each under 3 days.
@@ -412,7 +412,8 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 | `lib/repositories/ProcessedWebhookEventRepository.ts` | create | 1 | §3 |
 | `lib/repositories/PaymentRepository.ts` | modify | 2, 3 | `PaymentInvoiceRepository`, `PaymentTransactionRepository` methods |
 | `lib/repositories/PaymentRefundRepository.ts` | create | 3 | §3 |
-| `lib/repositories/PaymentPlanRepository.ts` | modify | 4 | Instalment methods |
+| `lib/repositories/PaymentPlanRepository.ts` | modify | 4 | Instalment methods; also the methods bind's inline queries need (scope addition, Fix-1b C-4) |
+| `lib/payments/bindPlanSubscription.ts` (+ `lib/payments/__tests__/bindPlanSubscription.test.ts`) | modify | 4 | Scope addition (Fix-1b C-4): its five inline `supabaseServer` queries move behind repositories (CLAUDE.md rule 1), no behaviour change; the bind unit tests (28 after Fix-1b) are the proof |
 | `lib/repositories/PaymentPlanSubscriptionRepository.ts` | modify | 4 | `findEndStateBySubscriptionId`, `endFromStripe` |
 | `lib/repositories/SchedulingRepository.ts` | modify | 4 | Booking methods |
 | `lib/repositories/UserSubscriptionRepository.ts`, `CreditTransactionRepository.ts`, `SystemConfigRepository.ts` | modify | 5 | Legacy methods |
@@ -435,12 +436,12 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 - [x] ✅ SA workplan review; Q-1 to Q-7 ruled (approved with C-1 to C-9).
 - **Sequence (C-1, extended by the Fix-1 SA review C-5): Fix-1 → Fix-1b → PR 0 → PR 1 → PR 2 → PR 3 → (Fix-2 if decided) → PR 4 → PR 5.** Each off fresh `main` after the previous one merged.
 - [ ] Fix-1: refuse foreign ids (F-1, F-2, F-4, J/K/L). Code complete, uncommitted, on `fix/webhook-connect-tenant-ownership`. Plan and evidence: [BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md).
-- [ ] Fix-1b (F-5): inside `bindPlanSubscription`, keep `bookingId` / `serviceId` / `paymentPlanId` only if `ownerId` owns them (fold into the `resolveContactId` read); drop, never refuse. Covers the three call sites (`route.ts:1031`, `:1142`, `:1581` at `248de6be`).
-- [ ] PR 0: harness additions; the "before-with-additions" recorded on post-Fix-1b `main` (the snapshot then has 40 entries, not 28); the existing entries proven identical.
+- [ ] Fix-1b (F-5): inside `bindPlanSubscription`, keep `bookingId` / `serviceId` / `paymentPlanId` only if `ownerId` owns them; drop, never refuse. Covers the three call sites (`route.ts:1031`, `:1142`, `:1581` at `248de6be`). Code complete 2026-10-07, uncommitted, on `fix/webhook-plan-booking-ownership`: [BUSINESS_OS_WEBHOOK_PLAN_BOOKING_OWNERSHIP_FIX1B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_PLAN_BOOKING_OWNERSHIP_FIX1B_WORKPLAN.md). Uses separate `findOwnedId` reads rather than the `resolveContactId` fold (SA accepted). Harness snapshot grows from 40 to 44 entries.
+- [ ] PR 0: harness additions; the "before-with-additions" recorded on post-Fix-1b `main` (the snapshot then has 44 entries, not 28); the existing entries proven identical.
 - [ ] PR 1: claim repository, client alias, `routerPlacement` guard moved.
 - [ ] PR 2: invoices.
 - [ ] PR 3: money rows.
-- [ ] PR 4: plans and bookings; two guards moved.
+- [ ] PR 4: plans and bookings; two guards moved; plus bind's five inline queries (scope addition, Fix-1b C-4).
 - [ ] PR 5: legacy tables, alias removed, rule-1 guard added, lockdown test updated.
 - [ ] Follow-ups handed to TL: F-1, F-2 (HIGH), F-3, F-4, FU-1 to FU-9.
 
@@ -608,3 +609,4 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 | 2026-10-06 | SA workplan review | Approved with conditions C-1 to C-9. F-1 confirmed (Medium-High), F-2 confirmed (High), F-3 confirmed (Medium, business decision needed), F-4 upgraded to High (an unscoped `propagate_refund_to_booking` trigger). Order: Fix-1, then PR 0 to PR 5, with Fix-2 placed once the user decides. Missed guard found (`noBookingGuess:66` would go vacuous). Q-2 to Q-7 ruled |
 | 2026-10-07 | Fix-1 plan written (Dev) | User chose Fix-1 first (C-1). Plan in its own file: [BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md). Branch renamed to `fix/webhook-connect-tenant-ownership`. New finding F-5 (plan binding keeps an unchecked metadata `booking_id`) recorded there |
 | 2026-10-07 | Fix-1 implemented (Dev); sequence updated | Fix-1 SA review: F-5 confirmed High, goes to its own PR **Fix-1b** right after Fix-1. Order recorded in §11: Fix-1 → Fix-1b → PR 0 to PR 5 (Fix-2 placed as before). Fix-1 grows the harness snapshot from 28 to 40 entries, so PR 0's "before" is re-recorded on post-Fix-1b `main` |
+| 2026-10-07 | Fix-1b scope addition (Dev) | Fix-1b SA condition C-4: the five pre-existing inline `supabaseServer` queries in `lib/payments/bindPlanSubscription.ts` (CLAUDE.md rule 1) are not fixed in Fix-1b; they join **PR 4** (plans), §9 / §10 / §11 updated. Fix-1b grows the harness snapshot from 40 to 44 entries, so PR 0's "before" counts 44 |
