@@ -57,10 +57,11 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +1 Business OS (BUSINESS_DELETION_PREVIEWED): admin delete AD-1b, read-only deletion preview (2026-10-04).
   // +2 Business OS (BOS_INVITE_INVITER_NOTIFIED, _NOT_NOTIFIED): invite N-1, the inviter told (2026-10-05).
   // +1 Business OS (BOS_QUEUE_ITEM_RETRIED): ADMIN_BOS_CLEANUP slice 7c, retry one queue item (2026-10-04).
+  // +1 Business OS (BUSINESS_DELETION_STARTED): admin delete AD-2a, the confirmed write-ahead row (2026-10-06).
   // +1 Business OS (BUSINESS_TEST_ACCOUNT_REMOVED): operator test-account cleanup, OX-1 (2026-10-06).
-  it('pins the split: 38 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(183);
-    expect(eventsTagged('bos')).toHaveLength(38);
+  it('pins the split: 39 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(184);
+    expect(eventsTagged('bos')).toHaveLength(39);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

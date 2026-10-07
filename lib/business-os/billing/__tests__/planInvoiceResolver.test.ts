@@ -12,7 +12,13 @@ import path from 'path';
 import type Stripe from 'stripe';
 
 import { createPlanResolver } from '@/lib/business-os/billing/planInvoiceResolver';
-import type { KnownPlanPrices, PlanPriceCatalog } from '@/lib/business-os/billing/planPriceCatalog';
+import {
+  BOS_PLAN_LOOKUP_KEYS,
+  createPlanPriceCatalog,
+  type KnownPlanPrices,
+  type PlanPriceCatalog,
+  type PriceLister,
+} from '@/lib/business-os/billing/planPriceCatalog';
 import type { DispatchOutcome, ResolverContext } from '@/lib/business-os/billing/webhookDispatcher';
 import type { Logger } from '@/lib/logger';
 
@@ -237,4 +243,36 @@ describe('planResolver: checkout sessions and other events', () => {
       expect(catalog.load).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('planResolver on the REAL catalog (P-2b, workplan §3.5)', () => {
+  // The catalog is the production one, configured keys included; only Stripe is
+  // replaced, by a lister that says which fixture price holds which plan key.
+  const [CHEAPER_KEY, DEARER_KEY] = BOS_PLAN_LOOKUP_KEYS;
+  const lister: PriceLister = {
+    prices: {
+      list: jest.fn(() =>
+        Promise.resolve({ data: [{ id: PRICE_A, lookup_key: CHEAPER_KEY }, { id: PRICE_B, lookup_key: DEARER_KEY }] })
+      ),
+    },
+  };
+  const realCatalog = () => createPlanPriceCatalog({ lookupKeys: BOS_PLAN_LOOKUP_KEYS, stripe: () => lister });
+
+  it('a subscription-create invoice on the cheaper plan price resolves to the plan flow, named by its lookup key', async () => {
+    expect(await resolveWith(realCatalog(), CREATE)).toEqual({ kind: 'flow', flow: 'plan', lookupKeys: [CHEAPER_KEY] });
+    expect(lister.prices.list).toHaveBeenCalledWith({ lookup_keys: [...BOS_PLAN_LOOKUP_KEYS], limit: 100 });
+  });
+
+  it('the upgrade proration (both plan prices) resolves to the plan flow with both keys', async () => {
+    expect(await resolveWith(realCatalog(), PRORATION)).toEqual({
+      kind: 'flow',
+      flow: 'plan',
+      lookupKeys: [CHEAPER_KEY, DEARER_KEY].sort(),
+    });
+  });
+
+  it('a failed payment on a plan price is a plan flow; the no-key price is denied', async () => {
+    expect(reasonOf(await resolveWith(realCatalog(), FAILED))).toBe('flow');
+    expect(reasonOf(await resolveWith(realCatalog(), UNKNOWN))).toBe('unknown_price');
+  });
 });

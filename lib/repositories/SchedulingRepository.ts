@@ -518,6 +518,35 @@ export class SchedulingServiceRepository {
   }
 
   /**
+   * Ownership oracle: the service's id if `userId` owns it, else null.
+   *
+   * For service-role paths that were handed a service id by someone else (the
+   * Stripe webhook vets metadata ids with it). `id` and `user_id` only; not
+   * found is a normal answer and is not logged. No `deleted_at` / status
+   * filter: this answers "whose is it", not "is it bookable".
+   */
+  async findOwnedId(
+    id: string,
+    userId: string
+  ): Promise<SchedulingRepositoryResult<string>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_services')
+        .select('id')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return { data: data?.id ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, serviceId: id, userId }, 'Failed to check scheduling service ownership');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * List all services for user
    */
   /**
@@ -1020,6 +1049,38 @@ export class SchedulingBookingRepository {
       return { data: normalizedData, error: null };
     } catch (error) {
       logger.error({ err: error, bookingId: id, userId }, 'Failed to find booking');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Ownership oracle: the booking's id if `userId` owns it, else null.
+   *
+   * For service-role paths that were handed a booking id by someone else (the
+   * Stripe webhook vets metadata ids with it, because a `booking_id` on a
+   * payment row reaches the booking through the unscoped
+   * `propagate_refund_to_booking` trigger). Deliberately not `findById`: that
+   * embeds three resources by named foreign key, and an ownership check must
+   * not fail closed on every call because an embed broke. Not found is a normal
+   * answer and is not logged. No status filter: this answers "whose is it".
+   */
+  async findOwnedId(
+    id: string,
+    userId: string
+  ): Promise<SchedulingRepositoryResult<string>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_bookings')
+        .select('id')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return { data: data?.id ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, bookingId: id, userId }, 'Failed to check booking ownership');
       return { data: null, error: error as Error };
     }
   }

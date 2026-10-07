@@ -134,6 +134,18 @@ export const AUDIT_EVENTS = {
   // carry the outcome, the refusal ids and statuses and the correlation id;
   // never an email or a business name.
   BUSINESS_DELETION_PREVIEWED: 'BUSINESS_DELETION_PREVIEWED',
+  // Admin delete AD-2a: the WRITE-AHEAD row, written (and CONFIRMED, via
+  // AuditTrailService.writeNow) by the admin commit immediately before the
+  // destructive RPC, after the second refusal evaluation passed. If it cannot
+  // be confirmed, nothing is deleted. Same placement as the preview: the ADMIN
+  // is user_id and actor, entity 'user' = the TARGET, so the owner never reads
+  // it and it survives the target's erasure (SA T-1 option A, BQ-4).
+  // ⚠️ STARTED WITHOUT A MATCHING BUSINESS_DATA_PURGED (same commit correlation
+  // id) MUST NEVER BE READ AS "DELETED": the RPC may still have refused,
+  // failed and rolled back, or the request may have died; a confirmed write
+  // that timed out can also land late. Only BUSINESS_DATA_PURGED records a
+  // completed deletion.
+  BUSINESS_DELETION_STARTED: 'BUSINESS_DELETION_STARTED',
   // Operator exception OX-1: one TEST account (its email contains the test tag)
   // removed completely, login included, by scripts/test-account-cleanup-delete.sql
   // pasted by hand. Never written by app code. Entity type 'user', id = the
@@ -864,6 +876,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'An admin opened the read-only deletion preview of a business (nothing deleted)',
+  },
+  // Admin delete AD-2a. 'critical': the record that a destructive, irreversible
+  // run was about to start. Not proof that it ran (see the event comment).
+  [AUDIT_EVENTS.BUSINESS_DELETION_STARTED]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'An admin started deleting a business (write-ahead; only BUSINESS_DATA_PURGED records completion)',
   },
   // OX-1. 'warning': a login and all its data were removed outside the product.
   [AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED]: {

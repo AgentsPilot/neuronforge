@@ -59,6 +59,12 @@ const ALLOWED = new Set(
     // from an admin-gated route path. Its test replaces the instance.
     'lib/business-os/purge/AdminDeletionPreview.ts',
     'lib/business-os/purge/__tests__/AdminDeletionPreview.test.ts',
+    // Admin delete AD-2a: the commit re-reads the same ONE account's identity
+    // (path id, admin-gated) for the server-side typed-name confirmation. Its
+    // tests replace the instance.
+    'lib/business-os/purge/AdminDeletionCommit.ts',
+    'lib/business-os/purge/__tests__/AdminDeletionCommit.test.ts',
+    'app/api/admin/users/[id]/deletion/commit/__tests__/route.test.ts',
   ].map((file) => file.split('/').join(sep))
 );
 

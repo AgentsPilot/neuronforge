@@ -242,6 +242,8 @@ import * as jobsQueuesDrain from '../jobs-queues/drain/route';
 import * as jobsQueuesItemAction from '../jobs-queues/items/action/route';
 // Admin delete AD-1b: the read-only deletion preview (a POST, gated from birth).
 import * as userDeletionPreview from '../users/[id]/deletion/preview/route';
+// Admin delete AD-2a: the deletion commit (DESTRUCTIVE once active; gated from birth).
+import * as userDeletionCommit from '../users/[id]/deletion/commit/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -402,6 +404,23 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
         params: { id: '00000000-0000-4000-8000-000000000000' },
       }),
   },
+
+  // ── Admin delete AD-2a (2026-10-06) ─────────────────────────────────────
+  // The DESTRUCTIVE commit (inactive: off switch + held RPC). Nothing (the
+  // token, the identity, the refusal facts, the blocked audit row) may happen
+  // before the gate. The admin case reaches the handler and refuses 409
+  // `admin_delete_disabled` (the off switch defaults off), never a 401/403.
+  {
+    name: 'POST /api/admin/users/[id]/deletion/commit',
+    call: () =>
+      userDeletionCommit.POST(
+        req('/api/admin/users/00000000-0000-4000-8000-000000000000/deletion/commit', 'POST', {
+          token: 'x.y',
+          confirmText: 'Some Business',
+        }),
+        { params: { id: '00000000-0000-4000-8000-000000000000' } }
+      ),
+  },
 ];
 
 beforeEach(() => {
@@ -432,10 +451,13 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  = 59
     //  + 1  `users/[id]/deletion/preview#POST` (admin delete AD-1b), gated from birth;
     //       a read-only POST (body must be `{}`)
-    //  = 60, which is every admin handler now on the canonical gate EXCEPT the
+    //  = 60
+    //  + 1  `users/[id]/deletion/commit#POST` (admin delete AD-2a), gated from birth;
+    //       destructive once active, shipped inactive (off switch + held RPC)
+    //  = 61, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(60);
+    expect(CASES).toHaveLength(61);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

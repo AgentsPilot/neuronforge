@@ -180,7 +180,7 @@ describe('the Credits block (credit deduction slice 11c)', () => {
   });
 });
 
-describe('the Delete… dialog is read-only (admin delete AD-1c; SA SC-9, FR-A1, FR-A3)', () => {
+describe('the Delete… dialog: preview, then a typed confirmation only with a token (admin delete AD-1c / AD-2b; SA SC-9, AC2-5, FR-A1, FR-A3, FR-A6)', () => {
   const DIALOG = `${ROOT}/components/DeleteBusinessDialog.tsx`;
   const DELETION_FILES = [DIALOG, `${ROOT}/deletionCopy.ts`];
 
@@ -188,36 +188,105 @@ describe('the Delete… dialog is read-only (admin delete AD-1c; SA SC-9, FR-A1,
     expect(read(DIALOG)).toMatch(/^'use client';/);
   });
 
-  it('calls exactly one URL, the read-only preview route, with POST and an empty body', () => {
+  it('calls exactly two URLs: the preview with an empty body, the commit with { token, confirmText }', () => {
     const code = codeOf(read(DIALOG));
     const urls = [...code.matchAll(/`(\/api\/[^`]*)`|'(\/api\/[^']*)'/g)].map((m) => m[1] ?? m[2]);
-    expect(urls).toEqual(['/api/admin/users/${encodeURIComponent(accountId)}/deletion/preview']);
-    expect(code.match(/fetch\(/g)).toHaveLength(1);
-    expect(code).toContain("method: 'POST'");
+    expect(urls).toEqual([
+      '/api/admin/users/${encodeURIComponent(accountId)}/deletion/preview',
+      '/api/admin/users/${encodeURIComponent(accountId)}/deletion/commit',
+    ]);
+    expect(code.match(/fetch\(/g)).toHaveLength(2);
+    expect(code.match(/method: 'POST'/g)).toHaveLength(2);
     expect(code).toContain('JSON.stringify({})');
+    expect(code).toContain('JSON.stringify({ token, confirmText })');
   });
 
-  it.each(DELETION_FILES)('%s names no commit route and no token', (file) => {
-    const code = codeOf(read(file));
-    expect(code).not.toMatch(/commit/i);
-    expect(code).not.toMatch(/token/i);
-  });
-
-  it('offers no confirmation input, and the confirm button is always disabled', () => {
+  it('the token is held in component state only: never a URL, storage, a cookie or a log (SA AC2-5)', () => {
     const code = codeOf(read(DIALOG));
-    expect(code).not.toMatch(/<(input|textarea|select|Input|Textarea|Checkbox)\b/);
-    const confirm = /<Button[^>]*data-testid="deletion-confirm"[^>]*>/.exec(code);
-    expect(confirm).not.toBeNull();
-    expect(confirm![0]).toMatch(/\sdisabled\s/);
-    expect(confirm![0]).not.toMatch(/disabled=\{/);
-    expect(confirm![0]).not.toMatch(/onClick/);
+    expect(code).not.toMatch(/localStorage|sessionStorage|document\.cookie|URLSearchParams|history\.|useRouter|useSearchParams/);
+    expect(code).not.toMatch(/logger|createLogger/);
+    for (const url of code.matchAll(/`(\/api\/[^`]*)`/g)) expect(url[1]).not.toMatch(/token/i);
+  });
+
+  it('the confirmation is offered only with a token, a value to type, and no blocking refusal (FR-A3)', () => {
+    const code = codeOf(read(DIALOG));
+    const gate = /function confirmableValue\([\s\S]*?\n\}/.exec(code);
+    expect(gate).not.toBeNull();
+    expect(gate![0]).toContain('if (!preview.commitToken) return null;');
+    expect(gate![0]).toMatch(/BLOCKING_STATUSES\.has\(r\.status\)\)\) return null;/);
+    // The one input lives in ConfirmField, and ConfirmField is rendered only in the confirmable branch.
+    expect(code.match(/<(input|textarea|select|Input|Textarea|Checkbox)\b/g)).toEqual(['<Input']);
+    expect(code.match(/<ConfirmField\b/g)).toHaveLength(1);
+    const branch = code.indexOf('isConfirmable && preview ? (');
+    expect(branch).toBeGreaterThan(-1);
+    expect(code.indexOf('<ConfirmField')).toBeGreaterThan(branch);
+    expect(code).toMatch(/const isConfirmable = expected !== null && !hasOutcome;/);
+  });
+
+  it('without a token the confirm is hard-disabled; with one it is disabled until the text matches', () => {
+    const code = codeOf(read(DIALOG));
+    const confirms = [...code.matchAll(/<Button[^>]*data-testid="deletion-confirm"[^>]*>/g)].map((m) => m[0]);
+    expect(confirms).toHaveLength(2);
+    const [submit, hard] = confirms;
+    expect(submit).toMatch(/type="submit"/);
+    expect(submit).toMatch(/disabled=\{!canSubmit\}/);
+    expect(hard).toMatch(/\sdisabled\s/);
+    expect(hard).not.toMatch(/disabled=\{/);
+    for (const c of confirms) {
+      expect(c).not.toMatch(/onClick/);
+      expect(c).toMatch(/aria-describedby=\{reasonId\}/);
+    }
+    // Enter in the field must not submit what the button would not.
+    expect(code).toMatch(/event\.preventDefault\(\);[\s\S]{0,120}if \(!canSubmit \|\| !preview\?\.commitToken\) return;/);
+  });
+
+  /**
+   * Every `message` read in the dialog, by any spelling: `x.message`, `x?.message`,
+   * `(x as T)?.message`, `x['message']`, or a destructured `{ message }`. Each is
+   * reported with what it was read from, so only the AD-1c refusal rows survive.
+   */
+  function messageReads(code: string): string[] {
+    const reads: string[] = [];
+    for (const m of code.matchAll(/([\w)\]]+)\s*\??\.\s*message\b/g)) reads.push(m[1]);
+    for (const m of code.matchAll(/\[\s*['"`]message['"`]\s*\]/g)) reads.push(m[0]);
+    for (const m of code.matchAll(/\{[^{}]*\bmessage\b[^{}]*\}\s*=/g)) reads.push(m[0]);
+    return reads;
+  }
+
+  it('the message-read detector sees every spelling (planted samples)', () => {
+    expect(messageReads('a = refusal.message;')).toEqual(['refusal']);
+    expect(messageReads('a = body?.message;')).toEqual(['body']);
+    expect(messageReads('a = (record as Foo)?.message;')).toEqual(['Foo)']);
+    expect(messageReads('a = (parsed as Record<string, unknown>).message;')).toEqual([')']);
+    expect(messageReads("a = record['message'];")).toEqual(["['message']"]);
+    expect(messageReads('const { message } = body;')).toHaveLength(1);
+  });
+
+  it('never renders the server’s own text for a commit: the only `message` read is a preview refusal row', () => {
+    const code = codeOf(read(DIALOG));
+    expect(messageReads(code)).toEqual(['refusal']);
+    expect(code).toContain('{refusal.message}');
+    // A `details` field read (the `<details>` element and "Technical details" copy are fine).
+    expect(code).not.toMatch(/\??\.\s*details\b|\[\s*['"`]details['"`]\s*\]|\{[^{}]*\bdetails\b[^{}]*\}\s*=/);
+    // Only the preview's kept-table notes (AD-1c technical expander) are read; never the commit's residue / kept / notes.
+    expect([...code.matchAll(/(\w+)\??\.(residue|kept|notes)\b/g)].map((m) => m[0])).toEqual(['t.notes', 't.notes']);
+    // postCommit reads only the fields of DeletionCommitRefusalView.
+    const post = /async function postCommit\([\s\S]*?\n\}/.exec(code);
+    expect(post).not.toBeNull();
+    expect(post![0]).not.toMatch(/message|details|residue|notes/);
+  });
+
+  it('a second submit while one is running cannot POST twice (an in-flight ref, not only state)', () => {
+    const code = codeOf(read(DIALOG));
+    expect(code).toMatch(/const inFlight = useRef\(false\);/);
+    expect(code).toMatch(/if \(inFlight\.current\) return;\s*inFlight\.current = true;/);
   });
 
   it.each(DELETION_FILES)('%s renders server text as text only (no dangerouslySetInnerHTML)', (file) => {
     expect(codeOf(read(file))).not.toMatch(/dangerouslySetInnerHTML/);
   });
 
-  it('the page opens it from the expanded row only, inside the danger area', () => {
+  it('the page opens it from the expanded row only, inside the danger area, and refreshes the list after a deletion', () => {
     const page = codeOf(read(`${ROOT}/page.tsx`));
     expect(page.match(/<DeleteBusinessDialog\b/g)).toHaveLength(1);
     const expanded = page.indexOf('{isExpanded && (');
@@ -226,5 +295,7 @@ describe('the Delete… dialog is read-only (admin delete AD-1c; SA SC-9, FR-A1,
     expect(dangerArea).toBeGreaterThan(expanded);
     expect(page.indexOf('<DeleteBusinessDialog')).toBeGreaterThan(dangerArea);
     expect(page.indexOf('data-testid="delete-business-open"')).toBeGreaterThan(dangerArea);
+    const dialog = page.slice(page.indexOf('<DeleteBusinessDialog'), page.indexOf('/>', page.indexOf('<DeleteBusinessDialog')));
+    expect(dialog).toMatch(/onDeleted=\{\(\) => \{\s*void fetchUsers\(\);\s*\}\}/);
   });
 });

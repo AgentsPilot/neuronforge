@@ -38,7 +38,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { authorizePurge } from '@/lib/business-os/purge/purgeAuthz';
 import { runPurgeCommit } from '@/lib/business-os/purge/ResetService';
-import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { confirmationMatches, resolveConfirmationTarget } from '@/lib/business-os/purge/confirmation';
 
 const logger = createLogger({ module: 'PurgeCommitAPI' });
 
@@ -70,9 +70,6 @@ const schema = z
     confirmText: z.string().trim().min(1).max(500),
   })
   .strict();
-
-/** Normalise for comparison: trimmed, case-insensitive, internal whitespace collapsed. */
-const normalise = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
 export async function POST(request: NextRequest) {
   const correlationId =
@@ -112,15 +109,25 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Typed confirmation, checked against a server-side value ───────────
-    const expected = await resolveConfirmationTarget(user.id, user.email ?? null);
-    if (!expected) {
+    // Shared with the admin surface (AD-2a). A profile READ ERROR is a 500,
+    // never the email fallback (SA AC2-8: the confirmation must not fail open).
+    const target = await resolveConfirmationTarget(user.id, user.email ?? null);
+    if (target.status === 'unverified') {
+      requestLogger.error({ userId: user.id, level: validated.level }, 'Commit refused — confirmation target could not be read');
+      return NextResponse.json(
+        { success: false, error: 'Could not read what to confirm against. Nothing was changed. Try again.' },
+        { status: 500 },
+      );
+    }
+    if (target.status === 'none') {
       return NextResponse.json(
         { success: false, error: 'Could not determine what to confirm against. Refusing.' },
         { status: 409 },
       );
     }
 
-    if (normalise(validated.confirmText) !== normalise(expected.value)) {
+    const expected = target;
+    if (!confirmationMatches(validated.confirmText, expected.value)) {
       requestLogger.info({ userId: user.id, level: validated.level }, 'Commit refused — confirmation text did not match');
       return NextResponse.json(
         {
@@ -132,8 +139,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Ids only (CLAUDE.md § Logging; AD-2a T-9): no address in this line.
     requestLogger.warn(
-      { userId: user.id, email: user.email, level: validated.level, options: validated.options },
+      { userId: user.id, level: validated.level, options: validated.options },
       'Commit confirmed — starting the destructive sequence',
     );
 
@@ -168,22 +176,4 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-}
-
-/**
- * What the user must type: the business name, or the account email if there is
- * no business name. Looked up server-side.
- */
-async function resolveConfirmationTarget(
-  userId: string,
-  email: string | null,
-): Promise<{ kind: 'business name' | 'account email'; value: string } | null> {
-  try {
-    const { data: profile } = await businessProfileRepository.findByUserId(userId);
-    const name = profile?.company_name;
-    if (name && name.trim()) return { kind: 'business name', value: name };
-  } catch {
-    // Fall through to email. A missing profile is normal for some test accounts.
-  }
-  return email ? { kind: 'account email', value: email } : null;
 }

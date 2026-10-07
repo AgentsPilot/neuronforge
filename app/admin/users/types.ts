@@ -213,9 +213,100 @@ export interface DeletionPreviewPayload {
   } | null;
   resetLive: boolean | null;
   limitations: string[];
-  /** Always false in AD-1: the confirm control is disabled. */
-  deletionAvailable: false;
+  /**
+   * True exactly when `commitToken` is set (AD-2a). The confirm control stays
+   * disabled until AD-2b wires the typed confirmation.
+   */
+  deletionAvailable: boolean;
   deletionUnavailableReason: string;
+  /**
+   * AD-2a: the signed commit token, or null. Hold it in component state only:
+   * never a URL, never storage, never a log (SA AC2-5).
+   */
+  commitToken: string | null;
+  /** What the admin must type to confirm; null when it could not be determined. */
+  confirmKind: 'business name' | 'account email' | null;
   correlationId: string;
   generatedAt: string;
+}
+
+// ── Admin delete AD-2b: the commit call ────────────────────────────────────
+// `POST /api/admin/users/[id]/deletion/commit`, body `{ token, confirmText }`.
+// A structural copy of `AdminDeletionCommitCode` and
+// `AdminDeletionCommitCompleted['result']` in
+// `lib/business-os/purge/AdminDeletionCommit.ts`, pinned both ways by the same
+// wire-type test as the preview.
+
+/** Every refusal code the composition can answer with. The dialog maps each to one sentence. */
+export type DeletionCommitCodeView =
+  | 'admin_delete_disabled'
+  | 'token_key_unavailable'
+  | 'token_malformed'
+  | 'token_signature'
+  | 'token_expired'
+  | 'token_version'
+  | 'token_gate_version'
+  | 'token_surface'
+  | 'token_actor'
+  | 'token_target'
+  | 'token_level'
+  | 'token_options'
+  | 'user_not_found'
+  | 'identity_read_failed'
+  | 'actor_not_admin'
+  | 'refused'
+  | 'confirmation_unverified'
+  | 'nothing_to_confirm'
+  | 'confirmation_kind_changed'
+  | 'confirmation_mismatch'
+  | 'schema_changed'
+  | 'rpc_not_applied'
+  | 'rpc_state_unknown'
+  | 'capability_missing'
+  | 'agents_option_refused'
+  | 'delete_graph_refused'
+  | 'delete_graph_unreadable'
+  | 'stripe_connected'
+  | 'stripe_unreadable'
+  | 'local_blocking'
+  | 'local_unreadable'
+  | 'snapshot_failed'
+  | 'already_running'
+  | 'commit_failed'
+  | 'precommit_refused'
+  | 'audit_unavailable';
+
+/** A completed admin deletion (`data` on a 200). */
+export interface DeletionCommitResultView {
+  targetId: string;
+  level: 'purge';
+  options: { integrations: boolean; agents: boolean; activityHistory: boolean };
+  snapshotPath: string;
+  rows: { total: number; byTable: Record<string, number> };
+  storage: Array<{ bucket: string; deleted: number; failed: number }>;
+  /** Server-written sentences. Never rendered: the dialog derives its residue lines from `storage` and `invites`. */
+  residue: string[];
+  invites: { revoked: number | null; skippedMidSignup: number | null };
+  /** Server-written sentences. Never rendered: the dialog uses its own kept list. */
+  kept: string[];
+  notes: string[];
+  auditRecorded: boolean;
+  committedAt: string;
+  durationMs: number;
+  correlationId: string;
+  previewCorrelationId: string;
+}
+
+/**
+ * The fields of a refusal body the dialog reads. `error` is a commit code, or
+ * one of the route's own (`invalid_body`, `invalid_user_id`, `Unauthorized`,
+ * `Forbidden`, `Internal server error`); anything else is the generic sentence.
+ * `message` and `details` are deliberately absent: they are never rendered.
+ */
+export interface DeletionCommitRefusalView {
+  error: string;
+  refusals?: DeletionRefusalView[];
+  snapshotWritten?: boolean;
+  expectedKind?: 'business name' | 'account email';
+  correlationId?: string;
 }

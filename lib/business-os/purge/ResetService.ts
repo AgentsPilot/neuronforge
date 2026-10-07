@@ -10,6 +10,7 @@
 //            3. delete-graph check                 (refuse unless `ok`; SA C-5)
 //            4. Reset guard — control 1, control 2 (refuse on either)
 //   PHASE 1  5. snapshot, VERIFIED by read-back    (abort on failure, AC-35)
+//            5a. admin surface only: `preCommitGate` (verdict only; AD-2a)
 //   PHASE 2  6. purge_business_data RPC            (one transaction)
 //   PHASE 3  7. storage removal                    (non-transactional, never fatal)
 //            8. structured report
@@ -34,6 +35,22 @@
 // transaction, so it either happened or did not. Phase 3 failures are reported
 // as residue, not retried, because retrying needs durable half-state and D7
 // refused a grace period.
+//
+// ── Two surfaces, one orchestrator (admin delete AD-2a; SA AC2-1, AC2-2) ───
+// The parameters are a DISCRIMINATED UNION, not free flags:
+//   * internal (the default, `surface` omitted): actor = target, and this file
+//     writes its own audit rows exactly as before. Unchanged;
+//   * admin: `actor` is the admin, `userId` is still the TARGET (every delete,
+//     snapshot and storage call uses it, never the actor), and the audit is
+//     DELEGATED: this file writes no rows and returns the outcome, so the admin
+//     composition owns every admin-owned, awaited row. A `preCommitGate` is
+//     REQUIRED on this arm, so no call can run without rows AND without a
+//     gate, and no internal call can switch its own audit off.
+// The gate takes no arguments (it cannot change the target, the tables or the
+// options), runs after the verified snapshot and immediately before the RPC,
+// and is wrapped: a throw or anything but `{ ok: true }` refuses
+// (`precommit_refused`, or `audit_unavailable` when the gate says so). It sits
+// after the probe, so on a database without the function it never runs.
 
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
@@ -65,7 +82,11 @@ export type ResetRefusal =
   | 'local_unreadable'
   | 'snapshot_failed'
   | 'already_running'
-  | 'commit_failed';
+  | 'commit_failed'
+  /** Admin surface: the pre-commit gate refused, threw or answered anything but `{ ok: true }`. */
+  | 'precommit_refused'
+  /** Admin surface: the write-ahead audit row could not be confirmed, so nothing was deleted. */
+  | 'audit_unavailable';
 
 /** Every opt-in extra off — slice 2's Reset, and the commit route's default. */
 export const NO_OPTIONS: Readonly<PurgeOptions> = Object.freeze({
@@ -108,7 +129,44 @@ export type ResetOutcome =
       snapshotWritten: boolean;
       rowsDeleted: 0;
       detail?: unknown;
+      /**
+       * Admin (delegated) surface only: the server-side detail for the
+       * composition's audit row. NEVER returned to a client: the composition
+       * strips it. Absent on the internal surface, which audits it itself.
+       */
+      auditDetail?: unknown;
     };
+
+/** The pre-commit gate's verdict (SA AC2-2). Verdict only: it changes nothing about the run. */
+export type PreCommitVerdict =
+  | { ok: true }
+  | { ok: false; reason?: 'precommit_refused' | 'audit_unavailable'; message: string; detail?: unknown };
+
+/** Takes no arguments, by design: it cannot change the target, the tables or the options. */
+export type PreCommitGate = () => Promise<PreCommitVerdict>;
+
+interface PurgeCommitCommon {
+  /** The TARGET. Every delete, snapshot and storage call uses it. */
+  userId: string;
+  correlationId: string;
+  level: PurgeLevel;
+  options: PurgeOptions;
+}
+
+/** The internal surface (default): actor = target, self-audited. Unchanged since 3b. */
+export interface InternalPurgeCommitParams extends PurgeCommitCommon {
+  surface?: 'internal';
+  actorEmail: string | null;
+}
+
+/** The admin surface (AD-2a): delegated audit, gate REQUIRED (SA AC2-1). */
+export interface AdminPurgeCommitParams extends PurgeCommitCommon {
+  surface: 'admin';
+  actor: { id: string };
+  preCommitGate: PreCommitGate;
+}
+
+export type PurgeCommitParams = InternalPurgeCommitParams | AdminPurgeCommitParams;
 
 
 /**
@@ -166,14 +224,12 @@ export async function runReset(params: {
   return runPurgeCommit({ ...params, level: 'reset', options: { ...NO_OPTIONS } });
 }
 
-export async function runPurgeCommit(params: {
-  userId: string;
-  actorEmail: string | null;
-  correlationId: string;
-  level: PurgeLevel;
-  options: PurgeOptions;
-}): Promise<ResetOutcome> {
-  const { userId, actorEmail, correlationId, level } = params;
+export async function runPurgeCommit(params: PurgeCommitParams): Promise<ResetOutcome> {
+  const { userId, correlationId, level } = params;
+  // Derived from the surface, never a free parameter (SA AC2-1 / T-7).
+  const admin = params.surface === 'admin' ? params : null;
+  const actorEmail = params.surface === 'admin' ? null : params.actorEmail;
+  const surface = admin ? 'admin' : 'internal';
   // Copied field by field: only the three known keys reach the run, the
   // snapshot, the RPC and the audit row.
   const options: PurgeOptions = {
@@ -193,7 +249,26 @@ export async function runPurgeCommit(params: {
     /** Server-side only: recorded in the audit row, never returned. Defaults to `detail`. */
     auditDetail?: unknown,
   ): Promise<ResetOutcome> => {
-    log.warn({ userId, level, options, reason, snapshotWritten }, `${label} refused`);
+    log.warn(
+      admin
+        ? { userId, actorId: admin.actor.id, surface, level, options, reason, snapshotWritten }
+        : { userId, level, options, reason, snapshotWritten },
+      `${label} refused`,
+    );
+
+    if (admin) {
+      // Delegated: the admin composition writes the admin-owned row (AC2-4).
+      return {
+        status: 'refused',
+        correlationId,
+        reason,
+        message,
+        snapshotWritten,
+        rowsDeleted: 0,
+        detail,
+        auditDetail: auditDetail ?? detail ?? null,
+      };
+    }
 
     auditTrail
       .log({
@@ -297,7 +372,8 @@ export async function runPurgeCommit(params: {
     level,
     options,
     correlationId,
-    context: { surface: 'internal', actorEmail },
+    // The admin snapshot records the admin's id, not an email.
+    context: admin ? { surface: 'admin', actorId: admin.actor.id } : { surface: 'internal', actorEmail },
   });
 
   if (!snapshot.ok || !snapshot.verified || !snapshot.path) {
@@ -311,6 +387,29 @@ export async function runPurgeCommit(params: {
       undefined,
       { error: snapshot.error ?? null },
     );
+  }
+
+  // ── 5a. Admin surface: the pre-commit gate, immediately before the RPC ──
+  // FR-A7's second evaluation and the confirmed write-ahead row live in the
+  // gate (the composition). Verdict only; a throw is a refusal (AC2-2).
+  if (admin) {
+    let verdict: PreCommitVerdict | null;
+    try {
+      verdict = await admin.preCommitGate();
+    } catch (err) {
+      log.error({ err, userId, actorId: admin.actor.id }, 'Pre-commit gate threw: refusing');
+      verdict = null;
+    }
+    if (!verdict || verdict.ok !== true) {
+      const refused = verdict && verdict.ok === false ? verdict : null;
+      const reason: ResetRefusal = refused?.reason === 'audit_unavailable' ? 'audit_unavailable' : 'precommit_refused';
+      return refuse(
+        reason,
+        `${refused?.message ?? 'The final check before deleting did not pass. Nothing was deleted.'} A verified snapshot was written first and remains at ${snapshot.path}; it expires under the 7-day rule.`,
+        true,
+        { snapshotPath: snapshot.path, ...(refused?.detail !== undefined ? { gate: refused.detail } : {}) },
+      );
+    }
   }
 
   // ── PHASE 2 — the commit ────────────────────────────────────────────────
@@ -385,6 +484,7 @@ export async function runPurgeCommit(params: {
   log.info(
     {
       userId,
+      ...(admin ? { actorId: admin.actor.id, surface } : {}),
       level,
       options,
       rows: total,
@@ -399,8 +499,8 @@ export async function runPurgeCommit(params: {
   // ── Audit ───────────────────────────────────────────────────────────────
   // The OUTCOME, not just the intent. Written AFTER the commit, so with
   // `activityHistory` on, the record of this run survives its own delete
-  // (requirement §10.3).
-  auditTrail
+  // (requirement §10.3). Admin surface: delegated, the composition writes it.
+  if (!admin) auditTrail
     .log({
       action: AUDIT_EVENTS.BUSINESS_DATA_PURGED,
       entityType: 'user',

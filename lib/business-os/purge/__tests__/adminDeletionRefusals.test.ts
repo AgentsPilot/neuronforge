@@ -14,6 +14,7 @@ import {
   blockingRefusals,
   evaluateAdminDeletionRefusals,
   isPlanSubscriptionLive,
+  r7AlreadyRunning,
   type AdminDeletionFacts,
   type AdminDeletionLaterFacts,
   type AdminDeletionRefusal,
@@ -29,6 +30,7 @@ const clearLater = (): AdminDeletionLaterFacts => ({
   connectAccounts: 0,
   localBlocking: { outcome: 'clear' },
   schema: { status: 'ok', unclassified: [], missingDeletable: [] },
+  deleteGraph: { status: 'ok' },
 });
 
 const facts = (overrides: Partial<AdminDeletionFacts> = {}, later: Partial<AdminDeletionLaterFacts> = {}): AdminDeletionFacts => ({
@@ -276,5 +278,37 @@ describe('every refusal is returned together (SC-4)', () => {
       'R-6:unverified',
       'R-8:applies',
     ]);
+  });
+});
+
+describe('R-8 includes the delete-graph verdict (AD-2a)', () => {
+  it('a refused graph: R-8 applies even with a classified schema', () => {
+    expect(statusOf(facts({}, { deleteGraph: { status: 'refused' } }), 'R-8')).toBe('applies');
+  });
+
+  it('an unreadable graph: R-8 unverified (never a pass)', () => {
+    expect(statusOf(facts({}, { deleteGraph: { status: 'unreadable' } }), 'R-8')).toBe('unverified');
+  });
+
+  it('a graph that was never read: R-8 unverified (fail closed)', () => {
+    const f = facts();
+    const later = { ...f.later } as Partial<AdminDeletionLaterFacts>;
+    delete later.deleteGraph;
+    expect(statusOf({ ...f, later: later as AdminDeletionLaterFacts }, 'R-8')).toBe('unverified');
+  });
+
+  it('schema drift still wins over a clean graph', () => {
+    expect(
+      statusOf(facts({}, { schema: { status: 'drift', unclassified: ['x'], missingDeletable: [] }, deleteGraph: { status: 'ok' } }), 'R-8')
+    ).toBe('applies');
+  });
+});
+
+describe('R-7 applies form (AD-2a, AC-A11)', () => {
+  it('is a blocking refusal with a clearing action', () => {
+    const r7 = r7AlreadyRunning();
+    expect(r7).toMatchObject({ id: 'R-7', status: 'applies' });
+    expect(BLOCKING_REFUSAL_STATUSES.has(r7.status)).toBe(true);
+    expect(r7.clearingAction).toBeTruthy();
   });
 });

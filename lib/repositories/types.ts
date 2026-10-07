@@ -398,6 +398,25 @@ export interface SystemSettingsConfig {
   updated_by?: string | null;
 }
 
+// ============ User Subscription (billing summary read) Types ============
+
+/**
+ * The `user_subscriptions` columns the Settings billing screen shows
+ * (GET /api/billing/summary). Allow-listed: exactly what BillingSettings reads,
+ * nothing more — no Stripe ids, no quotas, no internal throttles.
+ */
+export interface UserSubscriptionBillingSummary {
+  balance: number | null;
+  total_spent: number | null;
+  status: string | null;
+  created_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean | null;
+  monthly_credits: number | null;
+  monthly_amount_usd: number | null;
+}
+
 // ============ User Subscription (free-tier grant) Types ============
 //
 // S-6 fix (docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md). These types are
@@ -670,6 +689,21 @@ export interface RevokeFriendInviteInput {
   reason: string;
   now: Date;
   /** A claim made at or after this instant is LIVE, and blocks the revoke (I-2). */
+  claimLeaseCutoff: Date;
+}
+
+/**
+ * Admin delete AD-2a: revoke every PENDING invite one account issued, after an
+ * admin deleted that account's business (SA AC2-9). `issuerAccountId` is the
+ * deleted business's account (validated as a UUID by the repository).
+ */
+export interface RevokePendingIssuerInvitesByAdminInput {
+  issuerAccountId: string;
+  adminId: string;
+  /** At least 3 characters (CHECK `business_os_invites_revocation_complete`). */
+  reason: string;
+  now: Date;
+  /** A claim made at or after this instant is LIVE: that invite is skipped (BQ-3). */
   claimLeaseCutoff: Date;
 }
 
