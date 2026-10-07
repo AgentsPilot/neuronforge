@@ -364,6 +364,13 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1b. invoic
       "type": "db",
     },
     {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
       "chain": [
         [
           "update",
@@ -382,13 +389,6 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1b. invoic
       "table": "payment_invoices",
       "terminal": "await",
       "type": "db",
-    },
-    {
-      "args": [
-        "<supabase-admin>",
-        "acct_owner_a",
-      ],
-      "type": "resolveAccountOwner",
     },
     {
       "chain": [
@@ -1216,6 +1216,13 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 4b. checko
       "type": "db",
     },
     {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
       "chain": [
         [
           "update",
@@ -1223,11 +1230,19 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 4b. checko
             "payment_status": "paid",
             "updated_at": "<NOW>",
           },
+          {
+            "count": "exact",
+          },
         ],
         [
           "eq",
           "id",
           "bk-0001",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
         ],
       ],
       "operation": "update",
@@ -1333,6 +1348,72 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 5a. paymen
       ],
       "operation": "select",
       "table": "payment_transactions",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "ct-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "crm_contacts",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "bk-0002",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_bookings",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "svc-2",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_services",
       "terminal": "maybeSingle",
       "type": "db",
     },
@@ -1558,6 +1639,13 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 6a. invoic
       "type": "db",
     },
     {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
       "chain": [
         [
           "update",
@@ -1703,7 +1791,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 6b. invoic
       "chain": [
         [
           "select",
-          "id, invoice_number",
+          "id, invoice_number, user_id",
         ],
         [
           "eq",
@@ -1715,6 +1803,13 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 6b. invoic
       "table": "payment_invoices",
       "terminal": "single",
       "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
     },
     {
       "chain": [
@@ -1814,7 +1909,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 6c. invoic
       "chain": [
         [
           "select",
-          "id, invoice_number",
+          "id, invoice_number, user_id",
         ],
         [
           "eq",
@@ -1826,6 +1921,13 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 6c. invoic
       "table": "payment_invoices",
       "terminal": "single",
       "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
     },
     {
       "chain": [
@@ -2448,7 +2550,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 9c. a prev
       "chain": [
         [
           "select",
-          "id, invoice_number",
+          "id, invoice_number, user_id",
         ],
         [
           "eq",
@@ -2460,6 +2562,13 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 9c. a prev
       "table": "payment_invoices",
       "terminal": "single",
       "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
     },
     {
       "chain": [
@@ -2581,6 +2690,72 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 10. a hand
       ],
       "operation": "select",
       "table": "payment_transactions",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "ct-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "crm_contacts",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "bk-0002",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_bookings",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "svc-2",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_services",
       "terminal": "maybeSingle",
       "type": "db",
     },
@@ -2718,6 +2893,1722 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 11. platfo
           "eq",
           "event_id",
           "evt_platform_invoice_paid_no_user",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F1-1. invoice.paid metadata UUID naming another business's invoice is refused before stripe_invoice_id is written 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_paid",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_invoice_paid",
+            "event_type": "invoice.paid",
+            "metadata": {
+              "created": 1790000000,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_connect_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "id",
+          "pinv-0001",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_paid",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F1-2. invoice.paid metadata UUID from an account that maps to no business is refused before any write 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_paid",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_invoice_paid",
+            "event_type": "invoice.paid",
+            "metadata": {
+              "created": 1790000000,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_connect_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "id",
+          "pinv-0001",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_paid",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F1-3. invoice.finalized on another business's invoice (planted stripe_invoice_id) is refused 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_invoice_finalized",
+            "event_type": "invoice.finalized",
+            "metadata": {
+              "created": 1790000600,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, invoice_number, user_id",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_connect_final_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F1-4. invoice.payment_failed on another business's invoice is refused: no overdue, no activity 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_failed",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_invoice_failed",
+            "event_type": "invoice.payment_failed",
+            "metadata": {
+              "created": 1790000500,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, invoice_number, user_id",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_connect_failed_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_failed",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F1-5. invoice.marked_uncollectible on another business's invoice is refused 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_uncollectible",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_invoice_uncollectible",
+            "event_type": "invoice.marked_uncollectible",
+            "metadata": {
+              "created": 1790000700,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, invoice_number, user_id",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_connect_uncoll_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_uncollectible",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F2-1. checkout booking_id from an attacker account: the only booking write is scoped to the attacker, and 0 rows is logged 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_checkout_booking",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_checkout_booking",
+            "event_type": "checkout.session.completed",
+            "metadata": {
+              "created": 1790000300,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "payment_status": "paid",
+            "updated_at": "<NOW>",
+          },
+          {
+            "count": "exact",
+          },
+        ],
+        [
+          "eq",
+          "id",
+          "bk-0001",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-b",
+        ],
+      ],
+      "operation": "update",
+      "table": "scheduling_bookings",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_checkout_booking",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F2-2. checkout booking_id from an account that maps to no business writes nothing 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_checkout_booking",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_checkout_booking",
+            "event_type": "checkout.session.completed",
+            "metadata": {
+              "created": 1790000300,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_checkout_booking",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4-1. payment_intent.succeeded with a foreign booking_id records the money and drops the booking link 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_pi_succeeded",
+            "event_type": "payment_intent.succeeded",
+            "metadata": {
+              "created": 1790000400,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_1",
+        ],
+        [
+          "limit",
+          1,
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "ct-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "crm_contacts",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "bk-0002",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_bookings",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "svc-2",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_services",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "type": "stripe.client",
+    },
+    {
+      "args": [
+        {
+          "account": "acct_owner_a",
+          "paymentIntentId": "pi_website_1",
+          "stripe": "<stripe-client>",
+        },
+      ],
+      "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "account_resolution": "recorded",
+            "amount": 500000,
+            "booking_id": null,
+            "charge_account_kind": "connect",
+            "contact_id": "ct-1",
+            "currency": "JPY",
+            "description": "Website payment",
+            "metadata": {
+              "booking_id": null,
+              "service_id": "svc-2",
+              "source": "payment_intent_webhook",
+            },
+            "paid_at": "2026-09-21T14:19:50.000Z",
+            "payment_method": "card",
+            "processor_type": "stripe",
+            "refund_status": "none",
+            "refunded_amount": 0,
+            "service_id": "svc-2",
+            "status": "succeeded",
+            "stripe_connect_account_id": "acct_owner_a",
+            "stripe_payment_intent_id": "pi_website_1",
+            "user_id": "owner-a",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4-2. payment_intent.succeeded with a foreign contact_id drops the contact link only 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_pi_succeeded",
+            "event_type": "payment_intent.succeeded",
+            "metadata": {
+              "created": 1790000400,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_1",
+        ],
+        [
+          "limit",
+          1,
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "ct-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "crm_contacts",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "bk-0002",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_bookings",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "svc-2",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_services",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "type": "stripe.client",
+    },
+    {
+      "args": [
+        {
+          "account": "acct_owner_a",
+          "paymentIntentId": "pi_website_1",
+          "stripe": "<stripe-client>",
+        },
+      ],
+      "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "account_resolution": "recorded",
+            "amount": 500000,
+            "booking_id": "bk-0002",
+            "charge_account_kind": "connect",
+            "contact_id": null,
+            "currency": "JPY",
+            "description": "Website payment",
+            "metadata": {
+              "booking_id": "bk-0002",
+              "service_id": "svc-2",
+              "source": "payment_intent_webhook",
+            },
+            "paid_at": "2026-09-21T14:19:50.000Z",
+            "payment_method": "card",
+            "processor_type": "stripe",
+            "refund_status": "none",
+            "refunded_amount": 0,
+            "service_id": "svc-2",
+            "status": "succeeded",
+            "stripe_connect_account_id": "acct_owner_a",
+            "stripe_payment_intent_id": "pi_website_1",
+            "user_id": "owner-a",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4-3. payment_intent.succeeded with a foreign service_id drops the service link, column and metadata copy 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_pi_succeeded",
+            "event_type": "payment_intent.succeeded",
+            "metadata": {
+              "created": 1790000400,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_1",
+        ],
+        [
+          "limit",
+          1,
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "ct-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "crm_contacts",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "bk-0002",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_bookings",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "svc-2",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_services",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "type": "stripe.client",
+    },
+    {
+      "args": [
+        {
+          "account": "acct_owner_a",
+          "paymentIntentId": "pi_website_1",
+          "stripe": "<stripe-client>",
+        },
+      ],
+      "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "account_resolution": "recorded",
+            "amount": 500000,
+            "booking_id": "bk-0002",
+            "charge_account_kind": "connect",
+            "contact_id": "ct-1",
+            "currency": "JPY",
+            "description": "Website payment",
+            "metadata": {
+              "booking_id": "bk-0002",
+              "service_id": null,
+              "source": "payment_intent_webhook",
+            },
+            "paid_at": "2026-09-21T14:19:50.000Z",
+            "payment_method": "card",
+            "processor_type": "stripe",
+            "refund_status": "none",
+            "refunded_amount": 0,
+            "service_id": null,
+            "status": "succeeded",
+            "stripe_connect_account_id": "acct_owner_a",
+            "stripe_payment_intent_id": "pi_website_1",
+            "user_id": "owner-a",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4-4. a failed ownership read fails closed: the link is dropped with reason read_failed, the money is recorded 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_pi_succeeded",
+            "event_type": "payment_intent.succeeded",
+            "metadata": {
+              "created": 1790000400,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_1",
+        ],
+        [
+          "limit",
+          1,
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "ct-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "crm_contacts",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "bk-0002",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_bookings",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "id",
+          "svc-2",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "scheduling_services",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "type": "stripe.client",
+    },
+    {
+      "args": [
+        {
+          "account": "acct_owner_a",
+          "paymentIntentId": "pi_website_1",
+          "stripe": "<stripe-client>",
+        },
+      ],
+      "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "account_resolution": "recorded",
+            "amount": 500000,
+            "booking_id": null,
+            "charge_account_kind": "connect",
+            "contact_id": "ct-1",
+            "currency": "JPY",
+            "description": "Website payment",
+            "metadata": {
+              "booking_id": null,
+              "service_id": "svc-2",
+              "source": "payment_intent_webhook",
+            },
+            "paid_at": "2026-09-21T14:19:50.000Z",
+            "payment_method": "card",
+            "processor_type": "stripe",
+            "refund_status": "none",
+            "refunded_amount": 0,
+            "service_id": "svc-2",
+            "status": "succeeded",
+            "stripe_connect_account_id": "acct_owner_a",
+            "stripe_payment_intent_id": "pi_website_1",
+            "user_id": "owner-a",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F4-5. payment_intent.succeeded with no link ids reads nothing extra and records none 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded_no_links",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_pi_succeeded_no_links",
+            "event_type": "payment_intent.succeeded",
+            "metadata": {
+              "created": 1790000400,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id",
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_no_links",
+        ],
+        [
+          "limit",
+          1,
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "type": "stripe.client",
+    },
+    {
+      "args": [
+        {
+          "account": "acct_owner_a",
+          "paymentIntentId": "pi_website_no_links",
+          "stripe": "<stripe-client>",
+        },
+      ],
+      "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "account_resolution": "recorded",
+            "amount": 500000,
+            "booking_id": null,
+            "charge_account_kind": "connect",
+            "contact_id": null,
+            "currency": "JPY",
+            "description": "Website payment",
+            "metadata": {
+              "booking_id": null,
+              "service_id": null,
+              "source": "payment_intent_webhook",
+            },
+            "paid_at": "2026-09-21T14:19:50.000Z",
+            "payment_method": "card",
+            "processor_type": "stripe",
+            "refund_status": "none",
+            "refunded_amount": 0,
+            "service_id": null,
+            "status": "succeeded",
+            "stripe_connect_account_id": "acct_owner_a",
+            "stripe_payment_intent_id": "pi_website_no_links",
+            "user_id": "owner-a",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_pi_succeeded_no_links",
         ],
       ],
       "operation": "update",

@@ -49,7 +49,8 @@ import { NextRequest } from 'next/server';
 
 // ─── Recorder ────────────────────────────────────────────────────────────────
 
-type Answer = { data: unknown; error: unknown };
+/** `count` only for a write sent with `{ count: 'exact' }` (Fix-1, F-2). */
+type Answer = { data: unknown; error: unknown; count?: number | null };
 
 interface Scenario {
   fixture: string;
@@ -335,6 +336,16 @@ const PLATFORM_INVOICE = {
   amount: 150,
 };
 
+/**
+ * Fix-1 (F-4): `payment-intent-succeeded.json` names contact `ct-1`, booking
+ * `bk-0002` and service `svc-2`; these answers say `owner-a` owns all three.
+ */
+const OWNED_LINKS: Record<string, Answer> = {
+  'crm_contacts:select': ok({ id: 'ct-1' }),
+  'scheduling_bookings:select': ok({ id: 'bk-0002' }),
+  'scheduling_services:select': ok({ id: 'svc-2' }),
+};
+
 // ─── Scenarios ───────────────────────────────────────────────────────────────
 
 beforeAll(() => {
@@ -448,7 +459,14 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
   });
 
   it('4b. checkout.session.completed for a booking', async () => {
-    expect(await run({ fixture: 'checkout-completed-booking.json', owners: OWNER_A })).toMatchSnapshot();
+    expect(
+      await run({
+        fixture: 'checkout-completed-booking.json',
+        owners: OWNER_A,
+        // Fix-1 (F-2): the update is counted; one row is the owned booking.
+        db: { 'scheduling_bookings:update': { data: null, error: null, count: 1 } },
+      })
+    ).toMatchSnapshot();
   });
 
   it('5a. payment_intent.succeeded, the owner owns the account', async () => {
@@ -456,6 +474,7 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
       await run({
         fixture: 'payment-intent-succeeded.json',
         owners: OWNER_A,
+        db: OWNED_LINKS,
         processorFee: { fee: 180, net: 4820, feeCurrency: 'JPY' },
       })
     ).toMatchSnapshot();
@@ -486,7 +505,7 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
       await run({
         fixture: 'invoice-finalized.json',
         owners: OWNER_A,
-        db: { 'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004' }) },
+        db: { 'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }) },
       })
     ).toMatchSnapshot();
   });
@@ -496,7 +515,7 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
       await run({
         fixture: 'invoice-marked-uncollectible.json',
         owners: OWNER_A,
-        db: { 'payment_invoices:select': ok({ id: 'pinv-0005', invoice_number: 'INV-005' }) },
+        db: { 'payment_invoices:select': ok({ id: 'pinv-0005', invoice_number: 'INV-005', user_id: 'owner-a' }) },
       })
     ).toMatchSnapshot();
   });
@@ -582,7 +601,7 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
         owners: OWNER_A,
         db: {
           'processed_webhook_events:select': ok({ event_id: 'evt_connect_invoice_finalized', status: 'failed' }),
-          'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004' }),
+          'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }),
         },
       })
     ).toMatchSnapshot();
@@ -593,7 +612,10 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
       await run({
         fixture: 'payment-intent-succeeded.json',
         owners: OWNER_A,
-        db: { 'payment_transactions:insert': { data: null, error: { code: 'XX000', message: 'insert rejected' } } },
+        db: {
+          ...OWNED_LINKS,
+          'payment_transactions:insert': { data: null, error: { code: 'XX000', message: 'insert rejected' } },
+        },
       })
     ).toMatchSnapshot();
   });
@@ -749,5 +771,243 @@ describe('Stripe webhook, platform customer.subscription.updated (P-10)', () => 
     expect(claimStatus(result)).toBe('completed');
     expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
     expect(effectsOf(result).some((e) => e.type === 'quota.allocateQuotasForUser')).toBe(false);
+  });
+});
+
+// ─── Fix-1: ids the sending business cannot prove it owns ───────────────────
+//
+// Attack scenarios for F-1, F-2 and F-4 (Fix-1 workplan §6.3). Every id the
+// connected account can write (metadata, or a Stripe invoice id it may have
+// planted on our row) must be proved to belong to the business that owns the
+// SENDING account before anything is written with it. A refusal is today's
+// policy: an error line, 200, the claim completed (no Stripe retry).
+
+/** Tables a refused Connect event must not write. */
+const VICTIM_TABLES = ['payment_invoices', 'payment_transactions', 'scheduling_bookings'];
+
+/** The payload of the first insert into `table`. */
+function insertPayload(result: unknown, table: string): Record<string, unknown> | undefined {
+  const insert = effectsOf(result).find(
+    (e) => e.type === 'db' && e.table === table && e.operation === 'insert'
+  ) as { chain: unknown[][] } | undefined;
+  return insert?.chain[0][1] as Record<string, unknown> | undefined;
+}
+
+/** Contexts of the error lines logged with exactly this message. */
+function errorsLogged(message: string): unknown[] {
+  return mockLogLines.filter((l) => l.level === 'error' && l.msg === message).map((l) => l.ctx);
+}
+
+const tablesRead = (result: unknown): string[] =>
+  effectsOf(result)
+    .filter((e) => e.type === 'db' && e.operation === 'select')
+    .map((e) => String(e.table));
+
+const INVOICE_PAID_REFUSAL = 'Connect invoice.paid names an invoice owned by a different business - refusing';
+const LINK_DROPPED = 'payment_intent.succeeded link not proved to belong to the owner - dropping it';
+const NOT_FOUND = { data: null, error: null };
+
+describe('Stripe webhook, Fix-1: ids the sending business cannot prove it owns', () => {
+  it('F1-1. invoice.paid metadata UUID naming another business\'s invoice is refused before stripe_invoice_id is written', async () => {
+    const result = await run({
+      fixture: 'invoice-paid.json',
+      owners: OWNED_BY_OTHER,
+      db: {
+        'payment_invoices:select': [
+          { data: null, error: { code: 'PGRST116', message: 'no rows' } },
+          ok(PLATFORM_INVOICE),
+        ],
+      },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, VICTIM_TABLES)).toEqual([]);
+    expect(errorsLogged(INVOICE_PAID_REFUSAL)).toEqual([{ connectAccountId: 'acct_owner_a', invoiceId: 'pinv-0001' }]);
+  });
+
+  it('F1-2. invoice.paid metadata UUID from an account that maps to no business is refused before any write', async () => {
+    const result = await run({
+      fixture: 'invoice-paid.json',
+      owners: {},
+      db: {
+        'payment_invoices:select': [
+          { data: null, error: { code: 'PGRST116', message: 'no rows' } },
+          ok(PLATFORM_INVOICE),
+        ],
+      },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, VICTIM_TABLES)).toEqual([]);
+    expect(errorsLogged(INVOICE_PAID_REFUSAL)).toHaveLength(1);
+  });
+
+  it('F1-3. invoice.finalized on another business\'s invoice (planted stripe_invoice_id) is refused', async () => {
+    const result = await run({
+      fixture: 'invoice-finalized.json',
+      owners: OWNED_BY_OTHER,
+      db: { 'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }) },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, VICTIM_TABLES)).toEqual([]);
+    expect(
+      errorsLogged('Connect invoice.finalized names an invoice owned by a different business - refusing')
+    ).toEqual([{ connectAccountId: 'acct_owner_a', invoiceId: 'pinv-0004' }]);
+  });
+
+  it('F1-4. invoice.payment_failed on another business\'s invoice is refused: no overdue, no activity', async () => {
+    const result = await run({
+      fixture: 'invoice-payment-failed.json',
+      owners: OWNED_BY_OTHER,
+      db: { 'payment_invoices:select': ok({ id: 'pinv-0003', invoice_number: 'INV-003', user_id: 'owner-a' }) },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, VICTIM_TABLES)).toEqual([]);
+    expect(tablesRead(result)).not.toContain('business_profiles');
+    expect(effectsOf(result).some((e) => e.type === 'crmActivity.create')).toBe(false);
+    expect(
+      errorsLogged('Connect invoice.payment_failed names an invoice owned by a different business - refusing')
+    ).toEqual([{ connectAccountId: 'acct_owner_a', invoiceId: 'pinv-0003' }]);
+  });
+
+  it('F1-5. invoice.marked_uncollectible on another business\'s invoice is refused', async () => {
+    const result = await run({
+      fixture: 'invoice-marked-uncollectible.json',
+      owners: OWNED_BY_OTHER,
+      db: { 'payment_invoices:select': ok({ id: 'pinv-0005', invoice_number: 'INV-005', user_id: 'owner-a' }) },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, VICTIM_TABLES)).toEqual([]);
+    expect(
+      errorsLogged('Connect invoice.marked_uncollectible names an invoice owned by a different business - refusing')
+    ).toEqual([{ connectAccountId: 'acct_owner_a', invoiceId: 'pinv-0005' }]);
+  });
+
+  it('F2-1. checkout booking_id from an attacker account: the only booking write is scoped to the attacker, and 0 rows is logged', async () => {
+    const result = await run({
+      fixture: 'checkout-completed-booking.json',
+      owners: OWNED_BY_OTHER,
+      db: { 'scheduling_bookings:update': { data: null, error: null, count: 0 } },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    const bookingWrites = effectsOf(result).filter(
+      (e) => e.type === 'db' && e.table === 'scheduling_bookings' && e.operation !== 'select'
+    ) as Array<{ chain: unknown[][] }>;
+    expect(bookingWrites).toHaveLength(1);
+    expect(bookingWrites[0].chain).toContainEqual(['eq', 'user_id', 'owner-b']);
+    expect(bookingWrites[0].chain).not.toContainEqual(['eq', 'user_id', 'owner-a']);
+    expect(
+      errorsLogged('Connect checkout names a booking owned by a different business - no row updated')
+    ).toEqual([{ connectAccountId: 'acct_owner_a', bookingId: 'bk-0001' }]);
+  });
+
+  it('F2-2. checkout booking_id from an account that maps to no business writes nothing', async () => {
+    const result = await run({ fixture: 'checkout-completed-booking.json', owners: {} });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, VICTIM_TABLES)).toEqual([]);
+    expect(
+      errorsLogged('Connect checkout names a booking on an account that maps to no business - refusing')
+    ).toEqual([{ connectAccountId: 'acct_owner_a', bookingId: 'bk-0001' }]);
+  });
+
+  it('F2-3. an absent update count is not read as a refusal (strict count === 0)', async () => {
+    const result = await run({ fixture: 'checkout-completed-booking.json', owners: OWNER_A });
+    expect(statusOf(result)).toBe(200);
+    expect(
+      errorsLogged('Connect checkout names a booking owned by a different business - no row updated')
+    ).toEqual([]);
+  });
+
+  it('F4-1. payment_intent.succeeded with a foreign booking_id records the money and drops the booking link', async () => {
+    const result = await run({
+      fixture: 'payment-intent-succeeded.json',
+      owners: OWNER_A,
+      db: { ...OWNED_LINKS, 'scheduling_bookings:select': NOT_FOUND },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    const row = insertPayload(result, 'payment_transactions');
+    expect(row).toMatchObject({ user_id: 'owner-a', contact_id: 'ct-1', booking_id: null, service_id: 'svc-2' });
+    expect(row?.metadata).toMatchObject({ booking_id: null, service_id: 'svc-2' });
+    expect(errorsLogged(LINK_DROPPED)).toEqual([
+      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'booking_id', id: 'bk-0002', reason: 'not_owned' },
+    ]);
+  });
+
+  it('F4-2. payment_intent.succeeded with a foreign contact_id drops the contact link only', async () => {
+    const result = await run({
+      fixture: 'payment-intent-succeeded.json',
+      owners: OWNER_A,
+      db: { ...OWNED_LINKS, 'crm_contacts:select': NOT_FOUND },
+    });
+    expect(result).toMatchSnapshot();
+    expect(insertPayload(result, 'payment_transactions')).toMatchObject({
+      contact_id: null,
+      booking_id: 'bk-0002',
+      service_id: 'svc-2',
+    });
+    expect(errorsLogged(LINK_DROPPED)).toEqual([
+      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'contact_id', id: 'ct-1', reason: 'not_owned' },
+    ]);
+  });
+
+  it('F4-3. payment_intent.succeeded with a foreign service_id drops the service link, column and metadata copy', async () => {
+    const result = await run({
+      fixture: 'payment-intent-succeeded.json',
+      owners: OWNER_A,
+      db: { ...OWNED_LINKS, 'scheduling_services:select': NOT_FOUND },
+    });
+    expect(result).toMatchSnapshot();
+    const row = insertPayload(result, 'payment_transactions');
+    expect(row).toMatchObject({ contact_id: 'ct-1', booking_id: 'bk-0002', service_id: null });
+    expect(row?.metadata).toMatchObject({ booking_id: 'bk-0002', service_id: null });
+    expect(errorsLogged(LINK_DROPPED)).toEqual([
+      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'service_id', id: 'svc-2', reason: 'not_owned' },
+    ]);
+  });
+
+  it('F4-4. a failed ownership read fails closed: the link is dropped with reason read_failed, the money is recorded', async () => {
+    const result = await run({
+      fixture: 'payment-intent-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        ...OWNED_LINKS,
+        'scheduling_bookings:select': { data: null, error: { code: 'XX000', message: 'read failed' } },
+      },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(insertPayload(result, 'payment_transactions')).toMatchObject({ booking_id: null, contact_id: 'ct-1' });
+    expect(errorsLogged(LINK_DROPPED)).toEqual([
+      { connectAccountId: 'acct_owner_a', paymentIntentId: 'pi_website_1', field: 'booking_id', id: 'bk-0002', reason: 'read_failed' },
+    ]);
+  });
+
+  it('F4-5. payment_intent.succeeded with no link ids reads nothing extra and records none', async () => {
+    const result = await run({ fixture: 'payment-intent-succeeded-no-links.json', owners: OWNER_A });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(tablesRead(result)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^(crm_contacts|scheduling_bookings|scheduling_services)$/)])
+    );
+    expect(insertPayload(result, 'payment_transactions')).toMatchObject({
+      contact_id: null,
+      booking_id: null,
+      service_id: null,
+    });
+    expect(errorsLogged(LINK_DROPPED)).toEqual([]);
   });
 });
