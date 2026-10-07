@@ -1,6 +1,6 @@
 # Workplan: Stripe webhook onto repositories (CLAUDE.md rule 1), no behaviour change
 
-> **Last Updated**: 2026-10-06
+> **Last Updated**: 2026-10-07
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): SR-16 (every route on repositories), §9.4, the tenant-isolation ruling and "Standards for every workplan" (SA-3). Tracked follow-up from [P-0](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md) SA review ("Rule 1 / direct Supabase … record it as a tracked follow-up") and [P-1](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P1_WORKPLAN.md) condition P1-C6.
@@ -434,15 +434,27 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 - [x] ✅ Inventory every DB call (§2) and every source guard that pins route text (§8).
 - [x] ✅ Record the "before" (§7.1): harness, coverage, regression set, scoped `tsc`, `--exact` sanity run, client-equivalence measurement.
 - [x] ✅ SA workplan review; Q-1 to Q-7 ruled (approved with C-1 to C-9).
-- **Sequence (C-1, extended by the Fix-1 SA review C-5): Fix-1 → Fix-1b → PR 0 → PR 1 → PR 2 → PR 3 → (Fix-2 if decided) → PR 4 → PR 5.** Each off fresh `main` after the previous one merged.
-- [ ] Fix-1: refuse foreign ids (F-1, F-2, F-4, J/K/L). Code complete, uncommitted, on `fix/webhook-connect-tenant-ownership`. Plan and evidence: [BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md).
-- [ ] Fix-1b (F-5): inside `bindPlanSubscription`, keep `bookingId` / `serviceId` / `paymentPlanId` only if `ownerId` owns them; drop, never refuse. Covers the three call sites (`route.ts:1031`, `:1142`, `:1581` at `248de6be`). Code complete 2026-10-07, uncommitted, on `fix/webhook-plan-booking-ownership`: [BUSINESS_OS_WEBHOOK_PLAN_BOOKING_OWNERSHIP_FIX1B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_PLAN_BOOKING_OWNERSHIP_FIX1B_WORKPLAN.md). Uses separate `findOwnedId` reads rather than the `resolveContactId` fold (SA accepted). Harness snapshot grows from 40 to 44 entries.
-- [ ] PR 0: harness additions; the "before-with-additions" recorded on post-Fix-1b `main` (the snapshot then has 44 entries, not 28); the existing entries proven identical.
+- **Sequence (C-1, extended by the Fix-1 SA review C-5 and the FU-5 SA review Q-5): Fix-1 → Fix-1b → FU-5 → PR 0 → PR 1 → PR 2 → PR 3 → (Fix-2 if decided) → PR 4 → PR 5.** Each off fresh `main` after the previous one merged.
+- [x] Fix-1: refuse foreign ids (F-1, F-2, F-4, J/K/L). **Merged 2026-10-07 (#242).** Was on `fix/webhook-connect-tenant-ownership`. Plan and evidence: [BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md).
+- [x] Fix-1b (F-5) — **merged 2026-10-07 (#246)**: inside `bindPlanSubscription`, keep `bookingId` / `serviceId` / `paymentPlanId` only if `ownerId` owns them; drop, never refuse. Covers the three call sites (`route.ts:1031`, `:1142`, `:1581` at `248de6be`). Code complete 2026-10-07, uncommitted, on `fix/webhook-plan-booking-ownership`: [BUSINESS_OS_WEBHOOK_PLAN_BOOKING_OWNERSHIP_FIX1B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_PLAN_BOOKING_OWNERSHIP_FIX1B_WORKPLAN.md). Uses separate `findOwnedId` reads rather than the `resolveContactId` fold (SA accepted). Harness snapshot grows from 40 to 44 entries.
+- [ ] FU-5 (webhook reliability, infra, no business-logic change): `resolveAccountOwner` throws on a read error (claim released, 500, Stripe retries) and the route's owner cache never holds `null` and is cleared at the start of every request. Code complete 2026-10-07, uncommitted, on `fix/webhook-owner-cache-retry`: [BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md). Harness snapshot grows from 44 to 45 entries (+FU5-1, the 44 others byte-identical).
+- [ ] PR 0: harness additions; the "before-with-additions" recorded on post-FU-5 `main` (the snapshot then has 45 entries, not 28); the existing entries proven identical.
 - [ ] PR 1: claim repository, client alias, `routerPlacement` guard moved.
+  - *Note (FU-5 SA review, Q-2 observation; pre-existing, not a behaviour change for PR 1):* when the database is fully down, `POST`'s catch can fail to release the claim (`status: 'failed'`). The row then stays `processing`, and later deliveries are answered 200 "duplicate", so the event is not retried. This holds for every handler throw today. FU-5 did not introduce or widen it. Record it when the claim moves behind its repository, and keep the release's failure logged. Any fix (e.g. a stale-`processing` reclaim) is its own change, not part of the byte-identical PR 1.
 - [ ] PR 2: invoices.
 - [ ] PR 3: money rows.
-- [ ] PR 4: plans and bookings; two guards moved; plus bind's five inline queries (scope addition, Fix-1b C-4).
+- [ ] PR 4: plans and bookings; two guards moved; plus bind's five inline queries (scope addition, Fix-1b C-4). Also (FU-5 SA Q-3): move the owner check at the plan checkout site (route.ts ~1669) above its `try`, so a lookup failure is no longer logged as "Could not bound a payment plan" before it is rethrown.
 - [ ] PR 5: legacy tables, alias removed, rule-1 guard added, lockdown test updated.
+  - *Scope addition (FU-5 SA review, rule 1; supersedes Q-2's "tracked follow-up"):* `resolveAccountOwner`'s two direct reads (`lib/payments/stripeAccountContext.ts`) move behind the **existing** repositories. No new repository:
+    - `StripeConnectRepository.findOwnerIdByStripeAccountId(stripeAccountId)` (`lib/repositories/PaymentRepository.ts:1498`): `select('user_id').eq('stripe_account_id', …).maybeSingle()`;
+    - a `PluginConnectionRepository` method listing by plugin key: `select('user_id, profile_data, status').eq('plugin_key', …)`.
+    - Both use the same chains as today and **no status filter**. Do not reuse `findActiveByProfileData`: it filters `active`, which would change which accounts map to a business.
+    - Both are unscoped by design: they map an external id to an owner, so the owner is the output. Document that per `tenant-isolation-guard`.
+    - The resolver keeps its signature `resolveAccountOwner(db, stripeAccountId)` and builds the two repositories with the injected `db`. A repository `error` becomes FU-5's throw, with the same message (table + PostgREST code only).
+    - So `route.ts`, every harness entry's recorded `resolveAccountOwner` args, and PR 5's guard stay unchanged.
+    - Add unit tests for each new method (data, miss, error). The resolver's existing unit tests keep passing on the same fake.
+    - Estimate +0.25 d.
+    - Out of scope: `resolveUserConnectAccounts` and `resolvePaymentCollectionCapability` stay with the purge workplan's T29 item (3).
 - [ ] Follow-ups handed to TL: F-1, F-2 (HIGH), F-3, F-4, FU-1 to FU-9.
 
 ---
@@ -610,3 +622,4 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 | 2026-10-07 | Fix-1 plan written (Dev) | User chose Fix-1 first (C-1). Plan in its own file: [BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_FIX1_WORKPLAN.md). Branch renamed to `fix/webhook-connect-tenant-ownership`. New finding F-5 (plan binding keeps an unchecked metadata `booking_id`) recorded there |
 | 2026-10-07 | Fix-1 implemented (Dev); sequence updated | Fix-1 SA review: F-5 confirmed High, goes to its own PR **Fix-1b** right after Fix-1. Order recorded in §11: Fix-1 → Fix-1b → PR 0 to PR 5 (Fix-2 placed as before). Fix-1 grows the harness snapshot from 28 to 40 entries, so PR 0's "before" is re-recorded on post-Fix-1b `main` |
 | 2026-10-07 | Fix-1b scope addition (Dev) | Fix-1b SA condition C-4: the five pre-existing inline `supabaseServer` queries in `lib/payments/bindPlanSubscription.ts` (CLAUDE.md rule 1) are not fixed in Fix-1b; they join **PR 4** (plans), §9 / §10 / §11 updated. Fix-1b grows the harness snapshot from 40 to 44 entries, so PR 0's "before" counts 44 |
+| 2026-10-07 | FU-5 sequenced; PR 1 note; PR 5 rule-1 scope (Dev, per the FU-5 SA review) | §11: sequence is now Fix-1 → Fix-1b → **FU-5** → PR 0 … PR 5 (FU-5 SA Q-5). FU-5 grows the harness snapshot from 44 to 45 entries, so PR 0's "before" counts 45. PR 1 note: a failed claim release when the DB is fully down leaves the row `processing` (pre-existing). PR 5 scope addition: `resolveAccountOwner`'s reads move behind the existing `StripeConnectRepository` + `PluginConnectionRepository` (new methods, no status filter, resolver signature unchanged), superseding Q-2's tracked follow-up. FU-5 plan and evidence: [BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md](/docs/workplans/BUSINESS_OS_WEBHOOK_OWNER_CACHE_FU5_WORKPLAN.md) |
