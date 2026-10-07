@@ -116,6 +116,12 @@ export const BUSINESS_OWNED_TABLES = [
   'user_capabilities',
   // Queued actions the platform takes on the business's behalf
   'insight_actions',
+  // Insight hypotheses and their outcome measurements. Created outside
+  // supabase/migrations (live only, measured 2026-10-07), each with a
+  // `<table>_business_fk` CASCADE to business_profiles, so the ownership
+  // migration's array never named them (LIVE_ONLY in the test beside this file).
+  'insight_hypotheses',
+  'insight_measurements',
   // Business chat
   'business_chat_action_log',
   'business_chat_conversation',

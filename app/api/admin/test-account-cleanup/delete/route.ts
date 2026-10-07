@@ -124,13 +124,19 @@ export async function POST(request: NextRequest) {
           rows: outcome.report.total.rowsRemoved,
           tables: outcome.report.total.tablesRemoved,
           filesRemoved: outcome.filesRemoved,
+          serverMs: outcome.serverMs,
           elapsedMs: Date.now() - started,
         },
         'Test account removed'
       );
       return NextResponse.json({
         success: true,
-        data: { targetUserId: outcome.targetUserId, filesRemoved: outcome.filesRemoved, report: outcome.report },
+        data: {
+          targetUserId: outcome.targetUserId,
+          filesRemoved: outcome.filesRemoved,
+          report: outcome.report,
+          serverMs: outcome.serverMs,
+        },
         correlationId,
       });
     }
@@ -142,6 +148,7 @@ export async function POST(request: NextRequest) {
           reason: outcome.reason,
           guards: outcome.guards,
           filesRemoved: outcome.filesRemoved,
+          serverMs: outcome.serverMs,
           elapsedMs: Date.now() - started,
         },
         'Test-account removal refused'

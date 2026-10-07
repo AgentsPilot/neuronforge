@@ -42,7 +42,7 @@ The other sections:
 
 - `remove`: the rows per table that will go.
 - `storage`: files you must delete first.
-- `trigger`: triggers that fire on the login.
+- `trigger`: the triggers on the login, each with the events it fires on. Only those marked "Fires when the login is deleted" run during the delete.
 - `kept`: what stays.
 
 ## 3. Empty the storage folders, if any are listed
@@ -86,7 +86,7 @@ What is kept: the invitation that first brought the account in, as the record of
 
 ## 6. The Danger Zone path: one-time setup, checks and rollback
 
-The admin routes call one database function, `public.operator_test_account_cleanup`, created by `supabase/migrations/20261041_operator_test_account_cleanup.sql`. It runs the same guards as the files above. It refuses (error 42501) unless the server sends a second secret, `TEST_CLEANUP_SECRET`. The database keeps only the secret's sha256, never the secret itself. Until all the steps below are done, the routes answer 503 "not configured", and nothing can be removed.
+The admin routes call one database function, `public.operator_test_account_cleanup`, created by `supabase/migrations/20261041_operator_test_account_cleanup.sql` and replaced by each newer version (6.1.1). It runs the same guards as the files above. It refuses (error 42501) unless the server sends a second secret, `TEST_CLEANUP_SECRET`. The database keeps only the secret's sha256, never the secret itself. Until all the steps below are done, the routes answer 503 "not configured", and nothing can be removed.
 
 ### 6.1 Apply the migration
 
@@ -99,6 +99,7 @@ When the cleanup plan changes after 20261041 was applied, the change ships as a 
 | Version | Adds | Apply after |
 |---|---|---|
 | `20261042_operator_test_account_cleanup_billing_events.sql` | `business_os_billing_events` (plan payments P-3b.1): guard G-5 counts its live rows, and the plan removes its rows | `20261041_operator_test_account_cleanup.sql` **and** `20261027_business_os_billing_events.sql` |
+| `20261043_operator_test_account_cleanup_insight_links.sql` | `insight_hypotheses` and `insight_measurements` classified and their links reviewed (G-18 no longer blocks every account), cheaper G-18 and survivor scans, trigger events in the check, `serverMs` on every answer | `20261042_operator_test_account_cleanup_billing_events.sql` |
 
 The migration checks this itself: it refuses, and applies nothing, with `Apply <migration> first` until both are in place.
 
@@ -117,6 +118,7 @@ WHERE proc.oid = 'public.operator_test_account_cleanup(text, text, text, text, u
 ```
 
 After 20261042 the expected answer is the 20261042 stamp and `true`. Then rerun the lock check (6.5): it must still answer `false, false, true, false`.
+
 
 ### 6.2 Make the secret and its hash, on your own computer
 
@@ -190,9 +192,11 @@ For the first live delete, pick a `+test` account that has at least one `payment
 
 On a `+test` account only: run one check, then one delete, from the Danger Zone (or, until that section ships, from the browser console while signed in as an admin, with `fetch('/api/admin/test-account-cleanup/check', ...)`, then `.../delete`). The check must say OK, or BLOCKED with only G-12. The delete must end with TOTAL = CLEAN. Then invite the email again (section 5).
 
+**The 8-second limit (SA C-3).** The server's requests stop after 8 seconds, and a delete does more work than a check. Each answer carries `serverMs`, the time the database spent (the check route returns a number; the delete returns `{ check, delete }`), and the server log records it next to `elapsedMs`. If the check's `serverMs` is above 3000, or any delete times out, do not retry from the Danger Zone: clean that account with the pasted files (sections 1 to 5), which run the same guards in the SQL editor without the 8-second limit, and bring the numbers to SA. A timeout removes nothing. Never change a role's timeout.
+
 ### 6.7 Roll back
 
-**One version back.** Run the newest version's rollback, for example `supabase/SQL Scripts/20261042_operator_test_account_cleanup_billing_events_rollback.sql`. It restores the previous function byte for byte and keeps the schema, the secret table and the hash. Redeploy a build that pins the previous stamp, or the Danger Zone refuses.
+**One version back.** Run the newest version's rollback, for example `supabase/SQL Scripts/20261043_operator_test_account_cleanup_insight_links_rollback.sql` (it restores the 20261042 function). It restores the previous function byte for byte and keeps the schema, the secret table and the hash. Redeploy a build that pins the previous stamp, or the Danger Zone refuses.
 
 **The whole feature.** Roll back each newer version first (newest first), then run `supabase/SQL Scripts/20261041_operator_test_account_cleanup_rollback.sql` in the SQL editor. It drops the function, the secret table and the schema. Then remove `TEST_CLEANUP_SECRET` from Vercel and redeploy. The pasted files above keep working without either.
 
@@ -225,6 +229,8 @@ On a `+test` account only: run one check, then one delete, from the Danger Zone 
 
 | Date | Change | Details |
 |---|---|---|
+| 2026-10-07 | Section 6.6, 8-second limit (SA C-3) | Server-side `serverMs` on every answer; over 3 s on a check, or a delete timeout, means the pasted path for that account and the numbers to SA. No role timeout changes |
+| 2026-10-07 | First live run fixes, migration 20261043 | `insight_hypotheses` and `insight_measurements` (live-only tables) classified and their three links reviewed, so G-18 no longer blocks every account. G-18 skips counts that are zero by construction, the survivor scan counts each table once. The trigger section shows each trigger's events |
 | 2026-10-07 | Section 6.1.1, function versions | 20261041 is applied history (bytes pinned by test). Plan changes ship as a new dated `CREATE OR REPLACE` migration: 20261042 adds `business_os_billing_events` (plan payments P-3b.1), refuses until 20261041 and 20261027 are applied, keeps the secret. Version query, deploy timing, one-version-back rollback |
 | 2026-10-07 | Section 6.6 introspection | Required read-only step before the first live delete (login triggers, storage-quota trigger source), first target with a refund and a quota row (SA review) |
 | 2026-10-07 | OX-1r, section 6 | The same logic also runs from the admin-only `/api/admin/test-account-cleanup/*` routes through one secret-gated function (SA re-ruling R-7, R-9). Section 6: migration, secret and hash (PowerShell), Vercel Production only, lock checks, timeout check, one live run, rollback. The audit row reads the actor and the source from settings; pasted, it writes `actor_id` NULL and `source` `operator_sql` as before |

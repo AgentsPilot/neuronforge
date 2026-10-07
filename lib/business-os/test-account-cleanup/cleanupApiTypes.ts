@@ -44,6 +44,8 @@ export interface CleanupCheckView {
   rows: CleanupCheckRowView[];
   /** false: the applied database function is from another build; the delete will refuse (R-6). */
   functionUpToDate: boolean;
+  /** Time the database function took, in ms (SA C-2). Null from a function version that does not report it. */
+  serverMs: number | null;
 }
 
 export interface CleanupReportView {
@@ -63,6 +65,8 @@ export interface CleanupDeleteView {
   targetUserId: string | null;
   filesRemoved: number;
   report: CleanupReportView;
+  /** Database time of the check and of the delete call, in ms (SA C-2). */
+  serverMs: { check: number | null; delete: number | null };
 }
 
 /**

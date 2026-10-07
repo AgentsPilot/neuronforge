@@ -217,6 +217,16 @@ describe('delete (SA-6 ordering, R-6)', () => {
     expect(mockAudit).not.toHaveBeenCalled();
   });
 
+  it('logs and returns the database time of both calls next to elapsedMs (SA C-2)', async () => {
+    mockReply = (mode: string): Reply =>
+      ({ data: { version: CLEANUP_FUNCTION_VERSION, mode, rows: mode === 'check' ? [verdict('OK')] : REPORT, server_ms: mode === 'check' ? 900 : 2100 }, error: null });
+    const res = await deleteRoute.POST(req('/d', DELETE_OK));
+    expect((await res.json()).data.serverMs).toEqual({ check: 900, delete: 2100 });
+    const line = mockLogged.find((entry) => typeof entry === 'object' && entry !== null && 'serverMs' in entry) as Record<string, unknown>;
+    expect(line).toMatchObject({ serverMs: { check: 900, delete: 2100 } });
+    expect(typeof line.elapsedMs).toBe('number');
+  });
+
   it('a function of another version: 503 before any storage call or delete (R-6)', async () => {
     mockReply = script([verdict('BLOCKED'), blocked('G-12 no stored files under the account folder'), file('website-images', 'a.png')], ok('delete', REPORT), 'ffffffffffffffff');
     const res = await deleteRoute.POST(req('/d', DELETE_OK));

@@ -70,8 +70,19 @@ describe('business data ownership', () => {
     expect(BUSINESS_OWNED_TABLES.length).toBeGreaterThan(40);
   });
 
+  /**
+   * Business-owned on the live database but created outside supabase/migrations,
+   * so the (applied, never edited) ownership migration cannot name them. Each
+   * carries a live `<table>_business_fk` CASCADE to business_profiles, measured
+   * with purge_schema_introspect on 2026-10-07 (test-account cleanup first live run).
+   */
+  const LIVE_ONLY: Record<string, string> = {
+    insight_hypotheses: 'insight_hypotheses_business_fk CASCADE, measured 2026-10-07; no CREATE TABLE in the repo.',
+    insight_measurements: 'insight_measurements_business_fk CASCADE, measured 2026-10-07; no CREATE TABLE in the repo.',
+  };
+
   it('names the same tables in TypeScript and in SQL', () => {
-    const sql: string[] = [...tablesInMigration()].sort();
+    const sql: string[] = [...tablesInMigration(), ...Object.keys(LIVE_ONLY)].sort();
     // Annotated, because the registry is `as const`: spreading it keeps the
     // union-of-literals element type, and `.includes` then refuses a plain
     // string. Comparing table NAMES is the whole point here.
@@ -81,6 +92,17 @@ describe('business data ownership', () => {
     // than printing two long lists and leaving the reader to compare them.
     expect(sql.filter(t => !ts.includes(t))).toEqual([]);
     expect(ts.filter(t => !sql.includes(t))).toEqual([]);
+  });
+
+  it('each LIVE_ONLY exception is still absent from every migration, and still registered', () => {
+    // Once someone commits the CREATE TABLE, the exception must go: the table then
+    // needs its own ownership migration, which the array test above would demand.
+    const owned: readonly string[] = BUSINESS_OWNED_TABLES;
+    for (const t of Object.keys(LIVE_ONLY)) {
+      expect(owned).toContain(t);
+      expect(tablesInMigration()).not.toContain(t);
+      expect(tablesWithUserIdInMigrations().has(t)).toBe(false);
+    }
   });
 
   it('never claims a table for both the business and the person', () => {

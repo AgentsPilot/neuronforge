@@ -6,7 +6,7 @@
 **Requirement:** [TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md](/docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md) (§8.1 user decisions and §12 SA-1 to SA-12 are binding)
 **Branch:** `feature/test-account-cleanup-danger-zone`
 **Date:** 2026-10-07
-**Status:** Code Complete (uncommitted, awaiting SA code review)
+**Status:** Slice 1 merged (PR #249). First-live-run fix code complete on `fix/test-account-cleanup-insight-links` (uncommitted, SA approved for QA with C-1 to C-3, C-2/C-3 done). Slice 2 UI merged (PR #253)
 
 ## Overview
 
@@ -204,6 +204,36 @@ A wire-type pin is required, and the pin is leaner than a shared types file. A s
 - Item 2 is done on the client (`verdict==='OK' || (≥1 blocker && all G-12)`). It is also done on the server in `runCleanupDelete.ts`, using the same predicate, and this only makes the server stricter. The new route test asserts a 409 and that only the check RPC runs: storage is not called and the delete does not run.
 - Item 3 is done here. `KNOWN_SECTIONS` sends every unrecognised section to "Other rows", and trigger rows now show `detail`. The fix branch no longer needs to change the panel; it only re-runs the render test.
 
+---
+
+**Code Review by SA — 2026-10-07 (first-live-run fix, branch `fix/test-account-cleanup-insight-links`, content only; migration 20261043 provisional)**
+**Status:** Code Approved for QA, with conditions C-1 to C-3
+
+1. **Classification.** `insight_hypotheses` and `insight_measurements` as `reset` / insights / LEAF is right: business-derived data, siblings of `insight_actions` and `owner_insight_history` (reset), and `insights` itself is reset. LEAF (300) before `insights` (ROOT 500) is required for measurements, so its own count is reported instead of a silent cascade. Hypotheses has no blocking edge either way. Baseline 149 and dated `TAC-1` review notes: accepted.
+2. **LIVE_ONLY exception, no capture migration here.** A `CREATE TABLE IF NOT EXISTS` written without the measured DDL (columns, defaults, indexes, RLS, policies, grants) is a no-op on prod and a divergent invention on any fresh database, which is worse than no file. Capture belongs to the core-schema-capture backlog, from a measured dump. The self-expiring test (fails once a CREATE TABLE appears) is the correct guard. **C-1:** add both tables to that backlog item, and record their `relrowsecurity` and policy list from one read-only introspect in the descriptor notes. Prod-only tables with `user_id` and no known writer are an RLS unknown; not blocking this fix.
+3. **G-18 skip 1, `owner_is_target`. Provably zero.** It applies only when the parent is a direct plan table (`parent_table IS NULL`), the FK references the parent key column (`parent_column = key_column`), and the child FK column is the owner column. Then every referenced value is in `{p.key_column : p.key_column = target}` = `{target}`, so `child.owner = child.fk = target`, and `IS DISTINCT FROM target` is false. NULL FK values never pass `IN`. Another owner's rows cannot match, because their FK value would have to equal target. `insight_measurements_insight_id_fkey` (id, not key_column) is correctly not skipped.
+4. **G-18 skip 2, parent probe `found = 0`. Provably zero.** It runs the same table and the same `parent_predicate` as the count's `IN` subquery, so an empty probe means an empty `IN` set. A missing probe row gives NULL, `NULL = 0` is not true, and the full count runs (fails closed). The probe and count are separate SPI snapshots, but that is the same point-in-time window every G-18 count already has. Not a new weakening. **Survivor dedup:** the excluded FK columns are exactly `(public, table, key_column)` pairs already counted with the identical predicate, and a table that has an FK exists, so `to_regclass` cannot drop it. Equivalent. Only the item label changes.
+5. **Timeout. Keep 8 s, no role change.** A timeout in either mode rolls back the single PostgREST transaction, so it fails safe: nothing is removed. `ALTER ROLE service_role SET statement_timeout` is **not approved**. It widens every cron, webhook and repository call on the service role, just for a tool used a few times a day. The fallback is already shipped: the pasted operator files in the SQL editor run the same generated guards with no 8 s cap (runbook §1 to §5). **C-2:** return the server-side duration (`clock_timestamp() - statement_timestamp()`, ms) in the function's jsonb and log it next to `elapsedMs` in both routes. `elapsedMs` includes network and cold start. **C-3:** the delete does more than the check (deletes, survivor scan, report). Runbook §6.6: if the server-side check time is above 3 s, or any delete times out, use the pasted path for that account and bring the numbers to SA. Do not change role settings.
+6. **Trigger wording.** Accepted. The `tgtype` bits are correct (4 INSERT, 8 DELETE, 16 UPDATE, 32 TRUNCATE), and showing "Does not fire on this delete" for the INSERT-only signup trigger removes the false alarm. Optional: it reports row and statement triggers alike, which is fine for `auth.users`.
+7. **Migration.** Shape not reviewed (provisional). On regeneration over plan-payments 20261042, `APPLIED_FUNCTION_MIGRATIONS` must list 20261041 and 20261042 (if 20261042 replaces the function), and the rollback must restore the newest one.
+
+### Code Approved for QA: Yes, with C-2 and C-3 done before the first live delete. C-1 is a tracked follow-up.
+
+### Dev response to the first-live-run SA review (2026-10-07)
+
+- **C-2 done.** The function returns `server_ms` (`clock_timestamp() - statement_timestamp()`, ms) in both modes. The repository reads it (optional, so the 20261041 function gives `null`). The check route logs `serverMs` next to `elapsedMs` and returns it as `data.serverMs` (number or null). The delete route logs and returns `data.serverMs = { check, delete }`, and the refused log carries it too. **Wire field for the slice-2 panel types (`cleanupApiTypes.ts`, not edited here):** check `data.serverMs: number | null`; delete success `data.serverMs: { check: number | null; delete: number | null }`. Executed on the PGlite replica: check and delete both return it. Tests: repository (with and without), route (logged and returned), generator (one RETURN, both modes).
+- **C-3 done.** Runbook §6.6: over 3000 ms on a check, or any delete timeout, means the pasted path for that account and the numbers to SA. No role timeout change.
+- **C-1 recorded** in both descriptor notes. Read-only: `pg_policies` lists no policy on either table. `insight_hypotheses`: RLS on, inferred (anon has SELECT, sees 0 of 12 rows). `insight_measurements`: RLS flag unknown (empty table, so the probe cannot tell). Neither read `relrowsecurity` directly.
+- **Follow-up, core-schema-capture backlog:** add `insight_hypotheses` and `insight_measurements` (prod-only, no CREATE TABLE in the repo, no known writer on any branch). Capture their measured DDL: columns, defaults, indexes, `relrowsecurity`, policies, grants, and the two `_business_fk` constraints plus `insight_measurements_insight_id_fkey`. Then remove the LIVE_ONLY exception in `businessOwnedTables.test.ts` (it fails by itself once a CREATE TABLE appears). Find who writes them (12 rows exist).
+- **Migration stays provisional** (20261043). It will be regenerated on the plan-payments generator after their 20261042 merges.
+
+**SA re-check — 2026-10-07 (rebuilt on main after #251; stamp 6793b7e11d0ea391)**
+- (a) Rollback test accepting `CREATE OR REPLACE` in the previous file: not a weakening. The expected text still comes from the previous file, whose bytes are pinned by sha256. Both sides are normalised the same way, and the rollback must still contain the generated `CREATE OR REPLACE` text exactly.
+- (b) The new "never TRUNCATE" regex `TRUNCATE\s+(TABLE\s+)?[a-z_]` **does weaken the guard**. It still catches `TRUNCATE x`, `TRUNCATE ONLY x` and `TRUNCATE public.x`, but it misses a dynamic `format('TRUNCATE %I', ...)` and a quoted `TRUNCATE "x"`. **Fix (Low, cheap):** strip the exact label literal `'TRUNCATE' END` from the text first, then keep the original bare `TRUNCATE` ban.
+- Order guard: correct. The insight tables appear only as data in the plan and review VALUES lists, and their deletes and counts are dynamic and gated by `to_regclass`. Nothing in static SQL names them, so they do not belong in `FUNCTION_REQUIRED_TABLES`. They also have no migration to name. `business_os_billing_events` (static, G-5) stays the only entry.
+- Wire order with PR #253: land this branch first, because it unblocks every live check. #253 then rebases and adds `serverMs: number | null` (check) and `serverMs: { check, delete }` (delete outcome) to `cleanupApiTypes.ts`, so its two-way pin passes. If #253 lands first, this branch adds them instead.
+- Code Approved for QA: Yes, with the (b) fix.
+
 ## QA Testing Report
 
 **QA — 2026-10-07**
@@ -272,8 +302,78 @@ Scratch contract test (real repo + runCleanupDelete on replica jsonb)     6 pass
 ```
 
 ### Final Status
-- [x] All acceptance criteria pass — ready for commit (after the user has seen the diff). The live prod steps stay with the user per runbook §6
-- [ ] Issues found — Dev must address before commit
+- [x] Slice 1: all acceptance criteria passed, merged as PR #249 (2026-10-07). The user applied 20261041 and stored the secret hash on prod.
+- [x] First live check on prod (2026-10-07) found three issues: G-18 blocked every account (two live-only insight tables), the run time sits close to the 8 s limit, and the trigger section wording was wrong. Fixed on `fix/test-account-cleanup-insight-links` as migration **20261043** (stamp `6793b7e11d0ea391`), chained after 20261042 (plan payments PR #251, applied on prod; its bytes are pinned). SA approved for QA. Re-QA is owed before commit.
+- [ ] Owed by the user before the first live delete: apply 20261043 next to the deploy that pins its stamp, then follow runbook §6.6 (server time over 3 s, or a timeout, means the pasted path).
+
+### Re-QA: first-live-run fix (`fix/test-account-cleanup-insight-links`, migration 20261043)
+
+**QA — 2026-10-07**
+**Test mode:** full
+**Strategy used:** A (Jest: the cleanup suites, guards, full suite) + C (20261041, 20261042 and 20261043 **executed** on a local PGlite 0.5.8 replica rebuilt from the read-only prod schema dump of 2026-10-07 13:12 UTC, which has both insight tables and all three of their FKs, in session scratch space outside the repo). Nothing connected to prod.
+**Focus:** schema, security, performance (the two G-18 skips and the survivor dedup)
+**Skipped:** D (no UI in this fix). The live prod apply and runbook §6.6 timing stay with the user
+**Input source:** prompt keywords
+
+**Replica setup.** The same Supabase-shaped roles and default privileges as the slice-1 QA, plus:
+- the real refund and storage-quota trigger functions
+- `business_os_billing_events` with its `auth.users` FK
+- `REVOKE CREATE ON SCHEMA public FROM PUBLIC`
+- an **insert-only** `AFTER INSERT` trigger `on_auth_user_created` on `auth.users`
+
+The insight `_business_fk` links are built as `user_id -> business_profiles(user_id)`, and `insight_measurements_insight_id_fkey` as `insight_id -> insights(id)`. There are two accounts. Each has 2 `insight_hypotheses` rows, 3 `insight_measurements` rows (two of them linked to the account's own insight), a refund and a `storage_usage` row. The migrations are applied as LF text, which is what the SQL editor submits.
+
+| Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| Control: 20261042 reproduces the prod block | ✅ | Pass | With the insight tables present, 20261042's check is BLOCKED on G-18 for all three insight links, as seen on prod |
+| Order guard | ✅ | Pass | Without 20261041: refused ("Apply 20261041 ... first"), no function created. With 20261041 but no `business_os_billing_events`: refused ("Apply 20261027 ... first"), and the function stays 20261041's. 20261042 refuses on the same condition. See Edge Case 1 |
+| Apply after 20261041 + 20261042 | ✅ | Pass | Function replaced; `SECURITY DEFINER`, owner postgres, `search_path=pg_catalog, public, pg_temp`. anon and authenticated have no EXECUTE (despite the default privileges); service_role has it |
+| Version stamp | ✅ | Pass | Check and delete both return `6793b7e11d0ea391`. That equals `CLEANUP_FUNCTION_VERSION` in the generated TS, and an independent sha256 of the migration's function SQL (with the token put back). The stamp occurs once |
+| Check on a test account with insight rows, a refund and `storage_usage` | ✅ | Pass | OK, no BLOCKED rows; both insight tables are listed to remove; zero rows changed |
+| Trigger wording | ✅ | Pass | `auth.users.on_auth_user_created`: "Does not fire on this delete. Events: INSERT." A planted AFTER DELETE trigger reads "Fires when the login is deleted. Events: DELETE." |
+| Delete | ✅ | Pass | CLEAN, `same_run`, 146 rows over 132 tables, and the per-table lines sum to TOTAL. The report counts `insight_hypotheses` 2 and `insight_measurements` 3, and both are emptied for the target. Refund and storage lines are present. Audit row: `actor_id` = admin, `source` = `admin_page` |
+| Other account untouched | ✅ | Pass | Its hypotheses and measurements keep the same counts and the same md5; its login is kept |
+| `server_ms` | ✅ | Pass | A number in both modes: check 321 ms, delete 397 ms on PGlite, which says nothing about prod. Jest covers how the repository and routes handle it |
+| Every previously blocked path still blocks, zero rows changed | ✅ | Pass (11/11) | Check, then delete, with a full fingerprint before and after: G-2 (non-test email, empty tag, blank tag), G-3 (wrong and empty confirmation; the check is OK by design), G-1, G-4, G-5 (a live billing event, from 20261042), G-6, G-9, G-12. Each delete refusal is `P0001` and names the guard |
+| Perf skip 2 (parent probe `found = 0`) is safe | ✅ | Pass | The target had no insights, so the probe was empty. Add a new target insight plus another account's measurement pointing at it: BLOCKED G-18 `insight_measurements.insight_id to insights`, delete P0001, zero rows changed |
+| Non-skipped link still counted | ✅ | Pass | Another account's measurement on the target's existing insight gives the same BLOCKED G-18, P0001, zero rows changed |
+| Perf skip 1 (`owner_is_target`) is safe | ✅ | Pass (by construction + count) | On the two `_business_fk` links the FK column is the owner column. So a row pointing at the target's profile is owned by the target, and another account's rows on those links point at their own profile. The full count without the skip, done by hand, is 0, and the check is OK (no false block) |
+| Survivor scan after the dedup | ✅ | Pass | A planted `auth.users` AFTER DELETE trigger re-creates an `agent_memories` row for the target. The delete fails `P0001 Rows still name the login after the delete ... agent_memories 1`, zero rows changed |
+| Rollback restores 20261042 exactly | ✅ | Pass | `pg_get_functiondef`, ACL, `proconfig`, `prosecdef` and owner match the 20261042 apply exactly. The secret row is kept, and the function returns 20261042's stamp `8169e372b7dfc636`. Re-applying 20261043 gives the same definition and ACL as the first apply and returns `6793b7e11d0ea391`. 20261043 can be re-run (CREATE OR REPLACE). See Edge Case 2 |
+| Pasted SQL files | ✅ | Pass | `npx tsx scripts/generate-test-account-cleanup-sql.ts` rewrote all 5 outputs byte-identical (md5), and `git status` is unchanged. On the replica: check OK; delete CLEAN, 144 rows over 132 tables, incl. `insight_hypotheses` 1 and `insight_measurements` 2. The other account kept its rows. Audit row: `actor_id` NULL, `source` `operator_sql` |
+| Entitlements registration | ⬜ | n/a | No import from `lib/business-os/entitlements/` in the diff |
+
+#### Bugs (must fix before commit)
+1. **SA re-check condition (b) is still open: the "never TRUNCATE" pin misses dynamic and quoted forms.** File: `scripts/__tests__/testAccountCleanupSql.test.ts:513`. Severity: Medium. This is a test guard, not runtime: the migration has no TRUNCATE statement today, only the `'TRUNCATE'` label. Confirmed: `/TRUNCATE\s+(TABLE\s+)?[a-z_]/i` does not match `EXECUTE format('TRUNCATE %I', t)` or `TRUNCATE "x"`. SA approved for QA only with this fix, and it is not yet in the worktree.
+
+#### Performance Issues (should fix)
+None found. Prod timing cannot be measured here; runbook §6.6 (3 s on a check) covers it.
+
+#### Edge Cases (nice to fix)
+1. **The order guard checks 20261042's prerequisites, not that 20261042 was applied.** File: `supabase/migrations/20261043_…` (generator `order_guard`). Severity: Low. With 20261041 and the billing-events table present but 20261042 not applied, 20261043 applies and works, because it contains everything 20261042 adds. Its rollback would then install a 20261042 function that database never had. That is harmless, but it is not the same as "refuses before 20261042". Prod already has 20261042, so this rollout needs no action.
+2. **CRLF in Windows checkouts of the applied migrations.** Pre-existing, Low. `20261041` and `20261042` are LF in git but CRLF in this worktree: `core.autocrlf=true`, and `.gitattributes` forces LF only on `scripts/test-account-cleanup-*.sql`. If one of them were applied from CRLF bytes (for example psql from a Windows checkout), the stored body would differ from the LF rollback by `\r` only. `pg_get_functiondef` would then not be byte-equal, though behaviour is the same. Suggest extending the `eol=lf` rule to the generated `supabase/migrations/*_operator_test_account_cleanup*.sql` files and their rollbacks.
+3. **The nested-parent form of skip 2 was not run.** That is the parent predicate through `parent_table`, for example `website_blocks` via `website_pages`. The replica has no reviewed inbound link of that form. SA's proof covers it: the probe and the count use the same predicate.
+4. ESLint shows 1 warning: unused import `PREVIOUS_FUNCTION_MIGRATION`, `scripts/__tests__/testAccountCleanupSql.test.ts:40`. It is already on main, not added by this diff.
+
+#### Test Outputs / Logs
+
+```text
+Targeted Jest (57 suites: cleanup routes, TestAccountCleanupRepository, testAccountCleanupSql drift + applied pins,
+  lib/business-os/purge (descriptors, invariant, no-deletion-paths, ...), businessOwnedTables, lib/audit/__tests__,
+  supabase/migrations/__tests__ (all), adminGate.writes)                    57 passed, 1617 tests passed
+npm run test:authz-guard                                                   119 passed
+npm run typecheck:bos-llm                                                  passed (28 baseline, 0 new; 1 baseline entry now fixed)
+eslint on the 15 changed TS files                                          0 errors, 1 warning (already on main)
+Generator re-run                                                           5 outputs byte-identical (md5), git status unchanged
+Full npm test                                                              991 passed / 15 failed suites, 20,183 tests; 11 = quarantine list;
+  4 outside it, the known Windows-env ones untouched by this diff: oneAddressPolicy.guard,
+  geo/addressFormat, AdminAreaField.render, AdminAreaField.search
+Replica qa43.mjs (order guard, control, apply, check, delete, rollback, 11 blocked paths, skips, survivors)   82 PASS, FAILURES: 0
+Replica pasted files                                                       check OK, delete CLEAN 144/132, actor NULL, source operator_sql
+```
+
+#### Final Status
+- [ ] Issues found. Everything in scope passes on the replica, but SA condition (b) (Bug 1) must be fixed before commit. Once it is, the branch is ready for commit with no new replica run, since the fix only touches a test regex (re-run `scripts/__tests__/testAccountCleanupSql.test.ts`).
 
 ## QA Testing Report, slice 2 (Danger Zone UI)
 
@@ -360,7 +460,11 @@ Full npm test                                                                 98
 
 ## Commit Info
 
-_RM to populate._
+| PR | Branch | Merge | What |
+|---|---|---|---|
+| #249 | `feature/test-account-cleanup-danger-zone` | `5becd7cc`, 2026-10-07 12:58 UTC | Slice 1: the server path, the generated secret-gated function (migration 20261041) and its routes |
+| #253 | `feature/test-account-cleanup-danger-zone-ui` | `98dae9a7`, 2026-10-07 | Slice 2: the Danger Zone UI and `cleanupApiTypes.ts` with a two-way wire pin. `serverMs` added to the wire types on `fix/test-account-cleanup-insight-links` (landed second): check `serverMs: number \| null`; delete success `serverMs: { check: number \| null; delete: number \| null }`; the panel shows a small "Server time" line |
+| (pending) | `fix/test-account-cleanup-insight-links` | not committed | First-live-run fixes, migration 20261043 (after #251's 20261042) |
 
 ## Change History
 
@@ -375,3 +479,6 @@ _RM to populate._
 | 2026-10-07 | SA re-check (slice 2) | Items 1-3 verified (wire pin in scoped tsc, Record-typed sentences, G-12-only predicate client + server with route test, Other-rows fallback + trigger detail); Code Approved |
 | 2026-10-07 | QA (slice 2) | Full Jest pass of the panel (Dev suite + 23-case QA probe), purge and slice-1 suites, guards, scoped tsc, eslint, full suite (no new failures); planted raw-message regression went red, restored byte-exact. One Medium bug (Delete offered on BLOCKED with zero blockers, = SA item 2); Low test-gap edge cases; manual visual checks listed for the user |
 | 2026-10-07 | Dev fixes (slice 2) | SA items 1-3 and QA bug 1 / edges 1-3: wire-type pin in the bos-llm gate, empty-blockers gap in the panel and in runCleanupDelete, unknown-section fallback + trigger detail, extra tests |
+| 2026-10-07 | SA code review (first-live-run fix) | Insight tables reset/LEAF + LIVE_ONLY accepted (no capture migration; C-1 backlog + RLS note); both G-18 skips and the survivor dedup proven zero-preserving; keep 8 s, no service_role widening, the pasted path is the fallback; C-2 server-side duration, C-3 runbook threshold |
+| 2026-10-07 | SA re-check (rebuilt on main) | (a) rollback test OK; (b) TRUNCATE regex misses `%I`/quoted, mask the label instead; required-tables guard correct; land before #253, which then adds serverMs to cleanupApiTypes |
+| 2026-10-07 | QA re-run (first-live-run fix) | Jest 57 suites / 1617 tests, guards, full suite with no new failures. 20261043 executed on a PGlite replica that has the insight tables: order guard, control (20261042 blocks), stamp, check OK, delete CLEAN with both insight tables emptied and counted, other account untouched, server_ms, trigger events wording, 11 blocked paths with zero rows changed, both G-18 skips and the survivor dedup safe, exact rollback to 20261042, pasted files. Open: SA condition (b) TRUNCATE regex (Medium). 2 Low edge cases |

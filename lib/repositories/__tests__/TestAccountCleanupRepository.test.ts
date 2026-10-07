@@ -84,6 +84,15 @@ describe('check', () => {
     expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
+  it('reads the database time (SA C-2), and null from a function that does not report it', async () => {
+    const withMs = fakeClient(() => ({ data: { version: VERSION, mode: 'check', rows: checkRows, server_ms: 812 }, error: null }));
+    const a = await new TestAccountCleanupRepository({ client: withMs.client, secret: () => SECRET }).check({ email: EMAIL, tag: TAG });
+    expect(a.data?.serverMs).toBe(812);
+    const without = fakeClient(() => ({ data: { version: VERSION, mode: 'check', rows: checkRows }, error: null }));
+    const b = await new TestAccountCleanupRepository({ client: without.client, secret: () => SECRET }).check({ email: EMAIL, tag: TAG });
+    expect(b.data?.serverMs).toBeNull();
+  });
+
   it('makes no call at all when the secret is unset', async () => {
     const { client, calls } = fakeClient(() => ({ data: null, error: null }));
     const result = await new TestAccountCleanupRepository({ client, secret: () => null }).check({ email: EMAIL, tag: TAG });
@@ -120,6 +129,7 @@ describe('remove', () => {
       data: {
         version: VERSION,
         mode: 'delete',
+        server_ms: 2140,
         rows: [
           { line: 'crm_contacts', rows_removed: 3, result: null },
           { line: 'TOTAL', rows_removed: 3, result: 'CLEAN', tables_removed: 1, removed_login: TARGET, removed_at: '2026-10-07T10:00:00+00:00', same_run: true },
@@ -136,6 +146,7 @@ describe('remove', () => {
         tables: [{ table: 'crm_contacts', rowsRemoved: 3 }],
         total: { result: 'CLEAN', rowsRemoved: 3, tablesRemoved: 1, removedLogin: TARGET, removedAt: '2026-10-07T10:00:00+00:00', sameRun: true },
       },
+      serverMs: 2140,
     });
   });
 

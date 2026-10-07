@@ -790,11 +790,14 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
     // function names the charge and totals tables only to count and delete ONE test account's
     // rows by user_id. It defines no charge function, column or grant, so what L8 pins is unchanged.
     // 20261042 (plan payments P-3b.1) is the next version of that same generated function, and its
-    // rollback restores the 20261041 one: same reason, nothing on the charge path changes.
+    // rollback restores the 20261041 one: same reason, nothing on the charge path changes. 20261043
+    // (test-account cleanup first live run) and its rollback, which restores 20261042: same again.
     const testAccountCleanup = [
       join(MIGRATIONS_DIR, '20261041_operator_test_account_cleanup.sql'),
       join(MIGRATIONS_DIR, '20261042_operator_test_account_cleanup_billing_events.sql'),
       join(SQL_SCRIPTS_DIR, '20261042_operator_test_account_cleanup_billing_events_rollback.sql'),
+      join(MIGRATIONS_DIR, '20261043_operator_test_account_cleanup_insight_links.sql'),
+      join(SQL_SCRIPTS_DIR, '20261043_operator_test_account_cleanup_insight_links_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))
