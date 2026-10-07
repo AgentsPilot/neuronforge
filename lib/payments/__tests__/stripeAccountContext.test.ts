@@ -230,23 +230,31 @@ describe('resolveAccountOwner', () => {
   function ownerDb(opts: {
     express?: Array<{ user_id: string; stripe_account_id: string }>;
     plugin?: Array<{ user_id: string; profile_data: Record<string, string> }>;
+    /** A PostgREST error on that table's read (FU-5). */
+    expressError?: { code: string; message: string };
+    pluginError?: { code: string; message: string };
   }) {
+    const tablesRead: string[] = [];
     return {
+      tablesRead,
       from(table: string) {
+        tablesRead.push(table);
         if (table === 'stripe_connect_accounts') {
           return {
             select: () => ({
               eq: (_col: string, value: string) => ({
-                maybeSingle: async () => ({
-                  data: (opts.express ?? []).find(r => r.stripe_account_id === value) ?? null,
-                }),
+                maybeSingle: async () =>
+                  opts.expressError
+                    ? { data: null, error: opts.expressError }
+                    : { data: (opts.express ?? []).find(r => r.stripe_account_id === value) ?? null },
               }),
             }),
           };
         }
         return {
           select: () => ({
-            eq: async () => ({ data: opts.plugin ?? [] }),
+            eq: async () =>
+              opts.pluginError ? { data: null, error: opts.pluginError } : { data: opts.plugin ?? [] },
           }),
         };
       },
@@ -284,6 +292,52 @@ describe('resolveAccountOwner', () => {
     });
     expect(await resolveAccountOwner(db, 'acct_attacker')).toBe('u_attacker');
     expect(await resolveAccountOwner(db, 'acct_attacker')).not.toBe('u_victim');
+  });
+
+  /*
+   * FU-5: a failed read must never read as "maps to no business". The webhook
+   * refuses an unmapped account and completes the event, so a read error that
+   * came back as null lost the event; thrown, the webhook returns 500 and
+   * Stripe retries.
+   */
+  const RESET = { code: 'XX000', message: 'connection reset by peer acct_secret u_secret' };
+
+  it('FU-5: throws when the express read fails, and does not go on to the plugin table', async () => {
+    const db = ownerDb({ expressError: RESET, plugin: [{ user_id: 'u2', profile_data: { stripe_account_id: 'acct_b' } }] });
+    await expect(resolveAccountOwner(db, 'acct_b')).rejects.toThrow(
+      'Account owner lookup failed on stripe_connect_accounts (code XX000)'
+    );
+    expect(db.tablesRead).toEqual(['stripe_connect_accounts']);
+  });
+
+  it('FU-5: throws when the express read misses and the plugin read fails', async () => {
+    const db = ownerDb({ pluginError: RESET });
+    await expect(resolveAccountOwner(db, 'acct_b')).rejects.toThrow(
+      'Account owner lookup failed on plugin_connections (code XX000)'
+    );
+  });
+
+  it('FU-5: an express hit returns the owner without reading the plugin table (whose read would fail)', async () => {
+    const db = ownerDb({ express: [{ user_id: 'u1', stripe_account_id: 'acct_a' }], pluginError: RESET });
+    expect(await resolveAccountOwner(db, 'acct_a')).toBe('u1');
+    expect(db.tablesRead).toEqual(['stripe_connect_accounts']);
+  });
+
+  it('FU-5 (SA C-3): the thrown message is the table and code only, no account id, no driver text', async () => {
+    for (const opts of [{ expressError: RESET }, { pluginError: RESET }]) {
+      const error = await resolveAccountOwner(ownerDb(opts), 'acct_secret').catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      const message = (error as Error).message;
+      expect(message).toMatch(/^Account owner lookup failed on (stripe_connect_accounts|plugin_connections) \(code XX000\)$/);
+      expect(message).not.toContain('acct_secret');
+      expect(message).not.toContain('u_secret');
+      expect(message).not.toContain('connection reset');
+    }
+  });
+
+  it('FU-5: an error with no code still throws (never null)', async () => {
+    const db = ownerDb({ expressError: { message: 'x' } as { code: string; message: string } });
+    await expect(resolveAccountOwner(db, 'acct_a')).rejects.toThrow('(code unknown)');
   });
 });
 

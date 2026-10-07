@@ -22,6 +22,10 @@ type Effect = Record<string, unknown> & { type: string };
 
 interface QaScenario {
   owners?: Record<string, string | null>;
+  /** FU-5: accounts whose owner lookup fails with a read error (the stub rejects). */
+  ownerErrors?: string[];
+  /** FU-5: what `findBySubscriptionId` answers. Default: no plan. */
+  planBySubscription?: Answer;
   db?: Record<string, Answer | Answer[]>;
 }
 
@@ -94,6 +98,10 @@ jest.mock('@/lib/payments/stripeAccountContext', () => ({
   resolveAccountOwner: (...args: unknown[]) => {
     const accountId = String(args[1]);
     mockEffects.push({ type: 'resolveAccountOwner', accountId });
+    if (mockScenario.ownerErrors?.includes(accountId)) {
+      // The message the real resolver throws (stripeAccountContext.ts, FU-5).
+      return Promise.reject(new Error('Account owner lookup failed on stripe_connect_accounts (code XX000)'));
+    }
     return Promise.resolve(mockScenario.owners?.[accountId] ?? null);
   },
 }));
@@ -120,7 +128,7 @@ jest.mock('@/lib/payments/syncBookingPaymentState', () => ({
 
 jest.mock('@/lib/repositories/PaymentPlanSubscriptionRepository', () => ({
   paymentPlanSubscriptionRepository: {
-    findBySubscriptionId: () => Promise.resolve({ data: null, error: null }),
+    findBySubscriptionId: () => Promise.resolve(mockScenario.planBySubscription ?? { data: null, error: null }),
     recordPeriodPaid: () => Promise.resolve({ data: null, error: null }),
     recordFailure: () => Promise.resolve({ data: null, error: null }),
     close: () => Promise.resolve({ data: null, error: null }),
@@ -612,7 +620,7 @@ describe('Fix-1 QA: dedupe order and the account-owner cache', () => {
     expect(insertPayload(r, 'payment_transactions')).toBeUndefined();
   });
 
-  it('C-1. one warm instance, two accounts: the cache is per account, B\'s event is not decided by A\'s owner', async () => {
+  it('C-1. one warm instance, two accounts: B\'s event is not decided by A\'s owner, and A\'s owner is looked up again on a later request (FU-5)', async () => {
     const POST = loadRoute();
     const owners = { acct_owner_a: 'owner-a', acct_owner_b: 'owner-b' };
 
@@ -631,17 +639,18 @@ describe('Fix-1 QA: dedupe order and the account-owner cache', () => {
     expect(w.chain).not.toContainEqual(['eq', 'user_id', 'owner-a']);
     expect(errorsLogged('Connect checkout names a booking owned by a different business - no row updated')).toHaveLength(1);
 
-    // And A again: served from the cache (no lookup), still A's owner.
+    // And A again: FU-5 clears the cache at the start of every request, so A's
+    // owner is looked up afresh (not served from the first request), still A's.
     const third = await post(POST, { ...fixture('checkout-completed-booking.json'), id: 'evt_a_again' }, {
       owners, db: { 'scheduling_bookings:update': { data: null, error: null, count: 1 } },
     });
-    expect(ownerLookups(third)).toEqual([]);
+    expect(ownerLookups(third)).toEqual([{ type: 'resolveAccountOwner', accountId: 'acct_owner_a' }]);
     expect(writes(third, ['scheduling_bookings'])[0].chain).toContainEqual(['eq', 'user_id', 'owner-a']);
   });
 
-  it('C-2. FU-5 (known, tracked, not a Fix-1 bug): a cached null owner keeps refusing on the warm instance after the account maps', async () => {
-    // Pins today's behaviour so FU-5 has a visible test to flip. When FU-5 stops
-    // caching null, this test must change: the second event should be written.
+  it('C-2. FU-5 (QA note N-3, flipped): a null owner is not cached; once the account maps, the next event on the warm instance is written', async () => {
+    // Before FU-5 the null from the first event was cached for the life of the
+    // instance, so the second event was refused too (no lookup, no write).
     const POST = loadRoute();
     const finalized = (id: string) => ({ ...fixture('invoice-finalized.json'), id });
     const answer = { 'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }) };
@@ -650,8 +659,220 @@ describe('Fix-1 QA: dedupe order and the account-owner cache', () => {
     expect(writes(first, VICTIM_TABLES)).toEqual([]);
 
     const second = await post(POST, finalized('evt_fu5_2'), { owners: OWNER_A, db: answer });
-    expect(ownerLookups(second)).toEqual([]);
-    expect(writes(second, VICTIM_TABLES)).toEqual([]);
+    expect(ownerLookups(second)).toEqual([{ type: 'resolveAccountOwner', accountId: 'acct_owner_a' }]);
+    const [update] = writes(second, VICTIM_TABLES);
+    expect(update.table).toBe('payment_invoices');
+    expect(JSON.stringify(update.chain[0][1])).toContain('hosted_invoice_url');
+    expect(update.chain).toContainEqual(['eq', 'id', 'pinv-0004']);
+    expect(second.status).toBe(200);
     expect(claimStatus(second)).toBe('completed');
+  });
+});
+
+// ─── 5. FU-5: a failed owner lookup is retried, never refused ─────────────────
+
+/**
+ * Before FU-5 a read error in the owner lookup came back as "maps to no
+ * business": every owner check below refused, completed the claim, and Stripe
+ * never retried. Now the resolver throws and the route's existing catch
+ * releases the claim (`failed`) and answers 500.
+ *
+ * Each case carries a CONTROL: the same event and data with a foreign (or
+ * absent) owner, which must hit that site's own refusal. That proves the error
+ * case reached the site it names, not an earlier one.
+ */
+describe('FU-5 QA: an owner lookup error releases the claim on every owner-check site', () => {
+  const LOOKUP_FAILED = 'Account owner lookup failed on stripe_connect_accounts (code XX000)';
+  const OWNED_PLAN = ok({ id: 'plan-1', user_id: 'owner-a', status: 'active', installment_count: 3, periods_paid: 1 });
+  const INVOICE_ROW = ok({ id: 'pinv-9', invoice_number: 'INV-9', user_id: 'owner-a' });
+  const PLAN_TABLES = ['payment_plan_subscriptions', 'payment_plan_installments'];
+
+  /** Basil invoice parent naming a subscription, optionally without plan terms. */
+  function withSubscription(event: Record<string, unknown>, subscription: string, metadata: Record<string, string> = {}) {
+    const object = (event.data as { object: Record<string, unknown> }).object;
+    object.parent = { type: 'subscription_details', subscription_details: { subscription, metadata } };
+    return event;
+  }
+
+  const logged = (msg: string) => mockLogLines.filter((l) => l.msg === msg);
+
+  function failureMessage(r: Result): unknown {
+    const updates = writes(r, ['processed_webhook_events']).filter((e) => e.operation === 'update');
+    return (updates[updates.length - 1]?.chain[0][1] as { failure_message?: unknown } | undefined)?.failure_message;
+  }
+
+  interface Site {
+    line: string;
+    event: () => Record<string, unknown>;
+    scenario: Omit<QaScenario, 'owners' | 'ownerErrors'>;
+    /** Owners for the control run, and the line that proves the site was reached. */
+    control: { owners: Record<string, string | null>; msg: string };
+  }
+
+  const SITES: Site[] = [
+    {
+      line: ':683 payment_intent.succeeded',
+      event: () => fixture('payment-intent-succeeded.json'),
+      scenario: {},
+      control: { owners: OWNED_BY_OTHER, msg: 'payment_intent.succeeded claims an owner that does not own this account - refusing' },
+    },
+    {
+      line: ':809 invoice.paid plan period (recordPlanPeriodPaid)',
+      // No plan terms on the invoice, so the bind check (:1213) is skipped.
+      event: () => withSubscription(fixture('invoice-paid-plan-period.json'), 'sub_plan_1'),
+      scenario: { planBySubscription: OWNED_PLAN },
+      control: { owners: OWNED_BY_OTHER, msg: 'Plan period from an account that does not own the plan - refusing' },
+    },
+    {
+      line: ':1084 trialling plan (customer.subscription.created)',
+      event: () => fixture('subscription-created-trialing-plan.json'),
+      scenario: {},
+      control: { owners: OWNED_BY_OTHER, msg: 'Trialling plan claims an owner this account does not own - refusing' },
+    },
+    {
+      line: ':1213 invoice.paid first plan period (bind)',
+      event: () => fixture('invoice-paid-plan-first-period-foreign-links.json'),
+      scenario: {},
+      control: { owners: OWNED_BY_OTHER, msg: 'Plan metadata claims an owner this account does not own - refusing' },
+    },
+    {
+      line: ':1310 invoice.paid metadata path',
+      event: () => fixture('invoice-paid.json'),
+      scenario: { db: { 'payment_invoices:select': [PGRST116, ok({ ...VICTIM_INVOICE, booking_id: null })] } },
+      control: { owners: OWNED_BY_OTHER, msg: INVOICE_PAID_REFUSAL },
+    },
+    {
+      line: ':1331 invoice.paid H1 path (found by stripe_invoice_id)',
+      event: () => fixture('invoice-paid.json'),
+      scenario: { db: { 'payment_invoices:select': ok({ ...VICTIM_INVOICE, booking_id: null }) } },
+      control: { owners: OWNED_BY_OTHER, msg: INVOICE_PAID_REFUSAL },
+    },
+    {
+      line: ':1669 plan checkout (inside the rethrowing try)',
+      event: () => fixture('checkout-completed-plan-foreign-links.json'),
+      scenario: {},
+      control: { owners: OWNED_BY_OTHER, msg: 'Plan checkout names an owner this account does not own - refusing' },
+    },
+    {
+      line: ':1717 checkout invoice',
+      event: () => fixture('checkout-completed-invoice.json'),
+      scenario: { db: { 'payment_invoices:select': ok({ ...VICTIM_INVOICE, id: 'pinv-0002' }) } },
+      control: { owners: OWNED_BY_OTHER, msg: 'Connect checkout names an invoice owned by a different business - refusing' },
+    },
+    {
+      line: ':1857 checkout booking (unmapped-account refusal)',
+      event: () => fixture('checkout-completed-booking.json'),
+      scenario: {},
+      control: { owners: {}, msg: 'Connect checkout names a booking on an account that maps to no business - refusing' },
+    },
+    {
+      line: ':1918 invoice.payment_failed plan branch',
+      event: () => withSubscription(fixture('invoice-payment-failed.json'), 'sub_plan_1'),
+      scenario: { planBySubscription: OWNED_PLAN },
+      // Owned, the plan branch logs this and returns; it is the branch's only line.
+      control: { owners: OWNER_A, msg: 'Plan marked past_due' },
+    },
+    {
+      line: ':1944 invoice.payment_failed',
+      event: () => fixture('invoice-payment-failed.json'),
+      scenario: { db: { 'payment_invoices:select': INVOICE_ROW } },
+      control: { owners: OWNED_BY_OTHER, msg: 'Connect invoice.payment_failed names an invoice owned by a different business - refusing' },
+    },
+    {
+      line: ':2037 invoice.finalized',
+      event: () => fixture('invoice-finalized.json'),
+      scenario: { db: { 'payment_invoices:select': INVOICE_ROW } },
+      control: { owners: OWNED_BY_OTHER, msg: 'Connect invoice.finalized names an invoice owned by a different business - refusing' },
+    },
+    {
+      line: ':2087 invoice.marked_uncollectible',
+      event: () => fixture('invoice-marked-uncollectible.json'),
+      scenario: { db: { 'payment_invoices:select': INVOICE_ROW } },
+      control: { owners: OWNED_BY_OTHER, msg: 'Connect invoice.marked_uncollectible names an invoice owned by a different business - refusing' },
+    },
+    {
+      line: ':2151 Connect customer.subscription.deleted',
+      event: () => fixture('subscription-deleted.json'),
+      scenario: { db: { 'payment_plan_subscriptions:select': OWNED_PLAN } },
+      control: { owners: OWNED_BY_OTHER, msg: 'Subscription ended on an account that does not own the plan it names' },
+    },
+  ];
+
+  it('covers all 14 owner-check sites', () => {
+    expect(SITES).toHaveLength(14);
+  });
+
+  it.each(SITES.map((s) => [s.line, s] as const))('FU5-E %s: 500, claim failed (table + code only), nothing written', async (_line, site) => {
+    // Control: the data reaches this site's own owner check.
+    const control = await run(site.event(), { ...site.scenario, owners: site.control.owners });
+    expect(logged(site.control.msg)).toHaveLength(1);
+    expect(control.status).toBe(200);
+    expect(ownerLookups(control)).toHaveLength(1);
+
+    const r = await run(site.event(), { ...site.scenario, owners: OWNER_A, ownerErrors: ['acct_owner_a'] });
+    expect(r.status).toBe(500);
+    expect(r.body).toMatchObject({ success: false, error: 'Webhook processing failed' });
+    expect(claimStatus(r)).toBe('failed');
+    expect(failureMessage(r)).toBe(LOOKUP_FAILED);
+    expect(ownerLookups(r)).toEqual([{ type: 'resolveAccountOwner', accountId: 'acct_owner_a' }]);
+    expect(logged(site.control.msg)).toEqual([]);
+    expect(writes(r, [...VICTIM_TABLES, ...PLAN_TABLES])).toEqual([]);
+    expect(r.effects.filter((e) => e.type === 'bindPlanSubscription' || e.type === 'crmActivity.create')).toEqual([]);
+  });
+
+  it('FU5-E :1669: the error goes through the plan-checkout catch, which rethrows (its log line is left as is, SA Q-3)', async () => {
+    const r = await run(fixture('checkout-completed-plan-foreign-links.json'), { owners: OWNER_A, ownerErrors: ['acct_owner_a'] });
+    expect(r.status).toBe(500);
+    expect(errorsLogged('Could not bound a payment plan - subscription may bill indefinitely')).toHaveLength(1);
+  });
+});
+
+describe('FU-5 QA: recovery, true unmapped, and the per-request cache', () => {
+  const finalized = (id: string) => ({ ...fixture('invoice-finalized.json'), id });
+  const answer = { 'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }) };
+
+  it('FU5-R. warm instance: a lookup error gives 500; the redelivery of the same event after recovery is written', async () => {
+    const POST = loadRoute();
+
+    const first = await post(POST, finalized('evt_fu5_r'), { owners: OWNER_A, ownerErrors: ['acct_owner_a'], db: answer });
+    expect(first.status).toBe(500);
+    expect(claimStatus(first)).toBe('failed');
+    expect(writes(first, VICTIM_TABLES)).toEqual([]);
+
+    // The redelivery finds its claim `failed`, reclaims it, and looks the owner
+    // up afresh: nothing from the failed attempt was cached.
+    const second = await post(POST, finalized('evt_fu5_r'), {
+      owners: OWNER_A,
+      db: { ...answer, 'processed_webhook_events:select': ok({ event_id: 'evt_fu5_r', status: 'failed' }) },
+    });
+    expect(second.status).toBe(200);
+    expect(ownerLookups(second)).toEqual([{ type: 'resolveAccountOwner', accountId: 'acct_owner_a' }]);
+    const [update] = writes(second, VICTIM_TABLES);
+    expect(update.table).toBe('payment_invoices');
+    expect(update.chain).toContainEqual(['eq', 'id', 'pinv-0004']);
+    expect(claimStatus(second)).toBe('completed');
+  });
+
+  it('FU5-U. a truly unmapped account still refuses with 200 and completes; each event looks again (null is not cached)', async () => {
+    const POST = loadRoute();
+    for (const id of ['evt_fu5_u1', 'evt_fu5_u2']) {
+      const r = await post(POST, finalized(id), { owners: {}, db: answer });
+      expect(r.status).toBe(200);
+      expect(claimStatus(r)).toBe('completed');
+      expect(writes(r, VICTIM_TABLES)).toEqual([]);
+      expect(ownerLookups(r)).toEqual([{ type: 'resolveAccountOwner', accountId: 'acct_owner_a' }]);
+      expect(errorsLogged('Connect invoice.finalized names an invoice owned by a different business - refusing')).toHaveLength(1);
+    }
+  });
+
+  it('FU5-Q. one request checking the same mapped account twice (plan bind :1213, then the period :809) looks it up once', async () => {
+    const r = await run(fixture('invoice-paid-plan-period.json'), {
+      owners: OWNER_A,
+      planBySubscription: ok({ id: 'plan-1', user_id: 'owner-a', status: 'active', installment_count: 3, periods_paid: 1 }),
+    });
+    expect(r.status).toBe(200);
+    expect(r.effects.filter((e) => e.type === 'bindPlanSubscription')).toHaveLength(1);
+    expect(mockLogLines.some((l) => l.msg === 'Plan period from an account that does not own the plan - refusing')).toBe(false);
+    expect(ownerLookups(r)).toEqual([{ type: 'resolveAccountOwner', accountId: 'acct_owner_a' }]);
   });
 });
