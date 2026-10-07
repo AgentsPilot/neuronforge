@@ -132,6 +132,16 @@ jest.mock('@/lib/repositories/PaymentPlanSubscriptionRepository', () => ({
     recordPeriodPaid: () => Promise.resolve({ data: null, error: null }),
     recordFailure: () => Promise.resolve({ data: null, error: null }),
     close: () => Promise.resolve({ data: null, error: null }),
+    // CF-5 PR 4's two methods, delegated to the real repository by name (SA C-4,
+    // as in the characterisation harness), so the `:2151` site below keeps
+    // reading `payment_plan_subscriptions` through `mockSupabase` once PR 4
+    // moves that query. Resolved at call time: the methods arrive in PR 4.
+    findEndStateBySubscriptionId: (...args: unknown[]) =>
+      jest.requireActual('@/lib/repositories/PaymentPlanSubscriptionRepository')
+        .paymentPlanSubscriptionRepository.findEndStateBySubscriptionId(...args),
+    endFromStripe: (...args: unknown[]) =>
+      jest.requireActual('@/lib/repositories/PaymentPlanSubscriptionRepository')
+        .paymentPlanSubscriptionRepository.endFromStripe(...args),
   },
 }));
 
@@ -582,7 +592,7 @@ describe('Fix-1 QA: id shape edge cases', () => {
   });
 
   it('E-7. invoice.paid with empty / absent metadata invoice id: no fallback lookup, no write', async () => {
-    for (const metadata of [{ neuronforge_invoice_id: '' }, {}]) {
+    for (const metadata of [{ neuronforge_invoice_id: '' }, {}] as Record<string, string>[]) {
       const r = await run(withMetadata('invoice-paid.json', metadata), {
         owners: OWNER_A,
         db: { 'payment_invoices:select': PGRST116 },
