@@ -18,7 +18,8 @@
  * Order, and nothing before it: 401 → 403 → 400 (Zod) → 403 `own_account` (any
  * op on the admin's own account, slice 11b) → 409 `platform_account` (credit
  * ops) → 404/409 (pre-checks) → write → cache invalidation (not for the credit
- * ops) → audit (flushed before the response, WC-7; none for a replay).
+ * ops) → audit (flushed before the response, WC-7, bounded at 2 s; none for a
+ * replay). The last three steps are `recordPlanChange` (plan payments P-3b.1).
  *
  * The path id is lower-cased after Zod (slice 11b, SA W11b-1): Postgres matches
  * uuids case-insensitively, so the cache key, the audit ids and the own-account
@@ -31,8 +32,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
-import { AUDIT_EVENTS } from '@/lib/audit/events';
-import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import {
   businessOsAccountPlanRepository,
   type BusinessOsEntitlementOverride,
@@ -45,6 +44,9 @@ import { onboardingConversationRepository } from '@/lib/repositories/OnboardingC
 import { businessOsCreditLotRepository } from '@/lib/repositories/BusinessOsCreditLotRepository';
 import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
+// Plan payments P-3b.1 (PF-13): the same "is a plan subscription live" read as
+// deletion's R-3, both Stripe modes, fail closed.
+import { hasLivePlanSubscription } from '@/lib/business-os/purge/adminDeletionFacts';
 import {
   adminOpSchema,
   executeAdminOp,
@@ -54,11 +56,11 @@ import { describeCapabilityValue } from '@/lib/business-os/entitlements/capabili
 import { isGrantingValue } from '@/lib/business-os/entitlements/schema';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { getEntitlementService, CACHE_TTL_SECONDS } from '@/lib/business-os/entitlements/EntitlementService';
+import { recordPlanChange } from '@/lib/business-os/entitlements/recordPlanChange';
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { getEntitlementMode } from '@/lib/business-os/entitlements/mode';
 
 const logger = createLogger({ module: 'AdminBosEntitlementsAccountAPI' });
-const auditTrail = AuditTrailService.getInstance();
 
 // Node: Pino, the catalog and the repositories are all Node-only. An
 // admin-and-cookie dependent route must never be cached.
@@ -232,6 +234,9 @@ export async function POST(request: NextRequest, context: { params: { accountId:
         lotRepository: businessOsCreditLotRepository,
         holdReaders: { lineage: businessOsAccountLineageRepository, invites: businessOsInviteRepository },
       },
+      // PF-13: assign_tier and set_cohort keep the credit-period anchor of a
+      // subscribed account; a failed read is 500 billing_read_failed (SA Q-6).
+      billing: { hasLivePlanSubscription },
     });
 
     if (!outcome.ok) {
@@ -254,50 +259,45 @@ export async function POST(request: NextRequest, context: { params: { accountId:
       return NextResponse.json({ success: true, data: { accountId, op: parsed.data.op, ...outcome.data } });
     }
 
-    // Local-instance invalidation. Other instances are bounded by the 30 s TTL,
-    // which every decision already carries as `effectiveWithinSeconds`.
-    //
-    // Skipped for the credit ops (SA W11b-7): credit lots are not an
-    // `EntitlementService` input. If slice 9 / 10 makes extra credits an input
-    // to a cached decision, the credit ops must invalidate again.
-    if (outcome.invalidatesEntitlements !== false) getEntitlementService().invalidate(accountId);
-
     requestLogger.info({ accountId, op: parsed.data.op, action: outcome.action }, 'Admin entitlement op applied');
 
-    await auditTrail
-      .log({
-        // The fallback cannot fire: `adminOps.test.ts` asserts that every
-        // action literal in `adminOps.ts` is a registered `AUDIT_EVENTS` key,
-        // by source sweep AND by running every op (SA C5-2 / QA-2). It stays
-        // because an unregistered action should still produce an audit row
-        // rather than `undefined` — a row named oddly beats no row at all.
-        action: AUDIT_EVENTS[outcome.action as keyof typeof AUDIT_EVENTS] ?? outcome.action,
-        // Slice 11b (S11-SQ-5): a credit op names its lot instead of the plan
-        // row. The seven plan ops set no `audit`, so their entries are exactly
-        // what they were (pinned byte for byte in routes.test.ts, T11b.1).
-        entityType: outcome.audit?.entityType ?? 'business_os_account_plan',
-        entityId: outcome.audit?.entityId ?? accountId,
-        userId: accountId,
-        actorId: gate.user.id,
-        changes: outcome.audit
-          ? outcome.audit.changes
-          : ({ before: outcome.before, after: outcome.after } as unknown as Record<string, unknown>),
-        details: {
-          reason: parsed.data.reason,
-          op: parsed.data.op,
-          correlationId,
-          ...outcome.data,
-          ...(outcome.audit?.details ?? {}),
-        },
-        severity: 'warning',
-        request,
-      })
-      .catch((err) => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
-
-    // WC-7: flushed BEFORE the response. A serverless instance can be frozen
-    // the moment it responds, and an entitlement change with no audit row is
-    // the one kind this module cannot have.
-    await auditTrail.flush().catch((err) => requestLogger.error({ err }, 'Audit flush failed'));
+    // Plan payments P-3b.1 (SA-P3 c): the cache invalidation, the audit entry
+    // and its flush are one shared helper, which the Stripe webhook uses too.
+    // Same inputs, same order (invalidate → log → flush, all before the
+    // response); routes.test.ts pins the entry byte for byte and runs unedited
+    // except the one SA-approved billing-repository mock (C-8 ruling). The one
+    // behaviour change (SA Q-5): the flush is bounded at 2 s.
+    await recordPlanChange({
+      accountId,
+      // An unregistered action still produces a row under its own name;
+      // `adminOps.test.ts` asserts every action literal is registered.
+      action: outcome.action,
+      actor: { kind: 'admin', adminId: gate.user.id },
+      // Slice 11b (S11-SQ-5): a credit op names its lot instead of the plan
+      // row. The seven plan ops set no `audit`, so their entries are exactly
+      // what they were (pinned byte for byte in routes.test.ts, T11b.1).
+      entityType: outcome.audit?.entityType ?? 'business_os_account_plan',
+      entityId: outcome.audit?.entityId ?? accountId,
+      changes: outcome.audit
+        ? outcome.audit.changes
+        : ({ before: outcome.before, after: outcome.after } as unknown as Record<string, unknown>),
+      details: {
+        reason: parsed.data.reason,
+        op: parsed.data.op,
+        correlationId,
+        ...outcome.data,
+        ...(outcome.audit?.details ?? {}),
+      },
+      severity: 'warning',
+      request,
+      // Local-instance invalidation; other instances follow within the 30 s
+      // TTL every decision carries as `effectiveWithinSeconds`. Skipped for the
+      // credit ops (SA W11b-7): credit lots are not an `EntitlementService`
+      // input. If slice 9 / 10 makes extra credits an input to a cached
+      // decision, the credit ops must invalidate again.
+      invalidatesEntitlements: outcome.invalidatesEntitlements !== false,
+      log: requestLogger,
+    });
 
     return NextResponse.json({ success: true, data: { accountId, op: parsed.data.op, ...outcome.data } });
   } catch (error) {

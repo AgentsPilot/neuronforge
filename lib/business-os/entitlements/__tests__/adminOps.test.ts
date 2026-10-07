@@ -112,6 +112,8 @@ function context(options: {
   overrides?: BusinessOsEntitlementOverride[];
   isTenant?: boolean;
   config?: EntitlementConfig;
+  /** P-3b.1 (PF-13): the billing reader's answer. `null` = could not tell. Default: no subscription. */
+  subscribed?: boolean | null;
 } = {}): { ctx: AdminOpContext; calls: Calls } {
   const plan = options.plan === undefined ? planRow() : options.plan;
   const calls: Calls = {
@@ -205,6 +207,12 @@ function context(options: {
         },
       } as unknown as AdminOpContext['credit']['holdReaders'],
     },
+    // P-3b.1 (PF-13): the plan subscription reader.
+    billing: {
+      async hasLivePlanSubscription() {
+        return options.subscribed === undefined ? false : options.subscribed;
+      },
+    },
   };
 
   // Record every repository method called, read or write (slice 11b: the
@@ -226,6 +234,7 @@ function context(options: {
   record(ctx.credit.lotRepository, 'lots');
   record(ctx.credit.holdReaders.lineage, 'lineage');
   record(ctx.credit.holdReaders.invites, 'invites');
+  record(ctx.billing, 'billing');
 
   return { ctx, calls };
 }
@@ -622,6 +631,97 @@ describe('assign_tier', () => {
     await executeAdminOp({ op: 'assign_tier', tier: null, expiresAt: null, reason: 'downgrade' } as AdminOp, ctx);
 
     expect(calls.updatePlan[0]).toMatchObject({ tier: null, tier_expires_at: null });
+  });
+});
+
+describe('PF-13: the credit-period anchor on a subscribed account (plan payments P-3b.1, SA-P2, Q-6)', () => {
+  const ASSIGN = { op: 'assign_tier', tier: 'growth', expiresAt: null, reason: 'support case' } as AdminOp;
+  const COHORT = { op: 'set_cohort', cohort: 'trial', reason: 'support case' } as AdminOp;
+
+  it.each([
+    ['assign_tier', ASSIGN],
+    ['set_cohort', COHORT],
+  ])('%s on an account with no live plan subscription still resets the anchor (unchanged behaviour)', async (_name, op) => {
+    const { ctx, calls } = context({ subscribed: false });
+    const result = await executeAdminOp(op, ctx);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(calls.updatePlan[0]).toMatchObject({ period_anchor: NOW.toISOString() });
+  });
+
+  it.each([
+    ['assign_tier', ASSIGN],
+    ['set_cohort', COHORT],
+  ])('%s on a subscribed account keeps the anchor: the patch does not name it at all', async (_name, op) => {
+    const { ctx, calls } = context({ subscribed: true });
+    const result = await executeAdminOp(op, ctx);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(calls.updatePlan).toHaveLength(1);
+    expect(calls.updatePlan[0]).not.toHaveProperty('period_anchor');
+  });
+
+  it('assign_tier on a subscribed account still writes the tier, its end date and the version (SA-P16b: the next paid invoice re-asserts the bought tier)', async () => {
+    const config = fixtureConfig();
+    const { ctx, calls } = context({ subscribed: true, config });
+    await executeAdminOp(ASSIGN, ctx);
+
+    expect(calls.updatePlan[0]).toEqual({ tier: 'growth', tier_expires_at: null, plan_version: config.matrix.version });
+  });
+
+  it.each([
+    ['assign_tier', ASSIGN],
+    ['set_cohort', COHORT],
+  ])('%s refuses 500 billing_read_failed when the subscription cannot be told, and writes nothing (fail closed)', async (_name, op) => {
+    const { ctx, calls } = context({ subscribed: null });
+    const result = await executeAdminOp(op, ctx);
+
+    expect(result).toEqual({ ok: false, status: 500, error: 'billing_read_failed' });
+    expect(calls.updatePlan).toEqual([]);
+  });
+
+  it('the billing read comes after every earlier refusal, so those keep their status', async () => {
+    // RC-1 and R2-3 refuse before the billing record is consulted.
+    const empty = context({ subscribed: null, config: { ...readCodeConfig(), tierOrder: [] } });
+    expect(await executeAdminOp({ op: 'assign_tier', tier: 'pro', expiresAt: null, reason: 'support case' } as AdminOp, empty.ctx)).toMatchObject({
+      status: 400,
+      error: 'no_tiers_configured',
+    });
+    expect(empty.calls.all).not.toContain('billing.hasLivePlanSubscription');
+
+    const stranded = context({ subscribed: null, plan: planRow({ cohort: 'trial', tier: null }) });
+    expect(
+      await executeAdminOp({ op: 'set_cohort', cohort: null, reason: 'support case' } as AdminOp, stranded.ctx)
+    ).toMatchObject({ status: 409, error: 'would_leave_no_basis' });
+    expect(stranded.calls.all).not.toContain('billing.hasLivePlanSubscription');
+  });
+
+  it('reads the billing record for the path account, once, just before the write', async () => {
+    const { ctx, calls } = context();
+    const seen: string[] = [];
+    ctx.billing = {
+      async hasLivePlanSubscription(accountId: string) {
+        seen.push(accountId);
+        calls.all.push('billing.hasLivePlanSubscription');
+        return false;
+      },
+    };
+    await executeAdminOp(ASSIGN, ctx);
+
+    expect(seen).toEqual([ACCOUNT]);
+    expect(calls.all.indexOf('billing.hasLivePlanSubscription')).toBe(calls.all.indexOf('plan.updatePlan') - 1);
+  });
+
+  it.each([
+    ['set_expiry', { op: 'set_expiry', field: 'grace_ends_at', value: null, reason: 'support case' } as AdminOp, {}],
+    ['add_override', { op: 'add_override', capability: 'chat.search', overrideOp: 'set', value: true, reason: 'support case' } as AdminOp, {}],
+    ['ensure_plan_row', { op: 'ensure_plan_row', cohort: 'champion', expiresAt: null, reason: 'trigger failed' } as AdminOp, { plan: null }],
+  ] as Array<[string, AdminOp, Parameters<typeof context>[0]]>)('%s never reads the billing record (it does not move the anchor)', async (_name, op, options) => {
+    const { ctx, calls } = context({ ...options, subscribed: null });
+    const result = await executeAdminOp(op, ctx);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(calls.all).not.toContain('billing.hasLivePlanSubscription');
   });
 });
 

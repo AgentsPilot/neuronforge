@@ -226,10 +226,11 @@ describe('backward: a gate cannot ship unregistered', () => {
         'getEntitlementConfig',
         'getEntitlementService',
         'CACHE_TTL_SECONDS',
+        'recordPlanChange',
         'resolveAccountId',
         'getEntitlementMode',
       ],
-      why: 'The admin inspect-and-change endpoint. It reports and edits ONE account plan through the audited op union; it gates no product feature. `isGrantingValue` here answers a question for a screen, it does not refuse a request.',
+      why: 'The admin inspect-and-change endpoint. It reports and edits ONE account plan through the audited op union; it gates no product feature. `isGrantingValue` here answers a question for a screen, it does not refuse a request. `recordPlanChange` (plan payments P-3b.1) runs AFTER a completed op: it invalidates the cache and writes the audit entry, and can refuse nothing.',
     },
     {
       file: 'app/api/admin/business-os/entitlements/launch/route.ts',

@@ -27,7 +27,24 @@
 //   3. Does it have a plan row?              409 `plan_row_missing` — Q-15
 //   4. Would this leave it with no basis?    409 `would_leave_no_basis` — R2-3
 //      (credit ops: their own checks, in `lib/business-os/credits/creditAdminOps.ts`)
+//   4a. assign_tier / set_cohort only: is a plan subscription live?
+//                                            500 `billing_read_failed` if it
+//                                            cannot be told (PF-13, SA Q-6)
 //   5. Write, then invalidate (credit ops leave the cache alone).
+//
+// ── PF-13: THE CREDIT-PERIOD ANCHOR ON A SUBSCRIBED ACCOUNT (P-3b.1) ────────
+// `assign_tier` and `set_cohort` used to restart the credit period
+// (`period_anchor = now`) on every call. Once an account pays through Stripe,
+// the anchor is the subscription's billing date (SA-P2), set by the payment
+// itself; an admin change must not move it, or the credit period drifts out of
+// step with what Stripe bills. So both ops keep the anchor when the account
+// has a live plan subscription in either Stripe mode, and reset it, as before,
+// when it has none. A billing read that fails is refused (fail closed, SA Q-6
+// a and b): an anchor moved on a guess cannot be put back.
+//
+// The admin change itself still lands and lasts until the next paid invoice,
+// which re-asserts the bought tier and Stripe's paid-through date (SA-P16b,
+// Q-7). The warning that says so to the admin is P-8a's.
 //
 // Every refusal is an explicit status with a machine-readable code. **A database
 // constraint must never be how an admin learns they made a mistake** (M-3): the
@@ -56,6 +73,7 @@ import { resolveAccountId } from './account';
 import { currentCreditValue } from './config/creditValue';
 import { championEndDecisionMissing } from './grantRules';
 import { isGrantingValue, valueSchemaFor } from './schema';
+import { wouldLeaveNoBasis } from './planWriteChecks';
 import type { CatalogLike } from './schema';
 import type { EntitlementConfig } from './source';
 import type { CapabilityValue } from './types';
@@ -229,31 +247,38 @@ export interface AdminOpContext {
   onboardingRepository: Pick<OnboardingConversationRepository, 'getFirstMessageAt' | 'getLatestMessageAt'>;
   /** Slice 11b: the lot repository and the payment-hold readers the credit ops use. */
   credit: CreditAdminDependencies;
-}
-
-/** Is a tier assignment in force at `now`? (A-1) */
-function tierInForce(plan: BusinessOsAccountPlan | null, now: Date): boolean {
-  if (!plan?.tier) return false;
-  return plan.tier_expires_at === null || now.getTime() < Date.parse(plan.tier_expires_at);
+  /** P-3b.1 (PF-13): read only by assign_tier and set_cohort, just before their write. */
+  billing: PlanSubscriptionReader;
 }
 
 /**
- * R2-3: would the account be left with neither an in-force tier nor a cohort?
- *
- * Checked against the state the op WOULD produce, not the state it came from —
- * an account with no basis resolves to the `no_assignment` anomaly, and under
- * enforcement an anomaly denies owner-paid capabilities. No admin op may create
- * that state, so it is refused before the write rather than discovered after.
+ * PF-13: does the account hold a plan subscription Stripe may still bill?
+ * `null` means the question could not be answered, which is neither yes nor no
+ * and is refused (SA Q-6). The route wires the billing record's reader; this
+ * module names only the port.
  */
-function wouldLeaveNoBasis(plan: BusinessOsAccountPlan, patch: BusinessOsAccountPlanPatch, now: Date): boolean {
-  const next: BusinessOsAccountPlan = { ...plan, ...(patch as Partial<BusinessOsAccountPlan>) };
-  // `updatePlan` clears a paired expiry when its assignment is cleared (Q-6),
-  // so the projection has to do the same or it would disagree with reality.
-  if (patch.tier === null && patch.tier_expires_at === undefined) next.tier_expires_at = null;
-  if (patch.cohort === null && patch.cohort_expires_at === undefined) next.cohort_expires_at = null;
-
-  return !tierInForce(next, now) && !next.cohort;
+export interface PlanSubscriptionReader {
+  hasLivePlanSubscription(accountId: string): Promise<boolean | null>;
 }
+
+/**
+ * PF-13: add the anchor reset to `patch` only when no plan subscription is
+ * live. Returns the refusal when that cannot be told; `null` when the patch is
+ * ready to write. Called after every other check, just before the write, so
+ * the refusals that existed before PF-13 keep their order and their status.
+ */
+async function applyAnchorRule(
+  ctx: AdminOpContext,
+  patch: BusinessOsAccountPlanPatch
+): Promise<Extract<AdminOpOutcome, { ok: false }> | null> {
+  const subscribed = await ctx.billing.hasLivePlanSubscription(ctx.accountId);
+  if (subscribed === null) return { ok: false, status: 500, error: 'billing_read_failed' };
+  if (!subscribed) patch.period_anchor = ctx.now.toISOString();
+  return null;
+}
+
+// `tierInForce` (A-1) and `wouldLeaveNoBasis` (R2-3) live in `planWriteChecks.ts`
+// since plan payments P-3b.1 (SA-P3 a): the webhook's plan write shares them.
 
 /**
  * Execute one admin operation.
@@ -423,7 +448,6 @@ async function setCohort(
 
   const patch: BusinessOsAccountPlanPatch = {
     cohort: op.cohort,
-    period_anchor: ctx.now.toISOString(),
   };
 
   if (op.cohort === 'champion') patch.cohort_expires_at = op.expiresAt ?? null;
@@ -436,6 +460,10 @@ async function setCohort(
   if (wouldLeaveNoBasis(plan, patch, ctx.now)) {
     return { ok: false, status: 409, error: 'would_leave_no_basis' };
   }
+
+  // PF-13 (SA Q-6 b): the same anchor rule as assign_tier.
+  const refused = await applyAnchorRule(ctx, patch);
+  if (refused) return refused;
 
   return writePatch(ctx, plan, patch, 'BOS_ENTITLEMENT_COHORT_SET');
 }
@@ -479,7 +507,6 @@ async function assignTier(
   const patch: BusinessOsAccountPlanPatch = {
     tier: op.tier,
     tier_expires_at: op.tier === null ? null : op.expiresAt,
-    period_anchor: ctx.now.toISOString(),
   };
 
   if (op.tier !== null) patch.plan_version = ctx.config.matrix.version;
@@ -487,6 +514,10 @@ async function assignTier(
   if (wouldLeaveNoBasis(plan, patch, ctx.now)) {
     return { ok: false, status: 409, error: 'would_leave_no_basis' };
   }
+
+  // PF-13 (SA-P2, Q-6 a): a subscribed account keeps its billing anchor.
+  const refused = await applyAnchorRule(ctx, patch);
+  if (refused) return refused;
 
   return writePatch(ctx, plan, patch, 'BOS_ENTITLEMENT_TIER_ASSIGNED');
 }

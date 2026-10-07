@@ -170,6 +170,17 @@ export const ACCOUNT_POLICY_EXCEPTIONS: Record<string, AccountTablePolicy> = {
       'deleting the Stripe customer is a separate P-7a / PF-14 decision.',
   },
 
+  // Plan payments P-3b.1 (SA-P5, migration 20261027): the money history. The
+  // same financial-record verdict and mechanism as the billing record.
+  business_os_billing_events: {
+    verdict: 'minimise',
+    reason:
+      'Financial record: the Business OS money history (one append-only row per Stripe money event ' +
+      'of the plan, with amounts and Stripe ids, never an email). Retained for accounting, detached ' +
+      'from the person. Its user_id is declared ON DELETE SET NULL, and service_role holds no UPDATE ' +
+      'on the table at all, so the detach happens when the auth user is deleted, not through an update.',
+  },
+
   // Credits boost slice 2a (NFR-12, F-11): the same financial-record verdict
   // and mechanism as the credit lots.
   business_os_boost_purchases: {

@@ -7,8 +7,11 @@
 //   scripts/test-account-cleanup-delete.sql   one all-or-nothing block
 //   supabase/migrations/<FUNCTION_MIGRATION>.sql
 //                                             the same builders as ONE
-//                                             secret-gated function (OX-1r)
+//                                             secret-gated function (OX-1r),
+//                                             CREATE OR REPLACE over the
+//                                             applied 20261041 setup
 //   supabase/SQL Scripts/<FUNCTION_MIGRATION>_rollback.sql
+//                                             restores the previous function
 //   lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts
 //                                             only the function's version stamp
 //
@@ -56,7 +59,7 @@
 // only on the edit lines at the top. The test enforces all of it.
 
 import { createHash } from 'crypto';
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import {
   REVIEWED_DELETE_TRIGGERS,
@@ -83,13 +86,48 @@ export const DEFAULT_TEST_TAG = '+test';
 export const CHECK_FILE = 'scripts/test-account-cleanup-check.sql';
 export const DELETE_FILE = 'scripts/test-account-cleanup-delete.sql';
 /**
- * The migration that creates the function (R-1). NEVER edit it once applied:
- * a changed plan gets a new dated name here, and the drift test then expects
- * the new file (the old one stays as applied history).
+ * The migration that created the function, its private schema and the secret
+ * table (R-1). APPLIED to prod, so it is history: this generator no longer
+ * writes it, and the test pins its bytes (and its rollback's) by sha256.
  */
-export const FUNCTION_MIGRATION = '20261041_operator_test_account_cleanup';
+export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanup';
+/**
+ * The migration the generator writes now: CREATE OR REPLACE of the same
+ * function with the current plan (R-1). NEVER edit it once applied: a changed
+ * plan gets a new dated name here, PREVIOUS_FUNCTION_MIGRATION moves to the
+ * name below, and the drift test then expects the new file. The old file stays
+ * as applied history.
+ *
+ * If two branches both change the cleanup plan, whichever lands second
+ * rebases onto the first one's generator, takes the next free number, sets
+ * PREVIOUS_FUNCTION_MIGRATION to the first one's file, adds the first one's
+ * sha256 to the APPLIED pins (scripts/__tests__/testAccountCleanupSql.test.ts)
+ * once it is applied, and regenerates.
+ *
+ * 20261042: the plan gained business_os_billing_events (plan payments P-3b.1).
+ */
+export const FUNCTION_MIGRATION = '20261042_operator_test_account_cleanup_billing_events';
+/** The applied migration whose function the rollback restores, byte for byte. */
+export const PREVIOUS_FUNCTION_MIGRATION = INITIAL_FUNCTION_MIGRATION;
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
+export const PREVIOUS_MIGRATION_FILE = `supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql`;
+/**
+ * Tables the function names in STATIC SQL that a migration newer than the
+ * previously applied function creates. A plpgsql body is only parsed when it
+ * is created, so without a guard the migration would apply cleanly and then
+ * fail every check and delete with 42P01 (undefined table). The migration
+ * therefore refuses, and applies nothing, until each table exists: that makes
+ * the apply order (the creating migration first, then this one) enforced
+ * rather than only documented. The test checks each entry against its file.
+ */
+export const FUNCTION_REQUIRED_TABLES: ReadonlyArray<{ table: string; migration: string; reason: string }> = [
+  {
+    table: 'business_os_billing_events',
+    migration: '20261027_business_os_billing_events',
+    reason: 'Guard G-5 counts its live-mode rows and the plan deletes it, both in static SQL (plan payments P-3b.1).',
+  },
+];
 export const VERSION_FILE = 'lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts';
 export const FUNCTION_NAME = 'public.operator_test_account_cleanup';
 export const FUNCTION_SIGNATURE = `${FUNCTION_NAME}(text, text, text, text, uuid, text)`;
@@ -134,6 +172,7 @@ export const FULL_REMOVAL_EXTRAS: ReadonlyArray<{ table: string; reason: string 
   { table: 'business_os_credit_lots', reason: 'Credits added to the test account (BQ-2).' },
   { table: 'business_os_credit_charges', reason: 'The credit bill of the test account (BQ-2). SET NULL to the login, so it would otherwise survive with no owner.' },
   { table: 'business_os_credit_totals', reason: 'Running totals derived from the bill (BQ-2).' },
+  { table: 'business_os_billing_events', reason: 'Plan money history (BQ-2). Append-only, but the owner may delete. G-5 refuses any live-mode row.' },
   { table: 'business_os_billing_accounts', reason: 'Plan billing rows (BQ-2). G-5 refuses live mode, G-6 refuses a live subscription in either mode.' },
   { table: 'business_os_boost_cap_overrides', reason: 'Admin boost cap changes for the test account (BQ-2).' },
   { table: 'business_os_account_plans', reason: 'Plan state. A re-signup gets a fresh plan, which is the point of the cleanup.' },
@@ -736,7 +775,8 @@ function guardRowsCte(): string {
       'G-5',
       'nothing ever ran in Stripe live mode',
       `(SELECT count(*) FROM public.business_os_billing_accounts AS billing WHERE billing.user_id = ${uid} AND billing.livemode)
-      + (SELECT count(*) FROM public.business_os_boost_purchases AS boosts WHERE boosts.user_id = ${uid} AND boosts.livemode)`,
+      + (SELECT count(*) FROM public.business_os_boost_purchases AS boosts WHERE boosts.user_id = ${uid} AND boosts.livemode)
+      + (SELECT count(*) FROM public.business_os_billing_events AS money WHERE money.user_id = ${uid} AND money.livemode)`,
       'Real money. This account is not a test account and must not be removed.'
     ),
     guard(
@@ -1131,7 +1171,7 @@ const VERSION_TOKEN = '__CLEANUP_FUNCTION_VERSION__';
 
 /** The function, with `version` either the token or the real stamp. */
 function renderFunctionSql(version: string): string {
-  return `CREATE FUNCTION ${FUNCTION_NAME}(p_mode text, p_email text, p_tag text, p_confirm text, p_actor uuid, p_secret text)
+  return `CREATE OR REPLACE FUNCTION ${FUNCTION_NAME}(p_mode text, p_email text, p_tag text, p_confirm text, p_actor uuid, p_secret text)
 RETURNS jsonb
 LANGUAGE plpgsql
 VOLATILE
@@ -1185,13 +1225,33 @@ export function cleanupFunctionVersion(): string {
   return createHash('sha256').update(renderFunctionSql(VERSION_TOKEN)).digest('hex').slice(0, 16);
 }
 
+/** The grants every version re-asserts. CREATE OR REPLACE keeps them, this makes it explicit. */
+function renderGrantsSql(): string {
+  return `ALTER FUNCTION ${FUNCTION_SIGNATURE} OWNER TO postgres;
+REVOKE ALL ON FUNCTION ${FUNCTION_SIGNATURE} FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE} TO service_role;`;
+}
+
 /**
- * The migration (R-1 to R-4). Comments stay at the top, without semicolons or
+ * The migration (R-1 to R-4): CREATE OR REPLACE of the function, on top of the
+ * schema, secret table and function the initial migration created. It never
+ * touches the schema or the secret table, so the stored hash survives and no
+ * setup step is repeated. Comments stay at the top, without semicolons or
  * apostrophes, so the file is as paste-safe as the operator files.
  */
 export function renderMigrationSql(): string {
+  const requiredChecks = FUNCTION_REQUIRED_TABLES.map(
+    (required) => `  IF pg_catalog.to_regclass(${lit(`public.${required.table}`)}) IS NULL THEN
+    RAISE EXCEPTION ${lit(`Apply ${required.migration} first  Nothing was applied`)};
+  END IF;`
+  ).join('\n');
+  const requiredNames = FUNCTION_REQUIRED_TABLES.map((required) => required.migration).join(' and ');
   return `-- ${FUNCTION_MIGRATION}. GENERATED by scripts/generate-test-account-cleanup-sql.ts. Never edit by hand, and never edit once applied
 -- A changed plan goes in a new dated file (generator constant FUNCTION_MIGRATION).
+-- Replaces the function public.operator_test_account_cleanup with the current plan. The schema operator_private and its secret table stay as they are
+-- Apply order. First ${INITIAL_FUNCTION_MIGRATION}${requiredNames ? ` and ${requiredNames}` : ''}, then this file. It refuses otherwise and applies nothing
+-- The app pins the version stamp this function returns. Until the deployed build and this function agree, the Danger Zone check and delete refuse
+-- Rollback supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql restores the function of ${PREVIOUS_FUNCTION_MIGRATION}
 -- Operator exception OX-1r. One secret-gated function for the admin-only test-account cleanup routes
 -- It runs the same generated guards G-1 to G-18 as scripts/test-account-cleanup-delete.sql
 -- It refuses with 42501 unless the caller sends the second secret whose sha256 only this database holds
@@ -1207,34 +1267,53 @@ BEGIN
 END
 $create_guard$;
 
-CREATE SCHEMA operator_private;
-REVOKE ALL ON SCHEMA operator_private FROM PUBLIC, anon, authenticated, service_role;
-
-CREATE TABLE operator_private.secrets (
-  name text PRIMARY KEY,
-  secret_sha256 bytea NOT NULL,
-  created_at timestamptz DEFAULT now()
-);
-ALTER TABLE operator_private.secrets ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE operator_private.secrets FROM PUBLIC, anon, authenticated, service_role;
+DO $order_guard$
+BEGIN
+  IF pg_catalog.to_regclass('operator_private.secrets') IS NULL OR pg_catalog.to_regprocedure(${lit(FUNCTION_SIGNATURE)}) IS NULL THEN
+    RAISE EXCEPTION ${lit(`Apply ${INITIAL_FUNCTION_MIGRATION} first  Nothing was applied`)};
+  END IF;
+${requiredChecks}
+END
+$order_guard$;
 
 ${renderFunctionSql(cleanupFunctionVersion())};
 
-ALTER FUNCTION ${FUNCTION_SIGNATURE} OWNER TO postgres;
-REVOKE ALL ON FUNCTION ${FUNCTION_SIGNATURE} FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE} TO service_role;
+${renderGrantsSql()}
 
 NOTIFY pgrst, 'reload schema';
 `;
 }
 
-export function renderRollbackSql(): string {
-  return `-- Rollback of supabase/migrations/${FUNCTION_MIGRATION}.sql. GENERATED, never edit by hand.
--- Drops the function, the secret table and the schema. Then remove TEST_CLEANUP_SECRET from Vercel.
+/**
+ * The function exactly as the previous applied migration created it, as
+ * CREATE OR REPLACE. Read from that file, which the test pins by sha256, so
+ * the rollback restores the bytes that were applied and nothing newer.
+ */
+export function previousFunctionSql(previousMigrationSql: string): string {
+  // Windows checkouts may hold CRLF. The generator always writes LF (SA C-9).
+  const sql = previousMigrationSql.replace(/\r\n/g, '\n');
+  const heads = [`CREATE FUNCTION ${FUNCTION_NAME}(`, `CREATE OR REPLACE FUNCTION ${FUNCTION_NAME}(`];
+  const starts = heads.map((head) => sql.indexOf(head)).filter((index) => index >= 0);
+  const close = '\n$operator_cleanup$;';
+  const start = starts.length > 0 ? Math.min(...starts) : -1;
+  const end = start < 0 ? -1 : sql.indexOf(close, start);
+  if (start < 0 || end < 0) {
+    throw new Error(`${PREVIOUS_MIGRATION_FILE}: the function was not found`);
+  }
+  // Up to and including the closing dollar tag, without its semicolon.
+  const body = sql.slice(start, end + close.length - 1);
+  return body.startsWith('CREATE OR REPLACE') ? body : body.replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION');
+}
 
-DROP FUNCTION IF EXISTS ${FUNCTION_SIGNATURE};
-DROP TABLE IF EXISTS operator_private.secrets;
-DROP SCHEMA IF EXISTS operator_private;
+export function renderRollbackSql(previousMigrationSql = readFileSync(join(__dirname, '..', ...PREVIOUS_MIGRATION_FILE.split('/')), 'utf8')): string {
+  return `-- Rollback of supabase/migrations/${FUNCTION_MIGRATION}.sql. GENERATED, never edit by hand.
+-- Restores the function exactly as supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql created it. Keeps the schema, the secret table and the stored hash
+-- Then redeploy an app build that pins the version stamp of ${PREVIOUS_FUNCTION_MIGRATION}, or the Danger Zone check and delete refuse
+-- To remove the whole feature instead, also run supabase/SQL Scripts/${INITIAL_FUNCTION_MIGRATION}_rollback.sql afterwards
+
+${previousFunctionSql(previousMigrationSql)};
+
+${renderGrantsSql()}
 
 NOTIFY pgrst, 'reload schema';
 `;

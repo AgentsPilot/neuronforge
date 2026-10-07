@@ -471,6 +471,10 @@ const EXCLUDED: PurgeDescriptor[] = [
   never('business_os_billing_accounts', U,
     'The Business OS billing record: the Stripe customer and subscription of the plan, one row per account per Stripe mode. A Reset that removed it would orphan a live Stripe subscription that keeps charging, and lose the customer link. A retained financial record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
 
+  // Plan payments P-3b.1 (SA-P5, migration 20261027): the money history.
+  never('business_os_billing_events', U,
+    'The Business OS money history: one append-only row per Stripe money event of the plan (paid, failed, refused). A retained financial record: never purged and never archived. A Reset that removed it would erase what the account paid and which payment moved its plan. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+
   // Credits boost slice 2a (NFR-12, F-11): boost purchases and cap overrides.
   never('business_os_boost_purchases', U,
     'Boost purchases: one row per attempt to buy credits, with the price, the Stripe references and the link to the credit lot. A financial record: never purged and never archived — a Reset that removed it would erase what the account paid for. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
