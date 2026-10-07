@@ -327,6 +327,22 @@ export const AUDIT_EVENTS = {
   // never audited (SA Q-9). Details: tier, lookup key, session id, livemode,
   // held, expiresAt, actor 'owner'; never the client secret or an email.
   BOS_BILLING_CHECKOUT_STARTED: 'BOS_BILLING_CHECKOUT_STARTED',
+  // Plan payments P-3b (AM-7, SA-P3 c): a paid Business OS plan invoice was
+  // applied by business_os_apply_plan_payment (status applied or recorded).
+  // Written by recordPlanChange after the function, flushed before the 200,
+  // with the platform actor and details.actor 'stripe_webhook' (SA Q-4), never
+  // a null actor. Entity type 'business_os_account_plan', id = the account.
+  // changes: the plan tier before and after. Details: invoice and
+  // subscription ids, tier, amount, planWritten, anchorSet, livemode, event
+  // id; never an email or a metadata value. A replay writes none. Registered
+  // in P-3b.1; first written by the webhook handler in P-3b.2.
+  BOS_BILLING_INVOICE_PAID: 'BOS_BILLING_INVOICE_PAID',
+  // Plan payments P-3b: a Business OS plan payment was refused and recorded as
+  // a mismatch_refused money history row (second subscription, subscription
+  // held elsewhere, currency, metadata, customer or tier mismatch). Same writer,
+  // actor and entity as BOS_BILLING_INVOICE_PAID. Details: refusal reason and
+  // Stripe ids. Registered in P-3b.1; first written in P-3b.2.
+  BOS_BILLING_PAYMENT_REFUSED: 'BOS_BILLING_PAYMENT_REFUSED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -887,6 +903,19 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'A Business OS owner opened a plan checkout (tier, session and mode recorded; nothing paid yet)',
+  },
+  // Plan payments P-3b. 'info': the payment the customer chose was applied.
+  // SOC2 alone, as every Business OS money event (SA W11b-3).
+  [AUDIT_EVENTS.BOS_BILLING_INVOICE_PAID]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A paid Business OS plan invoice was applied (money history recorded; plan written when it was the newest)',
+  },
+  // 'warning': money arrived that the platform refused to apply; an operator looks.
+  [AUDIT_EVENTS.BOS_BILLING_PAYMENT_REFUSED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS plan payment was refused and recorded in the money history (reason recorded)',
   },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',

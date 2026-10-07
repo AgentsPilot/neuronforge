@@ -276,3 +276,54 @@ describe('M-1: concurrent refusals on one instance each get their row', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
   }, 10_000);
 });
+
+describe('an injected sink (plan payments P-3b.1, recordPlanChange, SA Q-5)', () => {
+  it('writes through the sink the caller holds, log then flush, and leaves the default untouched', async () => {
+    const calls: string[] = [];
+    const sink = {
+      log: async (logged: AuditLogInput) => {
+        calls.push(`log:${String(logged.entityId)}`);
+      },
+      flush: async () => {
+        calls.push('flush');
+      },
+    };
+    await logAndFlush(entry('s'), testLogger, REFUSAL, sink);
+    expect(calls).toEqual(['log:s', 'flush']);
+    expect(writes).toEqual([]);
+    expect(fake.queue).toEqual([]);
+  });
+
+  it('an injected sink joins the same serialising chain: it waits for a default caller in flight', async () => {
+    const order: string[] = [];
+    const hold = fake.holdInsert();
+    const first = logAndFlush(entry('a'), testLogger, REFUSAL);
+    await hold.entered;
+    const sink = {
+      log: async () => {
+        order.push('sink log');
+      },
+      flush: async () => {
+        order.push('sink flush');
+      },
+    };
+    const second = logAndFlush(entry('b'), testLogger, REFUSAL, sink);
+    await Promise.resolve();
+    expect(order).toEqual([]);
+    hold.release();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['sink log', 'sink flush']);
+    expect(writes).toEqual([['a']]);
+  });
+
+  it('a rejecting sink is swallowed and logged at error, never thrown', async () => {
+    const sink = {
+      log: async () => {
+        throw new Error('sink down');
+      },
+      flush: async () => undefined,
+    };
+    await expect(logAndFlush(entry('x'), testLogger, REFUSAL, sink)).resolves.toBeUndefined();
+    expect(logs.filter((l) => l.level === 'error')).toHaveLength(1);
+  });
+});

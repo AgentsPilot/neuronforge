@@ -92,6 +92,10 @@ const EXEMPT: Record<string, string> = {
   // The `userId` the guard sees is the REPOSITORY's input field name — the
   // column is `user_id` — not a user id arriving from outside.
   'adminOps.ts': 'works in account ids; `userId` is the repository input field name',
+  // Plan payments P-3b.1: takes an AccountId its caller already resolved (the
+  // admin route through resolveAccountId; the webhook from its own billing row).
+  // The `userId` the guard sees is the AUDIT entry's field name for the account.
+  'recordPlanChange.ts': 'its accountId IS an AccountId; `userId` is the audit entry field name',
 };
 
 function read(file: string): string {

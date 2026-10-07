@@ -117,6 +117,22 @@ export interface AuditFlushContext {
 }
 
 /**
+ * The two calls this helper makes on the audit trail. `AuditTrail`, the
+ * singleton, by default.
+ *
+ * Plan payments P-3b.1 (`recordPlanChange`, SA Q-5): the admin entitlements
+ * route reaches the service through `AuditTrailService.getInstance()`, and its
+ * route suite pins the audit entry through that seam byte for byte (SA C-8: the
+ * suite must not change). Passing the instance the caller already holds keeps
+ * the bound and the serialising chain without changing which object the entry
+ * goes through. In production both are the same singleton.
+ */
+export interface AuditSink {
+  log: (entry: AuditLogInput) => Promise<void>;
+  flush: () => Promise<void>;
+}
+
+/**
  * The serialising chain. Holds the SWALLOWED continuation of the last link, so
  * one failure can never poison it (M-1 constraint 2).
  */
@@ -131,8 +147,8 @@ let pending: Promise<void> = Promise.resolve();
  *
  * The returned promise MAY reject (the caller handles it). `pending` never does.
  */
-function enqueue(entry: AuditLogInput): Promise<void> {
-  const link = pending.then(() => AuditTrail.log(entry)).then(() => AuditTrail.flush());
+function enqueue(entry: AuditLogInput, sink: AuditSink): Promise<void> {
+  const link = pending.then(() => sink.log(entry)).then(() => sink.flush());
   pending = link.then(
     () => undefined,
     () => undefined
@@ -147,7 +163,8 @@ function enqueue(entry: AuditLogInput): Promise<void> {
 export async function logAndFlush(
   entry: AuditLogInput,
   logger: AuditFlushLogger,
-  context: AuditFlushContext
+  context: AuditFlushContext,
+  sink: AuditSink = AuditTrail
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<'timeout'>((resolve) => {
@@ -155,7 +172,7 @@ export async function logAndFlush(
   });
 
   try {
-    const outcome = await Promise.race([enqueue(entry).then(() => 'flushed' as const), timeout]);
+    const outcome = await Promise.race([enqueue(entry, sink).then(() => 'flushed' as const), timeout]);
     if (outcome === 'timeout') {
       logger.warn(
         { userId: entry.userId ?? null, action: entry.action, timeoutMs: AUDIT_FLUSH_TIMEOUT_MS },
