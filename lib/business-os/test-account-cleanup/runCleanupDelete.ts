@@ -92,8 +92,11 @@ export async function runCleanupDelete(
     return { kind: 'unavailable', reason: 'function_out_of_date', targetUserId: check.targetUserId, filesRemoved: 0, error: null };
   }
 
-  const hardBlockers = check.blockers.filter((blocker) => blocker.guard !== 'G-12');
-  if (hardBlockers.length > 0 || check.targetUserId === null) {
+  // Go on only on OK, or on BLOCKED where at least one blocker exists and every
+  // one is G-12. A BLOCKED verdict with no parsed blocker (a row the parser
+  // missed) must refuse here: storage would go and the function would refuse.
+  const storageOnly = check.blockers.length > 0 && check.blockers.every((blocker) => blocker.guard === 'G-12');
+  if (!(check.verdict === 'OK' || storageOnly) || check.targetUserId === null) {
     return {
       kind: 'refused',
       reason: 'blocked',

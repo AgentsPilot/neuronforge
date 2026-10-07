@@ -240,6 +240,14 @@ describe('delete (SA-6 ordering, R-6)', () => {
     expect(mockEvents).toEqual([RPC_CHECK, 'storage:website-images:2', 'storage:contact-documents:1', RPC_DELETE]);
   });
 
+  it('BLOCKED with no parsed blocker: 409, storage never called, no delete', async () => {
+    mockReply = script([verdict('BLOCKED'), file('website-images', 'a.png')]);
+    const res = await deleteRoute.POST(req('/d', DELETE_OK));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe('blocked');
+    expect(mockEvents).toEqual([RPC_CHECK]);
+  });
+
   it('any other blocker: 409, no storage call, no delete, audited with the guard ids', async () => {
     mockReply = script([
       verdict('BLOCKED'),

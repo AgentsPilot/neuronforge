@@ -33,6 +33,7 @@ This document describes the page as it exists today: the shared chrome, the Acco
   - [Tab: Modules](#tab-modules)
   - [Tab: LLM Usage](#tab-llm-usage)
   - [Tab: Billing](#tab-billing)
+  - [Tab: Danger Zone, Remove a test account](#tab-danger-zone-remove-a-test-account)
 - [Adding a New Tab](#adding-a-new-tab)
 - [Technical Architecture](#technical-architecture)
 - [Related Documentation](#related-documentation)
@@ -283,6 +284,23 @@ The tab imports only types from server modules. All labels and statuses are comp
 - Press Start again: `409 checkout_open`.
 - A held friend cannot open this page (the payment-hold gate redirects them); their path is tested from `/invite/awaiting-payment`.
 
+### Tab: Danger Zone, Remove a test account
+
+**Purpose:** removes one **test** account completely, login included, so the email can sign up again, without pasting SQL (test-account cleanup slice 2, [requirement](/docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md)). Platform admins only: the section renders inside the Danger Zone only after the `admin_users` access check, and renders nothing if its own probe answers 401 / 403. Unlike the rest of the page it targets the account named by the email, not the session user. **There is no undo.**
+
+**Features:**
+- On mount, `GET /api/admin/test-account-cleanup/check` says whether the deployment is configured. Not configured: a "Not set up on this deployment" note pointing at [runbook §6](/docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md), and the inputs and buttons are disabled.
+- Email and tag (free text, default `+test`, only empty is refused). **Check** shows OK or BLOCKED, every blocker with its guard id and how to clear it, the rows per table (`unknown`, never 0, when a count could not be read), the storage files that will be removed, the triggers on the login and what is kept. Editing the email or the tag discards the check.
+- After an OK check, or a BLOCKED one whose only blocker is G-12 (files, which the delete removes first): type the email again; **Delete** is enabled only on an exact match (trimmed, case-insensitive). One request per click, with a "Deleting…" state. No delete is offered when the database function is out of date.
+- Result: one row per table, then TOTAL with the result (CLEAN), rows, tables, files removed and the removed login id. A refusal or error is one plain sentence chosen from the error code (including "Files removed, account kept"); the server's message and details are never shown, and nothing goes to the shared Last API Response viewer.
+
+**API Endpoints Used:** `GET` and `POST /api/admin/test-account-cleanup/check`, `POST /api/admin/test-account-cleanup/delete`.
+
+**Use cases:**
+- Check a `+test` account: OK, with its rows; run the delete and read the report.
+- Check a non-test or admin email: BLOCKED with the guard and how to clear it; no delete offered.
+- On a deployment without `TEST_CLEANUP_SECRET`: the "not set up" note, actions disabled.
+
 ---
 
 ## Adding a New Tab
@@ -384,3 +402,4 @@ Could not run a live session/DB. The following need a manual pass on `/test-busi
 | 2026-09-18 | LLM Usage tab: Layer 1.5 areas | Documented the two new areas, `onboarding` and `images`: their call names (at most three onboarding call types fire, KI-D; `client_workflow_extraction` can appear ×2 in one group), how a zero-token image row reads in Check 1, Check 5 and the area totals, the images note under the area totals, the reuse cache writing no row (KI-B), and the mid-rollout zero lines. Check 3(c) text updated: no live caller should write the helper label any more; still Info (F-7). The verify-a-session use case gains an onboarding run and an image generation. |
 | 2026-10-01 | Payment hold on the harness (invite-only signup Slice 5b, SA R-2) | New server `app/test-business-os/layout.tsx` calls the payment-hold gate first: a friend who signed up from a champion's invite and has not paid is sent to `/invite/awaiting-payment`, because middleware skips this page and its Account Setup and module testers drive the full Business OS API. One note under Account Model. No other behaviour changes; signed out, the page renders as before. |
 | 2026-10-07 | Billing tab (plan payments P-3a) | Added the **Tab: Billing** section: a test-mode plan checkout for the session account through `POST /api/business-os/billing/plan/checkout`, Stripe's embedded checkout mounted on the returned client secret (redacted from the shared viewer), the two server switches it needs in `.env.local` only, and that paying changes no plan until P-3b. New component `components/test-business-os/PlanCheckoutPanel.tsx`. |
+| 2026-10-07 | Danger Zone: Remove a test account (test-account cleanup slice 2) | Added the **Tab: Danger Zone, Remove a test account** section: admin-only, the configured probe and its "not set up" state, check then typed confirmation then delete, the G-12-only exception, the per-table report with TOTAL, refusals as one plain sentence. New component `components/business-os/purge/TestAccountCleanupPanel.tsx`, mounted at the end of `PurgeDangerZone`. |

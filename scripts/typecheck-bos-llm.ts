@@ -113,6 +113,9 @@ const SCOPED_DIRS = [
   // guard forbids `@/lib/business-os` imports), and this test pins the two
   // together. Matched by `startsWith`, so a file path scopes exactly that file.
   'lib/business-os/purge/__tests__/adminDeletionPreview.wireTypes.test.ts',
+  // Test-account cleanup slice 2: ONE file. The Danger Zone panel re-declares
+  // the cleanup routes' payloads client-side; this test pins the two together.
+  'lib/business-os/test-account-cleanup/__tests__/cleanupApiTypes.wireTypes.test.ts',
 ];
 
 const ATTRIBUTION_TEST = /attribution[^/]*\.test\.tsx?$/;
