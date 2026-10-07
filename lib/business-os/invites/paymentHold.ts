@@ -46,9 +46,14 @@ export interface PaymentHoldReaders {
   invites: Pick<BusinessOsInviteRepository, 'findHoldFactsById'>;
 }
 
+/**
+ * `source` on a held result (plan payments P-3a, SA Q-3): which lineage holds
+ * the account, so the plan checkout can restrict a friend to the friend tier
+ * without copying this predicate. Additive: the gate reads only `held`.
+ */
 export type PaymentHold =
   | { ok: true; held: false }
-  | { ok: true; held: true; inviteId: string | null }
+  | { ok: true; held: true; inviteId: string | null; source: 'account_invite' | 'admin_invite' }
   | { ok: false };
 
 /**
@@ -74,13 +79,15 @@ export async function readPaymentHold(accountId: string, readers: PaymentHoldRea
   if (!facts || facts.first_paid_at !== null) return { ok: true, held: false };
 
   // R-3: an unpaid friend is held on the lineage alone.
-  if (facts.source === 'account_invite') return { ok: true, held: true, inviteId: facts.invite_id };
+  if (facts.source === 'account_invite') {
+    return { ok: true, held: true, inviteId: facts.invite_id, source: 'account_invite' };
+  }
   if (facts.source !== 'admin_invite' || !facts.invite_id) return { ok: true, held: false };
 
   // 5c's case: an admin invite holds only when it was a Paid (tier) invite.
   const invite = await readers.invites.findHoldFactsById(facts.invite_id);
   if (invite.error) return { ok: false };
   return isAwaitingPayment(facts, invite.data?.grant_kind ?? null)
-    ? { ok: true, held: true, inviteId: facts.invite_id }
+    ? { ok: true, held: true, inviteId: facts.invite_id, source: 'admin_invite' }
     : { ok: true, held: false };
 }

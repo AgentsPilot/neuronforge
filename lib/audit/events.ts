@@ -305,6 +305,20 @@ export const AUDIT_EVENTS = {
   BOS_QUEUE_ITEM_RETRIED: 'BOS_QUEUE_ITEM_RETRIED',
 
   // ==========================================
+  // BUSINESS OS PLAN BILLING (owner-initiated, server-written)
+  // ==========================================
+  // Plan payments P-3a (AM-7, SA-P3): an owner opened a Business OS plan
+  // checkout (POST /api/business-os/billing/plan/checkout) and the session was
+  // recorded as the account's checkout lock. Entity type
+  // 'business_os_billing_account', id = the ACCOUNT id (the billing record is
+  // one row per account and Stripe mode; the mode is in the details). Written
+  // with logAndFlush before the response (WC-7). Nothing is paid or assigned
+  // yet: payment and the plan change are P-3b's events. Refusals are logged,
+  // never audited (SA Q-9). Details: tier, lookup key, session id, livemode,
+  // held, expiresAt, actor 'owner'; never the client secret or an email.
+  BOS_BILLING_CHECKOUT_STARTED: 'BOS_BILLING_CHECKOUT_STARTED',
+
+  // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
   // ==========================================
   // One entry when a run starts and one when it ends. A run that stops at its
@@ -856,6 +870,14 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   },
   // ADMIN_BOS_CLEANUP slice 7c. 'warning': an admin added one more send
   // attempt to a real client's queued message.
+  // Plan payments P-3a. 'info': an owner opened a checkout; nothing was paid.
+  // SOC2 alone, as every Business OS money event (SA W11b-3: FINANCIAL is
+  // reserved for AgentsPilot's own platform-billing events).
+  [AUDIT_EVENTS.BOS_BILLING_CHECKOUT_STARTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner opened a plan checkout (tier, session and mode recorded; nothing paid yet)',
+  },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',
     complianceFlags: ['SOC2'],

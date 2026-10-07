@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-10-06
-> **Version**: 1.7.0
+> **Last Updated**: 2026-10-07
+> **Version**: 1.9.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-07 | 1.9.0 | Dev | Added `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` (plan payments P-3a): server-only, default off. While off `POST /api/business-os/billing/plan/checkout` answers 404 and reads nothing. Turn on only where `BUSINESS_OS_PLAN_PRICES_ENABLED` is on (otherwise the route refuses every checkout, 503 with an alert), and never in production before P-3b. |
 | 2026-10-06 | 1.8.0 | Dev | Added `BUSINESS_OS_CREDITS_BOOST_ENABLED` and `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` (credits boost slice 3): the boost checkout's server-only kill switch, default off, and an optional allow-list of account UUIDs. **Stays unset on Vercel until slice 4a is deployed** (SA C-1). |
 | 2026-10-06 | 1.7.0 | Dev | Added `BUSINESS_OS_PLAN_PRICES_ENABLED` (plan payments P-2b, merge safety): server-only, default off. While off the webhook's plan price catalog looks up no lookup key and calls no Stripe API, exactly P-1's deny-all. Turned on per environment only after `npm run check-bos-plan-prices` passes against that environment's Stripe account. |
 | 2026-10-06 | 1.6.0 | Dev | Added `ADMIN_BUSINESS_DELETE_ENABLED` (admin delete AD-2a, BQ-1): admin delete's **own off switch**, server-only, default off. Checked by `POST /api/admin/users/[id]/deletion/commit` before token verification; while off the preview mints no commit token and the commit refuses `admin_delete_disabled`. Stays off for real customers until AD-3 (close the login) and the data export ship, even after the delete function is applied. |
@@ -56,6 +57,7 @@ Feature flag functions are defined in:
 | **Admin delete (admin surface)** | `ADMIN_BUSINESS_DELETE_ENABLED` | **Server only** | `false` (unset = off) | `/api/admin/users/[id]/deletion/preview` (token minting), `/api/admin/users/[id]/deletion/commit` |
 | **Business OS: Credits boost checkout** | `BUSINESS_OS_CREDITS_BOOST_ENABLED` (+ optional `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS`) | **Server only** | `false` (unset = off) | `POST /api/business-os/credits/boost/checkout` |
 | **Business OS: plan price recognition** | `BUSINESS_OS_PLAN_PRICES_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/stripe/webhook` (plan price catalog in the Business OS router) |
+| **Business OS: plan checkout** | `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/business-os/billing/plan/checkout` (refuses unless the price switch is also on) |
 
 ---
 
@@ -311,6 +313,35 @@ requirement §9.5).
 ```bash
 # .env.local — on only when this key's account passes check-bos-plan-prices
 BUSINESS_OS_PLAN_PRICES_ENABLED=false
+```
+
+---
+
+### Business OS: plan checkout — `BUSINESS_OS_PLAN_CHECKOUT_ENABLED`
+
+Plan payments P-3a. **Default: off. Server-only.** Reader:
+`isPlanCheckoutEnabled()` in `lib/business-os/billing/planCheckoutFlag.ts`
+(`parseBooleanFlag`; imports nothing else), read on every request.
+
+| State | What `POST /api/business-os/billing/plan/checkout` does |
+|---|---|
+| Off (default) | Answers **404** before reading the session, the body, the database or Stripe |
+| On | Opens an embedded Stripe subscription checkout for the signed-in owner (card only, USD, Adaptive Pricing off) and records it as the account's checkout lock. **It assigns no plan**: P-3b does that from the webhook |
+
+**Order with the price switch.** With this on and `BUSINESS_OS_PLAN_PRICES_ENABLED`
+off, the route **refuses every checkout** (503 `checkout_unavailable`, logged at
+`error` with `alert: true`): money the webhook cannot recognise is never taken.
+So turn this on only where the price switch is already on and
+`npm run check-bos-plan-prices` passes, and **never in production before P-3b
+ships** (requirement §9.5 row 15 turns it on there at go-live, after the price
+switch).
+
+The P-3a local demo turns both on **in the developer's `.env.local` only**, with
+the sandbox key; nothing on Vercel changes.
+
+```bash
+# .env.local — on only for the local demo, with BUSINESS_OS_PLAN_PRICES_ENABLED=true
+BUSINESS_OS_PLAN_CHECKOUT_ENABLED=false
 ```
 
 ---

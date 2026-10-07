@@ -100,6 +100,12 @@ export const AUDIT_ENTITY_TYPES = [
   // classified 'operator' (lib/audit/ownerVisibility.ts). Slice 7c's re-send
   // uses the same type.
   'bos_queue_item',
+  // One account's Business OS billing record (business_os_billing_accounts,
+  // one row per account and Stripe mode). Written by the plan checkout route
+  // (plan payments P-3a, BOS_BILLING_CHECKOUT_STARTED); the entity id is the
+  // ACCOUNT id, the mode is in the details. Owner-visible: it records the
+  // owner's own action (lib/audit/ownerVisibility.ts).
+  'business_os_billing_account',
   // One Business OS boost purchase (a row in business_os_boost_purchases).
   // Written by the owner's boost checkout route (credits boost slice 3); the
   // entity id is the purchase id. Owner-visible: it is the owner's own action.

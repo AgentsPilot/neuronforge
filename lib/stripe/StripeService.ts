@@ -5,6 +5,11 @@
 import Stripe from 'stripe';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import {
+  BOS_PLAN_PRODUCT_MARKER,
+  BOS_PRODUCT_METADATA_KEY,
+  BOS_USER_ID_METADATA_KEY,
+} from '@/lib/business-os/billing/stripeMetadataKeys';
 
 const logger = createLogger({ module: 'StripeService' });
 
@@ -244,6 +249,117 @@ export class StripeService {
     });
 
     return session;
+  }
+
+  // ── Business OS plan checkout (plan payments P-3a, workplan §3.4) ─────────
+  // Four Stripe-only methods: no database client, no product record. They sit
+  // AFTER `createBoostPackCheckout`, outside the slice the user_subscriptions
+  // lockdown guard reads, and none of them accepts a client.
+
+  /**
+   * The prices behind some lookup keys, in one call (at most ten keys, Stripe's
+   * limit for `lookup_keys`). No `active` filter: an archived price must surface
+   * and fail the runtime price check rather than silently disappear (SA-P12 b).
+   */
+  async listPricesByLookupKeys(lookupKeys: readonly string[]): Promise<Stripe.Price[]> {
+    if (lookupKeys.length === 0 || lookupKeys.length > 10) {
+      throw new Error('listPricesByLookupKeys takes between one and ten lookup keys');
+    }
+    const page = await this.stripe.prices.list({ lookup_keys: [...lookupKeys], limit: 10 });
+    return page.data;
+  }
+
+  /**
+   * Every subscription of a customer, in any status, for the Business OS
+   * checkout's live-subscription check (SA-P14 layer 1b, SA Q-5, C-2).
+   *
+   * Pages through ALL of them (100 per page), so a live subscription behind
+   * cancelled ones is never missed. Stops after `maxPages`; `complete: false`
+   * then tells the caller the answer may be partial, and the caller fails closed.
+   */
+  async listCustomerSubscriptions(
+    customerId: string,
+    options: { maxPages?: number } = {}
+  ): Promise<{ subscriptions: Array<{ id: string; status: Stripe.Subscription.Status }>; complete: boolean }> {
+    const maxPages = options.maxPages ?? 10;
+    const subscriptions: Array<{ id: string; status: Stripe.Subscription.Status }> = [];
+    let startingAfter: string | undefined;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await this.stripe.subscriptions.list({
+        customer: customerId,
+        status: 'all',
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      for (const subscription of result.data) subscriptions.push({ id: subscription.id, status: subscription.status });
+      if (!result.has_more || result.data.length === 0) return { subscriptions, complete: true };
+      startingAfter = result.data[result.data.length - 1].id;
+    }
+    return { subscriptions, complete: false };
+  }
+
+  /**
+   * Open an EMBEDDED Stripe subscription checkout for one Business OS plan
+   * price (SA-P8 card only, SA-P15 Adaptive Pricing off, SA-P14 expiry and
+   * idempotency key, SA-P2 no anchor or proration parameters).
+   *
+   * The metadata is built HERE from the shared Business OS keys and nothing
+   * else, so no caller can add a legacy Pilot-Credit key, which the
+   * agent-platform webhook handlers still act on (CF-4, C-3). No `currency`
+   * parameter: the price's own currency (USD, checked by the caller) is the
+   * only one.
+   *
+   * `expiresAt` is a unix time in seconds the caller chose (P-3a C-1:
+   * now + 31 minutes, since Stripe refuses less than 30 measured at its side).
+   * The returned `expiresAt` is Stripe's, which is what the caller records.
+   */
+  async createBusinessOsPlanCheckoutSession(params: {
+    customerId: string;
+    priceId: string;
+    bosUserId: string;
+    returnUrl: string;
+    expiresAt: number;
+    idempotencyKey: string;
+  }): Promise<{ sessionId: string; clientSecret: string; expiresAt: number; livemode: boolean }> {
+    const { customerId, priceId, bosUserId, returnUrl, expiresAt, idempotencyKey } = params;
+    const metadata = {
+      [BOS_PRODUCT_METADATA_KEY]: BOS_PLAN_PRODUCT_MARKER,
+      [BOS_USER_ID_METADATA_KEY]: bosUserId,
+    };
+
+    const session = await this.stripe.checkout.sessions.create(
+      {
+        mode: 'subscription',
+        ui_mode: 'embedded',
+        return_url: returnUrl,
+        redirect_on_completion: 'if_required',
+        customer: customerId,
+        line_items: [{ price: priceId, quantity: 1 }],
+        payment_method_types: ['card'],
+        adaptive_pricing: { enabled: false },
+        expires_at: expiresAt,
+        metadata,
+        subscription_data: { metadata },
+      },
+      { idempotencyKey }
+    );
+
+    if (!session.client_secret) {
+      // An embedded session always carries one; without it nobody can pay.
+      throw new Error('Stripe returned an embedded checkout session without a client secret');
+    }
+    return {
+      sessionId: session.id,
+      clientSecret: session.client_secret,
+      expiresAt: session.expires_at,
+      livemode: session.livemode,
+    };
+  }
+
+  /** Expire an open checkout session, so it can no longer be paid. */
+  async expireCheckoutSession(sessionId: string): Promise<void> {
+    await this.stripe.checkout.sessions.expire(sessionId);
   }
 
   /**

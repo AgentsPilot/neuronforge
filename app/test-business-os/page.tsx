@@ -39,6 +39,7 @@ import type { ActionSchema } from '@/lib/plugins/tester/tester-types';
 import type { ExecutionResult } from '@/lib/types/plugin-types';
 import { PurgeDangerZone } from '@/components/business-os/purge/PurgeDangerZone';
 import { LlmUsageVerification } from '@/components/test-business-os/llm-usage/LlmUsageVerification';
+import { PlanCheckoutPanel } from '@/components/test-business-os/PlanCheckoutPanel';
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 // Add tabs here. The first real tab will replace/extend this list.
@@ -47,6 +48,7 @@ const TABS = [
   { id: 'modules', label: 'Modules' },
   { id: 'danger-zone', label: 'Danger Zone' },
   { id: 'llm-usage', label: 'LLM Usage' },
+  { id: 'billing', label: 'Billing' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -476,6 +478,16 @@ export default function TestBusinessOSPage() {
             onLog={addDebugLog}
             onResponse={setLastResponse}
           />
+        </div>
+      )}
+
+      {/* Tab: Billing — plan payments P-3a. Opens a Business OS plan checkout
+          for the session account and mounts Stripe's embedded checkout. Test
+          mode only; paying changes no plan until P-3b. */}
+      {activeTab === 'billing' && (
+        <div style={panelStyle}>
+          <h2 style={{ marginTop: 0 }}>Billing — Plan checkout (test)</h2>
+          <PlanCheckoutPanel onLog={addDebugLog} onResponse={setLastResponse} />
         </div>
       )}
 
