@@ -5,6 +5,12 @@
 //
 //   scripts/test-account-cleanup-check.sql    read-only, ends with OK or BLOCKED
 //   scripts/test-account-cleanup-delete.sql   one all-or-nothing block
+//   supabase/migrations/<FUNCTION_MIGRATION>.sql
+//                                             the same builders as ONE
+//                                             secret-gated function (OX-1r)
+//   supabase/SQL Scripts/<FUNCTION_MIGRATION>_rollback.sql
+//   lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts
+//                                             only the function's version stamp
 //
 //   npx tsx scripts/generate-test-account-cleanup-sql.ts
 //
@@ -25,6 +31,17 @@
 // whose email contains the test tag. No route, service or TS runtime path may
 // ever run it. Recorded in both requirements (purge D3, admin delete UD-1/D14).
 //
+// ── OX-1r (SA re-ruling R-7, 2026-10-07, supersedes the paragraph above) ───
+// Operator-only hard delete of `auth.users` for accounts whose email contains
+// the test tag, run either as pasted SQL or by the admin-only
+// `/api/admin/test-account-cleanup/*` routes through the single secret-gated
+// RPC `public.operator_test_account_cleanup`, both generated from the same
+// builders. No other RPC, no other caller. The function is applied by the
+// migration this file writes; it refuses (42501) unless the caller sends the
+// second secret whose sha256 only the database holds (R-3). No SQL exists at
+// runtime in the app: it only calls the function and checks its version.
+// Requirement: docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md
+//
 // ── What lives here ─────────────────────────────────────────────────────────
 // Only reviewed data that the descriptors cannot express: the extra `never`
 // tables removed for a test account (BQ-2), the foreign keys to the login that
@@ -38,6 +55,7 @@
 // assigns plpgsql variables with `:=`, never `SELECT ... INTO`. Comments appear
 // only on the edit lines at the top. The test enforces all of it.
 
+import { createHash } from 'crypto';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -64,6 +82,19 @@ export const DEFAULT_TEST_TAG = '+test';
 
 export const CHECK_FILE = 'scripts/test-account-cleanup-check.sql';
 export const DELETE_FILE = 'scripts/test-account-cleanup-delete.sql';
+/**
+ * The migration that creates the function (R-1). NEVER edit it once applied:
+ * a changed plan gets a new dated name here, and the drift test then expects
+ * the new file (the old one stays as applied history).
+ */
+export const FUNCTION_MIGRATION = '20261041_operator_test_account_cleanup';
+export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
+export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
+export const VERSION_FILE = 'lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts';
+export const FUNCTION_NAME = 'public.operator_test_account_cleanup';
+export const FUNCTION_SIGNATURE = `${FUNCTION_NAME}(text, text, text, text, uuid, text)`;
+/** The row of operator_private.secrets holding the sha256 of TEST_CLEANUP_SECRET (R-3). */
+export const SECRET_ROW_NAME = 'test_account_cleanup';
 
 /** Where a table's rows name the account, when it is not `user_id`. */
 const KEY_COLUMN_OVERRIDES: Readonly<Record<string, string>> = {
@@ -827,13 +858,35 @@ const EDIT_LINES = `SELECT set_config('cleanup.target_email', ${lit(PLACEHOLDER_
 SELECT set_config('cleanup.test_tag', ${lit(DEFAULT_TEST_TAG)}, true) AS edit_test_tag;`;
 
 export function renderCheckSql(): string {
-  const buckets = litList(STORAGE_DESCRIPTORS.map((s) => s.bucket));
   return `-- TEST ACCOUNT CLEANUP, CHECK. Read-only. Edit the two lines below, then run the whole file.
 -- Runbook: docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md
 -- 1. The email of the test account to remove.
 ${EDIT_LINES}
 
-WITH
+${buildCheckQuery()};
+`;
+}
+
+/** The check statement, no edit lines, no trailing `;`. Reads `cleanup.target_email` and `cleanup.test_tag`. */
+export function buildCheckQuery(): string {
+  return `${checkCtes()}
+SELECT report.section, report.status, report.item, report.found, report.detail
+FROM report
+ORDER BY report.section_order, report.sort_order, report.item`;
+}
+
+/** The same check as one jsonb array, ordered by explicit keys (R-2 g). */
+export function buildCheckJson(): string {
+  return `${checkCtes()}
+SELECT jsonb_agg(jsonb_build_object('section', report.section, 'status', report.status, 'item', report.item, 'found', report.found, 'detail', report.detail)
+  ORDER BY report.section_order, report.sort_order, report.item)
+FROM report`;
+}
+
+/** Every CTE of the check, ending with `report`. */
+function checkCtes(): string {
+  const buckets = litList(STORAGE_DESCRIPTORS.map((s) => s.bucket));
+  return `WITH
 ${sharedCtes()},
 ${guardRowsCte()},
 removal AS (
@@ -882,15 +935,10 @@ report AS (
   SELECT 5, 'kept', 0, 'kept', 'business_os_invites redeemed or claimed by it',
     (SELECT count(*) FROM public.business_os_invites AS invites CROSS JOIN target WHERE invites.redeemed_account_id = target.user_id OR invites.claimed_account_id = target.user_id),
     ${lit(KEPT_RESIDUE[0].reason)}
-)
-SELECT report.section, report.status, report.item, report.found, report.detail
-FROM report
-ORDER BY report.section_order, report.sort_order, report.item;
-`;
+)`;
 }
 
 export function renderDeleteSql(): string {
-  const auditColumns = 'action, entity_type, entity_id, resource_name, user_id, actor_id, details, severity, compliance_flags, created_at';
   return `-- TEST ACCOUNT CLEANUP, DELETE. Removes one test account completely, or nothing at all.
 -- Run the check file first and continue only when it says OK.
 -- Runbook: docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md
@@ -900,7 +948,23 @@ ${EDIT_LINES}
 SELECT set_config('cleanup.confirm_email', 'type-the-email-again', true) AS edit_confirm_email;
 
 DO $cleanup$
-DECLARE
+${buildDeleteBlock()}
+$cleanup$;
+
+${buildDeleteReportQuery()};
+`;
+}
+
+/**
+ * The all-or-nothing DO block alone. Reads `cleanup.target_email`,
+ * `cleanup.test_tag`, `cleanup.confirm_email` and, for the audit row only,
+ * `cleanup.actor_id` and `cleanup.source` (SA-5). Unset, those two give
+ * `actor_id = NULL` and `source = 'operator_sql'`, exactly as the pasted file
+ * always wrote.
+ */
+export function buildDeleteBlock(): string {
+  const auditColumns = 'action, entity_type, entity_id, resource_name, user_id, actor_id, details, severity, compliance_flags, created_at';
+  return `DECLARE
   v_email text := NULLIF(lower(btrim(coalesce(current_setting('cleanup.target_email', true), ''))), '');
   v_confirm text := NULLIF(lower(btrim(coalesce(current_setting('cleanup.confirm_email', true), ''))), '');
   v_blockers text;
@@ -990,16 +1054,50 @@ ${planValues('        ')}
 
   INSERT INTO public.audit_trail (${auditColumns})
   VALUES (
-    ${lit(AUDIT_ACTION)}, 'user', v_user_id::text, NULL, NULL, NULL,
-    jsonb_build_object('source', 'operator_sql', 'script', ${lit(DELETE_FILE)}, 'tables', v_tables, 'rows', v_total, 'counts', v_counts),
+    ${lit(AUDIT_ACTION)}, 'user', v_user_id::text, NULL, NULL, NULLIF(current_setting('cleanup.actor_id', true), '')::uuid,
+    jsonb_build_object('source', coalesce(NULLIF(current_setting('cleanup.source', true), ''), 'operator_sql'), 'script', ${lit(DELETE_FILE)}, 'tables', v_tables, 'rows', v_total, 'counts', v_counts),
     ${lit(AUDIT_SEVERITY)}, ARRAY[${litList(AUDIT_COMPLIANCE_FLAGS)}]::text[], now()
   );
 
   RAISE NOTICE 'CLEAN. Removed % rows from % tables and the login %', v_total, v_tables, v_user_id;
-END
-$cleanup$;
+END`;
+}
 
-WITH
+/**
+ * The per-table report alone. Read-only. Run inside the delete transaction,
+ * before COMMIT, `created_at = now()` matches only this run's audit row (SA-3).
+ */
+export function buildDeleteReportQuery(): string {
+  return `${reportCtes()}
+SELECT report.line, report.rows_removed, report.result, report.tables_removed, report.removed_login, report.removed_at, report.same_run
+FROM (
+${reportRows()}
+) AS report
+ORDER BY report.sort_order, report.line`;
+}
+
+/** The same report as one jsonb array, ordered by explicit keys (R-2 g). */
+export function buildDeleteReportJson(): string {
+  return `${reportCtes()}
+SELECT jsonb_agg(jsonb_build_object('line', report.line, 'rows_removed', report.rows_removed, 'result', report.result,
+    'tables_removed', report.tables_removed, 'removed_login', report.removed_login, 'removed_at', report.removed_at, 'same_run', report.same_run)
+  ORDER BY report.sort_order, report.line)
+FROM (
+${reportRows()}
+) AS report`;
+}
+
+function reportRows(): string {
+  return `  SELECT 0 AS sort_order, per_table.table_name AS line, per_table.rows_removed,
+    NULL::text AS result, NULL::bigint AS tables_removed, NULL::text AS removed_login, NULL::timestamptz AS removed_at, NULL::boolean AS same_run
+  FROM per_table
+  UNION ALL
+  SELECT 1, 'TOTAL', summary.rows_removed, summary.result, summary.tables_removed, summary.removed_login, summary.removed_at, summary.same_run
+  FROM summary`;
+}
+
+function reportCtes(): string {
+  return `WITH
 recent AS (
   SELECT audit.entity_id, audit.created_at, audit.details
   FROM public.audit_trail AS audit
@@ -1026,17 +1124,130 @@ summary AS (
     coalesce(recent.created_at = now(), false) AS same_run
   FROM (SELECT 1 AS anchor) AS anchor_row
   LEFT JOIN recent ON true
-)
-SELECT report.line, report.rows_removed, report.result, report.tables_removed, report.removed_login, report.removed_at, report.same_run
-FROM (
-  SELECT 0 AS sort_order, per_table.table_name AS line, per_table.rows_removed,
-    NULL::text AS result, NULL::bigint AS tables_removed, NULL::text AS removed_login, NULL::timestamptz AS removed_at, NULL::boolean AS same_run
-  FROM per_table
-  UNION ALL
-  SELECT 1, 'TOTAL', summary.rows_removed, summary.result, summary.tables_removed, summary.removed_login, summary.removed_at, summary.same_run
-  FROM summary
-) AS report
-ORDER BY report.sort_order, report.line;
+)`;
+}
+
+const VERSION_TOKEN = '__CLEANUP_FUNCTION_VERSION__';
+
+/** The function, with `version` either the token or the real stamp. */
+function renderFunctionSql(version: string): string {
+  return `CREATE FUNCTION ${FUNCTION_NAME}(p_mode text, p_email text, p_tag text, p_confirm text, p_actor uuid, p_secret text)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $operator_cleanup$
+DECLARE
+  v_result jsonb;
+BEGIN
+  IF p_secret IS NULL OR pg_catalog.length(p_secret) < 32 OR NOT EXISTS (
+    SELECT 1 FROM operator_private.secrets AS stored
+    WHERE stored.name = ${lit(SECRET_ROW_NAME)}
+      AND stored.secret_sha256 = pg_catalog.sha256(pg_catalog.convert_to(p_secret, 'UTF8'))
+  ) THEN
+    RAISE EXCEPTION 'not authorised' USING ERRCODE = '42501';
+  END IF;
+  IF p_mode IS NULL OR p_mode NOT IN ('check', 'delete') THEN
+    RAISE EXCEPTION 'unknown mode' USING ERRCODE = '22023';
+  END IF;
+  IF p_mode = 'delete' AND p_actor IS NULL THEN
+    RAISE EXCEPTION 'a delete needs the admin id' USING ERRCODE = '22023';
+  END IF;
+  IF p_mode = 'check' THEN
+    PERFORM pg_catalog.set_config('transaction_read_only', 'on', true);
+  END IF;
+  PERFORM pg_catalog.set_config('cleanup.target_email', coalesce(p_email, ''), true);
+  PERFORM pg_catalog.set_config('cleanup.test_tag', coalesce(p_tag, ''), true);
+  PERFORM pg_catalog.set_config('cleanup.confirm_email', CASE WHEN p_mode = 'delete' THEN coalesce(p_confirm, '') ELSE '' END, true);
+  PERFORM pg_catalog.set_config('cleanup.actor_id', CASE WHEN p_mode = 'delete' THEN p_actor::text ELSE '' END, true);
+  PERFORM pg_catalog.set_config('cleanup.source', 'admin_page', true);
+  PERFORM pg_catalog.set_config('lock_timeout', '5s', true);
+
+  IF p_mode = 'check' THEN
+    v_result := (
+${buildCheckJson()}
+    );
+  ELSE
+${buildDeleteBlock()};
+    v_result := (
+${buildDeleteReportJson()}
+    );
+  END IF;
+
+  RETURN pg_catalog.jsonb_build_object('version', ${lit(version)}, 'mode', p_mode, 'rows', coalesce(v_result, '[]'::jsonb));
+END
+$operator_cleanup$`;
+}
+
+/** sha256 of the function SQL (with the token in place of the stamp), first 16 hex digits. */
+export function cleanupFunctionVersion(): string {
+  return createHash('sha256').update(renderFunctionSql(VERSION_TOKEN)).digest('hex').slice(0, 16);
+}
+
+/**
+ * The migration (R-1 to R-4). Comments stay at the top, without semicolons or
+ * apostrophes, so the file is as paste-safe as the operator files.
+ */
+export function renderMigrationSql(): string {
+  return `-- ${FUNCTION_MIGRATION}. GENERATED by scripts/generate-test-account-cleanup-sql.ts. Never edit by hand, and never edit once applied
+-- A changed plan goes in a new dated file (generator constant FUNCTION_MIGRATION).
+-- Operator exception OX-1r. One secret-gated function for the admin-only test-account cleanup routes
+-- It runs the same generated guards G-1 to G-18 as scripts/test-account-cleanup-delete.sql
+-- It refuses with 42501 unless the caller sends the second secret whose sha256 only this database holds
+-- Requirement docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md, SA re-ruling R-1 to R-9
+-- Runbook docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md, section 6
+-- search_path is pg_catalog, public, pg_temp (SA review) so the reviewed delete triggers resolve their tables as today
+
+DO $create_guard$
+BEGIN
+  IF pg_catalog.has_schema_privilege('anon', 'public', 'CREATE') OR pg_catalog.has_schema_privilege('authenticated', 'public', 'CREATE') THEN
+    RAISE EXCEPTION 'anon or authenticated may create objects in schema public. Revoke that first. Nothing was applied.';
+  END IF;
+END
+$create_guard$;
+
+CREATE SCHEMA operator_private;
+REVOKE ALL ON SCHEMA operator_private FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TABLE operator_private.secrets (
+  name text PRIMARY KEY,
+  secret_sha256 bytea NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE operator_private.secrets ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE operator_private.secrets FROM PUBLIC, anon, authenticated, service_role;
+
+${renderFunctionSql(cleanupFunctionVersion())};
+
+ALTER FUNCTION ${FUNCTION_SIGNATURE} OWNER TO postgres;
+REVOKE ALL ON FUNCTION ${FUNCTION_SIGNATURE} FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE} TO service_role;
+
+NOTIFY pgrst, 'reload schema';
+`;
+}
+
+export function renderRollbackSql(): string {
+  return `-- Rollback of supabase/migrations/${FUNCTION_MIGRATION}.sql. GENERATED, never edit by hand.
+-- Drops the function, the secret table and the schema. Then remove TEST_CLEANUP_SECRET from Vercel.
+
+DROP FUNCTION IF EXISTS ${FUNCTION_SIGNATURE};
+DROP TABLE IF EXISTS operator_private.secrets;
+DROP SCHEMA IF EXISTS operator_private;
+
+NOTIFY pgrst, 'reload schema';
+`;
+}
+
+/** The only generated TS: the stamp the delete route compares before the storage step (R-6). */
+export function renderVersionModule(): string {
+  return `// GENERATED by scripts/generate-test-account-cleanup-sql.ts. Never edit by hand.
+// The version stamp the test-account cleanup database function returns. The
+// delete route refuses before the storage step when the applied function
+// returns another one (SA re-ruling R-6). The drift test pins it.
+
+export const CLEANUP_FUNCTION_VERSION = '${cleanupFunctionVersion()}';
 `;
 }
 
@@ -1044,7 +1255,10 @@ function main(): void {
   const root = join(__dirname, '..');
   writeFileSync(join(root, ...CHECK_FILE.split('/')), renderCheckSql());
   writeFileSync(join(root, ...DELETE_FILE.split('/')), renderDeleteSql());
-  process.stdout.write(`Wrote ${CHECK_FILE} and ${DELETE_FILE}\n`);
+  writeFileSync(join(root, ...MIGRATION_FILE.split('/')), renderMigrationSql());
+  writeFileSync(join(root, ...ROLLBACK_FILE.split('/')), renderRollbackSql());
+  writeFileSync(join(root, ...VERSION_FILE.split('/')), renderVersionModule());
+  process.stdout.write(`Wrote ${CHECK_FILE}, ${DELETE_FILE}, ${MIGRATION_FILE}, ${ROLLBACK_FILE} and ${VERSION_FILE}\n`);
 }
 
 if (require.main === module) main();

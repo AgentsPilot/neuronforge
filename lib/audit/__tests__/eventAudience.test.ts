@@ -61,9 +61,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +1 Business OS (BUSINESS_TEST_ACCOUNT_REMOVED): operator test-account cleanup, OX-1 (2026-10-06).
   // +1 Business OS (BOS_BOOST_CHECKOUT_STARTED): credits boost slice 3, the boost checkout (2026-10-06).
   // +1 Business OS (BOS_BILLING_CHECKOUT_STARTED): plan payments P-3a, an owner opened a plan checkout (2026-10-07).
-  it('pins the split: 41 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(186);
-    expect(eventsTagged('bos')).toHaveLength(41);
+  // +1 Business OS (BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED): admin Danger Zone cleanup, OX-1r (2026-10-07).
+  it('pins the split: 42 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(187);
+    expect(eventsTagged('bos')).toHaveLength(42);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

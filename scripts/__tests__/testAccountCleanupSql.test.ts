@@ -32,12 +32,27 @@ import {
   INBOUND_FOREIGN_KEYS,
   MUST_BE_EMPTY,
   PARENT_OWNED_REASONS,
+  FUNCTION_SIGNATURE,
+  MIGRATION_FILE,
   PLACEHOLDER_EMAIL,
+  ROLLBACK_FILE,
+  SECRET_ROW_NAME,
   STEP_B_BLOCKING_EDGES,
+  VERSION_FILE,
+  buildCheckJson,
+  buildCheckQuery,
   buildCleanupPlan,
+  buildDeleteBlock,
+  buildDeleteReportJson,
+  buildDeleteReportQuery,
+  cleanupFunctionVersion,
   renderCheckSql,
   renderDeleteSql,
+  renderMigrationSql,
+  renderRollbackSql,
+  renderVersionModule,
 } from '../generate-test-account-cleanup-sql';
+import { CLEANUP_FUNCTION_VERSION } from '@/lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated';
 import {
   BLOCKING_EDGES,
   PURGE_DESCRIPTORS,
@@ -57,6 +72,8 @@ const FILES: ReadonlyArray<[string, string]> = [
   [CHECK_FILE, checkSql],
   [DELETE_FILE, deleteSql],
 ];
+const migrationSql = readSql(MIGRATION_FILE);
+const rollbackSql = readSql(ROLLBACK_FILE);
 
 const plan = buildCleanupPlan();
 const position = (table: string) => plan.findIndex((entry) => entry.table === table);
@@ -127,7 +144,34 @@ describe('drift: the committed SQL is what the generator writes', () => {
     expect(committed).toBe(generated);
   });
 
+  it.each([
+    [MIGRATION_FILE, () => renderMigrationSql()],
+    [ROLLBACK_FILE, () => renderRollbackSql()],
+    [VERSION_FILE, () => renderVersionModule()],
+  ])('%s matches the generator output (R-1)', (file, render) => {
+    // Same fix as above: regenerate, never hand-edit. Once the migration is
+    // applied, a changed plan needs a NEW FUNCTION_MIGRATION name instead.
+    expect(readSql(file)).toBe(render());
+  });
+
+  it('the pasted files wrap the same builders the function runs (R-1)', () => {
+    expect(checkSql.endsWith(`\n\n${buildCheckQuery()};\n`)).toBe(true);
+    expect(deleteSql).toContain(`DO $cleanup$\n${buildDeleteBlock()}\n$cleanup$;\n\n${buildDeleteReportQuery()};\n`);
+    expect(migrationSql).toContain(buildCheckJson());
+    expect(migrationSql).toContain(`${buildDeleteBlock()};`);
+    expect(migrationSql).toContain(buildDeleteReportJson());
+    // The builders carry no edit line, no comment and no settings of their own.
+    for (const body of [buildCheckQuery(), buildDeleteBlock(), buildDeleteReportQuery()]) {
+      expect(body).not.toContain('--');
+      expect(body).not.toContain(PLACEHOLDER_EMAIL);
+      expect(body).not.toMatch(/set_config\(/);
+      expect(body.trimEnd().endsWith(';')).toBe(false);
+    }
+  });
+
   it('is deterministic', () => {
+    expect(renderMigrationSql()).toBe(renderMigrationSql());
+    expect(renderMigrationSql()).not.toMatch(/\r/);
     expect(renderCheckSql()).toBe(renderCheckSql());
     expect(renderDeleteSql()).toBe(renderDeleteSql());
     expect(renderDeleteSql()).not.toMatch(/\r/);
@@ -356,7 +400,11 @@ describe('audit row (SA TQ-5, C-7)', () => {
     const meta = EVENT_METADATA[AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED];
     expect(meta.severity).toBe(AUDIT_SEVERITY);
     expect([...(meta.complianceFlags ?? [])]).toEqual([...AUDIT_COMPLIANCE_FLAGS]);
-    expect(deleteSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, NULL,`);
+    expect(deleteSql).toContain(
+      `'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, NULLIF(current_setting('cleanup.actor_id', true), '')::uuid,`
+    );
+    // SA-5: unset (the pasted file), actor_id is NULL and source is 'operator_sql', as before.
+    expect(deleteSql).toContain("'source', coalesce(NULLIF(current_setting('cleanup.source', true), ''), 'operator_sql')");
     expect(deleteSql).toContain(`'${AUDIT_SEVERITY}', ARRAY['SOC2']::text[], now()`);
   });
 });
@@ -417,5 +465,129 @@ describe('SQL editor hygiene (SA C-6, C-10, C-11)', () => {
     const outsideDo = sql.replace(/DO \$cleanup\$[\s\S]*?\$cleanup\$;/, 'DO_BLOCK;');
     const statements = outsideDo.split(/;\n/).map((part) => part.trim()).filter(Boolean);
     expect(statements.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('the secret-gated function (SA re-ruling R-2 to R-4, R-6)', () => {
+  const fn = migrationSql.slice(migrationSql.indexOf('CREATE FUNCTION'), migrationSql.indexOf('$operator_cleanup$;'));
+  const head = fn.slice(0, fn.indexOf('IF p_mode = \'check\' THEN\n    v_result'));
+
+  it('is SECURITY DEFINER with search_path pg_catalog, public, pg_temp (pg_temp last), returning jsonb', () => {
+    // Not '': the reviewed delete triggers (refund recompute, storage quota) name
+    // their tables without a schema and must resolve them as they do today (SA review).
+    expect(fn).toContain(
+      'CREATE FUNCTION public.operator_test_account_cleanup(p_mode text, p_email text, p_tag text, p_confirm text, p_actor uuid, p_secret text)\nRETURNS jsonb\nLANGUAGE plpgsql\nVOLATILE\nSECURITY DEFINER\nSET search_path = pg_catalog, public, pg_temp\n'
+    );
+  });
+
+  it('starts by aborting when anon or authenticated may CREATE in schema public (SA review)', () => {
+    const guard = migrationSql.indexOf('DO $create_guard$');
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(migrationSql.indexOf('CREATE SCHEMA operator_private;'));
+    expect(migrationSql).toContain(
+      "IF pg_catalog.has_schema_privilege('anon', 'public', 'CREATE') OR pg_catalog.has_schema_privilege('authenticated', 'public', 'CREATE') THEN"
+    );
+    expect(migrationSql.slice(guard, migrationSql.indexOf('$create_guard$;'))).toContain('RAISE EXCEPTION');
+  });
+
+  it('names the tables it touches directly with their schema', () => {
+    // The function's own SQL stays schema-qualified; public is on the path only for the triggers.
+    for (const table of ['operator_private.secrets', 'public.audit_trail', 'auth.users', 'storage.objects', 'public.admin_users']) {
+      expect(fn).toContain(table);
+    }
+    expect(fn).not.toMatch(/(FROM|JOIN|INSERT INTO|DELETE FROM)\s+(audit_trail|admin_users|secrets|users|objects)\b/);
+  });
+
+  it('creates its private schema loudly and locks the secret table', () => {
+    expect(migrationSql).toContain('CREATE SCHEMA operator_private;');
+    expect(migrationSql).not.toMatch(/IF NOT EXISTS/i);
+    expect(migrationSql).toContain('REVOKE ALL ON SCHEMA operator_private FROM PUBLIC, anon, authenticated, service_role;');
+    expect(migrationSql).toContain('ALTER TABLE operator_private.secrets ENABLE ROW LEVEL SECURITY;');
+    expect(migrationSql).toContain('REVOKE ALL ON TABLE operator_private.secrets FROM PUBLIC, anon, authenticated, service_role;');
+    expect(migrationSql).not.toMatch(/CREATE POLICY/i);
+  });
+
+  it('grants EXECUTE to service_role only, then reloads the schema cache last', () => {
+    expect(migrationSql).toContain(`ALTER FUNCTION ${FUNCTION_SIGNATURE} OWNER TO postgres;`);
+    expect(migrationSql).toContain(`REVOKE ALL ON FUNCTION ${FUNCTION_SIGNATURE} FROM PUBLIC, anon, authenticated;`);
+    const grants = migrationSql.match(/^GRANT .*$/gm) ?? [];
+    expect(grants).toEqual([`GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE} TO service_role;`]);
+    expect(migrationSql.trimEnd().endsWith("NOTIFY pgrst, 'reload schema';")).toBe(true);
+  });
+
+  it('checks the secret first, by sha256, and refuses with 42501', () => {
+    const secret = head.indexOf('pg_catalog.sha256(pg_catalog.convert_to(p_secret, \'UTF8\'))');
+    expect(head).toContain('p_secret IS NULL OR pg_catalog.length(p_secret) < 32');
+    expect(head).toContain(`stored.name = '${SECRET_ROW_NAME}'`);
+    expect(secret).toBeGreaterThan(0);
+    expect(head.indexOf("RAISE EXCEPTION 'not authorised' USING ERRCODE = '42501'")).toBeGreaterThan(secret);
+    // The secret check comes before anything else the function does.
+    expect(secret).toBeLessThan(head.indexOf('p_mode NOT IN'));
+    expect(fn).not.toMatch(/pgcrypto|crypt\(|digest\(/i);
+  });
+
+  it('holds no secret, hash or hex literal, and never raises a parameter', () => {
+    expect(migrationSql).not.toMatch(/'[0-9a-f]{32,}'/i);
+    expect(migrationSql).not.toMatch(/decode\(/i);
+    expect(migrationSql).not.toMatch(/RAISE[^;]*p_(secret|email|tag|confirm)/i);
+  });
+
+  it('sets all five cleanup values from parameters, plus read-only for a check and the lock timeout', () => {
+    expect(head).toContain("PERFORM pg_catalog.set_config('transaction_read_only', 'on', true);");
+    for (const name of ['target_email', 'test_tag', 'confirm_email', 'actor_id', 'source']) {
+      expect(head).toContain(`PERFORM pg_catalog.set_config('cleanup.${name}', `);
+    }
+    expect(head).toContain("PERFORM pg_catalog.set_config('cleanup.source', 'admin_page', true);");
+    expect(head).toContain("IF p_mode = 'delete' AND p_actor IS NULL THEN");
+    expect(head).toContain("PERFORM pg_catalog.set_config('lock_timeout', '5s', true);");
+    expect(fn).not.toContain('statement_timeout');
+    expect(fn).not.toMatch(/\bDO \$/);
+  });
+
+  it('returns the version stamp the app pins (R-6)', () => {
+    expect(CLEANUP_FUNCTION_VERSION).toBe(cleanupFunctionVersion());
+    expect(CLEANUP_FUNCTION_VERSION).toMatch(/^[0-9a-f]{16}$/);
+    expect(fn).toContain(`pg_catalog.jsonb_build_object('version', '${CLEANUP_FUNCTION_VERSION}', 'mode', p_mode, 'rows'`);
+  });
+
+  it('the rollback drops the function, the table and the schema, then reloads', () => {
+    expect(rollbackSql).toContain(`DROP FUNCTION IF EXISTS ${FUNCTION_SIGNATURE};`);
+    expect(rollbackSql).toContain('DROP TABLE IF EXISTS operator_private.secrets;');
+    expect(rollbackSql).toContain('DROP SCHEMA IF EXISTS operator_private;');
+    expect(rollbackSql.trimEnd().endsWith("NOTIFY pgrst, 'reload schema';")).toBe(true);
+  });
+});
+
+describe('paste safety of the migration and rollback (SA C-6, R-1)', () => {
+  const SQL: ReadonlyArray<[string, string, number]> = [
+    [MIGRATION_FILE, migrationSql, 1],
+    [ROLLBACK_FILE, rollbackSql, 0],
+  ];
+
+  it.each(SQL)('%s has "into" only as the audit INSERT INTO keyword', (_file, sql, expected) => {
+    const allowed = 'INSERT INTO public.audit_trail (';
+    expect(sql.split(allowed).length - 1).toBe(expected);
+    expect(sql.split(allowed).join('').match(/\binto\b/gi)).toBeNull();
+  });
+
+  it.each(SQL)('%s closes every string, comment and dollar quote', (_file, sql) => {
+    expect(scan(sql).unterminated).toBe(false);
+  });
+
+  it.each(SQL)('%s keeps comments to the header, without semicolons or apostrophes', (_file, sql) => {
+    const lines = sql.split('\n');
+    const firstCode = lines.findIndex((line) => line !== '' && !line.startsWith('--'));
+    lines.forEach((line, index) => {
+      if (line.includes('--')) expect([index, line.startsWith('-- ') && index < firstCode]).toEqual([index, true]);
+    });
+    for (const token of scan(sql).tokens.filter((t) => t.kind === 'comment')) expect(token.text).not.toMatch(/[;']/);
+  });
+
+  it.each(SQL)('%s has no semicolon or "--" inside a string literal, and no email', (_file, sql) => {
+    const offenders = scan(sql)
+      .tokens.filter((t) => t.kind === 'string' && (t.text.includes(';') || t.text.includes('--')))
+      .map((t) => t.text.slice(0, 60));
+    expect(offenders).toEqual([]);
+    expect(sql.match(/[A-Za-z0-9.+_-]+@[A-Za-z0-9.-]+\.[a-z]+/g)).toBeNull();
   });
 });
