@@ -1,0 +1,77 @@
+kind	fn_name	identity_args	nargs	min_args	search_path	x_public	x_anon	x_auth	x_service	public_acl	execute_grantees	triggers
+SUMMARY	total secdef in public=75; anon executable=68; anon executable non trigger=50; anon non trigger zero args=1; anon non trigger callable with no args=3; authenticated executable non trigger=50; PUBLIC explicit execute entry=67; service_role cannot execute=0; missing pinned search_path=47; other schemas: pgbouncer 1 anon 0, vault 2 anon 0; authenticator pgrst settings: none set on role; default privileges on new functions: postgres public {postgres,anon,authenticated,service_role =X} AND supabase_admin public {postgres,anon,authenticated,service_role =X}; exec_sql/get_table_constraints in public: none (prod run 2026-10-07)
+trigger	advance_contact_on_completed_booking		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+fn	advance_contact_stage	p_user_id uuid, p_contact_id uuid, p_target_type text, p_only_from text[]	4	4	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	auto_disable_ineffective_behavior_rules	p_min_applications integer, p_min_effectiveness numeric	2	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+trigger	auto_set_agent_org_id		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+fn	business_os_auth_email_has_account	p_email text	1	1	""	f	f	f	t	f	postgres service_role	0
+trigger	business_os_plan_fact_onboarding		0	0	""	f	f	f	t	f	postgres service_role	1
+trigger	business_os_plan_fact_profile		0	0	""	f	f	f	t	f	postgres service_role	1
+fn	check_execution_anomaly	p_agent_id uuid, p_execution_id uuid, p_user_id uuid, p_duration_ms numeric, p_token_usage numeric, p_step_count integer, p_retry_count integer, p_success boolean	8	8	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	check_subdomain_available	subdomain_to_check text	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	claim_auth_handoff_code	p_code text	1	1	public	f	f	f	t	f	postgres service_role	0
+fn	claim_due_daily_briefings	p_runner uuid, p_batch integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	claim_due_insight_actions	p_runner uuid, p_batch integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	claim_due_lead_responses	p_runner uuid, p_batch integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	claim_due_payment_automation_executions	p_runner uuid, p_batch integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	claim_due_payment_reminders	p_runner uuid, p_batch integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+trigger	create_user_settings		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+fn	dismiss_setup_step	p_user_id uuid, p_step_id text	2	2	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	find_similar_intent_examples	p_plugins text[], p_category text, p_complexity text, p_limit integer	4	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	generate_subdomain	business_name text	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_active_failures	p_plugin text, p_action text	2	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_last_perfect_calibration	p_agent_id uuid, p_user_id uuid	2	2	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_or_create_user_organization	p_user_id uuid	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_similar_patterns	p_plugins text[], p_limit integer	2	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_top_insights	p_limit integer	1	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_unviewed_insights_count	p_agent_id uuid	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_user_credit_balance	p_user_id uuid	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_user_subscription_info	p_user_id uuid	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_user_usage_summary	target_user_id uuid, days_back integer	2	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	get_user_workflow_stats	target_user_id uuid	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	has_sufficient_credits	p_user_id uuid, p_required_credits integer	2	2	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	increment_calibration_count	p_agent_id uuid	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	increment_executions_used	p_user_id uuid	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+trigger	increment_smart_link_click_count		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+fn	increment_verified_question_uses	p_ids uuid[]	1	1	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	is_platform_admin		0	0	pg_catalog, public	f	t	t	t	f	postgres anon authenticated service_role	0
+fn	is_reward_eligible	p_user_id uuid, p_reward_key character varying	2	2	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+trigger	link_subscriber_to_contact		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	log_document_activity		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	log_exchange_rate_change		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	marketing_consent_project		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+fn	match_behavior_rules	p_user_id uuid, p_agent_id uuid, p_plugin text, p_action text, p_error_code text, p_data_field text	6	5	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	match_verified_questions	query_embedding vector, p_user_id uuid, p_language text, similarity_threshold double precision, result_limit integer	5	3	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	operator_test_account_cleanup	p_mode text, p_email text, p_tag text, p_confirm text, p_actor uuid, p_secret text	6	6	pg_catalog, public, pg_temp	f	f	f	t	f	postgres service_role	0
+fn	pg_advisory_unlock	lock_id bigint	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	pg_try_advisory_lock	lock_id bigint	1	1	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+trigger	promote_contact_on_payment		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+fn	purge_schema_introspect		0	0	pg_catalog, public	f	f	f	t	f	postgres service_role	0
+fn	reap_stale_daily_briefings	p_lease_seconds integer, p_max_attempts integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	reap_stale_insight_actions	p_lease_seconds integer, p_max_attempts integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	reap_stale_lead_responses	p_lease_seconds integer, p_max_attempts integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	reap_stale_payment_automation_executions	p_lease_seconds integer, p_max_attempts integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	reap_stale_payment_reminders	p_lease_seconds integer, p_max_attempts integer	2	2	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	record_auto_fix_result	p_pattern_id uuid, p_success boolean	2	2	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	record_behavior_rule_result	p_rule_id uuid, p_success boolean	2	2	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	record_business_chat_plan_outcome	p_id uuid, p_success boolean	2	2	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	record_business_event	p_user_id uuid, p_event_type text, p_category text, p_entity_type text, p_entity_id uuid, p_contact_id uuid, p_value numeric, p_metadata jsonb, p_source text, p_occurred_at timestamp with time zone	10	10	public	t	t	t	t	t	PUBLIC postgres service_role	0
+fn	record_execution_anomaly	p_agent_id uuid, p_execution_id uuid, p_user_id uuid, p_anomaly_type text, p_severity text, p_baseline_value numeric, p_actual_value numeric, p_z_score numeric, p_deviation_percent numeric, p_plugin text, p_action text, p_step_index integer	12	9	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	record_global_failure	p_error_code text, p_plugin text, p_action text, p_recovery_method text, p_recovery_success boolean	5	3	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	record_intent_example_usage	p_example_id uuid, p_success boolean	2	2	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	search_business_chat_plans_semantic	query_embedding vector, p_catalog_version text, p_language text, p_user_id uuid, similarity_threshold double precision, result_limit integer	6	4	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+trigger	tg_activity_reply_events		0	0	public	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	tg_booking_events		0	0	public	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	tg_contact_events		0	0	public	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	tg_invoice_events		0	0	public	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	tg_page_view_events		0	0	public	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	tg_proposal_events		0	0	public	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	tg_service_events		0	0	public	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+trigger	tg_transaction_events		0	0	public	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+fn	update_execution_baseline	p_agent_id uuid, p_user_id uuid, p_duration_ms numeric, p_token_usage numeric, p_step_count integer, p_retry_count integer, p_success boolean	7	7	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	update_overdue_installments		0	0	null	f	f	f	t	f	postgres service_role	0
+trigger	update_user_storage_used		0	0	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	1
+fn	upsert_error_pattern	p_user_id uuid, p_agent_id uuid, p_error_code text, p_plugin text, p_action text, p_error_message text, p_step_type text, p_recovery_attempt jsonb	8	7	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	upsert_intent_example	p_user_input_normalized text, p_intent_contract jsonb, p_plugin_set text[], p_calibration_iterations integer, p_token_usage integer, p_category text	6	3	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	upsert_plugin_performance	p_agent_id uuid, p_user_id uuid, p_plugin text, p_action text, p_success boolean, p_duration_ms numeric, p_tokens numeric, p_error_code text	8	6	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
+fn	upsert_workflow_pattern	p_plugin_sequence text[], p_trigger_type text, p_step_count integer, p_category text, p_success boolean, p_execution_time_ms numeric, p_token_usage numeric	7	7	null	t	t	t	t	t	PUBLIC postgres anon authenticated service_role	0
