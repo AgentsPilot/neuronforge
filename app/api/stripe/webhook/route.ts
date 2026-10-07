@@ -1123,10 +1123,20 @@ async function handleConnectPlanSubscriptionCreated(
 /**
  * Does this connected account belong to the business that owns this record?
  *
- * Cached per invocation: a webhook may check the same account more than once,
- * and this is two queries.
+ * The owner lookup is two queries and one request may ask more than once, so
+ * found owners are cached. What the cache guarantees (FU-5):
+ *
+ * - A failed lookup is never stored. `resolveAccountOwner` throws on a read
+ *   error; the throw reaches `POST`'s catch, which releases the claim and
+ *   returns 500, so Stripe retries with a fresh lookup.
+ * - "No business" (`null`) is never stored either, so an account whose row
+ *   lands a moment later is found by the next event, not refused for the life
+ *   of the instance.
+ * - `POST` clears the map when a request starts. The map is module-level, so
+ *   requests overlapping on one warm instance may share a positive owner that
+ *   another of them found moments earlier; nothing older survives a new request.
  */
-const accountOwnerCache = new Map<string, string | null>();
+const accountOwnerCache = new Map<string, string>();
 
 async function accountOwns(
   connectAccountId: string,
@@ -1143,17 +1153,16 @@ async function accountOwns(
  *
  * Taken from the account the event came from (`event.account`, inside the
  * signed payload), never from metadata. Shares `accountOwns`' cache, so asking
- * both for the same account costs one lookup.
+ * both for the same mapped account costs one lookup. A lookup error throws
+ * (see `accountOwnerCache`); it is never read as "maps to none".
  */
 async function accountOwner(connectAccountId: string, log: Logger): Promise<string | null> {
-  if (!accountOwnerCache.has(connectAccountId)) {
-    accountOwnerCache.set(
-      connectAccountId,
-      await resolveAccountOwner(supabaseAdmin, connectAccountId)
-    );
-  }
+  let owner = accountOwnerCache.get(connectAccountId) ?? null;
 
-  const owner = accountOwnerCache.get(connectAccountId) ?? null;
+  if (!owner) {
+    owner = await resolveAccountOwner(supabaseAdmin, connectAccountId);
+    if (owner) accountOwnerCache.set(connectAccountId, owner);
+  }
 
   // An account we cannot map to any business is not proof of ownership. It is
   // also not necessarily an attack — a newly connected account whose row has
@@ -2265,6 +2274,10 @@ export async function POST(request: NextRequest) {
   // Set once this request has claimed the event. The catch needs it to release
   // the claim, and it must survive out of the try block to do so.
   let processedEventId: string | null = null;
+
+  // A warm instance keeps module state between deliveries; an owner found for
+  // an earlier one is not reused here (see `accountOwnerCache`, FU-5).
+  accountOwnerCache.clear();
 
   try {
     const body = await request.text();

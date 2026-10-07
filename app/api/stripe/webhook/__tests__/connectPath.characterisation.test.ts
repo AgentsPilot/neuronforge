@@ -63,6 +63,11 @@ interface Scenario {
   knownPlanPrices?: Record<string, string>;
   /** Connected account → the business it maps to (resolveAccountOwner). */
   owners?: Record<string, string | null>;
+  /**
+   * FU-5: accounts whose owner lookup fails with a read error. The stub rejects
+   * with the message the real resolver throws.
+   */
+  ownerLookupFails?: string[];
   /** `table:operation` → answer, or answers consumed in order. Default: no rows, no error. */
   db?: Record<string, Answer | Answer[]>;
   planLookup?: Answer;
@@ -171,6 +176,9 @@ jest.mock('@/lib/payments/stripeAccountContext', () => ({
   resolveAccountOwner: (...args: unknown[]) => {
     mockRecord({ type: 'resolveAccountOwner', args });
     const accountId = String(args[1]);
+    if (mockScenario.ownerLookupFails?.includes(accountId)) {
+      return Promise.reject(new Error('Account owner lookup failed on stripe_connect_accounts (code XX000)'));
+    }
     return Promise.resolve(mockScenario.owners?.[accountId] ?? null);
   },
 }));
@@ -1122,5 +1130,26 @@ describe('Stripe webhook, Fix-1b: plan link ids', () => {
       const result = await run({ fixture, owners: OWNED_BY_OTHER });
       expect(bindCalls(result)).toEqual([]);
     }
+  });
+});
+
+/**
+ * FU-5: an owner lookup that fails is retried, not refused.
+ *
+ * Before FU-5 a read error came back as "maps to no business": the handler
+ * refused, the claim was completed and Stripe never retried. Now the resolver
+ * throws, and the route's existing catch (entry 10) releases the claim to
+ * `failed` and returns 500.
+ */
+describe('Stripe webhook, FU-5: owner lookup failure', () => {
+  it('FU5-1. invoice.finalized whose owner lookup fails: 500, claim released to failed, no invoice write', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-finalized.json',
+        owners: OWNER_A,
+        ownerLookupFails: ['acct_owner_a'],
+        db: { 'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }) },
+      })
+    ).toMatchSnapshot();
   });
 });

@@ -425,6 +425,12 @@ export function stripeRequestOptions(
  *
  * Both tables are checked because either may hold the id, exactly as the
  * forward lookup does.
+ *
+ * THROWS ON A READ ERROR. `null` means both reads succeeded and neither named
+ * this account. A failed read must never look like that: the webhook refuses an
+ * unmapped account and completes the event, so a transient error read as
+ * `null` lost the event for good (FU-5). Thrown, it fails the webhook, the
+ * claim is released and Stripe retries.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export async function resolveAccountOwner(
@@ -437,6 +443,7 @@ export async function resolveAccountOwner(
     .eq('stripe_account_id', stripeAccountId)
     .maybeSingle();
 
+  if (direct.error) throw ownerLookupError('stripe_connect_accounts', direct.error);
   if (direct.data?.user_id) return direct.data.user_id;
 
   // The OAuth path stores it inside profile_data, which cannot be queried by a
@@ -447,6 +454,8 @@ export async function resolveAccountOwner(
     .select('user_id, profile_data, status')
     .eq('plugin_key', 'stripe');
 
+  if (viaPlugin.error) throw ownerLookupError('plugin_connections', viaPlugin.error);
+
   for (const row of viaPlugin.data ?? []) {
     const profile = row.profile_data as { stripe_account_id?: string; id?: string } | null;
     const id = profile?.stripe_account_id ?? profile?.id;
@@ -454,4 +463,15 @@ export async function resolveAccountOwner(
   }
 
   return null;
+}
+
+/**
+ * The error `resolveAccountOwner` throws when a read fails.
+ *
+ * The table and the PostgREST code only (SA FU-5 C-3): the message is stored in
+ * `processed_webhook_events.failure_message` and logged, so it carries no
+ * account id and no row data.
+ */
+function ownerLookupError(table: string, error: { code?: string } | null | undefined): Error {
+  return new Error(`Account owner lookup failed on ${table} (code ${error?.code || 'unknown'})`);
 }

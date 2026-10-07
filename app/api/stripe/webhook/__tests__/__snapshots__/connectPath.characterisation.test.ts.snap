@@ -2905,6 +2905,104 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 11. platfo
 }
 `;
 
+exports[`Stripe webhook, FU-5: owner lookup failure FU5-1. invoice.finalized whose owner lookup fails: 500, claim released to failed, no invoice write 1`] = `
+{
+  "body": {
+    "error": "Webhook processing failed",
+    "success": false,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_invoice_finalized",
+            "event_type": "invoice.finalized",
+            "metadata": {
+              "created": 1790000600,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, invoice_number, user_id",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_connect_final_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "failure_message": "Account owner lookup failed on stripe_connect_accounts (code XX000)",
+            "status": "failed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 500,
+}
+`;
+
 exports[`Stripe webhook, Fix-1: ids the sending business cannot prove it owns F1-1. invoice.paid metadata UUID naming another business's invoice is refused before stripe_invoice_id is written 1`] = `
 {
   "body": {
