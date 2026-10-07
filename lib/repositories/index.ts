@@ -279,6 +279,7 @@ export type {
   UpsertPluginConnectionInput,
   // User subscription (free-tier grant) types
   UserSubscriptionGrantState,
+  UserSubscriptionBillingSummary,
   FreeTierNewRowValues,
   FreeTierNewRow,
   FreeTierGrantPatch,
