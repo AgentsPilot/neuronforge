@@ -18,6 +18,8 @@ import { syncBookingsForTransactions } from '@/lib/payments/syncBookingPaymentSt
 import { resolveProcessorFee, feeColumns } from '@/lib/payments/processorFee';
 import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
+import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
 import { createLogger, type Logger } from '@/lib/logger';
 import {
@@ -598,6 +600,33 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
 }
 
 /**
+ * A link id from metadata, kept only if `ownerId` owns the row it names.
+ *
+ * Absent → null, nothing read. Not owned, or not readable → null and one error
+ * line saying which (`reason`), so a dropped link can be found and, if it was a
+ * transient failure, repaired. The id is logged; it is ours, not personal data.
+ */
+async function ownedOrNull(
+  rawId: string | undefined,
+  ownerId: string,
+  field: 'contact_id' | 'booking_id' | 'service_id',
+  findOwnedId: (id: string, userId: string) => Promise<{ data: string | null; error: Error | null }>,
+  context: { connectAccountId: string; paymentIntentId: string },
+  log: Logger
+): Promise<string | null> {
+  if (!rawId) return null;
+
+  const { data, error } = await findOwnedId(rawId, ownerId);
+  if (data) return data;
+
+  log.error(
+    { ...context, field, id: rawId, reason: error ? 'read_failed' : 'not_owned' },
+    'payment_intent.succeeded link not proved to belong to the owner - dropping it'
+  );
+  return null;
+}
+
+/**
  * A standalone payment on a connected account.
  *
  * Upserted on `stripe_payment_intent_id`, which is UNIQUE, so this cannot
@@ -668,6 +697,32 @@ async function handleConnectPaymentIntentSucceeded(
     return;
   }
 
+  /*
+   * The links, vetted (F-4).
+   *
+   * `owner_id` is proved above, but the contact, booking and service ids beside
+   * it are metadata the same connected account wrote, and they are not proved by
+   * it. A foreign `booking_id` on this row is enough on its own: the
+   * `propagate_refund_to_booking` trigger then marks THAT booking paid, by id,
+   * across businesses. Each id is kept only if the owner owns it. A foreign one
+   * is dropped, never refused: the money did arrive in this account and belongs
+   * on its books. A failed read drops too (fail closed), with its own reason, so
+   * a repair can tell it from an attack.
+   */
+  const linkContext = { connectAccountId, paymentIntentId: intent.id };
+  const contactId = await ownedOrNull(
+    intent.metadata?.contact_id, ownerId, 'contact_id',
+    (id, userId) => crmContactRepository.findOwnedId(id, userId), linkContext, log
+  );
+  const bookingId = await ownedOrNull(
+    intent.metadata?.booking_id, ownerId, 'booking_id',
+    (id, userId) => schedulingBookingRepository.findOwnedId(id, userId), linkContext, log
+  );
+  const serviceId = await ownedOrNull(
+    intent.metadata?.service_id, ownerId, 'service_id',
+    (id, userId) => schedulingServiceRepository.findOwnedId(id, userId), linkContext, log
+  );
+
   const currency = intent.currency.toUpperCase();
 
   /*
@@ -686,7 +741,7 @@ async function handleConnectPaymentIntentSucceeded(
 
   const { error } = await supabaseAdmin.from('payment_transactions').insert({
     user_id: ownerId,
-    contact_id: intent.metadata?.contact_id || null,
+    contact_id: contactId,
     // `/ 100` assumed every currency has two decimal places. JPY has none, so a
     // ¥5,000 payment was recorded as 50 — under-reporting revenue a hundredfold
     // and leaving the refund guard comparing figures on two different scales.
@@ -699,8 +754,8 @@ async function handleConnectPaymentIntentSucceeded(
     // THE COLUMNS, not metadata. Both readers — `findSettledForBooking` and
     // `resolveRefundTarget` — query the columns, so money written only into
     // metadata was money that could not be refunded or attributed to its work.
-    booking_id: intent.metadata?.booking_id || null,
-    service_id: intent.metadata?.service_id || null,
+    booking_id: bookingId,
+    service_id: serviceId,
     ...feeColumns(fee),
     paid_at: new Date(intent.created * 1000).toISOString(),
     description: intent.description || 'Website payment',
@@ -708,8 +763,10 @@ async function handleConnectPaymentIntentSucceeded(
     refunded_amount: 0,
     metadata: {
       // Kept as well, not instead: rows written before this carry it only here.
-      booking_id: intent.metadata?.booking_id || null,
-      service_id: intent.metadata?.service_id || null,
+      // The vetted values: a reader falling back to this copy must not find
+      // the id the columns refused.
+      booking_id: bookingId,
+      service_id: serviceId,
       source: 'payment_intent_webhook'
     },
     ...describeChargeAccount(connectAccountId)
@@ -1071,6 +1128,17 @@ async function accountOwns(
 ): Promise<boolean> {
   if (!ownerId) return false;
 
+  return (await accountOwner(connectAccountId, log)) === ownerId;
+}
+
+/**
+ * The business that owns this connected account, or null when it maps to none.
+ *
+ * Taken from the account the event came from (`event.account`, inside the
+ * signed payload), never from metadata. Shares `accountOwns`' cache, so asking
+ * both for the same account costs one lookup.
+ */
+async function accountOwner(connectAccountId: string, log: Logger): Promise<string | null> {
   if (!accountOwnerCache.has(connectAccountId)) {
     accountOwnerCache.set(
       connectAccountId,
@@ -1085,10 +1153,10 @@ async function accountOwns(
   // not landed yet reads the same way — so it is logged rather than silent.
   if (!owner) {
     log.warn({ connectAccountId }, 'Connect account maps to no known business');
-    return false;
+    return null;
   }
 
-  return owner === ownerId;
+  return owner;
 }
 
 async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountId: string, log: Logger) {
@@ -1225,6 +1293,20 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       if (invoiceByMetadata && !metadataLookupError) {
         platformInvoice = invoiceByMetadata;
         log.info({ invoiceId: invoiceByMetadata.id }, 'Found platform invoice by metadata invoice id');
+
+        // Ownership FIRST, before anything is written. The UUID came from
+        // metadata the connected account writes, and the write below plants
+        // this account's Stripe invoice id on the row. Checked after the write,
+        // a refusal left another business's invoice pointing at the attacker's
+        // Stripe invoice, so its later finalized / payment_failed /
+        // marked_uncollectible events found and rewrote the wrong row (F-1).
+        if (!(await accountOwns(connectAccountId, invoiceByMetadata.user_id, log))) {
+          log.error(
+            { connectAccountId, invoiceId: invoiceByMetadata.id },
+            'Connect invoice.paid names an invoice owned by a different business - refusing'
+          );
+          return;
+        }
 
         // Update the invoice with stripe_invoice_id for future lookups
         await supabaseAdmin
@@ -1762,17 +1844,40 @@ async function handleConnectCheckoutCompleted(
   if (bookingId) {
     log.info({ bookingId, sessionId: session.id }, 'Checkout session for booking');
 
-    // Update booking payment status
-    const { error: bookingError } = await supabaseAdmin
+    // The booking id is metadata the connected account wrote, so it could name
+    // any business's booking (F-2). The write is scoped to the business that
+    // owns the SENDING account: another business's booking matches no row.
+    const owner = await accountOwner(connectAccountId, log);
+    if (!owner) {
+      log.error(
+        { connectAccountId, bookingId },
+        'Connect checkout names a booking on an account that maps to no business - refusing'
+      );
+      return;
+    }
+
+    // Update booking payment status. `count` (never `.select()` after an
+    // update) is how a foreign id is told apart: it updates nothing.
+    const { error: bookingError, count: bookingsUpdated } = await supabaseAdmin
       .from('scheduling_bookings')
-      .update({
-        payment_status: 'paid',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', bookingId);
+      .update(
+        {
+          payment_status: 'paid',
+          updated_at: new Date().toISOString()
+        },
+        { count: 'exact' }
+      )
+      .eq('id', bookingId)
+      .eq('user_id', owner);
 
     if (bookingError) {
       log.error({ err: bookingError, bookingId }, 'Failed to update booking payment status');
+    } else if (bookingsUpdated === 0) {
+      // Strictly 0: an absent count says nothing and must not read as a refusal.
+      log.error(
+        { connectAccountId, bookingId },
+        'Connect checkout names a booking owned by a different business - no row updated'
+      );
     } else {
       log.info({ bookingId }, 'Booking payment status updated');
     }
@@ -1823,6 +1928,17 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
 
   if (lookupError || !platformInvoice) {
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
+    return;
+  }
+
+  // Found by Stripe invoice id, which is only as trustworthy as whoever wrote
+  // it onto our row: the invoice.paid fallback used to plant it before its owner
+  // check (F-1). So the sending account must own the row, like invoice.paid.
+  if (!(await accountOwns(connectAccountId, platformInvoice.user_id, log))) {
+    log.error(
+      { connectAccountId, invoiceId: platformInvoice.id },
+      'Connect invoice.payment_failed names an invoice owned by a different business - refusing'
+    );
     return;
   }
 
@@ -1900,12 +2016,22 @@ async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAcc
   // Look up the platform invoice by Stripe invoice ID
   const { data: platformInvoice, error: lookupError } = await supabaseAdmin
     .from('payment_invoices')
-    .select('id, invoice_number')
+    .select('id, invoice_number, user_id')
     .eq('stripe_invoice_id', invoice.id)
     .single();
 
   if (lookupError || !platformInvoice) {
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
+    return;
+  }
+
+  // Same reason as invoice.payment_failed: a planted Stripe id must not let
+  // one business replace another's hosted payment link and PDF (F-1).
+  if (!(await accountOwns(connectAccountId, platformInvoice.user_id, log))) {
+    log.error(
+      { connectAccountId, invoiceId: platformInvoice.id },
+      'Connect invoice.finalized names an invoice owned by a different business - refusing'
+    );
     return;
   }
 
@@ -1940,12 +2066,22 @@ async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connec
   // Look up the platform invoice by Stripe invoice ID
   const { data: platformInvoice, error: lookupError } = await supabaseAdmin
     .from('payment_invoices')
-    .select('id, invoice_number')
+    .select('id, invoice_number, user_id')
     .eq('stripe_invoice_id', invoice.id)
     .single();
 
   if (lookupError || !platformInvoice) {
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
+    return;
+  }
+
+  // Same reason as invoice.payment_failed: a planted Stripe id must not let
+  // one business cancel another's invoice (F-1).
+  if (!(await accountOwns(connectAccountId, platformInvoice.user_id, log))) {
+    log.error(
+      { connectAccountId, invoiceId: platformInvoice.id },
+      'Connect invoice.marked_uncollectible names an invoice owned by a different business - refusing'
+    );
     return;
   }
 
