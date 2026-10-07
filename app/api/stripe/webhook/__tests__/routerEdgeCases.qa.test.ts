@@ -66,12 +66,13 @@ jest.mock('@/lib/business-os/billing/planPriceCatalog', () => {
   return {
     ...actual,
     planPriceCatalog: {
-      load: (...args: unknown[]) => {
+      load: () => {
         mockCatalogLoads += 1;
         const c = mockScenario.catalog;
         if (c === 'throw') return Promise.reject(new Error('Stripe unavailable (QA)'));
-        if (c) return Promise.resolve({ byPriceId: new Map(Object.entries(c)), fromCache: false });
-        return actual.planPriceCatalog.load(...args);
+        // P-2b (workplan §3.3): an explicit empty map, never the real catalog,
+        // which would ask Stripe once the lookup keys are filled and switched on.
+        return Promise.resolve({ byPriceId: new Map(Object.entries(c ?? {})), fromCache: false });
       },
     },
   };
