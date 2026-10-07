@@ -4,12 +4,13 @@
 
 /**
  * The reduced agent-platform billing screen (Business OS plan payments P-10b,
- * SA ruling Q-6), rendered with a mocked Supabase client and fetch.
+ * SA ruling Q-6), rendered with a mocked fetch.
  *
  * What would mislead a user if it were wrong: a purchase, upgrade or boost-pack
  * control that now only gets a 410; a request to a retired route on load; a
- * browser read of `boost_packs`; or losing what still serves an existing
- * subscription (balance, portal, cancel, reactivate, invoices).
+ * browser database read (the figures come from GET /api/billing/summary, B-3);
+ * or losing what still serves an existing subscription (balance, portal,
+ * cancel, reactivate, invoices).
  */
 
 import '@testing-library/jest-dom';
@@ -28,40 +29,20 @@ jest.mock('@/lib/logger', () => ({
 }));
 
 type Rows = Record<string, unknown>;
-const tablesRead: string[] = [];
 let subscriptionRow: Rows | null = null;
 
-function builder(table: string) {
-  const result = (): { data: unknown; error: null } => {
-    if (table === 'user_subscriptions') return { data: subscriptionRow, error: null };
-    if (table === 'credit_transactions') return { data: [{ credits_delta: 50 }], error: null };
-    if (table === 'ais_system_config') {
-      return {
-        data: [
-          { config_key: 'pilot_credit_cost_usd', config_value: '0.00048' },
-          { config_key: 'tokens_per_pilot_credit', config_value: '10' },
-        ],
-        error: null,
-      };
-    }
-    return { data: [], error: null };
-  };
-  const chain: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'in', 'order', 'neq']) chain[m] = () => chain;
-  chain.single = () => Promise.resolve(result());
-  chain.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
-    Promise.resolve(result()).then(resolve, reject);
-  return chain;
-}
-
+// The component must not touch the browser Supabase client at all any more.
+const browserSupabaseUsed = jest.fn();
 jest.mock('@/lib/supabaseClient', () => ({
-  supabase: {
-    auth: { getUser: () => Promise.resolve({ data: { user: { id: 'user-1' } } }) },
-    from: (table: string) => {
-      tablesRead.push(table);
-      return builder(table);
-    },
-  },
+  supabase: new Proxy(
+    {},
+    {
+      get: (_target, prop) => {
+        browserSupabaseUsed(String(prop));
+        return undefined;
+      },
+    }
+  ),
 }));
 
 import BillingSettings from '../BillingSettings';
@@ -69,14 +50,12 @@ import BillingSettings from '../BillingSettings';
 const fetchCalls: string[] = [];
 
 beforeEach(() => {
-  tablesRead.length = 0;
+  browserSupabaseUsed.mockClear();
   fetchCalls.length = 0;
   subscriptionRow = {
     balance: 120000,
-    total_earned: 200000,
     total_spent: 80000,
     status: 'active',
-    stripe_subscription_id: 'sub_test',
     current_period_start: '2026-09-01T00:00:00.000Z',
     current_period_end: '2026-11-01T00:00:00.000Z',
     cancel_at_period_end: false,
@@ -88,7 +67,17 @@ beforeEach(() => {
     fetchCalls.push(url);
     const body = url.includes('/api/stripe/invoices')
       ? { invoices: [], has_more: false, last_invoice_id: null }
-      : { success: true };
+      : url === '/api/billing/summary'
+        ? {
+            success: true,
+            data: {
+              subscription: subscriptionRow,
+              rewardCredits: 50,
+              boostPackCredits: 50,
+              pricingConfig: { pilot_credit_cost_usd: 0.00048, tokens_per_pilot_credit: 10 },
+            },
+          }
+        : { success: true };
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) } as Response);
   }) as jest.Mock;
 });
@@ -129,14 +118,28 @@ describe('BillingSettings (read-only, P-10b)', () => {
     expect(screen.getByText('$10.00')).toBeInTheDocument();
   });
 
-  it('never reads boost_packs and never calls a retired route on load', async () => {
+  it('reads its figures from the summary route, never the database, and calls no retired route on load', async () => {
     render(<BillingSettings />);
     await screen.findByText('Credit purchases are no longer available');
 
-    expect(tablesRead).not.toContain('boost_packs');
-    expect(tablesRead).toEqual(expect.arrayContaining(['user_subscriptions', 'credit_transactions', 'ais_system_config']));
+    expect(browserSupabaseUsed).not.toHaveBeenCalled();
+    expect(fetchCalls).toContain('/api/billing/summary');
     expect(fetchCalls.filter((u) => RETIRED.test(u))).toEqual([]);
     expect(document.querySelector('script[src*="js.stripe.com"]')).toBeNull();
+  });
+
+  it('a failed summary read still renders the screen (loading ends), not a crash', async () => {
+    (global.fetch as jest.Mock).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      fetchCalls.push(url);
+      return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ success: false, error: 'x' }) } as Response);
+    });
+    render(<BillingSettings />);
+    expect(await screen.findByText('Credit purchases are no longer available')).toBeInTheDocument();
+    expect(fetchCalls).toContain('/api/billing/summary');
+    // No subscription figures arrived, so none of the row's numbers show.
+    expect(screen.queryByText('12,000')).not.toBeInTheDocument();
+    expect(screen.queryByText('$10.00')).not.toBeInTheDocument();
   });
 
   it('a ?success=true return no longer triggers a sync call', async () => {

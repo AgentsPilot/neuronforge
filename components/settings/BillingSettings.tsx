@@ -10,7 +10,6 @@
 
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { supabase } from '@/lib/supabaseClient';
 import { createLogger } from '@/lib/logger';
 import {
   CreditCard,
@@ -33,18 +32,15 @@ import {
 
 const logger = createLogger({ module: 'BillingSettings' });
 
+// Only the fields GET /api/billing/summary returns (the 9-column allow-list).
 interface UserSubscription {
   balance: number;
-  total_earned: number;
   total_spent: number;
   status: string;
-  stripe_customer_id?: string;
-  stripe_subscription_id?: string;
   current_period_start?: string;
   current_period_end?: string;
   created_at?: string;
   cancel_at_period_end?: boolean;
-  monthly_pilot_credits?: number;
   monthly_credits?: number;
   monthly_amount_usd?: number;
 }
@@ -52,6 +48,14 @@ interface UserSubscription {
 interface PricingConfig {
   pilot_credit_cost_usd: number;
   tokens_per_pilot_credit: number;
+}
+
+/** The payload of GET /api/billing/summary. */
+interface BillingSummaryResponse {
+  subscription: UserSubscription | null;
+  rewardCredits: number;
+  boostPackCredits: number;
+  pricingConfig: PricingConfig;
 }
 
 type BillingTab = 'subscription' | 'invoices';
@@ -99,54 +103,31 @@ export default function BillingSettings() {
 
   const fetchBillingData = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      // One server read (GET /api/billing/summary): the subscription row, the
+      // historical reward / boost-pack totals (read-only history from before the
+      // buy flow was retired) and the pricing config that turns balances into
+      // Pilot Credits. A 401 (signed out) leaves the screen as it was.
+      const response = await fetch('/api/billing/summary');
+      if (!response.ok) {
+        if (response.status !== 401) {
+          logger.error({ status: response.status }, 'Failed to load billing data');
+        }
+        return;
+      }
 
-      const { data: subscription } = await supabase
-        .from('user_subscriptions')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
+      const body: { success: boolean; data?: BillingSummaryResponse } = await response.json();
+      if (!body.success || !body.data) {
+        logger.error('Billing summary answered without data');
+        return;
+      }
 
+      const { subscription, rewardCredits, boostPackCredits, pricingConfig } = body.data;
       if (subscription) {
         setUserSubscription(subscription);
       }
-
-      // Historical totals only: rewards and boost packs bought before the buy
-      // flow was retired still show, as read-only history.
-      const { data: rewardTransactions } = await supabase
-        .from('credit_transactions')
-        .select('credits_delta')
-        .eq('user_id', user.id)
-        .eq('activity_type', 'reward_credit');
-
-      setRewardCredits(rewardTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0);
-
-      const { data: boostTransactions } = await supabase
-        .from('credit_transactions')
-        .select('credits_delta')
-        .eq('user_id', user.id)
-        .eq('activity_type', 'boost_pack_purchase');
-
-      setBoostPackCredits(boostTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0);
-
-      // Needed to show balances in Pilot Credits and the monthly figures.
-      const { data: configData, error: configError } = await supabase
-        .from('ais_system_config')
-        .select('config_key, config_value')
-        .in('config_key', ['pilot_credit_cost_usd', 'tokens_per_pilot_credit']);
-
-      if (configError) {
-        logger.error({ err: configError }, 'Failed to load pricing config');
-      }
-
-      if (configData) {
-        const configMap = new Map(configData.map(c => [c.config_key, c.config_value]));
-        setPricingConfig({
-          pilot_credit_cost_usd: parseFloat(configMap.get('pilot_credit_cost_usd') || '0.00048'),
-          tokens_per_pilot_credit: parseInt(configMap.get('tokens_per_pilot_credit') || '10')
-        });
-      }
+      setRewardCredits(rewardCredits);
+      setBoostPackCredits(boostPackCredits);
+      setPricingConfig(pricingConfig);
     } catch (error) {
       logger.error({ err: error }, 'Failed to load billing data');
     } finally {
