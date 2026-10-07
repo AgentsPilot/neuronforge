@@ -1,0 +1,39 @@
+{
+  "id": "evt_connect_plan_first_period_f5",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "invoice.paid",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000700,
+  "data": {
+    "object": {
+      "id": "in_plan_first_f5",
+      "object": "invoice",
+      "customer": { "id": "cus_client_f5" },
+      "currency": "usd",
+      "amount_paid": 30000,
+      "amount_due": 30000,
+      "total": 30000,
+      "hosted_invoice_url": null,
+      "invoice_pdf": null,
+      "metadata": {},
+      "parent": {
+        "type": "subscription_details",
+        "subscription_details": {
+          "subscription": "sub_plan_first_f5",
+          "metadata": {
+            "plan_count": "3",
+            "plan_total": "900",
+            "plan_currency": "USD",
+            "plan_frequency": "monthly",
+            "owner_id": "owner-a",
+            "booking_id": "f5f5f5f5-0b0b-4000-8000-0000000000b1",
+            "service_id": "f5f5f5f5-05e5-4000-8000-0000000000e1",
+            "payment_plan_id": "f5f5f5f5-0a1a-4000-8000-0000000000a1"
+          }
+        }
+      }
+    }
+  }
+}

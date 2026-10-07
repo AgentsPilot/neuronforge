@@ -1,6 +1,7 @@
 /**
  * `findOwnedId(id, userId)` — the lean ownership oracle on the contact, booking
- * and service repositories (webhook Fix-1, SA condition C-1).
+ * and service repositories (webhook Fix-1, SA condition C-1), and on the payment
+ * plan repository (Fix-1b, same shape).
  *
  * The Stripe webhook vets ids that a connected account wrote into metadata with
  * these. What must hold, for each of the three:
@@ -33,6 +34,7 @@ import {
   SchedulingBookingRepository,
   SchedulingServiceRepository,
 } from '@/lib/repositories/SchedulingRepository';
+import { PaymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
 
 type Answer = { data: unknown; error: unknown };
 
@@ -70,6 +72,7 @@ const CASES: Array<{
   { name: 'CRMContactRepository', table: 'crm_contacts', make: (c) => new CRMContactRepository(c) },
   { name: 'SchedulingBookingRepository', table: 'scheduling_bookings', make: (c) => new SchedulingBookingRepository(c) },
   { name: 'SchedulingServiceRepository', table: 'scheduling_services', make: (c) => new SchedulingServiceRepository(c) },
+  { name: 'PaymentPlanRepository', table: 'payment_plans', make: (c) => new PaymentPlanRepository(c) },
 ];
 
 beforeEach(() => {

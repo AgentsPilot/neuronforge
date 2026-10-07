@@ -44,6 +44,12 @@ import type Stripe from 'stripe';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { PaymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
+import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
+import {
+  schedulingBookingRepository,
+  schedulingServiceRepository,
+} from '@/lib/repositories/SchedulingRepository';
+import { vetLinkId } from './ownedLinkId';
 import { planSchedule, phaseDurationFor, type PlanFrequency } from './planSchedule';
 import { fromMinorUnits } from './refundMath';
 
@@ -56,8 +62,18 @@ export interface BindPlanSubscriptionInput {
   connectAccountId: string;
   subscriptionId: string;
   customerId: string | null;
+  /**
+   * The business this plan belongs to. The CALLER must already have proved it
+   * owns `connectAccountId` (the signed `event.account`), never taken it from
+   * metadata alone. Every link id below is vetted against it here.
+   */
   ownerId: string;
+  /**
+   * Untrusted: arrives from Stripe metadata. Kept only if `ownerId` owns the
+   * booking; otherwise dropped (stored as null), never refused.
+   */
   bookingId: string | null;
+  /** Untrusted, vetted the same way as `bookingId`. */
   serviceId: string | null;
   /** The agreed total, not one period's amount. */
   planTotal: number;
@@ -72,6 +88,10 @@ export interface BindPlanSubscriptionInput {
    * non-fatal, it failed quietly and left a plan with no periods to mark paid.
    * The booking modal carries it in the subscription metadata; the hosted
    * checkout does not, so it is looked up from the service when absent.
+   *
+   * Untrusted, vetted like `bookingId`. A dropped id (not owned, malformed or
+   * unreadable) takes the same path as an absent one: the owner's oldest active
+   * plan for the (vetted) service.
    */
   paymentPlanId?: string | null;
 }
@@ -129,7 +149,31 @@ export async function bindPlanSubscription({
       logger.info({ subscriptionId, planId: existing.data.id }, 'Plan already bound — nothing to do');
       return { scheduleId: existing.data.stripe_schedule_id, planId: existing.data.id, alreadyBound: true };
     }
+  }
 
+  /*
+   * The link ids came from Stripe metadata, written by the connected account.
+   * Whatever is stored here is copied onto every later period payment, and an
+   * unscoped trigger (`propagate_refund_to_booking`) follows that booking id
+   * across businesses. So each one is kept only if the owner owns it.
+   *
+   * A bad link is DROPPED, never refused: refusing would leave the
+   * subscription unbounded, and the cap below does not depend on any of them.
+   * Vetted after the "already projected" return, so a plain redelivery reads
+   * nothing extra; both the repair and the first bind see only vetted ids.
+   */
+  const dropContext = { subscriptionId, connectAccountId, ownerId };
+  bookingId = await vettedOrNull(
+    bookingId, 'booking_id', (id, userId) => schedulingBookingRepository.findOwnedId(id, userId), dropContext
+  );
+  serviceId = await vettedOrNull(
+    serviceId, 'service_id', (id, userId) => schedulingServiceRepository.findOwnedId(id, userId), dropContext
+  );
+  paymentPlanId = await vettedOrNull(
+    paymentPlanId, 'payment_plan_id', (id, userId) => paymentPlanRepository.findOwnedId(id, userId), dropContext
+  );
+
+  if (existing.data) {
     logger.warn(
       { subscriptionId, planId: existing.data.id },
       'Plan recorded but its periods were never projected — completing it',
@@ -447,7 +491,9 @@ async function resolveContactId(
  * Which `payment_plans` offer this sale was made under.
  *
  * Preferred from metadata, because that is the plan the client was actually
- * shown at checkout. Falling back to the service's active plan covers the
+ * shown at checkout. By the time it arrives here it has already been vetted
+ * (owned by `ownerId`, or null): a dropped id takes the absent-id fallback
+ * below, never a foreign plan. Falling back to the service's active plan covers the
  * hosted-checkout path, which never carried the id — and matches how the public
  * pages pick a plan: the oldest active one for the service.
  */
@@ -470,4 +516,36 @@ async function resolvePlanRowId(
     .maybeSingle();
 
   return data?.id ?? null;
+}
+
+/** One link that could not be proved to belong to the owner. */
+type LinkField = 'booking_id' | 'service_id' | 'payment_plan_id';
+
+/**
+ * A metadata link id, kept only if `ownerId` owns the row it names.
+ *
+ * Dropped links are logged once each, at error, so a transient `read_failed`
+ * on a legitimate plan can be found by `subscriptionId` and repaired. A
+ * malformed value is never logged — only its length — because it is arbitrary
+ * input, not one of our ids.
+ */
+async function vettedOrNull(
+  rawId: string | null | undefined,
+  field: LinkField,
+  findOwnedId: (id: string, userId: string) => Promise<{ data: string | null; error: Error | null }>,
+  context: { subscriptionId: string; connectAccountId: string; ownerId: string }
+): Promise<string | null> {
+  const { id, reason } = await vetLinkId(rawId, context.ownerId, findOwnedId);
+  if (!reason) return id;
+
+  logger.error(
+    {
+      ...context,
+      field,
+      reason,
+      ...(reason === 'malformed' ? { idLength: (rawId ?? '').length } : { id: rawId }),
+    },
+    'Plan link not proved to belong to the owner - dropping it'
+  );
+  return null;
 }
