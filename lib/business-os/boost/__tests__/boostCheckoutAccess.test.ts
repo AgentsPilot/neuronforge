@@ -75,15 +75,46 @@ describe('the flag and the test-account list (C-1, C-7)', () => {
   });
 });
 
-describe('the return URL (C-6)', () => {
-  it('uses NEXT_PUBLIC_APP_URL when set, trailing slashes trimmed', () => {
-    expect(boostReturnUrl('https://evil.example', { appUrl: 'https://app.example.com/', nodeEnv: 'production' })).toBe(`https://app.example.com${BOOST_RETURN_PATH}`);
+describe('the return URL (C-6, from the address resolver)', () => {
+  const VERCEL_KEYS = ['VERCEL', 'VERCEL_ENV', 'NEXT_PUBLIC_VERCEL_ENV', 'VERCEL_URL', 'NEXT_PUBLIC_VERCEL_URL', 'VERCEL_PROJECT_PRODUCTION_URL', 'NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL'];
+  const setEnv = (values: Record<string, string | undefined>) => {
+    for (const key of [...VERCEL_KEYS, 'NEXT_PUBLIC_APP_URL']) delete process.env[key];
+    for (const [key, value] of Object.entries(values)) if (value !== undefined) process.env[key] = value;
+  };
+
+  it('takes no request, so the Host header can never shape it', () => {
+    expect(boostReturnUrl.length).toBe(0);
   });
 
-  it('falls back to the request origin only in development', () => {
-    expect(boostReturnUrl('http://localhost:3000', { appUrl: undefined, nodeEnv: 'development' })).toBe(`http://localhost:3000${BOOST_RETURN_PATH}`);
-    expect(boostReturnUrl('https://evil.example', { appUrl: undefined, nodeEnv: 'production' })).toBeNull();
-    expect(boostReturnUrl('https://evil.example', { appUrl: '  ', nodeEnv: 'test' })).toBeNull();
+  it('production: the resolved address, trailing slashes trimmed, the placeholder not encoded', () => {
+    setEnv({ NODE_ENV: 'production', NEXT_PUBLIC_APP_URL: 'https://app.example.com/' });
+    expect(boostReturnUrl()).toBe(`https://app.example.com${BOOST_RETURN_PATH}`);
+    expect(boostReturnUrl()).toContain('session_id={CHECKOUT_SESSION_ID}');
+  });
+
+  it('a Vercel preview uses its own deployment host, even over a configured value', () => {
+    setEnv({ NODE_ENV: 'production', VERCEL_ENV: 'preview', VERCEL_URL: 'neuronforge-abc.vercel.app', NEXT_PUBLIC_APP_URL: 'https://app.example.com' });
+    expect(boostReturnUrl()).toBe(`https://neuronforge-abc.vercel.app${BOOST_RETURN_PATH}`);
+  });
+
+  it('a loopback address configured on Vercel is refused by the resolver, not used', () => {
+    setEnv({ NODE_ENV: 'production', VERCEL_ENV: 'production', VERCEL_PROJECT_PRODUCTION_URL: 'neuronforge.vercel.app', NEXT_PUBLIC_APP_URL: 'http://localhost:3000' });
+    expect(boostReturnUrl()).toBe(`https://neuronforge.vercel.app${BOOST_RETURN_PATH}`);
+  });
+
+  it.each([
+    ['a loopback address off Vercel', 'http://localhost:3000'],
+    ['an https loopback address', 'https://127.0.0.1:3000'],
+    ['a plain http address', 'http://app.example.com'],
+    ['an address that does not parse', 'not a url'],
+  ])('outside development, %s → null (payments_unavailable)', (_name, appUrl) => {
+    setEnv({ NODE_ENV: 'production', NEXT_PUBLIC_APP_URL: appUrl });
+    expect(boostReturnUrl()).toBeNull();
+  });
+
+  it('development accepts the local address', () => {
+    setEnv({ NODE_ENV: 'development' });
+    expect(boostReturnUrl()).toBe(`http://localhost:3000${BOOST_RETURN_PATH}`);
   });
 
   it('carries the session placeholder Stripe fills in', () => {

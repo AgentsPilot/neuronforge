@@ -18,14 +18,18 @@
  *     the checkout to all. Blanks are ignored; an invalid entry is logged once
  *     at `warn`.
  *
- * `boostReturnUrl` builds the embedded checkout's `return_url` (SA C-6): from
- * `NEXT_PUBLIC_APP_URL`; the request origin only in development; otherwise
- * `null`, and the route refuses with `payments_unavailable`.
+ * `boostReturnUrl` builds the embedded checkout's `return_url` (SA C-6) from the
+ * platform address resolver (`platformUrl` in `lib/utils/origins.ts`): an
+ * address is never decided at a call site, and never from the request's Host
+ * header. Outside development the resolved origin must be `https` and not a
+ * loopback host, or it is `null` and the route refuses with
+ * `payments_unavailable` before anything is reserved.
  *
  * @module lib/business-os/boost/boostCheckoutAccess
  */
 
 import { isBusinessOsCreditsBoostEnabled } from '@/lib/utils/featureFlags';
+import { platformOrigin, platformUrl } from '@/lib/utils/origins';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -68,10 +72,25 @@ export function isBoostCheckoutOpenFor(accountId: string, log?: BoostAccessLogge
   return allowList === null || allowList.has(accountId.toLowerCase());
 }
 
-/** The embedded checkout's return URL (C-6), or `null` when it cannot be built safely. */
-export function boostReturnUrl(requestOrigin: string, env: { appUrl: string | undefined; nodeEnv: string | undefined }): string | null {
-  const configured = env.appUrl?.trim();
-  if (configured) return `${configured.replace(/\/+$/, '')}${BOOST_RETURN_PATH}`;
-  if (env.nodeEnv === 'development') return `${requestOrigin.replace(/\/+$/, '')}${BOOST_RETURN_PATH}`;
-  return null;
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/i;
+
+/**
+ * The embedded checkout's return URL (C-6), or `null` when the resolver's
+ * origin is not one a paying customer's browser can come back to.
+ *
+ * Takes no request: the Host header can never shape it. `platformUrl` only
+ * prefixes the origin, so Stripe's `{CHECKOUT_SESSION_ID}` placeholder stays
+ * unencoded.
+ */
+export function boostReturnUrl(): string | null {
+  let origin: URL;
+  try {
+    origin = new URL(platformOrigin());
+  } catch {
+    return null;
+  }
+  if (process.env.NODE_ENV !== 'development') {
+    if (origin.protocol !== 'https:' || LOOPBACK_HOST.test(origin.hostname)) return null;
+  }
+  return platformUrl(BOOST_RETURN_PATH);
 }

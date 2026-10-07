@@ -95,12 +95,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const returnUrl = boostReturnUrl(request.nextUrl.origin, {
-      appUrl: process.env.NEXT_PUBLIC_APP_URL,
-      nodeEnv: process.env.NODE_ENV,
-    });
+    const returnUrl = boostReturnUrl();
     if (returnUrl === null) {
-      requestLogger.error({ userId: user.id }, 'bos_boost_checkout_refused: NEXT_PUBLIC_APP_URL is unset outside development');
+      requestLogger.error({ userId: user.id }, 'bos_boost_checkout_refused: the platform address is not a usable https origin');
       return NextResponse.json({ success: false, error: 'payments_unavailable' }, { status: 500, headers: NO_STORE });
     }
 

@@ -138,6 +138,10 @@ function post(body: unknown) {
 beforeEach(() => {
   process.env = { ...ENV, BUSINESS_OS_CREDITS_BOOST_ENABLED: 'true', NEXT_PUBLIC_APP_URL: 'https://app.example.com' };
   delete process.env.BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS;
+  // The return URL comes from the address resolver; keep Vercel's own variables out of it.
+  for (const key of ['VERCEL', 'VERCEL_ENV', 'NEXT_PUBLIC_VERCEL_ENV', 'VERCEL_URL', 'NEXT_PUBLIC_VERCEL_URL', 'VERCEL_PROJECT_PRODUCTION_URL', 'NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL']) {
+    delete process.env[key];
+  }
   Object.assign(state, {
     user: { id: ACCOUNT, email: 'owner@example.com' },
     getUserCalls: 0,
@@ -240,9 +244,8 @@ describe('auth and input', () => {
     expect(state.reserveCalls).toHaveLength(0);
   });
 
-  it('C-6: production without NEXT_PUBLIC_APP_URL → payments_unavailable, nothing reserved', async () => {
-    process.env = { ...process.env, NODE_ENV: 'production' };
-    delete process.env.NEXT_PUBLIC_APP_URL;
+  it('C-6: production where the resolver gives a loopback address → payments_unavailable, nothing reserved', async () => {
+    process.env = { ...process.env, NODE_ENV: 'production', NEXT_PUBLIC_APP_URL: 'http://localhost:3000' };
     const res = await POST(post({ packageId: 'plus' }));
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ success: false, error: 'payments_unavailable' });
@@ -291,8 +294,8 @@ describe('refusals', () => {
 });
 
 describe('QA follow-ups (R-6, R-7)', () => {
-  it('R-6: production with a blank NEXT_PUBLIC_APP_URL → payments_unavailable; a hostile Host is never used', async () => {
-    process.env = { ...process.env, NODE_ENV: 'production', NEXT_PUBLIC_APP_URL: '   ' };
+  it('R-6: production with a plain-http address → payments_unavailable; a hostile Host is never used', async () => {
+    process.env = { ...process.env, NODE_ENV: 'production', NEXT_PUBLIC_APP_URL: 'http://app.example.com' };
     const hostile = new NextRequest('https://evil.example.com/api/business-os/credits/boost/checkout', {
       method: 'POST',
       body: JSON.stringify({ packageId: 'plus' }),
@@ -303,6 +306,19 @@ describe('QA follow-ups (R-6, R-7)', () => {
     expect(await res.json()).toEqual({ success: false, error: 'payments_unavailable' });
     expect(state.reserveCalls).toHaveLength(0);
     expect(JSON.stringify(state.createCalls)).not.toContain('evil.example.com');
+  });
+
+  it('R-6: a hostile Host on a valid production request → the return URL is the resolver\'s, never the Host', async () => {
+    process.env = { ...process.env, NODE_ENV: 'production' };
+    const hostile = new NextRequest('https://evil.example.com/api/business-os/credits/boost/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ packageId: 'plus' }),
+      headers: { 'content-type': 'application/json', host: 'evil.example.com' },
+    });
+    const res = await POST(hostile);
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(state.createCalls)).not.toContain('evil.example.com');
+    expect(JSON.stringify(state.createCalls)).toContain('https://app.example.com/business-os?boost=return&session_id={CHECKOUT_SESSION_ID}');
   });
 
   it.each([

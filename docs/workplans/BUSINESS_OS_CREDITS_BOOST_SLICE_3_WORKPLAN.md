@@ -352,6 +352,16 @@ Local (scratch configs, `--runTestsByPath`): the new suites plus `enforcementPoi
 - **The broad set** (the `test:bos-entitlements` file set rebuilt with `find`, the boost suites, `featureFlags`, `entitlementSqlScripts.guard`; JSX scratch config): **200 suites, 5,338 tests**, all green. This list has 4 fewer suites than the earlier 204 because it was rebuilt by hand; the count is not a regression.
 - **Scoped tsc** (`tsconfig.slice3.json`): 0 errors.
 
+**One-address policy fix (Dev, 2026-10-07, after the RM's local commits, uncommitted):**
+
+| # | Change | Tests |
+|---|---|---|
+| OA-1 | `lib/utils/__tests__/oneAddressPolicy.guard.test.ts` failed on Linux: the route read `NEXT_PUBLIC_APP_URL` itself. (On Windows the guard's path handling hides it.) `boostReturnUrl()` now takes no arguments and builds the address with `platformUrl(BOOST_RETURN_PATH)` from `lib/utils/origins.ts`. The route has no env read and no request-origin fallback, and its refusal log no longer names the variable. The route is **not** added to the guard's allowed list. C-6 is kept: the Host header can never shape the address. Outside development, a resolved origin that is not `https`, is a loopback host, or does not parse → `null` → 500 `payments_unavailable` before anything is reserved. `platformUrl` only prefixes the origin, so `{CHECKOUT_SESSION_ID}` stays unencoded. The resolver now owns three things: the preview host, refusing loopback on Vercel, and the development fallback | `boostCheckoutAccess.test.ts`: no parameters; production address with trailing slashes trimmed and the placeholder intact; a preview uses its deployment host; loopback on Vercel falls to the project production host; loopback, https loopback, plain http or unparseable outside development → null; development → localhost. Route test: a loopback in production → `payments_unavailable`; plain http + a hostile Host → refused; a hostile Host on a valid request → the resolver's address, never the Host |
+
+Residual (for SA): with nothing configured and not on Vercel, the resolver's production fallback (`https://app.agentspilot.ai`, not served yet) is accepted as https. On Vercel production the project's production host is used instead. Only `origins.ts` can tell "configured" from "fallback", so refusing it would need a resolver change; not done here.
+
+**Re-run after OA-1:** the guard with paths normalised as on Linux (a temporary copy with `/`-normalised `relative()`, deleted after) → 4/4 pass; the route no longer reads the variable at all. The boost suites, `lib/utils/__tests__`, `lib/audit/__tests__` and `lib/business-os/entitlements` (62 suites, 1,487 tests, scratch JSX config) → all pass, except the **unpatched** guard on Windows. It lists only the files it already allows, plus `origins.ts`, because its `relative()` strips `ROOT + '/'` and Windows paths use `\`; the route is not listed. Scoped tsc: 0 errors.
+
 **Deviations from the plan (small, for SA code review):**
 1. **The audit catalogue pins moved on purpose.**
    - `lib/audit/__tests__/eventAudience.test.ts` now expects 184 events, 39 of them `bos` (was 183 and 38).
@@ -560,6 +570,15 @@ SA re-checks only that diff. QA can then run the existing plan plus the three ne
 
   Both files were restored and SHA-1 checked.
 
+#### Re-check of OA-1, the one-address policy (SA, 2026-10-07, diff only)
+
+✅ **Still Code Approved.**
+
+- **The fix:** `boostReturnUrl()` takes no arguments and builds from `platformOrigin()` / `platformUrl()` (`lib/utils/origins.ts`). Outside development it refuses (`null` → `payments_unavailable`, before reserving) when the origin does not parse, is not `https` or is a loopback host. The route no longer names `NEXT_PUBLIC_APP_URL`, and a hostile `Host` header is never used.
+- **Re-run by SA:** the 4 boost suites pass (77 tests incl. updated).
+- **`oneAddressPolicy.guard`:** fails locally **only** because of Windows backslash paths. All 7 files it reports (`origins.ts`, `platformBranding.ts`, the three plugin strategies, `UniversalOAuthHandler.ts`, the OAuth callback) are its documented exceptions, written there with forward slashes. **The boost route is not among them**, so the guard passes on Linux CI.
+- **Residual: accepted.** Off Vercel, with nothing configured, the resolver falls back to `https://app.agentspilot.ai`. That only affects where Stripe sends the browser **after** payment. It never affects crediting, which is webhook-driven, and it is reachable only on a non-Vercel production build with the flag turned on. Changing `origins.ts` is out of scope. **Note for slice 5 and the go-live checklist:** confirm the production origin serves `/business-os?boost=return`.
+
 ## QA Testing Report
 
 ### QA — slice 3 (2026-10-06)
@@ -686,3 +705,5 @@ Scoped tsc:     0 errors (tsconfig.slice3.json)
 | 2026-10-06 | QA (slice 3): PASS WITH NOTES | 4 new suites / 77 green; broad set 61 suites / 1,634 green; scoped tsc 0 errors. Adversarial scratch suites (60 orchestrator + 55 route, all mocked, no Stripe or database calls) cover: flag-off 404 before any read, 401, allow-list edges, 19 invalid bodies → 400 with no details, any catalogue rejection → 503, hold fail-closed, reserve mapping, the exact Stripe parameters, definite vs indeterminate create (identical retry), C-2 expire-before-abandon including the orphan alerts, every attach outcome, the audit once after success with no Stripe ids, no secret or email in logs or answers, and the 3-field response. QA3-D1 (Low): a repository call that throws escapes the orchestrator (the session is not expired). QA3-D2 (Low): a Stripe error message can carry the email into the logs. Recommended tests R-1 to R-7 |
 | 2026-10-06 | QA follow-ups applied; ready for user review | QA3-D1: a throwing reserve → `reservation_failed`; a throwing attach → expire, then abandon (orphan alert if the expire fails). QA3-D2: Stripe errors are logged as `stripeErrorFacts` only (type, code, param, request id, status), never the message. R-3 confirmed: a definite rejection on the retry still leaves the row pending with an alert. Tests R-1 to R-7 added; the four suites 95 green; broad set 200 suites / 5,338 green; scoped tsc 0 errors. I-2 (CLAUDE.md link casing) noted in §9 for the user. Nothing committed |
 | 2026-10-07 | Approved and committed, PR open | The user saw the diff and approved the commit (2026-10-07). RM committed on `feature/bos-credits-boost-slice-3` and opened a PR to `main`. `BUSINESS_OS_CREDITS_BOOST_ENABLED` stays unset on Vercel until slice 4a is merged and deployed |
+| 2026-10-07 | OA-1: return URL from the address resolver | The one-address guard failed on Linux after the RM's local commits. `boostReturnUrl()` now uses `platformUrl` from `lib/utils/origins.ts`, with no env read and no request origin. Outside development, a non-https, loopback or unparseable origin refuses `payments_unavailable` before reserving (C-6 kept). The guard with Linux-normalised paths passes; 62 suites / 1,487 tests (the only failure is the unpatched guard's Windows path artefact); scoped tsc 0 errors. Uncommitted on top of the RM's local commits |
+| 2026-10-07 | SA re-check of OA-1: still Code Approved | The return URL comes from the platform address resolver (`https`, no loopback, else refuse before reserving). Boost suites green. The one-address guard's local failures are Windows-path artefacts of its own exceptions; the boost route is clean. The `app.agentspilot.ai` fallback residual is accepted (redirect only, never crediting); slice 5 / go-live to confirm the landing is served |
