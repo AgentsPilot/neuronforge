@@ -1,6 +1,6 @@
 # Workplan: Business OS Plan Payments, P-10 (Retire the rest of the Pilot-Credit purchase path, WS-3)
 
-> **Last Updated**: 2026-10-06
+> **Last Updated**: 2026-10-07
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): §9.1 P-10, §9.4 CF-3, §10.1 BQ-P8, SA-P5 (`billing_events` shape), SR-10. Reuse plan [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md): §4.6, §4.6b, TK-2, TK-3, TK-5, TK-6, RD-2, RD-9, RD-12, RD-15, RD-16, F-7, F-16 to F-20, F-28, L-7, L-9, L-23, L-26, L-33, L-35. Credits Boost [requirement](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md): FR-40, T-11, R-7.
@@ -8,7 +8,7 @@
 **Prior slices read:** [P-0](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md) (Connect characterisation harness, AST check), [P-1](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P1_WORKPLAN.md) (router, deny by default, what P-1 removed, SA Q-1), [Payment tables lockdown](/docs/workplans/PAYMENT_TABLES_WRITE_LOCKDOWN_WORKPLAN.md) (grant revoke pattern).
 **Date:** 2026-10-05
 **Branch:** `feature/bos-plan-payments-p10` (worktree `neuronforge-invite-s1`), on `origin/main` `f9448054`, **rebased 2026-10-06 onto `origin/main` `4c1b630a`** (§16.9). Created by RM at kickoff. **P-10b:** `feature/bos-plan-payments-p10b` from `origin/main` `49c2e001` (after #234 merged), same worktree (§16b). **Follow-up:** `fix/boost-packs-revoke-browser-select` from `origin/main` `248de6be` (migration 20261039).
-**Status:** **P-10a merged** (PR #234, merge `49c2e001`, 2026-10-06; migration 20261038). **P-10b merged** (PR #238, merge `248de6be`, 2026-10-06). Follow-up migration 20261039 (browser SELECT on `boost_packs` revoked, B-4 / SA Q-7) written, pending review and manual apply. Evidence: [§16](#16-p-10a-implementation-and-evidence-log), [§16b](#16b-p-10b-implementation-and-evidence-log).
+**Status:** **P-10a merged** (PR #234, merge `49c2e001`, 2026-10-06; migration 20261038). **P-10b merged** (PR #238, merge `248de6be`, 2026-10-06). Follow-up migration 20261039 (browser SELECT on `boost_packs` revoked, B-4 / SA Q-7) **merged (PR #243) and applied to prod 2026-10-07** by the user before the merge: pre-check as expected (anon/authenticated SELECT only, 2 policies, 0 dependent views or functions, 3 rows, 0 active), migration OK, checker VERDICT PASS (21 pass, 0 fail). **TK-5 data step closed:** pre-check Q6 on 2026-10-07 showed 0 of 3 packs active. Next follow-up: migration 20261040 drops the two now-dead `boost_packs` policies ([workplan](/docs/workplans/ADMIN_BOOST_PACKS_ROUTE_STANDARDS_WORKPLAN.md)). Evidence: [§16](#16-p-10a-implementation-and-evidence-log), [§16b](#16b-p-10b-implementation-and-evidence-log).
 
 ## Overview
 
@@ -310,7 +310,7 @@ Recorded 2026-10-06 13:16 UTC (user ran the pre-check on production):
 | DB writers (`check-billing-events-db-writers.sql`, 13:16:49 UTC) | Table exists; 0 triggers; 0 functions mention `billing_events` |
 
 ⬜ Checker output (user, after apply; C5 policy counts filled from Q-4 on 2026-10-06).
-⬜ TK-5 data step done after P-10a deploy, Q-6 re-run (user).
+✅ TK-5 data step done after P-10a deploy, Q-6 re-run (user). Closed 2026-10-07: the 20261039 pre-check Q6 showed 0 of 3 packs active.
 
 ---
 
@@ -739,7 +739,7 @@ exports[`Stripe webhook, platform customer.subscription.updated (P-10) P10-1. le
 | D-5 | **Deferred docs:** reuse plan §4.6 TK-2/TK-3/TK-5/TK-6 rows and F-18 to F-20 corrections; Credits Boost requirement R-7 row (P-10 owns FR-40, slice 7 verify-only). Not edited here: the boost requirement is the boost session's file (TL tells that session, §15), and the reuse-plan edits are not needed for P-10a's code. Proposed: with P-10b, or a small docs PR | TL |
 | G-1 | **C-1 merge gate:** user runs the pre-check and records Q-7 (both counts) in §5.6 before RM merges. Any non-zero Business OS count stops the merge | User |
 | G-2 | Migration apply (§5.5 steps 1–3, 5); fill C5 policy counts first | User |
-| G-3 | TK-5 hand-run step (§5.5 step 4), **only after P-10a is deployed**, with Q-6 values saved first | User |
+| G-3 | TK-5 hand-run step (§5.5 step 4), **only after P-10a is deployed**, with Q-6 values saved first. **Closed 2026-10-07:** 20261039 pre-check Q6 showed 0 of 3 packs active | User |
 
 ### 16.9 After the rebase on `main` (2026-10-06)
 
@@ -1008,3 +1008,4 @@ scripts/__tests__/check-logging-only-diff.test.ts: 24 passed
 | 2026-10-06 | P-10b implemented (Dev) | Branch `feature/bos-plan-payments-p10b` from `49c2e001`, uncommitted: 8 dead or replaced billing files deleted, `/v2/billing` → server redirect to `/settings?tab=billing`, `BillingSettings` reduced to read-only (no buy, upgrade, boost or sync; portal, cancel, reactivate, invoices kept; 69 `console.*` → Pino), guard + render tests. Evidence and open items B-1 to B-7: §16b |
 | 2026-10-06 | `boost_packs` browser SELECT revoke; doc corrections (Dev) | Branch `fix/boost-packs-revoke-browser-select` from `248de6be`. Migration **20261039** revokes SELECT on `boost_packs` from `anon` and `authenticated` (B-4, SA Q-7 one-liner); policies, RLS and `service_role` unchanged. Pre-check `scripts/precheck-boost-packs-client-select.sql`, checker `scripts/check-boost-packs-client-select-migration.sql`, rollback `supabase/SQL Scripts/20261039_boost_packs_revoke_client_select_rollback.sql`, static test `boost-packs-revoke-client-select.migration.test.ts`. **Pending manual apply.** Once applied, the 20261038 checker's C3 `boost_packs` SELECT rows read FAIL by design (it expects SELECT kept); use the 20261039 checker. Header corrected: P-10a merged (#234), P-10b merged (#238); stale "uncommitted" wording removed. Reuse plan TK-2/3/5/6 outcomes and F-18 to F-20 corrected |
 | 2026-10-07 | B-3 resolved (RM) | `BillingSettings` browser reads of `user_subscriptions`, `credit_transactions` and `ais_system_config` moved behind `GET /api/billing/summary`: [PR #240](https://github.com/AgentsPilot/neuronforge/pull/240). B-4: confirmed `boost_packs` has no browser reader any more (the grant revoke stays in the tidy-up task) |
+| 2026-10-07 | 20261039 applied; TK-5 data step closed; 20261040 follow-up (Dev) | Migration 20261039 merged (PR #243) and applied to prod 2026-10-07 by the user before the merge: pre-check as expected (anon/authenticated SELECT only, 2 policies, 0 dependent views or functions, 3 rows, 0 active), migration OK, checker VERDICT PASS 21 pass 0 fail. The TK-5 "set the three packs inactive" step (§5.5 step 4, §5.6, G-3) is closed on that pre-check's Q6 (0 of 3 active). Follow-up migration 20261040 drops the two dead `boost_packs` policies, keeping RLS on; after it, the 20261039 checker's C5 (expects 2 policies) reads FAIL by design, use the 20261040 checker ([workplan](/docs/workplans/ADMIN_BOOST_PACKS_ROUTE_STANDARDS_WORKPLAN.md)) |

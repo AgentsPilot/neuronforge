@@ -387,6 +387,49 @@ export interface AiModelPricingSyncResult {
   failed: string[];
 }
 
+/**
+ * A row of `boost_packs` — the agent-platform Pilot-Credit boost catalog, a
+ * platform-wide table with no `user_id`. See the header of `BoostPackRepository`
+ * for why the mandatory user scoping does not apply. PostgREST returns the
+ * `numeric` columns (`price_usd`, `bonus_percentage`) as JSON numbers. Nullable
+ * columns per the table definition (docs/BOOST_PACK_ADMIN_INTERFACE.md):
+ * `badge_text` and `is_active` (DEFAULT true, but no NOT NULL).
+ */
+export interface BoostPack {
+  id: string;
+  pack_key: string;
+  pack_name: string;
+  display_name: string;
+  description: string;
+  price_usd: number;
+  bonus_percentage: number;
+  credits_amount: number;
+  bonus_credits: number;
+  badge_text: string | null;
+  is_active: boolean | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * The fields an admin may write. Every field is optional at this layer because
+ * the route keeps its historic semantics: POST requires the four text fields
+ * (enforced by its Zod schema), PUT is a partial update. A field left undefined
+ * is not sent, so the database default or the existing value stands.
+ */
+export interface BoostPackWriteInput {
+  pack_key?: string;
+  pack_name?: string;
+  display_name?: string;
+  description?: string;
+  price_usd?: number;
+  bonus_percentage?: number;
+  credits_amount?: number;
+  bonus_credits?: number;
+  badge_text?: string | null;
+  is_active?: boolean | null;
+}
+
 export interface SystemSettingsConfig {
   id: string;
   key: string;
