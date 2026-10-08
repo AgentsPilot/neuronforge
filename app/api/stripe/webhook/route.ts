@@ -4,7 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence } from '@/lib/business-os/activityText';
-import { createClient } from '@supabase/supabase-js';
+import { supabaseServer } from '@/lib/supabaseServer';
+import { processedWebhookEventRepository } from '@/lib/repositories/ProcessedWebhookEventRepository';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 import { QuotaAllocationService } from '@/lib/services/QuotaAllocationService';
@@ -39,17 +40,17 @@ export const runtime = 'nodejs';
 // line a delivery writes can be found from the event id alone.
 const logger = createLogger({ module: 'stripe-webhook', route: '/api/stripe/webhook' });
 
-// Create admin Supabase client (bypasses RLS)
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-);
+// Service role on purpose (CLAUDE.md Security Rules): a Stripe webhook has no
+// user session. Every row is reached by a Stripe id from a signed event or by a
+// row already proved to belong to the sending account (`accountOwns`); see the
+// tenant-isolation notes in docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md §5.
+//
+// CF-5 PR 1 replaced this route's private service-role client with the shared
+// `supabaseServer` (the same URL and key; the dropped auth options only matter
+// for a signed-in session, which a service-role client never has, workplan §4).
+// The alias keeps the remaining direct queries compiling while later PRs move
+// them behind repositories; PR 5 removes it.
+const supabaseAdmin = supabaseServer;
 
 // Plan payments P-1 removed `handleInvoicePaid`, the agent-platform conversion
 // of a platform `invoice.paid` into Pilot Credits. It took the account from
@@ -2304,10 +2305,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription, log:
  * use it (SA P1-C4).
  */
 async function completeClaim(eventId: string) {
-  await supabaseAdmin
-    .from('processed_webhook_events')
-    .update({ status: 'completed', completed_at: new Date().toISOString() })
-    .eq('event_id', eventId);
+  await processedWebhookEventRepository.complete(eventId);
 }
 
 /**
@@ -2428,11 +2426,7 @@ export async function POST(request: NextRequest) {
     //
     // Only 'completed' suppresses a retry now. A 'failed' row is reclaimed
     // below so Stripe's next delivery can do the work.
-    const { data: existingEvent, error: checkError } = await supabaseAdmin
-      .from('processed_webhook_events')
-      .select('event_id, status')
-      .eq('event_id', event.id)
-      .maybeSingle();
+    const { data: existingEvent, error: checkError } = await processedWebhookEventRepository.findClaim(event.id);
 
     if (checkError) {
       log.error({ err: checkError }, 'Error checking for duplicate event');
@@ -2453,24 +2447,19 @@ export async function POST(request: NextRequest) {
     if (existingEvent) {
       // A previous attempt failed. Claim it for this attempt.
       log.info('Retrying previously failed event');
-      await supabaseAdmin
-        .from('processed_webhook_events')
-        .update({ status: 'processing', failure_message: null, processed_at: new Date().toISOString() })
-        .eq('event_id', event.id);
+      await processedWebhookEventRepository.reclaimFailed(event.id);
       processedEventId = event.id;
     } else {
-      const { error: insertError } = await supabaseAdmin
-        .from('processed_webhook_events')
-        .insert({
-          event_id: event.id,
-          event_type: event.type,
-          status: 'processing',
-          processed_at: new Date().toISOString(),
-          metadata: {
-            created: event.created,
-            livemode: event.livemode
-          }
-        });
+      const { error: insertError } = await processedWebhookEventRepository.insertClaim({
+        event_id: event.id,
+        event_type: event.type,
+        status: 'processing',
+        processed_at: new Date().toISOString(),
+        metadata: {
+          created: event.created,
+          livemode: event.livemode
+        }
+      });
 
       if (insertError) {
         // Unique violation means another request claimed it between our SELECT
@@ -2695,13 +2684,10 @@ export async function POST(request: NextRequest) {
     // signature, malformed body), where there is nothing to release.
     if (processedEventId) {
       try {
-        await supabaseAdmin
-          .from('processed_webhook_events')
-          .update({
-            status: 'failed',
-            failure_message: String(error?.message ?? error).slice(0, 500)
-          })
-          .eq('event_id', processedEventId);
+        await processedWebhookEventRepository.markFailed(
+          processedEventId,
+          String(error?.message ?? error).slice(0, 500)
+        );
       } catch (releaseError) {
         // Nothing further to do — the original failure is the one that matters,
         // and swallowing this keeps it from masking the real error.
