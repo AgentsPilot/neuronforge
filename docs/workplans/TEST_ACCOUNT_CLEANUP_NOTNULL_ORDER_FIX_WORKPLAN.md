@@ -27,7 +27,7 @@ Measured read-only on prod 2026-10-08 (`purge_schema_introspect()` + PostgREST O
 | `deleteGraph.ts` | A SET NULL / SET DEFAULT edge whose child is ordered after its parent is a blocking-order violation unless its column is shown NULLABLE. The payload has no FK columns, so the column comes from the default name `<child>_<column>_fkey` and `columns[].is_nullable` (already returned by 20260915a). Unresolvable name, absent column or nullability blocks (fail closed). No migration. |
 | `BusinessPurgeRepository.ts` | Zod keeps `is_nullable` (optional). |
 | `descriptors.ts` | `scheduling_bookings` to `ROOT - 2` (after B2, before `crm_contacts` and before its CASCADE parent `scheduling_services`). New `NOT_NULL_OVERWRITE_EDGES` (N1). |
-| Generator | G-19 reads the class from `pg_catalog` (`confdeltype IN ('n','d')`, `attnotnull`, no default for SET DEFAULT, any key column) and refuses a plan where the child's ord is after the parent's. Migration `20261045_operator_test_account_cleanup_notnull_order` (20261044 is the SECURITY DEFINER lockdown), rollback restores 20261043; 20261043 pinned as applied. |
+| Generator | G-19 reads the class from `pg_catalog` (`confdeltype IN ('n','d')`, `attnotnull`, no default for SET DEFAULT, any key column) and refuses a plan where the child's ord is after the parent's. Migration `20261046_operator_test_account_cleanup_notnull_order` (20261044 is the SECURITY DEFINER lockdown), rollback restores 20261043; 20261043 pinned as applied. |
 
 ## Task List
 

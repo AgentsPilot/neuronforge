@@ -108,12 +108,12 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * 20261043: insight_hypotheses and insight_measurements classified, their links
  * reviewed (G-18), cheaper G-18 and survivor scans, trigger events shown, and
  * the database time returned as server_ms (test-account cleanup first live run).
- * 20261045: scheduling_bookings deleted before crm_contacts (its contact_id is
+ * 20261046: scheduling_bookings deleted before crm_contacts (its contact_id is
  * NOT NULL with ON DELETE SET NULL, so the old order failed with 23502 on prod,
  * 2026-10-08), and G-19 refuses any plan that deletes a parent before such a
  * child. 20261044 is the unrelated SECURITY DEFINER lockdown, slice 1.
  */
-export const FUNCTION_MIGRATION = '20261045_operator_test_account_cleanup_notnull_order';
+export const FUNCTION_MIGRATION = '20261046_operator_test_account_cleanup_notnull_order';
 /** The applied migration whose function the rollback restores, byte for byte. */
 export const PREVIOUS_FUNCTION_MIGRATION = '20261043_operator_test_account_cleanup_insight_links';
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;

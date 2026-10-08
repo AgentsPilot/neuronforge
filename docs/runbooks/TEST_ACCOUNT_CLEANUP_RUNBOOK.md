@@ -100,7 +100,7 @@ When the cleanup plan changes after 20261041 was applied, the change ships as a 
 |---|---|---|
 | `20261042_operator_test_account_cleanup_billing_events.sql` | `business_os_billing_events` (plan payments P-3b.1): guard G-5 counts its live rows, and the plan removes its rows | `20261041_operator_test_account_cleanup.sql` **and** `20261027_business_os_billing_events.sql` |
 | `20261043_operator_test_account_cleanup_insight_links.sql` | `insight_hypotheses` and `insight_measurements` classified and their links reviewed (G-18 no longer blocks every account), cheaper G-18 and survivor scans, trigger events in the check, `serverMs` on every answer | `20261042_operator_test_account_cleanup_billing_events.sql` |
-| `20261045_operator_test_account_cleanup_notnull_order.sql` | `scheduling_bookings` removed before `crm_contacts` (its `contact_id` is NOT NULL with ON DELETE SET NULL, so the old order failed with 23502 on prod), and G-19 refuses any plan that removes such a parent first. 20261044 is the unrelated SECURITY DEFINER lockdown | `20261043_operator_test_account_cleanup_insight_links.sql` |
+| `20261046_operator_test_account_cleanup_notnull_order.sql` | `scheduling_bookings` removed before `crm_contacts` (its `contact_id` is NOT NULL with ON DELETE SET NULL, so the old order failed with 23502 on prod), and G-19 refuses any plan that removes such a parent first. 20261044 is the unrelated SECURITY DEFINER lockdown | `20261043_operator_test_account_cleanup_insight_links.sql` |
 
 The migration checks this itself: it refuses, and applies nothing, with `Apply <migration> first` until both are in place.
 

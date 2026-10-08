@@ -800,8 +800,8 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       join(SQL_SCRIPTS_DIR, '20261042_operator_test_account_cleanup_billing_events_rollback.sql'),
       join(MIGRATIONS_DIR, '20261043_operator_test_account_cleanup_insight_links.sql'),
       join(SQL_SCRIPTS_DIR, '20261043_operator_test_account_cleanup_insight_links_rollback.sql'),
-      join(MIGRATIONS_DIR, '20261045_operator_test_account_cleanup_notnull_order.sql'),
-      join(SQL_SCRIPTS_DIR, '20261045_operator_test_account_cleanup_notnull_order_rollback.sql'),
+      join(MIGRATIONS_DIR, '20261046_operator_test_account_cleanup_notnull_order.sql'),
+      join(SQL_SCRIPTS_DIR, '20261046_operator_test_account_cleanup_notnull_order_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))
