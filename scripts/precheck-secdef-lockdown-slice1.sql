@@ -167,15 +167,15 @@ report AS (
   SELECT fn_state.fn_order * 1000 + 50,
          'Q5 grantees ' || fn_state.fn_name || ' expected ' || fn_state.expected_grantees,
          COALESCE(
-           (SELECT string_agg(fn_execute_entry.grantee_name, ' ' ORDER BY fn_execute_entry.grantee_name)
+           (SELECT string_agg(fn_execute_entry.grantee_name, ' ' ORDER BY fn_execute_entry.grantee_name COLLATE "C")
             FROM fn_execute_entry
             WHERE fn_execute_entry.fn_name = fn_state.fn_name),
            'none')
          || CASE
-              WHEN (SELECT string_agg(fn_execute_entry.grantee_name, ' ' ORDER BY fn_execute_entry.grantee_name)
+              WHEN (SELECT string_agg(fn_execute_entry.grantee_name, ' ' ORDER BY fn_execute_entry.grantee_name COLLATE "C")
                     FROM fn_execute_entry
                     WHERE fn_execute_entry.fn_name = fn_state.fn_name)
-                 = (SELECT string_agg(expected_grantee, ' ' ORDER BY expected_grantee)
+                 = (SELECT string_agg(expected_grantee, ' ' ORDER BY expected_grantee COLLATE "C")
                     FROM unnest(string_to_array(fn_state.expected_grantees, ' ')) AS expected_grantee)
                 THEN ' match'
               ELSE ' DIFFERS stop here rollback must change'
@@ -187,7 +187,7 @@ report AS (
          'Q5 grantors ' || fn_state.fn_name,
          COALESCE(
            (SELECT string_agg(fn_execute_entry.grantee_name || ' by ' || fn_execute_entry.grantor_name, ' '
-                              ORDER BY fn_execute_entry.grantee_name)
+                              ORDER BY fn_execute_entry.grantee_name COLLATE "C")
             FROM fn_execute_entry
             WHERE fn_execute_entry.fn_name = fn_state.fn_name),
            'none')

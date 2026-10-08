@@ -356,4 +356,21 @@ describe('the checker and the pre-check', () => {
     expect(precheck).toContain("'pg_try_advisory_lock(bigint)')");
     expect(precheck).toContain("'pg_advisory_unlock(bigint)')");
   });
+
+  // Prod pre-check 2026-10-08: Q5 compared a C-collated actual list (grantee
+  // names derive from type name) with a default-collated expected list, so
+  // 'PUBLIC' sorted differently on each side and all 13 rows read DIFFERS
+  // although the sets matched. PGlite runs in C collation and cannot show it,
+  // so every string_agg ordering is pinned to an explicit COLLATE "C".
+  it('the pre-check orders every string_agg with COLLATE "C" so both Q5 sides sort the same on any database collation', () => {
+    const total = (precheck.match(/string_agg\(/g) ?? []).length;
+    const aggregates = [...precheck.matchAll(/string_agg\(([\s\S]*?)\)\s+FROM /g)].map((match) => match[1]);
+    expect(total).toBeGreaterThanOrEqual(4);
+    expect(aggregates).toHaveLength(total);
+    for (const aggregate of aggregates) {
+      const orderBy = aggregate.match(/ORDER BY ([\s\S]*)$/);
+      expect(orderBy).not.toBeNull();
+      expect(orderBy![1].trim()).toMatch(/ COLLATE "C"$/);
+    }
+  });
 });
