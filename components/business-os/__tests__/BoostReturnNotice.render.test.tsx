@@ -212,7 +212,10 @@ describe('QA R-3: when the notice reads, and how many times', () => {
     expect(screen.getByTestId('boost-return-message')).toHaveTextContent('Your payment is still being confirmed.');
     await tick(10 * 60 * 1000);
     expect(fetchMock).toHaveBeenCalledTimes(5);
-  });
+    // Ninety fake-timer steps, each through act(): cheap, but slower than Jest's
+    // default 5 s under a loaded full run (it timed out once there). Time on the
+    // page is faked; this only bounds the real time the steps may take.
+  }, 30_000);
 
   it('under StrictMode (double mount) there is ONE poll sequence', async () => {
     visit(`?boost=return&session_id=${SESSION}`);
