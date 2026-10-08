@@ -246,6 +246,97 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     }
   });
 
+  // CF-5 PR 2 (workplan §7.3.3): the 15 invoice and business-profile sites.
+  // Expected calls per handler; together they are every call in the route.
+  const INVOICE_CALLS: Record<string, Record<string, number>> = {
+    handleConnectInvoicePaid: {
+      findByStripeInvoiceId: 1,
+      findByIdUnscoped: 1,
+      recordStripeInvoiceId: 1,
+      markPaidFromStripeInvoice: 1,
+      readFieldsUnscoped: 1,
+    },
+    handleConnectCheckoutCompleted: { findByIdUnscoped: 1, markPaidFromCheckout: 1 },
+    handleConnectInvoicePaymentFailed: { findByStripeInvoiceId: 1, setStatusFromStripe: 1, readFieldsUnscoped: 1 },
+    handleConnectInvoiceFinalized: { findByStripeInvoiceId: 1, recordStripeDocuments: 1 },
+    handleConnectInvoiceUncollectible: { findByStripeInvoiceId: 1, setStatusFromStripe: 1 },
+  };
+  const INVOICE_WRITES = ['recordStripeInvoiceId', 'markPaidFromStripeInvoice', 'markPaidFromCheckout', 'setStatusFromStripe', 'recordStripeDocuments'];
+
+  /** Every `<receiver>.<anything>(…)` call under `root`, as method names. */
+  function receiverCalls(root: ts.Node, receiver: string): ts.CallExpression[] {
+    const out: ts.CallExpression[] = [];
+    walk(root, (n) => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        ts.isIdentifier(n.expression.expression) &&
+        n.expression.expression.text === receiver
+      ) {
+        out.push(n);
+      }
+    });
+    return out;
+  }
+
+  it('the invoice and business-profile tables are reached only through their repositories (CF-5 PR 2)', () => {
+    const code = codeOf(sf);
+    expect(code).not.toMatch(/from\(\s*['"`]payment_invoices['"`]\s*\)/);
+    expect(code).not.toMatch(/from\(\s*['"`]business_profiles['"`]\s*\)/);
+
+    // Only the singletons, never the classes (no instance built around the checks).
+    const classMentions: string[] = [];
+    walk(sf, (n) => {
+      if (ts.isIdentifier(n) && (n.text === 'PaymentInvoiceRepository' || n.text === 'BusinessProfileRepository')) {
+        classMentions.push(n.text);
+      }
+    });
+    expect(classMentions).toEqual([]);
+
+    // Each handler makes exactly its expected calls, and no other function makes any.
+    let expectedTotal = 0;
+    for (const [fn, expected] of Object.entries(INVOICE_CALLS)) {
+      const node = topLevelFunction(fn);
+      expect(node).toBeDefined();
+      const actual: Record<string, number> = {};
+      for (const call of receiverCalls(node!, 'paymentInvoiceRepository')) {
+        const name = (call.expression as ts.PropertyAccessExpression).name.text;
+        actual[name] = (actual[name] ?? 0) + 1;
+      }
+      expect({ fn, calls: actual }).toEqual({ fn, calls: expected });
+      expectedTotal += Object.values(expected).reduce((a, b) => a + b, 0);
+    }
+    expect(receiverCalls(sf, 'paymentInvoiceRepository')).toHaveLength(expectedTotal);
+
+    const languageReads = receiverCalls(sf, 'businessProfileRepository');
+    expect(languageReads.map((c) => (c.expression as ts.PropertyAccessExpression).name.text)).toEqual(['findLanguage']);
+    const failed = topLevelFunction('handleConnectInvoicePaymentFailed')!;
+    expect(languageReads[0].pos >= failed.pos && languageReads[0].end <= failed.end).toBe(true);
+  });
+
+  it('F-1 stays fixed: every invoice write comes after an ownership check on an invoice row (CF-5 PR 2)', () => {
+    // The nearest `accountOwns(…)` before each write must test an invoice row's
+    // owner, not, say, a plan's. Moving a write above its check (the F-1 shape)
+    // makes the nearest check a different one, or none.
+    for (const fn of Object.keys(INVOICE_CALLS)) {
+      const node = topLevelFunction(fn)!;
+      const checks = callsTo(node, 'accountOwns');
+      const writes = receiverCalls(node, 'paymentInvoiceRepository').filter((c) =>
+        INVOICE_WRITES.includes((c.expression as ts.PropertyAccessExpression).name.text)
+      );
+      expect(writes.length).toBeGreaterThan(0);
+      for (const write of writes) {
+        const before = checks.filter((c) => c.end <= write.getStart(sf));
+        const nearest = before[before.length - 1];
+        expect({ fn, write: write.expression.getText(sf), check: nearest?.arguments[1]?.getText(sf) }).toEqual({
+          fn,
+          write: write.expression.getText(sf),
+          check: expect.stringMatching(/^(platformInvoice|invoiceByMetadata)\.user_id$/),
+        });
+      }
+    }
+  });
+
   it('handleInvoicePaid and the customer-subscription fallback are gone', () => {
     expect(topLevelFunction('handleInvoicePaid')).toBeUndefined();
     const code = codeOf(sf);

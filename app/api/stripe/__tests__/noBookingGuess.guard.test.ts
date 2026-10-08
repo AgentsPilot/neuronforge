@@ -35,11 +35,60 @@
 
 import fs from 'fs';
 import path from 'path';
+import * as ts from 'typescript';
 
 const webhook = fs.readFileSync(
   path.join(process.cwd(), 'app/api/stripe/webhook/route.ts'),
   'utf8'
 );
+
+/*
+ * CF-5 PR 2 moved the paid handler's invoice queries into
+ * `PaymentInvoiceRepository` (workplan BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES
+ * §7.3.3, SA C-2). The "never writes booking_id onto an invoice" check would
+ * then pass on an empty handler, so it follows the writes into the repository:
+ * the handler reaches the table only through an allow-listed set of methods,
+ * the ones of those that write are exactly two, and neither writes booking_id.
+ */
+const REPOSITORY_FILE = path.join(process.cwd(), 'lib/repositories/PaymentRepository.ts');
+const repositorySf = ts.createSourceFile(
+  REPOSITORY_FILE,
+  fs.readFileSync(REPOSITORY_FILE, 'utf8'),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS
+);
+
+/** The methods of `PaymentInvoiceRepository`, by name (overload signatures skipped). */
+function invoiceRepositoryMethods(): Map<string, ts.MethodDeclaration> {
+  const methods = new Map<string, ts.MethodDeclaration>();
+  const visit = (node: ts.Node) => {
+    if (ts.isClassDeclaration(node) && node.name?.text === 'PaymentInvoiceRepository') {
+      for (const member of node.members) {
+        if (ts.isMethodDeclaration(member) && member.body) methods.set(member.name.getText(repositorySf), member);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(repositorySf);
+  return methods;
+}
+
+/** A method's code without comments (its doc may explain booking_id; its body may not use it). */
+function codeOfMethod(method: ts.MethodDeclaration): string {
+  return ts.createPrinter({ removeComments: true }).printNode(ts.EmitHint.Unspecified, method, repositorySf);
+}
+
+const WRITE_OPS = /\.(update|insert|upsert|delete)\(/;
+
+/** The only invoice-repository methods the paid handler may call. */
+const PAID_HANDLER_INVOICE_METHODS = [
+  'findByStripeInvoiceId',
+  'findByIdUnscoped',
+  'recordStripeInvoiceId',
+  'markPaidFromStripeInvoice',
+  'readFieldsUnscoped',
+];
 
 /** The `invoice.paid` handler, where the guess used to live. */
 function connectInvoicePaidHandler(): string {
@@ -64,6 +113,53 @@ describe('paying an invoice never invents a booking link', () => {
     const handler = connectInvoicePaidHandler();
 
     expect(handler).not.toMatch(/from\(['"]payment_invoices['"]\)[\s\S]{0,200}booking_id:/);
+  });
+
+  it('reaches payment_invoices only through allow-listed repository methods (CF-5 PR 2, SA C-2)', () => {
+    const handler = connectInvoicePaidHandler();
+
+    // No inline query on the table in any quote style, so the check above is
+    // not the only thing standing between the handler and an inline write.
+    expect(handler).not.toMatch(/from\(\s*['"`]payment_invoices['"`]\s*\)/);
+    // Only the singleton, never a class instance built around the allow-list.
+    expect(handler).not.toMatch(/\bPaymentInvoiceRepository\b/);
+
+    // Every mention of the singleton is a direct call to an allow-listed
+    // method: no alias, no other method (the generic user-scoped `update`
+    // accepts any column, booking_id included).
+    const mentions = handler.match(/\bpaymentInvoiceRepository\b/g) ?? [];
+    const calls = [...handler.matchAll(/\bpaymentInvoiceRepository\.(\w+)\(/g)].map((m) => m[1]);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls).toHaveLength(mentions.length);
+    for (const method of calls) expect(PAID_HANDLER_INVOICE_METHODS).toContain(method);
+  });
+
+  it('the paid handler writes payment_invoices through exactly two methods, and neither writes booking_id (SA C-2)', () => {
+    const handler = connectInvoicePaidHandler();
+    const methods = invoiceRepositoryMethods();
+    const called = new Set([...handler.matchAll(/\bpaymentInvoiceRepository\.(\w+)\(/g)].map((m) => m[1]));
+
+    // Which of the called methods write is read from the repository's code,
+    // not taken from the method names.
+    const writers = [...called].filter((name) => {
+      const method = methods.get(name);
+      expect(method).toBeDefined();
+      return WRITE_OPS.test(codeOfMethod(method!));
+    });
+    expect(writers.sort()).toEqual(['markPaidFromStripeInvoice', 'recordStripeInvoiceId']);
+
+    for (const name of writers) {
+      const code = codeOfMethod(methods.get(name)!);
+      expect(code).toMatch(/from\('payment_invoices'\)/);
+      expect(code).not.toContain('booking_id');
+    }
+
+    // And no method the handler calls goes looking for a booking either.
+    for (const name of called) {
+      const code = codeOfMethod(methods.get(name)!);
+      expect(code).not.toMatch(/scheduling_/);
+      expect(code).not.toMatch(/servicePrice/);
+    }
   });
 
   it('does not match a booking by its service price', () => {

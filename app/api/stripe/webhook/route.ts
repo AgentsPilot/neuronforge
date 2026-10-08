@@ -22,6 +22,13 @@ import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import {
+  paymentInvoiceRepository,
+  WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS,
+  WEBHOOK_INVOICE_LOOKUP_COLUMNS,
+  WEBHOOK_INVOICE_RECEIPT_COLUMNS,
+} from '@/lib/repositories/PaymentRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
 import { createLogger, type Logger } from '@/lib/logger';
 import {
@@ -1266,17 +1273,15 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   let platformInvoice: {
     id: string;
     user_id: string;
-    contact_id: string;
+    // `string | null`, as the column is: the row now comes typed from the
+    // invoice repository instead of as `any` (CF-5 PR 2).
+    contact_id: string | null;
     invoice_number: string;
     booking_id?: string | null;
     amount?: number;
   } | null = null;
 
-  const { data: invoiceByStripeId, error: lookupError } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('*')
-    .eq('stripe_invoice_id', invoice.id)
-    .single();
+  const { data: invoiceByStripeId, error: lookupError } = await paymentInvoiceRepository.findByStripeInvoiceId(invoice.id);
 
   if (invoiceByStripeId) {
     platformInvoice = invoiceByStripeId;
@@ -1302,11 +1307,8 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
     if (metadataInvoiceId) {
       log.info({ invoiceId: metadataInvoiceId }, 'Looking up platform invoice by metadata');
-      const { data: invoiceByMetadata, error: metadataLookupError } = await supabaseAdmin
-        .from('payment_invoices')
-        .select('*')
-        .eq('id', metadataInvoiceId)
-        .single();
+      const { data: invoiceByMetadata, error: metadataLookupError } =
+        await paymentInvoiceRepository.findByIdUnscoped(metadataInvoiceId);
 
       if (invoiceByMetadata && !metadataLookupError) {
         platformInvoice = invoiceByMetadata;
@@ -1327,13 +1329,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
         }
 
         // Update the invoice with stripe_invoice_id for future lookups
-        await supabaseAdmin
-          .from('payment_invoices')
-          .update({
-            stripe_invoice_id: invoice.id,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', invoiceByMetadata.id);
+        await paymentInvoiceRepository.recordStripeInvoiceId(invoiceByMetadata.id, invoice.id);
         log.info({ invoiceId: invoiceByMetadata.id, stripeInvoiceId: invoice.id }, 'Updated invoice with stripe_invoice_id');
       }
     }
@@ -1535,16 +1531,11 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
   // Then the invoice. The update_invoice_on_payment trigger also does this when
   // the transaction lands; this is idempotent and covers databases without it.
-  const { error: updateError } = await supabaseAdmin
-    .from('payment_invoices')
-    .update({
-      status: 'paid',
-      paid_at: paidAt,
-      stripe_hosted_invoice_url: invoice.hosted_invoice_url,
-      stripe_invoice_pdf: invoice.invoice_pdf,
-      updated_at: paidAt
-    })
-    .eq('id', platformInvoice.id);
+  const { error: updateError } = await paymentInvoiceRepository.markPaidFromStripeInvoice(platformInvoice.id, {
+    paidAt,
+    hostedInvoiceUrl: invoice.hosted_invoice_url,
+    invoicePdf: invoice.invoice_pdf,
+  });
 
   if (updateError) {
     log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
@@ -1655,11 +1646,10 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
    */
   void (async () => {
     try {
-      const { data: receiptInvoice } = await supabaseAdmin
-        .from('payment_invoices')
-        .select('id, user_id, client_email, client_name, invoice_number, currency, booking_id')
-        .eq('id', platformInvoice.id)
-        .maybeSingle();
+      const { data: receiptInvoice } = await paymentInvoiceRepository.readFieldsUnscoped(
+        platformInvoice.id,
+        WEBHOOK_INVOICE_RECEIPT_COLUMNS
+      );
 
       if (!receiptInvoice?.client_email) {
         log.info({ invoiceId: platformInvoice.id }, 'No client email on this invoice; no receipt to send');
@@ -1774,11 +1764,7 @@ async function handleConnectCheckoutCompleted(
     log.info({ invoiceId, sessionId: session.id }, 'Checkout session for invoice');
 
     // Look up the platform invoice
-    const { data: platformInvoice, error: lookupError } = await supabaseAdmin
-      .from('payment_invoices')
-      .select('*')
-      .eq('id', invoiceId)
-      .single();
+    const { data: platformInvoice, error: lookupError } = await paymentInvoiceRepository.findByIdUnscoped(invoiceId);
 
     if (lookupError || !platformInvoice) {
       log.error({ err: lookupError, invoiceId }, 'Platform invoice not found');
@@ -1853,14 +1839,7 @@ async function handleConnectCheckoutCompleted(
     // Now the invoice. The update_invoice_on_payment trigger already does this
     // when the transaction lands, so this is belt-and-braces for databases where
     // that trigger is not present — and it is idempotent either way.
-    const { error: updateError } = await supabaseAdmin
-      .from('payment_invoices')
-      .update({
-        status: 'paid',
-        paid_at: paidAt,
-        updated_at: paidAt
-      })
-      .eq('id', invoiceId);
+    const { error: updateError } = await paymentInvoiceRepository.markPaidFromCheckout(invoiceId, paidAt);
 
     if (updateError) {
       log.error({ err: updateError, invoiceId }, 'Failed to update invoice status');
@@ -1998,11 +1977,10 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
   }
 
   // Look up the platform invoice by Stripe invoice ID
-  const { data: platformInvoice, error: lookupError } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('id, invoice_number, user_id')
-    .eq('stripe_invoice_id', invoice.id)
-    .single();
+  const { data: platformInvoice, error: lookupError } = await paymentInvoiceRepository.findByStripeInvoiceId(
+    invoice.id,
+    WEBHOOK_INVOICE_LOOKUP_COLUMNS
+  );
 
   if (lookupError || !platformInvoice) {
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
@@ -2021,13 +1999,7 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
   }
 
   // Update platform invoice to overdue
-  const { error: updateError } = await supabaseAdmin
-    .from('payment_invoices')
-    .update({
-      status: 'overdue',
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', platformInvoice.id);
+  const { error: updateError } = await paymentInvoiceRepository.setStatusFromStripe(platformInvoice.id, 'overdue');
 
   if (updateError) {
     log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
@@ -2041,19 +2013,16 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
    * declining" was a pattern with no trail behind it — the invoice quietly
    * turned overdue and the drawer said nothing.
    */
-  const { data: failedInvoice } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('contact_id, amount, currency')
-    .eq('id', platformInvoice.id)
-    .maybeSingle();
+  const { data: failedInvoice } = await paymentInvoiceRepository.readFieldsUnscoped(
+    platformInvoice.id,
+    WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS
+  );
 
   if (failedInvoice?.contact_id) {
-    const { data: ownerProfile } = await supabaseAdmin
-      .from('business_profiles')
-      .select('language')
-      .eq('user_id', platformInvoice.user_id)
-      .maybeSingle();
-    const ownerLocale = ownerProfile?.language || 'en';
+    // The raw stored language, or null when there is none (same as the old
+    // `profile?.language`); `|| 'en'` below is unchanged.
+    const { data: ownerLanguage } = await businessProfileRepository.findLanguage(platformInvoice.user_id);
+    const ownerLocale = ownerLanguage || 'en';
     const currency = failedInvoice.currency || 'USD';
 
     crmActivityRepository.create({
@@ -2092,11 +2061,10 @@ async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAcc
   log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.finalized');
 
   // Look up the platform invoice by Stripe invoice ID
-  const { data: platformInvoice, error: lookupError } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('id, invoice_number, user_id')
-    .eq('stripe_invoice_id', invoice.id)
-    .single();
+  const { data: platformInvoice, error: lookupError } = await paymentInvoiceRepository.findByStripeInvoiceId(
+    invoice.id,
+    WEBHOOK_INVOICE_LOOKUP_COLUMNS
+  );
 
   if (lookupError || !platformInvoice) {
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
@@ -2114,14 +2082,10 @@ async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAcc
   }
 
   // Update with hosted URL and PDF
-  const { error: updateError } = await supabaseAdmin
-    .from('payment_invoices')
-    .update({
-      stripe_hosted_invoice_url: invoice.hosted_invoice_url,
-      stripe_invoice_pdf: invoice.invoice_pdf,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', platformInvoice.id);
+  const { error: updateError } = await paymentInvoiceRepository.recordStripeDocuments(platformInvoice.id, {
+    hostedInvoiceUrl: invoice.hosted_invoice_url,
+    invoicePdf: invoice.invoice_pdf,
+  });
 
   if (updateError) {
     log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
@@ -2142,11 +2106,10 @@ async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connec
   log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.marked_uncollectible');
 
   // Look up the platform invoice by Stripe invoice ID
-  const { data: platformInvoice, error: lookupError } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('id, invoice_number, user_id')
-    .eq('stripe_invoice_id', invoice.id)
-    .single();
+  const { data: platformInvoice, error: lookupError } = await paymentInvoiceRepository.findByStripeInvoiceId(
+    invoice.id,
+    WEBHOOK_INVOICE_LOOKUP_COLUMNS
+  );
 
   if (lookupError || !platformInvoice) {
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
@@ -2164,13 +2127,7 @@ async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connec
   }
 
   // Update platform invoice to cancelled
-  const { error: updateError } = await supabaseAdmin
-    .from('payment_invoices')
-    .update({
-      status: 'cancelled',
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', platformInvoice.id);
+  const { error: updateError } = await paymentInvoiceRepository.setStatusFromStripe(platformInvoice.id, 'cancelled');
 
   if (updateError) {
     log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
