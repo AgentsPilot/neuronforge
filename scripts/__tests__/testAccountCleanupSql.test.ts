@@ -505,11 +505,23 @@ describe('the secret-gated function (SA re-ruling R-2 to R-4, R-6)', () => {
     expect(fn).not.toMatch(/(FROM|JOIN|INSERT INTO|DELETE FROM)\s+(audit_trail|admin_users|secrets|users|objects)\b/);
   });
 
+  /** The trigger-events label, the only TRUNCATE the function may contain. */
+  const TRUNCATE_LABEL = "CASE WHEN (trg.tgtype::integer & 32) <> 0 THEN 'TRUNCATE' END";
+  const withoutTruncateLabel = (sql: string) => sql.split(TRUNCATE_LABEL).join('');
+  const FORBIDDEN_DDL = /CREATE (SCHEMA|TABLE)|ALTER TABLE|DROP |TRUNCATE|DELETE FROM operator_private/i;
+
   it('replaces only the function: never creates, alters or drops the schema or the secret table', () => {
     // The schema, the secret table and its RLS were created by the applied
     // initial migration (pinned below). Re-running them would fail, or worse,
     // drop the stored hash and disarm the routes.
-    expect(migrationSql).not.toMatch(/CREATE (SCHEMA|TABLE)|ALTER TABLE|DROP |TRUNCATE|DELETE FROM operator_private/i);
+    // Bare TRUNCATE stays banned. Only the one label literal of the trigger-events
+    // section is stripped first, so any other TRUNCATE (statement or dynamic) fails.
+    expect(migrationSql.split(TRUNCATE_LABEL).length - 1).toBe(1);
+    expect(withoutTruncateLabel(migrationSql)).not.toMatch(FORBIDDEN_DDL);
+    for (const planted of ["EXECUTE format('TRUNCATE %I', t);", 'TRUNCATE "x";', 'truncate table public.audit_trail;']) {
+      expect(withoutTruncateLabel(`${migrationSql}
+${planted}`)).toMatch(FORBIDDEN_DDL);
+    }
     expect(migrationSql).not.toMatch(/IF NOT EXISTS/i);
     expect(migrationSql).not.toMatch(/CREATE POLICY/i);
     expect(migrationSql.match(/CREATE OR REPLACE FUNCTION/g)).toHaveLength(1);
@@ -587,8 +599,12 @@ describe('the secret-gated function (SA re-ruling R-2 to R-4, R-6)', () => {
     const restored = previousFunctionSql(previousMigrationSql);
     // The previous function, only its CREATE turned into CREATE OR REPLACE.
     const close = '\n$operator_cleanup$';
+    // The previous file may say CREATE FUNCTION (20261041) or CREATE OR REPLACE FUNCTION (every later version).
+    const previous = previousMigrationSql; // readSql already normalised CRLF
+    const head = previous.search(/CREATE (OR REPLACE )?FUNCTION public\.operator_test_account_cleanup\(/);
+    expect(head).toBeGreaterThan(-1);
     expect(restored.replace('CREATE OR REPLACE FUNCTION', 'CREATE FUNCTION')).toBe(
-      previousMigrationSql.slice(previousMigrationSql.indexOf('CREATE FUNCTION'), previousMigrationSql.indexOf(`${close};`) + close.length)
+      previous.slice(head, previous.indexOf(`${close};`, head) + close.length).replace('CREATE OR REPLACE FUNCTION', 'CREATE FUNCTION')
     );
     expect(rollbackSql).toContain(`\n${restored};\n`);
     expect(rollbackSql).toBe(renderRollbackSql(previousMigrationSql));
@@ -601,6 +617,7 @@ describe('the secret-gated function (SA re-ruling R-2 to R-4, R-6)', () => {
     expect(rollbackSql.match(/^GRANT .*$/gm) ?? []).toEqual([`GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE} TO service_role;`]);
     expect(rollbackSql.trimEnd().endsWith("NOTIFY pgrst, 'reload schema';")).toBe(true);
   });
+
 });
 
 describe('applied history: a function migration is never edited once applied', () => {
@@ -611,6 +628,9 @@ describe('applied history: a function migration is never edited once applied', (
   const APPLIED: ReadonlyArray<[string, string]> = [
     [`supabase/migrations/${INITIAL_FUNCTION_MIGRATION}.sql`, '19df58138f21362ed57f8f6bba4af889067ba2b2dd64a305ae56cc9fe08ec15e'],
     [`supabase/SQL Scripts/${INITIAL_FUNCTION_MIGRATION}_rollback.sql`, 'f8573a4d29f35e131a369f77e072a27b08822ef06dcb94c7fd39d01c27ea62f1'],
+    // Applied to prod by the user 2026-10-07 (plan payments P-3b.1, PR #251).
+    ['supabase/migrations/20261042_operator_test_account_cleanup_billing_events.sql', 'f2aec8391439e1d26f67e720d4d625087614b289c6968e008b5ae91aebc4d40c'],
+    ['supabase/SQL Scripts/20261042_operator_test_account_cleanup_billing_events_rollback.sql', 'ac784912b9d370cb78af13052e03247c9a0b994c0e3ede26c634a13436984067'],
   ];
 
   it.each(APPLIED)('%s is byte-identical to what was applied', (file, sha256) => {
@@ -659,5 +679,71 @@ describe('paste safety of the migration and rollback (SA C-6, R-1)', () => {
       .map((t) => t.text.slice(0, 60));
     expect(offenders).toEqual([]);
     expect(sql.match(/[A-Za-z0-9.+_-]+@[A-Za-z0-9.-]+\.[a-z]+/g)).toBeNull();
+  });
+});
+
+describe('first live run fixes (2026-10-07)', () => {
+  it('reviews the three links into emptied tables that blocked every account (G-18)', () => {
+    const reviewed = INBOUND_FOREIGN_KEYS.map(([child, constraint, owner]) => `${child}.${constraint}.${owner}`);
+    expect(reviewed).toEqual(
+      expect.arrayContaining([
+        'insight_hypotheses.insight_hypotheses_business_fk.user_id',
+        'insight_measurements.insight_measurements_business_fk.user_id',
+        'insight_measurements.insight_measurements_insight_id_fkey.user_id',
+      ])
+    );
+    // Both tables are now deleted by the plan, child before its CASCADE parent.
+    expect(position('insight_measurements')).toBeGreaterThan(-1);
+    expect(position('insight_hypotheses')).toBeGreaterThan(-1);
+    expect(position('insight_measurements')).toBeLessThan(position('insights'));
+  });
+
+  it('G-18 skips only counts that are zero by construction', () => {
+    const shared = buildCheckQuery();
+    // (a) the parent row is removed because its key column IS the target, the link
+    // points at that column, and the link column is the owner column: the child
+    // row names the target as owner, so it can never be another account's row.
+    expect(shared).toContain(
+      'plan.parent_table IS NULL AND inbound_catalog.parent_column = plan.key_column\n      AND inbound_catalog.child_column = inbound_review.owner_column AS owner_is_target'
+    );
+    // (b) the parent has no row this script removes (the same predicate the count
+    // would use, LIMIT 1), so nothing can point at a removed row. Asked once per parent.
+    expect(shared).toContain(
+      "format('SELECT count(*) AS row_count FROM (SELECT 1 FROM public.%I WHERE %s LIMIT 1) AS one_row', needed.parent_table, needed.parent_predicate)"
+    );
+    expect(shared).toContain('SELECT DISTINCT inbound_joined.parent_ord, inbound_joined.parent_table, inbound_joined.parent_predicate');
+    expect(shared).toContain('WHEN inbound_joined.owner_is_target OR inbound_parents.found = 0 THEN 0');
+    expect(shared).toContain('LEFT JOIN inbound_parents USING (parent_ord)');
+    // The delete reads the same guard rows, so it skips exactly the same counts.
+    expect(buildDeleteBlock()).toContain('WHEN inbound_joined.owner_is_target OR inbound_parents.found = 0 THEN 0');
+  });
+
+  it('the survivor scan still covers every link to the login, counting a plan table once', () => {
+    const block = buildDeleteBlock();
+    const scan = block.slice(block.indexOf('v_survivors := ('), block.indexOf('IF v_survivors IS NOT NULL'));
+    expect(scan).toContain("WHERE con.contype = 'f' AND con.confrelid = 'auth.users'::regclass AND nsp.nspname <> 'auth'");
+    // Only a link already counted by the plan-table half is left out: same table, same key column, keyed by user.
+    expect(scan).toContain(
+      "AND NOT (nsp.nspname = 'public' AND (rel.relname::text, att.attname::text) IN (SELECT plan_keys.table_name, plan_keys.key_column FROM plan_keys))"
+    );
+    // plan_keys is every plan table keyed by the login, and the first half counts each of them.
+    expect(scan).toMatch(/\) AS plan_values\(ord, step, table_name, key_column, parent_table\)\n\s+WHERE plan_values\.parent_table IS NULL\n\s+\)/);
+    expect(scan).toContain("FROM plan_keys\n      WHERE to_regclass(format('public.%I', plan_keys.table_name)) IS NOT NULL");
+  });
+
+  it('the function returns its own database time in ms, in both modes (SA C-2)', () => {
+    expect(migrationSql).toContain(
+      "'server_ms', (pg_catalog.date_part('epoch', pg_catalog.clock_timestamp() - pg_catalog.statement_timestamp()) * 1000)::bigint);"
+    );
+    // One RETURN, after both branches, so a check and a delete both carry it.
+    expect(migrationSql.match(/RETURN pg_catalog\.jsonb_build_object\(/g)).toHaveLength(1);
+  });
+
+  it('the trigger section says which events a login trigger fires on', () => {
+    expect(checkSql).not.toContain("'Fires when the login is deleted.'");
+    expect(checkSql).toContain("CASE WHEN (trg.tgtype::integer & 8) <> 0 THEN 'Fires when the login is deleted. Events: ' ELSE 'Does not fire on this delete. Events: ' END");
+    for (const [bit, event] of [[4, 'INSERT'], [8, 'DELETE'], [16, 'UPDATE'], [32, 'TRUNCATE']] as const) {
+      expect(checkSql).toContain(`CASE WHEN (trg.tgtype::integer & ${bit}) <> 0 THEN '${event}' END`);
+    }
   });
 });

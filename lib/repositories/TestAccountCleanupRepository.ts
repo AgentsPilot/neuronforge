@@ -89,6 +89,12 @@ export interface CleanupCheckResult {
   /** The files under the account folder (G-12), by bucket and path. */
   storageObjects: StorageObjectRef[];
   rows: CleanupCheckRow[];
+  /**
+   * Time the function spent in the database, in ms (SA C-2), measured from the
+   * statement start. `elapsedMs` in the routes adds network and cold start.
+   * Null from a function version that does not report it.
+   */
+  serverMs: number | null;
 }
 
 export interface CleanupReport {
@@ -104,7 +110,7 @@ export interface CleanupReport {
 }
 
 export type CleanupRemoveOutcome =
-  | { kind: 'removed'; version: string; report: CleanupReport }
+  | { kind: 'removed'; version: string; report: CleanupReport; serverMs: number | null }
   /** The function raised on a guard: nothing was removed. `reason` is the plain SQL message (no email). */
   | { kind: 'blocked'; guards: string[]; reason: string };
 
@@ -148,6 +154,8 @@ const rpcResultSchema = z.object({
   version: z.string().min(1),
   mode: z.enum(['check', 'delete']),
   rows: z.array(z.record(z.unknown())),
+  // Optional: the 20261041 function does not return it.
+  server_ms: z.number().nonnegative().optional(),
 });
 
 const GUARD_ID = /^G-\d+/;
@@ -169,7 +177,7 @@ export function cleanupErrorFacts(err: unknown): { kind: CleanupErrorKind | null
   return { kind: null, code: null, message: err instanceof Error ? err.message : String(err) };
 }
 
-function parseCheck(version: string, rows: Array<Record<string, unknown>>): CleanupCheckResult {
+function parseCheck(version: string, rows: Array<Record<string, unknown>>, serverMs: number | null): CleanupCheckResult {
   const parsed: CleanupCheckRow[] = rows.map((row) => ({
     section: toText(row.section),
     status: toText(row.status),
@@ -199,6 +207,7 @@ function parseCheck(version: string, rows: Array<Record<string, unknown>>): Clea
     blockers,
     storageObjects,
     rows: parsed,
+    serverMs,
   };
 }
 
@@ -267,7 +276,7 @@ export class TestAccountCleanupRepository {
   async check(input: CleanupInput): Promise<RepositoryResult<CleanupCheckResult>> {
     try {
       const result = await this.call('check', input, null);
-      return { data: parseCheck(result.version, result.rows), error: null };
+      return { data: parseCheck(result.version, result.rows, result.server_ms ?? null), error: null };
     } catch (err) {
       return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
     }
@@ -281,7 +290,10 @@ export class TestAccountCleanupRepository {
   async remove(input: CleanupDeleteInput, actorId: string): Promise<RepositoryResult<CleanupRemoveOutcome>> {
     try {
       const result = await this.call('delete', input, actorId);
-      return { data: { kind: 'removed', version: result.version, report: parseReport(result.rows) }, error: null };
+      return {
+        data: { kind: 'removed', version: result.version, report: parseReport(result.rows), serverMs: result.server_ms ?? null },
+        error: null,
+      };
     } catch (err) {
       if (err instanceof CleanupRpcError && err.code === PG_RAISE_EXCEPTION) {
         return { data: { kind: 'blocked', guards: guardIdsIn(err.message), reason: err.message }, error: null };

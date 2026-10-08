@@ -1,6 +1,6 @@
 {
  "generated": "2026-10-04",
- "count": 148,
+ "count": 150,
  "levels": {
   "admin_users": "never",
   "advisor_reports": "never",
@@ -88,6 +88,8 @@
   "group_metrics_rollup": "never",
   "insight_actions": "reset",
   "insight_automations": "reset",
+  "insight_hypotheses": "reset",
+  "insight_measurements": "reset",
   "insights": "reset",
   "intake_form_templates": "never",
   "kernel_action_log": "reset",
@@ -159,6 +161,8 @@
   "exchange_rate_history": "2026-10-04 AD-1a SC-8: no tenancy column; changed_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK.",
   "exchange_rates": "2026-10-04 AD-1a SC-8: no tenancy column; updated_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK.",
   "insight_actions": "2026-10-04 AD-1a SC-8: live user_id column; FK business_profiles CASCADE; no inbound FK (measured by scripts/purge-schema-reconcile.ts). Business data, reset/LEAF (SA-1(a)).",
+  "insight_hypotheses": "2026-10-07 TAC-1: live user_id column; FK business_profiles CASCADE; no inbound FK, no trigger (measured with purge_schema_introspect, test-account cleanup first live run). Absent from supabase/migrations. Business data, reset/LEAF.",
+  "insight_measurements": "2026-10-07 TAC-1: live user_id column; FK business_profiles CASCADE and insight_id -> insights CASCADE; no inbound FK, no trigger (measured with purge_schema_introspect, test-account cleanup first live run). Absent from supabase/migrations. Business data, reset/LEAF.",
   "shared_agent_imports": "2026-10-04 AD-1a SC-8: no tenancy column; imported_by_user_id -> auth.users SET NULL. Actor reference on platform data: never.",
   "sla_events": "2026-10-04 AD-1a SC-8: no tenancy column; acknowledged_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK.",
   "system_settings_config": "2026-10-04 AD-1a SC-8: no tenancy column; updated_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK."

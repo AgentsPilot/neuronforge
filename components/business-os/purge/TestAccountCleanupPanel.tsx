@@ -348,6 +348,11 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
             </strong>{' '}
             · login <code>{view.targetUserId ?? 'not found'}</code>
           </p>
+          {view.serverMs !== null && (
+            <p data-testid="cleanup-check-server-time" style={{ margin: '4px 0 0', fontSize: 12, color: '#6c757d' }}>
+              Server time: {view.serverMs} ms
+            </p>
+          )}
           {!view.functionUpToDate && (
             <p role="alert" style={{ margin: '6px 0 0', fontSize: 13, color: '#b02a37' }}>
               The database function is out of date, so the delete will refuse. Apply the current migration.
@@ -498,6 +503,11 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
             <code>{removed.report.total.removedLogin ?? removed.targetUserId ?? 'unknown'}</code>
             {removed.report.total.removedAt && <> · at {removed.report.total.removedAt}</>}
           </p>
+          {(removed.serverMs.check !== null || removed.serverMs.delete !== null) && (
+            <p data-testid="cleanup-delete-server-time" style={{ margin: '4px 0 0', fontSize: 12, color: '#6c757d' }}>
+              Server time: check {removed.serverMs.check ?? '?'} ms · delete {removed.serverMs.delete ?? '?'} ms
+            </p>
+          )}
         </div>
       )}
     </section>
