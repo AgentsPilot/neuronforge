@@ -74,6 +74,7 @@ describe('who may open a checkout (5a SA C-3, replaced in 5b.1 per workplan §3.
     'lib/business-os/boost/boostPurchasesTypes.ts',
     'app/api/business-os/credits/boost/purchases/route.ts',
     'components/business-os/BoostReturnNotice.tsx',
+    'components/business-os/BoostPurchasesList.tsx',
   ])('(b) %s never names the boost switch or the access checks', (file) => {
     const code = read(file);
     for (const word of ['BUSINESS_OS_CREDITS_BOOST', 'isBoostCheckoutOpenFor', 'isBoostPurchaseAvailableFor', '/credits/boost/checkout']) {
