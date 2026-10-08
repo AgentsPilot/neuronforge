@@ -11,7 +11,7 @@
 
 **Branch:** `feature/bos-credits-boost-slice-5b`, cut from `origin/main` `e2813fca` (after #259)
 **Date:** 2026-10-08
-**Status:** **5b.1 "Buy and return": approved and committed 2026-10-08, [PR #264](https://github.com/AgentsPilot/neuronforge/pull/264) open; after deploy the user runs the test purchase (§7); 5b.2 next.** **QA PASS 2026-10-08** (one Low UX note, same as SA N-1; see QA Testing Report). SA code review approved 2026-10-08 (Code Complete 2026-10-08). C-1 to C-6 applied (§3.0); results in §6.1. 5b.2 (the Purchases list) not started. *(Earlier: SA approved with conditions 2026-10-08.)*
+**Status:** **5b.1 merged ([PR #264](https://github.com/AgentsPilot/neuronforge/pull/264), 2026-10-08). 5b.2 "Purchases list": approved and committed 2026-10-08, PR open.** **QA PASS 2026-10-08** (no defects; see QA — 5b.2). SA code review approved 2026-10-08 (Code Complete 2026-10-08) (results in §6.3). *(Earlier: **5b.1 "Buy and return": approved and committed 2026-10-08, [PR #264](https://github.com/AgentsPilot/neuronforge/pull/264) open; after deploy the user runs the test purchase (§7); 5b.2 next.** **QA PASS 2026-10-08** (one Low UX note, same as SA N-1; see QA Testing Report). SA code review approved 2026-10-08 (Code Complete 2026-10-08). C-1 to C-6 applied (§3.0); results in §6.1. 5b.2 (the Purchases list) not started. *(Earlier: SA approved with conditions 2026-10-08.)*)*
 
 ## Overview
 
@@ -229,10 +229,10 @@ Rulings Q-1 to Q-8 as proposed (§10): the user-scoped service-role read; the bo
 
 - ✅ T5b.1 Repository `findForAccountBySessionId` + tests (user-scoped; another account → null)
 - ✅ T5b.2 Purchase view + types + tests (mapping, nothing internal, BQ-B1) *(5b.1)*
-- ✅ T5b.3 (5b.1 part, SA C-1) Purchases route **`sessionId` branch** + tests (happy, 401, 400, cross-owner null, exact key set, no-store). ⬜ The list branch and the mode filter are 5b.2
+- ✅ T5b.3 Purchases route: the **`sessionId` branch** (5b.1) and the **list branch** (5b.2: current mode only, newest first, default and maximum 50, owner view only, no-store) + tests
 - ✅ T5b.4 Packages route: `purchaseAvailable` + `no-store` + tests
 - ✅ T5b.5 Panel: Buy, one-checkout guard, embedded form, every error, Back, `SheetDescription` + tests
-- ⬜ T5b.6 (5b.2) Purchases list + tests (statuses, receipt, RTL, error)
+- ✅ T5b.6 (5b.2) Purchases list + tests (hidden at zero, every status, receipt link safety, business timezone, he / es / RTL, error and Try again, refresh on credit)
 - ✅ T5b.7 Return notice + `UsageCard` mount + tests (each status, URL cleaned, bounded poll, signal raised)
 - ✅ T5b.8 Strings; guards and registrations *(the 5b.1 strings and guards)*
 - ✅ T5b.9 Run the bar, the UsageCard suites unedited, the figure guard, entitlements, `oneAddressPolicy` (Linux-path copy), scoped tsc (types-first); record in §6 *(5b.1)*
@@ -343,6 +343,96 @@ Rulings Q-1 to Q-8 as proposed (§10): the user-scoped service-role read; the bo
 
 he / es drafts are in `LanguageContext.tsx` under `usage.boost.*`, for native review.
 
+### 6.3 Results (Dev, 2026-10-08): 5b.2 "Purchases list"
+
+**What was built:**
+- **The purchases route's list branch.** `GET /api/business-os/credits/boost/purchases` without `sessionId` returns the signed-in owner's purchases:
+  - the account from `getUser()`;
+  - the current Stripe mode only (`isLiveMode(currentStripeMode())`; an unknown mode → 500);
+  - newest first, `limit` 1–50 (default 50);
+  - the owner view only;
+  - `private, no-store`.
+
+  The `sessionId` branch is unchanged. `limit` beside a `sessionId` is refused (400).
+- **Reuse:** the repository's existing **`listForAccount`** (explicit columns, `.eq('user_id')`, `.eq('livemode')`, newest first, clamped limit, already unit-tested) is reused. No new repository method.
+- **`BoostPurchasesList`** sits at the bottom of the package list in the Top up panel and renders nothing until there is at least one purchase. Each row shows:
+  - name and a "Bought" tag, with the status chip on the other side;
+  - the date in the business's timezone (`timeZoneOptions`), the credits, the price "excl. tax", and a Receipt link: https only, `target="_blank" rel="noopener noreferrer"`.
+
+  It re-reads when the panel opens, on Try again, and on the credit-usage signal while open (so a purchase credited during a return shows at once).
+- **Strings:** 13 new `usage.boost.purchases.*` keys in en/he/es (he/es drafts).
+- **Guards:** `BoostPurchasesList.tsx` is added to `creditFigures` `SOURCES` and to the "never names the switch or the checkout" guard. No new entitlements importer: the route's registration is unchanged.
+- **5b.1 tests updated on purpose:**
+  - "no sessionId → 400" is removed (it is now the list);
+  - the R-4 "an extra limit key" case became "a limit beside a sessionId";
+  - two 5a panel tests now count the packages reads only, since the list adds its own read.
+
+| Run | Result |
+|---|---|
+| New: the list branch (7 tests in the route suite), `BoostPurchasesList.render` (26) | ✅ green, three consecutive runs of the list suite |
+| **Broad set** (`--ci`; every boost suite and route, the webhook and billing suites, all of `components/business-os/__tests__` with the five UsageCard suites unedited, the `test:bos-entitlements` set, `lib/audit`, `app/api/audit`, `oneAddressPolicy` on a Linux-path copy) | ✅ **252 suites, 6,695 tests, 100 snapshots** |
+| Types-first tsc (`tsconfig.5b2.json`: the 5b files plus the list and its test) | ✅ 0 errors in 5b files (the 24 known `LanguageContext` duplicate keys only) |
+
+**Deviations:**
+1. `listForAccount` is reused instead of a new repository method; it already does exactly the scoped, ordered and limited read.
+2. An unknown server Stripe mode answers 500 rather than an empty list, so a misconfigured environment does not look like "no purchases".
+3. The list is rendered only in the package view, not beside the open payment form. Back, or reopening, re-reads it.
+4. The chip for `awaiting_payment` reads "Pending" and the one for `processing` reads "Processing", as asked. A delayed payment method therefore shows "Pending" in the list, while the return notice keeps its longer explanation.
+
+**The English strings:**
+
+| Key | Text |
+|---|---|
+| Title | **Purchases** |
+| Price | **{price} excl. tax** (e.g. "$25 excl. tax") |
+| Credits | **{credits} credits** (the existing key, e.g. "13,750 credits") |
+| Tag | **Bought** |
+| Link | **Receipt** |
+| Error | **We couldn't load your purchases.** + **Try again** |
+| Status chips | credited **Credits added** · processing **Processing** · awaiting_payment **Pending** · failed **Didn't go through** · expired **Expired** · refunded **Refunded** · partially_refunded **Partly refunded** · under_review **Payment under review** |
+
+**What the list looks like** (bottom of Top up, after the footer line; a thin divider, then):
+
+```text
+Purchases
+Plus  [Bought]                                Credits added
+Oct 8, 2026, 10:30 PM   13,750 credits   $25 excl. tax   Receipt
+─────────────────────────────────────────────────────────────────
+Starter  [Bought]                                 Processing
+Oct 8, 2026, 10:05 PM   5,000 credits   $10 excl. tax
+```
+
+In Hebrew the sheet is RTL and opens from the left, so the chip sits on the left and the row reads right to left.
+
+### 6.4 5b.2 after review (Dev, 2026-10-08): the user's decisions and QA's R-1 to R-4
+
+The user approved 5b.2 (SA approved, QA PASS) with two decisions:
+
+1. **The row date stays the checkout start (`createdAt`). Decided.**
+2. **When the package catalogue fails to load, the Purchases list stays hidden, but the owner is told.** A second line sits under the existing packages error, only in that state:
+
+| Language | Text (`usage.boost.purchases.unavailable`) |
+|---|---|
+| en | **Your purchases can't be shown right now either. Please check back later.** |
+| he (draft) | גם את הרכישות שלך אי אפשר להציג כרגע. כדאי לבדוק שוב מאוחר יותר. |
+| es (draft) | Tampoco podemos mostrar tus compras en este momento. Vuelve a consultarlo más tarde. |
+
+There are no digits in any language. When the catalogue loads, the notice is absent, whether or not there are purchases.
+
+**QA's tests, added:**
+- **R-1:** a missing, garbage or empty server key → 500 with no read and no details; `sk_test_` / `rk_test_` → test rows, `sk_live_` → live rows (route suite).
+- **R-2:** no Receipt link for `data:`, protocol-relative, empty, malformed or `ftp:` links.
+- **R-3:** dates across the Asia/Jerusalem daylight-saving change on 25 Oct 2026 (01:30 AM, 02:30 AM) and across the year end (Jan 1, 2027, 12:30 AM).
+- **R-4:** one read per open; the credit signal adds exactly one read while open and none after close.
+- **The notice:** shown in en/he/es on a catalogue failure, inside the error block, with no purchases read; absent when the catalogue loads.
+
+**A flake fixed (test only, in a 5b.1 test already on main):** QA 5b.1 R-3, "reads at 2, 7, 17, 37 and 77 seconds", steps fake timers 90 times through `act()`. Under the loaded broad run it once exceeded Jest's 5 s default. It now has an explicit 30 s budget; the time on the page is still faked.
+
+**Re-run:**
+- the 5b suites green, twice;
+- the broad set (`--ci`, 252 files, including `oneAddressPolicy` on a Linux-path copy): **252 suites, 6,712 tests, 100 snapshots**, run twice after the timeout fix;
+- types-first tsc (`tsconfig.5b2.json`): 0 errors in 5b files (the 24 known duplicate keys only).
+
 ## 7. The user's test purchase (after 5b is deployed)
 
 Production Stripe is in **test mode**, so no real money moves. **Never set the flag on Preview** (the database is shared).
@@ -370,7 +460,7 @@ Production Stripe is in **test mode**, so no real money moves. **Never set the f
 
 **If credits do not appear after about a minute (and a refresh):** use 4a §7 step 6, the stuck-claim recovery statement. It applies **in test mode only**, to a purchase still `pending` or `awaiting_payment` (SA C-6 d). Real-money go-live still needs 4b (SA's go-live gate in 4a §7).
 
-**Note for 5b.1:** step 7 (the Purchases list) arrives with 5b.2. Until then, check the purchase in Supabase (`business_os_boost_purchases`: status `paid`, `receipt_url` filled).
+*(5b.2 merged = step 7 available. Before it, the purchase could only be checked in Supabase: `business_os_boost_purchases`, status `paid`, `receipt_url` filled.)*
 
 ---
 
@@ -524,6 +614,48 @@ The design is right. The server stays the authority (`purchaseAvailable` comes f
 
 #### Code Approved for QA: **Yes**
 
+### SA Code Review (5b.2)
+
+**Code Review by SA — 2026-10-08 (branch `feature/bos-credits-boost-slice-5b2`, off `031a2af3`)**
+**Status:** ✅ **Code Approved for QA.** There are no must-fix items.
+
+#### What I verified myself
+
+| Check | Result |
+|---|---|
+| 11 suites: the new list render, the purchases route, the 5a and 5b.1 panel suites, the return notice, the UsageCard Top-up suite, the credit-signal census, both boost views, `creditFigures`, `enforcementPoints` | ✅ **317 passed** |
+| Types-first `tsc` over every touched `.ts` / `.tsx` | ✅ **0 errors in the touched files.** The only errors are the 24 pre-existing duplicate keys in `LanguageContext.tsx`; none is a `usage.boost.*` line |
+| Mutation M1: the list `limit` cap raised from 50 to 500 | ✅ Caught (route, 1 red) |
+| Mutation M2: a non-https receipt link rendered | ✅ Caught (list render, 2 red) |
+| Restoration after each mutation | ✅ SHA-1 checked |
+| `console.*`; `package.json` | ✅ 0; unchanged |
+
+#### The points asked
+
+- **Tenant isolation:** the account comes only from `getUser()`. The list reuses `listForAccount(user.id, { livemode, limit })`, which is `.eq('user_id')` plus `.eq('livemode')`, an explicit column list and newest first. The response is `BoostPurchaseView[]`, with the exact key set pinned by the view test (no Stripe ids, session id, flag reason, livemode or lot id). Another owner's rows cannot appear. ✅
+- **Query validation:** the Zod object is `.strict()`. `limit` must be an integer from 1 to 50. `sessionId` and `limit` together → 400. Unknown keys → 400. An unknown Stripe mode → 500, never an empty list (deviation, accepted: an empty list would hide a misconfiguration). `no-store` is on every answer. ✅
+- **Receipt link:** https only, both server-side (the view) and client-side (`new URL().protocol`), with `target="_blank" rel="noopener noreferrer"`. M2 proves it. ✅
+- **Dates and time zone:** `timeZoneOptions` from `LanguageContext`, the same business-clock path the credit history uses. **When `user_preferences.timezone` is NULL** (not asked yet), `LanguageContext` falls back to `'UTC'` (`useState('UTC')` and `safeTimezone`), so purchase times show in UTC. That is the platform-wide display behaviour today, not something 5b.2 introduces. The NULL-vs-`'UTC'` distinction CLAUDE.md requires is kept **in storage** and is the readiness gate's concern; a display fallback does not write it. Accepted. ✅
+- **No figures typed:** credits come from the payload through `Intl`, prices through `formatMinorAmount`, and the strings use placeholders. The `creditFigures` guard has the list in `SOURCES`. ✅
+- **RTL:** inherited from the sheet's `dir`; the strings are present in en, he and es. ✅
+- **Refetching:** on open, on `onCreditUsageChanged` while open, on Try again, and on remount when returning to the package view after Back (the list lives only in the package view, deviation accepted). The fetch is aborted on close. There is no timer or poll. ✅
+- **5b.1 is unchanged:** the Buy, return-notice and UsageCard suites pass. The only intended change to the 5b.1 contract is that "no `sessionId` → 400" becomes the list. ✅
+
+#### §6.3 deviations: all accepted
+
+- Reusing `listForAccount`.
+- An unknown Stripe mode answers 500, not an empty list.
+- The list shows only in the package view.
+- Pending and Processing are distinct chips.
+
+#### Note (no change required)
+
+- **N-1:** time zones. An owner who has never set a time zone sees UTC times in the list, as in the credit history. If that reads oddly in the UI review, the fix belongs to the shared time-zone gap prompt (`journeyReadiness`), not to this list.
+
+#### Code Approved for QA: **Yes**
+
+**SA re-check of the 5b.2 follow-ups (2026-10-08, diff only):** ✅ still Code Approved. When the catalogue fails, the `usage.boost.purchases.unavailable` notice sits inside the packages error block; the copy is static, in en/he/es, has no digits and creates no new data path. QA tests R-1 to R-4 pass. The 30 s budget on the return-notice test bounds real time only; fake timers still drive the 2–77 s schedule. 156 tests re-run green.
+
 ## QA Testing Report
 
 ### QA — 5b.1 (2026-10-08)
@@ -625,6 +757,96 @@ Scoped tsc: 24 x TS1117 (pre-existing duplicate keys, none usage.boost.*), 0 in 
 - [x] The 5b.1 acceptance criteria pass. Ready for the user's diff review and the §7 test purchase (Production only, `pk_test_`, Preview unticked). The two notes need no change.
 - [ ] Issues found that the Dev must address before commit
 
+### QA — 5b.2 (2026-10-08)
+
+**Verdict:** ✅ **PASS.** No defects; three Info notes. QA confirmed:
+- the list route is owner-scoped, mode-scoped and strictly validated;
+- the Purchases list renders, localises and refreshes as specified;
+- the receipt link is https-only;
+- the 5b.1 status read is unchanged.
+
+**Test mode:** full
+**Strategy used:** A + B (Jest, jsdom; Stripe mocked; no Supabase, no dev server). Two scratch suites live in the session scratchpad and are **not committed**:
+- `qa/server5b2.qa.test.ts`: 36 tests;
+- `qa/ui5b2.qa.test.tsx`: 38 tests.
+
+Two more mutations of my own, each restored and SHA-1 checked.
+**Focus:** api, ui, security (tenant scope, owner payload, link safety)
+**Skipped:** a real browser (layout is left to the user's §7 step 7); `oneAddressPolicy` (Linux-path copy, run by the Dev).
+**Input source:** coordinator brief + workplan §6.3
+
+#### Commands run
+
+| Check | Result |
+|---|---|
+| Broad set (JSX scratch config, `--ci`):<br>• all of `app/api/business-os/credits/boost/**`;<br>• `lib/business-os/boost/__tests__`;<br>• all of `components/business-os/__tests__` (the UsageCard suites unedited: empty `git diff`);<br>• `lib/business-os/entitlements/__tests__`;<br>• the repository test;<br>• `formatMinorAmount` | ✅ **69 suites, 1,972 tests passed** |
+| Types-first tsc (`tsconfig.5b2.json`) | ✅ 0 errors in 5b files. Only the 24 known `TS1117` duplicate keys remain; each of the 13 `usage.boost.purchases.*` keys appears exactly 3 times |
+| QA server suite | ✅ 36 / 36 (two runs, identical) |
+| QA UI suite | ✅ 37 / 38. The one red is a test artefact: my expected "00:30" for a 12-hour English clock, where the rendered "12:30 AM" is correct |
+| Mutations | ✅ (Q1) The list route's `livemode` pinned to `false` → **1 red** (route). (Q2) An empty list rendered (`length === 0` check removed) → **2 red** (list render). Both restored, SHA-1 identical |
+| `console.*` | ✅ None in the list or the route |
+| Source untouched | ✅ The SHA-1 of the 9 non-doc files matches the pre-QA snapshot; `git status` is unchanged |
+
+#### Test matrix
+
+| Area | Result | Notes |
+|---|---|---|
+| Route: auth | ✅ | 401 signed out, with no repository read |
+| Route: owner and mode scope | ✅ | `listForAccount` is called with **the session user's id** and `livemode` from the server key: `sk_test_` / `rk_test_` → `false`, `sk_live_` → `true`. A missing, empty or garbage key → **500 with no read** and no details. The repository itself issues `.eq('user_id').eq('livemode').order('created_at', desc).range(0, limit-1)` with an explicit column list, and clamps a limit of 500 to 200 |
+| Route: limit | ✅ | Default 50. `1`, `7` and `50` are accepted. `0`, `51`, `-1`, `1.5`, `abc`, empty, `1e2` and a duplicate `limit` → **400 with no read**. `limit` with `sessionId`, and `userId`, `accountId`, `livemode` or `offset` → 400 with no read (Info I-1: a URL-encoded leading space before a digit is coerced) |
+| Route: payload | ✅ | `data` holds exactly `purchases`; each item has exactly the 13 view keys. The repository order is preserved (newest first). A retired package → `name: null` with its id. A flagged row → `under_review`. **No** session id, payment-intent, charge or dispute id, flag reason, lot id, livemode or retail version anywhere. `http:` and `javascript:` receipts from the database → `null`. Empty → `{purchases: []}`. A repository error → 500 with no details. Always `no-store` |
+| Route: `sessionId` branch | ✅ | Unchanged. The six malformed cases → 400 with no read. Own row → the view, read with the session user's id. Missing → `{purchase:null}`. The list is never read on this branch |
+| List: visibility | ✅ | Closed (`open={false}`) → **no read**, nothing rendered. Zero purchases → nothing rendered (no title, no empty state) |
+| List: status chips | ✅ | credited "Credits added", processing "Processing", awaiting_payment "Pending", failed "Didn't go through", expired "Expired", refunded "Refunded", partially_refunded "Partly refunded", under_review "Payment under review" |
+| List: row (en) | ✅ | Heading "Purchases"; "Plus" + "Bought"; "13,750 credits"; "$25 excl. tax"; "Receipt" with `href` exactly the https URL, `target="_blank"`, `rel="noopener noreferrer"` |
+| Receipt safety | ✅ | **No link** for `http:`, `javascript:`, `data:`, malformed, null, empty or protocol-relative `//evil.com`. A link for `HTTPS://…` (upper case is a valid https URL) and for `" https://x.com"` (the URL parser trims the space; the server filter would already null this one) |
+| Retired package | ✅ | `name: null` → the package id "mega_2025" is shown |
+| Dates and timezone | ✅ | Business timezone `Asia/Jerusalem`, across the 25 Oct 2026 DST change: `2026-10-24T22:30Z` → "Oct 25, 2026, 01:30 AM" (+03); `2026-10-25T00:30Z` → "Oct 25, 2026, 02:30 AM" (+02); `2026-12-31T22:30Z` → Jan 1, 2027, 12:30 AM. A NULL timezone (the provider's `UTC` fallback, SA N-1) → "Oct 24, 2026, 10:30 PM" |
+| he / es | ✅ | he: "פלוס", "נרכש", "הקרדיטים נוספו", "8 באוק׳ 2026, 22:30", "13,750 קרדיטים", "25 $ לא כולל מס", "קבלה", title "רכישות"; inside the panel the list sits in the `dir="rtl"` sheet. es: "Comprado", "Créditos añadidos", "8 oct 2026, 22:30", "13.750 créditos", "25 US$ sin impuestos", "Recibo", title "Compras" |
+| Error states | ✅ | A 500, a network error, a 200 with `success:false`, one malformed row (`status:'paid'`), an EUR row, fractional credits, or a bad date → "We couldn't load your purchases." + Try again, **never an empty list**. Try again → one more read, then the list |
+| Credit signal | ✅ | While open, `notifyCreditUsageChanged` → **exactly one** extra read. After closing, the signal → no read |
+| Request storm | ✅ | 5 open/close cycles of the panel → 5 purchases reads and 5 packages reads (one each per open); none while closed |
+| With the payment form | ✅ | Buy → the form mounts and **the Purchases section is gone**. Back → it reappears, with one re-read (1 → 2) |
+| Strings | ✅ | 13 `usage.boost.purchases.*` keys, present in en/he/es, with no digit in any (figures are placeholders) |
+
+#### Issues Found
+
+##### Bugs
+
+None.
+
+##### Info
+
+- **I-1:** `?limit=%205` (a leading space) is coerced to 5 by `z.coerce.number()`. It is harmless (still 1–50).
+- **I-2:** the list sits inside the package view, so when the **packages** read fails (catalogue down) the Purchases section is not shown either (0 purchases reads). An owner then cannot see past purchases until the catalogue is back. This is acceptable for v1; if wanted, mount the list outside the package-view condition.
+- **I-3:** each row shows `createdAt` (when the checkout started), not `paidAt`. For a delayed payment method the date is the day the purchase began. That matches the plan ("the date"), and is noted for the UI review.
+
+#### Recommended additions
+
+| # | Test | Where | Priority |
+|---|---|---|---|
+| R-1 | The list route with a missing or garbage server key → 500 with no read; `sk_live_` → `livemode: true` | purchases route test | Should |
+| R-2 | Receipt edge cases: `data:`, protocol-relative, malformed → no link | list render test | Nice |
+| R-3 | The business-timezone date across the DST change (Asia/Jerusalem, 25 Oct 2026) | list render test | Nice |
+| R-4 | Five open/close cycles → one read per open; the credit signal after close → no read | list or panel render test | Nice |
+
+#### Test Outputs / Logs
+
+```text
+Broad set:  Test Suites: 69 passed, 69 total   Tests: 1972 passed, 1972 total
+QA server:  Tests: 36 passed (two runs)        QA UI: 37 passed + 1 test-artefact red (12-hour clock expectation)
+  Asia/Jerusalem: 'Oct 25, 2026, 01:30 AM', 'Oct 25, 2026, 02:30 AM'
+  he ["פלוס","נרכש","הקרדיטים נוספו","8 באוק׳ 2026, 22:30","13,750 קרדיטים","25 $ לא כולל מס","קבלה"] | title: רכישות
+  es ["Plus","Comprado","Créditos añadidos","8 oct 2026, 22:30","13.750 créditos","25 US$ sin impuestos","Recibo"] | title: Compras
+  5 opens -> purchases reads: 5 packages reads: 5 | reads before buy 1 after back 2 | catalogue down: purchases shown = false
+Mutations:  livemode pinned false -> 1 failed | empty list rendered -> 2 failed | both RESTORED (SHA-1)
+Scoped tsc: 24 x TS1117 (pre-existing), 0 in 5b files
+```
+
+#### Final Status
+- [x] The 5b.2 acceptance criteria pass (FR-26, BQ-B1). Ready for the user's diff review and §7 step 7. No change required.
+- [ ] Issues found that the Dev must address before commit
+
 ## Commit Info
 
 ---
@@ -640,3 +862,9 @@ Scoped tsc: 24 x TS1117 (pre-existing duplicate keys, none usage.boost.*), 0 in 
 | 2026-10-08 | QA (5b.1): PASS | Broad set 79 suites / 2,178 tests / 100 snapshots green (UsageCard suites unedited); types-first tsc 0 in 5b.1 files. QA scratch suites (41 server + 52 UI, Stripe mocked) cover:<br>• the availability matrix (flag, allow-list, missing or mismatched `pk_` / `sk_` modes → false; matching → true; `no-store`);<br>• one POST per intentional start (double clicks, microtasks, Back);<br>• 20 refusal messages (cap with and without figures, override, never the counted spend);<br>• Back and closing the sheet unmount the form;<br>• focus returns to Top up in en and he;<br>• the owner-scoped status read: exact 13 keys, nothing internal, cross-owner null, malformed → 400 before any read;<br>• the return notice: URL cleaned, reads at 2/7/17/37/77 s then stop, every final status, one card refresh, StrictMode, garbage ids, GET only.<br>Two mutations caught. QA5b-L1 (Low, same as SA N-1): Dismiss does not stop the poll. No change required |
 | 2026-10-08 | QA R-1 to R-5 added; QA5b-L1 accepted | The user approved 5b.1 (SA approved, QA PASS). Tests only: the availability matrix (R-1), cap lines including an override and counted-only answers (R-2), the 2/7/17/37/77 s read times and StrictMode (R-3), the status read's refused queries (R-4), Back and close unmounting the form with one more POST allowed (R-5). QA5b-L1 / SA N-1 (Dismiss stops the poll) accepted by the user as is. 251 suites / 6,661 tests / 100 snapshots green; 0 tsc errors in 5b.1 files. Nothing committed |
 | 2026-10-08 | 5b.1 approved and committed, PR #264 open | The user saw the diff and approved the commit (2026-10-08). RM committed on `feature/bos-credits-boost-slice-5b` and opened [PR #264](https://github.com/AgentsPilot/neuronforge/pull/264) to `main`. After deploy the user runs the test purchase (§7). 5b.2 is next |
+| 2026-10-08 | 5b.1 merged (#264); 5b.2 implemented; Code Complete | The Purchases list: the purchases route's list branch (current mode only, newest first, at most 50, owner view only, reusing `listForAccount`) and a Purchases section at the bottom of Top up, shown only after the first purchase. It has the business-clock date, name, Bought, credits, price excl. tax, a status chip and an https-only Receipt link; en/he/es, RTL; it re-reads on open, Try again and when credits change. 252 suites / 6,695 tests / 100 snapshots green; 0 tsc errors in 5b files. Nothing committed |
+| 2026-10-08 | SA code review (5b.2): Code Approved for QA | 317 tests green; types-first tsc 0 in the touched files. Mutations caught: the limit cap raised, a non-https receipt rendered. Tenant isolation, strict query, `no-store`, https-only receipts with `noopener noreferrer`, no typed figures and RTL all verified. A NULL time zone displays as UTC, as platform-wide (N-1, no change) |
+| 2026-10-08 | QA (5b.2): PASS | Broad set 69 suites / 1,972 tests green (UsageCard suites unedited); types-first tsc 0 in 5b files. QA scratch suites (36 server + 38 UI) cover:<br>• the list route: owner and mode scope from the session and the server key (unknown key → 500 with no read), limit 1–50 with every bad value and `limit` + `sessionId` → 400 with no read, the exact 13-key view with nothing internal, `no-store`, a repository error → 500, the `sessionId` branch unchanged;<br>• the list: hidden when closed or empty, all 8 chips, https-only receipts (no link for http / javascript / data / malformed / protocol-relative) with `target` and `rel`, the retired-package id, business-timezone dates across the Israel DST change and the UTC fallback, he / es / RTL, the error with Try again, exactly one re-read on the credit signal, one read per open, hidden behind the payment form and back after Back.<br>Two mutations caught. No defects; Info I-1 to I-3 |
+| 2026-10-08 | 5b.2 after review: decisions and QA tests | User approved 5b.2 (SA approved, QA PASS). Decided: the row date is the checkout start; on a catalogue failure the purchases stay hidden with the notice "Your purchases can't be shown right now either. Please check back later." (en/he/es, no digits). QA R-1 to R-4 added, plus the notice tests. A 5b.1 poll-timing test given a 30 s budget (it timed out once under load). 252 suites / 6,712 tests / 100 snapshots green twice; 0 tsc errors in 5b files. Nothing committed |
+| 2026-10-08 | SA re-check of the 5b.2 follow-ups: still Code Approved | Purchases-unavailable notice on a catalogue failure (static en/he/es copy, no digits); QA R-1 to R-4; a 30 s real-time budget on the fake-timer return-notice test. 156 tests green |
+| 2026-10-08 | 5b.2 approved and committed, PR open | The user saw the diff and approved the commit (2026-10-08). RM committed on `feature/bos-credits-boost-slice-5b2` and opened a PR to `main` |
