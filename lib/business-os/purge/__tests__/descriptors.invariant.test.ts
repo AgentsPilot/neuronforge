@@ -30,6 +30,7 @@ import {
   PURGE_DESCRIPTORS,
   STORAGE_DESCRIPTORS,
   BLOCKING_EDGES,
+  NOT_NULL_OVERWRITE_EDGES,
   CASCADE_COUNT_EXEMPT,
   REVIEWED_DELETE_TRIGGERS,
   descriptorsForRun,
@@ -264,6 +265,57 @@ describe('purge descriptors — structural invariants (AC-45)', () => {
         expect(result.blockingOrderViolations).toEqual([]);
         expect(result.cascadeAfterParent.filter((e) => !e.exempt)).toEqual([]);
       }
+    });
+
+    /**
+     * 2026-10-08: SET NULL into a NOT NULL column fails the parent delete
+     * (23502) like NO ACTION does. NOT_NULL_OVERWRITE_EDGES is the measured
+     * list; the mirror carries each as a SET NULL FK with its NOT NULL column,
+     * so the descriptor bands are checked by the same rule the live check uses.
+     */
+    const overwriteMirror: ForeignKeyFact[] = NOT_NULL_OVERWRITE_EDGES.map((e) => ({
+      constraint_name: `${e.child}_${e.column}_fkey`,
+      table_name: e.child,
+      references: e.parent,
+      on_delete: e.onDelete === 'SET NULL' ? 'n' : 'd',
+    }));
+    const overwriteColumns = NOT_NULL_OVERWRITE_EDGES.map((e) => ({
+      table_name: e.child,
+      column_name: e.column,
+      is_nullable: 'NO',
+    }));
+
+    it('every NOT NULL overwrite edge is child-first in every run that holds both ends', () => {
+      expect(NOT_NULL_OVERWRITE_EDGES.map((e) => e.id)).toContain('N1');
+      let exercised = 0;
+      for (const { run } of allRuns) {
+        const position = new Map(run.map((d, i) => [d.table, i]));
+        for (const e of NOT_NULL_OVERWRITE_EDGES) {
+          if (!position.has(e.child) || !position.has(e.parent)) continue;
+          exercised += 1;
+          expect([e.id, position.get(e.child)! < position.get(e.parent)!]).toEqual([e.id, true]);
+        }
+        const result = checkDeleteGraph({
+          run,
+          foreignKeys: [...cascadeMirror, ...overwriteMirror],
+          triggers: [],
+          columns: overwriteColumns,
+        });
+        expect(result.blockingOrderViolations).toEqual([]);
+      }
+      // Non-vacuity: N1 is reset-level, so all 16 runs carry it.
+      expect(exercised).toBe(16 * NOT_NULL_OVERWRITE_EDGES.length);
+    });
+
+    it('the overwrite mirror can fail: the pre-2026-10-08 order (crm_contacts first) is refused (negative case)', () => {
+      const run = descriptorsForRun('reset', { integrations: false, agents: false, activityHistory: false });
+      const contacts = run.find((d) => d.table === 'crm_contacts')!;
+      const broken = [contacts, ...run.filter((d) => d !== contacts)];
+      const result = checkDeleteGraph({ run: broken, foreignKeys: overwriteMirror, triggers: [], columns: overwriteColumns });
+      expect(result.status).toBe('refused');
+      expect(result.blockingOrderViolations.map((e) => `${e.child}->${e.parent}`)).toEqual([
+        'scheduling_bookings->crm_contacts',
+      ]);
     });
 
     it('the mirror can fail: business_profiles moved first reports count-zero edges (negative case)', () => {

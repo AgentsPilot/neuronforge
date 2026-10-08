@@ -80,19 +80,19 @@ plan AS (
     (51, 'A', 'website_blocks', 'page_id', 'website_pages'),
     (52, 'A', 'website_content', 'user_id', NULL),
     (53, 'A', 'website_page_views', 'user_id', NULL),
-    (54, 'A', 'agent_executions', 'user_id', NULL),
-    (55, 'A', 'agents', 'user_id', NULL),
-    (56, 'A', 'crm_contacts', 'user_id', NULL),
-    (57, 'A', 'daily_briefings', 'user_id', NULL),
-    (58, 'A', 'email_campaigns', 'user_id', NULL),
-    (59, 'A', 'email_sequences', 'user_id', NULL),
-    (60, 'A', 'insights', 'user_id', NULL),
-    (61, 'A', 'kernel_executions', 'user_id', NULL),
-    (62, 'A', 'payment_automation_rules', 'user_id', NULL),
-    (63, 'A', 'payment_invoices', 'user_id', NULL),
-    (64, 'A', 'payment_plans', 'user_id', NULL),
-    (65, 'A', 'payment_transactions', 'user_id', NULL),
-    (66, 'A', 'scheduling_bookings', 'user_id', NULL),
+    (54, 'A', 'scheduling_bookings', 'user_id', NULL),
+    (55, 'A', 'agent_executions', 'user_id', NULL),
+    (56, 'A', 'agents', 'user_id', NULL),
+    (57, 'A', 'crm_contacts', 'user_id', NULL),
+    (58, 'A', 'daily_briefings', 'user_id', NULL),
+    (59, 'A', 'email_campaigns', 'user_id', NULL),
+    (60, 'A', 'email_sequences', 'user_id', NULL),
+    (61, 'A', 'insights', 'user_id', NULL),
+    (62, 'A', 'kernel_executions', 'user_id', NULL),
+    (63, 'A', 'payment_automation_rules', 'user_id', NULL),
+    (64, 'A', 'payment_invoices', 'user_id', NULL),
+    (65, 'A', 'payment_plans', 'user_id', NULL),
+    (66, 'A', 'payment_transactions', 'user_id', NULL),
     (67, 'A', 'scheduling_services', 'user_id', NULL),
     (68, 'A', 'smart_links', 'user_id', NULL),
     (69, 'A', 'website_pages', 'user_id', NULL),
@@ -736,6 +736,21 @@ guard_rows AS (
   WHERE NOT inbound_rows.reviewed OR inbound_rows.key_width <> 1 OR NOT inbound_rows.owner_ok OR inbound_rows.found > 0
   UNION ALL
   SELECT 'G-18'::text AS guard, 'links pointing at removed tables, reviewed'::text AS item, count(*)::bigint AS found, false AS blocked, ''::text AS clears FROM inbound_catalog
+  UNION ALL
+  SELECT 'G-19'::text AS guard, child_plan.table_name || '.' || att.attname || ' to ' || parent_plan.table_name AS item, 1::bigint AS found, true AS blocked,
+    'Removing a row of the second table empties a NOT NULL column of the first (ON DELETE SET NULL or SET DEFAULT), which the database refuses, and the plan removes the second table first. Engineering must order the first table before it in the generator.'::text AS clears
+  FROM pg_catalog.pg_constraint AS con
+  JOIN pg_catalog.pg_class AS child_rel ON child_rel.oid = con.conrelid
+  JOIN pg_catalog.pg_namespace AS child_nsp ON child_nsp.oid = child_rel.relnamespace
+  JOIN pg_catalog.pg_class AS parent_rel ON parent_rel.oid = con.confrelid
+  JOIN pg_catalog.pg_namespace AS parent_nsp ON parent_nsp.oid = parent_rel.relnamespace
+  JOIN plan AS parent_plan ON parent_plan.table_name = parent_rel.relname::text
+  JOIN plan AS child_plan ON child_plan.table_name = child_rel.relname::text
+  JOIN pg_catalog.pg_attribute AS att ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)
+  WHERE con.contype = 'f' AND con.confdeltype IN ('n', 'd') AND con.conrelid <> con.confrelid
+    AND parent_nsp.nspname = 'public' AND child_nsp.nspname = 'public'
+    AND att.attnotnull AND (con.confdeltype = 'n' OR NOT att.atthasdef)
+    AND child_plan.ord > parent_plan.ord
 ),
 removal AS (
   SELECT

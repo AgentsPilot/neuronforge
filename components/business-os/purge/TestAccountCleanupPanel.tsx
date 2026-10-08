@@ -5,7 +5,7 @@
  * /test-business-os (test-account cleanup, slice 2).
  *
  * ⚠️ DESTRUCTIVE once the deployment is configured: it removes one TEST
- * account completely, login included. Every guard (G-1 to G-18) runs on the
+ * account completely, login included. Every guard (G-1 to G-19) runs on the
  * server inside the generated database function; this panel adds none and
  * decides nothing. It only orders the steps: check, then confirm, then delete.
  *
