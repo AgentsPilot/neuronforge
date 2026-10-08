@@ -112,6 +112,31 @@ function base(s: string): string {
     }
     ${s} .apc-panel,
     ${s} .apc-qa { border-radius: var(--ap-radius-lg); }
+
+    /*
+     * THE CARD DEFAULT, so a panel is a panel even with no composition.
+     *
+     * This class carried only a radius, which was enough while two components
+     * used it and painted their own background. It is not enough once the
+     * public cards adopt it: a theme that is only a PALETTE resolves to the
+     * base layer alone, by design, and those cards would render transparent
+     * and borderless.
+     *
+     * Safe to state here because compositionCss concatenates base FIRST and
+     * the composition after it, so every composition still overrides this by
+     * source order, Stone's transparent border-top-only panel included.
+     *
+     * Padding is deliberately left out: each composition sets its own, and a
+     * default here would fight the components' spacing on palette-only
+     * themes.
+     *
+     * NOTE: no backticks in this comment. It sits inside a template literal,
+     * so one would end the CSS string; the suite asserts against exactly that.
+     */
+    ${s} .apc-panel {
+      background: var(--ap-surface);
+      border: 1px solid var(--ap-border);
+    }
     ${s} .apc-btn { border-radius: var(--ap-radius-md); }
 
     /*

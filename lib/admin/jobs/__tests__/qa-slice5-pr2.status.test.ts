@@ -43,7 +43,25 @@ function tilesFor(inputs: JobsQueuesInputs, now: Date = NOW) {
   return { view, t6: tiles.find((t) => t.id === 'scheduled_jobs')!, t7: tiles.find((t) => t.id === 'queues')! };
 }
 
-const EXPECTED: Record<number, [number, number]> = { 5: [15, 20], 15: [25, 40], 60: [70, 130], 1440: [1500, 2940] };
+/*
+ * Restated from the schedule constants rather than derived from the formula, so
+ * a change to `lateAfterMinutes` / `stoppedAfterMinutes` fails here instead of
+ * agreeing with itself.
+ *
+ * The weekly row (10,080) arrived with `insight-hypotheses`, the first weekly
+ * job. §S5.8 predates weekly schedules and has no row for one; these two
+ * numbers are the published `WEEKLY` grace of 180 minutes, which carries its
+ * own rationale in `bosCronJobs.ts` -- a wider grace than daily, and one
+ * failure's patience rather than two, because six days of slack makes a second
+ * miss a fortnight of silence.
+ */
+const EXPECTED: Record<number, [number, number]> = {
+  5: [15, 20],
+  15: [25, 40],
+  60: [70, 130],
+  1440: [1500, 2940],
+  10_080: [10_260, 20_340],
+};
 
 describe('exact late / stopped boundaries, per schedule type (requirement §S5.8 table)', () => {
   it.each(BOS_CRON_JOBS.map((j) => [j.id, j] as const))('%s', (_id, job) => {

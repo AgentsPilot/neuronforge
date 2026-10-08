@@ -10,12 +10,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import type { Detector, DetectionResult, DetectionRun } from './types';
+import { effectiveClaimType } from './types';
 import { getCorrelationEngine } from '../correlation';
 import type { CorrelationSummary } from '../correlation/types';
-import { InsightRepository, type VectorKey } from '../repository/InsightRepository';
+import { InsightRepository, type VectorKey, type VectorState } from '../repository/InsightRepository';
 import type { BusinessEventCategory } from '../events/types';
 
 // Import detector catalog - Original 6
+import { ToilManualBookingEntryDetector } from './catalog/ToilManualBookingEntryDetector';
+import { SysAutomationUnadoptedDetector } from './catalog/SysAutomationUnadoptedDetector';
 import { CashArOverdueDetector } from './catalog/CashArOverdueDetector';
 import { PaymentIssuesDetector } from './catalog/PaymentIssuesDetector';
 import { RetNoShowSpikeDetector } from './catalog/RetNoShowSpikeDetector';
@@ -115,6 +118,13 @@ export class DetectorEngine {
     // Initialize all detectors
     this.detectors = [
       // Original 6 detectors
+      /*
+       * Behaviour detectors: what the OWNER does, not what happened to the
+       * business. Everything above this line reasons about outcomes.
+       */
+      new ToilManualBookingEntryDetector(supabase),
+      new SysAutomationUnadoptedDetector(supabase),
+
       new CashArOverdueDetector(supabase),
       new PaymentIssuesDetector(supabase),
       new RetNoShowSpikeDetector(supabase),
@@ -208,21 +218,70 @@ export class DetectorEngine {
   }
 
   /**
-   * Vectors with no data behind them yet, so nothing they cover can be judged.
+   * How much evidence each vector actually has, by name.
    *
-   * On failure this returns an empty set — every detector runs — because a
-   * maturity lookup that breaks should not silence the whole engine.
+   * This read `state === 'dark'` into a Set and threw the rest away, which
+   * reduced a three-state machine to two states at the only place that gates
+   * anything. `learn` means ONE ROW of data:
+   *
+   *   if (dataPoints >= threshold && alsoMet) state = 'lit';
+   *   else if (dataPoints > 0)                state = 'learn';
+   *   else                                    state = 'dark';
+   *
+   * So `learn` was treated exactly like `lit`, and `journeyTimeline` -- reading
+   * the same data properly, including the `also` volume clause -- drew the
+   * pricing node locked and promised it for day 52 while a pricing card was
+   * already on the owner's dashboard. The timeline honoured the threshold; the
+   * engine honoured `> 0`.
+   *
+   * Returning null, rather than an empty map, is how an unreadable lookup is
+   * told apart from a genuinely empty one. See `shouldRun`.
    */
-  private async getDarkVectors(userId: string): Promise<Set<VectorKey>> {
+  private async getVectorStates(userId: string): Promise<Map<VectorKey, VectorState> | null> {
     const repository = new InsightRepository(this.supabase);
     const { data, error } = await repository.getVectorMaturity(userId);
 
     if (error || !data) {
-      logger.warn({ err: error, userId }, 'Vector maturity unavailable; running every detector');
-      return new Set();
+      logger.warn({ err: error, userId }, 'Vector maturity unavailable; instance claims only');
+      return null;
     }
 
-    return new Set(data.vectors.filter(v => v.state === 'dark').map(v => v.key));
+    return new Map(data.vectors.map(v => [v.key, v.state]));
+  }
+
+  /**
+   * May this detector speak, given what its vector actually knows?
+   *
+   * An `instance` claim names specific things and is true however little
+   * history exists: "three people wrote to you and got no reply" needs no
+   * baseline, and the businesses a strict gate silences are exactly the small
+   * ones that can least afford to lose an enquiry. That reasoning was already
+   * in this file, applied one hand-set boolean at a time; it is now the
+   * definition of a claim type.
+   *
+   * A rate, trend or pattern is an inference over a population and is only as
+   * good as the population behind it, so it waits for `lit`.
+   *
+   * Unreadable maturity FAILS CLOSED for inference. If we cannot establish how
+   * much evidence there is, we cannot establish the claim either -- the old
+   * behaviour here was to run all 44 detectors on a failed lookup, which is the
+   * most confident the engine could possibly be at the moment it knows least.
+   */
+  private shouldRun(
+    detector: Detector,
+    states: Map<VectorKey, VectorState> | null
+  ): boolean {
+    const vector = CATEGORY_VECTOR[detector.definition.category];
+    if (!vector) return true;
+
+    const claim = effectiveClaimType(detector.definition);
+
+    if (states === null) return claim === 'instance';
+
+    const state = states.get(vector);
+    if (!state) return true;
+
+    return claim === 'instance' ? state !== 'dark' : state === 'lit';
   }
 
   /**
@@ -230,23 +289,21 @@ export class DetectorEngine {
    */
   async runForUser(userId: string): Promise<DetectionResult[]> {
     const results: DetectionResult[] = [];
-    const darkVectors = await this.getDarkVectors(userId);
+    const vectorStates = await this.getVectorStates(userId);
     let evaluated = 0;
 
     for (const detector of this.detectors) {
-      const vector = CATEGORY_VECTOR[detector.definition.category];
-      /*
-       * An absolute count can opt out of the maturity gate.
-       *
-       * The gate is right for a detector that compares against a baseline, and
-       * wrong for one that counts — "three people are waiting on you" does not
-       * need history to be true, and the businesses the gate silences are the
-       * small ones that can least afford to lose an enquiry.
-       */
-      if (vector && darkVectors.has(vector) && !detector.definition.ignoresVectorMaturity) {
+      if (!this.shouldRun(detector, vectorStates)) {
+        const vector = CATEGORY_VECTOR[detector.definition.category];
         logger.debug(
-          { userId, detectorId: detector.definition.id, vector },
-          'Detector skipped: its vector has no data to reason from yet'
+          {
+            userId,
+            detectorId: detector.definition.id,
+            vector,
+            state: vectorStates?.get(vector) ?? 'unknown',
+            claim: effectiveClaimType(detector.definition),
+          },
+          'Detector skipped: its claim needs more evidence than its vector has'
         );
         continue;
       }
@@ -275,7 +332,7 @@ export class DetectorEngine {
       evaluated,
       skipped: this.detectors.length - evaluated,
       fired: results.length,
-      darkVectors: [...darkVectors]
+      vectorStates: vectorStates ? Object.fromEntries(vectorStates) : 'unavailable',
     }, 'Detector run complete');
 
     return results;

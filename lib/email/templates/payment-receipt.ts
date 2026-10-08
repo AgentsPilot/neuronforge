@@ -42,6 +42,28 @@ export interface PaymentReceiptData {
    * Absent on an ordinary payment, and then the receipt is unchanged.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * Money returned against THIS receipt's invoice.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A RECEIPT FOR A REFUNDED PAYMENT CLAIMED THE MONEY WAS STILL THERE.
+   *
+   * The owner presses "send receipt" on a stage after returning part of it, and
+   * the client gets a document headed "₪4,500 paid" with no mention of the
+   * ₪2,250 that went back. It is the client's record of the transaction, and it
+   * was wrong about the one thing that changed since.
+   *
+   * The amount paid stays what was paid — that happened — and the refund is
+   * reported beside it with what is left, which is the figure a client checks
+   * against their statement.
+   *
+   * Absent or zero and the receipt is unchanged.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  refund?: {
+    amount: number;
+    at?: Date | null;
+  };
   plan?: {
     totalAmount: number;
     /** The period this receipt is for, so it can be marked among the rest. */
@@ -106,6 +128,46 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
     emailDetailRow(t.amountLabel[locale], formatCurrency(data.amount, data.currency), brandingWithLocale),
     emailDetailRow(t.paymentDateLabel[locale], formattedPaymentDate, brandingWithLocale),
   ];
+
+  /*
+   * Directly under the amount it reduces, because a refund read three rows
+   * below the sum it applies to is a refund the reader has to connect for
+   * themselves.
+   */
+  const refunded = Number(data.refund?.amount || 0);
+
+  if (refunded > 0) {
+    detailRows.push(
+      emailDetailRow(
+        t.refundedLabel[locale],
+        data.refund?.at
+          ? `${formatCurrency(refunded, data.currency)} · ${data.refund.at.toLocaleDateString(
+              intlLocale,
+              {
+                /* The business's clock, exactly as the payment date above it —
+                   a refund issued in the evening is otherwise receipted as the
+                   following day, and the two dates would disagree by one. */
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                ...(data.timezone ? { timeZone: data.timezone } : {}),
+              }
+            )}`
+          : formatCurrency(refunded, data.currency),
+        brandingWithLocale
+      )
+    );
+
+    /* What the client is actually out of pocket. The two figures above are both
+       true and neither answers it. */
+    detailRows.push(
+      emailDetailRow(
+        t.netPaidLabel[locale],
+        formatCurrency(Math.max(data.amount - refunded, 0), data.currency),
+        brandingWithLocale
+      )
+    );
+  }
 
   if (data.paymentMethod) {
     detailRows.push(emailDetailRow(t.paymentMethodLabel[locale], data.paymentMethod, brandingWithLocale));
@@ -173,6 +235,11 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
                 labels: {
                   title: tPlan.planTitle[locale],
                   paid: tPlan.planPaid[locale],
+                  /* The receipt is the client's record of what happened to the
+                     money, so a period that was partly returned says so on its
+                     own row. The confirmation does not pass this: it describes a
+                     schedule going forward. */
+                  refunded: t.refundedLabel[locale],
                   highlight: tPlan.planPaid[locale],
                   total: tPlan.planTotal[locale],
                 },

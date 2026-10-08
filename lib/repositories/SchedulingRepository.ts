@@ -10,6 +10,7 @@ import type { CancelledBy } from '@/lib/business-os/cancellationReasons';
 import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { createLogger } from '@/lib/logger';
+import { recordBusinessEvent } from '@/lib/business-os/insight/events/recordEvent';
 
 const logger = createLogger({ service: 'SchedulingRepository' });
 
@@ -837,6 +838,24 @@ type EventedBookingStatus = 'no_show' | 'completed' | 'cancelled';
 const EVENTED_BOOKING_STATUSES = new Set<string>(['no_show', 'completed', 'cancelled']);
 
 /**
+ * The booking plus its contact, used by both arms of `update()`.
+ *
+ * Declared once because the two writes must return the SAME shape: the
+ * normalisation below reads `data.contact`, and a select that differed between
+ * the claim path and the fallback would leave `client_email` populated on one
+ * and empty on the other depending on which arm ran.
+ */
+const BOOKING_WITH_CONTACT = `
+          *,
+          contact:crm_contacts(
+            first_name,
+            last_name,
+            email,
+            phone
+          )
+        `;
+
+/**
  * Record how a booking ended.
  *
  * The value goes on the event because that is what makes it useful later: a
@@ -844,14 +863,22 @@ const EVENTED_BOOKING_STATUSES = new Set<string>(['no_show', 'completed', 'cance
  * meaningful over events that carry one. Taken from the charge on the booking,
  * falling back to the service's list price.
  */
-async function emitBookingStatusEvent(
+/**
+ * A joined booking row, as loose as PostgREST actually returns it.
+ *
+ * `SchedulingBooking` was the declared parameter type and the function's first
+ * act was `booking as unknown as { … }`, so the signature claimed a guarantee
+ * the body immediately threw away — and the call site then needed a cast of
+ * its own to satisfy it. Taking the row loosely and narrowing here is the same
+ * runtime behaviour with none of the fiction: the select carries a `contact`
+ * join, so the result genuinely is not a `SchedulingBooking`.
+ */
+function emitBookingStatusEvent(
   userId: string,
-  booking: SchedulingBooking,
+  booking: Record<string, unknown>,
   status: EventedBookingStatus
-): Promise<void> {
-  const { businessEventService } = await import('@/lib/business-os/insight/events/BusinessEventService');
-
-  const row = booking as unknown as {
+): void {
+  const row = booking as {
     id?: string;
     contact_id?: string | null;
     payment_amount?: number | string | null;
@@ -863,7 +890,18 @@ async function emitBookingStatusEvent(
   const charged = Number(row.payment_amount);
   const valueUsd = Number.isFinite(charged) && charged > 0 ? charged : undefined;
 
-  await businessEventService.emit(userId, {
+  /*
+   * Routed through `recordBusinessEvent` rather than importing the service
+   * here.
+   *
+   * This function owned its own copy of the dynamic import plus the
+   * `void ... .catch()` at its call site, which was the original pattern and
+   * the thing the wrapper was extracted from. Keeping both meant two shapes
+   * for the same guarantee, and the money-spine emitters would have made it
+   * eight. The value logic stays here because it is specific to a booking: the
+   * charge on the row, which is what lets a no-show be costed at all.
+   */
+  recordBusinessEvent(userId, {
     eventType: `booking.${status}`,
     category: 'retention',
     entityType: 'booking',
@@ -969,6 +1007,22 @@ export class SchedulingBookingRepository {
       if (error) throw error;
 
       logger.info({ bookingId: data.id, userId: booking.user_id, contactId: booking.contact_id }, 'Booking created');
+
+      /*
+       * `booking.created` is recorded by a DATABASE TRIGGER, not here.
+       *
+       * An audit on 2026-10-06 found that the client-facing booking route
+       * (`app/api/website/booking/create/route.ts`) inserts into
+       * `scheduling_bookings` directly rather than through this repository, so
+       * an emit at this line captured only the bookings an OWNER typed in and
+       * missed every booking a client made -- which is most of them. See
+       * `supabase/migrations/20261006_business_event_triggers.sql`.
+       *
+       * The three status events below stay in this file: `update()` is the only
+       * path that changes booking status, so they have no bypass, and one
+       * writer per event type is what keeps the two mechanisms from
+       * duplicating each other.
+       */
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId: booking.user_id }, 'Failed to create booking');
@@ -1340,53 +1394,91 @@ export class SchedulingBookingRepository {
       logger.info({ bookingId: id, userId }, 'Updating booking');
 
       /*
-       * The status BEFORE the write, when the write changes status.
+       * Did THIS call move the status, or had somebody already moved it?
        *
-       * Needed so the event below fires on a transition rather than on every
-       * save: a booking re-saved while already marked no-show would otherwise
-       * record a second no-show, and the detector counting them would report a
-       * spike the business never had. Read only when a status is actually being
-       * set, so ordinary updates cost nothing extra.
+       * This used to read the status in one query and compare it after the
+       * write in another, which cannot answer that question under concurrency:
+       * three calls all read `confirmed`, all see `confirmed !== 'completed'`,
+       * and all three emit. Live data from 2026-10-06 had exactly that --
+       * `booking.completed` three times for one booking inside 0.7 seconds,
+       * and `booking.cancelled` five times for another.
+       *
+       * The fix is to let the UPDATE itself be the test. `.neq('status', ...)`
+       * makes the write match only a row whose status actually differs, and in
+       * READ COMMITTED Postgres re-evaluates that condition after taking the
+       * row lock: the first caller to commit sets the status, and every caller
+       * behind it then fails the predicate and matches zero rows. So exactly
+       * one of them gets a row back, and a returned row IS the transition.
+       *
+       * `ProposalRepository` has had this shape from the start -- its `send`,
+       * `claimForAcceptance` and `decline` are each conditional on the status
+       * they expect -- which is why the proposal events have never duplicated.
+       *
+       * It is also one query fewer than before on the common path: the pre-read
+       * is gone.
        */
-      let previousStatus: string | undefined;
-      if (updates.status && EVENTED_BOOKING_STATUSES.has(updates.status)) {
-        const { data: before } = await this.supabase
+      const evented = Boolean(updates.status && EVENTED_BOOKING_STATUSES.has(updates.status));
+
+      let data: Record<string, unknown> | null = null;
+      let claimedTransition = false;
+
+      if (evented) {
+        const { data: claimed, error: claimError } = await this.supabase
           .from('scheduling_bookings')
-          .select('status')
+          .update(updates)
           .eq('id', id)
           .eq('user_id', userId)
+          // The whole guarantee. Only a row not already at this status matches.
+          .neq('status', updates.status as string)
+          .select(BOOKING_WITH_CONTACT)
           .maybeSingle();
-        previousStatus = before?.status ?? undefined;
+
+        if (claimError) throw claimError;
+        if (claimed) {
+          data = claimed;
+          claimedTransition = true;
+        }
       }
 
-      // Update and return with contact data via JOIN
-      const { data, error } = await this.supabase
-        .from('scheduling_bookings')
-        .update(updates)
-        .eq('id', id)
-        .eq('user_id', userId)
-        .select(`
-          *,
-          contact:crm_contacts(
-            first_name,
-            last_name,
-            email,
-            phone
-          )
-        `)
-        .single();
+      if (!data) {
+        /*
+         * Either an ordinary update, or an evented one whose status was already
+         * the target -- a re-save, or a loser of the race above. The fields
+         * still have to be written; only the event is withheld.
+         */
+        const { data: plain, error } = await this.supabase
+          .from('scheduling_bookings')
+          .update(updates)
+          .eq('id', id)
+          .eq('user_id', userId)
+          .select(BOOKING_WITH_CONTACT)
+          .single();
 
-      if (error) throw error;
+        if (error) throw error;
+        data = plain;
+      }
 
       // Extract contact data and add convenience fields
       const contact = Array.isArray(data?.contact) ? data.contact[0] : data?.contact;
-      const normalizedData = data ? {
+      /*
+       * Cast once, here.
+       *
+       * `data` is declared `Record<string, unknown>` because it is assigned
+       * from either of two selects above, and both carry a `contact` join that
+       * no row interface describes. The spread therefore widens to an index
+       * signature and stops matching the declared `SchedulingBooking` return.
+       * The shape returned is unchanged from before the claim/lease rewrite --
+       * the same spread with the same four convenience fields -- so this
+       * records the structural looseness rather than altering what callers
+       * receive.
+       */
+      const normalizedData = (data ? {
         ...data,
         client_first_name: contact?.first_name || null,
         client_last_name: contact?.last_name || null,
         client_email: contact?.email || '',
         client_phone: contact?.phone || null
-      } : null;
+      } : null) as SchedulingBooking | null;
 
       logger.info({ bookingId: id, userId }, 'Booking updated');
 
@@ -1403,14 +1495,8 @@ export class SchedulingBookingRepository {
        * nothing downstream is allowed to fail a booking update, and the table
        * may not be migrated everywhere.
        */
-      if (
-        data &&
-        updates.status &&
-        EVENTED_BOOKING_STATUSES.has(updates.status) &&
-        previousStatus !== updates.status
-      ) {
-        void emitBookingStatusEvent(userId, data as SchedulingBooking, updates.status as EventedBookingStatus)
-          .catch(err => logger.debug({ err, bookingId: id }, 'Event rail write skipped'));
+      if (claimedTransition && data) {
+        emitBookingStatusEvent(userId, data, updates.status as EventedBookingStatus);
       }
       return { data: normalizedData, error: null };
     } catch (error) {

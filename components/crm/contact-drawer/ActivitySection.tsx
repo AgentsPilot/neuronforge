@@ -5,7 +5,7 @@ import { activityFieldName } from '@/lib/business-os/activityText';
 import {
   Activity, Plus, MessageSquare, Phone, Mail, Users,
   Calendar, CreditCard, FileText, ChevronDown, Clock, Bot, User, Eye,
-  Paperclip, ClipboardList, UserCog, RotateCcw
+  Paperclip, ClipboardList, UserCog, RotateCcw, Quote
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,7 +50,18 @@ const FILTER_CATEGORIES = [
   // The record's own history: when it was created, and every edit since.
   // Without a category these rows were reachable only under "all" — invisible
   // the moment any chip was pressed.
-  { value: 'changes', labelKey: 'crm.activity.filter.changes', icon: UserCog, types: ['contact_created', 'contact_updated', 'stage_changed'] }
+  { value: 'changes', labelKey: 'crm.activity.filter.changes', icon: UserCog, types: ['contact_created', 'contact_updated', 'stage_changed'] },
+  /*
+   * Someone asking to be quoted.
+   *
+   * `/api/website/proposal-request` writes `quote_requested` as the record of
+   * the ask — there is no booking and no invoice yet, so the timeline entry IS
+   * the request. It was written to a drawer that had never heard of it: no
+   * icon, no label, and no chip, so it rendered under a generic clock with the
+   * raw string `quote_requested` for a title, and vanished the moment any
+   * filter was pressed.
+   */
+  { value: 'quotes', labelKey: 'crm.activity.filter.quotes', icon: Quote, types: ['quote_requested'] }
 ];
 
 
@@ -78,7 +89,8 @@ const ACTIVITY_ICONS: Record<string, typeof Activity> = {
   document_uploaded: FileText,
   contact_created: Activity,
   contact_updated: Activity,
-  stage_changed: Activity
+  stage_changed: Activity,
+  quote_requested: Quote
 };
 
 /*

@@ -92,7 +92,22 @@ describe('the contact drawer', () => {
   const drawer = read('components/crm/contact-drawer/CRMContactDrawerV2.tsx');
 
   it('anchors a stage due date, and leaves paidAt alone', () => {
-    const fn = bookingsTab.match(/const stageDate = \(value: string\) =>([\s\S]*?\n    \);)/);
+    /*
+     * Matched up to the function's closing `};`, and tolerant of extra
+     * parameters.
+     *
+     * It used to pin the exact signature `(value: string) =>` and an expression
+     * body. `stageDate` then gained an optional `withYear` — a single payment's
+     * date stands alone and needs the year, while a stage list takes it from its
+     * neighbours — which turned the body into a block and made this find
+     * nothing. `expect(fn).not.toBeNull()` caught that, so the guard failed
+     * loudly rather than passing over an empty match, which is the one thing it
+     * had to get right.
+     *
+     * The rule being guarded has not moved: a date-only value is read back in
+     * UTC, a real instant is not.
+     */
+    const fn = bookingsTab.match(/const stageDate = \(value: string[^)]*\) =>([\s\S]*?\n  \};)/);
     expect(fn).not.toBeNull();
     expect(fn![1]).toContain("timeZone: 'UTC'");
     // The ternary is what keeps `paidAt` — a real instant — in the local zone.

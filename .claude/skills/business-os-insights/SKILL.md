@@ -7,6 +7,8 @@ description: Orient before developing anything in the Business OS Insights modul
 
 The authoritative map is **[docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md)** — the as-built module reference, written from code. **Read it before writing anything.** This skill is the short list of things that go wrong when you don't.
 
+For *where the module is going* — the six layers, what is built, what is next, and the decisions already taken (cohort comparison is rejected; do not propose it) — read **[docs/workplans/BUSINESS_OS_INSIGHT_HEART_PLAN.md](/docs/workplans/BUSINESS_OS_INSIGHT_HEART_PLAN.md)**.
+
 ---
 
 ## Rule 1 — There are two systems called "insights". Confirm which one before you touch a file.
@@ -66,7 +68,9 @@ The correlation `storyTemplate` strings currently violate this (hardcoded Englis
 
 ## Rule 6 — Most detectors compute over an empty table. Check before calling one "broken".
 
-`business_events` has **no emitters**. `BusinessEventService` is imported by exactly one file. Nothing in CRM, Scheduling, Payments or Website emits an event.
+**This rule said `business_events` has no emitters. That was wrong, and as of 2026-10-06 it is very wrong** — believing it cost real time on 2026-10-06, when it was quoted to the owner twice before the table was checked. **Check the table before believing anything about the rail:** it currently holds the booking lifecycle, enquiries, form submissions, and the whole money spine (payments, refunds, invoices created/paid/overdue, proposals sent/accepted/rejected). `scripts/backfill-business-events.ts --check` reports what is derivable but not yet recorded.
+
+What remains true is narrower: **`derived_metrics` is still computed from a partial rail**, and a handful of event types nothing emits (`calendar.slot_filled`, discount events, card expiry) leave the detectors keyed to them dark.
 
 So "this detector never fires" is usually **correct behaviour for the current data**, not a bug. Confirm which of the two cases you are in before fixing anything:
 

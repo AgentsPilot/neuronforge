@@ -41,7 +41,7 @@ export class CashCardsExpiringDetector extends BaseDetector {
     description: 'Detects customer cards expiring within 30 days',
 
     watchedMetrics: ['cashflow.expiring_cards'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -84,19 +84,21 @@ export class CashCardsExpiringDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'automate',
+    /*
+     * `claimType: 'instance'`.
+     *
+     * A count of specific cards about to expire. The claim is about those cards,
+     * not about what fraction of cards they are, and it is most useful EARLY --
+     * before a payment fails.
+     *
+     * Declared rather than left to default: `effectiveClaimType` assumes
+     * `rate` for an undeclared detector, which holds the card until the
+     * vector is fully lit. For a claim that is true from the first row,
+     * that is silence with no safety benefit. Hazard H15.
+     */
+    claimType: 'instance',
+
     eligibleForAutomation: false,
-    ownerParameters: [
-      {
-        id: 'days_before',
-        label: 'Days Before Expiry',
-        type: 'number',
-        default: 30,
-        min: 14,
-        max: 60,
-      },
-    ],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 

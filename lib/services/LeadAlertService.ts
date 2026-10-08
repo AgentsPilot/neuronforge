@@ -50,6 +50,7 @@ import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 import { automationById } from '@/lib/business-os/gaps/automations';
 import { businessEventService } from '@/lib/business-os/insight/events/BusinessEventService';
+import { getCategoryForEventType, type BusinessEventType } from '@/lib/business-os/insight/events/types';
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
 
 const logger = createLogger({ service: 'LeadAlertService' });
@@ -281,25 +282,54 @@ export async function notifyOwnerOfLead(input: LeadAlertInput): Promise<LeadAler
           entityId: input.contactId,
           contactId: input.contactId,
           sourceCapability: 'website',
-        } as Parameters<typeof businessEventService.emit>[1])
+        })
         .catch(err => log.debug({ err }, 'Enquiry event write skipped'));
     }
 
-    void businessEventService
-      .emit(input.ownerId, {
-        eventType:
-          input.kind === 'enquiry'
-            ? 'form.submitted'
-            : input.kind === 'quote'
-              ? 'quote.requested'
-              : `booking.${input.kind}`,
-        category: 'acquisition',
-        entityType: 'contact',
-        entityId: input.contactId,
-        contactId: input.contactId,
-        sourceCapability: 'website',
-      } as Parameters<typeof businessEventService.emit>[1])
-      .catch(err => log.debug({ err }, 'Event rail write skipped'));
+    /*
+     * One entry per kind, and NO string interpolation.
+     *
+     * This was a ternary chain ending in `` `booking.${input.kind}` ``, cast
+     * with `as Parameters<...>[1]` so the compiler never checked the result
+     * against `BusinessEventType`. Two of the four kinds produced a name that
+     * is not in that union:
+     *
+     *   kind 'quote'  -> 'quote.requested'   not in the union
+     *   kind 'moved'  -> 'booking.moved'     not in the union
+     *
+     * `getCategoryForEventType` returned undefined for both, `emit` passes that
+     * as `category`, the column is NOT NULL, and the insert failed into a
+     * swallowed `.catch`. So a quote request and a reschedule emitted NOTHING,
+     * silently, for as long as this service has existed. A map keyed by the
+     * `kind` union means the compiler now rejects a name the taxonomy does not
+     * have, which is the only reason this could hide.
+     *
+     * `cancelled` maps to null on purpose. The client cancel route calls
+     * `cancelBooking()` -> `schedulingBookingRepository.cancel()` -> `update()`,
+     * which already emits `booking.cancelled` off an atomic claim. Emitting
+     * here as well made every client cancellation TWO events -- visible in live
+     * data as one booking carrying five `booking.cancelled` rows.
+     */
+    const SECOND_EVENT: Record<LeadAlertInput['kind'], BusinessEventType | null> = {
+      enquiry: 'form.submitted',
+      quote: 'quote.requested',
+      moved: 'booking.rescheduled',
+      cancelled: null,
+    };
+
+    const secondEvent = SECOND_EVENT[input.kind];
+    if (secondEvent) {
+      void businessEventService
+        .emit(input.ownerId, {
+          eventType: secondEvent,
+          category: getCategoryForEventType(secondEvent),
+          entityType: 'contact',
+          entityId: input.contactId,
+          contactId: input.contactId,
+          sourceCapability: 'website',
+        })
+        .catch(err => log.debug({ err }, 'Event rail write skipped'));
+    }
 
     return { sent: true };
   } catch (err) {

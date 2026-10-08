@@ -32,7 +32,7 @@ const PAGES = [
   ['app', 'proposal', '[token]', 'page.tsx'],
   ['app', 'book', 'manage', '[token]', 'page.tsx'],
   ['app', 'book', 'manage', '[token]', 'cancel', 'page.tsx'],
-  ['app', 'book', 'manage', '[token]', 'reschedule', 'page.tsx'],
+  ['app', 'reschedule', '[token]', 'page.tsx'],
   ['app', 'book', 'manage', '[token]', 'intake', 'page.tsx'],
 ];
 

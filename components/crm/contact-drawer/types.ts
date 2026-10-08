@@ -185,6 +185,15 @@ export interface SessionPaymentPlan {
      * proposals API all along and dropped at the mapping.
      */
     paidAt?: string | null;
+    /**
+     * How much of THIS stage came back, and when.
+     *
+     * A job can have two paid milestones and a refund against only one of them,
+     * so the figure belongs to the stage. The card's totals sum these; the
+     * stage's own row is the only place that can say which money was returned.
+     */
+    refundedAmount?: number | null;
+    refundedAt?: string | null;
   }>;
 }
 

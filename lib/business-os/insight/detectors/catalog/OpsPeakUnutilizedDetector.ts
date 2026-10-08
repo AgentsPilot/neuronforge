@@ -30,7 +30,7 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
     description: 'Detects historically busy time slots going unfilled',
 
     watchedMetrics: ['operations.peak_utilization'],
-    eventTypes: ['booking.created', 'booking.cancelled'],
+    documentsEventTypes: ['booking.created', 'booking.cancelled'],
 
     baselineWindow: 'month',
     thresholdType: 'percent_change',
@@ -66,22 +66,7 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
      * that cannot work.
 
      */
-    consentTier: 'automate',
     eligibleForAutomation: false,
-    ownerParameters: [
-      {
-        id: 'target_contacts',
-        label: 'Target Contacts',
-        type: 'select',
-        default: 'recent_clients',
-        options: [
-          { value: 'recent_clients', label: 'Recent Clients' },
-          { value: 'all_contacts', label: 'All Contacts' },
-          { value: 'engaged_leads', label: 'Engaged Leads' },
-        ],
-      },
-    ],
-    guardrails: [],
     cooldownHours: 72, // 3 days
   };
 

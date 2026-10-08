@@ -25,7 +25,7 @@ export class CashArAgingDetector extends BaseDetector {
     description: 'Detects invoices aging into 60+ day buckets',
 
     watchedMetrics: ['cashflow.ar_aging'],
-    eventTypes: ['invoice.overdue', 'ar.aged'],
+    documentsEventTypes: ['invoice.overdue', 'ar.aged'],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -47,22 +47,7 @@ export class CashArAgingDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'automate',
     eligibleForAutomation: true,
-    ownerParameters: [
-      {
-        id: 'escalation_tone',
-        label: 'Collection Tone',
-        type: 'select',
-        default: 'firm',
-        options: [
-          { value: 'professional', label: 'Professional' },
-          { value: 'firm', label: 'Firm' },
-          { value: 'final_notice', label: 'Final Notice' },
-        ],
-      },
-    ],
-    guardrails: [],
     cooldownHours: 72, // 3 days
   };
 

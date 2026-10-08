@@ -72,7 +72,7 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
     description: 'Totals money that has been billed or quoted and has not arrived',
 
     watchedMetrics: ['cashflow.ar_total'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -100,10 +100,7 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'automate',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 72,
   };
 

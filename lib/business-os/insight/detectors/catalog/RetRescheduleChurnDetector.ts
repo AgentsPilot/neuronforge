@@ -70,7 +70,7 @@ export class RetRescheduleChurnDetector extends BaseDetector {
     description: 'Finds clients who have rescheduled repeatedly, which usually precedes them stopping',
 
     watchedMetrics: ['retention.clients_at_risk'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -106,10 +106,7 @@ export class RetRescheduleChurnDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 336,
   };
 

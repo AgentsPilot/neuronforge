@@ -18,9 +18,8 @@
 import type { Metadata } from 'next';
 
 import { BrandButton } from '@/components/public/BrandButton';
-import { PublicDirScript } from '@/components/public/PublicDirScript';
+import { PublicBrandFrame } from '@/components/public/PublicBrandFrame';
 import { PublicErrorScreen } from '@/components/public/PublicErrorScreen';
-import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 import { publicT } from '@/lib/i18n/public-pages';
 import { getRequestLocale } from '@/lib/i18n/requestLocale';
@@ -43,14 +42,7 @@ export default async function SmartLinkUnavailablePage({ searchParams }: PagePro
   const kind = reason === 'inactive' ? 'expired' : 'not-found';
 
   return (
-    <>
-      {brand && (
-        <>
-          <PublicDirScript brand={brand} />
-          <PublicThemeStyle brand={brand} />
-        </>
-      )}
-
+    <PublicBrandFrame brand={brand}>
       <PublicErrorScreen
         brand={brand}
         kind={kind}
@@ -70,6 +62,6 @@ export default async function SmartLinkUnavailablePage({ searchParams }: PagePro
           ) : undefined
         }
       />
-    </>
+    </PublicBrandFrame>
   );
 }

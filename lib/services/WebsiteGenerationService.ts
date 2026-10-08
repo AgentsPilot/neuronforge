@@ -25,6 +25,7 @@ import { themeForTemplateId } from '@/lib/website-builder/templates';
 import { DEFAULT_ARCHETYPE } from '@/lib/website-builder/archetypes';
 import { recipeFor, orderByRecipe, recommendArchetypeId } from '@/lib/website-builder/recipes';
 import { repairBlockLinks } from '@/lib/website-builder/linkIntegrity';
+import { ctaFor, type CtaIntent } from '@/lib/website-builder/ctaIntent';
 import { imageForSection, imagesForSection } from '@/lib/services/StockImageService';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
@@ -106,6 +107,11 @@ interface WebsiteContent {
    */
   booking?: { title?: string; description?: string };
   contact?: { title?: string; description?: string };
+  /**
+   * `buttonText` is @deprecated — the closing CTA now draws its label from
+   * `buttons`, by intent, so the words and the destination come from one
+   * decision. Left on the type because older stored content still carries it.
+   */
   cta?: { title?: string; description?: string; buttonText?: string };
   /**
    * The heading above each section.
@@ -130,10 +136,37 @@ interface WebsiteContent {
    * it was the least considered: "Book a Session" on a site selling a course,
    * "Book Now" in a header for a business that invoices.
    */
+  /*
+   * ─────────────────────────────────────────────────────────────────────────
+   * NAMED BY INTENT, NOT BY POSITION, AND THAT IS THE POINT.
+   *
+   * These used to be `heroCta` and `headerCta` — the model naming a button by
+   * where it sits, while the code decided where it goes. Nothing made the two
+   * agree, and a model asked for "the main button under the headline" has no
+   * way to know that button scrolls to the About section. It wrote "Get in
+   * Touch"; the code sent it to the services.
+   *
+   * Asked for by intent instead, the model writes the words for a destination
+   * the code has already chosen, and `ctaFor` returns the pair. Which button
+   * carries which intent stops being something either side has to guess.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
   buttons?: {
-    /** The hero's primary button. */
+    /** For a button that sends a visitor to the services, to book. */
+    bookCta?: string;
+    /** For a button that sends a visitor to the contact form. */
+    contactCta?: string;
+    /** For a button that carries on into the page, to read about the business. */
+    learnMoreCta?: string;
+    /**
+     * Written by generations before the intent fields existed.
+     *
+     * @deprecated Nothing reads these. Stored content from an older run still
+     * carries them and they are harmless: a missing intent label falls through
+     * to the phrasebook, which is the label those sites already show.
+     */
     heroCta?: string;
-    /** The button in the header, beside the navigation. */
+    /** @deprecated See `heroCta`. The header stopped reading it before that. */
     headerCta?: string;
   };
   processSteps: Array<{
@@ -506,14 +539,23 @@ export class WebsiteGenerationService {
        * ─────────────────────────────────────────────────────────────────────
        * AND EVERY BUTTON POINTS AT A SECTION THIS PAGE ACTUALLY HAS.
        *
-       * Checked HERE, after the recipe, because the recipe is what makes a
-       * destination stale: `buildBlocks` writes `#about` and `#services` from
-       * what it knows, and then `orderByRecipe` DROPS the sections this
-       * vertical does not get. A consultant never gets a gallery; a trade with
-       * no catalogue loses the services list. Any button still naming one is
-       * now a fragment matching no element — and the browser does not
-       * navigate, does not scroll and reports nothing, so the loudest button on
-       * a new site silently does nothing at all.
+       * Checked HERE, after the recipe, so the pass sees the final list. A
+       * fragment matching no element is the quietest failure a page has: the
+       * browser does not navigate, does not scroll and reports nothing, so the
+       * loudest button on a new site silently does nothing at all.
+       *
+       * It catches LESS than it used to be credited with, and the difference
+       * matters. This comment used to say `orderByRecipe` "DROPS the sections
+       * this vertical does not get" — it does not, and says so itself: a block
+       * the recipe does not name is moved above the footer, never discarded
+       * (`recipes.ts`, "NOTHING IS DROPPED"). So on a homepage every section
+       * `buildBlocks` emitted is still there and this pass almost never fires.
+       *
+       * Which is why it is NOT the guard against a button going to the wrong
+       * place. It only asks whether a destination EXISTS. A button reading
+       * "Get in touch" and pointing at a perfectly real `#services` passes it
+       * untouched — that is what `ctaIntent` is for, upstream, where the words
+       * and the destination are chosen as one thing.
        *
        * This is the same pass the renderer runs, from the same shared table of
        * section anchors, so what is STORED is already correct rather than
@@ -813,7 +855,7 @@ export class WebsiteGenerationService {
       .join('\n');
 
     const languageInstructions: Record<string, string> = {
-      en: 'LANGUAGE REQUIREMENT: Generate ALL content values in English only — including every heading, paragraph, service description, process step, FAQ, testimonial, every section title (sectionTitles), the call-to-action text, and EVERY BUTTON LABEL (buttons.heroCta, buttons.headerCta, cta.buttonText).',
+      en: 'LANGUAGE REQUIREMENT: Generate ALL content values in English only — including every heading, paragraph, service description, process step, FAQ, testimonial, every section title (sectionTitles), the call-to-action text, and EVERY BUTTON LABEL (buttons.bookCta, buttons.contactCta, buttons.learnMoreCta).',
       he: `
 !!! קריטי - דרישת שפה !!!
 צור את כל התוכן בעברית בלבד. זה כולל:
@@ -825,9 +867,9 @@ export class WebsiteGenerationService {
 - עדויות לקוחות (testimonials - quote ו-role)
 - כותרת ותיאור ההזמנה (booking - title ו-description)
 - כותרת ותיאור טופס יצירת הקשר (contact - title ו-description)
-- קריאה לפעולה כולל טקסט הכפתור (cta - title, description ו-buttonText)
+- קריאה לפעולה (cta - title ו-description)
 - כותרות כל הסעיפים (sectionTitles - about, services, process, testimonials, faq)
-- טקסט הכפתורים בראש העמוד (buttons - heroCta ו-headerCta)
+- טקסט כל הכפתורים (buttons - bookCta, contactCta ו-learnMoreCta)
 - מטא תיאור (metaDescription)
 - מילות מפתח (keywords)
 
@@ -845,9 +887,9 @@ Genera TODO el contenido en español únicamente. Esto incluye:
 - Testimonios (testimonials - quote y role)
 - Título y descripción de la reserva (booking - title y description)
 - Título y descripción del formulario de contacto (contact - title y description)
-- Llamada a la acción incluido el TEXTO DEL BOTÓN (cta - title, description y buttonText)
+- Llamada a la acción (cta - title y description)
 - Los títulos de TODAS las secciones (sectionTitles - about, services, process, testimonials, faq)
-- El TEXTO DE LOS BOTONES de la cabecera y del hero (buttons - heroCta y headerCta)
+- El TEXTO DE TODOS LOS BOTONES (buttons - bookCta, contactCta y learnMoreCta)
 - Meta descripción (metaDescription)
 - Palabras clave (keywords)
 
@@ -980,8 +1022,7 @@ ${sections.services ? `  "serviceDescriptions": {
   },
 ` : ''}${sections.cta ? `  "cta": {
     "title": "Closing call to action — must NOT repeat the hero headline",
-    "description": "One line of encouragement specific to this business (10-20 words)",
-    "buttonText": "Button label, 2-4 words, matching what the services actually offer"
+    "description": "One line of encouragement specific to this business (10-20 words)"
   },
 ` : ''}${sections.process ? `  "processSteps": [
     {
@@ -1012,8 +1053,9 @@ ${sections.services ? `  "serviceDescriptions": {
     "faq": "Heading for the questions section (2-5 words)"` : ''}
   },
   "buttons": {
-    "heroCta": "The main button under the headline: 2-4 words naming what happens when it is pressed",
-    "headerCta": "The button in the header, 2-3 words"
+    "bookCta": "Words for a button that takes the visitor to the list of services, to book or buy — 2-4 words, naming what they get",
+    "contactCta": "Words for a button that takes the visitor to the contact form — 2-4 words",
+    "learnMoreCta": "Words for a button that carries the visitor further down the page, to read about this business — 2-4 words"
   },
 }
 
@@ -1119,11 +1161,50 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
       return written && written.length <= 40 ? written : t(fallbackKey);
     };
 
-    /** Same rule, tighter: a button label has less room than a heading. */
-    const button = (written: string | undefined, fallback: string) => {
-      const label = written?.trim();
-      return label && label.length <= 24 ? label : fallback;
+    /**
+     * A button: its words and where it goes, as one value.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The code chooses the INTENT — it is the only side that knows which
+     * sections this page installs and whether the business has anything to
+     * sell. The model wrote the words for each intent. `ctaFor` pairs them.
+     *
+     * Written this way so a destination cannot be edited without its label
+     * coming too. Before, each button named its own anchor as a literal
+     * beside a label the model had chosen, and the pair drifted: a closing
+     * call to action reading "Get in Touch" that scrolled to the services.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const cta = (intent: CtaIntent) => {
+      const written = {
+        book: content.buttons?.bookCta,
+        contact: content.buttons?.contactCta,
+        learnMore: content.buttons?.learnMoreCta,
+      }[intent];
+
+      const fallback = {
+        book: menu('bookNow'),
+        contact: t('ctaGetInTouch'),
+        learnMore: t('ctaLearnMore'),
+      }[intent];
+
+      return ctaFor(intent, { hasBookingSection: plan.booking, written, fallback });
     };
+
+    /** The ask this page makes of a visitor: buy if there is anything to buy. */
+    const primaryIntent: CtaIntent = services.length > 0 ? 'book' : 'contact';
+
+    /*
+     * The three buttons, resolved once each.
+     *
+     * The header and the closing block make the page's primary ask; the hero
+     * reads on; the footer is the last chance to talk to a person, which is
+     * the contact form whatever else the page is selling.
+     */
+    const headerCta = cta(primaryIntent);
+    const heroCta = cta('learnMore');
+    const closingCta = cta(plan.booking ? 'book' : primaryIntent);
+    const footerCta = cta('contact');
 
     return [
       // Header block with navigation menu
@@ -1160,20 +1241,20 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
            * helps while its text describes a different destination from its
            * href.
            *
-           * So this button is no longer the model's to name, for the same
-           * reason the pricing section's heading is not: one field, two
-           * authors, and the visible half was wrong. A business with something
-           * to book says "Book Now" and goes to the services; a business
-           * without says "Get in Touch" and goes to the form.
+           * So the destination is no longer decided apart from the words, for
+           * the same reason the pricing section's heading is not: one field,
+           * two authors, and the visible half was wrong. A business with
+           * something to book goes to the services; a business without goes to
+           * the form — and `ctaFor` writes the label that belongs to whichever
+           * of those it is. The model still supplies the wording; what it no
+           * longer does is name a button whose destination it cannot see.
            *
            * A header with no button at all was the previous answer for a
            * business with no services, which left those businesses — the ones
            * reaching clients by conversation rather than a catalogue — with no
            * call to action anywhere above the fold.
            */
-          cta_button: services.length > 0
-            ? { text: menu('bookNow'), link: '#services' }
-            : { text: t('ctaGetInTouch'), link: '#contact' },
+          cta_button: headerCta,
           style: 'blur',
         },
       },
@@ -1196,9 +1277,15 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
            * after the reader knows what is on offer. Asking someone to book in
            * the first sentence, before the services are read, is the wrong
            * moment anyway.
+           *
+           * `learnMore` is therefore the intent, and the model writes its
+           * words. It used to write them against `heroCta` — "the main button
+           * under the headline" — with no way to know that button reads on
+           * rather than books, so it answered with whatever the business most
+           * wanted to say and the label stopped matching the destination.
            */
-          cta_text: button(content.buttons?.heroCta, t('ctaLearnMore')),
-          cta_link: '#about',
+          cta_text: heroCta.text,
+          cta_link: heroCta.link,
           /*
            * The hero photograph, and the reason it matters more than it looks.
            *
@@ -1411,15 +1498,23 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
           // twice.
           title: content.cta?.title || content.hero.headline,
           description: content.cta?.description || t('cta'),
-          // Text and destination decided together. They had drifted apart: the
-          // label said "get in touch" while the link went to the services.
-          cta_text: content.cta?.buttonText
-            || (plan.booking || services.length > 0 ? t('ctaSchedule') : t('ctaGetInTouch')),
-          // `plan.booking` is false by default now, so this read '#contact' for
-          // every site — under a button that says "book". Point it at the
-          // services when there are any, and only fall back to contact for a
-          // page with nothing to sell.
-          cta_link: plan.booking ? '#booking' : (services.length > 0 ? '#services' : '#contact'),
+          /*
+           * THE BUTTON THIS WHOLE CHANGE IS ABOUT.
+           *
+           * The comment here used to claim the text and the destination were
+           * "decided together". They were not. The coordination lived only on
+           * the `||` FALLBACK branch — and the prompt asked the model for
+           * `cta.buttonText`, so the fallback almost never ran. In the ordinary
+           * case the label was the model's, the link was still `#services`, and
+           * a closing button reading "Get in Touch" scrolled to the services
+           * list. That is the reported bug, verbatim.
+           *
+           * Now there is no second expression to disagree with the first: the
+           * intent decides both halves, and the model's words are the words
+           * for that intent.
+           */
+          cta_text: closingCta.text,
+          cta_link: closingCta.link,
         },
       },
 
@@ -1450,8 +1545,8 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
            * naming days the business stopped working months ago.
            */
           show_logo: true,
-          cta_text: t('ctaGetInTouch'),
-          cta_link: '#contact',
+          cta_text: footerCta.text,
+          cta_link: footerCta.link,
           show_powered_by: true,
         },
       },

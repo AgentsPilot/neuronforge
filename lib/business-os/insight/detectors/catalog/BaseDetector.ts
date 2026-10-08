@@ -7,8 +7,40 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { BaselineCalculator } from '../../metrics/BaselineCalculator';
+import { resolveBusinessTimezone } from '@/lib/business-os/businessDay';
 import type { Detector, DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
-import type { MetricKey } from '../../metrics/types';
+import type { MetricKey, PeriodType } from '../../metrics/types';
+
+/**
+ * A figure placed against what this business normally does.
+ *
+ * `sigma` is how many standard deviations from its own mean, which is the only
+ * honest way to say "unusual" without a benchmark -- and this platform has no
+ * benchmarks, because a 31% repeat rate is excellent for one trade and poor for
+ * another. Returned only when the comparison is worth making; see
+ * `compareToOwnBaseline`.
+ */
+export interface OwnBaselineComparison {
+  /**
+   * Whether the figure is outside this business's normal range (beyond 2σ).
+   *
+   * The whole reason this is a FIELD and not represented by returning null:
+   * `null` would have to mean both "there is no baseline" and "the figure is
+   * unremarkable", and those call for opposite responses -- fall back to an
+   * absolute rule, or stay quiet. A detector that cannot tell them apart ends
+   * up asking twice, which is what the first version of this made
+   * `RetRepeatBookingLowDetector` do.
+   */
+  unusual: boolean;
+  mean: number;
+  stdDev: number;
+  /** Signed distance from the mean, in standard deviations. */
+  sigma: number;
+  direction: 'above' | 'below';
+  /** Periods behind the baseline, so copy can say "against your last N days". */
+  sampleSize: number;
+  periodType: PeriodType;
+}
 
 const logger = createLogger({ module: 'BaseDetector' });
 
@@ -177,6 +209,7 @@ export abstract class BaseDetector implements Detector {
       detectedAt: new Date(),
       category: this.definition.category,
       pairedProcessId: this.definition.pairedProcessId,
+      cooldownHours: this.definition.cooldownHours,
       eligibleForAutomation: this.definition.eligibleForAutomation,
       ...rest,
       ...this.honest(rest),
@@ -228,6 +261,51 @@ export abstract class BaseDetector implements Detector {
     }
 
     return corrections;
+  }
+
+  /**
+   * The zone this business's clock runs in, or NULL when nobody has said.
+   *
+   * Needed by any comparison that slices by day or by hour: a one-in-the-
+   * morning appointment in Jerusalem is on the PREVIOUS day in UTC, so a
+   * weekday read off the raw timestamp files some of a business's bookings
+   * under the wrong day. A card naming the wrong day is worse than no card.
+   *
+   * Null rather than `'UTC'` on purpose, and the distinction is the whole
+   * point of the return type. `resolveBusinessTimezone` answers `UTC` for a
+   * business that CHOSE UTC and for one that was never asked, and those two
+   * must not be treated alike — the second has no answer, so a detector
+   * should drop the question rather than guess. CLAUDE.md § Currency &
+   * Timezone, and `businessDay.ts` on why this is a named function and not an
+   * inline `??`.
+   *
+   * `user_preferences` is the only authority. `profiles.timezone` drifts and
+   * `business_profiles.timezone` does not exist — naming the latter in a
+   * `.select()` makes PostgREST reject the whole query.
+   */
+  protected async resolveBusinessTimezone(userId: string): Promise<string | null> {
+    try {
+      const { data } = await this.supabase
+        .from('user_preferences')
+        .select('timezone')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      const resolved = resolveBusinessTimezone({
+        preferencesTimezone: (data as { timezone?: string | null } | null)?.timezone,
+      });
+
+      return resolved.source === 'user_preferences' ? resolved.timezone : null;
+    } catch (err) {
+      /*
+       * Unreadable is the same as unanswered: the caller drops the dimension
+       * and says nothing about days. Never throw — a comparison is an
+       * enhancement to a card, and failing to add one must not take down the
+       * detection it was decorating.
+       */
+      logger.debug({ err, userId }, 'Timezone unreadable; day-based comparison unavailable');
+      return null;
+    }
   }
 
   /**
@@ -402,6 +480,105 @@ export abstract class BaseDetector implements Detector {
   /**
    * Log detection for debugging
    */
+  /**
+   * How does this figure compare to what this business normally does?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE POINT OF THE WHOLE THING.
+   *
+   * Every detector in this catalogue compares a measurement to a constant
+   * somebody typed: refunds above 5%, 25 visitors, 42 days. None of them asks
+   * what is normal for THIS business. So a card can only ever repeat that you
+   * are over a line, week after week, which is exactly the complaint that
+   * started this work.
+   *
+   * `BaselineCalculator` has been able to answer the better question since it
+   * was written -- mean, standard deviation, a 2σ band, a minimum sample count
+   * -- and `BaseDetector` has handed an instance to all 44 detectors. NONE of
+   * them called it. Same shape of mistake as `minSamples`, which was declared
+   * by every detector and read by none.
+   *
+   * WHAT THIS RETURNS, AND WHY NULL IS THE IMPORTANT CASE
+   *
+   * `null` means ONE thing: there is no usable baseline -- too few periods, or
+   * a metric that has never varied. A caller seeing null should fall back to
+   * whatever absolute rule it had, because the business has no history to be
+   * judged against yet.
+   *
+   * A returned comparison carries `unusual`. `unusual: false` is the
+   * behavioural change an owner actually notices: the figure is simply where
+   * this business normally sits, so there is nothing to report however it
+   * compares to a typed constant. Weekly cards stop being a status report and
+   * start meaning something moved.
+   *
+   * CALLERS MUST STILL DECIDE WHAT TO DO WITH IT. This deliberately does not
+   * fire or suppress on its own -- an absolute floor can coexist with a
+   * baseline ("a 60% no-show rate is bad whatever your average"), and only the
+   * detector knows whether it has one.
+   */
+  protected async compareToOwnBaseline(
+    userId: string,
+    metricKey: MetricKey,
+    value: number,
+    periodType: PeriodType = 'daily',
+    lookbackDays = 60
+  ): Promise<OwnBaselineComparison | null> {
+    try {
+      const baseline = await this.baselineCalculator.computeBaseline(
+        userId,
+        metricKey,
+        periodType,
+        lookbackDays
+      );
+
+      if (!baseline.isSignificant) {
+        logger.debug(
+          { userId, metricKey, sampleSize: baseline.sampleSize },
+          'No comparative claim: not enough history behind this metric yet'
+        );
+        return null;
+      }
+
+      /*
+       * A standard deviation of zero means the figure has never moved, so every
+       * value is "outside" it by definition and a 2σ test would fire on the
+       * first flicker. `cashflow.ar_overdue_usd` is exactly this on a small
+       * account: the same current balance every day, stdDev 0. There is no
+       * spread to be unusual against, so no comparative claim is possible.
+       */
+      if (baseline.stdDev === 0) {
+        logger.debug(
+          { userId, metricKey, mean: baseline.mean },
+          'No comparative claim: this metric has never varied'
+        );
+        return null;
+      }
+
+      const deviation = value - baseline.mean;
+      const sigma = deviation / baseline.stdDev;
+
+      return {
+        // Inside the business's own normal range. The silence IS the feature,
+        // and the caller is told so rather than left to infer it from null.
+        unusual: Math.abs(sigma) >= 2,
+        mean: Math.round(baseline.mean * 100) / 100,
+        stdDev: Math.round(baseline.stdDev * 100) / 100,
+        sigma: Math.round(sigma * 10) / 10,
+        direction: deviation > 0 ? 'above' : 'below',
+        sampleSize: baseline.sampleSize,
+        periodType,
+      };
+    } catch (error) {
+      /*
+       * A baseline that cannot be read must never take a detector down with it.
+       * The detector falls back to whatever absolute rule it already had, which
+       * is the behaviour that existed before this helper.
+       */
+      logger.warn({ err: error, userId, metricKey }, 'Baseline unavailable; no comparative claim');
+      return null;
+    }
+  }
+
   protected logDetection(userId: string, result: DetectionResult | null): void {
     if (result) {
       logger.info(

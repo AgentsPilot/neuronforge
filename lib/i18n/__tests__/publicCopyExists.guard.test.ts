@@ -52,11 +52,27 @@ const blocks: Record<string, Set<string>> = Object.fromEntries(
  * of keys says nothing about the card inside it.
  */
 const PAGES = [
-  ['app', 'proposal', '[token]', 'page.tsx'],
+  /*
+   * The quote's words live in the COMPONENT, not in either route that shows it.
+   *
+   * `/proposal/[token]` is now a thin wrapper and `/book/manage/[token]/quote`
+   * is the same thing inside the portal; both mount `ProposalAnswer`, which is
+   * where every `t()` went. Listing a wrapper here would assert over an empty
+   * set — which this file's own sanity check catches, and did.
+   */
+  ['components', 'public', 'ProposalAnswer.tsx'],
+  ['app', 'book', 'manage', '[token]', 'quote', 'page.tsx'],
+  /*
+   * The intake form went the same way, and for the same reason. Its words are
+   * in `IntakePanel`, which the portal index shows in place and `/intake`
+   * mounts for clients arriving from an email. The route is 38 lines and asks
+   * for nothing, so listing it here asserted over an empty set — caught, again,
+   * by the sanity check below.
+   */
+  ['components', 'public', 'IntakePanel.tsx'],
   ['app', 'book', 'manage', '[token]', 'page.tsx'],
   ['app', 'book', 'manage', '[token]', 'cancel', 'page.tsx'],
-  ['app', 'book', 'manage', '[token]', 'reschedule', 'page.tsx'],
-  ['app', 'book', 'manage', '[token]', 'intake', 'page.tsx'],
+  ['app', 'reschedule', '[token]', 'page.tsx'],
   ['components', 'public', 'AppointmentCard.tsx'],
 ];
 

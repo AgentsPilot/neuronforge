@@ -19,7 +19,7 @@ export class WebMissingCtaDetector extends BaseDetector {
     description: 'Detects live pages without booking/contact/CTA blocks',
 
     watchedMetrics: ['acquisition.page_conversion'],
-    eventTypes: ['page.viewed'],
+    documentsEventTypes: ['page.viewed'],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -65,10 +65,7 @@ export class WebMissingCtaDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 

@@ -28,7 +28,7 @@ export class WebIncompleteContentDetector extends BaseDetector {
     description: 'Detects empty or incomplete key sections on live pages',
 
     watchedMetrics: ['acquisition.incomplete_content'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -71,10 +71,7 @@ export class WebIncompleteContentDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 
@@ -204,7 +201,17 @@ export class WebIncompleteContentDetector extends BaseDetector {
 
         // Check CTA block
         if (block.block_type === 'cta') {
-          if (!content?.title || !content?.buttonText) {
+          /*
+           * The keys a CTA block actually stores its label under.
+           *
+           * This asked for `content.buttonText`, which nothing has ever
+           * written: the generator stores `cta_text` and the renderer reads
+           * `button_text || cta_text`. So the detector reported "CTA missing
+           * button text" — at high importance — on every site ever generated,
+           * including the ones whose button was perfectly fine.
+           */
+          const buttonText = content?.cta_text || content?.button_text;
+          if (!content?.title || !buttonText) {
             issues.push({
               pageId: page.id,
               pageTitle: page.title || page.slug,

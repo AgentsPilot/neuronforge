@@ -22,7 +22,7 @@ import {
   Globe, ChevronRight, ChevronLeft, Check, X,
   Plus, Loader2, Eye, Sparkles, Rocket, ExternalLink,
   Monitor, Tablet, Smartphone, Maximize2, Calendar, DollarSign,
-  Target, Users, FileText, CreditCard, ClipboardList, GripVertical, User,
+  Target, Users, FileText, CreditCard, ClipboardList, GripVertical, User, Edit2,
   Link, MessageSquare, Copy, QrCode, Layers, Mail, Share2, Clock, ArrowRight
 } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
@@ -420,6 +420,17 @@ const LABELS = {
     no_services: 'No services yet',
     no_services_desc: 'Create your first service to get started',
     create_new_service: 'Create New Service',
+    /*
+     * Why the description suddenly matters.
+     *
+     * The page is written FROM this text, and nothing on this step said so. An
+     * owner picked a service, got a page, and had no way to know that the one
+     * paragraph they had typed months ago as an internal note was the whole
+     * brief. The ones with no description are already asked for one; everybody
+     * else was told nothing.
+     */
+    description_is_the_brief: 'This page will be written from your description of this service',
+    description_edit: 'Edit the description',
     generation_failed: 'We could not write this page from your service. It has been filled in with a starting draft you can edit.',
     preview_building: 'Writing your page…',
     generation_timeout: 'Writing this page took too long and was stopped. It has been filled in with a starting draft you can edit.',
@@ -520,6 +531,8 @@ const LABELS = {
     no_services: 'Sin servicios aún',
     no_services_desc: 'Crea tu primer servicio para comenzar',
     create_new_service: 'Crear Nuevo Servicio',
+    description_is_the_brief: 'Esta página se redactará a partir de tu descripción de este servicio',
+    description_edit: 'Editar la descripción',
     generation_failed: 'No pudimos redactar esta página desde tu servicio. Se completó con un borrador inicial que puedes editar.',
     preview_building: 'Redactando tu página…',
     generation_timeout: 'La redacción tardó demasiado y se detuvo. Se completó con un borrador inicial que puedes editar.',
@@ -617,6 +630,8 @@ const LABELS = {
     no_services: 'אין שירותים עדיין',
     no_services_desc: 'צור את השירות הראשון שלך כדי להתחיל',
     create_new_service: 'צור שירות חדש',
+    description_is_the_brief: 'הדף ייכתב מתוך התיאור שכתבתם לשירות הזה',
+    description_edit: 'עריכת התיאור',
     generation_failed: 'לא הצלחנו לכתוב את הדף מהשירות שלכם. הוא מולא בטיוטה התחלתית שאפשר לערוך.',
     preview_building: 'כותבים את הדף שלכם…',
     generation_timeout: 'כתיבת הדף ארכה זמן רב מדי ונעצרה. הוא מולא בטיוטה התחלתית שאפשר לערוך.',
@@ -1191,11 +1206,39 @@ export function LandingPageWizard({
     }
   }, [generatedContent, selectedService, selectedFlow]);
 
+  /**
+   * A hero line, from a description written for a different purpose.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The fallback used the description WHOLE, so a page whose generation failed
+   * opened with eleven lines of internal notes where a one-line promise
+   * belongs. That was the first thing reported about a real page, and it is a
+   * fallback problem rather than a model one: the prompt asks for one or two
+   * sentences, and this is what shows when the prompt never ran.
+   *
+   * First sentence, and only if it is short enough to read as a hero line. A
+   * description that opens with a 300-character paragraph has no usable lead in
+   * it, and the neutral line is better than a wall of text.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const heroLeadFrom = (description: string | null | undefined): string | null => {
+    const text = (description || '').trim().replace(/\s+/g, ' ');
+    if (!text) return null;
+
+    // Hebrew, Spanish and English all end a sentence with one of these.
+    const end = text.search(/[.!?।]\s|[.!?]$/);
+    const lead = end > 0 ? text.slice(0, end + 1) : text;
+
+    return lead.length > 0 && lead.length <= 180 ? lead : null;
+  };
+
   // Generate default content for preview when AI fails
   const getDefaultGeneratedContent = (service: SchedulingService) => ({
     hero: {
       headline: service.name,
-      subheadline: service.description || (language === 'he' ? 'הזמינו עכשיו כדי להתחיל' : language === 'es' ? 'Reserve ahora para comenzar' : 'Book now to get started')
+      subheadline:
+        heroLeadFrom(service.description)
+        || (language === 'he' ? 'הזמינו עכשיו כדי להתחיל' : language === 'es' ? 'Reserve ahora para comenzar' : 'Book now to get started')
     },
     features: {
       title: language === 'he' ? 'למה לבחור בשירות זה' : language === 'es' ? '¿Por qué elegir este servicio?' : 'Why Choose This Service',
@@ -1287,6 +1330,16 @@ export function LandingPageWizard({
         // Check if we got real AI content or default content
         if (data.warning) {
           console.warn('[LandingPageWizard] Using fallback content:', data.warning, data.debug);
+          /*
+           * Said on screen, not only to a console nobody has open.
+           *
+           * The route can answer with the starting draft three different ways,
+           * and until now all three arrived as `success: true` with content —
+           * so the owner reviewed placeholder copy believing a model had
+           * written it about their service, and approved it. The same sentence
+           * the thrown-error path already shows is the honest one here.
+           */
+          setGenerationFailed(labels.generation_failed);
         }
         setGeneratedContent(data.content);
       } else {
@@ -1636,13 +1689,16 @@ export function LandingPageWizard({
         return;
       }
       if (currentStep === 1 && selectedServiceId) {
-        // The readiness gate for this path lives in `handleServiceSelect`,
-        // which is what actually advances a landing page — see the note there.
-        //
-        // Asked again here rather than trusted: this branch is reachable from
-        // anything that calls `goNext` at step 1, and a gate that depends on
-        // one entry point being the only one is a gate waiting to be walked
-        // around. The check is cheap and the answer is the same.
+        /*
+         * THE gate, now that Continue is the only way out of this step.
+         *
+         * `handleServiceSelect` asks the same question when a card is tapped,
+         * but only to put the answer beside the card. Selecting no longer
+         * advances, so this is where a service that cannot be sold is actually
+         * stopped — and it is asked here rather than trusted from there,
+         * because a gate that depends on one entry point being the only one is
+         * a gate waiting to be walked around.
+         */
         const gate = await checkServiceReadiness([selectedServiceId]);
         if (gate && !gate.ready) {
           setServiceGate(gate);
@@ -1705,8 +1761,30 @@ export function LandingPageWizard({
       return; // Don't auto-advance for smart links
     }
 
-    // For landing pages: single select with auto-advance
+    // For landing pages: single select
     setSelectedServiceId(serviceId);
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A NEW SERVICE MEANS A NEW PAGE. DROP WHAT WAS WRITTEN FOR THE LAST ONE.
+     *
+     * The generation effect guards itself with `if (… || generatedContent) return`,
+     * and nothing ever cleared that state. So the first attempt's result — the
+     * STARTING DRAFT, when it failed — stuck to the wizard: every later visit to
+     * the preview step returned immediately, no request was made, and the owner
+     * watched the same placeholder page appear in under a second however many
+     * times they tried, with nothing in the console because nothing ran.
+     *
+     * It also meant choosing a different service showed the previous service's
+     * page.
+     *
+     * Cleared here, where the subject of the page changes. `generationFailed`
+     * goes with it: a banner about a page that is being rewritten is stale the
+     * moment the rewrite starts.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    setGeneratedContent(null);
+    setGenerationFailed(null);
     // A gap belongs to the service that had it. Leaving the message up while a
     // different one is selected would blame the new choice for the old problem.
     setServiceGate(null);
@@ -1726,27 +1804,38 @@ export function LandingPageWizard({
 
     /*
      * ─────────────────────────────────────────────────────────────────────────
-     * CAN THIS SERVICE BE SOLD AT ALL?
+     * CAN THIS SERVICE BE SOLD AT ALL? ASKED ON SELECTION, ENFORCED ON NEXT.
      *
-     * Checked HERE, not in `goNext`. This handler advances the landing-page
-     * flow itself — `setCurrentStep(2)` on the line below — and never calls
-     * `goNext`, so a gate placed in `goNext`'s step-1 branch was simply never
-     * reached. The wizard carried on, generated a page for a service whose
-     * journey cannot run, and the first sign of trouble was the generation
-     * call failing.
+     * Shown here because the answer belongs beside the card that caused it: an
+     * owner who picks a service with a blocking gap should read about it while
+     * looking at the service, not one click later. `goNext` asks again before
+     * it advances, so this is a warning and that is the gate.
      *
-     * Only BLOCKING gaps stop them: a missing card processor is fine, because
-     * the client is invoiced instead. A service that needs none of this — a
-     * free product, say — passes straight through and sees nothing.
+     * Only BLOCKING gaps are reported: a missing card processor is fine,
+     * because the client is invoiced instead. A service that needs none of this
+     * — a free product, say — passes straight through and sees nothing.
      */
     const gate = await checkServiceReadiness([serviceId]);
-    if (gate && !gate.ready) {
-      setServiceGate(gate);
-      return;
-    }
+    setServiceGate(gate && !gate.ready ? gate : null);
 
-    // Landing page: Step 1 (service) → Step 2 (journey)
-    setCurrentStep(2);
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * SELECTING IS NOT CONTINUING.
+     *
+     * This ended with `setCurrentStep(2)`, so a tap on a service card left the
+     * step before the owner had finished reading it. There was no way to look
+     * at two services and compare them, no way to change one's mind without
+     * going back, and no moment at which the choice was theirs to confirm —
+     * the wizard decided as soon as a finger landed.
+     *
+     * The Continue button for this step already existed and already required a
+     * selection (`shouldShowContinueButton`, landing-page step 1); nobody ever
+     * saw it, because the step was gone by the time it appeared. So the advance
+     * moves to the button, which is where `goNext` has handled this transition
+     * all along — gate, slug and the generation call for a settled theme
+     * included.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
   };
 
   // Handle smart link completion (user clicks "Done")
@@ -2181,9 +2270,19 @@ export function LandingPageWizard({
       )}
 
       {loadingServices ? (
-        <div className="flex items-center justify-center py-12">
+        // `gap-2` on the row, not `ml-2` on the text.
+        //
+        // `ml` is a PHYSICAL margin: always on the left, whatever the writing
+        // direction. Under `dir="rtl"` the text sits to the LEFT of the spinner,
+        // so the gap was pushed to the far side and "טוען שירותים..." ended up
+        // touching the spinner it belongs to. A flex gap separates the two
+        // wherever each of them lands.
+        //
+        // Line comments, not a braced JSX one: this is a ternary BRANCH, where
+        // braces are read as an object literal rather than a JSX expression.
+        <div className="flex items-center justify-center gap-2 py-12">
           <Loader2 className="w-6 h-6 animate-spin text-[var(--v2-text-muted)]" />
-          <span className="ml-2 text-sm text-[var(--v2-text-muted)]">{labels.loading_services}</span>
+          <span className="text-sm text-[var(--v2-text-muted)]">{labels.loading_services}</span>
         </div>
       ) : services.length === 0 && !showCreateService ? (
         <div className="text-center py-8">
@@ -2356,6 +2455,65 @@ export function LandingPageWizard({
                   </div>
                 </button>
 
+                {/*
+                  ─────────────────────────────────────────────────────────────
+                  WHAT THIS PAGE WILL BE WRITTEN FROM.
+
+                  The generator's entire brief is the service's description, and
+                  this step never said so. An owner picked a service, got a
+                  page, and had no way to connect the two — least of all to know
+                  that a paragraph typed months ago as an internal note was what
+                  a stranger would read.
+
+                  Shown with the text itself rather than as advice, because
+                  "your description matters" is a slogan and the paragraph in
+                  front of them is a fact they can judge. The service with NO
+                  description is already handled: it is asked for one instead,
+                  and this panel stands down while that prompt is open so the
+                  card never carries two things to read.
+                  ─────────────────────────────────────────────────────────────
+                */}
+                {isSelected
+                  && describeServiceId !== service.id
+                  && !!service.description?.trim() && (
+                  <div
+                    className="mt-2 p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]"
+                    style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  >
+                    <p className="flex items-start gap-2 text-[12.5px] font-medium text-[var(--v2-text-primary)]">
+                      <FileText className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[#4F6EF7]" />
+                      <span>{labels.description_is_the_brief}</span>
+                    </p>
+                    {/*
+                      Their own words, quoted. Clamped to four lines: this is
+                      for recognising the text, not for reading it again, and a
+                      long description would push the Continue button off the
+                      step it belongs to.
+                    */}
+                    <p className="mt-2 line-clamp-4 whitespace-pre-line text-[12.5px] leading-relaxed text-[var(--v2-text-secondary)]">
+                      {service.description}
+                    </p>
+                    {/*
+                      Changing it is a button, not an instruction.
+
+                      Telling an owner to go and edit the service in Settings
+                      sends them out of a wizard they are halfway through, and
+                      the thing they would be going to change is the brief for
+                      the page they are standing in. It opens the same field the
+                      "no description" prompt uses, seeded with what is already
+                      there — see `initialValue` on that component.
+                    */}
+                    <button
+                      type="button"
+                      onClick={() => setDescribeServiceId(service.id)}
+                      className="mt-2 inline-flex items-center gap-1.5 text-[11.5px] font-medium text-[#4F6EF7] hover:underline"
+                    >
+                      <Edit2 className="h-3 w-3" />
+                      {labels.description_edit}
+                    </button>
+                  </div>
+                )}
+
                 {/* Outside the button, because it contains a form. */}
                 {describeServiceId === service.id && (
                   <div
@@ -2366,6 +2524,11 @@ export function LandingPageWizard({
                       service={service}
                       language={language as 'en' | 'es' | 'he'}
                       autoFocus
+                      /* Empty for a service that has none, which is the case
+                         this prompt was built for; the existing text when the
+                         owner pressed Edit above, so changing a description is
+                         changing it rather than retyping it. */
+                      initialValue={service.description ?? ''}
                       onSaved={async (serviceId, description) => {
                         setServices(prev => prev.map(item =>
                           item.id === serviceId ? { ...item, description } : item
@@ -2390,26 +2553,22 @@ export function LandingPageWizard({
                         await fetchServices();
 
                         /*
-                         * The gate again — this is the THIRD way past this step.
+                         * Report a blocking gap, and stay on the step.
                          *
-                         * A service with no description never reaches the check
-                         * in `handleServiceSelect`: that returns early to ask
-                         * for one. Writing the description then advanced
-                         * straight to step 2 from here, so filling in a
-                         * description was a way of walking around a gate that
-                         * had nothing to do with descriptions.
+                         * This used to end `setCurrentStep(2)`, which made
+                         * writing a description a THIRD way out of this step —
+                         * and a way around a gate that had nothing to do with
+                         * descriptions, since a service without one never
+                         * reaches the check in `handleServiceSelect`.
                          *
-                         * Three entry points to one step is the actual lesson:
-                         * the check belongs to the transition, and every route
-                         * into it has to ask.
+                         * Now there is one way out, Continue, and `goNext` owns
+                         * the gate. Saving here returns the owner to the step
+                         * with their description shown back to them, which is
+                         * also what makes an EDIT finish somewhere sensible
+                         * rather than skipping the page they were reviewing.
                          */
                         const gate = await checkServiceReadiness([serviceId]);
-                        if (gate && !gate.ready) {
-                          setServiceGate(gate);
-                          return;
-                        }
-                        setServiceGate(null);
-                        setCurrentStep(2);
+                        setServiceGate(gate && !gate.ready ? gate : null);
                       }}
                     />
                   </div>
@@ -3040,8 +3199,17 @@ export function LandingPageWizard({
           />
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-auto p-6">
+        {/*
+          Content.
+
+          `scrollbar-thin` is what makes the bar follow the theme. Without it
+          the browser paints its own, which is light grey on every platform — so
+          a wizard built entirely from `--v2-*` surfaces had a pale stripe down
+          its edge in dark mode. The class and its `.dark` counterpart live in
+          `globals.css`, where the note explains why `scrollbar-color` is the
+          rule that actually paints it in current Chrome.
+        */}
+        <div className="flex-1 overflow-auto scrollbar-thin p-6">
           {/* Step header - hide on completion screens */}
           {!isStepWithOwnButtons() && (
             <div className="mb-4">

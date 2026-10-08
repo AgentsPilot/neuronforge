@@ -209,12 +209,23 @@ describe.each(BOS_CRON_JOBS.map((job) => [job.id, job] as const))('%s', (id, job
     const plain = await loadRoute(id).GET(cronRequest(id, `Bearer ${SECRET}`));
 
     expect(recorded.status).toBe(plain.status);
+    /*
+     * Two measured runs, so anything measured differs between them. The routes
+     * spell their timing both ways -- `duration_ms` (calendar-sync, the leak
+     * check, the settlement gap) and `durationMs` (insight-measure,
+     * insight-hypotheses) -- and at either level, so both spellings go at both
+     * levels rather than whichever one this job happens to use.
+     *
+     * Naming only `data.duration` left `data.durationMs` in the comparison,
+     * which made this a race against the millisecond: the two calls agreed
+     * roughly four times in five and reported 0 against 1 otherwise.
+     */
+    const MEASURED = ['duration', 'duration_ms', 'durationMs', 'elapsedMs', 'runId'];
     const strip = (body: Record<string, unknown>) => {
       const copy = JSON.parse(JSON.stringify(body)) as Record<string, unknown>;
-      delete copy.duration_ms;
+      for (const key of MEASURED) delete copy[key];
       if (copy.data && typeof copy.data === 'object') {
-        delete (copy.data as Record<string, unknown>).duration;
-        delete (copy.data as Record<string, unknown>).runId;
+        for (const key of MEASURED) delete (copy.data as Record<string, unknown>)[key];
       }
       return copy;
     };

@@ -181,12 +181,29 @@ describe('the recipes', () => {
   });
 
   it('lets the page type win outright', () => {
-    // A landing page for a therapist is still a landing page: one offer, no
-    // biography, nothing between the reader and the price.
+    // A landing page for a therapist is still a landing page: one offer, and
+    // none of the vertical's own furniture.
     expect(recipeIdFor('therapist', 'landing')).toBe('landing');
     expect(recipeFor('photographer', 'landing')).not.toContain('gallery');
-    expect(RECIPES.landing).not.toContain('about');
+    // `process` is how the work runs — a website question, not a buying one.
     expect(RECIPES.landing).not.toContain('process');
+  });
+
+  it('introduces the business before it asks for money', () => {
+    /*
+     * `about` was deliberately absent: a visitor who followed an ad has not
+     * asked who you are, and every section before the price is a place to
+     * leave. True of the sections that DELAY the offer, false of the one that
+     * makes it buyable — on a page a stranger reached from an ad there is no
+     * familiar logo, no navigation and no second page to check.
+     *
+     * Its position is the whole compromise, so the position is what is pinned:
+     * after the reader knows what is on offer, before they are asked to pay.
+     */
+    const landing = [...RECIPES.landing];
+    expect(landing).toContain('about');
+    expect(landing.indexOf('about')).toBeGreaterThan(landing.indexOf('features'));
+    expect(landing.indexOf('about')).toBeLessThan(landing.indexOf('pricing'));
   });
 
   it('falls back to the forgiving order for a trade it does not know', () => {

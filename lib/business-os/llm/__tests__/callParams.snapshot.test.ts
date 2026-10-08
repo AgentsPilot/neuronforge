@@ -149,6 +149,17 @@ const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
     insight_content: wired('gpt-4o-mini', 0.3),
     correlated_insight: wired('gpt-4o-mini', 0.4),
     health_summary: wired('gpt-4o-mini', 0.5),
+    /*
+     * The weekly hypothesis generator. `wired` because its call site resolves
+     * the model and temperature from `resolveBosLlmSettings` inside
+     * `withModelFallback` and writes neither itself -- there is no `evidence`
+     * entry, which is what `UNWIRED_CALLS` keys off.
+     *
+     * Ships at the area default 0.3 on purpose: the right temperature for a
+     * generator is a thing to learn from what it proposes, and Layer 2 lets an
+     * operator raise it without a deploy.
+     */
+    hypothesis: wired('gpt-4o-mini', 0.3),
   },
   briefing: {
     daily_narration: wired('gpt-4o-mini', 0.3),

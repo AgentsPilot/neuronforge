@@ -81,7 +81,7 @@ export class WebLinkNotConvertingDetector extends BaseDetector {
     description: 'Finds smart links with real clicks that produced no bookings or enquiries',
 
     watchedMetrics: ['acquisition.link_conversion_rate'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -104,10 +104,7 @@ export class WebLinkNotConvertingDetector extends BaseDetector {
     pairedProcessId: undefined,
     ignoresVectorMaturity: false,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 336,
   };
 

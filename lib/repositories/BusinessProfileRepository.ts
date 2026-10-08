@@ -168,6 +168,17 @@ export interface BusinessProfile {
   // Vertical identification
   vertical: string;
   sub_vertical: string | null;
+  /**
+   * Who the business is for, and what makes it different — in the owner's own
+   * words.
+   *
+   * Both columns exist and are written by onboarding; this type simply never
+   * named them, so a caller that read them did not compile. The landing-page
+   * generator selects them directly and has always had them, which is how the
+   * gap went unnoticed: the one place that used them bypassed this type.
+   */
+  target_audience: string | null;
+  unique_value_proposition: string | null;
 
   // Business metrics
   company_name: string | null;

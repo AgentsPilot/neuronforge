@@ -297,6 +297,8 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'B3 — NO ACTION onto kernel_executions, so this goes first.' },
   { table: 'insights', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
     notes: 'Self-FK correlation_parent_id is SET NULL — cosmetic, needs no ordering.' },
+  { table: 'insight_hypotheses', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+    notes: 'Model-proposed findings awaiting review (20261006e). No inbound FK and no outbound FK at all — a published row is copied into `insights` rather than joined to it, so there is no edge to order against and it is a LEAF. Operator-only to read (RLS enabled, no policy), but the rows are claims about THIS business and go when it does.' },
   // Admin delete AD-1a (SC-8, SA-1(a)): found unclassified on prod 2026-10-04.
   { table: 'insight_actions', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Chase-invoice / follow-up actions the insights engine proposes to the owner about their clients — business data. Its FK to business_profiles is CASCADE, so before AD-1a a Purge emptied it with no snapshot and no count (the only uncounted cascade child of business_profiles, SA-1(a)). Measured live 2026-10-04: no inbound FK; outbound insight_id -> insights SET NULL, contact/booking/invoice CASCADE — no blocking edge, so LEAF.' },

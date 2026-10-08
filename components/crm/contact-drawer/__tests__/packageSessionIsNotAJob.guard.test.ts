@@ -82,13 +82,28 @@ describe('the card itself', () => {
   });
 
   it('gives each meeting its own actions, against its own id', () => {
-    // One journey, but six real appointments: each can be held, missed, moved
-    // or called off alone, and for a per-session package marking one held is
-    // what invoices it.
-    expect(tab).toContain("onSetBookingStatus(row.id, 'completed')");
-    expect(tab).toContain("onSetBookingStatus(row.id, 'no_show')");
-    expect(tab).toContain("onSetBookingStatus(row.id, 'cancelled')");
+    /*
+     * One journey, but six real appointments: each can be held, missed, moved
+     * or called off alone, and for a per-session package marking one held is
+     * what invoices it.
+     *
+     * The three outcomes used to be three literal calls here. They now go
+     * through `MeetingRowActions`, which decides WHICH are possible from the
+     * status and the clock — a meeting still ahead cannot have been held or
+     * missed. What this guard still has to hold is the part that moving them
+     * could have broken: every call carries `row.id`, the meeting's own, and
+     * never the container's.
+     */
+    expect(tab).toContain('onSetBookingStatus(row.id, next)');
     expect(tab).toContain('onEditSession(row.id)');
+
+    // Nothing in the list acts on the parent booking by mistake.
+    const start = tab.indexOf('ONE LIST, NOT A STACK OF CARDS');
+    const list = tab.slice(start, tab.indexOf('AddPackageMeeting', start));
+
+    expect(start).toBeGreaterThan(-1);
+    expect(list).not.toMatch(/onSetBookingStatus\(booking\.id/);
+    expect(list).not.toMatch(/onEditSession\(booking\.id\)/);
   });
 });
 

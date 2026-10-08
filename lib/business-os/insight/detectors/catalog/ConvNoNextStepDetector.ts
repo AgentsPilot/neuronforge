@@ -61,7 +61,7 @@ export class ConvNoNextStepDetector extends BaseDetector {
     description: 'Finds people who had activity but have nothing scheduled to happen next',
 
     watchedMetrics: ['conversion.pipeline_velocity'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -95,10 +95,7 @@ export class ConvNoNextStepDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'automate',
     eligibleForAutomation: true,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 72,
   };
 

@@ -24,14 +24,18 @@ const read = (relative: string) => fs.readFileSync(path.join(ROOT, relative), 'u
 const vercel = JSON.parse(read('vercel.json')) as { crons: Array<{ path: string; schedule: string }> };
 
 /**
- * Interval in minutes of the four schedule shapes in use. Anything else throws,
+ * Interval in minutes of the five schedule shapes in use. Anything else throws,
  * so a new shape needs a human to add it (and its thresholds) on purpose.
+ *
+ * The weekly shape was added on 2026-10-06 for `insight-hypotheses`, which had
+ * been scheduled in `vercel.json` with no registry row at all.
  */
 function intervalOf(schedule: string): number {
   let m: RegExpMatchArray | null;
   if ((m = schedule.match(/^\*\/(\d+) \* \* \* \*$/))) return Number(m[1]);
   if (/^\d{1,2} \* \* \* \*$/.test(schedule)) return 60;
   if (/^\d{1,2} \d{1,2} \* \* \*$/.test(schedule)) return 1440;
+  if (/^\d{1,2} \d{1,2} \* \* [0-6]$/.test(schedule)) return 10_080;
   throw new Error(`Unsupported schedule shape: ${schedule}`);
 }
 
@@ -39,11 +43,11 @@ function intervalOf(schedule: string): number {
 const codeOf = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 describe('FR-R9: the registry is vercel.json', () => {
-  it('has exactly the 14 scheduled jobs, with the same schedules, byte for byte', () => {
+  it('has exactly the 16 scheduled jobs, with the same schedules, byte for byte', () => {
     const fromVercel = vercel.crons.map((c) => `${c.path} ${c.schedule}`).sort();
     const fromRegistry = BOS_CRON_JOBS.map((j) => `${j.path} ${j.schedule}`).sort();
     expect(fromRegistry).toEqual(fromVercel);
-    expect(BOS_CRON_JOBS).toHaveLength(14);
+    expect(BOS_CRON_JOBS).toHaveLength(16);
   });
 
   it('ids are unique, match their path, and satisfy the database job rule', () => {
@@ -61,7 +65,9 @@ describe('FR-R9: the registry is vercel.json', () => {
   });
 
   it('the parser refuses a shape it does not know (no dead parser)', () => {
-    expect(() => intervalOf('0 4 * * 0')).toThrow();
+    // Was `0 4 * * 0`, which the weekly shape added on 2026-10-06 now accepts.
+    // A day-of-month schedule is still unknown and still needs a human.
+    expect(() => intervalOf('0 4 1 * *')).toThrow();
   });
 });
 
@@ -71,10 +77,22 @@ describe('late and stopped thresholds equal the requirement table (§S5.8)', () 
     15: [25, 40],
     60: [70, 130],
     1440: [25 * 60, 49 * 60],
+    // Weekly, added 2026-10-06: one interval plus three hours' grace, then two.
+    10_080: [10_080 + 180, 2 * 10_080 + 180],
   };
+
+  /**
+   * How many consecutive failures before the job is called broken.
+   *
+   * Falls as the interval grows: a five-minute job failing three times is
+   * fifteen minutes, while a weekly job failing twice is a fortnight of
+   * silence. One miss is worth surfacing at that cadence.
+   */
+  const keepsFailing: Record<number, number> = { 10_080: 1, 1440: 2 };
+
   it.each(BOS_CRON_JOBS.map((j) => [j.id, j] as const))('%s', (_id, job) => {
     expect([lateAfterMinutes(job), stoppedAfterMinutes(job)]).toEqual(expected[job.intervalMinutes]);
-    expect(job.keepsFailingAfter).toBe(job.intervalMinutes === 1440 ? 2 : 3);
+    expect(job.keepsFailingAfter).toBe(keepsFailing[job.intervalMinutes] ?? 3);
   });
 });
 

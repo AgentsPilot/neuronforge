@@ -64,6 +64,16 @@ export default function CRMPage() {
    * left the owner to find the booking themselves.
    */
   const [drawerDefaultTab, setDrawerDefaultTab] = useState<DrawerSection | undefined>(undefined);
+  /**
+   * Which booking the drawer opens expanded, when a link named one.
+   *
+   * `&section=bookings` got the owner to the right LIST; `&booking=` gets them
+   * to the row. `NeedsYouCard` has always known which booking its gap was
+   * raised from and was dropping it at the point of navigating, so every
+   * "write a quote" / "bill this phase" / "say what happened" button landed on
+   * a list of that contact's bookings and left them to find the one it meant.
+   */
+  const [drawerFocusBookingId, setDrawerFocusBookingId] = useState<string | undefined>(undefined);
   // Pagination state for contacts list view
   const [currentPage, setCurrentPage] = useState(1);
   const [totalContacts, setTotalContacts] = useState(0);
@@ -110,9 +120,13 @@ export default function CRMPage() {
       // `?section=` decides which part of the record opens. Absent or unknown
       // falls back to details, which is what every link did before it existed.
       const section = sectionFromUrl(searchParams.get('section'));
+      // Read before the param is cleared below, and kept in state: the drawer
+      // may mount after this effect has already wiped the URL.
+      const bookingId = searchParams.get('booking') ?? undefined;
       const contact = contacts.find(c => c.id === contactId);
       if (contact) {
         setDrawerDefaultTab(section ?? 'details');
+        setDrawerFocusBookingId(bookingId);
         setSelectedContact(contact);
         // Clear the query param from URL after opening
         router.replace('/business-os/crm', { scroll: false });
@@ -120,7 +134,7 @@ export default function CRMPage() {
         // Contact not in current list - fetch it directly. The section has to go
         // with it: this is the path a link from another page usually takes, since
         // the contact it names is often not on the first page of this list.
-        fetchContactById(contactId, section);
+        fetchContactById(contactId, section, bookingId);
       }
     }
   }, [searchParams, contacts]);
@@ -180,12 +194,13 @@ export default function CRMPage() {
    * the honest outcome is the list with a clean URL, not a parameter that
    * retries on a loop with nothing to show for it.
    */
-  const fetchContactById = async (contactId: string, section?: DrawerSection) => {
+  const fetchContactById = async (contactId: string, section?: DrawerSection, bookingId?: string) => {
     try {
       const response = await fetch(`/api/crm/contacts/${contactId}`);
       const data = await response.json();
       if (data.success && data.contact) {
         setDrawerDefaultTab(section ?? 'details');
+        setDrawerFocusBookingId(bookingId);
         setSelectedContact(data.contact);
       } else {
         logger.warn(
@@ -727,10 +742,14 @@ export default function CRMPage() {
           onClose={() => {
             setSelectedContact(null);
             setDrawerDefaultTab(undefined); // Reset default tab when closing
+            // Cleared with it: reopening the same contact by hand should not
+            // silently expand a booking the owner never asked about.
+            setDrawerFocusBookingId(undefined);
           }}
           onContactUpdated={handleContactUpdated}
           onTasksUpdated={() => setTaskListKey(prev => prev + 1)}
           initialSection={drawerDefaultTab || 'details'}
+          focusBookingId={drawerFocusBookingId}
         />
       )}
 

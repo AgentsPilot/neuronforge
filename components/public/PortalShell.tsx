@@ -1,7 +1,7 @@
 // components/public/PortalShell.tsx
 
 import { PortalBar } from '@/components/public/PortalBar';
-import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+import { PAGE_CONTAINER, PORTAL_GRID } from '@/lib/business-os/pageContainer';
 import { PublicFooter } from '@/components/public/PublicFooter';
 import type { PublicBrand } from '@/lib/branding/publicBranding';
 
@@ -13,10 +13,11 @@ interface PortalShellProps {
   /**
    * The rail: what every screen in the section shows and none of them owns.
    *
-   * Rendered here, beside `children`, so it is mounted ONCE for the whole
-   * section. Moving from the portal to cancel to reschedule leaves the business
-   * details and the opening hours exactly where they are — they neither flicker
-   * nor refetch, because nothing about them changed.
+   * Rendered here, as tiles BENEATH `children`, so it is mounted ONCE for the
+   * whole section. Moving from the portal to cancel to reschedule leaves the
+   * business details and the opening hours exactly where they are — they
+   * neither flicker nor refetch, because nothing about them changed, and they
+   * sit in the same place on every screen.
    */
   aside?: React.ReactNode;
 }
@@ -66,13 +67,31 @@ export function PortalShell({ brand, children, clientName, aside }: PortalShellP
       {/* `flex-1` so a short screen still pushes the footer to the bottom
           rather than leaving it floating halfway up a desktop window. */}
       {/*
-        One main column with the rail beside it from `lg` up, and below it on a
-        phone, which is the only thing that fits there.
+        ───────────────────────────────────────────────────────────────────────
+        ONE FRAME FOR EVERY SCREEN IN THE SECTION.
+
+        This briefly chose its arrangement from the PATH — a grid on the index,
+        a column everywhere else — and that was wrong in a way worth recording.
+        The reminder and confirmation emails link to `/reschedule`, `/cancel`
+        and `/intake` far more often than to the index, so most clients arrived
+        on a screen the test did not match and got the old column layout. The
+        portal appeared to change shape from one booking to the next, and the
+        pathname is also null on the first render, which produced a third
+        answer again.
+
+        So there is no test. Every screen lays out the same way: the page's own
+        content across the full width, and the rail's cards as tiles beneath it
+        in a fixed order. A client moving from the portal to cancel and back
+        finds every card where they left it.
+        ───────────────────────────────────────────────────────────────────────
       */}
       <main className={`w-full flex-1 ${PAGE_CONTAINER} pb-6 pt-4`}>
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <div className="min-w-0 space-y-3">{children}</div>
-          {aside && <div className="space-y-3 lg:sticky lg:top-20">{aside}</div>}
+        <div className={`${PORTAL_GRID} gap-3`}>
+          {/* The page's own content, whatever shape it is. The index lays its
+              tiles out in a grid of its own inside this; the other four stack
+              one task, exactly as they always have. */}
+          <div className="col-span-full min-w-0 space-y-3">{children}</div>
+          {aside}
         </div>
       </main>
 

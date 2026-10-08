@@ -298,7 +298,8 @@ export const translations = {
     'automation.reply_to_enquiries': 'Reply to new enquiries for you',
     'automation.reply_to_enquiries_hint': 'When someone gets in touch, I send them the right booking link about 15 minutes later — enough time for you to change it or stop it.',
     'automation.remind_about_meeting': 'Remind everyone before a meeting',
-    'automation.remind_about_meeting_hint': 'Turn this on and we email a reminder before every confirmed appointment. Leave it off and we only step in when people start missing appointments.',
+    'automation.auto_complete_meetings': 'Close off meetings once they have happened',
+    'automation.auto_complete_meetings_hint': 'Turn this on and we mark a meeting as done twelve hours after it was due, so you are not clicking through yesterday. Nothing is sent to anyone, and you can always change it back. Leave it off and we will keep reminding you instead.',
     'automation.reminder_who': 'Who gets it',
     'automation.reminder_who_client': 'The client',
     'automation.reminder_who_owner': 'You',
@@ -1877,6 +1878,9 @@ export const translations = {
     'crm.activity.type.email_sent': 'Email Sent',
     'crm.activity.type.stage_changed': 'Stage Changed',
     'crm.activity.type.contact_updated': 'Contact Updated',
+    /* The record of someone asking to be quoted. There is no booking and no
+       invoice at this point, so this entry IS the request. */
+    'crm.activity.type.quote_requested': 'Quote Requested',
     /*
      * Types the writers emit that this list never knew about.
      *
@@ -1904,6 +1908,7 @@ export const translations = {
     'crm.activity.filter.tasks': 'Tasks',
     'crm.activity.filter.forms': 'Forms',
     'crm.activity.filter.changes': 'Changes',
+    'crm.activity.filter.quotes': 'Quote requests',
     'crm.activity.filter.files': 'Files',
     'crm.activity.details': 'Details',
     'crm.activity.detail.was': 'was',
@@ -2206,6 +2211,11 @@ export const translations = {
     'crm.drawer.saved': 'Saved',
     // V2 Drawer - Sessions section
     'crm.drawer.no_sessions': 'No sessions yet',
+    /* The bookings tab's own search, offered once a contact has more than one
+       page of history. The curly quotes are deliberate: the term is the
+       client's own words quoted back. */
+    'crm.drawer.search_bookings': 'Search bookings',
+    'crm.drawer.no_booking_matches': 'No bookings match “{term}”',
     'crm.drawer.schedule_first': 'Schedule first session',
     'crm.drawer.new_session': 'New',
     'crm.drawer.upcoming': 'upcoming',
@@ -2231,6 +2241,10 @@ export const translations = {
     'crm.stage.invoice': 'Invoice',
     'crm.stage.receipt': 'Receipt',
     'crm.stage.paid': 'Paid',
+    /* What became of a payment that was partly returned. The row above states
+       what the client paid; this states what went back and what survived it,
+       in the same words the totals strip uses for them. */
+    'crm.stage.refund_breakdown': '{refunded} refunded · {kept} kept',
     'crm.stage.awaiting_payment': 'Invoiced',
     'crm.stage.scheduled': 'Scheduled',
     'crm.stage.mark_done': 'Mark done',
@@ -2261,7 +2275,7 @@ export const translations = {
     'crm.booking.step.proposal': 'Quote',
     'crm.booking.step.intake': 'Client Form',
     'crm.booking.step.form': 'Form',
-    'crm.booking.step.session': 'Session',
+    'crm.booking.step.session': 'Meeting date',
     'crm.booking.step.appointment': 'Appointment',
     'crm.booking.step.completed': 'Completed',
     'crm.booking.step.done': 'Done',
@@ -2431,6 +2445,15 @@ export const translations = {
     'crm.email.status.bounced': 'Bounced',
     'crm.email.status.complained': 'Reported as spam',
     'crm.email.status.failed': 'Failed',
+    /*
+     * No send was ever recorded for this booking.
+     *
+     * Distinct from every status above, which describe a send that happened.
+     * The step's own status falls back to 'sent' when there is no email row —
+     * fine for colouring a tick, a lie if the card states it. This says the
+     * honest thing instead.
+     */
+    'crm.email.no_record': 'No send recorded',
     'crm.email.opened_at': 'Opened',
 
     // Document Types
@@ -3817,6 +3840,9 @@ export const translations = {
     'config.services.description.add': 'Add a description',
     'config.services.description.edit': 'Edit description',
     'config.services.published': 'Published',
+    /* The way back from one service to the list, shown on a phone only, where
+       the editor takes the whole screen. */
+    'config.services.all': 'All services',
     'config.services.saved_just_now': 'saved a moment ago',
     'config.services.when_collected': 'How it is collected',
     'config.services.currency_fixed': 'Set when the service is created. Changing it would relabel the price, not convert it.',
@@ -4336,7 +4362,8 @@ export const translations = {
     'automation.reply_to_enquiries': 'Responder a nuevas consultas por ti',
     'automation.reply_to_enquiries_hint': 'Cuando alguien escribe, le envío el enlace de reserva adecuado unos 15 minutos después: tiempo suficiente para que lo cambies o lo detengas.',
     'automation.remind_about_meeting': 'Recuerda a todos antes de una cita',
-    'automation.remind_about_meeting_hint': 'Actívalo y enviamos un recordatorio antes de cada cita confirmada. Déjalo apagado y solo intervenimos cuando la gente empieza a faltar.',
+    'automation.auto_complete_meetings': 'Cierra las citas una vez que han pasado',
+    'automation.auto_complete_meetings_hint': 'Actívalo y marcamos una cita como realizada doce horas después de su hora, para que no tengas que repasar el día anterior. No se envía nada a nadie y siempre puedes cambiarlo. Déjalo apagado y seguiremos recordándotelo.',
     'automation.reminder_who': 'Quién lo recibe',
     'automation.reminder_who_client': 'El cliente',
     'automation.reminder_who_owner': 'Tú',
@@ -5850,6 +5877,7 @@ export const translations = {
     'crm.activity.type.email_sent': 'Correo Enviado',
     'crm.activity.type.stage_changed': 'Etapa Cambiada',
     'crm.activity.type.contact_updated': 'Contacto Actualizado',
+    'crm.activity.type.quote_requested': 'Presupuesto Solicitado',
     'crm.activity.type.booking_rescheduled': 'Cita Reprogramada',
     'crm.activity.type.booking_confirmation_sent': 'Confirmación Enviada',
     'crm.activity.type.refund_issued': 'Reembolso Emitido',
@@ -5869,6 +5897,7 @@ export const translations = {
     'crm.activity.filter.tasks': 'Tareas',
     'crm.activity.filter.forms': 'Formularios',
     'crm.activity.filter.changes': 'Cambios',
+    'crm.activity.filter.quotes': 'Presupuestos',
     'crm.activity.filter.files': 'Archivos',
     'crm.activity.details': 'Detalles',
     'crm.activity.detail.was': 'antes',
@@ -6171,6 +6200,8 @@ export const translations = {
     'crm.drawer.saved': 'Guardado',
     // V2 Drawer - Sessions section
     'crm.drawer.no_sessions': 'Sin sesiones todavía',
+    'crm.drawer.search_bookings': 'Buscar reservas',
+    'crm.drawer.no_booking_matches': 'Ninguna reserva coincide con «{term}»',
     'crm.drawer.schedule_first': 'Programar primera sesión',
     'crm.drawer.new_session': 'Nueva',
     'crm.drawer.upcoming': 'próximas',
@@ -6194,6 +6225,7 @@ export const translations = {
     'crm.stage.invoice': 'Factura',
     'crm.stage.receipt': 'Recibo',
     'crm.stage.paid': 'Pagado',
+    'crm.stage.refund_breakdown': '{refunded} reembolsados · {kept} retenidos',
     'crm.stage.awaiting_payment': 'Facturado',
     'crm.stage.scheduled': 'Programado',
     'crm.stage.mark_done': 'Marcar hecho',
@@ -6222,7 +6254,7 @@ export const translations = {
     'crm.booking.step.proposal': 'Presupuesto',
     'crm.booking.step.intake': 'Formulario de Cliente',
     'crm.booking.step.form': 'Formulario',
-    'crm.booking.step.session': 'Sesión',
+    'crm.booking.step.session': 'Fecha de la reunión',
     'crm.booking.step.appointment': 'Cita',
     'crm.booking.step.completed': 'Completada',
     'crm.booking.step.done': 'Hecho',
@@ -6386,6 +6418,7 @@ export const translations = {
     'crm.email.status.bounced': 'Rebotado',
     'crm.email.status.complained': 'Marcado como spam',
     'crm.email.status.failed': 'Fallido',
+    'crm.email.no_record': 'Sin envío registrado',
     'crm.email.opened_at': 'Abierto',
 
     // Document Types
@@ -7706,6 +7739,7 @@ export const translations = {
     'config.services.description.add': 'Añadir descripción',
     'config.services.description.edit': 'Editar descripción',
     'config.services.published': 'Publicado',
+    'config.services.all': 'Todos los servicios',
     'config.services.saved_just_now': 'guardado hace un momento',
     'config.services.when_collected': 'Cómo se cobra',
     'config.services.currency_fixed': 'Se define al crear el servicio. Cambiarla reetiquetaría el precio en lugar de convertirlo.',
@@ -8304,6 +8338,7 @@ export const translations = {
     'crm.activity.type.email_sent': 'אימייל נשלח',
     'crm.activity.type.stage_changed': 'שלב השתנה',
     'crm.activity.type.contact_updated': 'איש קשר עודכן',
+    'crm.activity.type.quote_requested': 'התקבלה בקשה להצעת מחיר',
     'crm.activity.type.booking_rescheduled': 'מועד הפגישה שונה',
     'crm.activity.type.booking_confirmation_sent': 'אישור נשלח',
     'crm.activity.type.refund_issued': 'הוחזר תשלום',
@@ -8323,6 +8358,7 @@ export const translations = {
     'crm.activity.filter.tasks': 'משימות',
     'crm.activity.filter.forms': 'טפסים',
     'crm.activity.filter.changes': 'שינויים',
+    'crm.activity.filter.quotes': 'בקשות להצעת מחיר',
     'crm.activity.filter.files': 'קבצים',
     'crm.activity.details': 'פרטים',
     'crm.activity.detail.was': 'היה',
@@ -8428,6 +8464,7 @@ export const translations = {
     'crm.stage.invoice': 'חשבונית',
     'crm.stage.receipt': 'קבלה',
     'crm.stage.paid': 'שולם',
+    'crm.stage.refund_breakdown': 'הוחזר {refunded} · נותר אצלכם {kept}',
     'crm.stage.awaiting_payment': 'נשלחה חשבונית',
     'crm.stage.scheduled': 'מתוכנן',
     'crm.stage.mark_done': 'סימון כהושלם',
@@ -8456,7 +8493,7 @@ export const translations = {
     'crm.booking.step.proposal': 'הצעת מחיר',
     'crm.booking.step.intake': 'טופס לקוח',
     'crm.booking.step.form': 'טופס',
-    'crm.booking.step.session': 'פגישה',
+    'crm.booking.step.session': 'תאריך הפגישה',
     'crm.booking.step.appointment': 'תור',
     'crm.booking.step.completed': 'הושלם',
     'crm.booking.step.done': 'בוצע',
@@ -8801,6 +8838,8 @@ export const translations = {
     'crm.drawer.saved': 'נשמר',
     // V2 Drawer - Bookings section
     'crm.drawer.no_sessions': 'אין הזמנות עדיין',
+    'crm.drawer.search_bookings': 'חיפוש בהזמנות',
+    'crm.drawer.no_booking_matches': 'לא נמצאו הזמנות עבור "{term}"',
     'crm.drawer.schedule_first': 'צור הזמנה ראשונה',
     'crm.drawer.new_session': 'חדש',
     'crm.drawer.upcoming': 'קרובות',
@@ -8838,6 +8877,7 @@ export const translations = {
     'crm.email.status.bounced': 'קפץ בחזרה',
     'crm.email.status.complained': 'דווח כספאם',
     'crm.email.status.failed': 'נכשל',
+    'crm.email.no_record': 'לא נרשמה שליחה',
     'crm.email.opened_at': 'נפתח',
 
     // Document Types
@@ -10180,6 +10220,7 @@ export const translations = {
     'config.services.description.add': 'הוספת תיאור',
     'config.services.description.edit': 'עריכת התיאור',
     'config.services.published': 'פורסם',
+    'config.services.all': 'כל השירותים',
     'config.services.saved_just_now': 'נשמר לפני רגע',
     'config.services.when_collected': 'איך נגבה',
     'config.services.currency_fixed': 'נקבע בעת יצירת השירות. שינוי שלו היה משנה את תווית המחיר, לא ממיר אותו.',
@@ -10433,6 +10474,8 @@ export const translations = {
     'automation.reply_to_enquiries_hint': 'כשמישהו פונה, אשלח לו את הקישור המתאים לקביעת מועד כ-15 דקות אחר כך — מספיק זמן כדי לשנות או לעצור.',
     'automation.remind_about_meeting': 'תזכורת לכולם לפני פגישה',
     'automation.remind_about_meeting_hint': 'אם תפעיל, נשלח תזכורת לפני כל פגישה שאושרה. אם תשאיר כבוי, ניכנס לתמונה רק כשלקוחות מתחילים לא להגיע.',
+    'automation.auto_complete_meetings': 'סגירת פגישות אחרי שהתקיימו',
+    'automation.auto_complete_meetings_hint': 'הפעל ונסמן פגישה כהתקיימה שתים עשרה שעות אחרי המועד שלה, כדי שלא תצטרך לעבור על אתמול. שום דבר לא נשלח לאף אחד, ותמיד אפשר לשנות בחזרה. אם תשאיר כבוי, נמשיך להזכיר לך.',
     'automation.reminder_who': 'מי מקבל',
     'automation.reminder_who_client': 'הלקוח',
     'automation.reminder_who_owner': 'אתה',

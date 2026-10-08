@@ -43,6 +43,13 @@ import { createLogger } from '@/lib/logger';
 import { cancelReasonBucket } from '@/lib/business-os/cancellationReasons';
 import { CLIENT_CANCELLED_PREFIX } from '@/lib/services/bookingCancellationReason';
 import { dominantReason } from '../../patterns/dominantReason';
+import {
+  firstOutlier,
+  nameSegment,
+  type Dimension,
+  type SegmentRate,
+} from '../../patterns/segmentRate';
+import { localWeekdayIn } from '@/lib/business-os/businessDay';
 
 const logger = createLogger({ module: 'RetCancelPatternDetector' });
 
@@ -82,7 +89,7 @@ export class RetCancelPatternDetector extends BaseDetector {
       'Groups a quarter of cancellations by reason and by who called them off, with no spike required',
 
     watchedMetrics: ['retention.cancel_reason'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -111,12 +118,14 @@ export class RetCancelPatternDetector extends BaseDetector {
      */
     pairedProcessId: undefined,
 
-    ignoresVectorMaturity: true,
+    /*
+     * A dominant cancellation reason is a share of a sample, so it needs the
+     * sample. Flagged `ignoresVectorMaturity: true` when written, which was
+     * wrong: it fired on 4 cancellations and reported them as a pattern.
+     */
+    claimType: 'pattern',
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     /*
      * A week, matching the decline detector. A habit does not change between
      * Tuesday and Thursday, and a card about one that reappears daily is a card
@@ -211,6 +220,30 @@ export class RetCancelPatternDetector extends BaseDetector {
       ? byOwner.length
       : clientPattern?.count ?? ownerPattern?.count ?? rows.length;
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * IS IT A PARTICULAR DAY, OR A PARTICULAR SERVICE?
+     *
+     * The query above deliberately loads ONLY cancelled bookings, which is
+     * right for the reason analysis — it asks which reason dominates among
+     * those who gave one — but it means this detector cannot form a RATE from
+     * what it already has. Every row is the same outcome, so counting them by
+     * day would only report which day she works most. That is the volume
+     * fallacy `patterns/segmentRate.ts` exists to refuse.
+     *
+     * So the denominator comes from a second query, and it is windowed on
+     * `start_time` for BOTH halves. The reason query windows on `updated_at`
+     * (when the cancellation was recorded), which is the right clock for a
+     * reason and the wrong one for a rate: dividing cancellations-by-
+     * updated_at by bookings-by-start_time compares two different populations
+     * and can exceed 100%.
+     *
+     * Failing here must never take down the reason card, so a failed or thin
+     * lookup simply leaves the comparison absent.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const comparison = await this.cancelRateOutlier(userId, since);
+
     const result = this.createDetectionResult({
       severity: this.definition.severityFn(headlineCount, 0),
       metricKey: 'retention.cancel_reason',
@@ -230,7 +263,18 @@ export class RetCancelPatternDetector extends BaseDetector {
        * deposit may have been kept. `CashCancelledUnrefundedDetector` reports
        * the money that genuinely is still held; this one reports behaviour.
        */
+      comparison: comparison?.rate,
+      /*
+       * Names the slice, which `describeComparison` deliberately does not —
+       * it sends the shape of the gap and nothing to attach it to.
+       */
+      narrationSubject: comparison
+        ? `the cancellations concentrate on ${comparison.name}: ${comparison.rate.hits} of ${comparison.rate.of} called off there, against ${comparison.rate.rest.hits} of ${comparison.rate.rest.of} everywhere else`
+        : undefined,
       processParameters: {
+        comparison_dimension: comparison?.dimension,
+        comparison_segment: comparison?.name,
+
         lookback_days: LOOKBACK_DAYS,
         cancellations: rows.length,
         attributed,
@@ -266,4 +310,111 @@ export class RetCancelPatternDetector extends BaseDetector {
     this.logDetection(userId, result);
     return result;
   }
+
+  /**
+   * Which day or which service the cancellations concentrate on, if either.
+   *
+   * Its own query, because the reason analysis above loads only cancelled
+   * rows and a rate needs the bookings that were NOT called off. Windowed on
+   * `start_time` for both halves — see the note at the call site on why mixing
+   * clocks can produce a rate over 100%.
+   *
+   * Never throws. A comparison decorates a card that stands on its own; a
+   * failure here has to cost the decoration and nothing else.
+   */
+  private async cancelRateOutlier(
+    userId: string,
+    since: string
+  ): Promise<{ dimension: string; name: string; rate: SegmentRate } | null> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_bookings')
+        .select('id, status, start_time, service_id')
+        .eq('user_id', userId)
+        .gte('start_time', since)
+        .lt('start_time', new Date().toISOString());
+
+      if (error) throw error;
+
+      /*
+       * Only appointments whose outcome is known. A booking still sitting in
+       * `confirmed` with its slot already past is an unmarked meeting, not an
+       * attended one, and counting it as "not cancelled" would quietly deflate
+       * every rate here.
+       */
+      const settled = ((data ?? []) as SettledRow[]).filter(r =>
+        RESOLVED.has((r.status ?? '').toLowerCase())
+      );
+
+      const timezone = await this.resolveBusinessTimezone(userId);
+
+      const dimensions: Dimension<SettledRow>[] = [];
+      if (timezone) {
+        dimensions.push({
+          name: 'day_of_week',
+          segmentOf: r => (r.start_time ? localWeekdayIn(new Date(r.start_time), timezone) : null),
+        });
+      }
+      dimensions.push({ name: 'service', segmentOf: r => r.service_id });
+
+      const { found, refusals } = firstOutlier(
+        settled,
+        r => (r.status ?? '').toLowerCase() === 'cancelled',
+        dimensions
+      );
+
+      if (!found) {
+        logger.debug(
+          { userId, refusals, settled: settled.length, hasTimezone: Boolean(timezone) },
+          'Cancellations are even across every slice; reporting the reasons alone'
+        );
+        return null;
+      }
+
+      let labels: Map<string, string> | undefined;
+      if (found.dimension === 'service') {
+        const { data: services } = await this.supabase
+          .from('scheduling_services')
+          .select('id, service_name')
+          .eq('user_id', userId)
+          .eq('id', found.comparison.segment);
+
+        labels = new Map(
+          ((services ?? []) as Array<{ id: string; service_name: string | null }>).map(s => [
+            s.id,
+            s.service_name ?? '',
+          ])
+        );
+      }
+
+      const name = nameSegment(found.dimension, found.comparison.segment, labels);
+      if (!name) {
+        // A UUID on a card is worse than no comparison at all.
+        logger.debug({ userId, dimension: found.dimension }, 'Slice could not be named; omitting');
+        return null;
+      }
+
+      return { dimension: found.dimension, name, rate: found.comparison };
+    } catch (err) {
+      logger.debug({ err, userId }, 'Cancellation rate comparison unavailable');
+      return null;
+    }
+  }
 }
+
+/** The denominator's shape. Deliberately narrower than `CancelledRow`. */
+interface SettledRow {
+  id: string;
+  status: string | null;
+  start_time: string | null;
+  service_id: string | null;
+}
+
+/**
+ * Statuses that mean the appointment reached an outcome.
+ *
+ * `confirmed` is excluded on purpose even when the slot is in the past: that
+ * is an unmarked meeting, and treating it as attended would understate every
+ * cancellation rate on exactly the accounts that forget to mark them.
+ */
+const RESOLVED = new Set(['cancelled', 'completed', 'no_show']);

@@ -541,22 +541,38 @@ export async function POST(
     }
 
     if (created.invoiceId && !willRedirect) {
-      sendInvoice({ invoiceId: created.invoiceId, userId: proposal.user_id, request })
-        .then(result => {
-          // Reported, not thrown — see the milestone endpoint for the same note.
-          if (result.error) {
-            requestLogger.error(
-              { err: result.error, invoiceId: created.invoiceId, proposalId: proposal.id },
-              'Accepted, but the invoice email did not go out'
-            );
-          }
-        })
-        .catch(err =>
+      /*
+       * AWAITED, for the reason the milestone endpoint records at length.
+       *
+       * A floating promise does not survive a serverless response: the function
+       * freezes, and the send dies with it. This is the FIRST invoice of a
+       * quoted job — the one the client is waiting for the moment they accept —
+       * so it is the worst one to lose.
+       *
+       * Still non-fatal. The quote is accepted, the plan and the invoice exist,
+       * and nothing below depends on the mail having left; a failure is logged
+       * and the owner can resend.
+       */
+      try {
+        // Reported, not thrown — see the milestone endpoint for the same note.
+        const sent = await sendInvoice({
+          invoiceId: created.invoiceId,
+          userId: proposal.user_id,
+          request,
+        });
+
+        if (sent.error) {
           requestLogger.error(
-            { err, invoiceId: created.invoiceId, proposalId: proposal.id },
-            'Acceptance invoice send threw'
-          )
+            { err: sent.error, invoiceId: created.invoiceId, proposalId: proposal.id },
+            'Accepted, but the invoice email did not go out'
+          );
+        }
+      } catch (err) {
+        requestLogger.error(
+          { err, invoiceId: created.invoiceId, proposalId: proposal.id },
+          'Acceptance invoice send threw'
         );
+      }
     }
 
     requestLogger.info(
