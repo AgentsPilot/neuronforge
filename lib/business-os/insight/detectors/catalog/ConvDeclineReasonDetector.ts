@@ -84,7 +84,7 @@ export class ConvDeclineReasonDetector extends BaseDetector {
       'Groups declined quotes by the reason the client gave, and finds where that reason concentrates',
 
     watchedMetrics: ['conversion.decline_reason'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -127,12 +127,13 @@ export class ConvDeclineReasonDetector extends BaseDetector {
      * twelve quotes has no baseline and may still have lost four of them the
      * same way, which is exactly when knowing why is most useful.
      */
-    ignoresVectorMaturity: true,
+    /*
+     * Why quotes are lost is a share of the quotes that were answered. Below
+     * the sample it is a coincidence with a label on it.
+     */
+    claimType: 'pattern',
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168,
   };
 

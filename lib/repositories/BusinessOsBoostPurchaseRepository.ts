@@ -347,6 +347,47 @@ function singleRow(data: unknown, rpc: string): Record<string, unknown> {
   return data[0] as Record<string, unknown>;
 }
 
+/**
+ * A failed repository call, as the boost webhook needs to see it (slice 4a,
+ * SA C-1, 2b N-1 / I-3). `deterministic` means a retry cannot change the
+ * answer: the webhook completes the event with an alert instead of letting
+ * Stripe retry for days. Everything else is transient and must be retried.
+ */
+export class BoostRepositoryFailure extends Error {
+  readonly sqlstate: string | null;
+  readonly deterministic: boolean;
+  constructor(message: string, sqlstate: string | null, deterministic: boolean) {
+    super(message);
+    this.name = 'BoostRepositoryFailure';
+    this.sqlstate = sqlstate;
+    this.deterministic = deterministic;
+  }
+}
+
+/**
+ * SA C-1. Deterministic: class 22 (data exception), 23514 (check), 23502 (not
+ * null), 23503 (foreign key), class 42 (syntax / undefined object: a deploy
+ * defect) and this repository's own validation refusals. Transient: everything
+ * else, named here for the record: 23505 (a cross-row unique race; the retry
+ * converges and flags), 40xxx, 08xxx, 53xxx, 57xxx, XX000, network and timeout
+ * errors, and plain errors.
+ */
+export function isDeterministicSqlState(sqlstate: string | null | undefined): boolean {
+  if (typeof sqlstate !== 'string' || sqlstate.length !== 5) return false;
+  if (sqlstate.startsWith('22') || sqlstate.startsWith('42')) return true;
+  return sqlstate === '23514' || sqlstate === '23502' || sqlstate === '23503';
+}
+
+/** True for a failure the webhook must complete (with an alert) rather than retry. */
+export function isDeterministicRepositoryError(error: unknown): boolean {
+  return error instanceof BoostRepositoryFailure && error.deterministic;
+}
+
+/** XX000 (internal error) is retried, but alerted: 2b's "no lot back" anomaly (SA C-1). */
+export function isAnomalousRepositoryError(error: unknown): boolean {
+  return error instanceof BoostRepositoryFailure && error.sqlstate === 'XX000';
+}
+
 function sqlStateOf(error: unknown): string | undefined {
   if (typeof error === 'object' && error !== null && 'code' in error) {
     const code = (error as { code?: unknown }).code;
@@ -431,8 +472,12 @@ export class BusinessOsBoostPurchaseRepository {
    */
   private fail<T>(method: string, error: unknown, ids: Record<string, unknown>): RepositoryResult<T> {
     const message = String((error as { message?: unknown } | null)?.message ?? error);
-    this.logger.warn({ method, sqlstate: sqlStateOf(error), errorMessage: message, ...ids }, 'Boost purchase repository call failed');
-    return { data: null, error: new Error(message) };
+    const sqlstate = sqlStateOf(error) ?? null;
+    // Slice 4a (SA C-1): keep whether a retry could help. A refusal raised here
+    // (validation, an unreadable answer) can never be fixed by retrying.
+    const deterministic = error instanceof BoostPurchaseRepositoryError || isDeterministicSqlState(sqlstate);
+    this.logger.warn({ method, sqlstate, deterministic, errorMessage: message, ...ids }, 'Boost purchase repository call failed');
+    return { data: null, error: new BoostRepositoryFailure(message, sqlstate, deterministic) };
   }
 
   // ============ Writes (through the RPCs) ============
@@ -653,6 +698,34 @@ export class BusinessOsBoostPurchaseRepository {
   }
 
   /**
+   * UNSCOPED BY DESIGN (boost slice 4a, SA C-8 a, Q-1, C-3). For the boost
+   * webhook's `client_reference_id` fallback only, after a session-id miss on a
+   * signature-verified PLATFORM event carrying the boost marker:
+   * `client_reference_id` was written by our server when it created the session.
+   * Imported only by `lib/business-os/boost/boostWebhookSession.ts` (pinned by
+   * test). A row found this way is credited only if its stored session is NULL;
+   * a row holding a different session is never mutated (C-3). The returned
+   * row's `accountId` IS the account.
+   */
+  async findByIdForWebhook(purchaseId: string): Promise<RepositoryResult<BusinessOsBoostPurchase | null>> {
+    const method = 'findByIdForWebhook';
+    try {
+      this.assertUuid(purchaseId, 'A purchase id');
+      // Intentionally no user_id filter: see the JSDoc (ownership oracle, R-6).
+      const { data, error } = await this.supabase
+        .from('business_os_boost_purchases')
+        .select(BOOST_PURCHASE_COLUMNS)
+        .eq('id', purchaseId)
+        .maybeSingle();
+      if (error) throw error;
+      if (data === null || data === undefined) return { data: null, error: null };
+      return { data: mapPurchase(data as unknown as Record<string, unknown>), error: null };
+    } catch (error) {
+      return this.fail(method, error, { purchaseId });
+    }
+  }
+
+  /**
    * UNSCOPED BY DESIGN (R-6, SA C-5). As `findBySessionIdForWebhook`, keyed by
    * the Stripe payment intent (refund and dispute events carry no session).
    */
@@ -673,6 +746,34 @@ export class BusinessOsBoostPurchaseRepository {
       return { data: mapPurchase(data as unknown as Record<string, unknown>), error: null };
     } catch (error) {
       return this.fail(method, error, {});
+    }
+  }
+
+  /**
+   * One purchase of THIS account by its Stripe checkout session (credits boost
+   * slice 5b, SA C-3): the owner's return page asks "what happened to my
+   * payment?". Service role (the repository's client) because the owner's
+   * column grant does not include the session id; scoped by `user_id` from
+   * the session (`getUser()` in the route), so another account's session
+   * answers `null`, exactly like a missing one. A malformed session id is
+   * refused before any query.
+   */
+  async findForAccountBySessionId(accountId: string, sessionId: string): Promise<RepositoryResult<BusinessOsBoostPurchase | null>> {
+    const method = 'findForAccountBySessionId';
+    try {
+      this.assertUuid(accountId, 'An account id');
+      this.assertSessionId(sessionId);
+      const { data, error } = await this.supabase
+        .from('business_os_boost_purchases')
+        .select(BOOST_PURCHASE_COLUMNS)
+        .eq('user_id', accountId)
+        .eq('stripe_checkout_session_id', sessionId)
+        .maybeSingle();
+      if (error) throw error;
+      if (data === null || data === undefined) return { data: null, error: null };
+      return { data: mapPurchase(data as unknown as Record<string, unknown>), error: null };
+    } catch (error) {
+      return this.fail(method, error, { accountId });
     }
   }
 

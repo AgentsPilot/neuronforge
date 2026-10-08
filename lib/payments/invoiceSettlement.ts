@@ -353,6 +353,7 @@ export async function settleInvoicePaid(
       const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
 
       await BookingEmailService.sendPaymentReceipt(invoice.user_id, {
+        invoiceId: input.invoiceId,
         customerEmail: invoice.client_email,
         customerName: invoice.client_name || '',
         amount: input.amount,

@@ -30,6 +30,7 @@
 
 import { isBusinessOsCreditsBoostEnabled } from '@/lib/utils/featureFlags';
 import { platformOrigin, platformUrl } from '@/lib/utils/origins';
+import { currentStripeMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -93,4 +94,43 @@ export function boostReturnUrl(): string | null {
     if (origin.protocol !== 'https:' || LOOPBACK_HOST.test(origin.hostname)) return null;
   }
   return platformUrl(BOOST_RETURN_PATH);
+}
+
+let warnedKeyProblem: string | null = null;
+
+/** The mode of a Stripe publishable key, or null when it is missing or not one. */
+export function publishableKeyMode(key: string | undefined | null): StripeMode | null {
+  if (typeof key !== 'string') return null;
+  if (key.startsWith('pk_test_')) return 'test';
+  if (key.startsWith('pk_live_')) return 'live';
+  return null;
+}
+
+/**
+ * Can this owner BUY right now? (credits boost slice 5b, SA C-2)
+ *
+ * The checkout switch and allow-list (`isBoostCheckoutOpenFor`) AND a browser
+ * key that can open the payment form in the same Stripe mode as the server
+ * key. A missing key, or a `pk_live_` key beside an `sk_test_` server key (or
+ * the reverse), would show Buy and then fail inside Stripe's form; then the
+ * answer is false and one `error` is logged per distinct problem (never the
+ * key). The checkout route stays the authority either way (it re-checks the
+ * switch and the list, and answers 404 while the switch is off).
+ */
+export function isBoostPurchaseAvailableFor(accountId: string, log?: BoostAccessLogger): boolean {
+  if (!isBoostCheckoutOpenFor(accountId, log)) return false;
+  const keyMode = publishableKeyMode(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY);
+  let serverMode: StripeMode | null;
+  try {
+    serverMode = currentStripeMode();
+  } catch {
+    serverMode = null;
+  }
+  if (keyMode !== null && serverMode !== null && keyMode === serverMode) return true;
+  const problem = keyMode === null ? 'publishable_key_missing' : serverMode === null ? 'server_key_mode_unknown' : 'mode_mismatch';
+  if (log && warnedKeyProblem !== problem) {
+    warnedKeyProblem = problem;
+    log.error({ problem, publishableKeyMode: keyMode, serverKeyMode: serverMode }, 'bos_boost_publishable_key_mismatch: Buy is hidden until the Stripe keys agree');
+  }
+  return false;
 }

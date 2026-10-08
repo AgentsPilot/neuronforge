@@ -10,7 +10,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
-import { COMMON_GUARDRAILS } from '../types';
 import { buildClientStageFilter } from '@/lib/crm/StageTypeUtils';
 
 export class CrmEngagementDecayDetector extends BaseDetector {
@@ -21,7 +20,7 @@ export class CrmEngagementDecayDetector extends BaseDetector {
     description: 'Detects active clients with no activity in 30+ days',
 
     watchedMetrics: ['retention.clients_at_risk'],
-    eventTypes: ['client.at_risk', 'client.churned'],
+    documentsEventTypes: ['client.at_risk', 'client.churned'],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -37,33 +36,7 @@ export class CrmEngagementDecayDetector extends BaseDetector {
     },
 
     pairedProcessId: 'send_followup_nudge',
-    consentTier: 'automate',
     eligibleForAutomation: true,
-    ownerParameters: [
-      {
-        id: 'days_threshold',
-        label: 'Days Without Activity',
-        type: 'number',
-        default: 30,
-        min: 14,
-        max: 90,
-      },
-      {
-        id: 'tone',
-        label: 'Check-in Tone',
-        type: 'select',
-        default: 'caring',
-        options: [
-          { value: 'caring', label: 'Caring' },
-          { value: 'professional', label: 'Professional' },
-          { value: 'promotional', label: 'Promotional' },
-        ],
-      },
-    ],
-    guardrails: [
-      COMMON_GUARDRAILS.max_1_per_contact_per_7d,
-      COMMON_GUARDRAILS.max_20_per_run,
-    ],
     cooldownHours: 168, // 1 week
   };
 

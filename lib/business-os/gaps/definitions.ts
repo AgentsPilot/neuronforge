@@ -1003,11 +1003,19 @@ const stageAwaitingCompletion: GapDefinition = {
  * `blocksOn: 'owner'` because nobody else can know what happened in a room they
  * were not in.
  *
- * `staleAfterHours: 12` — the one gap here with a real wait, and deliberately
- * so. `since` is the START time, so a 10am meeting becomes a row at 10pm the
- * same day: late enough that an owner is not nagged about a session they are
- * still in or have only just left, early enough that tomorrow morning's glance
- * at the card catches it.
+ * `staleAfterHours: 2`, measured from the meeting's END via `staleFrom`.
+ *
+ * This was 12 hours from the START, which charged the wait to the wrong moment
+ * twice over. A three-hour workshop was asked about while it was still running,
+ * and a 15:30 appointment did not become a row until 03:30 the next morning —
+ * so the evening glance at the card, which is when an owner actually closes off
+ * the day, showed nothing about the day they had just worked.
+ *
+ * Measuring from the end makes the reasoning the comment always claimed come
+ * true: the owner is never asked about a session they are still in, because the
+ * end is in the future until it is not. Two hours is then only the grace for
+ * one they have "only just left", rather than a number standing in for a
+ * duration nobody looked up.
  *
  * ONLY WHAT CAN STILL BE MARKED. `confirmed` and `pending` are the two states a
  * marking decision applies to. Completed, no-show and cancelled ARE the answers.
@@ -1017,13 +1025,13 @@ const stageAwaitingCompletion: GapDefinition = {
 const meetingUnmarked: GapDefinition = {
   id: 'meeting_unmarked',
   blocksOn: 'owner',
-  staleAfterHours: 12,
+  staleAfterHours: 2,
   action: 'mark_meeting',
   find: userId =>
     safely('meeting_unmarked', async () => {
       const { data: bookings } = await supabaseServer
         .from('scheduling_bookings')
-        .select('id, contact_id, start_time, status, service:scheduling_services(service_name)')
+        .select('id, contact_id, start_time, end_time, status, service:scheduling_services(service_name)')
         .eq('user_id', userId)
         .in('status', ['confirmed', 'pending'])
         .not('start_time', 'is', null)
@@ -1072,6 +1080,12 @@ const meetingUnmarked: GapDefinition = {
            * on Tuesday"), and it is what the staleness window measures from.
            */
           since: row.start_time as string,
+          /*
+           * The wait runs from the END. Falls back to the start for a booking
+           * with no end recorded, which is the old behaviour for that row
+           * rather than a meeting that can never become stale.
+           */
+          staleFrom: (row.end_time as string | null) ?? (row.start_time as string),
           entityId: row.id as string,
         };
       });

@@ -50,6 +50,14 @@ interface PreviewData {
   theme: PageTheme;
   language: Locale;
   subdomain?: string;
+  /**
+   * Whether a card can actually be charged.
+   *
+   * Carried so the journey here draws the same payment step the website and the
+   * published page draw. Without it a service sold online behaved on a landing
+   * page like one that is invoiced.
+   */
+  paymentsEnabled?: boolean;
 }
 
 function LandingPreviewContent() {
@@ -134,7 +142,8 @@ function LandingPreviewContent() {
         blocks: result.blocks,
         theme: result.theme,
         language: result.language || 'en',
-        subdomain: result.subdomain
+        subdomain: result.subdomain,
+        paymentsEnabled: result.paymentsEnabled === true
       });
     } catch (err) {
       logger.error({ err }, 'Failed to load preview');
@@ -169,7 +178,7 @@ function LandingPreviewContent() {
     );
   }
 
-  const { blocks, theme, language, subdomain } = previewData;
+  const { blocks, theme, language, subdomain, paymentsEnabled } = previewData;
   const isRTL = getDirection(language) === 'rtl';
 
   /*
@@ -204,6 +213,7 @@ function LandingPreviewContent() {
           useLiveData={false}
           isPreview={true}
           subdomain={subdomain}
+          paymentsEnabled={paymentsEnabled}
           bookingUrl={subdomain ? `/site/${subdomain}/book` : undefined}
         />
       </main>

@@ -32,10 +32,31 @@ const DRAWER = join(
 const card = readFileSync(CARD, 'utf8');
 const drawer = readFileSync(DRAWER, 'utf8');
 
-/** The `act` branch for one navigating action, with its `router.push`. */
+/**
+ * Where one navigating action lands, resolved through the helper it calls.
+ *
+ * The three branches used to each write their own `router.push`, and this read
+ * the URL out of the branch. They now call one `openBooking`, so a branch names
+ * the helper and the helper holds the destination — which is the point of
+ * having one: three copies of a URL are three places for it to drift.
+ */
 function destinationFor(action: string): string | undefined {
-  const branch = card.split(`if (action === '${action}')`)[1];
-  return branch?.slice(0, 300).match(/section=([a-z]+)/)?.[1];
+  const branch = card.split(`if (action === '${action}')`)[1]?.slice(0, 300);
+  if (!branch) return undefined;
+
+  // Still written inline? Read it where it is.
+  const inline = branch.match(/section=([a-z]+)/)?.[1];
+  if (inline) return inline;
+
+  // Otherwise the branch must delegate, and the helper must name the section.
+  if (!/openBooking\s*\(/.test(branch)) return undefined;
+  return openBookingBody().match(/section=([a-z]+)/)?.[1];
+}
+
+/** The body of the shared `openBooking` helper. */
+function openBookingBody(): string {
+  const start = card.indexOf('const openBooking =');
+  return start === -1 ? '' : card.slice(start, start + 700);
 }
 
 /** The props handed to the element that opens `tag`. */
@@ -70,5 +91,56 @@ describe('the tab that owns each control', () => {
     const others = drawer.split('onCompleteStage').length - 1;
     // The prop passed once, and the handler's own definition. Nothing else.
     expect(others).toBeLessThanOrEqual(2);
+  });
+});
+
+/**
+ * The row, not just the list.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Landing on the bookings section was the second of three attempts at this
+ * target. The first sent `&action=quote`, which nothing read, so the drawer
+ * opened on `details`. The second reached the right LIST and stopped there: the
+ * card raises every one of these gaps FROM a booking and knew its id the whole
+ * time, so the owner arrived at a list of that contact's bookings and had to
+ * work out which one the card meant.
+ *
+ * The invariant spans three files, which is why it is checked across them: the
+ * card must SEND the id, the CRM page must READ it, and `BookingsTab` must open
+ * that row. Any one of the three silently dropping it puts the owner back on a
+ * list of collapsed rows, and nothing fails.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('the booking a gap was raised from', () => {
+  const crmPage = readFileSync(
+    join(__dirname, '..', '..', '..', '..', 'app', 'business-os', 'crm', 'page.tsx'),
+    'utf8'
+  );
+  const bookingsTab = readFileSync(
+    join(__dirname, '..', '..', '..', 'crm', 'contact-drawer', 'BookingsTab.tsx'),
+    'utf8'
+  );
+
+  it('is named in the link the card pushes', () => {
+    expect(openBookingBody()).toMatch(/booking=/);
+    // From the gap's own entity, never a guess.
+    expect(openBookingBody()).toMatch(/entityId/);
+  });
+
+  /* A gap with no entity must degrade to the list rather than naming a booking
+     that does not exist. */
+  it('is omitted when the gap carries no entity', () => {
+    expect(openBookingBody()).toMatch(/item\.entityId\s*\?/);
+  });
+
+  it('is read by the CRM page and handed to the drawer', () => {
+    expect(crmPage).toMatch(/searchParams\.get\('booking'\)/);
+    expect(crmPage).toMatch(/focusBookingId=\{/);
+  });
+
+  it('opens that row expanded in the bookings tab', () => {
+    expect(bookingsTab).toMatch(/focusBookingId\?: string/);
+    // Seeded into the expanded set, so the row is open on first render.
+    expect(bookingsTab).toMatch(/expandedBookings[\s\S]{0,200}focusBookingId/);
   });
 });

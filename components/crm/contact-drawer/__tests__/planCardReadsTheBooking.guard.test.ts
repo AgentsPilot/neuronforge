@@ -67,3 +67,50 @@ describe('the contact drawer decides a plan from the booking, not the service', 
     expect(condition![1]).toContain('installment_count');
   });
 });
+
+describe('the plan total belongs to the booking, not the service', () => {
+  const drawer = readFileSync(
+    join(process.cwd(), 'components/crm/contact-drawer/CRMContactDrawerV2.tsx'),
+    'utf8'
+  );
+
+  /** The `SessionPaymentPlan` the drawer hands the card. */
+  function plan(): string {
+    const start = drawer.indexOf('const sessionPlan: SessionPaymentPlan');
+    expect(start).toBeGreaterThan(-1);
+
+    const end = drawer.indexOf('stages: planPeriods.length', start);
+    expect(end).toBeGreaterThan(start);
+
+    return drawer.slice(start, end);
+  }
+
+  it('sums the booking’s own periods rather than reading the service price', () => {
+    /*
+     * The same lesson as this file's header, one field along.
+     *
+     * `scheduling_services.price` is live, and `syncServicePaymentPlan` rewrites
+     * `payment_plans.total_amount` and `installment_count` from the service on
+     * every save — so BOTH service-level figures move when an owner reprices.
+     * Neither records what any particular client agreed to.
+     *
+     * The installments do. They are written once, at checkout, from the
+     * `plan_total` and `plan_count` frozen into the Stripe session metadata.
+     *
+     * A client who bought at ₪200 in two payments, on a service since raised to
+     * ₪800, had their card report ₪800 total / ₪100 collected / ₪700
+     * outstanding — ₪600 of it money nobody had agreed to pay, against a
+     * schedule holding ₪100 more.
+     */
+    const body = plan();
+
+    expect(body).toMatch(/totalAmount: planPeriods\.length/);
+    expect(body).toMatch(/planPeriods\.reduce\(/);
+  });
+
+  it('falls back to the price only when no schedule exists yet', () => {
+    // Before the webhook writes the periods there is nothing else to show, and
+    // no period contradicts it.
+    expect(plan()).toMatch(/:\s*servicePrice,/);
+  });
+});

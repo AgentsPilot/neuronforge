@@ -60,7 +60,7 @@ export class ConvServiceRateDropDetector extends BaseDetector {
     description: 'Finds an entry service converting into paid work less often than it did',
 
     watchedMetrics: ['conversion.lead_to_client_rate'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'percent_change',
@@ -75,10 +75,7 @@ export class ConvServiceRateDropDetector extends BaseDetector {
     },
 
     pairedProcessId: 'send_followup_nudge',
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 336,
   };
 

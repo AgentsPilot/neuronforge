@@ -12,6 +12,8 @@ import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccount
 import { notFound } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CheckCircle, Clock, CreditCard, Building2, AlertCircle } from 'lucide-react';
+import { PortalShell } from '@/components/public/PortalShell';
+import { InvoicePaymentPanel } from '@/components/public/InvoicePaymentPanel';
 import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 import { localeCode, publicT, toLocale } from '@/lib/i18n/public-pages';
@@ -208,431 +210,495 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
   const startAlign = 'text-start';
   const endAlign = 'text-end';
 
-  return (
-    <div
-      dir={isRTL ? 'rtl' : 'ltr'}
-      lang={locale}
-      className="min-h-screen px-4 py-8"
-      style={{ background: 'var(--ap-surface-2)', color: 'var(--ap-text)' }}
-    >
-      <div className="mx-auto max-w-2xl">
-        {isPaid && (
-          <div
-            className="mb-4 flex items-center gap-3 p-4"
-            style={{
-              background: '#DCFCE7',
-              border: '1px solid #BBF7D0',
-              borderRadius: 'var(--ap-radius-md)',
-            }}
-          >
-            <CheckCircle className="h-5 w-5 shrink-0" style={{ color: '#15803D' }} />
-            <div>
-              <p className="font-semibold" style={{ color: '#166534' }}>
-                {t('paymentReceived')}
-              </p>
-              <p className="text-sm" style={{ color: '#15803D' }}>
-                {t('paymentReceivedDesc')}
-              </p>
-            </div>
-          </div>
-        )}
+  /*
+    ───────────────────────────────────────────────────────────────────────────
+    THE SHARED FRAME, not one of its own.
 
-        {isCancelled && (
-          <div
-            className="mb-4 flex items-center gap-3 p-4"
-            style={{
-              background: '#FEF3C7',
-              border: '1px solid #FDE68A',
-              borderRadius: 'var(--ap-radius-md)',
-            }}
-          >
-            <AlertCircle className="h-5 w-5 shrink-0" style={{ color: '#B45309' }} />
-            <div>
-              <p className="font-semibold" style={{ color: '#92400E' }}>
-                {t('paymentCancelled')}
-              </p>
-              <p className="text-sm" style={{ color: '#B45309' }}>
-                {t('paymentCancelledDesc')}
-              </p>
-            </div>
-          </div>
-        )}
+    This page hand-rolled every part of its own surround: its own `dir`/`lang`,
+    its own full-height ground, its own container. It was the only
+    client-facing page that did, which is why it was also the only one that
+    looked unrelated to the rest — and `PublicShell`'s own doc comment names
+    this page as the drift it exists to prevent.
 
-        {/* The document itself. A brand-coloured rule across the top is the one
-            place the business's colour can appear without competing with the
-            status colours that have to stay semantic. */}
+    It keeps a DOCUMENT body, deliberately. An invoice is read top to bottom,
+    printed and forwarded, so `max-w-2xl` centred is the right content for the
+    lead slot even though everything around it is now the same shell the
+    booking screens use. The business's contact details move to the shell's
+    card slot, where they sit on every other public page too.
+
+    `dir` and `lang` are the shell's now, from the brand.
+    ───────────────────────────────────────────────────────────────────────────
+  */
+  const invoiceDocument = (
+    <div className="mx-auto max-w-2xl">
+      {isPaid && (
         <div
-          className="overflow-hidden"
+          className="mb-4 flex items-center gap-3 p-4"
           style={{
-            background: 'var(--ap-surface)',
-            border: '1px solid var(--ap-border)',
-            borderRadius: 'var(--ap-radius-lg)',
-            boxShadow: 'var(--ap-shadow-md)',
-            borderTop: '4px solid var(--ap-brand)',
+            background: '#DCFCE7',
+            border: '1px solid #BBF7D0',
+            borderRadius: 'var(--ap-radius-md)',
           }}
         >
-          <div className="p-6" style={{ borderBottom: '1px solid var(--ap-border)' }}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex min-w-0 items-center gap-3">
-                {profile?.logo_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- arbitrary remote host
-                  <img
-                    src={profile.logo_url}
-                    alt={businessName}
-                    className="h-12 w-auto object-contain"
-                  />
-                ) : (
-                  <div
-                    className="flex h-12 w-12 items-center justify-center"
-                    style={{ background: 'var(--ap-brand)', borderRadius: 'var(--ap-radius-md)' }}
-                  >
-                    <Building2 className="h-6 w-6" style={{ color: 'var(--ap-on-brand)' }} />
-                  </div>
-                )}
-                <h2
-                  className="text-lg font-bold"
-                  style={{ color: 'var(--ap-text)', fontFamily: 'var(--ap-font-heading)' }}
-                >
-                  <bdi>{businessName}</bdi>
-                </h2>
-              </div>
+          <CheckCircle className="h-5 w-5 shrink-0" style={{ color: '#15803D' }} />
+          <div>
+            <p className="font-semibold" style={{ color: '#166534' }}>
+              {t('paymentReceived')}
+            </p>
+            <p className="text-sm" style={{ color: '#15803D' }}>
+              {t('paymentReceivedDesc')}
+            </p>
+          </div>
+        </div>
+      )}
 
-              <div className={endAlign}>
-                <p className="text-sm" style={{ color: 'var(--ap-text-muted)' }}>
-                  {t('invoiceNumber')}
-                </p>
-                <p className="text-xl font-bold" style={{ color: 'var(--ap-text)' }}>
-                  <bdi>{invoice.invoice_number}</bdi>
-                </p>
+      {isCancelled && (
+        <div
+          className="mb-4 flex items-center gap-3 p-4"
+          style={{
+            background: '#FEF3C7',
+            border: '1px solid #FDE68A',
+            borderRadius: 'var(--ap-radius-md)',
+          }}
+        >
+          <AlertCircle className="h-5 w-5 shrink-0" style={{ color: '#B45309' }} />
+          <div>
+            <p className="font-semibold" style={{ color: '#92400E' }}>
+              {t('paymentCancelled')}
+            </p>
+            <p className="text-sm" style={{ color: '#B45309' }}>
+              {t('paymentCancelledDesc')}
+            </p>
+          </div>
+        </div>
+      )}
 
+      {/* The document itself. A brand-coloured rule across the top is the one
+          place the business's colour can appear without competing with the
+          status colours that have to stay semantic. */}
+      <div
+        className="overflow-hidden"
+        style={{
+          background: 'var(--ap-surface)',
+          border: '1px solid var(--ap-border)',
+          borderRadius: 'var(--ap-radius-lg)',
+          boxShadow: 'var(--ap-shadow-md)',
+          borderTop: '4px solid var(--ap-brand)',
+        }}
+      >
+        <div className="p-6" style={{ borderBottom: '1px solid var(--ap-border)' }}>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              {profile?.logo_url ? (
+                // eslint-disable-next-line @next/next/no-img-element -- arbitrary remote host
+                <img
+                  src={profile.logo_url}
+                  alt={businessName}
+                  className="h-12 w-auto object-contain"
+                />
+              ) : (
                 <div
-                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold"
-                  style={{
-                    borderRadius: 'var(--ap-radius-sm)',
-                    ...labelCase,
-                    ...(isPaid
-                      ? { background: '#DCFCE7', color: '#166534' }
-                      : isOverdue
-                        ? { background: '#FEE2E2', color: '#991B1B' }
-                        : { background: '#FEF3C7', color: '#92400E' }),
-                  }}
+                  className="flex h-12 w-12 items-center justify-center"
+                  style={{ background: 'var(--ap-brand)', borderRadius: 'var(--ap-radius-md)' }}
                 >
-                  {isPaid ? (
-                    <>
-                      <CheckCircle className="h-3.5 w-3.5" />
-                      {t('paid')}
-                    </>
-                  ) : isOverdue ? (
-                    <>
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      {t('overdue')}
-                    </>
-                  ) : (
-                    <>
-                      <Clock className="h-3.5 w-3.5" />
-                      {t('pending')}
-                    </>
-                  )}
+                  <Building2 className="h-6 w-6" style={{ color: 'var(--ap-on-brand)' }} />
                 </div>
+              )}
+              <h2
+                className="text-lg font-bold"
+                style={{ color: 'var(--ap-text)', fontFamily: 'var(--ap-font-heading)' }}
+              >
+                <bdi>{businessName}</bdi>
+              </h2>
+            </div>
+
+            <div className={endAlign}>
+              <p className="text-sm" style={{ color: 'var(--ap-text-muted)' }}>
+                {t('invoiceNumber')}
+              </p>
+              <p className="text-xl font-bold" style={{ color: 'var(--ap-text)' }}>
+                <bdi>{invoice.invoice_number}</bdi>
+              </p>
+
+              <div
+                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold"
+                style={{
+                  borderRadius: 'var(--ap-radius-sm)',
+                  ...labelCase,
+                  ...(isPaid
+                    ? { background: '#DCFCE7', color: '#166534' }
+                    : isOverdue
+                      ? { background: '#FEE2E2', color: '#991B1B' }
+                      : { background: '#FEF3C7', color: '#92400E' }),
+                }}
+              >
+                {isPaid ? (
+                  <>
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    {t('paid')}
+                  </>
+                ) : isOverdue ? (
+                  <>
+                    <AlertCircle className="h-3.5 w-3.5" />
+                    {t('overdue')}
+                  </>
+                ) : (
+                  <>
+                    <Clock className="h-3.5 w-3.5" />
+                    {t('pending')}
+                  </>
+                )}
               </div>
             </div>
           </div>
+        </div>
 
+        <div
+          className="p-6"
+          style={{
+            background: 'var(--ap-surface-2)',
+            borderBottom: '1px solid var(--ap-border)',
+          }}
+        >
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
+            <div className="min-w-0">
+              <p className="mb-1 text-xs font-semibold" style={labelStyle}>
+                {t('billTo')}
+              </p>
+              <p className="font-semibold" style={{ color: 'var(--ap-text)' }}>
+                <bdi>{invoice.client_name || '-'}</bdi>
+              </p>
+              {invoice.client_email && (
+                <p className="text-sm break-words" style={{ color: 'var(--ap-text-muted)' }}>
+                  <bdi>{invoice.client_email}</bdi>
+                </p>
+              )}
+            </div>
+
+            {/* Literal classes, not `sm:${endAlign}`: Tailwind scans source
+                text for class names, so an interpolated variant is never
+                generated and the rule would silently not exist. */}
+            <div className="min-w-0 text-start sm:text-end">
+              <div className="mb-2">
+                <p className="text-xs font-semibold" style={labelStyle}>
+                  {t('issueDate')}
+                </p>
+                <p style={{ color: 'var(--ap-text)' }}>{formatDate(invoice.created_at)}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold" style={labelStyle}>
+                  {t('dueDate')}
+                </p>
+                <p className="font-medium" style={{ color: 'var(--ap-text)' }}>
+                  {formatDate(invoice.due_date)}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6">
+          {invoice.line_items && invoice.line_items.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr style={{ borderBottom: '2px solid var(--ap-border)' }}>
+                    <th className={`pb-3 text-xs font-semibold ${startAlign}`} style={labelStyle}>
+                      {t('description')}
+                    </th>
+                    <th className="w-16 pb-3 text-center text-xs font-semibold" style={labelStyle}>
+                      {t('qty')}
+                    </th>
+                    <th className={`w-24 pb-3 text-xs font-semibold ${endAlign}`} style={labelStyle}>
+                      {t('price')}
+                    </th>
+                    <th className={`w-28 pb-3 text-xs font-semibold ${endAlign}`} style={labelStyle}>
+                      {t('amount')}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoice.line_items.map(
+                    (
+                      item: { description: string; quantity: number; unit_price: number },
+                      idx: number
+                    ) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid var(--ap-border)' }}>
+                        <td className={`py-3 ${startAlign}`} style={{ color: 'var(--ap-text)' }}>
+                          <bdi>{item.description}</bdi>
+                        </td>
+                        <td className="py-3 text-center" style={{ color: 'var(--ap-text-muted)' }}>
+                          {item.quantity}
+                        </td>
+                        <td className={`py-3 ${endAlign}`} style={{ color: 'var(--ap-text-muted)' }}>
+                          {formatAmount(item.unit_price, invoice.currency)}
+                        </td>
+                        <td
+                          className={`py-3 font-medium ${endAlign}`}
+                          style={{ color: 'var(--ap-text)' }}
+                        >
+                          {formatAmount(item.quantity * item.unit_price, invoice.currency)}
+                        </td>
+                      </tr>
+                    )
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="py-4 text-center" style={{ color: 'var(--ap-text-muted)' }}>
+              -
+            </div>
+          )}
+
+          <div
+            className="mt-4 flex items-center justify-between pt-4"
+            style={{ borderTop: `2px solid var(--ap-brand)` }}
+          >
+            <span className="text-lg font-bold" style={{ color: 'var(--ap-text)' }}>
+              {t('total')}
+            </span>
+            <span className="text-2xl font-bold" style={{ color: 'var(--ap-brand)' }}>
+              {formatAmount(invoice.amount, invoice.currency)}
+            </span>
+          </div>
+
+          {/* UNDER the total, because the tax is contained in it. Above, and
+              the reader adds it on — the one misreading that changes what
+              they think they owe. Same placement as the emailed invoice and
+              the PDF, all three derived from the same figures. */}
+          {taxLine && (
+            <div
+              className="mt-2 flex items-center justify-between text-sm"
+              style={{ color: 'var(--ap-text-muted)' }}
+            >
+              <span>
+                {t('includesTax')} {taxLine.label} {taxLine.rate}%
+              </span>
+              <span>{formatAmount(taxLine.amount, invoice.currency)}</span>
+            </div>
+          )}
+        </div>
+
+        {invoice.notes && (
+          <div className="px-6 pb-6">
+            <p className="mb-1 text-xs font-semibold" style={labelStyle}>
+              {t('notes')}
+            </p>
+            <p
+              className="p-3 text-sm"
+              style={{
+                color: 'var(--ap-text-muted)',
+                background: 'var(--ap-surface-2)',
+                borderRadius: 'var(--ap-radius-sm)',
+              }}
+            >
+              <bdi>{translateNotes(invoice.notes)}</bdi>
+            </p>
+          </div>
+        )}
+
+        {/* Paying is what this page is for, so it is the visual climax. */}
+        {!isPaid && (
           <div
             className="p-6"
             style={{
               background: 'var(--ap-surface-2)',
-              borderBottom: '1px solid var(--ap-border)',
+              borderTop: '1px solid var(--ap-border)',
             }}
           >
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
-              <div className="min-w-0">
-                <p className="mb-1 text-xs font-semibold" style={labelStyle}>
-                  {t('billTo')}
-                </p>
-                <p className="font-semibold" style={{ color: 'var(--ap-text)' }}>
-                  <bdi>{invoice.client_name || '-'}</bdi>
-                </p>
-                {invoice.client_email && (
-                  <p className="text-sm break-words" style={{ color: 'var(--ap-text-muted)' }}>
-                    <bdi>{invoice.client_email}</bdi>
-                  </p>
-                )}
-              </div>
+            <h3
+              className="mb-4 flex items-center gap-2 font-semibold"
+              style={{ color: 'var(--ap-text)' }}
+            >
+              <CreditCard className="h-5 w-5" style={{ color: 'var(--ap-brand)' }} />
+              {t('paymentOptions')}
+            </h3>
 
-              {/* Literal classes, not `sm:${endAlign}`: Tailwind scans source
-                  text for class names, so an interpolated variant is never
-                  generated and the rule would silently not exist. */}
-              <div className="min-w-0 text-start sm:text-end">
-                <div className="mb-2">
-                  <p className="text-xs font-semibold" style={labelStyle}>
-                    {t('issueDate')}
-                  </p>
-                  <p style={{ color: 'var(--ap-text)' }}>{formatDate(invoice.created_at)}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold" style={labelStyle}>
-                    {t('dueDate')}
-                  </p>
-                  <p className="font-medium" style={{ color: 'var(--ap-text)' }}>
-                    {formatDate(invoice.due_date)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
+            <div className="space-y-3">
+              {/* Online Payment — only when a card can actually be taken. */}
+              {/*
+                PAID HERE, not on Stripe's page.
 
-          <div className="p-6">
-            {invoice.line_items && invoice.line_items.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr style={{ borderBottom: '2px solid var(--ap-border)' }}>
-                      <th className={`pb-3 text-xs font-semibold ${startAlign}`} style={labelStyle}>
-                        {t('description')}
-                      </th>
-                      <th className="w-16 pb-3 text-center text-xs font-semibold" style={labelStyle}>
-                        {t('qty')}
-                      </th>
-                      <th className={`w-24 pb-3 text-xs font-semibold ${endAlign}`} style={labelStyle}>
-                        {t('price')}
-                      </th>
-                      <th className={`w-28 pb-3 text-xs font-semibold ${endAlign}`} style={labelStyle}>
-                        {t('amount')}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {invoice.line_items.map(
-                      (
-                        item: { description: string; quantity: number; unit_price: number },
-                        idx: number
-                      ) => (
-                        <tr key={idx} style={{ borderBottom: '1px solid var(--ap-border)' }}>
-                          <td className={`py-3 ${startAlign}`} style={{ color: 'var(--ap-text)' }}>
-                            <bdi>{item.description}</bdi>
-                          </td>
-                          <td className="py-3 text-center" style={{ color: 'var(--ap-text-muted)' }}>
-                            {item.quantity}
-                          </td>
-                          <td className={`py-3 ${endAlign}`} style={{ color: 'var(--ap-text-muted)' }}>
-                            {formatAmount(item.unit_price, invoice.currency)}
-                          </td>
-                          <td
-                            className={`py-3 font-medium ${endAlign}`}
-                            style={{ color: 'var(--ap-text)' }}
-                          >
-                            {formatAmount(item.quantity * item.unit_price, invoice.currency)}
-                          </td>
-                        </tr>
-                      )
+                This was a link to `pay/route.ts`, which 302s to
+                `invoice.stripe.com` or to a Checkout Session. The client
+                finished settling the bill somewhere that looked like neither
+                them nor the business.
+
+                The panel mounts Stripe's Payment Element in place. Stripe
+                still owns the card fields, so nothing about PCI moves; only
+                the frame around them does. It renders NOTHING when the
+                business cannot collect, when the stage is agreed but unbilled,
+                or when the invoice is already settled — in each of those the
+                bank details and the explanation below stand on their own,
+                which is the state the money guard exists to protect.
+
+                `ap-no-print` because a printed invoice should carry the bank
+                details, not a dead card form.
+              */}
+              {paymentOptions.card && (
+                <div className="ap-no-print">
+                  <InvoicePaymentPanel
+                    invoiceId={invoice.id}
+                    locale={locale}
+                    isRTL={isRTL}
+                    primaryColor={brand?.theme.colors.primary ?? '#6366F1'}
+                    borderRadius={brand?.theme.borderRadius}
+                    successUrl={`/invoice/${invoice.id}?payment=success`}
+                  />
+                </div>
+              )}
+
+              {/* Bank Transfer — on ANY bank field. This required a name or
+                  an account, while the PDF required a name or instructions,
+                  so a business with only an account number was described
+                  differently by the two. */}
+              {paymentOptions.bank && (
+                <div
+                  className="p-4"
+                  style={{
+                    background: 'var(--ap-surface)',
+                    border: '1px solid var(--ap-border)',
+                    borderRadius: 'var(--ap-radius-md)',
+                  }}
+                >
+                  <h4 className="mb-3 font-semibold" style={{ color: 'var(--ap-text)' }}>
+                    {t('bankTransfer')}
+                  </h4>
+                  <div className="space-y-2 text-sm">
+                    {paymentOptions.bankName && (
+                      <div className="flex justify-between gap-4">
+                        <span style={{ color: 'var(--ap-text-muted)' }}>{t('bank')}</span>
+                        <span className="font-medium" style={{ color: 'var(--ap-text)' }}>
+                          <bdi>{paymentOptions.bankName}</bdi>
+                        </span>
+                      </div>
                     )}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="py-4 text-center" style={{ color: 'var(--ap-text-muted)' }}>
-                -
-              </div>
-            )}
-
-            <div
-              className="mt-4 flex items-center justify-between pt-4"
-              style={{ borderTop: `2px solid var(--ap-brand)` }}
-            >
-              <span className="text-lg font-bold" style={{ color: 'var(--ap-text)' }}>
-                {t('total')}
-              </span>
-              <span className="text-2xl font-bold" style={{ color: 'var(--ap-brand)' }}>
-                {formatAmount(invoice.amount, invoice.currency)}
-              </span>
-            </div>
-
-            {/* UNDER the total, because the tax is contained in it. Above, and
-                the reader adds it on — the one misreading that changes what
-                they think they owe. Same placement as the emailed invoice and
-                the PDF, all three derived from the same figures. */}
-            {taxLine && (
-              <div
-                className="mt-2 flex items-center justify-between text-sm"
-                style={{ color: 'var(--ap-text-muted)' }}
-              >
-                <span>
-                  {t('includesTax')} {taxLine.label} {taxLine.rate}%
-                </span>
-                <span>{formatAmount(taxLine.amount, invoice.currency)}</span>
-              </div>
-            )}
-          </div>
-
-          {invoice.notes && (
-            <div className="px-6 pb-6">
-              <p className="mb-1 text-xs font-semibold" style={labelStyle}>
-                {t('notes')}
-              </p>
-              <p
-                className="p-3 text-sm"
-                style={{
-                  color: 'var(--ap-text-muted)',
-                  background: 'var(--ap-surface-2)',
-                  borderRadius: 'var(--ap-radius-sm)',
-                }}
-              >
-                <bdi>{translateNotes(invoice.notes)}</bdi>
-              </p>
-            </div>
-          )}
-
-          {/* Paying is what this page is for, so it is the visual climax. */}
-          {!isPaid && (
-            <div
-              className="p-6"
-              style={{
-                background: 'var(--ap-surface-2)',
-                borderTop: '1px solid var(--ap-border)',
-              }}
-            >
-              <h3
-                className="mb-4 flex items-center gap-2 font-semibold"
-                style={{ color: 'var(--ap-text)' }}
-              >
-                <CreditCard className="h-5 w-5" style={{ color: 'var(--ap-brand)' }} />
-                {t('paymentOptions')}
-              </h3>
-
-              <div className="space-y-3">
-                {/* Online Payment — only when a card can actually be taken. */}
-                {paymentOptions.card && paymentOptions.cardUrl && (
-                  <a
-                    href={paymentOptions.cardUrl}
-                    className="block w-full px-6 py-3.5 text-center font-semibold transition-opacity hover:opacity-90 ap-no-print"
-                    style={{
-                      background: 'var(--ap-brand)',
-                      color: 'var(--ap-on-brand)',
-                      borderRadius: 'var(--ap-radius-md)',
-                    }}
-                  >
-                    {t('payOnline')}
-                  </a>
-                )}
-
-                {/* Bank Transfer — on ANY bank field. This required a name or
-                    an account, while the PDF required a name or instructions,
-                    so a business with only an account number was described
-                    differently by the two. */}
-                {paymentOptions.bank && (
-                  <div
-                    className="p-4"
-                    style={{
-                      background: 'var(--ap-surface)',
-                      border: '1px solid var(--ap-border)',
-                      borderRadius: 'var(--ap-radius-md)',
-                    }}
-                  >
-                    <h4 className="mb-3 font-semibold" style={{ color: 'var(--ap-text)' }}>
-                      {t('bankTransfer')}
-                    </h4>
-                    <div className="space-y-2 text-sm">
-                      {paymentOptions.bankName && (
-                        <div className="flex justify-between gap-4">
-                          <span style={{ color: 'var(--ap-text-muted)' }}>{t('bank')}</span>
-                          <span className="font-medium" style={{ color: 'var(--ap-text)' }}>
-                            <bdi>{paymentOptions.bankName}</bdi>
-                          </span>
-                        </div>
-                      )}
-                      {paymentOptions.bankAccount && (
-                        <div className="flex justify-between gap-4">
-                          <span style={{ color: 'var(--ap-text-muted)' }}>{t('account')}</span>
-                          {/* An account number is a Latin digit string that must
-                              not be reordered inside a Hebrew line. */}
-                          <span
-                            dir="ltr"
-                            className="font-mono font-medium"
-                            style={{ color: 'var(--ap-text)' }}
-                          >
-                            {paymentOptions.bankAccount}
-                          </span>
-                        </div>
-                      )}
-                      {paymentOptions.bankRouting && (
-                        <div className="flex justify-between gap-4">
-                          <span style={{ color: 'var(--ap-text-muted)' }}>{t('routingBranch')}</span>
-                          <span dir="ltr" className="font-medium" style={{ color: 'var(--ap-text)' }}>
-                            {paymentOptions.bankRouting}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <p
-                      className="mt-3 pt-3 text-xs"
-                      style={{ color: 'var(--ap-text-muted)', borderTop: '1px solid var(--ap-border)' }}
-                    >
-                      {t('includeInvoiceNumber', { invoiceNumber: invoice.invoice_number })}
-                    </p>
+                    {paymentOptions.bankAccount && (
+                      <div className="flex justify-between gap-4">
+                        <span style={{ color: 'var(--ap-text-muted)' }}>{t('account')}</span>
+                        {/* An account number is a Latin digit string that must
+                            not be reordered inside a Hebrew line. */}
+                        <span
+                          dir="ltr"
+                          className="font-mono font-medium"
+                          style={{ color: 'var(--ap-text)' }}
+                        >
+                          {paymentOptions.bankAccount}
+                        </span>
+                      </div>
+                    )}
+                    {paymentOptions.bankRouting && (
+                      <div className="flex justify-between gap-4">
+                        <span style={{ color: 'var(--ap-text-muted)' }}>{t('routingBranch')}</span>
+                        <span dir="ltr" className="font-medium" style={{ color: 'var(--ap-text)' }}>
+                          {paymentOptions.bankRouting}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
-
-                {paymentOptions.instructions && (
-                  <div
-                    className="p-4"
-                    style={{
-                      background: '#FEF3C7',
-                      border: '1px solid #FDE68A',
-                      borderRadius: 'var(--ap-radius-md)',
-                    }}
+                  <p
+                    className="mt-3 pt-3 text-xs"
+                    style={{ color: 'var(--ap-text-muted)', borderTop: '1px solid var(--ap-border)' }}
                   >
-                    <h4 className="mb-2 font-semibold" style={{ color: '#92400E' }}>
-                      {t('paymentInstructions')}
-                    </h4>
-                    <p className="text-sm" style={{ color: '#B45309' }}>
-                      {paymentOptions.instructions}
-                    </p>
-                  </div>
-                )}
+                    {t('includeInvoiceNumber', { invoiceNumber: invoice.invoice_number })}
+                  </p>
+                </div>
+              )}
 
-                {/* Contact for Payment — whenever there is genuinely no way to
-                    pay, not only after a bounce through `?payment=manual`. A
-                    client holding a bill with a blank space where the method
-                    should be needs telling, however they arrived. */}
-                {paymentOptions.none && (
-                  <div
-                    className="p-4 text-center"
-                    style={{
-                      background: 'var(--ap-brand-tint)',
-                      border: '1px solid var(--ap-brand-ring)',
-                      borderRadius: 'var(--ap-radius-md)',
-                    }}
-                  >
-                    <p className="text-sm" style={{ color: 'var(--ap-text)' }}>
-                      <bdi>{t('contactForPayment', { businessName })}</bdi>
-                    </p>
-                  </div>
-                )}
-              </div>
+              {paymentOptions.instructions && (
+                <div
+                  className="p-4"
+                  style={{
+                    background: '#FEF3C7',
+                    border: '1px solid #FDE68A',
+                    borderRadius: 'var(--ap-radius-md)',
+                  }}
+                >
+                  <h4 className="mb-2 font-semibold" style={{ color: '#92400E' }}>
+                    {t('paymentInstructions')}
+                  </h4>
+                  <p className="text-sm" style={{ color: '#B45309' }}>
+                    {paymentOptions.instructions}
+                  </p>
+                </div>
+              )}
+
+              {/* Contact for Payment — whenever there is genuinely no way to
+                  pay, not only after a bounce through `?payment=manual`. A
+                  client holding a bill with a blank space where the method
+                  should be needs telling, however they arrived. */}
+              {paymentOptions.none && (
+                <div
+                  className="p-4 text-center"
+                  style={{
+                    background: 'var(--ap-brand-tint)',
+                    border: '1px solid var(--ap-brand-ring)',
+                    borderRadius: 'var(--ap-radius-md)',
+                  }}
+                >
+                  <p className="text-sm" style={{ color: 'var(--ap-text)' }}>
+                    <bdi>{t('contactForPayment', { businessName })}</bdi>
+                  </p>
+                </div>
+              )}
             </div>
-          )}
-
-          <div
-            className="px-6 py-4 text-center"
-            style={{ background: 'var(--ap-brand)', color: 'var(--ap-on-brand)' }}
-          >
-            <p className="text-sm">{t('thankYouBusiness')}</p>
-            {profile?.invoice_footer_text && (
-              <p className="mt-1 text-xs opacity-80">
-                <bdi>{profile.invoice_footer_text}</bdi>
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* How to reach the business about this bill. */}
-        {brand && (
-          <div className="mt-6">
-            <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address', 'links']} />
           </div>
         )}
+
+        <div
+          className="px-6 py-4 text-center"
+          style={{ background: 'var(--ap-brand)', color: 'var(--ap-on-brand)' }}
+        >
+          <p className="text-sm">{t('thankYouBusiness')}</p>
+          {profile?.invoice_footer_text && (
+            <p className="mt-1 text-xs opacity-80">
+              <bdi>{profile.invoice_footer_text}</bdi>
+            </p>
+          )}
+        </div>
       </div>
+
     </div>
+  );
+
+  /*
+    An unresolvable brand still has to render the bill.
+
+    `PortalShell` needs a brand — it draws the business's bar and footer from
+    it — so a deleted or renamed account falls back to the plain centred
+    document this page drew before. Rare, and the one case where showing
+    something unbranded beats showing nothing.
+  */
+  if (!brand) {
+    return (
+      <div
+        dir={isRTL ? 'rtl' : 'ltr'}
+        lang={locale}
+        className="min-h-screen px-4 py-8"
+        style={{ background: 'var(--ap-surface-2)', color: 'var(--ap-text)' }}
+      >
+        {invoiceDocument}
+      </div>
+    );
+  }
+
+  return (
+    <PortalShell
+      brand={brand}
+      clientName={invoice.client_name ?? null}
+      aside={
+        <>
+          <BusinessInfoPanel
+            brand={brand}
+            variant="card"
+            show={['contact', 'address', 'links']}
+          />
+          <BusinessInfoPanel brand={brand} variant="card" show={['hours']} hoursStyle="folded" />
+        </>
+      }
+    >
+      {invoiceDocument}
+    </PortalShell>
   );
 }

@@ -150,6 +150,36 @@ export function localHourIn(instant: Date, timezone: string): number {
 }
 
 /**
+ * Which day of the week an instant falls on, where the business is.
+ *
+ * The sibling of `localHourIn`, and needed for the same reason: a nine-in-the-
+ * evening appointment in Jerusalem is six in the evening UTC on the same day,
+ * but a one-in-the-morning one is ten at night on the DAY BEFORE. Reading the
+ * weekday off the UTC instant therefore files some of a business's bookings
+ * under the wrong day, and a card that says "Thursdays are your problem" has to
+ * be right about which day a booking was on.
+ *
+ * Returns a lower-case three-letter code (`'mon'` … `'sun'`), which is a
+ * grouping key and never display text — the card renders it through a
+ * translation key, because a Hebrew dashboard does not say "Thursday".
+ *
+ * Falls back to UTC for an unusable zone, exactly as `localHourIn` does. A
+ * caller that must not guess should check `isUsableTimezone` first and skip the
+ * question — which is what the insight detectors do, since a day attributed to
+ * the wrong zone is a confidently wrong card rather than a missing one.
+ */
+export function localWeekdayIn(instant: Date, timezone: string): string {
+  const zone = isUsableTimezone(timezone) ? timezone : 'UTC';
+
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    weekday: 'short',
+  })
+    .format(instant)
+    .toLowerCase();
+}
+
+/**
  * The UTC instant at which a wall-clock time occurs in a given zone.
  *
  * The inverse of `localHourIn`, and the piece that was missing. Availability is

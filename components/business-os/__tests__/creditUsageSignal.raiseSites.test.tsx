@@ -171,6 +171,8 @@ describe('census: nothing else raises the signal', () => {
     ['app', 'components', 'lib', 'hooks'].forEach((d) => walk(join(ROOT, d)));
 
     expect(found).toEqual({
+      // Credits boost 5b.1: the return notice, once the purchase is credited.
+      'components/business-os/BoostReturnNotice.tsx': 1,
       'components/business-os/ChatCommandPanel.tsx': 4,
       'components/scheduling/IntakeSettingsPanel.tsx': 1,
       'components/scheduling/intake/AddIntakeQuestion.tsx': 1,

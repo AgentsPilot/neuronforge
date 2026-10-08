@@ -270,10 +270,14 @@ describe('refusals', () => {
   });
 
   it('cap reached → 409 cap_reached, no Stripe call, no audit', async () => {
-    state.reserveResult = { data: { outcome: 'cap_reached', capMinor: 15000, countedMinor: 15000 }, error: null };
+    state.reserveResult = { data: { outcome: 'cap_reached', capMinor: 15000, countedMinor: 14500 }, error: null };
     const res = await POST(post({ packageId: 'plus' }));
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ success: false, error: 'cap_reached' });
+    // 5b SA C-5: the cap and its window (server figures), never the counted amount.
+    const body = await res.json();
+    expect(body).toEqual({ success: false, error: 'cap_reached', capMinor: 15000, windowDays: expect.any(Number) });
+    expect(body.windowDays).toBeGreaterThan(0);
+    expect(JSON.stringify(body)).not.toContain('14500');
     expect(state.createCalls).toHaveLength(0);
     expect(state.auditLogs).toHaveLength(0);
   });

@@ -10,10 +10,17 @@ import {
   TrendingUp, TrendingDown, BarChart3, PieChart,
   Zap, Target, Award, Brain, ChevronRight, Edit2, Bot, Star
 } from 'lucide-react';
+import { createLogger } from '@/lib/logger';
+
+// Structured logging (CLAUDE.md rule 3, user decision 2026-10-08 on SA CR-1):
+// the six former browser-console calls, same moments, context first, errors as { err }.
+const logger = createLogger({ module: 'MonitoringPage' });
 
 interface AuditLogEntry {
   id: string;
   action: string;
+  /** A neutral name for a few owner-facing events (lib/audit/ownerEventPresentation.ts, boost SA C-5). */
+  owner_label?: { en: string };
   entity_type: string;
   entity_id: string | null;
   resource_name: string | null;
@@ -62,7 +69,7 @@ export default function AuditTrailPage() {
         setAllLogs(data.logs || []);
       }
     } catch (error) {
-      console.error('Error fetching audit logs:', error);
+      logger.error({ err: error }, 'Error fetching audit logs');
     } finally {
       setLoading(false);
     }
@@ -93,13 +100,16 @@ export default function AuditTrailPage() {
     }
 
     const filtered = allLogs.filter(log => new Date(log.created_at) >= cutoffDate);
-    console.log('📊 Audit Trail Filter Debug:', {
-      timeFilter,
-      cutoffDate: cutoffDate.toISOString(),
-      allLogsCount: allLogs.length,
-      filteredCount: filtered.length,
-      sample: filtered.slice(0, 2).map(l => ({ action: l.action, date: l.created_at }))
-    });
+    logger.debug(
+      {
+        timeFilter,
+        cutoffDate: cutoffDate.toISOString(),
+        allLogsCount: allLogs.length,
+        filteredCount: filtered.length,
+        sample: filtered.slice(0, 2).map(l => ({ action: l.action, date: l.created_at })),
+      },
+      'Audit trail filtered by time range'
+    );
     setLogs(filtered);
     setCurrentPage(1);
   }, [timeFilter, allLogs]);
@@ -121,7 +131,7 @@ export default function AuditTrailPage() {
       settings: logs.filter(l => l.action.includes('SETTINGS')).length,
       auth: logs.filter(l => l.action.includes('LOGIN') || l.action.includes('AUTH')).length,
     };
-    console.log('📈 Stats recalculated:', calculatedStats);
+    logger.debug({ stats: calculatedStats }, 'Audit stats recalculated');
     return calculatedStats;
   }, [logs]);
 
@@ -182,16 +192,19 @@ export default function AuditTrailPage() {
       ? Math.round(((agentsSuccessful + agentsRun - agentsFailed) / totalAgentExecutions) * 100)
       : 100;
 
-    console.log('📊 User Stats Calculated:', {
-      agentsCreated,
-      allAgentActivities,
-      pluginsConnected,
-      allPluginActivities,
-      logins,
-      failedLogins,
-      totalActions: logs.length,
-      compliance: { soc2Events, gdprEvents, hipaaEvents, iso27001Events, ccpaEvents }
-    });
+    logger.debug(
+      {
+        agentsCreated,
+        allAgentActivities,
+        pluginsConnected,
+        allPluginActivities,
+        logins,
+        failedLogins,
+        totalActions: logs.length,
+        compliance: { soc2Events, gdprEvents, hipaaEvents, iso27001Events, ccpaEvents },
+      },
+      'User stats calculated'
+    );
 
     return {
       totalActions: logs.length,
@@ -257,7 +270,7 @@ export default function AuditTrailPage() {
       .sort((a, b) => b.count - a.count)
       .slice(0, 8); // Show top 8 categories
 
-    console.log('🏷️ Category Breakdown recalculated:', breakdown);
+    logger.debug({ breakdown }, 'Category breakdown recalculated');
     return breakdown;
   }, [logs]);
 
@@ -487,7 +500,7 @@ export default function AuditTrailPage() {
     setCurrentPage(1);
     // Scroll to top to see the filtered results
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    console.log(`✅ Drilling down to Event Log with filter: ${searchTerm}`);
+    logger.debug({ searchTerm }, 'Drilling down to the event log');
   };
 
   return (
@@ -1458,7 +1471,7 @@ export default function AuditTrailPage() {
                                 </div>
                                 <div className="flex flex-col">
                                   <span className="text-sm font-semibold text-gray-900">
-                                    {formatActionName(log.action)}
+                                    {log.owner_label?.en ?? formatActionName(log.action)}
                                   </span>
                                   {log.entity_id && (
                                     <span className="text-xs text-gray-500 font-mono mt-0.5">

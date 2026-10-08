@@ -24,6 +24,14 @@
  *     claim so Stripe retries; it must never become a final `deny` (SA Q-6).
  *
  * Boost 4a appends its resolver to `DEFAULT_RESOLVERS` (requirement §9.4).
+ * That resolver (`lib/business-os/boost/boostWebhookResolver.ts`) is the one
+ * deliberate exception to "pure apart from the price catalog read" (boost
+ * requirement R-6): refund and checkout objects do not carry a platform-
+ * controlled identity in their metadata, so it reads OUR purchase row (one
+ * keyed read, two at most). It lives outside `billing/`, so the rule that
+ * billing modules stay database-free still holds here. Its handler is
+ * registered in the same change (SA C-2): a recognised flow with no handler
+ * would release the claim and loop Stripe for days.
  *
  * @module lib/business-os/billing/webhookDispatcher
  */
@@ -32,6 +40,7 @@ import type Stripe from 'stripe';
 
 import type { Logger } from '@/lib/logger';
 import { planResolver } from '@/lib/business-os/billing/planInvoiceResolver';
+import { boostResolver } from '@/lib/business-os/boost/boostWebhookDeps';
 
 export type BusinessOsFlow = 'plan' | 'boost';
 
@@ -100,7 +109,7 @@ export function denyLevel(reason: DenyReason): 'warn' | 'error' {
   return DENY_LEVEL[reason];
 }
 
-export const DEFAULT_RESOLVERS: readonly BusinessOsResolver[] = [planResolver];
+export const DEFAULT_RESOLVERS: readonly BusinessOsResolver[] = [planResolver, boostResolver];
 
 export async function dispatchBusinessOsEvent(
   event: Stripe.Event,

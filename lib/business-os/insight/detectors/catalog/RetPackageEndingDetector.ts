@@ -105,7 +105,7 @@ export class RetPackageEndingDetector extends BaseDetector {
     description: 'Finds clients on their last package instalment with nothing booked to follow it',
 
     watchedMetrics: ['retention.clients_at_risk'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -144,10 +144,7 @@ export class RetPackageEndingDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168,
   };
 

@@ -47,6 +47,10 @@ import {
   BOOST_SESSION_IN_USE_ERROR,
   BusinessOsBoostPurchaseRepository,
   businessOsBoostPurchaseRepository,
+  BoostRepositoryFailure,
+  isAnomalousRepositoryError,
+  isDeterministicRepositoryError,
+  isDeterministicSqlState,
   type BusinessOsBoostReservationInput,
   type BusinessOsBoostCreditInput,
   type BusinessOsBoostTransitionInput,
@@ -627,5 +631,136 @@ describe('source guards', () => {
 
   it('the C-5 guard pattern catches a use (negative control)', () => {
     expect(/\bfind(?:BySessionId|ByPaymentIntentId)ForWebhook\b/.test('repo.findBySessionIdForWebhook(id)')).toBe(true);
+  });
+});
+
+describe('slice 4a: findByIdForWebhook and the failure classification (SA C-1, C-3, Q-1, Q-6)', () => {
+  it('findByIdForWebhook reads one row by id, unscoped by design, and returns the row account', async () => {
+    const { repo, calls } = readClient({ data: PURCHASE_ROW, error: null });
+    const found = await repo.findByIdForWebhook(PURCHASE);
+    expect(calls).toEqual([
+      ['from', ['business_os_boost_purchases']],
+      ['select', [BOOST_PURCHASE_COLUMNS]],
+      ['eq', ['id', PURCHASE]],
+      ['maybeSingle', []],
+    ]);
+    expect(found.data?.accountId).toBe(ACCOUNT);
+  });
+
+  it('findByIdForWebhook: no row → null; a non-UUID → a deterministic refusal with no query', async () => {
+    expect(await readClient({ data: null, error: null }).repo.findByIdForWebhook(PURCHASE)).toEqual({ data: null, error: null });
+    const { repo, calls } = readClient({ data: PURCHASE_ROW, error: null });
+    const refused = await repo.findByIdForWebhook('not-a-uuid');
+    expect(calls).toEqual([]);
+    expect(refused.error).toBeInstanceOf(BoostRepositoryFailure);
+    expect(isDeterministicRepositoryError(refused.error)).toBe(true);
+  });
+
+  it.each([
+    ['22004', true],
+    ['22023', true],
+    ['22003', true],
+    ['22P02', true],
+    ['23514', true],
+    ['23502', true],
+    ['23503', true],
+    ['42883', true],
+    ['42P01', true],
+    ['42501', true],
+    ['23505', false],
+    ['40001', false],
+    ['40P01', false],
+    ['08006', false],
+    ['08000', false],
+    ['53300', false],
+    ['57014', false],
+    ['XX000', false],
+    ['PGRST116', false],
+    ['', false],
+  ])('SQLSTATE %p → deterministic %p', (code, deterministic) => {
+    expect(isDeterministicSqlState(code)).toBe(deterministic);
+  });
+
+  it.each([
+    ['class 22 from the database', { code: '22023', message: 'out of range' }, true, false],
+    ['a unique race (23505)', { code: '23505', message: 'duplicate key' }, false, false],
+    ['a serialisation failure (40001)', { code: '40001', message: 'could not serialize' }, false, false],
+    ['an internal error (XX000)', { code: 'XX000', message: 'no lot back' }, false, true],
+    ['a plain error with no code (network)', { message: 'fetch failed' }, false, false],
+  ])('%s → deterministic %p, anomalous %p', async (_name, error, deterministic, anomalous) => {
+    const { error: failure } = await readClient({ data: null, error }).repo.findByIdForWebhook(PURCHASE);
+    expect(failure).toBeInstanceOf(BoostRepositoryFailure);
+    expect(isDeterministicRepositoryError(failure)).toBe(deterministic);
+    expect(isAnomalousRepositoryError(failure)).toBe(anomalous);
+    expect((failure as BoostRepositoryFailure).sqlstate).toBe((error as { code?: string }).code ?? null);
+  });
+
+  it('a rejected RPC with no SQLSTATE (a timeout) is transient; a repository validation refusal is deterministic', async () => {
+    const timedOut = await rpcClient(new Error('timeout')).repo.transition({ purchaseId: PURCHASE, toStatus: 'expired' });
+    expect(isDeterministicRepositoryError(timedOut.error)).toBe(false);
+    const refused = await rpcClient({ data: [], error: null }).repo.transition({ purchaseId: 'nope', toStatus: 'expired' });
+    expect(isDeterministicRepositoryError(refused.error)).toBe(true);
+  });
+
+  it('a plain Error is never deterministic (only a BoostRepositoryFailure can be)', () => {
+    expect(isDeterministicRepositoryError(new Error('22023'))).toBe(false);
+    expect(isDeterministicRepositoryError(Object.assign(new Error('x'), { deterministic: true }))).toBe(false);
+  });
+
+  it('SA Q-1: only the boost webhook session module names findByIdForWebhook (app, lib, components)', () => {
+    const ROOT = process.cwd();
+    // The session module is the one caller; the wiring file only passes the method through.
+    const allowed = [
+      'lib/business-os/boost/boostWebhookSession.ts',
+      'lib/business-os/boost/boostWebhookDeps.ts',
+      'lib/repositories/BusinessOsBoostPurchaseRepository.ts',
+    ];
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(rel);
+        } else if (/\.tsx?$/.test(entry.name)) {
+          const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+          if (/\bfindByIdForWebhook\b/.test(text) && !allowed.includes(rel)) offenders.push(rel);
+        }
+      }
+    };
+    for (const root of ['app', 'lib', 'components']) walk(root);
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('slice 5b.1: findForAccountBySessionId (SA C-3)', () => {
+  it('reads one row scoped by user_id AND the session id, with the explicit column list', async () => {
+    const { repo, calls } = readClient({ data: PURCHASE_ROW, error: null });
+    const found = await repo.findForAccountBySessionId(ACCOUNT, SESSION);
+    expect(calls).toEqual([
+      ['from', ['business_os_boost_purchases']],
+      ['select', [BOOST_PURCHASE_COLUMNS]],
+      ['eq', ['user_id', ACCOUNT]],
+      ['eq', ['stripe_checkout_session_id', SESSION]],
+      ['maybeSingle', []],
+    ]);
+    expect(found.data?.id).toBe(PURCHASE);
+  });
+
+  it('another owner or a missing session → null (the filter decides, the caller cannot tell them apart)', async () => {
+    expect(await readClient({ data: null, error: null }).repo.findForAccountBySessionId(ACCOUNT, SESSION)).toEqual({ data: null, error: null });
+  });
+
+  it('a malformed session id or account is refused before any query', async () => {
+    for (const [account, session] of [
+      [ACCOUNT, 'pi_test_1'],
+      [ACCOUNT, ''],
+      ['not-a-uuid', SESSION],
+    ] as const) {
+      const { repo, calls } = readClient({ data: PURCHASE_ROW, error: null });
+      const result = await repo.findForAccountBySessionId(account, session);
+      expect(result.data).toBeNull();
+      expect(isDeterministicRepositoryError(result.error)).toBe(true);
+      expect(calls).toEqual([]);
+    }
   });
 });

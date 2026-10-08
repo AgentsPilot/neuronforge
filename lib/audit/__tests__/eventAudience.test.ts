@@ -63,9 +63,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +1 Business OS (BOS_BILLING_CHECKOUT_STARTED): plan payments P-3a, an owner opened a plan checkout (2026-10-07).
   // +1 Business OS (BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED): admin Danger Zone cleanup, OX-1r (2026-10-07).
   // +2 Business OS (BOS_BILLING_INVOICE_PAID, BOS_BILLING_PAYMENT_REFUSED): plan payments P-3b.1, registered ahead of the webhook (2026-10-07).
-  it('pins the split: 44 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(189);
-    expect(eventsTagged('bos')).toHaveLength(44);
+  // +3 Business OS (BOS_BOOST_CREDITED, _PAYMENT_FAILED, _FLAGGED): credits boost slice 4a, the webhook (2026-10-07).
+  it('pins the split: 47 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(192);
+    expect(eventsTagged('bos')).toHaveLength(47);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

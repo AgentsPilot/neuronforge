@@ -223,6 +223,69 @@ export const emailTranslations = {
     }
   },
 
+  /**
+   * The receipt for asking to be quoted.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A client picked a quoted service, typed their details and what they needed,
+   * pressed send, and heard nothing. The page said thank you; their inbox said
+   * nothing had happened. The owner was told, and the person waiting for a
+   * price was not.
+   *
+   * Written in the same register as `intakeReceived`: past tense, no button,
+   * nothing to do. The next move is a PRICE and only the owner can write it, so
+   * an email that asked the client to act would be asking them to do the one
+   * thing they cannot. What it does promise is a reply, because "when will I
+   * hear back" is the only question this email exists to answer.
+   *
+   * Deliberately makes no promise about WHEN. The platform does not know the
+   * business's turnaround, and inventing "within 24 hours" on their behalf
+   * would put a commitment in their name that they never made.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  quoteReceived: {
+    subject: {
+      en: (serviceName: string) => `We've received your request - ${serviceName}`,
+      es: (serviceName: string) => `Hemos recibido tu solicitud - ${serviceName}`,
+      he: (serviceName: string) => `קיבלנו את הפנייה שלך - ${serviceName}`
+    },
+    greeting: {
+      en: 'Thank you — we have your request',
+      es: 'Gracias: hemos recibido tu solicitud',
+      he: 'תודה — הפנייה שלך התקבלה'
+    },
+    intro: {
+      en: (firstName: string, businessName: string) =>
+        `Hi ${firstName}, thanks for getting in touch. ${businessName} has your request and will come back to you with a quote.`,
+      es: (firstName: string, businessName: string) =>
+        `Hola ${firstName}, gracias por escribir. ${businessName} tiene tu solicitud y te responderá con un presupuesto.`,
+      he: (firstName: string, businessName: string) =>
+        `שלום ${firstName}, תודה על הפנייה. ב-${businessName} קיבלו את הבקשה ויחזרו אליך עם הצעת מחיר.`
+    },
+    receivedNotice: {
+      en: '<strong>Your request was received</strong><br/>There is nothing else you need to do for now.',
+      es: '<strong>Tu solicitud fue recibida</strong><br/>Por ahora no tienes que hacer nada más.',
+      he: '<strong>הבקשה שלך התקבלה</strong><br/>בשלב הזה אין עוד משהו שצריך לעשות.'
+    },
+    requestDetails: {
+      en: 'What you asked about',
+      es: 'Lo que solicitaste',
+      he: 'מה ביקשת'
+    },
+    serviceLabel: { en: '🏷️ Service', es: '🏷️ Servicio', he: '🏷️ שירות' },
+    submittedLabel: { en: '✅ Sent', es: '✅ Enviado', he: '✅ נשלח' },
+    /** Their own words, quoted back, so they can see what arrived. */
+    noteLabel: { en: '📝 Your note', es: '📝 Tu nota', he: '📝 ההערה שלך' },
+    questionsHelp: {
+      en: (businessName: string) =>
+        `If you remembered something after sending this, just reply to this email and ${businessName} will see it.`,
+      es: (businessName: string) =>
+        `Si recordaste algo después de enviarlo, responde a este correo y ${businessName} lo verá.`,
+      he: (businessName: string) =>
+        `אם נזכרת במשהו אחרי ששלחת, אפשר פשוט להשיב למייל הזה וב-${businessName} יראו את זה.`
+    }
+  },
+
   intake: {
     subject: {
       en: (serviceName: string) => `Please complete your intake form - ${serviceName}`,
@@ -1328,6 +1391,25 @@ export const emailTranslations = {
       en: 'Amount Paid',
       es: 'Monto Pagado',
       he: 'סכום ששולם'
+    },
+    /*
+     * Shown only when money was actually returned against this receipt.
+     *
+     * The receipt is the client's record of the transaction, and it claimed the
+     * full amount was still paid long after part of it had gone back. "Amount
+     * paid" stays true — that happened — and these two say what became of it.
+     */
+    refundedLabel: {
+      en: 'Refunded',
+      es: 'Reembolsado',
+      he: 'הוחזר'
+    },
+    /* What the client is actually out of pocket. Neither figure above answers
+       it, and it is the one they check against their statement. */
+    netPaidLabel: {
+      en: 'Net Paid',
+      es: 'Pagado Neto',
+      he: 'שולם בפועל'
     },
     dateLabel: {
       en: 'Date',

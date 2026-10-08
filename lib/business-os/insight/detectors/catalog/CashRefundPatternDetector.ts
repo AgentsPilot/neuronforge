@@ -18,7 +18,7 @@ export class CashRefundPatternDetector extends BaseDetector {
     description: 'Detects high refund rate (>5%) or frequent refunds',
 
     watchedMetrics: ['cashflow.refund_rate'],
-    eventTypes: ['refund.completed'],
+    documentsEventTypes: ['refund.completed'],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -54,10 +54,7 @@ export class CashRefundPatternDetector extends BaseDetector {
      * that cannot work.
 
      */
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 
@@ -157,9 +154,30 @@ export class CashRefundPatternDetector extends BaseDetector {
       // twenty-five per cent, written as twenty-five shekels.
 
       currentValueUnit: 'percent',
-      baselineValue: this.definition.threshold,
+
+      /*
+       * There is no baseline here, so none is claimed.
+       *
+       * This passed `baselineValue: this.definition.threshold` and a
+       * `percentChange` measured against it, which produced the card the owner
+       * reported: "שיעור החזר גבוה: 275% על 18.8" -- a 275% refund rate, which
+       * is not a possible thing. 275 is the distance from the 5% POLICY
+       * THRESHOLD to the measured 18.8%, and the narrator had no way to know
+       * that, so it printed it as the rate.
+       *
+       * `hasRealBaseline` in InsightRepository already omits the change line
+       * when the baseline is 0, which is how the sixteen absolute-count
+       * detectors stay quiet. A configured constant defeated that guard by
+       * being non-zero while measuring nothing. Zero is the honest answer: this
+       * detector compares a rate to a policy limit, and a limit is not a
+       * previous value.
+       *
+       * The 18.8% itself was CORRECT -- 3 refunds of 16 transactions in the
+       * 30-day window. Only the comparison was invented.
+       */
+      baselineValue: 0,
       thresholdValue: this.definition.threshold,
-      percentChange: Math.round(((refundRate - this.definition.threshold) / this.definition.threshold) * 100),
+      percentChange: 0,
       direction: 'above',
       affectedEntityType: 'transaction',
       affectedEntityIds: refundedTransactions.map((t) => t.id),

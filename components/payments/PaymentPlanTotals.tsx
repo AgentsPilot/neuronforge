@@ -46,7 +46,28 @@ interface PaymentPlanTotalsProps {
     outstanding: string;
     /** Shown only when a period has been called off. Omit and the cell is too. */
     cancelled?: string;
+    /** Money handed back. Pair with `kept`; both are needed or neither renders. */
+    refunded?: string;
+    /** What the business is left with: charged minus returned. */
+    kept?: string;
   };
+  /**
+   * How much has gone back to the client.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A REFUND IS A DIFFERENT ACCOUNT, not a smaller collection.
+   *
+   * With money returned, "collected ₪100 / outstanding ₪0" is true and useless:
+   * it describes a settled payment and says nothing about the ₪100 that went
+   * back. The questions become what was charged, what was returned, and what is
+   * left — so those three replace the middle pair rather than crowding in
+   * beside them.
+   *
+   * Absent or zero changes nothing, which is what keeps every existing caller
+   * rendering exactly as it did.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  refunded?: number;
   locale?: string;
   /** `compact` for the booking journey, where it sits inside a timeline row. */
   size?: 'default' | 'compact';
@@ -111,6 +132,7 @@ export function PaymentPlanTotals({
   size = 'default',
   overdue = false,
   overdueLabel,
+  refunded = 0,
   className,
 }: PaymentPlanTotalsProps) {
   if (!stages.length) return null;
@@ -128,18 +150,43 @@ export function PaymentPlanTotals({
 
   const compact = size === 'compact';
 
-  const cells = [
-    { label: labels.total, value: total, tone: 'var(--v2-text-primary)' },
-    { label: labels.collected, value: collected, tone: '#22C58B' },
-    {
-      label: overdue && overdueLabel ? overdueLabel : labels.outstanding,
-      value: outstanding,
-      // Red when it is late, amber while it is merely owed, muted at zero. A
-      // finished plan showing a warning colour against nothing reads as a
-      // problem that is not there.
-      tone: outstanding <= 0 ? 'var(--v2-text-muted)' : overdue ? '#F04438' : '#F79009',
-    },
-  ];
+  /*
+   * Money went back, so the account is charged / returned / kept.
+   *
+   * Requires both labels: a caller that has not been given the words for this
+   * gets the ordinary three cells rather than an English fallback appearing in
+   * a Hebrew strip.
+   */
+  const showsRefund = refunded > 0 && Boolean(labels.refunded && labels.kept);
+
+  const cells = showsRefund
+    ? [
+        { label: labels.total, value: total, tone: 'var(--v2-text-primary)' },
+        { label: labels.refunded!, value: refunded, tone: '#F79009' },
+        {
+          /*
+           * What the business actually keeps. Floored at zero: a refund larger
+           * than the charge is a data fault, and a negative "kept" figure in a
+           * summary cell reads as a debt to the client that nothing else in the
+           * product would explain.
+           */
+          label: labels.kept!,
+          value: Math.max(total - refunded, 0),
+          tone: total - refunded > 0 ? '#22C58B' : 'var(--v2-text-muted)',
+        },
+      ]
+    : [
+        { label: labels.total, value: total, tone: 'var(--v2-text-primary)' },
+        { label: labels.collected, value: collected, tone: '#22C58B' },
+        {
+          label: overdue && overdueLabel ? overdueLabel : labels.outstanding,
+          value: outstanding,
+          // Red when it is late, amber while it is merely owed, muted at zero. A
+          // finished plan showing a warning colour against nothing reads as a
+          // problem that is not there.
+          tone: outstanding <= 0 ? 'var(--v2-text-muted)' : overdue ? '#F04438' : '#F79009',
+        },
+      ];
 
   /*
    * The fourth figure, and only when there is one.
@@ -150,7 +197,12 @@ export function PaymentPlanTotals({
    * failure, and this is the same reading the cancelled-money figures use
    * elsewhere.
    */
-  if (cancelled > 0 && labels.cancelled) {
+  /*
+   * Not alongside the refund trio. Those three already account for every
+   * figure — charged, returned, kept — and a fourth cell for money given up on
+   * would be describing a plan while the other three describe a refund.
+   */
+  if (!showsRefund && cancelled > 0 && labels.cancelled) {
     cells.push({ label: labels.cancelled, value: cancelled, tone: '#B54708' });
   }
 

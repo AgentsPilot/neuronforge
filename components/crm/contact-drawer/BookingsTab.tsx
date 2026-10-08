@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import {
   Calendar, Clock, CreditCard, ClipboardList, Mail, CheckCircle2,
-  XCircle, AlertCircle, ChevronDown, ChevronUp, Plus, Edit2,
+  XCircle, AlertCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Search, Plus, Edit2,
   Loader2, ShoppingBag, Package, User, MapPin,
   Phone, AtSign, Eye, ExternalLink, Save, X, RotateCcw, Ban, FileText, Paperclip,
   type LucideIcon
@@ -15,6 +15,11 @@ import type { SessionCardData, BookingJourneyData, BookingJourneyStep } from './
 import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 import { groupJourneyByDay } from '@/lib/business-os/journeyDays';
 import { cancelReasonKey } from '@/lib/business-os/cancellationReasons';
+import { MeetingRowActions } from './MeetingRowActions';
+import { StageRowActions } from './StageRowActions';
+/* Pure, no I/O — the clock rule lives beside `quoteGate` rather than in this
+   three-thousand-line component, for the reason that module's header gives. */
+import { isMeetingPastDue } from '@/lib/business-os/quoteGate';
 /*
  * Two constants and a split, no dependencies — safe in a client component. The
  * prefix itself stays stored English because a gap and a detector match on it;
@@ -173,6 +178,25 @@ interface BookingsTabProps {
    * billing them would leave a client owing money nobody had invoiced.
    */
   onCompleteStage?: (stageId: string, label: string, amount: string) => void;
+  /**
+   * Return the money collected against ONE stage.
+   *
+   * Per stage, because a refund follows a transaction and each milestone raises
+   * its own invoice. The booking-level dialog refuses a partial outright once a
+   * job has several payments — there is no honest way to split one figure
+   * across two charges — so without this there is no route to returning a
+   * single milestone except four levels down the payments list.
+   *
+   * Passed up like every other write this component delegates: the drawer owns
+   * the dialog, and the row only says which money is meant.
+   */
+  onRefundStage?: (stage: {
+    invoiceId: string;
+    amount: number;
+    refunded: number;
+    currency: string;
+    label: string;
+  }) => void;
   onOpenProposalBuilder?: (
     bookingId: string,
     context: { supersedesId: string | null; declineReason: string | null; declineNote: string | null }
@@ -194,7 +218,6 @@ interface BookingsTabProps {
    * actually paid for. The refund dialog resolves the payment from the booking
    * server-side and gets it right.
    */
-  onRefundJob?: (bookingId: string, currency: string, amount: number) => void;
   /**
    * Read a quote that has already been sent.
    *
@@ -244,6 +267,15 @@ interface BookingsTabProps {
   isLoading?: boolean;
   isOpen?: boolean;
   onToggle?: (isOpen: boolean) => void;
+  /**
+   * A booking to open expanded, named by whatever linked here.
+   *
+   * `NeedsYouCard` raises its gaps FROM a booking — the consultation awaiting a
+   * quote, the phase to be billed, the meeting with no outcome recorded — and
+   * its buttons used to land the owner on this list with every row collapsed,
+   * leaving them to work out which one the card meant.
+   */
+  focusBookingId?: string;
 }
 
 // Step status types
@@ -387,9 +419,9 @@ export function BookingsTab({
   onIntakeSaved,
   onSendIntake,
   onCompleteStage,
+  onRefundStage,
   onOpenProposalBuilder,
   onStopQuote,
-  onRefundJob,
   onViewProposal,
   onSendInvoice,
   onResendConfirmation,
@@ -398,10 +430,38 @@ export function BookingsTab({
   packageBillsPerMeeting,
   isLoading = false,
   isOpen,
-  onToggle
+  onToggle,
+  focusBookingId
 }: BookingsTabProps) {
-  const [expandedBookings, setExpandedBookings] = useState<Set<string>>(new Set());
+  /*
+   * Seeded with the booking a link named, so it is already open on the first
+   * render rather than opening a moment later.
+   *
+   * An initial value, not an effect: expanding after mount would collapse the
+   * row again every time this component re-rendered for an unrelated reason,
+   * and would fight an owner who closed it. `useState`'s initialiser runs once.
+   */
+  const [expandedBookings, setExpandedBookings] = useState<Set<string>>(
+    () => (focusBookingId ? new Set([focusBookingId]) : new Set())
+  );
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  /**
+   * Finding one booking among a client's history, and reading it five at a time.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Both are the same problem seen from two ends. A contact who has been with a
+   * business for a year has thirty bookings here, each an expandable journey
+   * card several hundred pixels tall, inside a drawer that is a column beside
+   * the contact rather than a page of its own. Scrolling thirty of those to
+   * reach "the consultation in March" is not reading, it is hunting.
+   *
+   * The page is a NUMBER rather than a slice of state that mirrors the list:
+   * it is clamped against what the search leaves standing at render time, so it
+   * can never point past the end and there is no effect to keep in step.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [bookingSearch, setBookingSearch] = useState('');
+  const [bookingPage, setBookingPage] = useState(0);
   // Inline intake editing state
   const [editingIntakeBookingId, setEditingIntakeBookingId] = useState<string | null>(null);
   const [editingIntakeResponses, setEditingIntakeResponses] = useState<Record<string, unknown>>({});
@@ -436,17 +496,32 @@ export function BookingsTab({
    * (UTC+13); `dateOnlyIsNotMidnightUTC.guard` pins that.
    * ─────────────────────────────────────────────────────────────────────────────
    */
-  const stageDate = (value: string) =>
-    /^\d{4}-\d{2}-\d{2}$/.test(value)
+  /**
+   * @param withYear adds the year — for a date that has to stand on its own.
+   *
+   * Off by default, because a stage list is read as a sequence: the rows sit
+   * together, in order, and repeating "2026" down every one of them is noise
+   * the reader has already got from its neighbours.
+   *
+   * A single payment has no neighbours. Its one date is the whole record of
+   * when the money moved, and "2 Oct" on a booking from any previous year is a
+   * date the owner cannot reconcile against a statement without opening
+   * something else.
+   */
+  const stageDate = (value: string, withYear = false) => {
+    const parts: Intl.DateTimeFormatOptions = {
+      day: 'numeric',
+      month: 'short',
+      ...(withYear ? { year: 'numeric' } : {}),
+    };
+
+    return /^\d{4}-\d{2}-\d{2}$/.test(value)
       ? new Date(`${value}T00:00:00Z`).toLocaleDateString(isRTL ? 'he-IL' : 'en-US', {
           timeZone: 'UTC',
-          day: 'numeric',
-          month: 'short',
+          ...parts,
         })
-      : new Date(value).toLocaleDateString(
-          isRTL ? 'he-IL' : 'en-US',
-          timeZoneOptions({ day: 'numeric', month: 'short' })
-        );
+      : new Date(value).toLocaleDateString(isRTL ? 'he-IL' : 'en-US', timeZoneOptions(parts));
+  };
 
   const toggleBooking = (id: string) => {
     setExpandedBookings(prev => {
@@ -486,23 +561,44 @@ export function BookingsTab({
     return bDate.getTime() - aDate.getTime();
   });
 
+
   // Format helpers
-  const formatDate = (dateString: string) => {
+  /**
+   * The year, where a date has to stand on its own.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A contact drawer is not a calendar. It is read months after the fact, and
+   * it holds a client's whole history at once: a package running into next
+   * year, a booking from last autumn, a quote accepted the January before.
+   * "12 באוק׳" answers none of those, and the reader has no surrounding context
+   * to recover the year from — unlike a list grouped under a date heading.
+   *
+   * Opt-in rather than applied to every date in the file, because the compact
+   * ones beside a figure (a refund date inside a 290px money column, a version
+   * stamp) are read in the context of the row they sit in, and a year there
+   * costs width to repeat something the row already implies.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const withYear = (on?: boolean) => (on ? { year: 'numeric' as const } : {});
+
+  const formatDate = (dateString: string, opts?: { withYear?: boolean }) => {
     const date = new Date(dateString);
     return date.toLocaleDateString(language, timeZoneOptions({
       weekday: 'short',
       month: 'short',
       day: 'numeric',
+      ...withYear(opts?.withYear),
       hour: '2-digit',
       minute: '2-digit'
     }));
   };
 
-  const formatShortDate = (dateString: string) => {
+  const formatShortDate = (dateString: string, opts?: { withYear?: boolean }) => {
     const date = new Date(dateString);
     return date.toLocaleDateString(language, timeZoneOptions({
       month: 'short',
-      day: 'numeric'
+      day: 'numeric',
+      ...withYear(opts?.withYear)
     }));
   };
 
@@ -514,11 +610,12 @@ export function BookingsTab({
     }));
   };
 
-  const formatDateTime = (dateString: string) => {
+  const formatDateTime = (dateString: string, opts?: { withYear?: boolean }) => {
     const date = new Date(dateString);
     return date.toLocaleString(language, timeZoneOptions({
       month: 'short',
       day: 'numeric',
+      ...withYear(opts?.withYear),
       hour: '2-digit',
       minute: '2-digit'
     }));
@@ -680,7 +777,16 @@ export function BookingsTab({
      * nothing to collect, so anything other than 'paid' is a genuine debt.
      * Absent means unknown, and unknown must not invent one.
      */
-    moneyOwed = false
+    moneyOwed = false,
+    /**
+     * The meeting's start, so a past one can say so.
+     *
+     * Optional, and absent means "do not claim anything about the clock" — a
+     * caller with no start time in hand gets exactly the badge it got before.
+     * That is why this is added rather than required: three call sites, and a
+     * required argument would have made the two that do not care pass a lie.
+     */
+    startTime?: string | null
   ) => {
     const labels: Record<string, { text: string; color: string; bgColor: string }> = {
       confirmed: {
@@ -717,8 +823,130 @@ export function BookingsTab({
         ? { text: t('crm.booking.status.pending') || 'Awaiting payment', color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-500/10' }
         : { text: t('crm.booking.status.unconfirmed'), color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-500/10' }
     };
-    return labels[status] || { text: status, color: 'text-[var(--v2-text-muted)]', bgColor: 'bg-[var(--v2-surface)]' };
+    const label =
+      labels[status] || { text: status, color: 'text-[var(--v2-text-muted)]', bgColor: 'bg-[var(--v2-surface)]' };
+
+    /*
+     * The clock, added to the word the status already chose.
+     *
+     * NOT a replacement. "Awaiting payment" is the more useful half of the
+     * sentence for an owner — it names what is missing — and swapping it for
+     * "Past Due" would trade a reason for a date. So the reason stays and the
+     * date joins it.
+     *
+     * The colour is left exactly as it was, deliberately. A past meeting is not
+     * a worse state than an unpaid one; it is a second fact about the same
+     * booking, and recolouring the badge would rank them.
+     */
+    if (isMeetingPastDue({ status, startTime: startTime ? new Date(startTime) : null })) {
+      /*
+       * IT REPLACES THE STATUS WORD. It used to wrap it.
+       *
+       * The badge read "קרובה (ממתין לעדכון)" — upcoming, awaiting an update —
+       * and the two halves contradict each other. A meeting whose time has
+       * passed is not upcoming; `status` says `confirmed` only because nobody
+       * has marked it, which is the very thing the note is reporting. Keeping
+       * both printed the stale half beside the true one.
+       *
+       * The colour is deliberately untouched, as before: a meeting nobody has
+       * marked is not a worse state than an unpaid one, and recolouring would
+       * rank them.
+       */
+      return { ...label, text: t('crm.journey.awaiting_outcome') || 'Awaiting an outcome' };
+    }
+
+    return label;
   };
+
+  /**
+   * Which bookings the search leaves standing.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT IS SEARCHED, AND WHY THOSE FIELDS
+   *
+   * What an owner types into this box is one of three things: the name of the
+   * service, a word from the note they wrote on the booking, or a year. So:
+   * the service, the note, and the date AS RENDERED — the date has to be
+   * matched on its formatted text, or searching "2026" fails against an ISO
+   * string that starts "2026" in UTC while the card shows a different year in
+   * the business's zone, and "אוק" matches nothing at all.
+   *
+   * A PACKAGE's meetings are searched too, because the card the owner is
+   * hunting for is the container: hiding a package whose fourth session matches
+   * would hide the only row that could have shown it.
+   *
+   * Case-folded and trimmed. No transliteration: a Hebrew business searching
+   * Hebrew words against Hebrew records needs no romanisation, and guessing at
+   * one would match things the owner did not ask for.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const needle = bookingSearch.trim().toLowerCase();
+
+  const matchesSearch = (session: SessionCardData): boolean => {
+    if (!needle) return true;
+
+    const haystack = (one: SessionCardData): string => {
+      /*
+       * The arguments are hoisted, and the start time is one of them.
+       *
+       * The label is clock-aware: a confirmed meeting whose time has passed
+       * with nobody marking it reads "awaiting an outcome", not "upcoming", so
+       * searching the word an owner can actually SEE means passing what the
+       * badge passes. `pastDueNoteIsRendered` caught the omission on its first
+       * run, which is exactly what that guard is for — and it reads the call
+       * site as text, so the arguments are named here rather than nested
+       * inside the call where it cannot follow them.
+       */
+      const hasSchedule = !isUnscheduledBooking(one.booking);
+      const owesMoney =
+        one.booking.payment_status !== undefined && one.booking.payment_status !== 'paid';
+      const statusLabel = getBookingStatusLabel(
+        one.booking.status,
+        hasSchedule,
+        owesMoney,
+        one.booking.start_time
+      ).text;
+
+      return [
+        one.booking.service?.service_name,
+        one.booking.notes,
+        one.booking.status,
+        statusLabel,
+        one.booking.start_time ? formatDate(one.booking.start_time, { withYear: true }) : '',
+        one.booking.created_at ? formatShortDate(one.booking.created_at, { withYear: true }) : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+    };
+
+    return haystack(session).includes(needle)
+      || (session.meetings ?? []).some(meeting => haystack(meeting).includes(needle));
+  };
+
+  const filteredSessions = sortedSessions.filter(matchesSearch);
+
+  /*
+   * Five a page.
+   *
+   * A contact who has been with a business for a year has thirty bookings, each
+   * one an expandable journey card several hundred pixels tall. The drawer is a
+   * column beside the contact, not a page of its own, and thirty of those is a
+   * scroll with no landmarks in it.
+   */
+  const PAGE_SIZE = 5;
+  const pageCount = Math.max(1, Math.ceil(filteredSessions.length / PAGE_SIZE));
+  /*
+   * Clamped rather than reset by an effect.
+   *
+   * Searching narrows the list under the reader, and page 4 of a set that now
+   * has one page renders empty — the same "it's there but you cannot see it"
+   * fault the orders page had. Deriving the page from what EXISTS means it can
+   * never point past the end, with no effect to fire and no render in between
+   * where the list is empty for a frame.
+   */
+  const page = Math.min(bookingPage, pageCount - 1);
+  const visibleSessions = filteredSessions.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
   // Intake editing helpers
   const startEditingIntake = (booking: SessionCardData['booking']) => {
@@ -1183,7 +1411,63 @@ export function BookingsTab({
           </div>
         ) : (
           <div className="space-y-4">
-            {sortedSessions.map((session) => {
+            {/*
+              THE SEARCH, above the list.
+
+              Offered only once there is enough to hunt through. On a contact
+              with two bookings a search box is a control that can only ever
+              narrow two things to one, and it costs a row of a drawer that is
+              already a narrow column.
+            */}
+            {sortedSessions.length > PAGE_SIZE && (
+              <div className="relative">
+                <Search className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--v2-text-muted)]" />
+                <input
+                  type="text"
+                  value={bookingSearch}
+                  onChange={(e) => {
+                    setBookingSearch(e.target.value);
+                    // Back to the first page: the results under the reader have
+                    // just changed, and page 3 of the previous set means nothing
+                    // about this one.
+                    setBookingPage(0);
+                  }}
+                  placeholder={t('crm.drawer.search_bookings') || 'Search bookings'}
+                  className="w-full rounded-lg border border-[var(--v2-border)] bg-[var(--v2-bg)] ps-9 pe-8 py-2 text-[13px] text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[#8B5CF6] focus:border-transparent"
+                />
+                {bookingSearch && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBookingSearch('');
+                      setBookingPage(0);
+                    }}
+                    aria-label={t('common.clear') || 'Clear'}
+                    className="absolute end-2 top-1/2 -translate-y-1/2 rounded p-1 text-[var(--v2-text-muted)] hover:bg-[var(--v2-surface)] hover:text-[var(--v2-text-primary)]"
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/*
+              A search that found nothing says so, and says what it searched
+              for. An empty list under a filled-in box reads as a broken drawer.
+            */}
+            {filteredSessions.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-[var(--v2-border)] py-10 text-center">
+                <Calendar className="mx-auto mb-3 h-10 w-10 text-[var(--v2-text-muted)]" />
+                <p className="text-sm text-[var(--v2-text-muted)]">
+                  {(t('crm.drawer.no_booking_matches') || 'No bookings match “{term}”').replace(
+                    '{term}',
+                    bookingSearch.trim()
+                  )}
+                </p>
+              </div>
+            ) : (
+            <div className="space-y-4">
+            {visibleSessions.map((session) => {
               const { booking, payment, journeyData } = session;
               const isExpanded = expandedBookings.has(booking.id);
               // Declared first: the badge's wording depends on it.
@@ -1223,7 +1507,7 @@ export function BookingsTab({
                         ? 'unmarked'
                         : 'settled'
                   )
-                : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid');
+                : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid', booking.start_time);
               const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
               const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
               const isPendingUnscheduled = isUnscheduled && booking.status !== 'completed' && booking.status !== 'cancelled';
@@ -1278,10 +1562,12 @@ export function BookingsTab({
                                 * the only record of WHEN it was bought — and two
                                 * purchases on one day were indistinguishable.
                                 */}
-                              {formatDateTime(booking.created_at || new Date().toISOString())}
+                              {formatDateTime(booking.created_at || new Date().toISOString(), { withYear: true })}
                             </bdi>
                           ) : booking.start_time ? (
-                            <bdi>{formatDate(booking.start_time)}</bdi>
+                            /* The card's own headline date, and the only one a
+                               collapsed booking shows: it carries the year. */
+                            <bdi>{formatDate(booking.start_time, { withYear: true })}</bdi>
                           ) : null}
                         </p>
                       </div>
@@ -1530,9 +1816,32 @@ export function BookingsTab({
                                     because nothing has happened yet.
                                   */
                                   const isFinalStep = step.key === 'session' || step.key === 'fulfillment';
+                                  /*
+                                    A MEETING THAT HAPPENED IS NOT AN ORDER THAT SHIPPED.
+                                    ─────────────────────────────────────────────────────
+                                    `isFinalStep` covers two different things — a session
+                                    and a product's fulfilment — and both were titled
+                                    "הזמנה הושלמה", order completed. On a meeting that
+                                    contradicted the very line underneath it, which reads
+                                    "הפגישה התקיימה".
+
+                                    The phrase is not new: it is the one the "mark held"
+                                    button uses, and the one `scheduleDetail` reports after
+                                    pressing it. Three places now say the same words about
+                                    the same event, which is the whole point — being told
+                                    "order completed" after pressing "the meeting took
+                                    place" reads as a different outcome than the one just
+                                    recorded.
+
+                                    `fulfillment` keeps the order wording, because for a
+                                    product that is exactly right.
+                                  */
+                                  const isMeetingStep = step.key === 'session';
                                   const outcomeTitle =
                                     isFinalStep && booking.status === 'completed'
-                                      ? t('crm.booking.step.booking_completed')
+                                      ? isMeetingStep
+                                        ? t('crm.booking.quoted.meeting_held')
+                                        : t('crm.booking.step.booking_completed')
                                       : isFinalStep &&
                                           (booking.status === 'cancelled' || booking.status === 'no_show')
                                         ? t('crm.booking.step.booking_cancelled')
@@ -1705,6 +2014,99 @@ export function BookingsTab({
                                     paymentExpected &&
                                     !moneyMoved;
 
+                                  /**
+                                   * Does this step draw its own money account below?
+                                   *
+                                   * ─────────────────────────────────────────────────────
+                                   * Hoisted because TWO places need the same answer and
+                                   * they must not drift: the block itself, and the step's
+                                   * primary fact line, which prints "₪300.00" and has to
+                                   * stay quiet when the account underneath already says
+                                   * the figure three times over.
+                                   *
+                                   * The file makes this point about `hasCardBody` a few
+                                   * lines up — conditions listed one per line, read off
+                                   * the blocks they guard, so a gate cannot be changed in
+                                   * one place only. Same reasoning, one step further: the
+                                   * gate is now a single value rather than a condition
+                                   * copied into both.
+                                   * ─────────────────────────────────────────────────────
+                                   */
+                                  const showsPaymentAccount = Boolean(
+                                    isPaymentStep &&
+                                      payment &&
+                                      // A written schedule is the staged branch's business.
+                                      !payment.plan?.stages?.length &&
+                                      payment.status !== 'free'
+                                  );
+
+                                  /**
+                                   * Does the confirmation step draw its own outcome line?
+                                   *
+                                   * ─────────────────────────────────────────────────────
+                                   * The card's primary line was the email's SUBJECT, so it
+                                   * read as a sentence in the CLIENT's voice — "your
+                                   * meeting has been confirmed" — on the OWNER's screen,
+                                   * and asserted a fact about the booking when it was
+                                   * really describing an email. Whether that email arrived
+                                   * was never shown at all: a bounced confirmation and a
+                                   * delivered one drew the same row.
+                                   *
+                                   * The outcome becomes the line, and the subject moves
+                                   * below it as a quotation of what was sent. Hoisted for
+                                   * the same reason as `showsPaymentAccount`: the block and
+                                   * the fact line it replaces must not disagree about when
+                                   * it renders.
+                                   * ─────────────────────────────────────────────────────
+                                   */
+                                  const showsEmailOutcome = Boolean(
+                                    isConfirmationStep && step.metadata
+                                  );
+
+                                  /**
+                                   * The staged branch — a plan or quote with a schedule.
+                                   *
+                                   * ─────────────────────────────────────────────────────
+                                   * Its fact line is a summary of the money: "₪400 · 1 of 2
+                                   * · ₪800 total". That sentence was the only account the
+                                   * card had, and it earned its place. It no longer does.
+                                   *
+                                   * The strip beneath it names ₪800 as the total, ₪400 as
+                                   * collected and ₪400 as outstanding; the rows under THAT
+                                   * name every period, its amount, its date and its state.
+                                   * "1 of 2" is two rows with one of them green. So the
+                                   * line repeats the total exactly and implies the rest,
+                                   * which is the same four-copies-of-one-figure problem
+                                   * the single-payment card had.
+                                   * ─────────────────────────────────────────────────────
+                                   */
+                                  const showsPaymentStages = Boolean(
+                                    isPaymentStep && payment?.plan?.stages?.length
+                                  );
+
+
+                                  /**
+                                   * The quote has been answered, so its own rows say so.
+                                   *
+                                   * ─────────────────────────────────────────────────────
+                                   * An accepted or stopped quote lists its versions below,
+                                   * and the standing one carries BOTH facts the header was
+                                   * printing — "אושרה ₪9,000.00, 7 באוק׳". So the amount
+                                   * and the state line go quiet and the row owns them.
+                                   *
+                                   * This gated a totals strip here too, briefly. It said
+                                   * the same three figures as the payment step's, on the
+                                   * same booking, a card apart — so the money has one home
+                                   * again and this says only that the rows have the rest.
+                                   * ─────────────────────────────────────────────────────
+                                   */
+                                  const quoteAnswered = Boolean(
+                                    isProposalStep &&
+                                      payment &&
+                                      (step.metadata?.proposalStatus === 'accepted' ||
+                                        step.metadata?.proposalStatus === 'stopped')
+                                  );
+
                                   const colors = STATUS_COLORS[step.status];
 
                                   /*
@@ -1723,11 +2125,97 @@ export function BookingsTab({
                                    * Composed from the slot, like the schedule step
                                    * above it does.
                                    */
+                                  const scheduleDuration = (() => {
+                                    if (!isScheduleStep) return null;
+                                    // Derived from the slot rather than a stored
+                                    // figure: `duration` lives on the service, and a
+                                    // booking that was moved or extended is the
+                                    // authority on how long it actually runs.
+                                    const minutes =
+                                      (booking.start_time && booking.end_time
+                                        ? Math.round(
+                                            (new Date(booking.end_time).getTime() -
+                                              new Date(booking.start_time).getTime()) / 60000
+                                          )
+                                        : null);
+                                    return minutes && minutes > 0 ? formatDuration(minutes) : null;
+                                  })();
+
                                   const scheduleFact =
                                     isScheduleStep && !step.details && booking.start_time
-                                      ? booking.end_time
-                                        ? `${formatTime(booking.start_time)} – ${formatTime(booking.end_time)}`
-                                        : formatTime(booking.start_time)
+                                      ? [
+                                          /*
+                                           * WHICH DAY, not just which hour.
+                                           *
+                                           * This line said "14:00 – 15:00" and nothing
+                                           * else. The weekday sits further down the card,
+                                           * beside the status — so an owner reading the
+                                           * meeting step learned it was a Monday at two,
+                                           * and had to work out WHICH Monday from the
+                                           * booking's position in the list.
+                                           *
+                                           * The date leads because that is the question
+                                           * being asked of this step: the hour is the
+                                           * detail of the day, not the other way round.
+                                           * `formatShortDate` is the file's own date, so
+                                           * this reads like the refund dates beside it and
+                                           * resolves in the BUSINESS's zone like
+                                           * everything else on the card.
+                                           */
+                                          /*
+                                            THE WEEKDAY BELONGS TO ITS DATE.
+                                            ────────────────────────────────
+                                            It used to sit two lines down, beside the
+                                            status, because this line had no room for it
+                                            — so "4 באוק׳ 2026" and "יום ראשון" were the
+                                            same fact printed in two places, and the
+                                            status was left reading as a property of the
+                                            weekday it was glued to.
+
+                                            A comma, not a middot: "Sunday, 4 October" is
+                                            one phrase in every language here. The middot
+                                            is this card's separator for things that are
+                                            genuinely separate.
+
+                                            The BUSINESS's weekday, matching the date
+                                            beside it — an evening appointment was named
+                                            the next day for an owner logged in abroad.
+                                          */
+                                          `${new Intl.DateTimeFormat(
+                                            language,
+                                            timeZoneOptions({ weekday: 'long' })
+                                          ).format(new Date(booking.start_time))}, ${formatShortDate(
+                                            booking.start_time,
+                                            { withYear: true }
+                                          )}`,
+                                        ].join(' · ')
+                                      : null;
+
+                                  /**
+                                   * The hours, and how long they run.
+                                   *
+                                   * ───────────────────────────────────────────────────
+                                   * Its own line, under the date. The range answers "when
+                                   * within that day" and the duration answers "for how
+                                   * long" — two halves of one question, and neither is the
+                                   * headline now that the card is called תאריך הפגישה.
+                                   *
+                                   * The duration moved here from the header gutter, where
+                                   * it displaced the step's own time and left "1 ש׳"
+                                   * floating alone above the date with nothing to attach
+                                   * it to.
+                                   * ───────────────────────────────────────────────────
+                                   */
+                                  const scheduleTime =
+                                    isScheduleStep && !step.details && booking.start_time
+                                      ? [
+                                          booking.end_time
+                                            ? `${formatTime(booking.start_time)} – ${formatTime(booking.end_time)}`
+                                            : formatTime(booking.start_time),
+                                          scheduleDuration,
+                                        ]
+                                          .filter(Boolean)
+                                          .join(' · ')
                                       : null;
 
                                   /*
@@ -1791,15 +2279,37 @@ export function BookingsTab({
                                     ? booking.status === 'cancelled' || Boolean(quotePaid)
                                     : meetingSettled;
 
+                                  /**
+                                   * Its time has passed and nobody has said what happened.
+                                   *
+                                   * The same condition `scheduleDetail` uses to choose
+                                   * "ממתין לעדכון" over "not yet held" — named here so the
+                                   * dot beside that sentence is coloured by the same test
+                                   * that produced it. Derived twice, they would eventually
+                                   * disagree and the card would show a brown dot against
+                                   * "not yet held".
+                                   */
+                                  const scheduleAwaiting = Boolean(
+                                    isScheduleStep &&
+                                      booking.start_time &&
+                                      !meetingSettled &&
+                                      new Date(booking.start_time) <= new Date()
+                                  );
+
                                   const scheduleDetail =
                                     isScheduleStep && booking.start_time
                                       ? [
-                                          // The business's weekday, not the
-                                          // viewer's: an evening appointment
-                                          // was named the next day for an
-                                          // owner logged in from abroad.
-                                          new Intl.DateTimeFormat(language, timeZoneOptions({ weekday: 'long' }))
-                                            .format(new Date(booking.start_time)),
+                                          /*
+                                            THE STATUS, ALONE.
+                                            ──────────────────
+                                            The weekday used to lead this line and the
+                                            status followed it after a middot, so
+                                            "ממתין לעדכון" read as something about
+                                            Sunday. The weekday has gone up to join its
+                                            own date; what is left is the one thing on
+                                            this card an owner acts on, and it now gets
+                                            a line and a dot of its own.
+                                          */
                                           meetingSettled
                                             ? // The same word the button used.
                                               // Pressing "הפגישה התקיימה" and
@@ -1808,7 +2318,7 @@ export function BookingsTab({
                                               // just recorded.
                                               isQuoted && booking.status === 'completed'
                                               ? t('crm.booking.quoted.meeting_held')
-                                              : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid').text
+                                              : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid', booking.start_time).text
                                             : new Date(booking.start_time) > new Date()
                                               ? t('crm.journey.not_yet_held') || 'Not yet held'
                                               : t('crm.journey.awaiting_outcome') || 'Awaiting an outcome'
@@ -1822,21 +2332,6 @@ export function BookingsTab({
                                    * beside it is already the time range, so repeating
                                    * the start time there would say nothing new.
                                    */
-                                  const scheduleDuration = (() => {
-                                    if (!isScheduleStep) return null;
-                                    // Derived from the slot rather than a stored
-                                    // figure: `duration` lives on the service, and a
-                                    // booking that was moved or extended is the
-                                    // authority on how long it actually runs.
-                                    const minutes =
-                                      (booking.start_time && booking.end_time
-                                        ? Math.round(
-                                            (new Date(booking.end_time).getTime() -
-                                              new Date(booking.start_time).getTime()) / 60000
-                                          )
-                                        : null);
-                                    return minutes && minutes > 0 ? formatDuration(minutes) : null;
-                                  })();
 
                                   // The node keeps its send/resend behaviour.
                                   const onNodeClick =
@@ -1885,8 +2380,15 @@ export function BookingsTab({
                                     cardFact ||
                                     showAccount ||
                                     isProposalStep ||
-                                    (showAccount && payment?.plan && step.details) ||
                                     (isPaymentStep && payment?.plan?.stages?.length) ||
+                                    /* The single-payment account. Listed here for the
+                                       reason the block above gives: `cardFact` is now
+                                       suppressed on exactly these steps, so without this
+                                       a payment card could lose its only line and render
+                                       as a lid on an empty box. */
+                                    showsPaymentAccount ||
+                                    showsEmailOutcome ||
+                                    quoteAnswered ||
                                     (isIntakeStep && hasIntake) ||
                                     intakeExpandable ||
                                     (isPaymentStep && onManagePayment) ||
@@ -2026,9 +2528,16 @@ export function BookingsTab({
                                                 owns its own edge, so it no longer needs a
                                                 positioned ancestor or the 46px of clearance
                                                 the content column had to reserve for it. */}
-                                            {(scheduleDuration || step.timestamp) && (
+                                            {/* The step's own time, always — never the
+                                                duration. On a meeting step the duration
+                                                used to win here, so the gutter read
+                                                "1 ש׳" and the hour the step happened at
+                                                was nowhere on the card. The length now
+                                                sits under the date, beside the range it
+                                                describes. */}
+                                            {step.timestamp && (
                                               <span className="ms-auto text-[11.5px] tabular-nums text-[var(--v2-text-muted)] whitespace-nowrap">
-                                                {scheduleDuration ?? formatTime(step.timestamp!)}
+                                                {formatTime(step.timestamp)}
                                               </span>
                                             )}
                                           </div>
@@ -2043,61 +2552,28 @@ export function BookingsTab({
                                             style={{ gridTemplateColumns: 'minmax(0, 1fr)', rowGap: '2px' }}
                                           >
                                         {/* What happened. */}
-                                        {showAccount ? (
-                                          <div
-                                            className="grid items-baseline mt-0.5"
-                                            style={{
-                                              gridColumn: 1,
-                                              gridTemplateColumns: 'minmax(0, 1fr) auto',
-                                              gap: '4px 18px',
-                                              maxWidth: '290px'
-                                            }}
-                                          >
-                                            {/* An account, not a number: charged,
-                                                returned, and a ruled total. A block
-                                                that has to add up cannot hide a
-                                                partial refund behind the gross. */}
-                                            <span className="text-[12.5px] text-[var(--v2-text-muted)] break-words">
-                                              {t('crm.journey.charged') || 'Charged'}
-                                            </span>
-                                            <span className="text-[13px] tabular-nums text-[var(--v2-text-secondary)] text-end whitespace-nowrap">
-                                              {formatAmount(charged, payment!.currency)}
-                                            </span>
+                                        {/* The old two-column ledger, now only where the
+                                            strip cannot go: a PLAN with a refund. A single
+                                            payment's refund is drawn below by the shared
+                                            strip, in the same cells every other payment
+                                            step uses — this one was the last surface still
+                                            showing money in a layout of its own. */}
+                                        {/*
+                                          NO LEDGER HERE ANY MORE.
+                                          ────────────────────────
+                                          It printed charged / returned / kept ABOVE the
+                                          strip — which now carries exactly those three
+                                          figures, in those words, a few pixels below. On a
+                                          part-refunded job the card stated ₪9,000, ₪2,250
+                                          and ₪6,750 twice over, and a reader cannot tell two
+                                          copies of one account from two accounts that happen
+                                          to agree.
 
-                                            {refunded > 0 && (
-                                              <>
-                                                <span className="text-[12.5px] text-orange-600 dark:text-orange-400 break-words">
-                                                  {t('crm.journey.returned') || 'Refunded'}
-                                                  {payment!.refundedAt
-                                                    ? ` · ${formatShortDate(payment!.refundedAt)}`
-                                                    : ''}
-                                                </span>
-                                                {/* `bdi` so the minus stays ON the
-                                                    number. In an RTL row a bare
-                                                    "−$100.00" is reordered by the
-                                                    bidi algorithm and renders as
-                                                    "$100.00−", which reads like a
-                                                    typo rather than a deduction. */}
-                                                <bdi className="text-[13px] tabular-nums text-orange-600 dark:text-orange-400 text-end whitespace-nowrap">
-                                                  −{formatAmount(refunded, payment!.currency)}
-                                                </bdi>
-
-                                                <span
-                                                  className="h-px bg-[var(--v2-border)]"
-                                                  style={{ gridColumn: '1 / -1', margin: '3px 0 1px' }}
-                                                  aria-hidden="true"
-                                                />
-
-                                                <span className="text-[12.5px] font-medium text-[var(--v2-text-secondary)]">
-                                                  {t('crm.journey.kept') || 'You keep'}
-                                                </span>
-                                                <span className="text-[17px] font-medium tabular-nums text-green-600 dark:text-green-400 text-end whitespace-nowrap">
-                                                  {formatAmount(Math.max(0, charged - refunded), payment!.currency)}
-                                                </span>
-                                              </>
-                                            )}
-                                          </div>
-                                        ) : (
+                                          The strip earned it: it reports a refund itself now,
+                                          swapping collected/outstanding for returned/kept, so
+                                          a second block has nothing left to add.
+                                        */}
+                                        {(
                                           <span
                                             className="text-[14.5px] font-medium leading-[1.5] text-[var(--v2-text-primary)] break-words"
                                             style={{ gridColumn: 1, gridRow: 1 }}
@@ -2119,22 +2595,171 @@ export function BookingsTab({
                                                 the same value decides whether this card HAS a
                                                 body, and two copies of it drift the moment one
                                                 gains a fallback. */}
+                                            {/* Silent when the account below carries the
+                                                figure. On a payment step `cardFact` IS the
+                                                amount — "₪300.00" — and the totals strip
+                                                under it already names that number as the
+                                                total, and again as collected or
+                                                outstanding. Printed as well, it read as a
+                                                fourth figure the reader had to reconcile
+                                                against the other three. */}
                                             {isProposalStep ? (
-                                              <span className="tabular-nums">{cardFact}</span>
-                                            ) : (
+                                              quoteAnswered ? null : (
+                                                <span className="tabular-nums">{cardFact}</span>
+                                              )
+                                            ) : showsPaymentAccount || showsEmailOutcome || showsPaymentStages ? null : (
                                               cardFact
                                             )}
                                           </span>
                                         )}
 
+                                        {/*
+                                          WHAT HAPPENED TO THE CONFIRMATION, then what it
+                                          said.
+                                          ──────────────────────────────────────────────────
+                                          Two lines where there was one sentence. The first
+                                          is the owner's: the mail was sent to the client,
+                                          and this is how far it got. The second is the
+                                          client's, quoted — so "your meeting has been
+                                          confirmed" stops being a claim this card is making
+                                          and becomes a record of what was in their inbox.
+                                        */}
+                                        {(() => {
+                                          if (!showsEmailOutcome) return null;
+
+                                          const meta = step.metadata ?? {};
+                                          const emailStatus = meta.emailStatus as string | undefined;
+                                          const hasRecord = Boolean(meta.hasRecord);
+
+                                          /*
+                                            FURTHEST POINT REACHED, not the stored status.
+                                            `delivered` and `opened` arrive as timestamps
+                                            from the provider webhook while the row's status
+                                            stays `'sent'` — so reading `status` alone would
+                                            report "sent" for mail the client has opened, and
+                                            the one signal an owner actually wants would
+                                            never appear.
+                                          */
+                                          const reached = !hasRecord
+                                            ? null
+                                            : meta.openedAt
+                                              ? 'opened'
+                                              : meta.deliveredAt
+                                                ? 'delivered'
+                                                : emailStatus;
+
+                                          /* Terminal failures. A bounce and a spam report
+                                             are the whole reason this step is worth a row. */
+                                          const failed =
+                                            reached === 'bounced' ||
+                                            reached === 'complained' ||
+                                            reached === 'failed';
+
+                                          const tone = !hasRecord
+                                            ? 'var(--v2-text-muted)'
+                                            : failed
+                                              ? '#B54708'
+                                              : reached === 'opened'
+                                                ? '#22C58B'
+                                                : reached === 'pending'
+                                                  ? 'var(--v2-border)'
+                                                  : '#22C58B';
+
+                                          /*
+                                            ONLY SAY SOMETHING THE PREFIX HAS NOT.
+                                            ──────────────────────────────────────
+                                            "מייל נשלח" already means sent, so appending
+                                            the stored status produced "sent · sent" on
+                                            every message the provider had not yet
+                                            confirmed — which was most of them, and read
+                                            as a stutter rather than a state.
+
+                                            Two bookings minutes apart showed "sent · sent"
+                                            and "sent · delivered", and the difference
+                                            looked like a bug in the data when it was only
+                                            this line repeating itself.
+
+                                            So `sent` adds nothing and is dropped. What
+                                            survives is the half the prefix cannot say:
+                                            it arrived, it was opened, it came back.
+                                          */
+                                          const adds = reached && reached !== 'sent' ? reached : null;
+
+                                          /*
+                                            Two states are not "sent, and then something".
+                                            `pending` has not left the platform yet and
+                                            `failed` never did, so leading either with
+                                            "Email sent" would assert the one thing that
+                                            did not happen.
+                                          */
+                                          const standsAlone = adds === 'pending' || adds === 'failed';
+
+                                          const outcome = !hasRecord
+                                            ? t('crm.email.no_record') || 'No send recorded'
+                                            : standsAlone
+                                              ? t(`crm.email.status.${adds}`) || String(adds)
+                                              : `${t('crm.booking.email_sent') || 'Email sent'}${
+                                                  adds
+                                                    ? ` · ${t(`crm.email.status.${adds}`) || adds}`
+                                                    : ''
+                                                }`;
+
+                                          return (
+                                            <div
+                                              className="flex flex-col gap-0.5"
+                                              style={{ gridColumn: 1 }}
+                                            >
+                                              <span className="flex items-center gap-2">
+                                                <span
+                                                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                  style={{ background: tone }}
+                                                  aria-hidden="true"
+                                                />
+                                                <span
+                                                  className="text-[12.5px] leading-[1.5]"
+                                                  style={{
+                                                    color: failed
+                                                      ? '#B54708'
+                                                      : 'var(--v2-text-primary)',
+                                                  }}
+                                                >
+                                                  {outcome}
+                                                </span>
+                                              </span>
+
+                                              {/* The subject, quoted and demoted. `bdi` so a
+                                                  Hebrew subject beside Latin punctuation is
+                                                  not reordered into nonsense. */}
+                                              {step.details && (
+                                                <span
+                                                  className="text-[12px] leading-[1.5] break-words"
+                                                  style={{ color: 'var(--v2-text-muted)' }}
+                                                >
+                                                  <bdi>{`„${step.details}”`}</bdi>
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
+
                                         {/* Supporting detail — a plan's terms,
                                             the answer count — under the fact. */}
 
-                                        {/* What is happening to the quote. Always
-                                            rendered: a quote with no state is a
-                                            row the owner cannot act on, and before
-                                            one exists this line IS the content. */}
-                                        {isProposalStep && (
+                                        {/* What is happening to the quote.
+                                            ───────────────────────────────────
+                                            Rendered unless the account below says it
+                                            already. Once a quote is agreed, its own row
+                                            carries the state and the amount together —
+                                            "אושרה ₪450.00, 1 באוק׳" — so this line
+                                            repeated the word a few pixels above the row
+                                            that owns it, under a figure the strip had
+                                            already named as the total.
+
+                                            Still the content for every OTHER state: a
+                                            quote sent, viewed, declined or expired has no
+                                            account block and no accepted row, and before
+                                            one exists this line IS the card. */}
+                                        {isProposalStep && !quoteAnswered && (
                                           <span
                                             className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)] break-words"
                                             style={{ gridColumn: 1 }}
@@ -2331,9 +2956,31 @@ export function BookingsTab({
                                                       "stopped part-way" leaves the owner to
                                                       remember which of six reasons it was —
                                                       and the reason is the whole point of
-                                                      having collected it. */}
-                                                  {version.status === 'stopped' &&
-                                                    (version.stopReason || version.stopNote) && (
+                                                      having collected it.
+
+                                                      SHOWN ON THE DATA, NOT THE STATUS.
+                                                      ──────────────────────────────────
+                                                      Both of these were gated on
+                                                      `version.status`, and a status does not
+                                                      survive a revision: `markSuperseded`
+                                                      rewrites every row in
+                                                      ('sent','viewed','declined') to
+                                                      'superseded'.
+
+                                                      So a client declined at ₪10,000 saying
+                                                      why, the owner sent a revised quote, and
+                                                      that row went from carrying the reason
+                                                      to reading "הוחלפה" and a date. The
+                                                      answer was never deleted — only the
+                                                      condition that printed it — and it is
+                                                      the single most useful thing on a
+                                                      superseded row, because it is why the
+                                                      revision exists.
+
+                                                      A reason is a fact about what happened
+                                                      to that version. Whatever happens to it
+                                                      afterwards does not unmake it. */}
+                                                  {(version.stopReason || version.stopNote) && (
                                                       <p
                                                         className="mt-1 ps-3.5 text-[11.5px] leading-[1.45]"
                                                         style={{ color: 'var(--v2-text-muted)' }}
@@ -2352,8 +2999,7 @@ export function BookingsTab({
                                                       </p>
                                                     )}
 
-                                                  {version.status === 'declined' &&
-                                                    (version.declineReason || version.declineNote) && (
+                                                  {(version.declineReason || version.declineNote) && (
                                                       <p
                                                         className="mt-1 ps-3.5 text-[11.5px] leading-[1.45]"
                                                         style={{ color: 'var(--v2-text-muted)' }}
@@ -2383,14 +3029,6 @@ export function BookingsTab({
                                             `step.details` is the amount itself, so
                                             this printed the figure a second time
                                             under the block that just totalled it. */}
-                                        {showAccount && payment?.plan && step.details && (
-                                          <span
-                                            className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)] break-words"
-                                            style={{ gridColumn: 1 }}
-                                          >
-                                            {step.details}
-                                          </span>
-                                        )}
 
                                         {/*
                                           The milestones, and the one action
@@ -2423,17 +3061,34 @@ export function BookingsTab({
                                               totalAmount={payment.plan.totalAmount}
                                               locale={isRTL ? 'he-IL' : 'en-US'}
                                               size="compact"
+                                              /* Summed across the stages, because each
+                                                 milestone raises its own invoice and a
+                                                 refund attaches to whichever one was paid.
+                                                 With money returned the middle pair becomes
+                                                 returned/kept — collected and outstanding
+                                                 describe a settled payment and say nothing
+                                                 about what went back. */
+                                              refunded={refunded}
                                               labels={{
                                                 total: t('crm.payment.total') || 'Total',
                                                 collected: t('crm.payment.collected') || 'Collected',
                                                 outstanding: t('crm.payment.outstanding') || 'Outstanding',
                                                 // Only rendered when a period has actually been called off.
                                                 cancelled: t('payments.plan.status.cancelled') || 'Stopped',
+                                                refunded: t('crm.journey.returned') || 'Refunded',
+                                                kept: t('crm.journey.kept') || 'You keep',
                                               }}
                                             />
 
                                           <div
-                                            className="flex flex-col gap-px overflow-hidden"
+                                            /* NO `overflow-hidden`: each row carries a ⋯ menu
+                                               positioned absolutely, and a clipping ancestor
+                                               clips the menu too — it rendered cut off, with
+                                               options the owner could not reach. The rows have
+                                               no background of their own, so the radius had
+                                               nothing to clip anyway. Same fix, same reason, as
+                                               the meetings list above. */
+                                            className="flex flex-col gap-px"
                                             style={{
                                               borderRadius: '10px',
                                               border: '1px solid var(--v2-border)',
@@ -2464,20 +3119,38 @@ export function BookingsTab({
                                                 Boolean(onCompleteStage) &&
                                                 !settledStatus;
 
-                                              const amountText = new Intl.NumberFormat(
-                                                isRTL ? 'he-IL' : 'en-US',
-                                                {
+                                              const money = (value: number) =>
+                                                new Intl.NumberFormat(isRTL ? 'he-IL' : 'en-US', {
                                                   style: 'currency',
                                                   currency: payment.currency,
-                                                  maximumFractionDigits: stage.amount % 1 === 0 ? 0 : 2,
-                                                }
-                                              ).format(stage.amount);
+                                                  maximumFractionDigits: value % 1 === 0 ? 0 : 2,
+                                                }).format(value);
+
+                                              const stageRefunded = Number(stage.refundedAmount || 0);
+
+                                              /*
+                                                THE FIGURE IS WHAT THE CLIENT PAID.
+                                                ───────────────────────────────────
+                                                Briefly it was the net, and that misstated the
+                                                event: the row reads "₪X שולם 7 באוק׳", so a
+                                                net figure there says the client paid ₪2,250 on
+                                                the 7th when they paid ₪4,500. What happened
+                                                afterwards does not change what was paid, and
+                                                this line is about the payment.
+
+                                                The refund is its own event and gets its own
+                                                line below — how much went back, and how much
+                                                stayed. Three facts, each where it belongs,
+                                                instead of five on one line.
+                                              */
+                                              const amountText = money(stage.amount);
 
                                               return (
                                                 <div
                                                   key={stage.id}
-                                                  className="flex items-center gap-2 px-2.5 py-2"
+                                                  className="flex flex-col gap-0.5 px-2.5 py-2"
                                                 >
+                                                  <div className="flex items-center gap-2">
                                                   <span
                                                     className="h-1.5 w-1.5 shrink-0 rounded-full"
                                                     style={{
@@ -2529,8 +3202,12 @@ export function BookingsTab({
                                                       className="text-[11.5px] tabular-nums whitespace-nowrap"
                                                       style={{ color: 'var(--v2-text-muted)' }}
                                                     >
+                                                      {/* "שולם 7 באוק׳" — one fact where there
+                                                          were two. The word used to sit alone at
+                                                          the end of the row, repeating a claim the
+                                                          green dot had already made at its start. */}
                                                       {paid && stage.paidAt
-                                                        ? stageDate(stage.paidAt)
+                                                        ? `${t('crm.stage.paid')} ${stageDate(stage.paidAt)}`
                                                         : stopped
                                                           // Its old due date is no longer a fact
                                                           // about this period — saying "due 7 Oct"
@@ -2543,53 +3220,13 @@ export function BookingsTab({
                                                     </span>
                                                   )}
 
-                                                  {/*
-                                                    The document for THIS stage.
-                                                    ───────────────────────────
-                                                    A job billed in three parts
-                                                    has three invoices and three
-                                                    receipts. The single button
-                                                    above can only ever reach one
-                                                    of them — the latest — so a
-                                                    client asking for the deposit
-                                                    invoice could not be served
-                                                    at all.
-
-                                                    One action per row, and the
-                                                    send route decides which
-                                                    document it is: invoice while
-                                                    the stage is owed, receipt
-                                                    once it is paid.
-                                                  */}
-                                                  {stage.invoiceId && onSendInvoice && (
-                                                    <button
-                                                      type="button"
-                                                      title={paid ? t('crm.invoice.send_receipt') : t('crm.invoice.resend')}
-                                                      disabled={sendingInvoiceBookingId === booking.id}
-                                                      onClick={e => {
-                                                        e.stopPropagation();
-                                                        handleSendInvoice(stage.invoiceId as string, booking.id);
-                                                      }}
-                                                      className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--v2-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--v2-text-secondary)] transition-colors hover:border-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] disabled:opacity-50"
-                                                    >
-                                                      <Mail className="h-3 w-3" />
-                                                      {/* Named, not just iconised: on a row that
-                                                          may sit beside two others, "send" does
-                                                          not say WHICH document — and invoice and
-                                                          receipt are different pieces of paper to
-                                                          the person asking for one. */}
-                                                      {paid ? t('crm.stage.receipt') : t('crm.stage.invoice')}
-                                                    </button>
-                                                  )}
-
                                                   <span className="ms-auto shrink-0">
                                                     {paid ? (
-                                                      <span
-                                                        className="text-[11.5px]"
-                                                        style={{ color: '#15864F' }}
-                                                      >
-                                                        {t('crm.stage.paid')}
-                                                      </span>
+                                                      /* Nothing: the date beside the amount reads
+                                                         "שולם 7 באוק׳" and the dot is green. A
+                                                         third statement of the same fact is what
+                                                         made the row crowded. */
+                                                      null
                                                     ) : stopped ? (
                                                       /*
                                                         Before every other test, because a stopped
@@ -2640,12 +3277,405 @@ export function BookingsTab({
                                                       </span>
                                                     )}
                                                   </span>
+
+                                                  {/*
+                                                    Receipt and refund, behind one control.
+                                                    ───────────────────────────────────────
+                                                    They were two buttons in the middle of the
+                                                    row, and on a line whose job is to report
+                                                    money they were the loudest marks on it.
+                                                    The figures are what a payment row is for.
+
+                                                    Nothing is removed — both live in the menu,
+                                                    which is where the meetings list already
+                                                    puts its secondary actions, so one gesture
+                                                    means the same thing in both places.
+                                                  */}
+                                                  <StageRowActions
+                                                    invoiceId={stage.invoiceId}
+                                                    paid={paid}
+                                                    remaining={
+                                                      stage.amount - Number(stage.refundedAmount || 0)
+                                                    }
+                                                    sending={sendingInvoiceBookingId === booking.id}
+                                                    onSendDocument={
+                                                      onSendInvoice
+                                                        ? () =>
+                                                            handleSendInvoice(
+                                                              stage.invoiceId as string,
+                                                              booking.id
+                                                            )
+                                                        : undefined
+                                                    }
+                                                    onRefund={
+                                                      onRefundStage
+                                                        ? () =>
+                                                            onRefundStage({
+                                                              invoiceId: stage.invoiceId as string,
+                                                              amount: stage.amount,
+                                                              refunded: Number(stage.refundedAmount || 0),
+                                                              currency: payment!.currency,
+                                                              label: stage.label || `${i + 1}`,
+                                                            })
+                                                        : undefined
+                                                    }
+                                                    t={t}
+                                                  />
+                                                  </div>
+
+                                                  {/*
+                                                    WHAT BECAME OF IT, under what was paid.
+                                                    ───────────────────────────────────────
+                                                    "הוחזר ₪2,250 · נותר אצלכם ₪2,250 · 7 באוק׳".
+                                                    The row above states the payment; this states
+                                                    the refund and what survived it — the two
+                                                    figures an owner actually weighs, in the same
+                                                    words the strip uses for them.
+
+                                                    Only on a stage that was actually refunded.
+                                                    `padding-inline-start` clears the dot, so the
+                                                    line hangs under the label rather than under
+                                                    the bullet.
+                                                  */}
+                                                  {stageRefunded > 0 && (
+                                                    <span
+                                                      className="text-[11.5px] tabular-nums"
+                                                      style={{
+                                                        color: 'var(--v2-text-muted)',
+                                                        paddingInlineStart: '14px',
+                                                      }}
+                                                    >
+                                                      {/* `bdi` around the whole line: it mixes two
+                                                          left-to-right currency runs into a
+                                                          right-to-left sentence, and left loose in
+                                                          the row the bidi algorithm reorders the
+                                                          neutrals between them. Isolated, the
+                                                          sentence resolves on its own terms. */}
+                                                      <bdi>
+                                                        {(t('crm.stage.refund_breakdown') ||
+                                                          '{refunded} refunded · {kept} kept')
+                                                          .replace('{refunded}', money(stageRefunded))
+                                                          .replace(
+                                                            '{kept}',
+                                                            money(Math.max(stage.amount - stageRefunded, 0))
+                                                          )}
+                                                        {stage.refundedAt
+                                                          ? ` · ${stageDate(stage.refundedAt, true)}`
+                                                          : ''}
+                                                      </bdi>
+                                                    </span>
+                                                  )}
                                                 </div>
                                               );
                                             })}
                                           </div>
                                           </div>
                                         ) : null}
+
+                                        {/*
+                                          THE SAME ROW, for a booking sold as one payment.
+                                          ─────────────────────────────────────────────────
+                                          A quote or a plan lists its stages above, each with
+                                          a dot, an amount and a date, so an owner can see at
+                                          a glance which parts are settled. An ordinary
+                                          service got none of that: its payment step printed
+                                          a bare "₪300.00" and two buttons, and said nothing
+                                          about whether the ₪300 had ever arrived. The one
+                                          question the step exists to answer was the one it
+                                          did not answer.
+
+                                          One payment is one row. Deliberately NOT
+                                          `PaymentPlanTotals` as well — Total, Collected and
+                                          Outstanding are three lines restating a single
+                                          figure when there is only one payment, and the row
+                                          already carries all three facts.
+
+                                          Not shown when a refund has happened: `showAccount`
+                                          then draws the full charged / returned / kept
+                                          ledger just above, which answers more than this
+                                          row would and would otherwise say "Paid" directly
+                                          beneath a line explaining the money went back.
+                                        */}
+                                        {(() => {
+                                          // Every gate lives in `showsPaymentAccount`, because
+                                          // the fact line above is suppressed on exactly the
+                                          // steps this renders on. Two copies of the
+                                          // condition would eventually disagree and leave a
+                                          // card with neither.
+                                          if (!showsPaymentAccount || !payment) return null;
+
+                                          /*
+                                            `refunded` status counts as paid HERE: the money
+                                            did arrive, and the refund that followed is the
+                                            chip's business, not this row's. Saying "not paid"
+                                            of a payment that was taken and returned would be
+                                            a third story about the same money.
+                                          */
+                                          const isPaid =
+                                            payment.status === 'paid' || payment.status === 'refunded';
+
+                                          /*
+                                            THE REQUEST WAS CALLED OFF.
+                                            ───────────────────────────
+                                            A cancelled booking nobody paid for: the invoice
+                                            was voided with it, so this money is never
+                                            arriving and was never chased.
+
+                                            It has to be tested BEFORE overdue, because the
+                                            step's own detail line called it overdue —
+                                            "₪300.00 (באיחור)" sitting directly above a chip
+                                            reading "payment request cancelled". `isOverdue`
+                                            upstream is only `status === 'pending'` and a due
+                                            date in the past, and voiding an invoice leaves
+                                            both of those true. The card contradicted itself.
+
+                                            Stopped money is not late money. It is money
+                                            given up on, which the strip already has a cell
+                                            and a colour for.
+                                          */
+                                          const isStopped = cancelledUnpaid;
+                                          const isOverdue =
+                                            !isPaid && !isStopped && payment.invoiceStatus === 'overdue';
+                                          const isBilled =
+                                            !isPaid && !isStopped && !isOverdue && Boolean(payment.invoiceId);
+
+                                          /*
+                                            A PLAN WHOSE SCHEDULE IS NOT WRITTEN YET.
+                                            ─────────────────────────────────────────
+                                            `stages` is omitted until the processor confirms,
+                                            so this booking fell between both branches and
+                                            showed no account at all — in the one window where
+                                            an owner is most likely checking whether the sale
+                                            went through.
+
+                                            It gets the totals and NOT a list. The periods do
+                                            not exist yet, and drawing projected rows with
+                                            invented dates would have the drawer assert a
+                                            schedule nobody has agreed to. The three figures
+                                            are real: the agreement's total, what the mirror
+                                            says is collected, and the difference.
+                                          */
+                                          const plan = payment.plan;
+
+                                          /*
+                                            The totals strip is `PaymentPlanTotals`, the same
+                                            component the staged branch uses — fed stages it
+                                            synthesises rather than a second set of sums.
+                                            Two renderers for one strip is how the card and
+                                            the dialog came to print different totals for one
+                                            job, which is the bug that component exists to
+                                            end.
+                                          */
+                                          const totalsStages = plan
+                                            ? Array.from({ length: Math.max(plan.installmentCount, 1) }, (_, i) => ({
+                                                amount: plan.installmentAmount,
+                                                // Only what the mirror has confirmed. Unknown
+                                                // (`undefined`) must not round up to "paid".
+                                                status: i < (plan.periodsPaid ?? 0) ? 'paid' : 'pending',
+                                              }))
+                                            : [
+                                                {
+                                                  amount: charged,
+                                                  /*
+                                                    `cancelled` puts the figure in the
+                                                    strip's Stopped cell, where it reads as
+                                                    money given up on rather than money
+                                                    still owed. Left `pending` it would be
+                                                    counted as outstanding and the card
+                                                    would ask the owner to collect it.
+                                                  */
+                                                  status: isStopped
+                                                    ? 'cancelled'
+                                                    : isPaid
+                                                      ? 'paid'
+                                                      : 'pending',
+                                                },
+                                              ];
+
+                                          /*
+                                            The same four colours the stage rows use, in the
+                                            same order of seriousness. Read down a drawer of
+                                            mixed bookings, a green dot has to mean the same
+                                            thing on a quoted job and on a single service.
+                                          */
+                                          const dot = isPaid
+                                            ? '#22C58B'
+                                            : isStopped || isOverdue
+                                              ? '#B54708'
+                                              : isBilled
+                                                ? '#F79009'
+                                                : 'var(--v2-border)';
+
+                                          /*
+                                            When, not just whether — the same halves the stage
+                                            rows carry. `stageDate` is reused rather than
+                                            re-formatted here because it already knows that
+                                            `paidAt` is an instant and `invoiceDueDate` is a
+                                            bare DATE, and that reading the second one in a
+                                            zone behind UTC moves an invoice to the day before
+                                            it existed.
+                                          */
+                                          const when = isPaid
+                                            ? payment.paidAt
+                                              ? `${t('crm.journey.paid_on')} ${stageDate(payment.paidAt, true)}`
+                                              : /*
+                                                  THE WORD ALONE, when no date was recorded.
+                                                  ──────────────────────────────────────────
+                                                  `paidAt` comes from the invoice's `paid_at`
+                                                  or a settled transaction's, and neither is
+                                                  guaranteed: an invoice can carry
+                                                  `status: 'paid'` with `paid_at` still null,
+                                                  which is the same status-versus-ledger split
+                                                  that has bitten the chasers.
+
+                                                  Returning '' here meant the row did not
+                                                  render at all, so a PAID booking showed a
+                                                  totals strip and nothing else — no date, and
+                                                  no statement that it had been paid either.
+                                                  The missing date became a missing fact.
+
+                                                  A date is not invented to fill the gap. The
+                                                  row says what is known and stops.
+                                                */
+                                                t('crm.journey.paid_on')
+                                            : isStopped
+                                              ? /*
+                                                  NO DUE DATE on a request that was called
+                                                  off. "Due 7 Oct" of something nobody will
+                                                  ever be asked for is the same confusion a
+                                                  stopped plan period had, and the chip
+                                                  beside this already says the request was
+                                                  cancelled. The Stopped cell carries the
+                                                  figure; there is nothing left to date.
+                                                */
+                                                ''
+                                              : payment.invoiceDueDate
+                                                ? `${t('crm.payment.due')} ${stageDate(payment.invoiceDueDate, true)}`
+                                                : '';
+
+                                          /*
+                                            BOTH DATES, because a refund is two events.
+                                            ───────────────────────────────────────────
+                                            The old ledger carried the refund's date and
+                                            not the payment's, so a card could say money
+                                            came back on the 29th without ever saying when
+                                            it arrived. They are separate facts and an
+                                            owner reconciling a statement needs both.
+
+                                            A line each rather than one line carrying two
+                                            dates: the dots then read down the card in the
+                                            order the money actually moved.
+                                          */
+                                          const lines = [
+                                            { key: 'state', dot, text: when },
+                                            ...(refunded > 0 && payment.refundedAt
+                                              ? [
+                                                  {
+                                                    key: 'refund',
+                                                    dot: '#F79009',
+                                                    text: `${t('crm.journey.returned')} ${stageDate(payment.refundedAt, true)}`,
+                                                  },
+                                                ]
+                                              : []),
+                                          ].filter(line => line.text);
+
+                                          /*
+                                            A plan shows the refund and nothing else.
+                                            ────────────────────────────────────────
+                                            Its periods do not exist yet, so a state line
+                                            would be a projection — the reason rows are
+                                            withheld from a plan at all. A refund is not a
+                                            projection: it is a thing that happened, on a
+                                            date the row can name. Dropping it with the
+                                            rest would lose a fact the old ledger showed.
+                                          */
+                                          const visibleLines = plan
+                                            ? lines.filter(line => line.key === 'refund')
+                                            : lines;
+
+                                          return (
+                                            <div
+                                              className="mt-2 flex flex-col gap-2"
+                                              style={{ gridColumn: 1 }}
+                                            >
+                                              {/* What the whole thing is worth, before the
+                                                  payment that makes it up — the same three
+                                                  figures, in the same strip, that a quoted
+                                                  job shows above its stages. */}
+                                              <PaymentPlanTotals
+                                                stages={totalsStages}
+                                                currency={payment.currency}
+                                                totalAmount={plan ? plan.totalAmount : charged}
+                                                locale={isRTL ? 'he-IL' : 'en-US'}
+                                                size="compact"
+                                                /* Late is a different fact from merely owed,
+                                                   and the strip says so in red rather than
+                                                   amber when the invoice has gone overdue. */
+                                                overdue={isOverdue}
+                                                overdueLabel={t('crm.payment.overdue') || 'Overdue'}
+                                                /* Money handed back turns the middle pair
+                                                   into returned/kept — see the component.
+                                                   The same two words the old ledger used,
+                                                   so nothing is renamed on the way. */
+                                                refunded={refunded}
+                                                labels={{
+                                                  total: t('crm.payment.total') || 'Total',
+                                                  collected: t('crm.payment.collected') || 'Collected',
+                                                  outstanding: t('crm.payment.outstanding') || 'Outstanding',
+                                                  cancelled: t('payments.plan.status.cancelled') || 'Stopped',
+                                                  refunded: t('crm.journey.returned') || 'Refunded',
+                                                  kept: t('crm.journey.kept') || 'You keep',
+                                                }}
+                                              />
+
+                                              {/* The single payment's DATE, and nothing the
+                                                  strip has already said.
+
+                                                  It carried the state word and the amount
+                                                  too, which put "Outstanding ₪300" directly
+                                                  under a strip cell reading "Outstanding
+                                                  ₪300". The date is the one fact the three
+                                                  figures above cannot express, so it is the
+                                                  only one left here — with the dot, which
+                                                  states the same thing in no space at all.
+
+                                                  No date, no row: a lone dot is not a line
+                                                  worth drawing, and the strip is then the
+                                                  whole truth. A plan with no written
+                                                  schedule has no row for the same reason —
+                                                  its periods do not exist yet. */}
+                                              {visibleLines.length > 0 && (
+                                              <div
+                                                className="flex flex-col gap-px overflow-hidden"
+                                                style={{
+                                                  borderRadius: '10px',
+                                                  border: '1px solid var(--v2-border)',
+                                                }}
+                                              >
+                                                {visibleLines.map(line => (
+                                                  <div
+                                                    key={line.key}
+                                                    className="flex items-center gap-2 px-2.5 py-2"
+                                                  >
+                                                    <span
+                                                      className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                      style={{ background: line.dot }}
+                                                      aria-hidden="true"
+                                                    />
+
+                                                    <span
+                                                      className="text-[12.5px] tabular-nums"
+                                                      style={{ color: 'var(--v2-text-secondary)' }}
+                                                    >
+                                                      {line.text}
+                                                    </span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
 
                                         {/* A plan that is no longer running.
                                             Only when it has actually ended: an
@@ -2688,11 +3718,43 @@ export function BookingsTab({
                                           );
                                         })()}
 
-                                        {scheduleDetail && (
+                                        {/* The hours, under the date they belong to. */}
+                                        {scheduleTime && (
                                           <span
-                                            className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)]"
+                                            className="text-[12.5px] leading-[1.5] tabular-nums text-[var(--v2-text-secondary)]"
                                             style={{ gridColumn: 1 }}
                                           >
+                                            {scheduleTime}
+                                          </span>
+                                        )}
+
+                                        {/* The status, on its own line with the dot every
+                                            other list on this card now uses — brown while
+                                            nobody has said what happened, green once it is
+                                            marked held, muted while it is still ahead. */}
+                                        {scheduleDetail && (
+                                          <span
+                                            className="flex items-center gap-2 text-[12.5px] leading-[1.5]"
+                                            style={{
+                                              gridColumn: 1,
+                                              color: meetingSettled
+                                                ? 'var(--v2-text-muted)'
+                                                : scheduleAwaiting
+                                                  ? '#B54708'
+                                                  : 'var(--v2-text-muted)',
+                                            }}
+                                          >
+                                            <span
+                                              className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                              style={{
+                                                background: meetingSettled
+                                                  ? '#22C58B'
+                                                  : scheduleAwaiting
+                                                    ? '#B54708'
+                                                    : 'var(--v2-border)',
+                                              }}
+                                              aria-hidden="true"
+                                            />
                                             {scheduleDetail}
                                           </span>
                                         )}
@@ -2879,69 +3941,20 @@ export function BookingsTab({
                                               {t('crm.quote.stop.action') || 'Stop this job'}
                                             </button>
                                           )}
+                                          {/*
+                                            NO REFUND HERE. It used to offer one once a job
+                                            was stopped and paid.
 
-                                          {/* Refund, on a job that has ALREADY been stopped.
-                                              The stop dialog offers a refund, but stopping is a
-                                              once-only action: the button above is gated on
-                                              `accepted`, so the moment it is pressed the refund
-                                              option goes with it. An owner who stops first and
-                                              decides to refund afterwards — the ordinary order,
-                                              since the client usually asks later — had nowhere to
-                                              go but the Payments tab, if they knew to look.
-                                              Opens the payment manager that already exists rather
-                                              than a second refund dialog: it carries the partial
-                                              amount, the over-refund guard and the notify flag. */}
-                                          {isProposalStep
-                                            && onRefundJob
-                                            && step.metadata?.proposalStatus === 'stopped'
-                                            /*
-                                             * ONLY when money actually came in.
-                                             *
-                                             * This showed on every stopped job, so a quote
-                                             * that was never paid offered a refund over
-                                             * nothing — and pressing it opened a dialog with
-                                             * nothing to return.
-                                             *
-                                             * `'paid'` and not `'refunded'`: a FULL refund
-                                             * moves the status to `refunded` and there is
-                                             * nothing left to give back, while a PARTIAL one
-                                             * deliberately leaves it at `paid` — so this
-                                             * still offers the rest of a half-refunded job.
-                                             */
-                                            && session.payment?.status === 'paid' && (
-                                            <button
-                                              type="button"
-                                              onClick={e => {
-                                                e.stopPropagation();
-                                                /*
-                                                 * The QUOTE's currency and total, not
-                                                 * the booking's — a quoted job's money
-                                                 * lives on the proposal. An empty
-                                                 * currency reaches `Intl.NumberFormat`
-                                                 * and throws `Invalid currency code`,
-                                                 * which is a crash rather than a blank.
-                                                 */
-                                                onRefundJob(
-                                                  booking.id,
-                                                  (step.metadata?.currency as string) || 'USD',
-                                                  Number(step.metadata?.total) || 0
-                                                );
-                                              }}
-                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
-                                            >
-                                              {/*
-                                                `payments.refund`, the label every other
-                                                refund control already uses. A key of its
-                                                own said 'החזר כספי' where the rest of the
-                                                app says 'החזר' — the same action reading
-                                                two ways depending on where you clicked.
-                                                Not `crm.payment.manage` either: that one
-                                                opens the payment manager, which is the
-                                                dialog that reported this job as free.
-                                              */}
-                                              {t('payments.refund') || 'Refund'}
-                                            </button>
-                                          )}
+                                            A stopped job’s money is on the PAYMENT card, where
+                                            every paid milestone now carries its own refund — and
+                                            that is the only place the choice can be made, because
+                                            a refund follows a charge and this card knows only the
+                                            job. Offered from here it could mean nothing narrower
+                                            than "all of it".
+
+                                            Two doors to one decision, one of which could not
+                                            express the common case, is worse than one door.
+                                          */}
 
                                           {/*
                                             No "View quote" button here any more.
@@ -3052,21 +4065,71 @@ export function BookingsTab({
                                             off alone, and on a package billed per
                                             session marking one held is what invoices
                                             it. */}
+                                        {/*
+                                          ONE LIST, NOT A STACK OF CARDS.
+                                          ───────────────────────────────
+                                          Every row was its own tinted box holding a
+                                          number, a date, a filled status pill and FOUR
+                                          outlined buttons. Six meetings meant six floating
+                                          boxes and twenty-four controls, and at drawer
+                                          width each row wrapped onto two lines — so the
+                                          actions for meeting 2 sat directly under the date
+                                          for meeting 2 and directly above meeting 3, with
+                                          nothing to say which belonged to which.
+
+                                          Now the same hairline-separated list the stages
+                                          and the payment account use: one border around
+                                          the set, rows divided by a rule, state carried by
+                                          a dot and a coloured word rather than a filled
+                                          pill. Nothing is removed — every action is still
+                                          on every row — it is the chrome around them that
+                                          is gone.
+                                        */}
                                         {step.key === 'package' && session.meetings && (
-                                          <div className="mt-2 flex flex-col gap-1.5" style={{ gridColumn: 1 }}>
+                                          <div className="mt-2 flex flex-col gap-2" style={{ gridColumn: 1 }}>
+                                            {/* NO `overflow-hidden` here, deliberately.
+                                                Each row carries a ⋯ menu positioned
+                                                absolutely, and an ancestor that clips its
+                                                overflow clips that menu too — it rendered
+                                                as a 40px strip of icons with every label
+                                                cut off. The rows have no background of
+                                                their own, so there is nothing for the
+                                                radius to clip anyway: the border and the
+                                                corner are the container's. */}
+                                            <div
+                                              className="flex flex-col gap-px"
+                                              style={{
+                                                borderRadius: '10px',
+                                                border: '1px solid var(--v2-border)',
+                                              }}
+                                            >
                                             {session.meetings.map((meeting, meetingIndex) => {
                                               const row = meeting.booking;
                                               const held = row.status === 'completed';
                                               const off =
                                                 row.status === 'cancelled' || row.status === 'no_show';
-                                              const open = !held && !off;
-                                              const meetingStatus = getBookingStatusLabel(row.status, true, false);
+                                              const meetingStatus = getBookingStatusLabel(row.status, true, false, row.start_time);
 
                                               return (
                                                 <div
                                                   key={row.id}
-                                                  className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg bg-[var(--v2-bg)] px-2.5 py-1.5"
+                                                  className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-2"
                                                 >
+                                                  {/* The state, in no space at all — the
+                                                      same four colours every other list on
+                                                      this card uses. */}
+                                                  <span
+                                                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                    style={{
+                                                      background: held
+                                                        ? '#22C58B'
+                                                        : off
+                                                          ? '#B54708'
+                                                          : 'var(--v2-border)',
+                                                    }}
+                                                    aria-hidden="true"
+                                                  />
+
                                                   <span className="w-4 shrink-0 text-[11px] font-semibold tabular-nums text-[var(--v2-text-muted)]">
                                                     {row.occurrence_number ?? meetingIndex + 1}
                                                   </span>
@@ -3081,68 +4144,42 @@ export function BookingsTab({
                                                     {row.start_time ? formatDate(row.start_time) : '—'}
                                                   </span>
 
+                                                  {/* The word keeps its colour and loses the
+                                                      filled pill. Six solid chips reading
+                                                      down a card look like six alerts; the
+                                                      colour alone still separates held from
+                                                      cancelled from past due. */}
                                                   <span
-                                                    className={`rounded-full px-1.5 py-0.5 text-[11px] font-medium ${meetingStatus.color} ${meetingStatus.bgColor}`}
+                                                    className={`text-[11.5px] ${meetingStatus.color}`}
                                                   >
                                                     {meetingStatus.text}
                                                   </span>
 
-                                                  <span className="ms-auto flex items-center gap-1.5">
-                                                    {open && onSetBookingStatus && (
-                                                      <>
-                                                        <button
-                                                          type="button"
-                                                          onClick={e => {
-                                                            e.stopPropagation();
-                                                            onSetBookingStatus(row.id, 'completed');
-                                                          }}
-                                                          className="rounded-full border border-green-600/40 px-2 py-0.5 text-[11px] font-medium text-green-700 transition-colors hover:bg-green-500/10 dark:text-green-400"
-                                                        >
-                                                          {t('crm.booking.quoted.meeting_held')}
-                                                        </button>
-                                                        <button
-                                                          type="button"
-                                                          onClick={e => {
-                                                            e.stopPropagation();
-                                                            onSetBookingStatus(row.id, 'no_show');
-                                                          }}
-                                                          className="rounded-full border border-[var(--v2-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--v2-text-secondary)] transition-colors hover:border-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
-                                                        >
-                                                          {t('crm.booking.status.no_show') || 'No show'}
-                                                        </button>
-                                                        <button
-                                                          type="button"
-                                                          onClick={e => {
-                                                            e.stopPropagation();
-                                                            onSetBookingStatus(row.id, 'cancelled');
-                                                          }}
-                                                          className="rounded-full border border-red-600/40 px-2 py-0.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
-                                                        >
-                                                          {t('crm.booking.status.cancelled') || 'Cancel'}
-                                                        </button>
-                                                      </>
-                                                    )}
-
-                                                    {onEditSession && (
-                                                      <button
-                                                        type="button"
-                                                        onClick={e => {
-                                                          e.stopPropagation();
-                                                          onEditSession(row.id);
-                                                        }}
-                                                        className="rounded-full border border-[var(--v2-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--v2-text-secondary)] transition-colors hover:border-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
-                                                      >
-                                                        {t('crm.booking.reschedule') || 'Reschedule'}
-                                                      </button>
-                                                    )}
-                                                  </span>
+                                                  <MeetingRowActions
+                                                    status={row.status}
+                                                    startTime={row.start_time ?? null}
+                                                    onSetStatus={
+                                                      onSetBookingStatus
+                                                        ? next => onSetBookingStatus(row.id, next)
+                                                        : undefined
+                                                    }
+                                                    onReschedule={
+                                                      onEditSession ? () => onEditSession(row.id) : undefined
+                                                    }
+                                                    t={t}
+                                                  />
                                                 </div>
                                               );
                                             })}
+                                            </div>
 
                                             {/* Another date on a block already under way:
                                                 a make-up for one the client missed, or a
-                                                seventh on a block of six. */}
+                                                seventh on a block of six.
+
+                                                Outside the bordered list deliberately: it
+                                                adds a meeting rather than being one, and
+                                                inside the frame it read as a seventh row. */}
                                             {onAddPackageMeeting && (
                                               <AddPackageMeeting
                                                 containerId={
@@ -3241,6 +4278,65 @@ export function BookingsTab({
                 </div>
               );
             })}
+            </div>
+            )}
+
+            {/*
+              THE PAGER.
+
+              Shown only when there is more than one page, so a contact with
+              three bookings is not given controls that cannot move. The count
+              describes the FILTERED set, because that is the list the reader is
+              looking at — a pager that counted everything while the search had
+              narrowed it would be describing a different screen.
+
+              The copy is `payments.pagination.*`, already written in all three
+              languages for the orders page. Two pagers saying the same thing in
+              different words would be two answers to one question.
+            */}
+            {pageCount > 1 && (
+              <div className="flex items-center justify-between gap-3 border-t border-[var(--v2-border)] pt-3">
+                <span className="text-[12px] tabular-nums text-[var(--v2-text-muted)]">
+                  {(t('payments.pagination.showing') || '{from}-{to} of {total}')
+                    .replace('{from}', String(page * PAGE_SIZE + 1))
+                    .replace('{to}', String(Math.min((page + 1) * PAGE_SIZE, filteredSessions.length)))
+                    .replace('{total}', String(filteredSessions.length))}
+                </span>
+
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setBookingPage(p => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                    className="h-7 px-2 text-[12px]"
+                  >
+                    {/* A chevron is a picture of an arrow and does not flip with
+                        direction the way `ms`/`me` do, so it is turned by hand
+                        in RTL — the same treatment the orders pager uses. */}
+                    <ChevronLeft className={`h-3.5 w-3.5 ${isRTL ? 'rotate-180' : ''}`} />
+                    <span className="ms-1">{t('payments.pagination.prev') || 'Previous'}</span>
+                  </Button>
+
+                  <span className="px-1 text-[12px] tabular-nums text-[var(--v2-text-muted)]">
+                    {page + 1}/{pageCount}
+                  </span>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setBookingPage(p => Math.min(pageCount - 1, p + 1))}
+                    disabled={page >= pageCount - 1}
+                    className="h-7 px-2 text-[12px]"
+                  >
+                    <span className="me-1">{t('payments.pagination.next') || 'Next'}</span>
+                    <ChevronRight className={`h-3.5 w-3.5 ${isRTL ? 'rotate-180' : ''}`} />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

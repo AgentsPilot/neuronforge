@@ -11,9 +11,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import { createLogger } from '@/lib/logger';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+import { firstOutlier, nameSegment, type Dimension } from '../../patterns/segmentRate';
+import { localWeekdayIn } from '@/lib/business-os/businessDay';
 
 const logger = createLogger({ module: 'RetNoShowSpikeDetector' });
-import { COMMON_GUARDRAILS } from '../types';
 
 export class RetNoShowSpikeDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -23,7 +24,7 @@ export class RetNoShowSpikeDetector extends BaseDetector {
     description: 'Detects when no-show rate spikes above baseline',
 
     watchedMetrics: ['retention.no_show_rate'],
-    eventTypes: ['booking.no_show'],
+    documentsEventTypes: ['booking.no_show'],
 
     baselineWindow: 'month',
     thresholdType: 'std_deviation',
@@ -40,22 +41,7 @@ export class RetNoShowSpikeDetector extends BaseDetector {
     },
 
     pairedProcessId: 'send_reminder_sequence',
-    consentTier: 'automate',
     eligibleForAutomation: true,
-    ownerParameters: [
-      {
-        id: 'hours_before',
-        label: 'Hours Before Booking',
-        type: 'number',
-        default: 24,
-        min: 1,
-        max: 72,
-      },
-    ],
-    guardrails: [
-      COMMON_GUARDRAILS.max_2_per_booking,
-      COMMON_GUARDRAILS.quiet_hours,
-    ],
     cooldownHours: 168, // 1 week
   };
 
@@ -129,6 +115,84 @@ export class RetNoShowSpikeDetector extends BaseDetector {
 
     const severity = this.definition.severityFn(risePoints, baselineRate);
 
+    /*
+     * WHICH appointments are being missed, not just how many.
+     *
+     * "Your no-shows are up 12 points" is a number the owner can do nothing
+     * with. "Thursday evenings are missed four times as often as everything
+     * else" names the thing to change. Computed over the FULL settled window
+     * rather than the recent slice: the recent window is deliberately short to
+     * catch a spike, and a 30-day slice rarely holds enough per day for a rate
+     * to mean anything.
+     *
+     * Day first, then service — the owner can move a slot more easily than she
+     * can change what she sells, so the more actionable slice is tried first.
+     * The day dimension is dropped entirely when nobody has told us the
+     * business's zone, because a weekday read off a UTC timestamp files
+     * late-evening appointments under the wrong day.
+     */
+    const timezone = await this.resolveBusinessTimezone(userId);
+
+    const dimensions: Dimension<BookingRow>[] = [];
+    if (timezone) {
+      dimensions.push({
+        name: 'day_of_week',
+        segmentOf: r => (r.start_time ? localWeekdayIn(new Date(r.start_time), timezone) : null),
+      });
+    }
+    dimensions.push({ name: 'service', segmentOf: r => r.service_id });
+
+    const { found, refusals } = firstOutlier(settled, r => r.status === 'no_show', dimensions);
+
+    if (!found) {
+      // The refusal kinds, so a card without a comparison can be explained.
+      logger.debug(
+        { userId, refusals, hasTimezone: Boolean(timezone), settled: settled.length },
+        'No-show rate is even across every slice; reporting the spike alone'
+      );
+    }
+
+    /*
+     * Name the slice, or drop the comparison entirely.
+     *
+     * A card that says "one group is four times worse" without saying which is
+     * the dead-link card again, and the owner's reply to that was "which
+     * link?". A service id has to be resolved to its name, and if the row has
+     * since gone there is nothing honest to print -- so the whole comparison
+     * goes rather than a UUID.
+     */
+    let segmentName: string | null = null;
+    if (found) {
+      let labels: Map<string, string> | undefined;
+
+      if (found.dimension === 'service') {
+        // Only when a service actually won. No lookup on the day path.
+        const { data: services } = await this.supabase
+          .from('scheduling_services')
+          .select('id, service_name')
+          .eq('user_id', userId)
+          .eq('id', found.comparison.segment);
+
+        labels = new Map(
+          ((services ?? []) as Array<{ id: string; service_name: string | null }>).map(s => [
+            s.id,
+            s.service_name ?? '',
+          ])
+        );
+      }
+
+      segmentName = nameSegment(found.dimension, found.comparison.segment, labels);
+
+      if (!segmentName) {
+        logger.debug(
+          { userId, dimension: found.dimension },
+          'Comparison found but its slice could not be named; omitting it'
+        );
+      }
+    }
+
+    const comparison = segmentName ? found?.comparison : undefined;
+
     const result = this.createDetectionResult({
       severity,
       metricKey: 'retention.no_show_rate',
@@ -143,6 +207,15 @@ export class RetNoShowSpikeDetector extends BaseDetector {
       estimatedImpactUsd: Math.round(lostValue * 100) / 100,
       impactDirection: 'loss',
       impactPeriod: 'monthly',
+      comparison,
+      /*
+       * The slice, named. `describeComparison` in `InsightRepository` sends
+       * only the shape of the gap, so without this line the model has four
+       * numbers and nothing to attach them to.
+       */
+      narrationSubject: comparison
+        ? `the no-shows concentrate on ${segmentName}: ${comparison.hits} of ${comparison.of} missed there, against ${comparison.rest.hits} of ${comparison.rest.of} everywhere else`
+        : undefined,
       processParameters: {
         window_days: WINDOW_DAYS,
         no_show_rate: recentRate,
@@ -150,6 +223,13 @@ export class RetNoShowSpikeDetector extends BaseDetector {
         rise_points: risePoints,
         no_shows: recentNoShows.length,
         appointments: recent.length,
+        /*
+         * The dimension travels with the comparison so the card can say "on
+         * Thursdays" rather than "in one group". The segment KEY is an id or a
+         * day code, never display text — the card resolves it.
+         */
+        comparison_dimension: comparison ? found?.dimension : undefined,
+        comparison_segment: comparison ? segmentName : undefined,
       },
     });
 

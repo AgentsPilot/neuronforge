@@ -1,7 +1,10 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+// `useRouter` left with the back button it existed for: the only other mention
+// of `router` in this file is a comment explaining why a hard navigation is used
+// instead of it.
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { changePassword } from '@/lib/client/change-password';
 import {
@@ -14,7 +17,6 @@ import { supabase } from '@/lib/supabaseClient';
 import { signOutUser } from '@/lib/client/auth-actions';
 import { marketingLogoutUrl } from '@/lib/utils/marketingUrl';
 import {
-  ArrowLeft,
   Loader2,
   Globe,
   DollarSign,
@@ -81,7 +83,6 @@ function scrollToSection(section: string): ReturnType<typeof setTimeout> {
 }
 
 function BusinessOSSettingsContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
   const { t, isRTL, language, setLanguage, currencyCode, setCurrency, availableCurrencies } = useLanguage();
@@ -732,17 +733,15 @@ function BusinessOSSettingsContent() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Back to Dashboard */}
-            <button
-              onClick={() => router.push('/business-os')}
-              className="p-1.5 sm:p-2 text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)] transition-all"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('settings.back_to_dashboard')}
-            >
-              <ArrowLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4 rtl:rotate-180" />
-            </button>
-          </div>
+          {/*
+            No "back to dashboard" control.
+
+            The platform's own navigation is always on screen, so a second way
+            back was one more thing in a header that has to fit on a phone — and
+            it pointed at one fixed destination regardless of where the reader
+            had come from, which is the part that made it misleading rather than
+            merely redundant.
+          */}
         </div>
 
         {/* Messages */}

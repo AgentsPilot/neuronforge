@@ -161,3 +161,35 @@ describe('R-5: allow-list edge cases', () => {
     expect(isBoostCheckoutOpenFor(A, { warn: jest.fn(), error: jest.fn() })).toBe(open);
   });
 });
+
+describe('5b.1: publishable key mode and purchase availability (SA C-2)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- fresh module state per case (the log-once memo)
+  const fresh = () => jest.requireActual('@/lib/business-os/boost/boostCheckoutAccess') as typeof import('@/lib/business-os/boost/boostCheckoutAccess');
+
+  it('publishableKeyMode reads the prefix only', () => {
+    const { publishableKeyMode } = fresh();
+    expect(publishableKeyMode('pk_test_x')).toBe('test');
+    expect(publishableKeyMode('pk_live_x')).toBe('live');
+    expect(publishableKeyMode('sk_test_x')).toBeNull();
+    expect(publishableKeyMode('')).toBeNull();
+    expect(publishableKeyMode(undefined)).toBeNull();
+  });
+
+  it('logs one error per distinct problem, never the key', () => {
+    jest.isolateModules(() => {
+      const { isBoostPurchaseAvailableFor } = fresh();
+      process.env.BUSINESS_OS_CREDITS_BOOST_ENABLED = 'true';
+      delete process.env.BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS;
+      process.env.STRIPE_SECRET_KEY = 'sk_test_server';
+      process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = 'pk_live_browser';
+      const log = { warn: jest.fn(), error: jest.fn() };
+      expect(isBoostPurchaseAvailableFor(A, log)).toBe(false);
+      expect(isBoostPurchaseAvailableFor(A, log)).toBe(false);
+      expect(log.error).toHaveBeenCalledTimes(1);
+      expect(log.error.mock.calls[0][1]).toMatch(/^bos_boost_publishable_key_mismatch/);
+      expect(JSON.stringify(log.error.mock.calls)).not.toContain('pk_live_browser');
+      process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = 'pk_test_browser';
+      expect(isBoostPurchaseAvailableFor(A, log)).toBe(true);
+    });
+  });
+});

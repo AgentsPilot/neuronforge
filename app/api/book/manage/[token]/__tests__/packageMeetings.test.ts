@@ -60,7 +60,25 @@ jest.mock('@/lib/supabaseServer', () => ({
             childFilters.push([column, value]);
             return chain;
           },
-          order: () => Promise.resolve({ data: siblings, error: null }),
+          /* The quote lookup filters out superseded versions. It is unrelated to
+             the meetings this file is about, and only has to not break. */
+          neq: () => chain,
+          /*
+           * Thenable AND chainable.
+           *
+           * The sibling query ends at `.order(...)` and is awaited there; the
+           * quote lookup continues `.order(...).limit(1).maybeSingle()`. A bare
+           * promise satisfied the first and made the second read `.limit` off a
+           * Promise — undefined — which threw inside the route and emptied every
+           * assertion in this file.
+           */
+          order: () =>
+            Object.assign(Promise.resolve({ data: siblings, error: null }), {
+              limit: () => ({
+                // No quote on a package meeting; the portal simply finds none.
+                maybeSingle: async () => ({ data: null, error: null }),
+              }),
+            }),
           single: async () => ({ data: booking, error: booking ? null : new Error('not found') }),
         };
         return chain;

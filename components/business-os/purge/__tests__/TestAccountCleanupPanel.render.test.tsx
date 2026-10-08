@@ -36,6 +36,7 @@ function checkData(overrides: Record<string, unknown> = {}) {
     blockers: [],
     storageObjects: [],
     functionUpToDate: true,
+    serverMs: 812,
     rows: [
       { section: 'VERDICT', status: 'OK', item: `login ${LOGIN}`, found: 0, detail: 'Run the delete file next.' },
       { section: 'remove', status: 'remove', item: 'B1 business_os_contacts', found: 4, detail: '' },
@@ -57,6 +58,7 @@ const deleteData = {
     ],
     total: { result: 'CLEAN', rowsRemoved: 5, tablesRemoved: 2, removedLogin: LOGIN, removedAt: '2026-10-07T10:00:00Z', sameRun: true },
   },
+  serverMs: { check: 812, delete: 2140 },
 };
 
 type Call = { url: string; method: string; body: unknown };
@@ -154,9 +156,13 @@ describe('the check', () => {
     const user = await ready();
     await user.type(screen.getByLabelText(/Email of the test account/), 'a@walla.co.il');
     const tagInput = screen.getByLabelText(/Test tag/);
+    expect(screen.queryByTestId('cleanup-empty-tag-hint')).toBeNull();
     await user.clear(tagInput);
     expect(screen.getByRole('button', { name: 'Check' })).toBeDisabled();
+    // The disabled button explains itself: an empty tag would match every account.
+    expect(screen.getByTestId('cleanup-empty-tag-hint')).toHaveTextContent(/empty tag would match every account/);
     await user.type(tagInput, '@walla.co.il');
+    expect(screen.queryByTestId('cleanup-empty-tag-hint')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Check' }));
     await screen.findByTestId('cleanup-check-result');
     expect(posts('/check')[0].body).toEqual({ email: 'a@walla.co.il', tag: '@walla.co.il' });
@@ -228,6 +234,17 @@ describe('the check', () => {
     expect(screen.queryByTestId('cleanup-confirm')).not.toBeInTheDocument();
   });
 
+  it('shows the server time of the check, and nothing when the function does not report it (SA C-2)', async () => {
+    await checked();
+    expect(screen.getByTestId('cleanup-check-server-time')).toHaveTextContent('Server time: 812 ms');
+  });
+
+  it('hides the server time line when serverMs is null', async () => {
+    replies.check = { status: 200, body: { success: true, data: checkData({ serverMs: null }) } };
+    await checked();
+    expect(screen.queryByTestId('cleanup-check-server-time')).not.toBeInTheDocument();
+  });
+
   it('a section this build does not know is listed, not dropped', async () => {
     const base = checkData();
     replies.check = {
@@ -294,6 +311,14 @@ describe('confirm and delete', () => {
     expect(del).toBeDisabled();
     await user.type(confirm, 'M ');
     expect(del).not.toBeDisabled();
+  });
+
+  it('shows the server time of both calls under the report (SA C-2)', async () => {
+    const user = await checked();
+    await user.type(screen.getByLabelText(/Type the email again/), EMAIL);
+    await user.click(screen.getByRole('button', { name: 'Delete this test account' }));
+    await screen.findByTestId('cleanup-report');
+    expect(screen.getByTestId('cleanup-delete-server-time')).toHaveTextContent('Server time: check 812 ms · delete 2140 ms');
   });
 
   it('posts { email, tag, confirmEmail } once, shows Deleting…, then the report', async () => {

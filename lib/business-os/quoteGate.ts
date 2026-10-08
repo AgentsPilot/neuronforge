@@ -109,6 +109,88 @@ export function quoteGate(input: QuoteGateInput): QuoteGateState {
   return 'unmarked';
 }
 
+/** What `isMeetingPastDue` needs to answer. */
+export interface MeetingPastDueInput {
+  /** `scheduling_bookings.status`. */
+  status: string | null | undefined;
+  /** The meeting's start. Null for a service that is bought, not booked. */
+  startTime: Date | null | undefined;
+  /** Injected so the rule is testable without faking the clock. */
+  now?: Date;
+}
+
+/**
+ * Has this meeting's time passed with nobody saying what happened?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE BUG THIS FIXES
+ *
+ * `'crm.booking.status.confirmed'` reads "Upcoming", and that label is chosen by
+ * the STATUS alone. Nothing marks a booking past, so a confirmed meeting from
+ * three weeks ago still said "Upcoming" — on the one screen an owner uses to
+ * decide what needs doing. The card was telling them a thing that had already
+ * happened was still ahead.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY NOT JUST CALL `quoteGate` AND CHECK FOR `'unmarked'`
+ *
+ * It looks like the same question and is not. `quoteGate` returns `'open'` the
+ * moment a proposal exists, deliberately — once a quote is out, the meeting it
+ * came from stops being what the journey is waiting on (see the note at the
+ * `proposalStatus` branch). That is right for "may the owner quote?" and wrong
+ * here: a meeting nobody marked is still unmarked whether or not a price was
+ * sent from the van afterwards.
+ *
+ * Routing the badge through the gate would therefore hide this note on exactly
+ * the bookings furthest along. Same module, because the clock reasoning belongs
+ * in one place; separate function, because they answer different questions.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT COUNTS AS SAID
+ *
+ * `completed`, `cancelled` and `no_show` are the three marks an owner can
+ * apply, and each one settles the question. The two statuses that leave it open
+ * are `confirmed` and `pending`, and those are NAMED rather than inferred from
+ * "not one of the marks".
+ *
+ * That distinction is load-bearing. A catch-all would make this note the
+ * default for any status added later, and the sibling badge in the drawer
+ * already records what that costs: `stopped` was added to the proposal set
+ * without a branch, fell through, and told an owner a job they had just
+ * stopped was "awaiting a quote" — the badge asking for the one thing they had
+ * decided not to do. A new booking status should render no claim here until
+ * somebody decides what it means, so an unknown or missing status returns
+ * false.
+ *
+ * NO START TIME IS NEVER PAST DUE. A quoted service sold without an
+ * appointment has no meeting to be late for, and the badge already says
+ * `unscheduled_confirmed` for those.
+ *
+ * Instants are compared, never calendar days: `start_time` is a `timestamptz`,
+ * so "has it passed" needs no timezone and cannot drift the way a formatted
+ * DATE does.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+/** The statuses that leave "did this happen" open. Named, never inferred. */
+const UNMARKED_STATUSES = ['confirmed', 'pending'];
+
+export function isMeetingPastDue(input: MeetingPastDueInput): boolean {
+  const { status, startTime } = input;
+
+  /*
+   * Only a status we understand to be open. `completed`, `cancelled` and
+   * `no_show` are answers; anything else is a status this function has no
+   * opinion about, and silence is the correct opinion to have.
+   */
+  if (!status || !UNMARKED_STATUSES.includes(status)) return false;
+
+  // Nothing was scheduled, so nothing is late.
+  if (!startTime || Number.isNaN(startTime.getTime())) return false;
+
+  const now = input.now ?? new Date();
+  return startTime.getTime() <= now.getTime();
+}
+
 /**
  * Which side the ball is on, for the drawer's `waitingOn` metadata.
  *

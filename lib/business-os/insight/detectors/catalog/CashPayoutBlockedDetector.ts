@@ -19,7 +19,7 @@ export class CashPayoutBlockedDetector extends BaseDetector {
     description: 'Detects when Stripe payouts are disabled',
 
     watchedMetrics: ['cashflow.payout_status'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -59,11 +59,8 @@ export class CashPayoutBlockedDetector extends BaseDetector {
      * true after the first invoice.
      */
     ignoresVectorMaturity: true,
-
-    consentTier: 'observe', // User must take action
+ // User must take action
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 24,
   };
 

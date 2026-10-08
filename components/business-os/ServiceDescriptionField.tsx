@@ -62,6 +62,18 @@ const LABELS: Record<Language, {
 
 export interface ServiceDescriptionFieldProps {
   service: { id: string; name: string };
+  /**
+   * The text already saved, when this is an EDIT rather than a first write.
+   *
+   * The field was built for a service that has no description, so the draft
+   * started empty — correct there, and wrong the moment the landing-page wizard
+   * offered to change one: an owner pressing Edit would have faced a blank box
+   * and had to retype a paragraph that already existed, or worse, saved a short
+   * replacement for a long one by accident.
+   *
+   * Seeds the draft only; the component still owns it from the first keystroke.
+   */
+  initialValue?: string;
   language?: Language;
   /** Called with the saved text so the wizard can update its own copy of the service. */
   onSaved: (serviceId: string, description: string) => void;
@@ -73,9 +85,12 @@ export function ServiceDescriptionField({
   language = 'en',
   onSaved,
   autoFocus,
+  initialValue,
 }: ServiceDescriptionFieldProps) {
   const labels = LABELS[language] || LABELS.en;
-  const [draft, setDraft] = useState('');
+  // `useState`'s initialiser runs once, which is what this needs: re-seeding on
+  // every render would fight the person typing.
+  const [draft, setDraft] = useState(() => initialValue ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

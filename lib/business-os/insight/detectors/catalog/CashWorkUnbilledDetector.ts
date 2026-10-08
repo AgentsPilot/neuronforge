@@ -77,7 +77,7 @@ export class CashWorkUnbilledDetector extends BaseDetector {
     description: 'Finds completed appointments with no invoice and no payment against them',
 
     watchedMetrics: ['cashflow.unbilled_work'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -114,10 +114,7 @@ export class CashWorkUnbilledDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 24,
   };
 

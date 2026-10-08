@@ -30,7 +30,7 @@ function vars(theme: (typeof ARCHETYPES)[number]): string {
     --ap-surface-2:${mix(c.surface, c.background, 50)};
     --ap-border:${mix(c.text, c.background, 14)};
     --ap-text:${c.text}; --ap-text-muted:${c.textSecondary};
-    --ap-radius-sm:${r / 2}px; --ap-radius-md:${r}px; --ap-radius-lg:${r * 2}px;
+    --ap-radius-sm:${r / 4}px; --ap-radius-md:${r / 2}px; --ap-radius-lg:${r}px;
     --ap-space-1:${step}px; --ap-space-2:${step * 2}px; --ap-space-3:${step * 3}px;
     --ap-space-4:${step * 4}px; --ap-space-6:${step * 6}px; --ap-space-8:${step * 8}px;
     --ap-font-heading:"${theme.fonts.heading}",system-ui,sans-serif;

@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { CalendarClock, CheckCheck, ChevronLeft, ChevronRight, X } from 'lucide-react';
 
+import { PublicCard } from '@/components/public/PublicCard';
 import { formatPublicDate, publicT } from '@/lib/i18n/public-pages';
 import type { PublicBrand } from '@/lib/branding/publicBranding';
 
@@ -24,6 +25,15 @@ export interface PortalMeeting {
 interface PortalMeetingsProps {
   brand: PublicBrand;
   meetings: PortalMeeting[];
+  /**
+   * The business's clock, so a date here matches the one the owner sees.
+   *
+   * Without it these rows were formatted on the READER's device. An appointment
+   * at 23:00 Israel time is already the next day for a client opening the link
+   * in London, so the portal and the contact drawer named different days for
+   * one booking — and the portal is the version the client believes.
+   */
+  timeZone: string | null;
 }
 
 /** Four rows a page: enough to be a list, short enough to stay a rail. */
@@ -45,11 +55,13 @@ const PER_PAGE = 4;
  * decides which four of it to draw, so turning a page costs no request and
  * nothing reloads.
  *
- * Coming up first, then held — both newest-first, so the appointment a client
- * is most likely looking for is the one they see without turning anything.
+ * Coming up first, soonest at the top; then held, most recent at the top. Each
+ * group is ordered the way it is actually read — a diary forwards, a history
+ * backwards — so the appointment a client is most likely looking for is the
+ * one they see without turning anything.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-export function PortalMeetings({ brand, meetings }: PortalMeetingsProps) {
+export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProps) {
   const [page, setPage] = useState(0);
 
   const t = (key: string) => publicT(brand.locale, key);
@@ -57,10 +69,37 @@ export function PortalMeetings({ brand, meetings }: PortalMeetingsProps) {
   const Previous = brand.dir === 'rtl' ? ChevronRight : ChevronLeft;
   const Next = brand.dir === 'rtl' ? ChevronLeft : ChevronRight;
 
-  const ordered = useMemo(
-    () => [...meetings.filter(m => m.upcoming), ...meetings.filter(m => !m.upcoming)],
-    [meetings]
-  );
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * SOONEST FIRST AMONG WHAT IS COMING, MOST RECENT FIRST AMONG WHAT IS DONE.
+   *
+   * Upcoming and past were separated here but neither was sorted, so both
+   * inherited the layout query's `start_time DESC` — which is right for a
+   * history and backwards for a diary. A client with four appointments booked
+   * saw 17 December, then 3 December, then 19 November, then 5 November: the
+   * one they need next was last, and on page 1 of 5 it was often not on the
+   * page at all.
+   *
+   * A row with no date is a purchase rather than a meeting. It sorts last
+   * within its group rather than being dropped, because the client still has
+   * it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const ordered = useMemo(() => {
+    const at = (value: string | null) => (value ? new Date(value).getTime() : null);
+    const by = (dir: 1 | -1) => (a: PortalMeeting, b: PortalMeeting) => {
+      const left = at(a.startTime);
+      const right = at(b.startTime);
+      if (left === null && right === null) return 0;
+      if (left === null) return 1;
+      if (right === null) return -1;
+      return (left - right) * dir;
+    };
+    return [
+      ...meetings.filter(m => m.upcoming).sort(by(1)),
+      ...meetings.filter(m => !m.upcoming).sort(by(-1)),
+    ];
+  }, [meetings]);
 
   /**
    * What this one is, in a word, and whether it still counts.
@@ -100,14 +139,9 @@ export function PortalMeetings({ brand, meetings }: PortalMeetingsProps) {
   } as const;
 
   return (
-    <section
-      className="p-5"
-      style={{
-        background: 'var(--ap-surface)',
-        border: '1px solid var(--ap-border)',
-        borderRadius: 'var(--ap-radius-lg)',
-      }}
-    >
+    /* The surface is the TEMPLATE's: see PublicCard. `p-5` applies only on a
+       palette-only theme, where no composition sets its own padding. */
+    <PublicCard className="p-5">
       <div className="mb-2 flex items-center gap-2">
         <h2
           className="text-xs font-semibold"
@@ -160,11 +194,18 @@ export function PortalMeetings({ brand, meetings }: PortalMeetingsProps) {
                       — a product, or the container a package hangs from. It is
                       still something the client has. */}
                   {meeting.startTime
-                    ? formatPublicDate(new Date(meeting.startTime), brand.locale, {
-                        day: 'numeric',
-                        month: 'long',
-                        year: 'numeric',
-                      })
+                    ? formatPublicDate(
+                        new Date(meeting.startTime),
+                        brand.locale,
+                        {
+                          day: 'numeric',
+                          month: 'long',
+                          year: 'numeric',
+                        },
+                        // The business's clock. Same instant, same day as the
+                        // owner's contact drawer reports it.
+                        timeZone
+                      )
                     : t('portal.no_date')}
                   {label && ` · ${label}`}
                 </span>
@@ -250,6 +291,6 @@ export function PortalMeetings({ brand, meetings }: PortalMeetingsProps) {
           </div>
         </div>
       )}
-    </section>
+    </PublicCard>
   );
 }

@@ -87,12 +87,27 @@ export const RECIPES: Record<RecipeId, readonly BlockType[]> = {
   ],
 
   /**
-   * A landing page is one offer, not a business.
+   * A landing page is one offer — sold by somebody.
    *
-   * No about and no process — a visitor who followed an ad has not asked who
-   * you are, and every section between them and the price is a place to leave.
+   * ───────────────────────────────────────────────────────────────────────────
+   * This read "one offer, not a business", and carried no `about` on the
+   * grounds that a visitor who followed an ad has not asked who you are and
+   * every section before the price is a place to leave.
+   *
+   * That is true of the sections that delay the offer, and false of the one
+   * that makes it buyable. Nobody hands over money to a page: they hand it to
+   * whoever is behind it, and on a page a stranger reached from an ad there is
+   * no logo they recognise, no navigation to go exploring, and no second page
+   * to check. The owner's words: "when I buy a product I need to know whom I
+   * buy from."
+   *
+   * So one section, and its POSITION is the compromise: after `features`, where
+   * the reader already knows what is on offer, and before `pricing`, where they
+   * decide whether to pay for it. `process` stays out — that is a different
+   * question, about how the work runs, and it belongs on a website.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  landing: ['header', 'hero', 'features', 'pricing', 'faq', 'cta', 'contact_form', 'footer'],
+  landing: ['header', 'hero', 'features', 'about', 'pricing', 'faq', 'cta', 'contact_form', 'footer'],
 };
 
 /**

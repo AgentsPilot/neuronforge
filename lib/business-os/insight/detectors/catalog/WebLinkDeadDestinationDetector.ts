@@ -123,7 +123,7 @@ export class WebLinkDeadDestinationDetector extends BaseDetector {
     description: 'Finds active shared links whose destination cannot open on anyone else\'s device',
 
     watchedMetrics: ['acquisition.broken_link_destinations'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -160,10 +160,22 @@ export class WebLinkDeadDestinationDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'suggest',
+    /*
+     * `claimType: 'instance'`.
+     *
+     * A count of links whose address cannot resolve, judged from the address
+     * itself with no network call. One broken link is broken regardless of how
+     * many links exist -- and on the reporting account the business had exactly
+     * one, pointing at localhost, with 27 clicks against it.
+     *
+     * Declared rather than left to default: `effectiveClaimType` assumes
+     * `rate` for an undeclared detector, which holds the card until the
+     * vector is fully lit. For a claim that is true from the first row,
+     * that is silence with no safety benefit. Hazard H15.
+     */
+    claimType: 'instance',
+
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     // Short, because this is actionable and stays true until it is fixed.
     cooldownHours: 72,
   };

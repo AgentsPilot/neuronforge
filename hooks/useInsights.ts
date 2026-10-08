@@ -125,18 +125,29 @@ export interface BusinessHealthSummaryData {
 }
 
 // Vector Maturity System (Progressive Data Revelation)
-export type VectorKey = 'wins' | 'conv' | 'ops' | 'cash' | 'leads' | 'ret' | 'price';
-export type VectorState = 'dark' | 'learn' | 'lit';
-export type MaturityLevel = 'cold_start' | 'early' | 'running' | 'mature';
+/*
+ * Declared in `lib/business-os/insight/vectorTypes`, and re-exported here so
+ * every existing importer keeps working.
+ *
+ * These four were copied into this file because a `'use client'` hook cannot
+ * import a repository (CLAUDE.md rule 1) — and the copies had already drifted
+ * (hazard H9): this one's `VectorStatus` was missing `also`, the volume clause
+ * the server has been sending all along, so client code that wanted it had to
+ * cast. `vectorTypes` carries no imports at all, so reaching it does not reach
+ * the server, and these are `import type` besides — erased at build.
+ *
+ * `VectorMaturityData` below stays local on purpose: its `journeyAnchors` is
+ * optional because a response cached before anchors shipped has none, while
+ * the server always computes them. That difference is real, not drift.
+ */
+import type {
+  VectorKey,
+  VectorState,
+  MaturityLevel,
+  VectorStatus,
+} from '@/lib/business-os/insight/vectorTypes';
 
-export interface VectorStatus {
-  key: VectorKey;
-  name: string;
-  state: VectorState;
-  dataPoints: number;
-  threshold: number;
-  note?: string;
-}
+export type { VectorKey, VectorState, MaturityLevel, VectorStatus };
 
 export interface VectorMaturityData {
   vectors: VectorStatus[];

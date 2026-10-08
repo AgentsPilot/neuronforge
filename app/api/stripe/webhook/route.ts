@@ -4,7 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence } from '@/lib/business-os/activityText';
-import { createClient } from '@supabase/supabase-js';
+import { supabaseServer } from '@/lib/supabaseServer';
+import { processedWebhookEventRepository } from '@/lib/repositories/ProcessedWebhookEventRepository';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 import { QuotaAllocationService } from '@/lib/services/QuotaAllocationService';
@@ -29,6 +30,7 @@ import {
   dispatchBusinessOsEvent,
   type BusinessOsFlow,
 } from '@/lib/business-os/billing/webhookDispatcher';
+import { handleBoostWebhookEvent } from '@/lib/business-os/boost/boostWebhookDeps';
 import Stripe from 'stripe';
 
 // Disable body parsing for webhook signature verification
@@ -39,17 +41,17 @@ export const runtime = 'nodejs';
 // line a delivery writes can be found from the event id alone.
 const logger = createLogger({ module: 'stripe-webhook', route: '/api/stripe/webhook' });
 
-// Create admin Supabase client (bypasses RLS)
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-);
+// Service role on purpose (CLAUDE.md Security Rules): a Stripe webhook has no
+// user session. Every row is reached by a Stripe id from a signed event or by a
+// row already proved to belong to the sending account (`accountOwns`); see the
+// tenant-isolation notes in docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md §5.
+//
+// CF-5 PR 1 replaced this route's private service-role client with the shared
+// `supabaseServer` (the same URL and key; the dropped auth options only matter
+// for a signed-in session, which a service-role client never has, workplan §4).
+// The alias keeps the remaining direct queries compiling while later PRs move
+// them behind repositories; PR 5 removes it.
+const supabaseAdmin = supabaseServer;
 
 // Plan payments P-1 removed `handleInvoicePaid`, the agent-platform conversion
 // of a platform `invoice.paid` into Pilot Credits. It took the account from
@@ -1422,7 +1424,66 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     paymentIntentId,
   });
 
-  const { error: txError } = await supabaseAdmin
+  /*
+    ───────────────────────────────────────────────────────────────────────────
+    THE OTHER HANDLER MAY HAVE GOT HERE FIRST.
+
+    The guard above dedupes on `invoice_id`; `payment_intent.succeeded` dedupes
+    on `stripe_payment_intent_id` and writes NO `invoice_id`, because it does
+    not know which invoice a standalone charge belongs to. So a row written by
+    that handler is invisible to this one, and the insert below — carrying the
+    same payment intent — then violates the unique constraint and throws. The
+    invoice is marked paid only AFTER the insert, deliberately, so the throw
+    leaves money taken and the bill still outstanding, and every Stripe retry
+    hits the same wall.
+
+    Unreachable today: Stripe creates an invoice's PaymentIntent itself, with
+    no metadata of ours, so the other handler drops it on the `owner_id` check
+    and never writes the row. That is the whole reason embedding invoice
+    payment must not stamp `owner_id` onto such an intent, which
+    `invoiceIntentsStayUnowned.guard.test.ts` now asserts.
+
+    Belt as well as braces: if the row is there, ATTACH the invoice to it
+    rather than insert a second one, and carry on to mark the invoice paid.
+    ───────────────────────────────────────────────────────────────────────────
+  */
+  let alreadyRecorded = false;
+
+  if (paymentIntentId) {
+    const { data: byIntent } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id, invoice_id')
+      .eq('stripe_payment_intent_id', paymentIntentId)
+      .limit(1)
+      .maybeSingle();
+
+    if (byIntent) {
+      alreadyRecorded = true;
+
+      if (!byIntent.invoice_id) {
+        const { error: attachError } = await supabaseAdmin
+          .from('payment_transactions')
+          .update({ invoice_id: platformInvoice.id })
+          .eq('id', byIntent.id);
+
+        if (attachError) {
+          log.error(
+            { err: attachError, invoiceId: platformInvoice.id, paymentIntentId },
+            'Could not attach an existing payment row to its invoice'
+          );
+        }
+      }
+
+      log.info(
+        { invoiceId: platformInvoice.id, paymentIntentId, transactionId: byIntent.id },
+        'Payment already recorded under this intent; attached rather than inserted'
+      );
+    }
+  }
+
+  const { error: txError } = alreadyRecorded
+    ? { error: null }
+    : await supabaseAdmin
     .from('payment_transactions')
     .insert({
       user_id: platformInvoice.user_id,
@@ -1596,7 +1657,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     try {
       const { data: receiptInvoice } = await supabaseAdmin
         .from('payment_invoices')
-        .select('user_id, client_email, client_name, invoice_number, currency, booking_id')
+        .select('id, user_id, client_email, client_name, invoice_number, currency, booking_id')
         .eq('id', platformInvoice.id)
         .maybeSingle();
 
@@ -1608,6 +1669,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
 
       const receipt = await BookingEmailService.sendPaymentReceipt(receiptInvoice.user_id, {
+        invoiceId: receiptInvoice.id,
         customerEmail: receiptInvoice.client_email,
         customerName: receiptInvoice.client_name || '',
         // What the client was charged, in the currency they were charged it —
@@ -2244,20 +2306,21 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription, log:
  * use it (SA P1-C4).
  */
 async function completeClaim(eventId: string) {
-  await supabaseAdmin
-    .from('processed_webhook_events')
-    .update({ status: 'completed', completed_at: new Date().toISOString() })
-    .eq('event_id', eventId);
+  await processedWebhookEventRepository.complete(eventId);
 }
 
 /**
  * Business OS flow handlers, registered by the slices that build them (P-3b adds
- * `plan`; boost adds `boost`). Empty in P-1: a recognised flow with no handler
- * throws, the claim is released and Stripe retries (SA Q-6).
+ * `plan`; boost 4a adds `boost`). A recognised flow with no handler throws, the
+ * claim is released and Stripe retries (SA Q-6) — so a resolver and its handler
+ * ship together (boost SA C-2). A handler that returns means "complete"; one
+ * that throws means "release for retry".
  */
 const BUSINESS_OS_FLOW_HANDLERS: Partial<
   Record<BusinessOsFlow, (event: Stripe.Event, log: Logger) => Promise<void>>
-> = {};
+> = {
+  boost: handleBoostWebhookEvent,
+};
 
 /**
  * Main webhook handler
@@ -2368,11 +2431,7 @@ export async function POST(request: NextRequest) {
     //
     // Only 'completed' suppresses a retry now. A 'failed' row is reclaimed
     // below so Stripe's next delivery can do the work.
-    const { data: existingEvent, error: checkError } = await supabaseAdmin
-      .from('processed_webhook_events')
-      .select('event_id, status')
-      .eq('event_id', event.id)
-      .maybeSingle();
+    const { data: existingEvent, error: checkError } = await processedWebhookEventRepository.findClaim(event.id);
 
     if (checkError) {
       log.error({ err: checkError }, 'Error checking for duplicate event');
@@ -2393,24 +2452,19 @@ export async function POST(request: NextRequest) {
     if (existingEvent) {
       // A previous attempt failed. Claim it for this attempt.
       log.info('Retrying previously failed event');
-      await supabaseAdmin
-        .from('processed_webhook_events')
-        .update({ status: 'processing', failure_message: null, processed_at: new Date().toISOString() })
-        .eq('event_id', event.id);
+      await processedWebhookEventRepository.reclaimFailed(event.id);
       processedEventId = event.id;
     } else {
-      const { error: insertError } = await supabaseAdmin
-        .from('processed_webhook_events')
-        .insert({
-          event_id: event.id,
-          event_type: event.type,
-          status: 'processing',
-          processed_at: new Date().toISOString(),
-          metadata: {
-            created: event.created,
-            livemode: event.livemode
-          }
-        });
+      const { error: insertError } = await processedWebhookEventRepository.insertClaim({
+        event_id: event.id,
+        event_type: event.type,
+        status: 'processing',
+        processed_at: new Date().toISOString(),
+        metadata: {
+          created: event.created,
+          livemode: event.livemode
+        }
+      });
 
       if (insertError) {
         // Unique violation means another request claimed it between our SELECT
@@ -2635,13 +2689,10 @@ export async function POST(request: NextRequest) {
     // signature, malformed body), where there is nothing to release.
     if (processedEventId) {
       try {
-        await supabaseAdmin
-          .from('processed_webhook_events')
-          .update({
-            status: 'failed',
-            failure_message: String(error?.message ?? error).slice(0, 500)
-          })
-          .eq('event_id', processedEventId);
+        await processedWebhookEventRepository.markFailed(
+          processedEventId,
+          String(error?.message ?? error).slice(0, 500)
+        );
       } catch (releaseError) {
         // Nothing further to do — the original failure is the one that matters,
         // and swallowing this keeps it from masking the real error.

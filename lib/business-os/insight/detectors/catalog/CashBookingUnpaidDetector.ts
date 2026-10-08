@@ -54,7 +54,7 @@ export class CashBookingUnpaidDetector extends BaseDetector {
     description: 'Finds upcoming appointments whose payment was due up front and has not arrived',
 
     watchedMetrics: ['cashflow.pending_payments'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -85,10 +85,21 @@ export class CashBookingUnpaidDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'automate',
+    /*
+     * `claimType: 'instance'`.
+     *
+     * A count of specific unpaid bookings, each one in `affectedEntityIds`. Not a
+     * share of anything: one booking taken and not paid for is worth saying on
+     * the quietest account.
+     *
+     * Declared rather than left to default: `effectiveClaimType` assumes
+     * `rate` for an undeclared detector, which holds the card until the
+     * vector is fully lit. For a claim that is true from the first row,
+     * that is silence with no safety benefit. Hazard H15.
+     */
+    claimType: 'instance',
+
     eligibleForAutomation: true,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 24,
   };
 

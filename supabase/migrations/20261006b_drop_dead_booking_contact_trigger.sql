@@ -1,0 +1,79 @@
+-- ============================================================================
+-- Retire create_crm_contact_from_booking: it reads a column dropped in August.
+-- ============================================================================
+--
+-- WHAT WAS WRONG
+--
+-- `create_crm_contact_from_booking()` is a BEFORE INSERT trigger on
+-- `scheduling_bookings` whose legacy branch reads `NEW.client_email`:
+--
+--   IF NEW.client_email IS NOT NULL THEN ...
+--
+-- `20260810_remove_client_fields_and_total_amount.sql` DROPPED
+-- `client_first_name`, `client_last_name`, `client_email` and `client_phone`
+-- from that table on the same day, and did not update the function. So the
+-- trigger has referenced a column that does not exist since 2026-08-10, and
+-- any INSERT that reaches that line fails with:
+--
+--   record "new" has no field "client_email"
+--
+-- It was invisible because the function returns early when `contact_id` is set,
+-- and every live path sets one. The branch is reachable ONLY by inserting a
+-- booking with no contact -- which turns a valid insert into an error naming a
+-- column nobody has been able to see for two months. Found 2026-10-06 while
+-- smoke-testing the event triggers, by doing exactly that.
+--
+-- WHY REMOVING IT IS SAFE, CHECKED RATHER THAN ASSUMED
+--
+--   the column           gone since 2026-08-10
+--   writers of it        none; `client_email` in SchedulingRepository is a
+--                        DERIVED field (`contact?.email || ''`) off the contact
+--                        join, not a column, and two detectors already carry
+--                        comments noting the column was dropped
+--   null-contact inserts IMPOSSIBLE. `scheduling_bookings.contact_id` is NOT
+--                        NULL, so the branch could never run unless the trigger
+--                        itself supplied the value -- which WAS its original
+--                        job, and is exactly what dropping `client_email` took
+--                        away. `SchedulingBookingInsert.contact_id` is also
+--                        typed `string` and commented "Required - must
+--                        create/find contact first"
+--   live data            0 of 119 bookings have a NULL contact_id
+--   other callers        none; this function has exactly one trigger
+--
+-- The NOT NULL constraint was HIDDEN by this bug, which is worth knowing for
+-- the next person who meets it: a BEFORE INSERT trigger runs ahead of
+-- constraint checking, so a null-contact insert raised the phantom-column error
+-- and never reached the constraint. With the trigger gone the same insert
+-- reports what is actually wrong:
+--
+--   null value in column "contact_id" ... violates not-null constraint
+--
+-- WHY THE WHOLE TRIGGER AND NOT JUST THE BRANCH
+--
+-- Removing the branch leaves nothing behind it. The function's other work is an
+-- early `RETURN NEW` when `contact_id` is set, plus a `crm_pipeline_stages`
+-- lookup whose only consumer is the branch being removed. What remains is a
+-- BEFORE INSERT trigger that fires on every booking to do nothing.
+--
+-- This is the follow-up the original migration asked for in its own header:
+-- "Once all bookings use the new flow, we can simplify or remove this trigger
+-- entirely" and "client_* fields will be removed in future migration". The
+-- second half happened; this is the first.
+--
+-- WHAT IS DELIBERATELY NOT CHANGED
+--
+-- `contact_id` keeps its NOT NULL constraint, which is now the only thing
+-- enforcing "a booking has a client" -- and it enforces it with a message that
+-- names the real problem instead of a column dropped in August.
+--
+-- The other triggers on `scheduling_bookings` are untouched and still required:
+--   promote_client_on_confirmed_booking  (20260918)
+--   pipeline transition stamping          (20260920)
+--   trg_booking_events                    (20261006, booking.created)
+--
+-- IDEMPOTENT: both statements are IF EXISTS, so applying this twice is harmless.
+-- ============================================================================
+
+DROP TRIGGER IF EXISTS create_crm_contact_from_booking_trigger ON public.scheduling_bookings;
+
+DROP FUNCTION IF EXISTS public.create_crm_contact_from_booking();

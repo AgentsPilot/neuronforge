@@ -20,6 +20,8 @@ import type {
 } from './types';
 import { CORRELATION_PATTERNS } from './patterns';
 
+import { groupBySharedSubject } from './sharedSubjects';
+
 const logger = createLogger({ module: 'InsightCorrelationEngine' });
 
 /**
@@ -85,6 +87,7 @@ export class InsightCorrelationEngine {
         standaloneInsights: [],
         patternsChecked: this.patterns.length,
         patternsMatched: 0,
+        sharedSubjects: [],
         totalImpactUsd: 0,
       };
     }
@@ -126,12 +129,22 @@ export class InsightCorrelationEngine {
       correlatedInsights.reduce((sum, i) => sum + i.totalImpactUsd, 0) +
       standaloneInsights.reduce((sum, r) => sum + (r.estimatedImpactUsd || 0), 0);
 
+    /*
+     * The same findings, grouped by who they are about.
+     *
+     * Computed over EVERY result rather than only the standalone ones: a
+     * finding already inside a named pattern can still be the third thing
+     * going wrong with one client, and that is the more useful framing.
+     */
+    const sharedSubjects = groupBySharedSubject(detectionResults);
+
     logger.info(
       {
         totalResults: detectionResults.length,
         patternsMatched: patternMatches.length,
         correlatedCount: correlatedInsights.length,
         standaloneCount: standaloneInsights.length,
+        sharedSubjects: sharedSubjects.length,
         totalImpactUsd,
       },
       'Correlation complete'
@@ -142,6 +155,7 @@ export class InsightCorrelationEngine {
       standaloneInsights,
       patternsChecked: this.patterns.length,
       patternsMatched: patternMatches.length,
+      sharedSubjects,
       totalImpactUsd,
     };
   }

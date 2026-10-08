@@ -19,7 +19,7 @@ export class ConvFollowupOverdueDetector extends BaseDetector {
     description: 'Detects scheduled follow-up tasks past their due date',
 
     watchedMetrics: ['conversion.overdue_tasks'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -62,10 +62,20 @@ export class ConvFollowupOverdueDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'automate',
+    /*
+     * `claimType: 'instance'`.
+     *
+     * A count of specific overdue tasks the owner set herself. Each is in
+     * `affectedEntityIds`; none of them is a proportion of anything.
+     *
+     * Declared rather than left to default: `effectiveClaimType` assumes
+     * `rate` for an undeclared detector, which holds the card until the
+     * vector is fully lit. For a claim that is true from the first row,
+     * that is silence with no safety benefit. Hazard H15.
+     */
+    claimType: 'instance',
+
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 24,
   };
 

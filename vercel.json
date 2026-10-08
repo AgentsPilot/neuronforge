@@ -10,6 +10,10 @@
       "schedule": "0 3 * * *"
     },
     {
+      "path": "/api/cron/insight-hypotheses",
+      "schedule": "30 4 * * 0"
+    },
+    {
       "path": "/api/cron/insight-detect",
       "schedule": "30 3 * * *"
     },
@@ -56,6 +60,10 @@
     {
       "path": "/api/cron/stripe-settlement-gap",
       "schedule": "17 5 * * *"
+    },
+    {
+      "path": "/api/cron/insight-measure",
+      "schedule": "55 4 * * *"
     }
   ],
   "rewrites": [

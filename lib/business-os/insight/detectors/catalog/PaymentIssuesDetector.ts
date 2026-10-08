@@ -17,7 +17,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
 import type { CashFlowMetricKey } from '../../metrics/types';
-import { COMMON_GUARDRAILS } from '../types';
 
 interface PaymentIssue {
   type: 'failed' | 'pending';
@@ -35,7 +34,7 @@ export class PaymentIssuesDetector extends BaseDetector {
     description: 'Detects failed payments, pending transactions, and refunds',
 
     watchedMetrics: ['cashflow.failed_payments', 'cashflow.pending_payments'],
-    eventTypes: ['payment.failed', 'payment.pending'],
+    documentsEventTypes: ['payment.failed', 'payment.pending'],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -70,19 +69,7 @@ export class PaymentIssuesDetector extends BaseDetector {
      * that cannot work.
 
      */
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [
-      {
-        id: 'days_lookback',
-        label: 'Days Lookback',
-        type: 'number',
-        default: 14,
-        min: 1,
-        max: 30,
-      },
-    ],
-    guardrails: [COMMON_GUARDRAILS.max_20_per_run],
     cooldownHours: 24,
   };
 

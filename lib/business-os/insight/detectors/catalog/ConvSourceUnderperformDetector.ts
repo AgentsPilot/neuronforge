@@ -28,7 +28,7 @@ export class ConvSourceUnderperformDetector extends BaseDetector {
     description: 'Detects lead sources with below-average conversion rates',
 
     watchedMetrics: ['conversion.source_performance'],
-    eventTypes: ['contact.created', 'contact.stage_changed'],
+    documentsEventTypes: ['contact.created', 'contact.stage_changed'],
 
     baselineWindow: 'month',
     thresholdType: 'percent_change',
@@ -44,10 +44,7 @@ export class ConvSourceUnderperformDetector extends BaseDetector {
     },
 
     pairedProcessId: undefined, // Advisory only
-    consentTier: 'observe',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 

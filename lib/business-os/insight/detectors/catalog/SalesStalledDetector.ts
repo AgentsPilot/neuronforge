@@ -30,7 +30,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
-import { COMMON_GUARDRAILS } from '../types';
 
 export class SalesStalledDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -40,7 +39,7 @@ export class SalesStalledDetector extends BaseDetector {
     description: 'Detects enquiries waiting 48+ hours without a reply',
 
     watchedMetrics: ['sales.stalled_enquiries'],
-    eventTypes: ['enquiry.stalled'],
+    documentsEventTypes: ['enquiry.stalled'],
 
     baselineWindow: 'week', // Not used for absolute threshold
     thresholdType: 'absolute',
@@ -60,7 +59,6 @@ export class SalesStalledDetector extends BaseDetector {
      * The kernel refuses every action today, and an insight that offers a
      * button which throws is worse than one that offers none.
      */
-    consentTier: 'suggest',
     eligibleForAutomation: false,
 
     /*
@@ -73,17 +71,6 @@ export class SalesStalledDetector extends BaseDetector {
      * least afford to lose an enquiry.
      */
     ignoresVectorMaturity: true,
-    ownerParameters: [
-      {
-        id: 'delay_hours',
-        label: 'Delay Hours',
-        type: 'number',
-        default: 48,
-        min: 24,
-        max: 168,
-      },
-    ],
-    guardrails: [COMMON_GUARDRAILS.max_1_per_contact_per_48h],
     cooldownHours: 24,
   };
 

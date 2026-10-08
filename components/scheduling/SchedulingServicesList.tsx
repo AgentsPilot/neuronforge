@@ -5,7 +5,7 @@ import { serviceShapeValues, collectionToPersist } from '@/lib/business-os/servi
 import { serviceMoneyLine } from '@/lib/business-os/serviceMoneyLine';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Clock, ChevronRight, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
+import { Clock, ChevronLeft, ChevronRight, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingService, PaymentType, InstallmentFrequency, FirstPaymentDue, ServiceCurrency, ServiceCollection, ServiceSaleMode } from '@/lib/repositories/SchedulingRepository';
@@ -93,7 +93,10 @@ function rowFingerprint(values: Record<string, unknown>): string {
 const COLUMN_WIDTHS = ['19%', '13%', '12%', '14%', '12%', '12%', '8%', '10%'] as const;
 
 export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited, intakeEnabled = false, processorReady = false, hideServiceList = false, onCancelNewRow }: SchedulingServicesListProps) {
-  const { t, formatCurrency, currencyCode, businessCurrency } = useLanguage();
+  // `isRTL` is read for ONE thing: which way the back chevron points. Layout
+  // here is direction-agnostic by construction (see the grid's note below), and
+  // an icon is the one case logical properties cannot answer.
+  const { t, formatCurrency, currencyCode, businessCurrency, isRTL } = useLanguage();
   const [publishingId, setPublishingId] = useState<string | null>(null);
   /**
    * Why the last publish did not happen.
@@ -1177,6 +1180,27 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     : null;
 
   /**
+   * Is a service open, as far as a PHONE is concerned.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The two panes are side by side from `md` up and stacked below it, and
+   * stacked is what made a service uneditable on a phone: the list took the
+   * screen, the panel sat under it at whatever height its content wanted, and
+   * tapping a service changed something nobody could see.
+   *
+   * So below `md` the dialog shows ONE of them, and this is which. Above `md`
+   * nothing consults it: both panes are visible there and always have been.
+   *
+   * It is derived, not stored. `editingRowId` already means "this service is
+   * open", so the phone's two screens need no state of their own — and every
+   * way into this component keeps working untouched, including the chat's
+   * `autoEditServiceId` and `autoStartNewRow`, which land on the editor by
+   * setting exactly these.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const detailOpen = isAddingNewRow || selectedService !== null;
+
+  /**
    * One service, as three questions and their consequence.
    *
    * `null` means the new one being added, which asks exactly the same questions
@@ -1419,6 +1443,36 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             badge — they landed on top of it, and Publish could not be clicked
             reliably. Here they have room and are visible without hovering. */}
         <div className="flex items-start gap-3 px-5 py-4 border-b border-[var(--v2-border)] flex-shrink-0">
+          {/*
+            The way back, on a phone only.
+
+            ──────────────────────────────────────────────────────────────────
+            Below `md` this panel is the whole screen, so without this the only
+            way out of a service is Cancel at the very bottom of the form. It
+            does exactly what Cancel does and nothing more — same handler, same
+            consequences — so it introduces no behaviour the owner has not
+            already met, including the existing truth that leaving a service
+            drops unsaved edits, on a phone or a desktop alike.
+
+            Hidden where there is no list to go back to: the landing-page
+            wizard embeds this panel on its own.
+
+            The glyph is the one thing here that cannot be done with logical
+            properties. `ms`/`me` flip with direction; a chevron does not — it
+            is a picture of an arrow, and in Hebrew "back" points the other way.
+          */}
+          {!hideServiceList && (
+            <button
+              type="button"
+              onClick={isNew ? cancelNewRow : cancelRowEdit}
+              className="md:hidden flex items-center gap-1 -ms-2 px-2 py-1.5 text-[13px] font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all flex-shrink-0"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {isRTL ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+              {t('config.services.all') || t('config.tab.services')}
+            </button>
+          )}
+
           <div className="min-w-0">
             <h3 className="text-[15px] font-semibold text-[var(--v2-text-primary)] truncate">
               {isNew
@@ -2138,7 +2192,18 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           business with more than a screenful of services — and moved further
           away with every service they added. */}
       {showAddButton && !isAddingNewRow && services.length > 0 && (
-        <div className="flex-shrink-0 flex justify-end mb-3">
+        <div
+          /*
+           * Belongs to the LIST screen, not to the service open on top of it.
+           *
+           * On a desktop it sits above both panes and reads as an action on the
+           * catalogue. On a phone, where the editor is the whole screen, the
+           * same button floats above the service being edited and offers to
+           * start a different one — so it steps aside with the list and comes
+           * back with it.
+           */
+          className={`flex-shrink-0 justify-end mb-3 ${detailOpen ? 'hidden md:flex' : 'flex'}`}
+        >
           <button
             onClick={startAddNewRow}
             className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium border border-dashed transition-all"
@@ -2178,7 +2243,23 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           branch anywhere. */}
       {(services.length > 0 || isAddingNewRow) && (
         <div
-          className={`flex-1 min-h-0 grid gap-3 ${
+          /*
+           * `grid-rows-[minmax(0,1fr)]` below `md`, and nothing above it.
+           *
+           * With one pane visible on a phone, the row has to be BOUNDED by the
+           * dialog rather than sized by its content, or the panel grows to the
+           * height of the form: its header scrolls away, its Save row sits at
+           * the bottom of a very long page, and the inner `overflow-y-auto`
+           * never scrolls because nothing ever constrains it.
+           *
+           * Bounded, the pane is exactly the height of the dialog body, so the
+           * header stays put, the form scrolls inside it, and Save is pinned
+           * where a thumb can reach it.
+           *
+           * `md:grid-rows-none` returns the desktop to its own default, which
+           * is what it renders today.
+           */
+          className={`flex-1 min-h-0 grid gap-3 grid-rows-[minmax(0,1fr)] md:grid-rows-none ${
             hideServiceList ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]'
           }`}
         >
@@ -2194,7 +2275,18 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           */}
           {!hideServiceList && (
           <div
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden flex flex-col min-h-0"
+            /*
+             * On a phone this is the FIRST screen, and it steps aside once a
+             * service is open. `md:flex` puts it back beside the panel on a
+             * desktop, where both belong on screen at once.
+             *
+             * Hidden with a class rather than unmounted: the list keeps its
+             * scroll position while a service is being edited, and nothing in
+             * it has to re-run when the owner comes back.
+             */
+            className={`bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden flex-col min-h-0 ${
+              detailOpen ? 'hidden md:flex' : 'flex'
+            }`}
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-[var(--v2-border)] flex-shrink-0">
@@ -2326,7 +2418,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
           {/* ── The panel ────────────────────────────────────────────────── */}
           <div
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden flex flex-col min-h-0"
+            /*
+             * The second screen on a phone, and half the dialog on a desktop.
+             *
+             * Hidden below `md` until a service is open, which also keeps the
+             * "pick a service" placeholder off the phone entirely: on a desktop
+             * it fills an empty half, and on a phone it would be a whole screen
+             * telling the owner to choose from a list they can no longer see.
+             *
+             * `hideServiceList` callers (the landing-page wizard) have no list
+             * to choose from, so for them the panel is the only screen there is
+             * and shows unconditionally.
+             */
+            className={`bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden flex-col min-h-0 ${
+              detailOpen || hideServiceList ? 'flex' : 'hidden md:flex'
+            }`}
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             {isAddingNewRow

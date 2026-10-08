@@ -19,7 +19,7 @@ export class AcqLowConversionDetector extends BaseDetector {
     description: 'Detects when form conversion rate is below 2%',
 
     watchedMetrics: ['acquisition.form_conversion_rate'],
-    eventTypes: ['form.submitted', 'page.viewed'],
+    documentsEventTypes: ['form.submitted', 'page.viewed'],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -56,19 +56,7 @@ export class AcqLowConversionDetector extends BaseDetector {
      * that cannot work.
 
      */
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [
-      {
-        id: 'benchmark_rate',
-        label: 'Benchmark Rate (%)',
-        type: 'number',
-        default: 2,
-        min: 1,
-        max: 10,
-      },
-    ],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 

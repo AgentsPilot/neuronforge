@@ -71,6 +71,14 @@ export const publicMessages: Catalogue = {
     'portal.overdue': 'overdue',
     'portal.plan_progress': '{paid} of {total} payments made',
     'portal.intake': 'Before your appointment',
+    'portal.service': 'Service',
+    'portal.duration': 'Duration',
+    'portal.status': 'Status',
+    'portal.payment': 'Payment',
+    'portal.plan': 'Payment plan',
+    'portal.billed': 'Invoiced',
+    'portal.book_another': 'Book another',
+    'portal.close': 'Close',
     'portal.intake_todo': 'There is a short form to fill in.',
     'portal.intake_done': 'Form completed — thank you.',
     'portal.intake_open': 'Fill it in',
@@ -104,7 +112,7 @@ export const publicMessages: Catalogue = {
     'portal.morning': 'Morning',
     'portal.afternoon': 'Afternoon',
     'portal.evening': 'Evening',
-    'manage.package_title': 'Your {count} meetings',
+    'manage.package_title': 'This package: {count} sessions',
     'manage.package_held': 'took place',
     'manage.package_cancelled': 'cancelled',
     'manage.package_too_soon': 'Too close to change online — please contact the business.',
@@ -358,6 +366,14 @@ export const publicMessages: Catalogue = {
     'portal.overdue': 'vencido',
     'portal.plan_progress': '{paid} de {total} pagos realizados',
     'portal.intake': 'Antes de tu cita',
+    'portal.service': 'Servicio',
+    'portal.duration': 'Duración',
+    'portal.status': 'Estado',
+    'portal.payment': 'Pago',
+    'portal.plan': 'Plan de pagos',
+    'portal.billed': 'Facturado',
+    'portal.book_another': 'Reservar otra cita',
+    'portal.close': 'Cerrar',
     'portal.intake_todo': 'Queda un breve formulario por completar.',
     'portal.intake_done': 'Formulario completado. Gracias.',
     'portal.intake_open': 'Completar',
@@ -391,7 +407,7 @@ export const publicMessages: Catalogue = {
     'portal.morning': 'Mañana',
     'portal.afternoon': 'Tarde',
     'portal.evening': 'Noche',
-    'manage.package_title': 'Tus {count} sesiones',
+    'manage.package_title': 'Este paquete: {count} sesiones',
     'manage.package_held': 'se realizó',
     'manage.package_cancelled': 'cancelada',
     'manage.package_too_soon': 'Demasiado cerca para cambiarla aquí: contacta con el negocio.',
@@ -621,6 +637,14 @@ export const publicMessages: Catalogue = {
     'portal.overdue': 'באיחור',
     'portal.plan_progress': '{paid} מתוך {total} תשלומים שולמו',
     'portal.intake': 'לפני הפגישה',
+    'portal.service': 'שירות',
+    'portal.duration': 'משך',
+    'portal.status': 'סטטוס',
+    'portal.payment': 'תשלום',
+    'portal.plan': 'תוכנית תשלומים',
+    'portal.billed': 'נשלחה חשבונית',
+    'portal.book_another': 'קביעת פגישה נוספת',
+    'portal.close': 'סגירה',
     'portal.intake_todo': 'נשאר טופס קצר למילוי.',
     'portal.intake_done': 'הטופס מולא. תודה!',
     'portal.intake_open': 'מילוי הטופס',
@@ -654,7 +678,7 @@ export const publicMessages: Catalogue = {
     'portal.morning': 'בוקר',
     'portal.afternoon': 'אחר הצהריים',
     'portal.evening': 'ערב',
-    'manage.package_title': '{count} הפגישות שלך',
+    'manage.package_title': '{count} מפגשים בחבילה הזו',
     'manage.package_held': 'התקיימה',
     'manage.package_cancelled': 'בוטלה',
     'manage.package_too_soon': 'קרוב מדי לשינוי באתר. אפשר ליצור קשר עם העסק.',
@@ -894,11 +918,45 @@ export function localeCode(locale: Locale): string {
 export function formatPublicDate(
   value: Date | string,
   locale: Locale,
-  options: Intl.DateTimeFormatOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }
+  options: Intl.DateTimeFormatOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' },
+  /**
+   * The clock to read the instant on — the BUSINESS's zone, not the reader's.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS A PARAMETER AND NOT LEFT TO THE OPTIONS BAG
+   *
+   * `timeZone` was always legal inside `options`, and exactly one of six call
+   * sites passed it. The other five printed the client's device clock while the
+   * TIME beside them printed the business's, so one appointment card could name
+   * the right hour on the wrong day. An optional field buried in an options
+   * object is not a thing callers remember.
+   *
+   * Separate from `options` so a caller can add the zone without restating the
+   * default `{ weekday, year, month, day }` — restating it is how two surfaces
+   * end up formatting the same date differently.
+   *
+   * Applied LAST, so it cannot be overridden by `options.timeZone`. That is the
+   * same rule, for the same reason, as `timeZoneOptions` on the business side:
+   * a call site reaching past this is either re-introducing the bug or doing
+   * something deliberate enough to reach for `Intl` directly.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT FOR A BARE SQL `DATE`
+   *
+   * A `due_date` is a day with no time and no zone. It parses to midnight UTC,
+   * so reading it on a zone WEST of UTC moves it to the previous day — the
+   * business's zone is the wrong answer there and `'UTC'` is the right one.
+   * This takes an instant; a calendar day is a different question.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  timeZone?: string | null
 ): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(localeCode(locale), options);
+  return date.toLocaleDateString(localeCode(locale), {
+    ...options,
+    ...(timeZone ? { timeZone } : {}),
+  });
 }
 
 /**

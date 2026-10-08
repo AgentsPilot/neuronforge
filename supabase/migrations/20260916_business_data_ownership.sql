@@ -128,6 +128,12 @@ DECLARE
     'derived_metrics',
     'insight_actions',
     'insight_automations',
+    'insight_hypotheses',
+    -- Re-readings of an insight's metric after the owner acted (20261006g).
+    -- Named here so an EXISTING database picks the constraint up on a re-run
+    -- of this loop; the table's own migration adds it too, because this loop
+    -- runs before that table exists on a fresh database and would skip it.
+    'insight_measurements',
     'insight_outcomes',
     'insights',
     'owner_insight_history',

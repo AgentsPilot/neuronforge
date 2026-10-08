@@ -113,7 +113,7 @@ export class CashCancelledUnrefundedDetector extends BaseDetector {
       'Finds cancelled bookings the client paid for where nothing has been refunded',
 
     watchedMetrics: ['cashflow.held_on_cancelled'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -150,10 +150,7 @@ export class CashCancelledUnrefundedDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 48,
   };
 

@@ -156,6 +156,10 @@ const SOURCES = [
   'app/api/business-os/credits/boost/packages/route.ts',
   'lib/business-os/boost/boostPackagesView.ts',
   'components/business-os/BoostPackagesPanel.tsx',
+  // Credits boost slice 5b.1 — the purchase status read and the return notice.
+  'app/api/business-os/credits/boost/purchases/route.ts',
+  'lib/business-os/boost/boostPurchasesView.ts',
+  'components/business-os/BoostReturnNotice.tsx',
 ];
 
 /** The builders whose output carries a credit allowance to a reader. */

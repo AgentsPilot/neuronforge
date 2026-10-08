@@ -252,28 +252,48 @@ export async function billStage(
       .eq('user_id', userId);
 
     /*
-     * Non-blocking. The stage is billed and the invoice exists either way; a
-     * transport failure is something the owner resends, not a reason to unwind a
-     * billed stage.
+     * AWAITED — and that is the whole fix.
+     *
+     * ───────────────────────────────────────────────────────────────────────────
+     * This was a floating promise, on the reasoning that a transport failure is
+     * something the owner resends rather than a reason to unwind a billed stage.
+     * The reasoning is right and the mechanism was not: this runs in a Vercel
+     * serverless function, and once the route returns its response the instance
+     * is frozen. A send still in flight is killed with it.
+     *
+     * So the stage was billed, the invoice existed, and the client was never
+     * told. The owner then pressed "send invoice" by hand and it arrived —
+     * because THAT route awaits the same call. Every path that works awaits it;
+     * this one and the proposal-acceptance route were the two that did not.
+     *
+     * Intermittent, not absent: a fast send sometimes finished before the
+     * freeze, which is exactly what makes it hard to report.
+     *
+     * Failure is still non-fatal. Nothing is rethrown, the stage stays billed
+     * and the caller still gets its success — the only change is that the send
+     * is given time to happen.
+     * ───────────────────────────────────────────────────────────────────────────
      */
-    sendInvoice({ invoiceId, userId, request: options.request })
-      .then(result => {
-        /*
-         * `sendInvoice` REPORTS failure, it does not throw it.
-         *
-         * A bare `.catch()` here caught nothing: a client with no email address,
-         * or a transport error, resolved successfully and the stage looked
-         * billed-and-sent when nothing had left. The returned error is the only
-         * thing that knows.
-         */
-        if (result.error) {
-          log.error(
-            { err: result.error, invoiceId },
-            'Stage billed but the invoice email did not go out'
-          );
-        }
-      })
-      .catch(err => log.error({ err, invoiceId }, 'Stage invoice send threw'));
+    try {
+      /*
+       * `sendInvoice` REPORTS failure, it does not throw it.
+       *
+       * A bare `catch` caught nothing: a client with no email address, or a
+       * transport error, resolved successfully and the stage looked
+       * billed-and-sent when nothing had left. The returned error is the only
+       * thing that knows.
+       */
+      const sent = await sendInvoice({ invoiceId, userId, request: options.request });
+
+      if (sent.error) {
+        log.error(
+          { err: sent.error, invoiceId },
+          'Stage billed but the invoice email did not go out'
+        );
+      }
+    } catch (err) {
+      log.error({ err, invoiceId }, 'Stage invoice send threw');
+    }
 
     auditLog({
       action: options.auditAction ?? 'PAYMENT_MILESTONE_COMPLETED',
