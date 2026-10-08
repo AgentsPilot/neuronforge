@@ -74,12 +74,14 @@ describe('business data ownership', () => {
    * Business-owned on the live database but created outside supabase/migrations,
    * so the (applied, never edited) ownership migration cannot name them. Each
    * carries a live `<table>_business_fk` CASCADE to business_profiles, measured
-   * with purge_schema_introspect on 2026-10-07 (test-account cleanup first live run).
+   * with purge_schema_introspect.
+   *
+   * Empty since 2026-10-08: insight_hypotheses and insight_measurements were the
+   * entries (measured 2026-10-07), and PR #257 committed their CREATE TABLEs
+   * (20261006e, 20261006g) and named them in the ownership migration's array, so
+   * the exception stopped being true. Kept as the mechanism for the next one.
    */
-  const LIVE_ONLY: Record<string, string> = {
-    insight_hypotheses: 'insight_hypotheses_business_fk CASCADE, measured 2026-10-07; no CREATE TABLE in the repo.',
-    insight_measurements: 'insight_measurements_business_fk CASCADE, measured 2026-10-07; no CREATE TABLE in the repo.',
-  };
+  const LIVE_ONLY: Record<string, string> = {};
 
   it('names the same tables in TypeScript and in SQL', () => {
     const sql: string[] = [...tablesInMigration(), ...Object.keys(LIVE_ONLY)].sort();
