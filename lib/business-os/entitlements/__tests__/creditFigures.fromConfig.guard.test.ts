@@ -160,6 +160,8 @@ const SOURCES = [
   'app/api/business-os/credits/boost/purchases/route.ts',
   'lib/business-os/boost/boostPurchasesView.ts',
   'components/business-os/BoostReturnNotice.tsx',
+  // Credits boost slice 5b.2 — the Purchases list.
+  'components/business-os/BoostPurchasesList.tsx',
 ];
 
 /** The builders whose output carries a credit allowance to a reader. */
