@@ -399,3 +399,41 @@ describe('POST /signup/google (Slice 3b; T-3b-12, D-9, R-6, R-11)', () => {
     expect(text).not.toContain('invitee@example.com');
   });
 });
+
+describe('N-1 (SA C-2): the issuing admin id never reaches a response', () => {
+  // The redemption now reads `issuer_admin_id` (server-side only). Even if an
+  // outcome ever carried it, each route answers with an explicit allow-list.
+  const ADMIN_ID = '55555555-5555-4555-8555-555555555555';
+  const leaky = { issuer_admin_id: ADMIN_ID, issuerAdminId: ADMIN_ID, issuer_account_id: ADMIN_ID };
+  const saved = process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+    else process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = saved;
+  });
+
+  it('complete: success and refusal', async () => {
+    state.completeOutcome = { ...state.completeOutcome, ...leaky };
+    expect(await (await complete(validBody)).text()).not.toContain(ADMIN_ID);
+    state.completeOutcome = { ok: false, kind: 'refused', status: 409, error: 'used', ...leaky };
+    expect(await (await complete(validBody)).text()).not.toContain(ADMIN_ID);
+  });
+
+  it('google: success and refusal', async () => {
+    process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = 'client.apps.googleusercontent.com';
+    const body = { token: TOKEN, idToken: 'eyJhbGciOiJSUzI1NiJ9.e30.c2ln', nonce: 'N'.repeat(43) };
+    const google = (payload: unknown) => post(googleRoute.POST, '/api/public/invites/signup/google', payload);
+    state.googleOutcome = { ...state.googleOutcome, ...leaky };
+    const ok = await google(body);
+    expect(ok.status).toBe(200);
+    expect(await ok.text()).not.toContain(ADMIN_ID);
+    state.googleOutcome = { ok: false, kind: 'refused', status: 409, error: 'used', ...leaky };
+    expect(await (await google(body)).text()).not.toContain(ADMIN_ID);
+  });
+
+  it('code: success and refusal', async () => {
+    state.requestOutcome = { ...state.requestOutcome, ...leaky };
+    expect(await (await code({ token: TOKEN })).text()).not.toContain(ADMIN_ID);
+    state.requestOutcome = { ok: false, kind: 'refused', status: 409, error: 'used', ...leaky };
+    expect(await (await code({ token: TOKEN })).text()).not.toContain(ADMIN_ID);
+  });
+});

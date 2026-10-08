@@ -59,18 +59,18 @@ describe('QA — who can write user_subscriptions at all', () => {
 
     // Every entry here has been traced by hand to the client it runs on.
     // Adding a file to this list must be a deliberate, reviewed act.
+    // Plan payments P-10 removed two writers: the free-tier freeze job is an
+    // inert 410 (TK-3, BQ-P8) and sync-subscription is a 410 (CF-3).
     expect(writers).toEqual([
-      'app/api/cron/check-free-tier-expiration/route.ts', // module-level service-role client
       'app/api/stripe/cancel-subscription/route.ts', // supabaseAdmin
       'app/api/stripe/reactivate-subscription/route.ts', // supabaseAdmin
-      'app/api/stripe/sync-subscription/route.ts', // supabaseAdmin
       'app/api/stripe/webhook/route.ts', // supabaseAdmin
       'lib/credits/rewardService.ts', // injected; browser client on purpose (W-3 / D-3)
       'lib/repositories/UserSubscriptionRepository.ts', // supabaseServer by default (S-6)
       'lib/services/CreditService.ts', // injected; only built with supabaseServer (W-1)
       'lib/services/ExecutionService.ts', // injected; quota writers must not run on a cookie client
       'lib/services/StorageService.ts', // injected; only built from QuotaAllocationService (admin)
-      'lib/stripe/StripeService.ts', // injected; only create-checkout passes a client (W-4)
+      'lib/stripe/StripeService.ts', // injected; no caller passes a client since P-10 (W-4)
     ]);
   });
 });
@@ -100,11 +100,11 @@ describe('QA — injected-client services that write the table', () => {
     ).toEqual([
       // W-1: the only CreditService in the app, on the service role.
       'app/api/run-agent/route.ts::CreditService(supabaseServer)',
-      'app/api/stripe/sync-subscription/route.ts::QuotaAllocationService(supabaseAdmin)',
       // Plan payments P-1 removed three of the five webhook sites with their
       // Pilot-Credit conversions (handleInvoicePaid, and the subscription-mode
-      // checkout with its welcome bonus). Left: boost pack, subscription.updated.
-      'app/api/stripe/webhook/route.ts::QuotaAllocationService(supabaseAdmin)',
+      // checkout with its welcome bonus). P-10 removed subscription.updated's
+      // and sync-subscription's (L-26). Left: the boost-pack branch, kept as-is
+      // by Credits Boost FR-40 so in-flight sessions complete (SA P10 Q-2).
       'app/api/stripe/webhook/route.ts::QuotaAllocationService(supabaseAdmin)',
       // Documented exception (SA RC9-8): the caller's cookie client. Only the
       // read and the SECURITY DEFINER `increment_executions_used` RPC may be
@@ -127,16 +127,17 @@ describe('QA — injected-client services that write the table', () => {
     );
   });
 
-  it('only create-checkout hands a Supabase client to StripeService (W-4 discovery net)', () => {
+  // Plan payments P-10: create-checkout, the last caller, now refuses every
+  // purchase with 410 (Credits Boost FR-40), and createCustomCreditSubscription
+  // is deleted. A new caller of a client-taking method must be reviewed (W-4).
+  it('no code hands a Supabase client to StripeService (W-4 discovery net)', () => {
     const callers = sourceFiles
       .filter((f) =>
-        /stripeService\.(createCustomCreditSubscription|createBoostPackCheckout|getOrCreateCustomer)\s*\(/.test(
-          readFileSync(f, 'utf8')
-        )
+        /stripeService\.(createBoostPackCheckout|getOrCreateCustomer)\s*\(/.test(readFileSync(f, 'utf8'))
       )
       .map(rel)
       .sort();
-    expect(callers).toEqual(['app/api/stripe/create-checkout/route.ts']);
+    expect(callers).toEqual([]);
 
     // And those are still the only StripeService methods that accept a client.
     const svc = read('lib/stripe/StripeService.ts');
@@ -147,11 +148,7 @@ describe('QA — injected-client services that write the table', () => {
         return /supabase:?\s*SupabaseClient/.test(svc.slice(start, start + 600));
       })
       .sort();
-    expect(withClient).toEqual([
-      'createBoostPackCheckout',
-      'createCustomCreditSubscription',
-      'getOrCreateCustomer',
-    ]);
+    expect(withClient).toEqual(['createBoostPackCheckout', 'getOrCreateCustomer']);
   });
 });
 
@@ -177,27 +174,25 @@ describe('QA — the service-role swaps keep user scoping (tenant-isolation-guar
     expect(src).toContain('status: 410');
   });
 
-  it('create-checkout passes the session user id, not a body value, into its customer-creating call', () => {
+  // Plan payments P-10 (Credits Boost FR-40): create-checkout refuses every
+  // purchase with 410, so the customer-creating call this test scoped is gone.
+  // What must hold now is that it stays gone, and that getOrCreateCustomer,
+  // kept for a possible revival (FR-40), stays user-scoped.
+  it('create-checkout makes no customer-creating call and holds no service-role client', () => {
     const src = read('app/api/stripe/create-checkout/route.ts');
-    // Closing indent 4 since P-1 un-nested the boost-pack call; 6 before.
-    const blocks = [...src.matchAll(/stripeService\.create\w+\(\{([^]*?)\n {4,6}\}\)/g)].map(
-      (m) => m[1]
-    );
-    // One call since plan payments P-1: the custom_credits branch is a 410.
-    expect(blocks).toHaveLength(1);
-    for (const block of blocks) {
-      expect(block).toContain('supabase: supabaseServer,');
-      expect(block).toContain('userId: user.id,');
-      expect(block).not.toMatch(/userId:\s*(body|provided|params)/);
-    }
-    expect(src.match(/supabase: supabaseServer,/g)).toHaveLength(1);
+    expect(src).not.toMatch(/stripeService\.\w+\(/);
+    expect(src).not.toContain('getStripeService');
+    expect(src).not.toContain('supabaseServer');
+    expect(src).not.toMatch(WRITE_OP);
+    expect(src).toContain('status: 410');
 
     // getOrCreateCustomer must stay user-scoped on every statement it issues.
     const svc = read('lib/stripe/StripeService.ts');
     const fn = svc.slice(
       svc.indexOf('async getOrCreateCustomer('),
-      svc.indexOf('async createCustomCreditSubscription(')
+      svc.indexOf('async createBoostPackCheckout(')
     );
+    expect(fn.length).toBeGreaterThan(0);
     expect(fn.match(/\.from\('user_subscriptions'\)/g)).toHaveLength(4);
     expect(fn.match(/\.eq\('user_id', userId\)/g)).toHaveLength(3); // the 4th site is the INSERT
     expect(fn).toMatch(/\.insert\(\{\s*\n\s*user_id: userId,/);

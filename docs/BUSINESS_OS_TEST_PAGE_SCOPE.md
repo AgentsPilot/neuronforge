@@ -1,6 +1,6 @@
 # Business OS Test Page — Scope & Functionality
 
-> **Last Updated**: 2026-10-01
+> **Last Updated**: 2026-10-07
 
 **Location:** `app/test-business-os/page.tsx`
 **Route:** `/test-business-os`
@@ -18,7 +18,7 @@ The Business OS Test Page is a multi-tabbed harness for exercising Business OS A
 
 Because every `/api/business-os/*` (and `/api/onboarding/*`) route authenticates via `getUser()`, this page acts as whoever you are currently authenticated as, and the current-user panel shows exactly which account that is. This removes the "typed userId vs. session user" mismatch that the Form Tester on `/test-plugins-v2` has to manage.
 
-This document describes the page as it exists today: the shared chrome, the Account Setup helper, and four tabs (**Overview**, **Modules**, **Danger Zone**, **LLM Usage**). It grows **one section per feature tab** as tabs are added. The Danger Zone tab is not yet documented here (follow-up F-5).
+This document describes the page as it exists today: the shared chrome, the Account Setup helper, and five tabs (**Overview**, **Modules**, **Danger Zone**, **LLM Usage**, **Billing**). It grows **one section per feature tab** as tabs are added. The Danger Zone tab is not yet documented here (follow-up F-5).
 
 ## Table of Contents
 
@@ -32,6 +32,8 @@ This document describes the page as it exists today: the shared chrome, the Acco
   - [Tab: Overview](#tab-overview)
   - [Tab: Modules](#tab-modules)
   - [Tab: LLM Usage](#tab-llm-usage)
+  - [Tab: Billing](#tab-billing)
+  - [Tab: Danger Zone, Remove a test account](#tab-danger-zone-remove-a-test-account)
 - [Adding a New Tab](#adding-a-new-tab)
 - [Technical Architecture](#technical-architecture)
 - [Related Documentation](#related-documentation)
@@ -99,7 +101,7 @@ A convenience helper to bootstrap the prerequisites most Business OS features ne
 
 Feature tabs are added over time; each will be documented here as its own subsection following the same structure as the Test Plugins V2 doc (**Purpose / Features / API Endpoints Used / Use Cases**).
 
-The tabs today are **Overview**, **Modules**, **Danger Zone** and **LLM Usage**. Danger Zone (business data reset and purge preview) is not yet documented in this file (follow-up F-5).
+The tabs today are **Overview**, **Modules**, **Danger Zone**, **LLM Usage** and **Billing**. Danger Zone (business data reset and purge preview) is not yet documented in this file (follow-up F-5).
 
 ### Tab: Overview
 
@@ -264,6 +266,41 @@ The tab imports only types from server modules. All labels and statuses are comp
 - Paste the all-zero id and confirm the platform-account message.
 - Hide the browser tab and confirm auto-refresh pauses.
 
+### Tab: Billing
+
+**Purpose:** the trigger for the Business OS plan checkout demo (plan payments P-3a). It opens a real Stripe **test-mode** checkout for the signed-in account and mounts Stripe's embedded checkout. Paying changes **no plan** until P-3b ships.
+
+**Features:**
+- A tier select built from `TIER_ORDER` (the component holds no tier name) and a **Start checkout** button.
+- Calls `POST /api/business-os/billing/plan/checkout` with `returnTo: 'test_harness'`. The response goes to the shared **Last API Response** viewer with the client secret **redacted**; the secret is used only to mount the checkout.
+- Completion arrives through `onComplete` (card only, so Stripe does not redirect). A refusal shows its HTTP status, code and, for `checkout_open`, the open lock's expiry.
+
+**Prerequisites (developer's `.env.local` only, never Vercel):** `BUSINESS_OS_PLAN_CHECKOUT_ENABLED=true`, `BUSINESS_OS_PLAN_PRICES_ENABLED=true`, the sandbox `STRIPE_SECRET_KEY` and `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`. With the checkout switch off the route answers 404.
+
+**API Endpoints Used:** `POST /api/business-os/billing/plan/checkout`.
+
+**Use cases:**
+- Pay with `4242 4242 4242 4242`; watch the webhook recognise the plan invoice and answer 500 by design until P-3b (the P-3a workplan's demo runbook).
+- Press Start again: `409 checkout_open`.
+- A held friend cannot open this page (the payment-hold gate redirects them); their path is tested from `/invite/awaiting-payment`.
+
+### Tab: Danger Zone, Remove a test account
+
+**Purpose:** removes one **test** account completely, login included, so the email can sign up again, without pasting SQL (test-account cleanup slice 2, [requirement](/docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md)). Platform admins only: the section renders inside the Danger Zone only after the `admin_users` access check, and renders nothing if its own probe answers 401 / 403. Unlike the rest of the page it targets the account named by the email, not the session user. **There is no undo.**
+
+**Features:**
+- On mount, `GET /api/admin/test-account-cleanup/check` says whether the deployment is configured. Not configured: a "Not set up on this deployment" note pointing at [runbook §6](/docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md), and the inputs and buttons are disabled.
+- Email and tag (free text, default `+test`, only empty is refused). **Check** shows OK or BLOCKED, every blocker with its guard id and how to clear it, the rows per table (`unknown`, never 0, when a count could not be read), the storage files that will be removed, the triggers on the login and what is kept. Editing the email or the tag discards the check.
+- After an OK check, or a BLOCKED one whose only blocker is G-12 (files, which the delete removes first): type the email again; **Delete** is enabled only on an exact match (trimmed, case-insensitive). One request per click, with a "Deleting…" state. No delete is offered when the database function is out of date.
+- Result: one row per table, then TOTAL with the result (CLEAN), rows, tables, files removed and the removed login id. A refusal or error is one plain sentence chosen from the error code (including "Files removed, account kept"); the server's message and details are never shown, and nothing goes to the shared Last API Response viewer.
+
+**API Endpoints Used:** `GET` and `POST /api/admin/test-account-cleanup/check`, `POST /api/admin/test-account-cleanup/delete`.
+
+**Use cases:**
+- Check a `+test` account: OK, with its rows; run the delete and read the report.
+- Check a non-test or admin email: BLOCKED with the guard and how to clear it; no delete offered.
+- On a deployment without `TEST_CLEANUP_SECRET`: the "not set up" note, actions disabled.
+
 ---
 
 ## Adding a New Tab
@@ -364,3 +401,5 @@ Could not run a live session/DB. The following need a manual pass on `/test-busi
 | 2026-09-17 | LLM Usage tab (Layer 1.1) | Added the **Tab: LLM Usage** section: admin-only, read-only attribution checks for one business (five checks, statuses including Incomplete, display caps and the 5,000-row ceiling, Check 5 open-end caveat, the business-selection exception to the session model, and a non-production "verify a test session" use case). Corrected the stale "only tab" statements to list Overview, Modules, Danger Zone and LLM Usage; documenting Danger Zone is follow-up F-5. |
 | 2026-09-18 | LLM Usage tab: Layer 1.5 areas | Documented the two new areas, `onboarding` and `images`: their call names (at most three onboarding call types fire, KI-D; `client_workflow_extraction` can appear ×2 in one group), how a zero-token image row reads in Check 1, Check 5 and the area totals, the images note under the area totals, the reuse cache writing no row (KI-B), and the mid-rollout zero lines. Check 3(c) text updated: no live caller should write the helper label any more; still Info (F-7). The verify-a-session use case gains an onboarding run and an image generation. |
 | 2026-10-01 | Payment hold on the harness (invite-only signup Slice 5b, SA R-2) | New server `app/test-business-os/layout.tsx` calls the payment-hold gate first: a friend who signed up from a champion's invite and has not paid is sent to `/invite/awaiting-payment`, because middleware skips this page and its Account Setup and module testers drive the full Business OS API. One note under Account Model. No other behaviour changes; signed out, the page renders as before. |
+| 2026-10-07 | Billing tab (plan payments P-3a) | Added the **Tab: Billing** section: a test-mode plan checkout for the session account through `POST /api/business-os/billing/plan/checkout`, Stripe's embedded checkout mounted on the returned client secret (redacted from the shared viewer), the two server switches it needs in `.env.local` only, and that paying changes no plan until P-3b. New component `components/test-business-os/PlanCheckoutPanel.tsx`. |
+| 2026-10-07 | Danger Zone: Remove a test account (test-account cleanup slice 2) | Added the **Tab: Danger Zone, Remove a test account** section: admin-only, the configured probe and its "not set up" state, check then typed confirmation then delete, the G-12-only exception, the per-table report with TOTAL, refusals as one plain sentence. New component `components/business-os/purge/TestAccountCleanupPanel.tsx`, mounted at the end of `PurgeDangerZone`. |

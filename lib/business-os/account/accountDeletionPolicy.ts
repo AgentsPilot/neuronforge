@@ -1,9 +1,23 @@
 /**
+ * @deprecated Purge slice 3a (2026-10-05, SA OQ-3): do not extend or add
+ * consumers. What a business deletion removes is decided by the purge
+ * descriptors (`lib/business-os/purge/descriptors.ts`), and account deletion is
+ * superseded by the admin-delete design (D14: the auth user and `profiles`
+ * survive every purge level), whose hard-delete model this file predates. Its
+ * only consumers are four scripts (`test-account-deletion.ts`,
+ * `business-fixture.ts`, `verify-deletion-policy-tables.ts`,
+ * `audit-deletion-coverage.ts`) and its own test; no route or service imports
+ * it. Deletion of this file and those scripts is scheduled for AD-3.
+ *
+ * Correction (workplan §1.2): the business table list is NOT here. It is
+ * `BUSINESS_OWNED_TABLES` in `lib/business-os/businessOwnedTables.ts`; this
+ * file reads only its `USER_OWNED_TABLES`.
+ *
  * What happens to each ACCOUNT-level table when someone deletes their account.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * The business side needs no policy: deleting the `business_profiles` row
- * cascades all 55 tables in `BUSINESS_OWNED_TABLES`. This file is about the
+ * cascades every table in `BUSINESS_OWNED_TABLES`. This file is about the
  * other half — the rows that belong to the PERSON and survive that cascade by
  * design.
  *
@@ -154,6 +168,36 @@ export const ACCOUNT_POLICY_EXCEPTIONS: Record<string, AccountTablePolicy> = {
       'auth user is deleted, not through an update. stripe_customer_id is deliberately kept (SA Q-3): ' +
       'it is a pseudonymous link needed to reconcile with Stripe, whose own records hold the email; ' +
       'deleting the Stripe customer is a separate P-7a / PF-14 decision.',
+  },
+
+  // Plan payments P-3b.1 (SA-P5, migration 20261027): the money history. The
+  // same financial-record verdict and mechanism as the billing record.
+  business_os_billing_events: {
+    verdict: 'minimise',
+    reason:
+      'Financial record: the Business OS money history (one append-only row per Stripe money event ' +
+      'of the plan, with amounts and Stripe ids, never an email). Retained for accounting, detached ' +
+      'from the person. Its user_id is declared ON DELETE SET NULL, and service_role holds no UPDATE ' +
+      'on the table at all, so the detach happens when the auth user is deleted, not through an update.',
+  },
+
+  // Credits boost slice 2a (NFR-12, F-11): the same financial-record verdict
+  // and mechanism as the credit lots.
+  business_os_boost_purchases: {
+    verdict: 'minimise',
+    reason:
+      'Financial record: the Business OS boost purchases of the account (price, Stripe references, ' +
+      'the link to the credit lot). Retained for accounting, detached from the person. Its user_id is ' +
+      'declared ON DELETE SET NULL, and service_role holds no UPDATE on user_id, so the detach happens ' +
+      'when the auth user is deleted, not through an update.',
+  },
+
+  business_os_boost_cap_overrides: {
+    verdict: 'minimise',
+    reason:
+      "Audited admin record: changes to the account's boost purchase cap. Retained, detached from the " +
+      'person. Its user_id is declared ON DELETE SET NULL, and service_role holds no UPDATE on user_id, ' +
+      'so the detach happens when the auth user is deleted, not through an update.',
   },
 };
 

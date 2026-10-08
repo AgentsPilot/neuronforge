@@ -1,11 +1,18 @@
 // app/api/business-os/purge/commit/route.ts
 //
-// T20 — the Reset commit.
+// T20 — the Reset / Purge commit (Purge added in purge slice 3b).
 //
 // ⚠️ THIS ROUTE DELETES DATA once `purge_business_data` is applied. Until then
 // it refuses before writing anything, because `ResetService` probes for the
 // function first. That refusal is the expected state until the service-role
 // key is rotated and `20260916b` is applied.
+//
+// ── Options (FR-4) ─────────────────────────────────────────────────────────
+// `options` is a `.strict()` object of three booleans, each defaulting to
+// false, so an unknown key is a 400. The `agents` key is ACCEPTED here and
+// refused by the orchestrator with its own code (`agents_option_refused`,
+// OQ-1 = (c), SA C-4): the refusal lives in one place, where it is audited,
+// and cannot be bypassed by a caller that skips this route's schema.
 //
 // FR-2 / AC-28: the target is ALWAYS the session user. No user id is accepted
 // anywhere — the schema is `.strict()`, so an injected `userId` is a 400 rather
@@ -17,12 +24,12 @@
 // up — not against anything the client supplied — so the confirmation cannot
 // be satisfied by a client that simply echoes back what it was shown.
 //
-// ── Not in slice 2: the signed dry-run token (AC-29) ───────────────────────
+// ── Not in slices 2 or 3: the signed dry-run token (AC-29) ─────────────────
 // Slice 2's "Delivers" list names typed confirmation and not the preview→commit
 // token, so this route does not require a prior matching dry-run. The UI only
 // offers the commit after a preview, but that is a rendering order, not an
 // enforced one. AC-29 is therefore NOT satisfied by this slice and is carried
-// forward — stated here so it is not mistaken for done.
+// forward (to AD-2 / slice 5) — stated here so it is not mistaken for done.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -30,8 +37,8 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { authorizePurge } from '@/lib/business-os/purge/purgeAuthz';
-import { runReset } from '@/lib/business-os/purge/ResetService';
-import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { runPurgeCommit } from '@/lib/business-os/purge/ResetService';
+import { confirmationMatches, resolveConfirmationTarget } from '@/lib/business-os/purge/confirmation';
 
 const logger = createLogger({ module: 'PurgeCommitAPI' });
 
@@ -39,8 +46,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Snapshot (full row read + write + read-back) plus a 53-table transaction plus
- * recursive storage removal. 60s is the ceiling the gate budget was set against;
+ * Snapshot (full row read + write + read-back) plus a one-transaction delete
+ * across every table in the run plus recursive storage removal. 60s is the ceiling the gate budget was set against;
  * a Reset that exceeds it is killed by the platform mid-phase-3, which is
  * survivable (phase 2 already committed, residue is reported on the next
  * preview) but should be rare for a test business.
@@ -49,15 +56,20 @@ export const maxDuration = 60;
 
 const schema = z
   .object({
-    level: z.literal('reset'),
+    level: z.enum(['reset', 'purge']),
+    options: z
+      .object({
+        integrations: z.boolean().default(false),
+        agents: z.boolean().default(false),
+        activityHistory: z.boolean().default(false),
+      })
+      .strict()
+      .default({}),
     // Trimmed before the length check, so whitespace-only text is a validation
     // error rather than a confirmation that merely fails to match.
     confirmText: z.string().trim().min(1).max(500),
   })
   .strict();
-
-/** Normalise for comparison: trimmed, case-insensitive, internal whitespace collapsed. */
-const normalise = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
 export async function POST(request: NextRequest) {
   const correlationId =
@@ -97,16 +109,26 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Typed confirmation, checked against a server-side value ───────────
-    const expected = await resolveConfirmationTarget(user.id, user.email ?? null);
-    if (!expected) {
+    // Shared with the admin surface (AD-2a). A profile READ ERROR is a 500,
+    // never the email fallback (SA AC2-8: the confirmation must not fail open).
+    const target = await resolveConfirmationTarget(user.id, user.email ?? null);
+    if (target.status === 'unverified') {
+      requestLogger.error({ userId: user.id, level: validated.level }, 'Commit refused — confirmation target could not be read');
+      return NextResponse.json(
+        { success: false, error: 'Could not read what to confirm against. Nothing was changed. Try again.' },
+        { status: 500 },
+      );
+    }
+    if (target.status === 'none') {
       return NextResponse.json(
         { success: false, error: 'Could not determine what to confirm against. Refusing.' },
         { status: 409 },
       );
     }
 
-    if (normalise(validated.confirmText) !== normalise(expected.value)) {
-      requestLogger.info({ userId: user.id }, 'Reset refused — confirmation text did not match');
+    const expected = target;
+    if (!confirmationMatches(validated.confirmText, expected.value)) {
+      requestLogger.info({ userId: user.id, level: validated.level }, 'Commit refused — confirmation text did not match');
       return NextResponse.json(
         {
           success: false,
@@ -117,15 +139,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Ids only (CLAUDE.md § Logging; AD-2a T-9): no address in this line.
     requestLogger.warn(
-      { userId: user.id, email: user.email },
-      'Reset confirmed — starting the destructive sequence',
+      { userId: user.id, level: validated.level, options: validated.options },
+      'Commit confirmed — starting the destructive sequence',
     );
 
-    const outcome = await runReset({
+    const outcome = await runPurgeCommit({
       userId: user.id, // session user only — never from the request
       actorEmail: user.email ?? null,
       correlationId,
+      level: validated.level,
+      options: validated.options,
     });
 
     return NextResponse.json({ success: true, data: outcome });
@@ -136,7 +161,7 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    requestLogger.error({ err: error }, 'Reset commit failed unexpectedly');
+    requestLogger.error({ err: error }, 'Purge commit failed unexpectedly');
     return NextResponse.json(
       {
         success: false,
@@ -151,22 +176,4 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-}
-
-/**
- * What the user must type: the business name, or the account email if there is
- * no business name. Looked up server-side.
- */
-async function resolveConfirmationTarget(
-  userId: string,
-  email: string | null,
-): Promise<{ kind: 'business name' | 'account email'; value: string } | null> {
-  try {
-    const { data: profile } = await businessProfileRepository.findByUserId(userId);
-    const name = profile?.company_name;
-    if (name && name.trim()) return { kind: 'business name', value: name };
-  } catch {
-    // Fall through to email. A missing profile is normal for some test accounts.
-  }
-  return email ? { kind: 'account email', value: email } : null;
 }

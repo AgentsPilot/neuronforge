@@ -1,14 +1,14 @@
 # Workplan: Business OS Plan Payments, P-2 (Plan prices and billing record)
 
-> **Last Updated**: 2026-10-04
+> **Last Updated**: 2026-10-06
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): §4 PF-8, PF-14 (registry part), PF-15 (billing-row part); §6 "Price shown vs price charged"; §8 SR-8, SR-9, SR-12, SR-16, SR-17; §9.1 P-2; §9.3 (20261025); §9.4 (Stripe customer row) and CF-1; SA Review SA-P1, SA-P10 (env name only), SA-P12 (a), tenant-isolation ruling; conditions C-4, C-5, C-9. Reuse plan [L-2, L-10, RD-1, RD-3, Q-T1, Q-T8](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md).
 **As-built:** [BUSINESS_OS_PLAN_PAYMENTS_ASBUILT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_ASBUILT.md) G-4, G-11, G-14
 **Depends on:** SA-P13 query answered (C-4; done 2026-10-02, requirement §10.2). P-1 merged (PR #188) is not a dependency, but P-2 edits P-1's catalog.
 **Date:** 2026-10-04
-**Branch:** `feature/bos-plan-payments-p2`, local only, cut from `origin/main` `2fb98a74` (P-0 and P-1 merged).
-**Status:** P-2a Code Complete (uncommitted, 2026-10-04): waiting for the user to see the diff, SA code review, QA, and the user's migration apply (P2-C6). P-2b not started.
+**Branch:** P-2a: `feature/bos-plan-payments-p2`, cut from `origin/main` `2fb98a74` (merged, #192). P-2b: `feature/bos-plan-payments-p2b`, cut from `origin/main` `248de6be` on 2026-10-06, worktree `neuronforge-invite-s1`, uncommitted.
+**Status:** P-2a merged (#192). **P-2b Code Complete except gate H3** (uncommitted, 2026-10-06): prices created in the sandbox and `check-bos-plan-prices` PASS (H2, sandbox). The C-8 fixture capture **STOPPED without writing anything**: the sandbox renders events in `2025-09-30.clover`, not `2025-10-29.clover`, and the sandbox has a webhook endpoint to production (evidence § P-2b). Needs an SA ruling on the merge-safety switch (P2b-Q1) and decisions on the capture (P2b-Q2, P2b-Q3).
 
 ## Overview
 
@@ -458,10 +458,10 @@ The migration is safe to apply before the code deploys: it is a new, empty table
 - [x] B5. ✅ (P-2a) Static migration test.
 
 **Phase C: config and catalog**
-- [ ] C1. (P-2b) `config/planPrices.ts` + tests.
-- [ ] C2. (P-2b) Catalog takes its keys from the config and gains the tier helper; catalog tests updated.
-- [ ] C3. (P-2b) Webhook harness and QA suite pinned to an empty map; snapshots byte-identical (SHA-256 before and after).
-- [ ] C4. (P-2b) `KNOWN_NON_GATE_IMPORTERS` entries; entitlements doc steps.
+- [x] C1. ✅ (P-2b) `config/planPrices.ts` + tests.
+- [x] C2. ✅ (P-2b) Catalog takes its keys from the config and gains the tier helper; catalog tests updated. Plus the merge-safety switch `BUSINESS_OS_PLAN_PRICES_ENABLED` (P2b-Q1).
+- [x] C3. ✅ (P-2b) Webhook harness and QA suite pinned to an empty map; snapshots byte-identical (SHA-256 before and after).
+- [x] C4. ✅ (P-2b) `KNOWN_NON_GATE_IMPORTERS` entries; entitlements doc steps.
 
 **Phase D: repository**
 - [x] D1. ✅ (P-2a) `BusinessOsBillingAccountRepository` + index export.
@@ -474,10 +474,10 @@ The migration is safe to apply before the code deploys: it is a new, empty table
 - [x] E4. ✅ (P-2a) `stripeMode.ts`, `businessOsStripeCustomer.ts` + tests.
 
 **Phase F: price scripts**
-- [ ] F1. (P-2b) `planPriceCheck.ts` + tests.
-- [ ] F2. (P-2b) `setup-bos-plan-prices.ts`. Refusals verified with no network: `sk_live_`, `rk_test_`, missing key, missing `--expect-account`.
-- [ ] F3. (P-2b) `check-bos-plan-prices.ts` + npm script.
-- [ ] F4. (P-2b) Capture script `--plan-prices` and `--expect-account`.
+- [x] F1. ✅ (P-2b) `planPriceCheck.ts` + tests.
+- [x] F2. ✅ (P-2b) `setup-bos-plan-prices.ts`. Refusals verified with no network: `sk_live_`, `rk_test_`, missing key, missing `--expect-account`, `--env` missing, inside the repo, inside another checkout.
+- [x] F3. ✅ (P-2b) `check-bos-plan-prices.ts` + npm script.
+- [x] F4. ✅ (P-2b) Capture script on the real plan prices, with `--expect-account` (plan prices are its only mode, so there is no `--plan-prices` flag; deviation 3 in § P-2b).
 
 **Phase G: registries and env**
 - [x] G1. ✅ (P-2a) Purge descriptor + baseline.
@@ -487,8 +487,8 @@ The migration is safe to apply before the code deploys: it is a new, empty table
 
 **Phase H: gates that need the user** (order matters; §8)
 - [ ] H1. (P-2a, owed by the user before merge, P2-C6) User runs the pre-check, migration and checker; the checker's VERDICT PASS rows are recorded in the evidence log.
-- [ ] H2. (P-2b) With the go-ahead and the right environment: `setup-bos-plan-prices --apply`, then `check-bos-plan-prices` PASS (both $79 / $129, tax exclusive).
-- [ ] H3. (P-2b) Capture `--plan-prices` (**before P-2 deploys**), fixtures replaced, and the P1-C7 read-only production check (no `user_subscriptions` write for the capture event ids; those events show as `unknown_price` denials, because production's list is still empty).
+- [x] H2. ✅ (P-2b, in the **sandbox**, per the user's decision of 2026-10-06) `setup-bos-plan-prices --apply`, then `check-bos-plan-prices` PASS (both $79 / $129, tax exclusive). Production's own account: at its setup (P2b-Q1).
+- [ ] H3. (P-2b) **STOPPED 2026-10-06, nothing written** (events on `2025-09-30.clover`; P2b-Q2). Capture (**before P-2b deploys**), fixtures replaced, and the P1-C7 read-only production check, which now applies because the sandbox delivers to production (event ids in § P-2b; P2b-Q3).
 
 **Phase I: verification**
 - [x] I1. ✅ (P-2a, see evidence log) `npx jest lib/business-os/billing lib/business-os/entitlements lib/stripe lib/repositories lib/business-os/purge lib/business-os/account lib/business-os/__tests__/businessOwnedTables.test.ts app/api/stripe supabase/migrations/__tests__ --ci`
@@ -706,6 +706,91 @@ The P-1 lockdown suites (`userSubscriptionsWriteLockdown.qa.test.ts`, `userSubsc
 - P-3a handles `billing_row_not_recorded` (the customer is held by another account) as a refused checkout with an alert, never a retry loop.
 - Non-blocking: checker B3 counts 15 constraints. On Postgres 18, NOT NULL constraints are listed in `pg_constraint`, so B3 would wrongly FAIL. That is fine on today's Supabase PG17; re-pin B3 if the project is upgraded.
 
+### P-2a migration 20261025: applied, checker PASS (recorded 2026-10-07 for the P-3a merge gate)
+
+- **User's statement, verbatim (2026-10-04):** "checker passed, merged PR192". The checker rows themselves were not pasted back; SA ruled in the P-3a workplan review (G-2) that this dated statement **plus** Dev's read-only check below satisfies P2-C6 for P-3a's merge, and that the rows are not owed retroactively.
+- **Dev's read-only check (2026-10-07, branch `feature/bos-plan-payments-p3a` at `acd2663b`):** zero-row selects only, through PostgREST, nothing written. As `service_role`, `select open_checkout_session_id, open_checkout_expires_at, stripe_customer_id, updated_at, stripe_subscription_id, subscription_status ... limit 0` → OK (all six columns exist). Negative control, a phantom column → refused `42703`. As `anon`, `select id ... limit 0` → refused `42501` (no client grant). The column-level UPDATE grant and the `checkout_lock_pair` / `checkout_id_shape` CHECKs cannot be read through PostgREST without writing; they are in the migration body (`20261025_business_os_billing_accounts.sql` lines 42, 52, 88) and are what the user's checker PASS covered (checker rows B1 to B10).
+
+### P-2b (Dev, 2026-10-06)
+
+**Decision.** The user, 2026-10-06: "yes, use the sandbox and start P-2b." Development and tests run on the separate "AgentsPilot sandbox" account `acct_1SMy0N56GTXD0wwi`. Production's own Stripe account gets the same lookup keys at its setup (go-live checklist, Offir). The code holds lookup keys only: there is no price, product or account id in app code, and a test asserts the config holds none.
+
+**Base and workspace.** `origin/main` `248de6be`, branch `feature/bos-plan-payments-p2b`, worktree `neuronforge-invite-s1`, uncommitted. The key was copied without being echoed to `C:/Users/Barak/.stripe/sandbox.env` (outside every checkout, one line). Every script run used `--env` on that file and `--expect-account acct_1SMy0N56GTXD0wwi`. No live-mode call was made.
+
+**What P-2b adds**
+
+| File | What |
+|---|---|
+| `lib/business-os/entitlements/config/planPrices.ts` | `PLAN_STRIPE_PRICES` (keys per Q-10, `retiredLookupKeys: []`), `allPlanLookupKeys`, `tierForPlanLookupKey`. The price-change procedure (CF-1) is in the header |
+| `lib/business-os/billing/planPricesFlag.ts` | `isPlanPriceRecognitionEnabled()`: server-only `BUSINESS_OS_PLAN_PRICES_ENABLED`, default off (P2b-Q1) |
+| `lib/business-os/billing/planPriceCatalog.ts` | `BOS_PLAN_LOOKUP_KEYS = allPlanLookupKeys()`; `activePlanLookupKeys()` (the configured keys while the switch is on, none while it is off; read on every load); `planTierForLookupKey`; the cache is keyed on the key list |
+| `lib/business-os/billing/planPriceCheck.ts` | The §3.4 check, pure. Retired keys are `info` |
+| `scripts/lib/stripe-script-guards.ts` | `--env` is required, and refused inside the current directory or inside any git checkout (it walks up looking for `.git`, as a folder or as a worktree's file; P2-C9). The key is read with `dotenv.parse`, never put in `process.env` and never printed. Key-kind gate. `--expect-account` plus one `accounts.retrieveCurrent`. Error messages pass through `redactKeys` |
+| `scripts/setup-bos-plan-prices.ts` | §3.5. Dry run by default, `sk_test_` only. The pure `planSetup()` stops on a price that differs, a duplicate price, a price on another product, an archived or live product, and a sub-cent display price |
+| `scripts/check-bos-plan-prices.ts` + npm `check-bos-plan-prices` | §3.5. Read-only, four key kinds |
+| `scripts/capture-stripe-billing-fixtures.ts` | Rewritten. Uses the real plan prices (they must pass the check, and it never creates them): basic, then a basic → pro proration, a renewal (`subscription_cycle`, new fixture `invoice-paid-renewal.json`), a failed renewal, and the no-key probe price. Counts webhook endpoints. **Refuses to write unless every event is on `2025-10-29.clover`.** Scrubs `hosted_invoice_url` and `invoice_pdf` (bearer links) as well as customer PII |
+| Tests | `planPrices.test.ts`; `planPriceCheck.test.ts`; `planPriceCatalog.test.ts` (switch on and off, retired key, cache per key list); `planInvoiceResolver.test.ts` (3 new cases on the **real** catalog with an injected lister); `scripts/__tests__/stripePlanPriceScripts.test.ts` (refusals, `planSetup`, source guards, two real `tsx` runs that exit 2) |
+| Registrations | `KNOWN_NON_GATE_IMPORTERS`: `planPriceCatalog.ts` (`TierId`, `allPlanLookupKeys`, `tierForPlanLookupKey`) and `planPriceCheck.ts` (`PLAN_STRIPE_PRICES`, `PlanStripePrice`, `TIER_MATRIX`, `TIER_ORDER`, `TierId`) |
+| Docs | `BUSINESS_OS_ENTITLEMENTS.md` (tier step 6, § Plan prices in Stripe); `FEATURE_FLAGS.md` (the switch); requirement §9.1 P-3a, §9.4 CF-1, §9.5 row 7, §10.2 |
+
+**H2: prices in the sandbox (ids are not secret).** A dry run first (4 CREATE lines, nothing created), then `--apply`, then a second `--apply` (everything "unchanged"), then the check.
+
+| Object | Id |
+|---|---|
+| Product (Essentials) | `bos_plan_basic` |
+| Product (Autopilot) | `bos_plan_pro` |
+| Price `bos_plan_basic_monthly_usd` ($79.00, usd, month, tax exclusive) | `price_1UNeUr56GTXD0wwiTXnG5mek` |
+| Price `bos_plan_pro_monthly_usd` ($129.00, usd, month, tax exclusive) | `price_1UNeUr56GTXD0wwiYAY8IfOK` |
+| Probe product and no-key price (capture only) | `bos_router_fixture_probe`, `price_1UNeXm56GTXD0wwiNba2Qmn9` |
+
+`npm run check-bos-plan-prices -- --env … --expect-account acct_1SMy0N56GTXD0wwi` printed `PASS basic … $79.00`, `PASS pro … $129.00` and `VERDICT PASS`, exit 0.
+
+**H3: the capture STOPPED and wrote nothing.** The run created two clocks (`clock_1UNeXn56GTXD0wwiRoZWdYqv`, `clock_1UNeYk56GTXD0wwisQYDwlOo`), deleted both at the end, and found all five events. Every event came back on **`2025-09-30.clover`**, so the script wrote no fixture (as the brief says: stop, do not adapt). The hand-built fixtures are unchanged (`git status` shows the folder clean). Events: create `evt_1UNeXr56GTXD0wwiqSOmW1Au`, proration `evt_1UNeXw56GTXD0wwi1Hn14GIj`, renewal `evt_1UNeYB56GTXD0wwiEilXaz7H`, payment_failed `evt_1UNeYS56GTXD0wwi3w0cXap0`, unknown `evt_1UNeYo56GTXD0wwiyznxKrPd`.
+
+**Found during the capture: the sandbox has a webhook endpoint to production.** A read-only listing shows `we_1UNG3L56GTXD0wwiKUsZn8DU`, created 2026-10-05 17:51 UTC, url `https://neuronforge-kohl.vercel.app/api/stripe/webhook` (production, per `docs/VERCEL_DEPLOYMENT_SETUP.md`), api_version `2025-09-30.clover`, 13 events: `invoice.paid`, `invoice.payment_failed`, `invoice.finalized`, `invoice.marked_uncollectible`, `payment_intent.succeeded`, `charge.refunded`, three `charge.dispute.*`, `checkout.session.completed` and `customer.subscription.created/updated/deleted`. The brief and §10.2 said the sandbox had no endpoint. The 26 capture events of those types all show `pending_webhooks: 0`, so production answered 2xx, which means it **verified their signatures**: production's `STRIPE_WEBHOOK_SECRET` appears to be this endpoint's.
+
+What production did with them, from reading the route on `main` (P-1, no switch):
+
+- `invoice.paid` and `invoice.payment_failed` are denied as `unknown_price`.
+- `customer.subscription.updated` and `deleted` return early on "No user_id in subscription metadata" (logged at `error`, no write).
+- `payment_intent.succeeded`, `invoice.finalized` and `invoice.marked_uncollectible` have no platform handler.
+- `customer.subscription.created` is Connect-only.
+
+Expected effect: one `processed_webhook_events` claim row per event, and no `user_subscriptions` or `billing_events` write. The P1-C7 read-only check is owed (P2b-Q3).
+
+**Merge safety (P2b-Q1, for SA).** P2-C7 asked for the prices to exist in production's Stripe environment before merge. Under the sandbox decision, that environment is set up later. So P-2b makes the filled list **inert in production**: the process catalog uses the keys only while `BUSINESS_OS_PLAN_PRICES_ENABLED` is on (server-only, default off, read on every load).
+
+- **Off** is exactly P-1: `load()` returns the empty map before any Stripe client is built, every platform plan invoice is denied, and nothing is logged.
+- **On**: one cached `prices.list` call. A Stripe error **throws**: the route releases the claim and answers 500, and Stripe retries. It never becomes a deny (tested).
+
+Production turns the switch on only after `check-bos-plan-prices` passes against production's account (requirement §9.1 P-3a, §9.5 row 7). Two alternatives were rejected. Keying on the key prefix (Q-5) does not help, because production is in test mode either way. An env list of lookup keys would make the keys per-environment config, which Q-T1 rejected. **Production behaviour after merge: unchanged.**
+
+**Tests**
+
+| Command | Result |
+|---|---|
+| `npx jest lib/business-os/billing lib/payments app/api/stripe scripts/__tests__ --ci` | 61 suites, 1,059 tests, 28 snapshots: all pass |
+| `npm run test:bos-entitlements` (P2-C10) | 193 suites, 5,101 tests: all pass |
+| Webhook harness snapshot `connectPath.characterisation.test.ts.snap`, SHA-256 | Before: `be25c778fcf80ee03bf32cc2e47b6ebc8f999c93b2fac065d2029e15da3f360a`. After the C3 pin: identical |
+| Scoped `tsc --noEmit` (a scratch tsconfig extending the repo's; the 16 changed or new TS files; 28 repo files in the program) | 0 errors |
+| `npx eslint` on the same 16 files | 0 errors, 0 warnings |
+
+**Deviations**
+
+1. The merge-safety switch is new (P2b-Q1). Without it, P2-C7's "prices in production's environment before merge" cannot be met under the sandbox decision.
+2. `--env` is **required**. The workplan said it defaults to `.env.local`, but P2-C9 refuses any path inside the repo, and `.env.local` is one.
+3. The capture script has one mode: the real plan prices. The P-1 probe A/B prices were never run and are dropped, so there is no `--plan-prices` flag. The unknown-price capture stays on a no-key probe price, now on the fixed product id `bos_router_fixture_probe`.
+4. The check script requires `--expect-account` too. It costs one call and is the same guard.
+5. The resolver suite's `HAND-BUILT|CAPTURED` assertion, and a renewal case, are left as they are until a capture succeeds (P2b-Q2). The fixtures did not change, so neither did those tests.
+
+**P-2b questions**
+
+| # | Question | Dev's proposal |
+|---|---|---|
+| P2b-Q1 (SA) | Merge with the catalog behind `BUSINESS_OS_PLAN_PRICES_ENABLED` (default off) instead of P2-C7's "prices in production's environment before merge"? | Yes, as built. P2-C7's price and check gate moves to "before the switch is turned on in production" |
+| P2b-Q2 (user, then SA) | The sandbox renders events in `2025-09-30.clover`. How is C-8 met? | Upgrade the sandbox's default API version to `2025-10-29.clover` in the Stripe dashboard (Workbench), then re-run the capture, which needs no code change. Move the production-pointing endpoint to `2025-10-29.clover` too (Q-5). The code is not adapted to `09-30` |
+| P2b-Q3 (user) | The sandbox endpoint to production: is it intended? | Confirm who created it on 2026-10-05, and whether production's Stripe keys are now the sandbox's (the SA-P13 look). Then the P1-C7 read-only check: a `processed_webhook_events` row for each of the 26 event ids, and no `user_subscriptions` or `billing_events` change since 2026-10-06 19:55 UTC. Any further capture run also reaches production |
+
 ---
 
 ## QA Testing Report
@@ -812,6 +897,61 @@ Spot-checked against the worktree: `StripeService.ts` has exactly 2 `console.*` 
 
 **Code Approved for QA:** Yes, in parallel with M-1. M-1 must land before RM commits.
 
+### Code Review — P-2b
+
+**Code Review by SA, 2026-10-06**
+**Status:** APPROVED WITH FIXES (F-1, F-2). Gate H3 (capture, C-8) and the P1-C7 production check stay open; they no longer block merge (ruling P2b-Q1), they block turning the switch on anywhere shared and starting P-3a.
+
+**Re-run:** `npx jest lib/business-os/billing lib/payments app/api/stripe scripts/__tests__ --ci`: 61 suites, 1,059 tests, 28 snapshots, all pass. `npm run test:bos-entitlements`: 193 suites, 5,101 tests, all pass (P2-C10). The review made no Stripe call and ran no SQL.
+
+**Rulings**
+
+| # | Ruling |
+|---|---|
+| P2b-Q1 | **Accepted, and still needed with the new facts.** Not a new pattern (rule 7): domain-local server-only readers on `parseBooleanFlag` already exist (`credits/creditHistoryFlag.ts`, `purge/purgeAuthz.ts`); `is…Enabled` naming, no `NEXT_PUBLIC_`, documented in FEATURE_FLAGS.md. Why it stays: if production does run on the sandbox, a filled list with no switch would make production RECOGNISE plan invoices from any capture or test checkout, and with no plan handler until P-3b the route throws `BusinessOsHandlerMissingError` and answers 500, so Stripe retries each one for days. Off keeps P-1's deny-all. P2-C7's "prices exist and check PASS" gate moves to "before the switch is turned on in an environment". |
+| P2b-Q2 | **No field we read differs.** Stripe monthly releases within a major are additive only; the SDK changelog for 19.2.0 (`2025-10-29.clover`) lists new resources, params and enum values (PaymentRecord, `invoice.payment_attempt_required`, …) and nothing on invoice line `pricing.price_details.price`, `parent.subscription_details.*`, subscription item `current_period_*`, or `metadata`. P-1's router therefore reads `09-30` payloads correctly (and denies all while the switch is off). The bump stays a P-3a gate (Q-5) as hygiene and so fixtures match the pin. **Ops step:** an endpoint's API version is fixed at creation (`webhookEndpoints.update` has no `api_version`). (1) Workbench → Overview → API version: upgrade the sandbox account default to `2025-10-29.clover` (72 h rollback); events are rendered on the account default, which is why the capture saw `09-30`. (2) Workbench → Webhooks → Add destination: same URL, same 13 events, API version `2025-10-29.clover`. (3) Put its signing secret in Vercel production `STRIPE_WEBHOOK_SECRET`, redeploy. (4) Send a test event, confirm 2xx, then delete `we_1UNG3L56GTXD0wwiKUsZn8DU`. Duplicates during the overlap are absorbed by the `event_id` claim. Then re-run the capture; no code change. |
+| P2b-Q3 | **Confirmed from code (route on `main`):** platform invoice events are decided by the router before the switch (`unknown_price` deny, `completeClaim`, 200), so `handleInvoicePaymentFailed` never runs; `subscription.updated`/`deleted` return at "No user_id"; `subscription.created`, `invoice.finalized`, `payment_intent.succeeded` are no-ops on the platform path. Only writes: the `processed_webhook_events` insert and its `completed` update, plus log lines. Read-only SQL below. |
+
+**Read-only SQL for the user (Supabase SQL editor)**
+
+```sql
+select event_id, event_type, status, processed_at, completed_at, failure_message
+from public.processed_webhook_events
+where event_id in ('evt_1UNeXr56GTXD0wwiqSOmW1Au','evt_1UNeXw56GTXD0wwi1Hn14GIj','evt_1UNeYB56GTXD0wwiEilXaz7H','evt_1UNeYS56GTXD0wwi3w0cXap0','evt_1UNeYo56GTXD0wwiyznxKrPd')
+order by processed_at;
+
+select event_type, status, count(*) from public.processed_webhook_events
+where processed_at >= '2026-10-06 19:55:00+00' group by 1, 2 order by 1, 2;
+
+select 'user_subscriptions' as tbl, count(*) from public.user_subscriptions where updated_at >= '2026-10-06 19:55:00+00'
+union all select 'billing_events', count(*) from public.billing_events where created_at >= '2026-10-06 19:55:00+00'
+union all select 'credit_transactions', count(*) from public.credit_transactions where created_at >= '2026-10-06 19:55:00+00';
+```
+
+Expected: 5 rows `completed`, no `failure_message`; the second query shows the 26 capture events `completed` (plus unrelated traffic); 0 and 0 for the first two tables. A non-zero `credit_transactions` count may be ordinary charging; look at the rows before concluding anything.
+
+**Code review**
+
+| Area | Result |
+|---|---|
+| `config/planPrices.ts` | Lookup keys only, `satisfies Record<TierId, …>`, no object id (tested), ten-key limit tested, CF-1 procedure in the header. Good |
+| Catalog + switch | Read on every load; cache keyed on the key list; off returns before any client is built; Stripe failure throws (tested). Harness and QA suite pinned to explicit maps, snapshot unchanged |
+| `planPriceCheck.ts` | Pure, exact-cent compare, sub-cent fails, retired keys `info`, mode checked. Good |
+| Guards / setup / check | `sk_test_` only for setup and capture, `--expect-account` verified by one read, `--env` refused inside cwd or any checkout, key never printed, `redactKeys` on every error path, dry run by default, refuses differing or duplicate prices, idempotency keys. Good |
+| Capture | PII and bearer links scrubbed (`hosted_invoice_url`, `invoice_pdf`, tax ids); refuses off-version events; forbidden-metadata check kept. See F-2 |
+| Entitlements | Both lib importers registered in `KNOWN_NON_GATE_IMPORTERS` with accurate `why`; neither calls `check()`/`decide()`. Scripts are outside the scanned roots (app, lib, components, hooks), so no entry is owed. P2-C10 green |
+| Logging / Zod | No `console.*` in touched lib files; scripts write to stdout (CLI). No route or input boundary added |
+
+**Fixes**
+1. **F-1** `docs/FEATURE_FLAGS.md` "On" row and the `planPricesFlag.ts` header: state that until a plan handler is registered (P-3b), a RECOGNISED plan invoice is released for retry (500, `bos_billing_plan_unhandled`), so the switch is not turned on in production before P-3b unless that loop is intended (the P-3a demo). — Priority: Medium Fixed by Dev (2026-10-06): the `planPricesFlag.ts` header and the FEATURE_FLAGS.md "On" row and section now say that until P-3b a recognised plan invoice is logged `bos_billing_plan_unhandled`, released, answered 500 and retried by Stripe, so the switch stays OFF in production until P-3b unless the loop is intended. The reader is `isPlanPriceRecognitionEnabled()`.
+2. **F-2** `scripts/capture-stripe-billing-fixtures.ts`: print each webhook endpoint's url, status and api_version (never a secret), and refuse while any enabled endpoint exists unless `--allow-webhook-delivery` is given. Today only a count is printed and nothing stops the run; the delivery to production was found by accident. — Priority: Medium Fixed by Dev (2026-10-06): before creating anything the capture lists every endpoint (id, status, api_version, url; never a secret) and throws a `ScriptRefusal` (exit 2) while any endpoint is `enabled`, unless `--allow-webhook-delivery` is given. Pure `webhookDeliveryRefusal` / `describeEndpoints` are tested, plus a source-order test that the refusal comes before the first create. Not re-run (blocked on the endpoint API-version ops step). Jest scope re-run: 61 suites, 1,063 tests, 28 snapshots, all pass; eslint and scoped tsc clean.
+
+**Optimisation suggestions (non-blocking)**
+- Capture: keep `created: { gte: start - 60 }` on `events.list` rather than paging up to 1,000 events.
+- Once the user confirms production's key prefix, rewrite the "separate, empty sandbox" wording in requirement §9.1 P-3a and §9.5 instead of keeping both versions.
+
+**Code Approved for QA:** Yes, with F-1 and F-2 landing before RM commits. Before the switch is turned on anywhere shared, or P-3a starts: the SQL above runs clean, the endpoint is recreated on `2025-10-29.clover`, the capture is re-run (H3) and fixtures replaced.
+
 ---
 
 ## Change History
@@ -821,3 +961,5 @@ Spot-checked against the worktree: `StripeService.ts` has exactly 2 `console.*` 
 | 2026-10-04 | Created (Dev) | P-2 workplan: lookup-key config with retired keys (CF-1), catalog fill, `check-bos-plan-prices`, test-mode price setup script with account and mode guards, migration 20261025 `business_os_billing_accounts` (surrogate PK and per-mode uniqueness proposed, column-level UPDATE), pre-check, checker, rollback, repository, customer helper split with characterisation proof, registries, names-only `.env.example`, real fixture capture gate. 34 tasks, 3 to 3.5 days, P-2a/P-2b split offered. Questions Q-1 to Q-11 for SA |
 | 2026-10-04 | SA workplan review: **APPROVED WITH CONDITIONS** | Q-1 to Q-11 ruled (SA-P1 amended to surrogate PK + per-mode uniqueness; UPDATE grant 17 columns incl. `stripe_customer_id`; `.env.example` deferred to staging C2, names documented in a doc). Split into P-2a (billing record) and P-2b (plan prices). Conditions P2-C1 to P2-C10 |
 | 2026-10-04 | P-2a implemented (Dev), uncommitted | Migration 20261025 + pre-check + checker (B1 to B10) + rollback + static guard; `BusinessOsBillingAccountRepository` (`findByUser`, `recordCustomer`) with importer guard; purge `never`, `USER_OWNED_TABLES`, deletion `minimise` + baseline 135; `findOrCreatePlatformCustomer` split with characterisation hash identical at E1, E2 and E3; 2 `console.*` to Pino; `stripeMode.ts`; `ensureBusinessOsStripeCustomer` (no caller); Stripe env-name table in BUSINESS_OS_ENTITLEMENTS.md; requirement SA-P1 amendment and §9.1 P-2 recorded. Evidence log § P-2a |
+| 2026-10-06 | P-2b implemented (Dev), uncommitted | User decision "yes, use the sandbox and start P-2b". `config/planPrices.ts`; catalog fill behind the server switch `BUSINESS_OS_PLAN_PRICES_ENABLED` (default off, production unchanged; P2b-Q1); `planPriceCheck.ts`; setup, check and capture scripts with shared guards (P2-C9); harness pinned (snapshot hash identical); registrations; docs. Sandbox prices created and checked (H2). Capture stopped on `2025-09-30.clover` with nothing written; the sandbox has a webhook endpoint to production (P2b-Q2, P2b-Q3). Evidence log § P-2b |
+| 2026-10-07 | G-2 record for P-3a (Dev) | Evidence log: the user's 2026-10-04 statement "checker passed, merged PR192" for 20261025, recorded verbatim, plus Dev's read-only column check. SA (P-3a review G-2): together they satisfy P2-C6 for P-3a's merge |

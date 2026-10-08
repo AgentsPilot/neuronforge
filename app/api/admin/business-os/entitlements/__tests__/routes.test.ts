@@ -242,6 +242,19 @@ jest.mock('@/lib/repositories/BusinessOsAccountLineageRepository', () => ({
   },
 }));
 
+// Plan payments P-3b.1 (PF-13), SA C-8 ruling 2026-10-07: assign_tier and
+// set_cohort now read the billing record before writing, to keep the credit
+// period anchor of a subscribed account. No subscription here, so every op
+// behaves exactly as before. The ONE additive change SA approved to this
+// suite; the T11b.1 pin below is unchanged.
+jest.mock('@/lib/repositories/BusinessOsBillingAccountRepository', () => ({
+  businessOsBillingAccountRepository: {
+    async findByUser() {
+      return { data: null, error: null };
+    },
+  },
+}));
+
 jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
   businessOsInviteRepository: {
     async findHoldFactsById() {

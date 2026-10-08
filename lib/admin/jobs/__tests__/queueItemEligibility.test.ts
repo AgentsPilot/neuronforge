@@ -358,6 +358,16 @@ describe('E-13: purity', () => {
     expect(code).not.toMatch(/new Date\(\s*\)/);
     expect(code).not.toMatch(/fetch\(|supabase|createLogger|process\.env/);
     const imports = [...code.matchAll(/from\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
-    expect(imports.sort()).toEqual(['@/lib/admin/jobs/jobsQueuesTypes', '@/lib/business-os/businessDay', '@/lib/cron/bosCronJobs'].sort());
+    // Amended by slice 7c (SA fallback (b)): + the LEAD_RETRY_HELD switch, a
+    // constant-only module that itself imports nothing (pinned below).
+    expect(imports.sort()).toEqual(
+      ['@/lib/admin/jobs/jobsQueuesTypes', '@/lib/admin/jobs/retryHolds', '@/lib/business-os/businessDay', '@/lib/cron/bosCronJobs'].sort()
+    );
+    const holds = fs
+      .readFileSync(path.join(process.cwd(), 'lib/admin/jobs/retryHolds.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    expect(holds).not.toMatch(/\bimport\b|\brequire\(|process\.env/);
+    expect(holds.trim()).toMatch(/^export const LEAD_RETRY_HELD = (false|true) as boolean;$/);
   });
 });

@@ -241,6 +241,35 @@ export class PaymentPlanRepository {
   }
 
   /**
+   * Ownership oracle: the plan's id if `userId` owns it, else null.
+   *
+   * For service-role paths that were handed a plan id by someone else
+   * (`bindPlanSubscription` vets the metadata `payment_plan_id` with it, Fix-1b).
+   * `id` and `user_id` only; not found is a normal answer and is not logged. No
+   * `is_active` / `deleted_at` filter: this answers "whose is it".
+   */
+  async findOwnedId(
+    id: string,
+    userId: string
+  ): Promise<PaymentPlanRepositoryResult<string>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_plans')
+        .select('id')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return { data: data?.id ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, planId: id, userId }, 'Failed to check payment plan ownership');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Find plans by service ID
    */
   async findByServiceId(serviceId: string, userId: string): Promise<PaymentPlanRepositoryResult<PaymentPlan[]>> {

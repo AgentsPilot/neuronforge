@@ -71,6 +71,13 @@ export interface InvitePageCopy {
    */
   planCategoryNote: Record<string, string>;
   linkExpires: (date: string) => string;
+  /**
+   * N-1 (N6, FR-42): the inviter will be told when the invitee joins. Shown in
+   * the signable state only, under the form. `inviterWillBeTold` takes a real
+   * name; `inviterWillBeToldUnnamed` is for the platform fallback name.
+   */
+  inviterWillBeTold: (name: string) => string;
+  inviterWillBeToldUnnamed: string;
   /** Slice 1b: the signup form (FR-11). */
   signup: SignupCopy;
   expiredHeading: string;
@@ -189,6 +196,8 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       'usage.explain.trial': CREDIT_EXPLANATION.en.trial,
     },
     linkExpires: (date) => `You can accept this invitation until ${date}.`,
+    inviterWillBeTold: (name) => `We'll let ${name} know when you join.`,
+    inviterWillBeToldUnnamed: "We'll let the person who invited you know when you join.",
     signup: {
       heading: 'Create your account',
       stepOf: (step, total) => `Step ${step} of ${total}`,
@@ -289,6 +298,8 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       'usage.explain.trial': CREDIT_EXPLANATION.he.trial,
     },
     linkExpires: (date) => `אפשר לקבל את ההזמנה עד ${date}.`,
+    inviterWillBeTold: (name) => `נעדכן את ${name} כשתצטרפו.`,
+    inviterWillBeToldUnnamed: 'נעדכן את מי שהזמין אתכם כשתצטרפו.',
     signup: {
       heading: 'יצירת החשבון',
       stepOf: (step, total) => `שלב ${step} מתוך ${total}`,
@@ -390,6 +401,8 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       'usage.explain.trial': CREDIT_EXPLANATION.es.trial,
     },
     linkExpires: (date) => `Puedes aceptar esta invitación hasta el ${date}.`,
+    inviterWillBeTold: (name) => `Avisaremos a ${name} cuando te unas.`,
+    inviterWillBeToldUnnamed: 'Avisaremos a quien te invitó cuando te unas.',
     signup: {
       heading: 'Crea tu cuenta',
       stepOf: (step, total) => `Paso ${step} de ${total}`,

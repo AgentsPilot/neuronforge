@@ -28,7 +28,8 @@
 // SET NULL nulls it. Restricted to blocking edges the graph IS acyclic, and
 // there are exactly TEN of them whose parent is in the delete set, of which
 // FIVE constrain a purge (the other five are billing-to-billing, never-to-never),
-// plus `crm_activities`-last and B4, which is a trigger and not an FK at all.
+// plus `crm_activities`-last. (B4, a trigger rather than an FK, was retired in
+// purge slice 3a — see the review note above REVIEWED_DELETE_TRIGGERS.)
 //
 // ⚠️ The count is TEN, not nine. A census filtered to edges where BOTH endpoints
 // are user-scoped returns nine and misses B7 — `agent_scheduler_state` has no
@@ -50,6 +51,13 @@ import type { PurgeDescriptor, StorageDescriptor } from './types';
  * the band, and the invariant test tells you if you were wrong.
  */
 const ORDER = {
+  /**
+   * Purge slice 3a (M-4). CASCADE children of a BLOCKING_CHILD table. Ordered
+   * ahead of it so each reports the rows its own delete removed, rather than 0
+   * because the parent's cascade got there first. Within the band the child
+   * sits below its parent (`payment_reminders` < `payment_plan_installments`).
+   */
+  PRE_BLOCKING: 50,
   /** Children that BLOCK a later delete. Must precede their parent. */
   BLOCKING_CHILD: 100,
   /** Ordinary leaf/child rows. */
@@ -59,7 +67,9 @@ const ORDER = {
   /** Config/identity kept by Reset, removed by Purge. */
   CONFIG: 700,
   /**
-   * `crm_activities` only. Deleted LAST inside the RPC (FR-17, AC-22).
+   * `crm_activities` only. Deleted LAST inside the RPC (FR-17, AC-22), with
+   * the single exception of `business_profiles` (TENANCY_ROOT, below), which
+   * a Purge deletes after it.
    *
    * Deleting `payment_refunds` fires `recompute_transaction_refund_state`,
    * which UPDATEs `payment_transactions.status`, which fires
@@ -70,6 +80,16 @@ const ORDER = {
    * is superuser-only), so ordering is the entire mitigation.
    */
   LAST: 9000,
+  /**
+   * `business_profiles` ONLY (purge slice 3a, §0.10 F-SA-3). 56 tables carry a
+   * CASCADE FK `(user_id) -> business_profiles(user_id)` (measured 2026-10-05),
+   * so deleting it before any of them makes every later count 0 — measured on
+   * the 7 CONFIG siblings and `crm_activities`. It goes after everything,
+   * including `crm_activities`: every T5 trigger source (`payment_refunds`) is
+   * already gone by then, and `crm_activities` is itself one of its cascade
+   * children, so the cascade clears any residue (workplan R-8).
+   */
+  TENANCY_ROOT: 9900,
 } as const;
 
 /**
@@ -103,22 +123,54 @@ export const BLOCKING_EDGES: ReadonlyArray<{
   // reclassifying any billing table knows it inherits an ordering problem.
 ];
 
+// ── B4 retired — review note (purge slice 3a, 2026-10-05, §0.10 F-SA-4) ─────
+// B4 was an ordering assertion, `payment_plan_subscriptions` before
+// `crm_contacts`, because `delete_future_bookings_on_contact_delete_trigger`
+// (BEFORE DELETE on crm_contacts) deleted future bookings and so tripped B2
+// from a direction B2 alone does not name. Migration
+// `20260928_contact_delete_handled_in_app.sql` DROPPED that trigger, and the
+// live measurement of 2026-10-05 (workplan §1.3 M-2, re-run at T3a-0) confirms
+// crm_contacts has no DELETE trigger. The `TRIGGER_ORDERING` export that
+// encoded it is deleted. `payment_plan_subscriptions` stays in BLOCKING_CHILD
+// for B2 alone.
+//
+// The lesson is kept instead of the edge: a hand-encoded trigger assertion
+// goes stale silently in BOTH directions (this one outlived its trigger; a new
+// trigger would never have been added). So triggers are now DETECTED, not
+// encoded: `deleteGraph.ts` refuses a run when a DELETE-capable trigger sits
+// on a run table or a CASCADE child and is not in the reviewed list below.
+
 /**
- * B4 is not an FK constraint and cannot be expressed as one.
+ * DELETE-capable triggers a reviewer has looked at, keyed by (table, trigger).
  *
- * `scheduling_bookings.contact_id -> crm_contacts` is SET NULL and does not
- * block. The constraint comes from `delete_future_bookings_on_contact_delete_trigger`,
- * a BEFORE DELETE trigger on `crm_contacts` that deletes future bookings and so
- * trips B2 from a direction B2 alone does not name. Encoded as an explicit
- * ordering assertion because no FK dump would ever reveal it.
+ * Populated from the live delete-graph run of 2026-10-05T12:47Z (SA C-3):
+ * across all 16 level x option combinations this is the ONLY DELETE-capable
+ * trigger on a run table or on a CASCADE child of one. The other three
+ * DELETE-capable triggers in `public` are reached by no run: `trg_mce_guard`
+ * (marketing_consent_events — `never`, and a SET NULL child of crm_contacts,
+ * so never deleted) and the `storage_usage` pair
+ * (`trigger_update_storage_on_delete`, `trigger_update_storage_used` —
+ * `never`, and not a CASCADE child of any run table). If a future FK makes
+ * any of them reachable, the check refuses and names it.
  */
-export const TRIGGER_ORDERING: ReadonlyArray<{ before: string; after: string; why: string }> = [
+export const REVIEWED_DELETE_TRIGGERS: ReadonlyArray<{ table: string; trigger: string; note: string }> = [
   {
-    before: 'payment_plan_subscriptions',
-    after: 'crm_contacts',
-    why: 'B4 — T1 (BEFORE DELETE on crm_contacts) deletes future bookings, tripping B2',
+    table: 'payment_refunds',
+    trigger: 'recompute_transaction_refund_state_trigger',
+    note: 'T2. AFTER INSERT OR DELETE OR UPDATE. Deleting a refund recomputes payment_transactions.status, whose log trigger INSERTs into crm_activities — the single live T5 residue path. Mitigated by ordering: crm_activities is LAST (FR-17, AC-22). Reviewed 2026-10-05, purge slice 3a.',
   },
 ];
+
+/**
+ * CASCADE children allowed to sit AFTER a cascade parent in a run, so their
+ * statement count can under-report (OQ-4: snapshot counts are the truth).
+ *
+ * `crm_activities` only: it must be deleted after `payment_refunds` (T5), and
+ * it is a CASCADE child of `crm_contacts`, which cannot move after it without
+ * breaking the bands. Any other cascade-after-parent edge is a banding defect,
+ * and the invariant test fails on it.
+ */
+export const CASCADE_COUNT_EXEMPT: readonly string[] = ['crm_activities'];
 
 // ────────────────────────────────────────────────────────────────────────────
 // IN SCOPE — the 64 tables of requirement §3
@@ -126,12 +178,16 @@ export const TRIGGER_ORDERING: ReadonlyArray<{ before: string; after: string; wh
 
 const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.1 Business profile ────────────────────────────────────────────────
-  { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
-    notes: '1:1 with auth.users — THIS is the "business" row. Kept by Reset so tests re-run without onboarding. No DELETE RLS policy.' },
+  { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.TENANCY_ROOT, snapshot: 'rows',
+    notes: '1:1 with auth.users — THIS is the "business" row. Kept by Reset so tests re-run without onboarding. No DELETE RLS policy. Alone in the final band (TENANCY_ROOT): 56 tables CASCADE from it (measured 2026-10-05; 57 with business_addresses, 20261037), so it goes last or their counts read 0 (F-SA-3).' },
+  // Added 2026-10-06 (20261036_business_addresses_book.sql + 20261037_…_ownership_fk.sql):
+  // the address book behind business_profiles.address_parts / invoice_address.
+  { table: 'business_addresses', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+    notes: 'The business\'s saved addresses. Same level as business_profiles, which Reset keeps: its address_id / invoice_address_id point here and its address_parts / invoice_address are copies of these rows, so a Reset that emptied the book would leave the profile showing an address the picker no longer offers. CASCADE child of business_profiles (business_addresses_business_fk), so CONFIG keeps it ahead of TENANCY_ROOT for an accurate count. Its only inbound FKs are those two business_profiles columns, ON DELETE SET NULL — no blocking edge.' },
 
   // ── §3.2 CRM ─────────────────────────────────────────────────────────────
   { table: 'crm_contacts', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
-    notes: 'CRM hub. BEFORE DELETE trigger T1 deletes future bookings — see TRIGGER_ORDERING (B4).' },
+    notes: 'CRM hub. CASCADE parent of proposals and crm_activities. Has no DELETE trigger since 20260928_contact_delete_handled_in_app.sql dropped T1 (B4 retired, slice 3a).' },
   { table: 'crm_activities', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LAST, snapshot: 'rows',
     notes: 'DELETED LAST. The single live T5 residue path writes here mid-purge; ordering is the only available mitigation.' },
   { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
@@ -152,7 +208,7 @@ const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.4 Scheduling ──────────────────────────────────────────────────────
   { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
   { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
-    notes: 'Blocked by B2; also reached by trigger T1.' },
+    notes: 'Blocked by B2 (payment_plan_subscriptions RESTRICT). No longer reached by a crm_contacts trigger: T1 was dropped (B4 retired, slice 3a).' },
   { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
   { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'calendar-sync repopulates within ~5 min after a Reset (business_profiles is kept and drives its enumeration) — FR-26.' },
@@ -161,15 +217,17 @@ const IN_SCOPE: PurgeDescriptor[] = [
   { table: 'payment_refunds', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
     notes: 'B1 — RESTRICT onto payment_transactions, so this goes first. Deleting it fires T2, the single T5 residue path.' },
   { table: 'payment_plan_subscriptions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
-    notes: 'B2 (RESTRICT onto scheduling_bookings) and B4 (must also precede crm_contacts). SELECT-only RLS.' },
+    notes: 'B2 (RESTRICT onto scheduling_bookings), so this goes first. CASCADE parent of payment_plan_installments, which sit in PRE_BLOCKING ahead of it. SELECT-only RLS.' },
   { table: 'payment_transactions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
   { table: 'payment_invoices', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
   { table: 'payment_plans', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'payment_plan_installments', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'payment_plan_installments', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING + 1, snapshot: 'rows',
+    notes: 'CASCADE child of payment_plan_subscriptions (BLOCKING_CHILD), so it is ordered ahead of it for an accurate count (slice 3a, M-4).' },
   { table: 'payment_events', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
   { table: 'payment_automation_rules', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
   { table: 'payment_automation_executions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'payment_reminders', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'payment_reminders', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows',
+    notes: 'CASCADE child of payment_plan_installments, so it is ordered ahead of it for an accurate count (slice 3a, M-4).' },
   { table: 'saved_payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
   { table: 'payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Live — 2026-08-14_drop_payment_methods.sql was never applied. Measured, not assumed.' },
@@ -259,8 +317,8 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'K* — RETAINED BY BOTH LEVELS. Holds preferred_language and currency. Deleting it resets the owner\'s language while they are reading the result screen, and renders their NEXT sign-in wrong — on a login that survives every level (D3).' },
 
   // ── §3.15 Newly classified in scope (T1 pass) ────────────────────────────
-  { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
-    notes: 'Business content the owner authored and sent to their clients. Self-FK supersedes_id is SET NULL — no ordering needed.' },
+  { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+    notes: 'Business content the owner authored and sent to their clients. Self-FK supersedes_id is SET NULL — no ordering needed. LEAF (slice 3a, M-4): a CASCADE child of crm_contacts, so it goes before it for an accurate count.' },
   { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Lead data is customer data.' },
   { table: 'daily_briefings', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
@@ -285,7 +343,8 @@ const OPT_IN: PurgeDescriptor[] = [
   { table: 'agent_scheduler_state', level: 'optional:agents', area: 'agents', scope: { kind: 'via', parent: 'agents', fk: 'agent_id' }, order: ORDER.BLOCKING_CHILD + 1, snapshot: 'ids',
     notes: 'B7 (C-30). NO tenancy column at all, so FR-1\'s predicate cannot see it by construction — it is reachable only through the blocking-edge check. last_execution_id -> agent_executions is NO ACTION. agent_id -> agents is CASCADE, so deleting agents would clear it incidentally, but relying on that would make the order depend on an FK action someone can later change to SET NULL.' },
   { table: 'agents', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'agent_executions', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.ROOT + 1, snapshot: 'rows' },
+  { table: 'agent_executions', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.ROOT - 1, snapshot: 'rows',
+    notes: 'CASCADE child of agents, so it goes one ahead of it for an accurate count (slice 3a, M-4). Still after agent_scheduler_state (B7).' },
   { table: 'agent_memory', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'Confirmed live at T4 — it was not a migration-file phantom.' },
   { table: 'agent_memories', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
@@ -413,6 +472,16 @@ const EXCLUDED: PurgeDescriptor[] = [
   // Plan payments P-2a (PF-14, SA-P1): the Business OS billing record.
   never('business_os_billing_accounts', U,
     'The Business OS billing record: the Stripe customer and subscription of the plan, one row per account per Stripe mode. A Reset that removed it would orphan a live Stripe subscription that keeps charging, and lose the customer link. A retained financial record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+
+  // Plan payments P-3b.1 (SA-P5, migration 20261027): the money history.
+  never('business_os_billing_events', U,
+    'The Business OS money history: one append-only row per Stripe money event of the plan (paid, failed, refused). A retained financial record: never purged and never archived. A Reset that removed it would erase what the account paid and which payment moved its plan. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+
+  // Credits boost slice 2a (NFR-12, F-11): boost purchases and cap overrides.
+  never('business_os_boost_purchases', U,
+    'Boost purchases: one row per attempt to buy credits, with the price, the Stripe references and the link to the credit lot. A financial record: never purged and never archived — a Reset that removed it would erase what the account paid for. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+  never('business_os_boost_cap_overrides', U,
+    "Admin changes to the account's boost purchase cap, ended and never deleted. An audited admin record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles."),
 
   // Admin Archiving (Slice 2, condition C-4)
   never('archive_runs', G,

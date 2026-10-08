@@ -33,6 +33,7 @@ import {
   type LocalPreconditionResult,
 } from './localPrecondition';
 import { businessPurgeRepository } from '@/lib/repositories/BusinessPurgeRepository';
+import { withDevDetail } from './devDetail';
 
 const logger = createLogger({ module: 'PurgeResetGuard' });
 
@@ -43,6 +44,8 @@ export type ResetGuardResult =
       control: 'stripe_connected' | 'stripe_unreadable' | 'local_blocking' | 'local_unreadable';
       message: string;
       detail?: unknown;
+      /** Server-side only: recorded in the audit row, never returned to the client (SA G-3). */
+      auditDetail?: unknown;
     };
 
 export async function evaluateResetGuard(params: {
@@ -90,7 +93,13 @@ export async function evaluateResetGuard(params: {
     return {
       outcome: 'refused',
       control: 'local_unreadable',
-      message: `Could not check for payments still in flight (${local.reason}). Refusing rather than assuming there are none.`,
+      // SA G-3: `local.reason` can carry raw read-error text, so it reaches the
+      // client only in development; Pino (above) and the audit row keep it.
+      message: withDevDetail(
+        'Could not check for payments still in flight. Refusing rather than assuming there are none.',
+        local.reason,
+      ),
+      auditDetail: { reason: local.reason },
     };
   }
 

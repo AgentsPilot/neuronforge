@@ -30,9 +30,12 @@ import {
   PURGE_DESCRIPTORS,
   STORAGE_DESCRIPTORS,
   BLOCKING_EDGES,
-  TRIGGER_ORDERING,
+  CASCADE_COUNT_EXEMPT,
+  REVIEWED_DELETE_TRIGGERS,
   descriptorsForRun,
 } from '../descriptors';
+import * as descriptorsModule from '../descriptors';
+import { checkDeleteGraph, type ForeignKeyFact } from '../deleteGraph';
 import type { PurgeDescriptor } from '../types';
 import {
   PURGE_CAPABILITIES,
@@ -112,7 +115,12 @@ describe('purge descriptors — structural invariants (AC-45)', () => {
   describe('ordering — verified against the live FK dump, not asserted', () => {
     it('knows about the blocking edges at all', () => {
       expect(BLOCKING_EDGES.length).toBeGreaterThanOrEqual(5);
-      expect(TRIGGER_ORDERING.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('B4 is retired: TRIGGER_ORDERING is no longer exported (slice 3a, F-SA-4)', () => {
+      // The trigger B4 encoded was dropped by 20260928_contact_delete_handled_in_app.sql.
+      // Triggers are now DETECTED by the delete-graph check, not hand-encoded.
+      expect(Object.keys(descriptorsModule)).not.toContain('TRIGGER_ORDERING');
     });
 
     it.each(BLOCKING_EDGES.map((e) => [e.id, e.child, e.parent] as const))(
@@ -128,22 +136,18 @@ describe('purge descriptors — structural invariants (AC-45)', () => {
       }
     );
 
-    it.each(TRIGGER_ORDERING.map((t) => [t.before, t.after, t.why] as const))(
-      '%s is ordered before %s (%s)',
-      (before, after) => {
-        expect(byTable.get(before)!.order).toBeLessThan(byTable.get(after)!.order);
-      }
-    );
-
-    it('crm_activities is ordered last of everything that gets deleted', () => {
+    it('crm_activities is ordered last of everything that gets deleted, except business_profiles', () => {
       // FR-17 / AC-22. Deleting payment_refunds fires a trigger chain that
       // writes a row into crm_activities mid-purge; ordering is the ONLY
       // mitigation, because trigger suppression is unavailable to the service
       // role (DISABLE TRIGGER is owner-only, session_replication_role is
       // superuser-only).
       const activities = byTable.get('crm_activities')!;
+      //
+      // Slice 3a (F-SA-3): `business_profiles` alone sits after it, in the
+      // TENANCY_ROOT band, asserted separately below.
       const others = PURGE_DESCRIPTORS.filter(
-        (d) => d.level !== 'never' && d.table !== 'crm_activities'
+        (d) => d.level !== 'never' && d.table !== 'crm_activities' && d.table !== 'business_profiles'
       );
 
       expect(others.length).toBeGreaterThan(0);
@@ -196,6 +200,96 @@ describe('purge descriptors — structural invariants (AC-45)', () => {
       // Non-vacuity: this run must actually contain the agents-only edges.
       expect(position.has('agent_logs')).toBe(true);
       expect(position.has('agent_scheduler_state')).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Purge slice 3a: the final band and cascade-accurate counts (F-SA-3, M-4)
+  // --------------------------------------------------------------------------
+  describe('slice 3a: business_profiles last, cascade children before their parents', () => {
+    const allRuns = (['reset', 'purge'] as const).flatMap((level) =>
+      [false, true].flatMap((integrations) =>
+        [false, true].flatMap((agents) =>
+          [false, true].map((activityHistory) => ({
+            level,
+            run: descriptorsForRun(level, { integrations, agents, activityHistory }),
+          }))
+        )
+      )
+    );
+
+    it('business_profiles is alone in the highest band', () => {
+      const bp = byTable.get('business_profiles')!;
+      const sameOrHigher = PURGE_DESCRIPTORS.filter((d) => d.level !== 'never' && d.order >= bp.order);
+      expect(sameOrHigher.map((d) => d.table)).toEqual(['business_profiles']);
+    });
+
+    it('business_profiles is last in every Purge run and absent from every Reset run', () => {
+      expect(allRuns).toHaveLength(16);
+      for (const { level, run } of allRuns) {
+        const tables = run.map((d) => d.table);
+        if (level === 'purge') expect(tables[tables.length - 1]).toBe('business_profiles');
+        else expect(tables).not.toContain('business_profiles');
+      }
+    });
+
+    /**
+     * SYNTHETIC cascade graph mirroring the cascade pairs the 2026-10-05 live
+     * measurement found inside runs (workplan 1.3 M-4). Names are descriptor
+     * names because this checks the descriptor bands; the edges are a
+     * hand-written mirror, not a dump (OQ-6). `business_profiles` is the parent
+     * of every other deletable `user_id`-scoped table, as its 56 FKs make it.
+     */
+    const cascadeMirror: ForeignKeyFact[] = [
+      ...PURGE_DESCRIPTORS.filter(
+        (d) => d.level !== 'never' && d.scope.kind === 'user_id' && d.table !== 'business_profiles'
+      ).map((d) => ({ constraint_name: `${d.table}_bp`, table_name: d.table, references: 'business_profiles', on_delete: 'c' })),
+      { constraint_name: 'inst_sub', table_name: 'payment_plan_installments', references: 'payment_plan_subscriptions', on_delete: 'c' },
+      { constraint_name: 'rem_inst', table_name: 'payment_reminders', references: 'payment_plan_installments', on_delete: 'c' },
+      { constraint_name: 'prop_contact', table_name: 'proposals', references: 'crm_contacts', on_delete: 'c' },
+      { constraint_name: 'act_contact', table_name: 'crm_activities', references: 'crm_contacts', on_delete: 'c' },
+      { constraint_name: 'exec_agent', table_name: 'agent_executions', references: 'agents', on_delete: 'c' },
+      ...BLOCKING_EDGES.map((e) => ({
+        constraint_name: e.id,
+        table_name: e.child,
+        references: e.parent,
+        on_delete: e.onDelete === 'RESTRICT' ? 'r' : 'a',
+      })),
+    ];
+
+    it('in every run, only CASCADE_COUNT_EXEMPT children sit after a cascade parent, and no blocking edge is violated', () => {
+      expect(CASCADE_COUNT_EXEMPT).toEqual(['crm_activities']);
+      for (const { run } of allRuns) {
+        const result = checkDeleteGraph({ run, foreignKeys: cascadeMirror, triggers: [] });
+        expect(result.blockingOrderViolations).toEqual([]);
+        expect(result.cascadeAfterParent.filter((e) => !e.exempt)).toEqual([]);
+      }
+    });
+
+    it('the mirror can fail: business_profiles moved first reports count-zero edges (negative case)', () => {
+      const purgeRun = descriptorsForRun('purge', { integrations: false, agents: false, activityHistory: false });
+      const broken = [byTable.get('business_profiles')!, ...purgeRun.filter((d) => d.table !== 'business_profiles')];
+      const result = checkDeleteGraph({ run: broken, foreignKeys: cascadeMirror, triggers: [] });
+      expect(result.cascadeAfterParent.filter((e) => !e.exempt).length).toBeGreaterThan(0);
+    });
+
+    it('every reviewed DELETE trigger names a deletable descriptor and carries a dated review note', () => {
+      expect(REVIEWED_DELETE_TRIGGERS.length).toBeGreaterThan(0);
+      for (const t of REVIEWED_DELETE_TRIGGERS) {
+        expect(byTable.get(t.table)?.level).not.toBe('never');
+        expect(t.note).toMatch(/Reviewed \d{4}-\d{2}-\d{2}/);
+      }
+    });
+
+    it('the re-band changed no classification level (FR-32)', () => {
+      // The SA-S3 suite below covers every table; restated for the moved ones so
+      // a 3a re-band that also moved a level fails next to its cause.
+      const baseline = JSON.parse(
+        fs.readFileSync(path.join(__dirname, 'classification-baseline.json'), 'utf-8')
+      ) as { levels: Record<string, string> };
+      for (const t of ['business_profiles', 'payment_plan_installments', 'payment_reminders', 'proposals', 'agent_executions']) {
+        expect(byTable.get(t)?.level).toBe(baseline.levels[t]);
+      }
     });
   });
 
@@ -704,7 +798,10 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
 
   it('the baseline count matches its levels, and covers the SC-8 additions', () => {
     expect(Object.keys(baseline.levels).length).toBe(baseline.count);
-    expect(baseline.count).toBe(144);
+    // 144 at the SC-8 pass; +1 business_addresses (2026-10-06, PR #229's table);
+    // +2 credits boost slice 2a: business_os_boost_purchases and business_os_boost_cap_overrides (both never).
+    // +1 plan payments P-3b.1: business_os_billing_events, the money history (never).
+    expect(baseline.count).toBe(148);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

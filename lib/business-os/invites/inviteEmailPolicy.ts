@@ -51,3 +51,35 @@ export const INVITE_EMAIL_POLICY = {
    */
   tokenPrefixRedactLength: 12,
 } as const;
+
+/**
+ * N-1: the inviter's "your invitation was accepted" email (workplan §2.2; SA
+ * Q-1, C-1). It is sent INLINE, awaited, inside the signup request, so the
+ * whole of it (the recipient and language lookups, the template and the send)
+ * runs under one deadline. A late send is left to finish; its result is
+ * ignored. 4 s keeps the worst-case extra wait on a signup click small and far
+ * inside the signup routes' `maxDuration` (60 s), which must also cover account
+ * creation and the finalise retry. A test pins the value and the margin.
+ */
+export const INVITER_NOTIFICATION_POLICY = {
+  deadlineMs: 4_000,
+} as const;
+
+/** Why the inviter was not emailed. A reason class only: never an address. */
+export const INVITER_NOT_NOTIFIED_REASONS = {
+  /** `RESEND_FROM_EMAIL` unset or unparseable: nothing composed or sent. */
+  senderNotConfigured: 'sender_not_configured',
+  /** The invite row names no issuer id for its kind (cannot happen under the CHECK; defended anyway). */
+  noIssuer: 'no_issuer',
+  /** The issuing admin is no longer an active admin (`admin_users`, SA Q-3). */
+  recipientNotAdmin: 'recipient_not_admin',
+  /** The issuer's account no longer exists, or has no email. */
+  recipientNotFound: 'recipient_not_found',
+  /** The recipient lookup failed: no email is guessed. */
+  recipientLookupFailed: 'recipient_lookup_failed',
+  /** Every configured transport refused or failed, or the send threw. */
+  transportFailed: 'transport_failed',
+  /** The whole notification did not finish within `deadlineMs`; a send may still land. */
+  deadlineExceeded: 'deadline_exceeded',
+} as const;
+export type InviterNotNotifiedReason = (typeof INVITER_NOT_NOTIFIED_REASONS)[keyof typeof INVITER_NOT_NOTIFIED_REASONS];

@@ -8,12 +8,14 @@
 // Workplan: docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P2_WORKPLAN.md §3.7 (P-2a),
 //           SA rulings Q-1, Q-2, Q-9
 //
-// ── SCOPE IN P-2a ───────────────────────────────────────────────────────────
-// Two methods only (SA Q-9): `findByUser` and `recordCustomer`. Lookups by a
-// Stripe id, the SR-5 checkout lock and the webhook mirror updates arrive with
-// their callers (P-3a, P-3b), each in its own review. The replace-customer
-// method lands in P-3a and must be compare-and-set on the old customer id
-// (SA Q-2). There is no DELETE grant, so there is no delete method.
+// ── SCOPE ───────────────────────────────────────────────────────────────────
+// P-2a (SA Q-9): `findByUser` and `recordCustomer`.
+// P-3a (workplan BUSINESS_OS_PLAN_PAYMENTS_P3A_WORKPLAN.md §3.5, SA Q-2, Q-8):
+// `acquireCheckoutLock` (the SR-5 checkout lock) and `replaceCustomer`. Both are
+// compare-and-set UPDATEs with `{ count: 'exact' }` and NO `.select()`, because
+// UPDATE + `.or()` + `.select()` fails with 42703 in production.
+// Lookups by a Stripe id and the webhook mirror updates arrive with P-3b, in
+// its own review. There is no DELETE grant, so there is no delete method.
 //
 // ── SERVICE ROLE (intentional RLS bypass, documented per CLAUDE.md) ─────────
 // The table has RLS on, NO policy and NO client grant at all (SA-P1): owners
@@ -30,7 +32,9 @@
 // `stripe_customer_id` stops one account taking another's customer: that
 // conflict is an error here, never a returned row.
 //
-// CALLERS: `lib/business-os/billing/businessOsStripeCustomer.ts` only. A source
+// CALLERS: `lib/business-os/billing/businessOsStripeCustomer.ts`,
+// `lib/business-os/billing/planCheckout.ts` (P-3a), and the admin deletion
+// reads under `lib/business-os/purge/`. A source
 // guard in `lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts`
 // holds the exact list of files allowed to name this repository.
 //
@@ -113,6 +117,26 @@ export interface BusinessOsBillingCustomerRecordResult {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CUSTOMER_ID_PATTERN = /^cus_[A-Za-z0-9]{1,251}$/;
 const UNIQUE_VIOLATION = '23505';
+/** A Stripe Checkout Session id, as the `checkout_id_shape` CHECK admits it (`cs_`, at most 255). */
+const CHECKOUT_SESSION_ID_PATTERN = /^cs_[A-Za-z0-9_]{1,252}$/;
+
+/**
+ * `Date.prototype.toISOString()` output only: no `+` (a URL would turn it into
+ * a space) and no comma (it would split the `.or()` list). This is what makes
+ * interpolating the time into the lock filter safe.
+ */
+function isFilterSafeIso(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+
+/** "No lock, or an expired one", as a PostgREST `or` filter. Exported for its test. */
+export function checkoutLockFreeFilter(nowIso: string): string {
+  return `open_checkout_session_id.is.null,open_checkout_expires_at.lte.${nowIso}`;
+}
 
 class BillingAccountRepositoryError extends Error {
   constructor(message: string) {
@@ -299,6 +323,135 @@ export class BusinessOsBillingAccountRepository {
       return { data: null, error: new BillingAccountRepositoryError('stripe_customer_held_by_another_account') };
     } catch (err) {
       methodLogger.error({ err }, 'Failed to record the Business OS billing row');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * SR-5 / SA-P14 layer 1: record an open checkout session as the account's
+   * checkout lock, by COMPARE-AND-SET (P-3a workplan §3.5, SA Q-2).
+   *
+   * Succeeds only while the row still holds `stripeCustomerId` and has no
+   * unexpired lock (none at all, or one whose expiry is at or before `nowIso`).
+   * `acquired: false` means another checkout holds the lock, or the customer
+   * was replaced meanwhile; the caller expires its own session.
+   *
+   * `{ count: 'exact' }` and NO `.select()` (see the header). The patch is an
+   * explicit allow-list of three columns; `user_id`, `livemode` and `id` have
+   * no UPDATE grant anyway.
+   */
+  async acquireCheckoutLock(input: {
+    userId: string;
+    livemode: boolean;
+    stripeCustomerId: string;
+    sessionId: string;
+    expiresAtIso: string;
+    nowIso: string;
+  }): Promise<RepositoryResult<{ acquired: boolean }>> {
+    const { userId, livemode, stripeCustomerId, sessionId, expiresAtIso, nowIso } = input;
+    if (
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof stripeCustomerId !== 'string' ||
+      !CUSTOMER_ID_PATTERN.test(stripeCustomerId) ||
+      typeof sessionId !== 'string' ||
+      !CHECKOUT_SESSION_ID_PATTERN.test(sessionId) ||
+      !isFilterSafeIso(expiresAtIso) ||
+      !isFilterSafeIso(nowIso)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'acquireCheckoutLock', userId, livemode });
+
+    try {
+      const { error, count } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .update(
+          { open_checkout_session_id: sessionId, open_checkout_expires_at: expiresAtIso, updated_at: nowIso },
+          { count: 'exact' }
+        )
+        .eq('user_id', userId)
+        .eq('livemode', livemode)
+        .eq('stripe_customer_id', stripeCustomerId)
+        .or(checkoutLockFreeFilter(nowIso));
+      if (error) throw asError(error);
+      if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+      return { data: { acquired: count === 1 }, error: null };
+    } catch (err) {
+      methodLogger.error({ err, sessionId }, 'Failed to record the Business OS checkout lock');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * Replace the account's Stripe customer after Stripe reported the stored one
+   * missing (deleted at Stripe), by COMPARE-AND-SET on the old id (P-2 SA Q-2,
+   * Q-6; P-3a §3.5, SA Q-8, C-3).
+   *
+   * Clears the subscription mirror and the lock with it: a deleted customer has
+   * no live subscription, and keeping its subscription id would make the
+   * checkout refuse for ever. `replaced: false` means another request replaced
+   * it first (or the row is gone); the caller re-reads and uses what is stored.
+   *
+   * A unique violation (the new customer is already recorded for another
+   * account) is an error with an alert, never a returned row, as in
+   * `recordCustomer`. `{ count: 'exact' }`, no `.select()` (see the header).
+   */
+  async replaceCustomer(input: {
+    userId: string;
+    livemode: boolean;
+    oldCustomerId: string;
+    newCustomerId: string;
+    nowIso: string;
+  }): Promise<RepositoryResult<{ replaced: boolean }>> {
+    const { userId, livemode, oldCustomerId, newCustomerId, nowIso } = input;
+    if (
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof oldCustomerId !== 'string' ||
+      !CUSTOMER_ID_PATTERN.test(oldCustomerId) ||
+      typeof newCustomerId !== 'string' ||
+      !CUSTOMER_ID_PATTERN.test(newCustomerId) ||
+      oldCustomerId === newCustomerId ||
+      !isFilterSafeIso(nowIso)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'replaceCustomer', userId, livemode });
+
+    try {
+      const { error, count } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .update(
+          {
+            stripe_customer_id: newCustomerId,
+            stripe_subscription_id: null,
+            subscription_status: null,
+            open_checkout_session_id: null,
+            open_checkout_expires_at: null,
+            updated_at: nowIso,
+          },
+          { count: 'exact' }
+        )
+        .eq('user_id', userId)
+        .eq('livemode', livemode)
+        .eq('stripe_customer_id', oldCustomerId);
+      if (error) {
+        if (sqlStateOf(error) === UNIQUE_VIOLATION) {
+          methodLogger.error(
+            { newCustomerId, alert: true },
+            'Replacement Stripe customer is already recorded for another account; nothing was replaced'
+          );
+          return { data: null, error: new BillingAccountRepositoryError('stripe_customer_held_by_another_account') };
+        }
+        throw asError(error);
+      }
+      if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+      return { data: { replaced: count === 1 }, error: null };
+    } catch (err) {
+      methodLogger.error({ err }, 'Failed to replace the Business OS Stripe customer');
       return { data: null, error: asError(err) };
     }
   }

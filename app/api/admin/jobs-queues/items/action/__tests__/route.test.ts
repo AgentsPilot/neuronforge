@@ -325,7 +325,9 @@ describe('Z — strict Zod → 400, nothing read (SA §F)', () => {
   it.each([
     ['an unknown queue', { queue: 'nope' }],
     ['an unknown action', { action: 'delete' }],
-    ['retry (not in 7b)', { action: 'retry' }],
+    // Slice 7c: 'retry' is now an action (route.retry.test.ts); these stay unknown.
+    ['requeue (never an action)', { action: 'requeue' }],
+    ['release (never an action)', { action: 'release' }],
     ['a non-uuid id', { itemId: 'item-1' }],
     ['a missing expected', { expected: undefined }],
     ['negative attempts', { expected: { status: 'pending', attempts: -1 } }],
@@ -392,9 +394,9 @@ describe('Z — strict Zod → 400, nothing read (SA §F)', () => {
     }
   });
 
-  it('Z-8 QUEUE_ITEM_ACTIONS is exactly the QueueItemAction union (7b: cancel only)', () => {
+  it('Z-8 QUEUE_ITEM_ACTIONS is exactly the QueueItemAction union (7b cancel; 7c adds retry)', () => {
     const actions: readonly QueueItemAction[] = QUEUE_ITEM_ACTIONS;
-    expect([...actions]).toEqual(['cancel']);
+    expect([...actions]).toEqual(['cancel', 'retry']);
   });
 });
 

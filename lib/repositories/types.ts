@@ -387,6 +387,49 @@ export interface AiModelPricingSyncResult {
   failed: string[];
 }
 
+/**
+ * A row of `boost_packs` — the agent-platform Pilot-Credit boost catalog, a
+ * platform-wide table with no `user_id`. See the header of `BoostPackRepository`
+ * for why the mandatory user scoping does not apply. PostgREST returns the
+ * `numeric` columns (`price_usd`, `bonus_percentage`) as JSON numbers. Nullable
+ * columns per the table definition (docs/BOOST_PACK_ADMIN_INTERFACE.md):
+ * `badge_text` and `is_active` (DEFAULT true, but no NOT NULL).
+ */
+export interface BoostPack {
+  id: string;
+  pack_key: string;
+  pack_name: string;
+  display_name: string;
+  description: string;
+  price_usd: number;
+  bonus_percentage: number;
+  credits_amount: number;
+  bonus_credits: number;
+  badge_text: string | null;
+  is_active: boolean | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * The fields an admin may write. Every field is optional at this layer because
+ * the route keeps its historic semantics: POST requires the four text fields
+ * (enforced by its Zod schema), PUT is a partial update. A field left undefined
+ * is not sent, so the database default or the existing value stands.
+ */
+export interface BoostPackWriteInput {
+  pack_key?: string;
+  pack_name?: string;
+  display_name?: string;
+  description?: string;
+  price_usd?: number;
+  bonus_percentage?: number;
+  credits_amount?: number;
+  bonus_credits?: number;
+  badge_text?: string | null;
+  is_active?: boolean | null;
+}
+
 export interface SystemSettingsConfig {
   id: string;
   key: string;
@@ -396,6 +439,25 @@ export interface SystemSettingsConfig {
   created_at: string;
   updated_at: string;
   updated_by?: string | null;
+}
+
+// ============ User Subscription (billing summary read) Types ============
+
+/**
+ * The `user_subscriptions` columns the Settings billing screen shows
+ * (GET /api/billing/summary). Allow-listed: exactly what BillingSettings reads,
+ * nothing more — no Stripe ids, no quotas, no internal throttles.
+ */
+export interface UserSubscriptionBillingSummary {
+  balance: number | null;
+  total_spent: number | null;
+  status: string | null;
+  created_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean | null;
+  monthly_credits: number | null;
+  monthly_amount_usd: number | null;
 }
 
 // ============ User Subscription (free-tier grant) Types ============
@@ -673,6 +735,21 @@ export interface RevokeFriendInviteInput {
   claimLeaseCutoff: Date;
 }
 
+/**
+ * Admin delete AD-2a: revoke every PENDING invite one account issued, after an
+ * admin deleted that account's business (SA AC2-9). `issuerAccountId` is the
+ * deleted business's account (validated as a UUID by the repository).
+ */
+export interface RevokePendingIssuerInvitesByAdminInput {
+  issuerAccountId: string;
+  adminId: string;
+  /** At least 3 characters (CHECK `business_os_invites_revocation_complete`). */
+  reason: string;
+  now: Date;
+  /** A claim made at or after this instant is LIVE: that invite is skipped (BQ-3). */
+  claimLeaseCutoff: Date;
+}
+
 /** A revoke, as the conditional UPDATE needs it. */
 export interface RevokeBusinessOsInviteInput {
   id: string;
@@ -701,6 +778,12 @@ export interface BusinessOsInviteRedemptionView {
   issuer_kind: 'admin' | 'account';
   /** Slice 5b: the champion who sent a friend invite (NULL on an admin invite). */
   issuer_account_id: string | null;
+  /**
+   * N-1: the auth user id of the admin who issued an admin invite (NULL on a
+   * friend invite), so that admin can be told it was accepted. Server-side
+   * only: never returned by a redemption route (SA C-2, pinned by test).
+   */
+  issuer_admin_id: string | null;
   grant_kind: BusinessOsInviteGrantKind;
   grant_id: string;
   access_open_ended: boolean | null;

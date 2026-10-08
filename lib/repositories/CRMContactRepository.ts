@@ -151,6 +151,37 @@ export class CRMContactRepository {
   }
 
   /**
+   * Ownership oracle: the contact's id if `userId` owns it, else null.
+   *
+   * For service-role paths that were handed a contact id by someone else (the
+   * Stripe webhook vets metadata ids with it). Depends on `id` and `user_id`
+   * only, so no join or schema change elsewhere can make it fail closed on
+   * every call. Not found is a normal answer, not an error, and is not logged:
+   * the caller decides what a miss means. No `deleted_at` filter: this answers
+   * "whose is it", the same as `findById`.
+   */
+  async findOwnedId(
+    id: string,
+    userId: string
+  ): Promise<CRMContactRepositoryResult<string>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('crm_contacts')
+        .select('id')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return { data: data?.id ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, contactId: id, userId }, 'Failed to check CRM contact ownership');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Find contact by email
    */
   async findByEmail(

@@ -24,6 +24,7 @@ import {
 } from './descriptors';
 import { evaluatePreflightGate, describeGateCoverage } from './PreflightGate';
 import { missingCapabilities, describeCapability, hasCapability } from './capabilities';
+import { runDeleteGraphCheck, type DeleteGraphResult } from './deleteGraph';
 import type { PurgeLevel, PurgeOptions, GateResult } from './types';
 import {
   businessPurgeRepository,
@@ -61,6 +62,13 @@ export interface PreviewResult {
    * The same answer the page banner shows, so the two cannot disagree.
    */
   resetLive: boolean | null;
+
+  /**
+   * Purge slice 3a (T3a-5): the delete-graph verdict for THIS level and
+   * these options, read-only, so a refusal is visible before anyone types a
+   * confirmation. `unreadable` is a blocking state, never "clean" (SA C-5).
+   */
+  deleteGraph: DeleteGraphResult;
 
   /** Always false: a PREVIEW never proceeds. The commit route is separate. */
   canProceed: false;
@@ -132,28 +140,44 @@ export async function buildPurgePreview(params: {
   // can never disagree with the banner or with `ResetService`.
   const resetLive = await businessPurgeRepository.purgeFunctionExists();
 
+  // Never throws: a failed read is `unreadable`, rendered as blocking (C-5).
+  const deleteGraph = await runDeleteGraphCheck({ level, options, correlationId });
+
   const limitations: string[] = [];
 
+  // Purge slice 3b: the commit exists for both levels, so the line names the
+  // level being previewed.
+  const Level = level === 'purge' ? 'Purge' : 'Reset';
   if (resetLive === true) {
     limitations.push(
-      '⚠️ RESET IS LIVE. This preview is read-only, but the Reset button below WILL permanently delete the rows counted here. A verified snapshot is written first; there is no undo.',
+      `⚠️ ${Level.toUpperCase()} IS LIVE. This preview is read-only, but the ${Level} button below WILL permanently delete the rows counted here. A verified snapshot is written first; there is no undo.`,
     );
   } else if (resetLive === false) {
     limitations.push(
-      'This preview is read-only. Reset is currently REFUSED: the destructive database function (`purge_business_data`) is not applied, so the server rejects Reset before writing a snapshot or deleting anything.',
+      `This preview is read-only. ${Level} is currently REFUSED: the destructive database function (\`purge_business_data\`) is not applied, so the server rejects ${Level} before writing a snapshot or deleting anything.`,
     );
   } else {
     limitations.push(
-      'Could not determine whether Reset is live. Treat it as LIVE — the server re-checks before deleting and refuses if it cannot confirm.',
+      `Could not determine whether ${Level} is live. Treat it as LIVE — the server re-checks before deleting and refuses if it cannot confirm.`,
     );
   }
 
-  if (level === 'purge') {
-    // Slice 2 implements Reset only. A Purge preview counts what Purge WOULD
-    // remove, but there is no Purge commit — say so, rather than let the counts
-    // imply one.
+  if (options.agents) {
+    // OQ-1 = (c), 2026-10-05: a purge never deletes agents. The preview still
+    // counts the run so the delete-graph refusal stays visible (SA, 3a review),
+    // but the commit refuses the option on its own terms (C-4).
     limitations.push(
-      'Purge is preview-only in this build. The commit path implements Reset; there is no Purge commit yet (slice 3).',
+      'Deleting agents is not offered: a purge never deletes agents. The commit refuses this option, whatever the counts below say.',
+    );
+  }
+
+  if (deleteGraph.status === 'unreadable') {
+    limitations.push(
+      `DELETE GRAPH NOT VERIFIED: the live foreign keys and triggers could not be read (${deleteGraph.error ?? 'unknown error'}). Treat this run as REFUSED; it is not shown as clean.`,
+    );
+  } else if (deleteGraph.status === 'refused') {
+    limitations.push(
+      `DELETE GRAPH REFUSES THIS RUN: ${deleteGraph.blockingOrderViolations.length} blocking-order violation(s), ${deleteGraph.unlistedCascadeChildren.length} cascade child table(s) outside the run, ${deleteGraph.unreviewedDeleteTriggers.length} unreviewed DELETE trigger(s). See the delete-graph panel.`,
     );
   }
 
@@ -194,7 +218,7 @@ export async function buildPurgePreview(params: {
   const durationMs = Date.now() - startedAt;
 
   log.info(
-    { userId, level, rows, tablesWithRows, tablesUnknown, gate: gate.outcome, durationMs },
+    { userId, level, rows, tablesWithRows, tablesUnknown, gate: gate.outcome, deleteGraph: deleteGraph.status, durationMs },
     'Purge preview complete',
   );
 
@@ -209,6 +233,7 @@ export async function buildPurgePreview(params: {
     gateCoverage,
     limitations,
     resetLive,
+    deleteGraph,
     canProceed: false,
     generatedAt: new Date().toISOString(),
     durationMs,

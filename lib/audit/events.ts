@@ -134,6 +134,35 @@ export const AUDIT_EVENTS = {
   // carry the outcome, the refusal ids and statuses and the correlation id;
   // never an email or a business name.
   BUSINESS_DELETION_PREVIEWED: 'BUSINESS_DELETION_PREVIEWED',
+  // Admin delete AD-2a: the WRITE-AHEAD row, written (and CONFIRMED, via
+  // AuditTrailService.writeNow) by the admin commit immediately before the
+  // destructive RPC, after the second refusal evaluation passed. If it cannot
+  // be confirmed, nothing is deleted. Same placement as the preview: the ADMIN
+  // is user_id and actor, entity 'user' = the TARGET, so the owner never reads
+  // it and it survives the target's erasure (SA T-1 option A, BQ-4).
+  // ⚠️ STARTED WITHOUT A MATCHING BUSINESS_DATA_PURGED (same commit correlation
+  // id) MUST NEVER BE READ AS "DELETED": the RPC may still have refused,
+  // failed and rolled back, or the request may have died; a confirmed write
+  // that timed out can also land late. Only BUSINESS_DATA_PURGED records a
+  // completed deletion.
+  BUSINESS_DELETION_STARTED: 'BUSINESS_DELETION_STARTED',
+  // Operator exception OX-1: one TEST account (its email contains the test tag)
+  // removed completely, login included, by scripts/test-account-cleanup-delete.sql
+  // pasted by hand. Never written by app code. Entity type 'user', id = the
+  // removed login. user_id and actor_id are NULL (no signed-in operator, and
+  // the login no longer exists). Details carry table and row counts, never an
+  // email. The SQL literal is pinned to this registration by test.
+  // OX-1r (2026-10-07): the same logic also runs from the admin-only
+  // /api/admin/test-account-cleanup/delete route, through one secret-gated
+  // database function; the row is still written inside it, with actor_id =
+  // the admin and details.source = 'admin_page'.
+  BUSINESS_TEST_ACCOUNT_REMOVED: 'BUSINESS_TEST_ACCOUNT_REMOVED',
+  // OX-1r: a delete of a test account from the admin Danger Zone that was
+  // refused or failed (a guard, the typed confirmation, the storage step, or an
+  // error). Written by POST /api/admin/test-account-cleanup/delete. Carries the
+  // guard ids, the resolved login id if any and the correlationId. Never the
+  // email and never the tag (the tag is free text and can itself be an email).
+  BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED: 'BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -197,6 +226,13 @@ export const AUDIT_EVENTS = {
   // trigger; never owner text, tokens or dollars. "Once per period" is derived,
   // not stored (KI-21, KI-22): count distinct (account, periodStart).
   BOS_CREDIT_LOW_LINE_CROSSED: 'BOS_CREDIT_LOW_LINE_CROSSED',
+  // Credits boost slice 3: an owner started a boost purchase (a reservation
+  // under the cap and a Stripe checkout session attached to it). Written only
+  // by POST /api/business-os/credits/boost/checkout, then flushed (WC-7).
+  // Entity type 'business_os_boost_purchase', id = the purchase id. The details
+  // carry the package id and version, the price in minor units, the currency
+  // and the Stripe mode; never the client secret, the session id or the email.
+  BOS_BOOST_CHECKOUT_STARTED: 'BOS_BOOST_CHECKOUT_STARTED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -230,6 +266,13 @@ export const AUDIT_EVENTS = {
   // invitee email, the link, the token, its hash or a provider's error text.
   BOS_INVITE_EMAIL_SENT: 'BOS_INVITE_EMAIL_SENT',
   BOS_INVITE_EMAIL_NOT_SENT: 'BOS_INVITE_EMAIL_NOT_SENT',
+  // N-1: the issuer of an accepted invite (the champion, or the one admin who
+  // issued it) was, or was not, emailed. A system event: no owner (userId and
+  // actorId null, SA Q-4), so it appears in neither person's own audit view;
+  // the recipient's account id, the status, the language and the reason class
+  // are in the details. Never an email address of anyone.
+  BOS_INVITE_INVITER_NOTIFIED: 'BOS_INVITE_INVITER_NOTIFIED',
+  BOS_INVITE_INVITER_NOT_NOTIFIED: 'BOS_INVITE_INVITER_NOT_NOTIFIED',
   // Slice 5a (F5a-13): a champion's friend invites. Actor = the champion
   // account. CREATED carries the language; REVOKED nothing beyond the invite
   // id; REFUSED the reason class only (`own_email`, `allowance_reached`,
@@ -261,6 +304,45 @@ export const AUDIT_EVENTS = {
   // nothing. The details carry exactly the reason, the queue, the action, the
   // correlation id and the due anchor; never content, error text or a name.
   BOS_QUEUE_ITEM_CANCELLED: 'BOS_QUEUE_ITEM_CANCELLED',
+  // ADMIN_BOS_CLEANUP slice 7c: an admin put ONE failed queue item back to
+  // pending for exactly one more send attempt (POST
+  // /api/admin/jobs-queues/items/action, action 'retry'). Same entity type,
+  // account and actor rules as the cancel above ('bos_queue_item', owner-hidden
+  // by migration 20261035). Written only AFTER the compare-and-set won; the
+  // send itself happens later, through the queue's own claim. changes.after
+  // carries the reminder's next sending-hours time (null on other queues); the
+  // details carry exactly the reason, queue, action, correlation id and due anchor.
+  BOS_QUEUE_ITEM_RETRIED: 'BOS_QUEUE_ITEM_RETRIED',
+
+  // ==========================================
+  // BUSINESS OS PLAN BILLING (owner-initiated, server-written)
+  // ==========================================
+  // Plan payments P-3a (AM-7, SA-P3): an owner opened a Business OS plan
+  // checkout (POST /api/business-os/billing/plan/checkout) and the session was
+  // recorded as the account's checkout lock. Entity type
+  // 'business_os_billing_account', id = the ACCOUNT id (the billing record is
+  // one row per account and Stripe mode; the mode is in the details). Written
+  // with logAndFlush before the response (WC-7). Nothing is paid or assigned
+  // yet: payment and the plan change are P-3b's events. Refusals are logged,
+  // never audited (SA Q-9). Details: tier, lookup key, session id, livemode,
+  // held, expiresAt, actor 'owner'; never the client secret or an email.
+  BOS_BILLING_CHECKOUT_STARTED: 'BOS_BILLING_CHECKOUT_STARTED',
+  // Plan payments P-3b (AM-7, SA-P3 c): a paid Business OS plan invoice was
+  // applied by business_os_apply_plan_payment (status applied or recorded).
+  // Written by recordPlanChange after the function, flushed before the 200,
+  // with the platform actor and details.actor 'stripe_webhook' (SA Q-4), never
+  // a null actor. Entity type 'business_os_account_plan', id = the account.
+  // changes: the plan tier before and after. Details: invoice and
+  // subscription ids, tier, amount, planWritten, anchorSet, livemode, event
+  // id; never an email or a metadata value. A replay writes none. Registered
+  // in P-3b.1; first written by the webhook handler in P-3b.2.
+  BOS_BILLING_INVOICE_PAID: 'BOS_BILLING_INVOICE_PAID',
+  // Plan payments P-3b: a Business OS plan payment was refused and recorded as
+  // a mismatch_refused money history row (second subscription, subscription
+  // held elsewhere, currency, metadata, customer or tier mismatch). Same writer,
+  // actor and entity as BOS_BILLING_INVOICE_PAID. Details: refusal reason and
+  // Stripe ids. Registered in P-3b.1; first written in P-3b.2.
+  BOS_BILLING_PAYMENT_REFUSED: 'BOS_BILLING_PAYMENT_REFUSED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -761,6 +843,17 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'A Business OS invitation email was not sent, or not confirmed in time; the admin was shown the link to copy (reason class only)',
   },
+  // N-1: 'info' for both. A skipped courtesy email is not an operator alert.
+  [AUDIT_EVENTS.BOS_INVITE_INVITER_NOTIFIED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'The issuer of an accepted Business OS invite was emailed (recipient kind, account id, status and language recorded)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_INVITER_NOT_NOTIFIED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'The issuer of an accepted Business OS invite was not emailed, or the send was not confirmed in time (reason class only)',
+  },
   // Credit deduction slice 11b. 'warning': an admin changed what an account can
   // spend. SOC2 and not FINANCIAL: FINANCIAL is reserved for AgentsPilot's own
   // platform-billing events (see PAYMENT_PLAN_CANCELLED below); every Business
@@ -782,6 +875,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     description: "A Business OS account's plan credits dropped below the low line (percentage before / after recorded)",
   },
+  // Credits boost slice 3: 'info' — the owner's own action; nothing is paid yet.
+  [AUDIT_EVENTS.BOS_BOOST_CHECKOUT_STARTED]: {
+    severity: 'info',
+    description: 'A Business OS owner started a credits boost purchase (package, price and Stripe mode recorded)',
+  },
   // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
   // (and possibly send) queued items across every account, outside the schedule.
   [AUDIT_EVENTS.BOS_QUEUE_DRAIN_STARTED]: {
@@ -795,6 +893,34 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin cancelled one Business OS queue item; it will not be sent',
+  },
+  // ADMIN_BOS_CLEANUP slice 7c. 'warning': an admin added one more send
+  // attempt to a real client's queued message.
+  // Plan payments P-3a. 'info': an owner opened a checkout; nothing was paid.
+  // SOC2 alone, as every Business OS money event (SA W11b-3: FINANCIAL is
+  // reserved for AgentsPilot's own platform-billing events).
+  [AUDIT_EVENTS.BOS_BILLING_CHECKOUT_STARTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner opened a plan checkout (tier, session and mode recorded; nothing paid yet)',
+  },
+  // Plan payments P-3b. 'info': the payment the customer chose was applied.
+  // SOC2 alone, as every Business OS money event (SA W11b-3).
+  [AUDIT_EVENTS.BOS_BILLING_INVOICE_PAID]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A paid Business OS plan invoice was applied (money history recorded; plan written when it was the newest)',
+  },
+  // 'warning': money arrived that the platform refused to apply; an operator looks.
+  [AUDIT_EVENTS.BOS_BILLING_PAYMENT_REFUSED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS plan payment was refused and recorded in the money history (reason recorded)',
+  },
+  [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin put one failed Business OS queue item back for exactly one more send attempt',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {
@@ -823,6 +949,24 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'An admin opened the read-only deletion preview of a business (nothing deleted)',
+  },
+  // Admin delete AD-2a. 'critical': the record that a destructive, irreversible
+  // run was about to start. Not proof that it ran (see the event comment).
+  [AUDIT_EVENTS.BUSINESS_DELETION_STARTED]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'An admin started deleting a business (write-ahead; only BUSINESS_DATA_PURGED records completion)',
+  },
+  // OX-1. 'warning': a login and all its data were removed outside the product.
+  [AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An operator removed a test account completely, login included (operator SQL)',
+  },
+  [AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin test-account removal was refused or failed; nothing or only storage files were removed',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',

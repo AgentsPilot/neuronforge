@@ -183,6 +183,55 @@ export function isBusinessOsCreditHistoryEnabled(): boolean {
 }
 
 /**
+ * Admin delete's **own off switch** (BQ-1, the user's decision of 2026-10-06):
+ * may an admin delete a business from `/admin/users`?
+ *
+ * **SERVER-ONLY. Default off** — unset, blank or anything unrecognised is off.
+ * No `NEXT_PUBLIC_` prefix on purpose: this is a destructive-capability
+ * decision, so it must never be compiled into the client bundle, and a client
+ * that calls it reads `undefined` (off).
+ *
+ * Independent of the delete function being installed: even after the
+ * service-role key is rotated and `purge_business_data` is applied, admin
+ * delete stays off for real customers until "close the login" (AD-3) and the
+ * data export ship, and is then turned on deliberately. Read by the admin
+ * commit route BEFORE token verification (SA AC2-6) and by the preview, which
+ * mints no commit token while it is off (SA T-10).
+ *
+ * Fail direction: if this module ever stops being importable on the server
+ * (see `parseBooleanFlag.ts`'s note), the admin commit route errors (500)
+ * rather than deletes.
+ *
+ * @returns {boolean} True only when `ADMIN_BUSINESS_DELETE_ENABLED` is `true` / `1`
+ */
+export function isAdminBusinessDeleteEnabled(): boolean {
+  const flag = process.env.ADMIN_BUSINESS_DELETE_ENABLED;
+  return parseBooleanFlag(flag, false);
+}
+
+/**
+ * The Business OS credits boost checkout's kill switch (credits boost slice 3,
+ * SA F-14): may an owner start a boost purchase at all?
+ *
+ * **SERVER-ONLY. Default off** — unset, blank or anything unrecognised is off.
+ * No `NEXT_PUBLIC_` prefix: it decides whether money can be taken, so it is
+ * never compiled into a client bundle.
+ *
+ * ⚠️ **SA C-1: leave it unset on Vercel (Preview and Production) until slice 4a
+ * is merged and deployed.** Before 4a, a paid boost session reaches the
+ * agent-platform webhook handler, which no-ops and marks the event completed,
+ * so the payment would never be credited. The optional allow-list
+ * `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` (lib/business-os/boost/
+ * boostCheckoutAccess.ts) narrows who passes; it does not change this rule.
+ *
+ * @returns {boolean} True only when `BUSINESS_OS_CREDITS_BOOST_ENABLED` is `true` / `1`
+ */
+export function isBusinessOsCreditsBoostEnabled(): boolean {
+  const flag = process.env.BUSINESS_OS_CREDITS_BOOST_ENABLED;
+  return parseBooleanFlag(flag, false);
+}
+
+/**
  * Get all feature flags status.
  *
  * ⚠️ **Debug helper only — it has NO production consumer**, by design. Nothing

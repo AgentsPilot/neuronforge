@@ -11,6 +11,7 @@ export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
 export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
+export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
@@ -135,6 +136,47 @@ export type {
   BusinessOsBillingCustomerRecordResult,
   BusinessOsSubscriptionStatus,
 } from './BusinessOsBillingAccountRepository';
+// Business OS boost purchases and cap overrides (credits boost slice 2a).
+// Server-only, service role; written only through five RPCs. The two
+// `…ForWebhook` finders are unscoped by design (R-6) and guarded (SA C-5).
+export {
+  BusinessOsBoostPurchaseRepository,
+  businessOsBoostPurchaseRepository,
+  BOS_RESERVE_BOOST_PURCHASE_RPC,
+  BOS_ATTACH_BOOST_CHECKOUT_RPC,
+  BOS_ABANDON_BOOST_PURCHASE_RPC,
+  BOS_SET_BOOST_CAP_OVERRIDE_RPC,
+  BOS_END_BOOST_CAP_OVERRIDE_RPC,
+  BOOST_PURCHASE_COLUMNS,
+  BOOST_CAP_OVERRIDE_COLUMNS,
+  BOOST_PURCHASE_READ_LIMITS,
+  BOOST_PURCHASE_STATUSES,
+  BOS_CREDIT_BOOST_PURCHASE_RPC,
+  BOS_TRANSITION_BOOST_PURCHASE_RPC,
+  BOS_RECORD_BOOST_RECEIPT_RPC,
+  BOOST_FLAG_REASONS,
+  BOOST_TRANSITION_TARGETS,
+} from './BusinessOsBoostPurchaseRepository';
+export type {
+  BusinessOsBoostPurchase,
+  BusinessOsBoostPurchaseStatus,
+  BusinessOsBoostReservationInput,
+  BusinessOsBoostReservationResult,
+  BusinessOsBoostAttachStatus,
+  BusinessOsBoostAbandonStatus,
+  BusinessOsBoostCapOverride,
+  BusinessOsBoostCapOverrideInput,
+  BusinessOsBoostSetCapOverrideResult,
+  BusinessOsBoostEndCapOverrideResult,
+  BusinessOsBoostCreditInput,
+  BusinessOsBoostCreditResult,
+  BusinessOsBoostFlagReason,
+  BusinessOsBoostTransitionInput,
+  BusinessOsBoostTransitionResult,
+  BusinessOsBoostTransitionStatus,
+  BusinessOsBoostTransitionTarget,
+  BusinessOsBoostReceiptStatus,
+} from './BusinessOsBoostPurchaseRepository';
 export {
   OrganizationRepository,
   organizationRepository,
@@ -238,6 +280,7 @@ export type {
   UpsertPluginConnectionInput,
   // User subscription (free-tier grant) types
   UserSubscriptionGrantState,
+  UserSubscriptionBillingSummary,
   FreeTierNewRowValues,
   FreeTierNewRow,
   FreeTierGrantPatch,
@@ -248,6 +291,9 @@ export type {
   CreateAiModelPricingInput,
   AiModelPricingSyncEntry,
   AiModelPricingSyncResult,
+  // Boost pack (agent-platform catalog) types
+  BoostPack,
+  BoostPackWriteInput,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';

@@ -12,6 +12,8 @@
  * fallback for when they never said.
  */
 
+import { fromMinorUnits, minorUnitsPerMajor } from '@/lib/payments/refundMath';
+
 export type CurrencyCode = 'USD' | 'ILS' | 'EUR' | 'GBP';
 
 const SYMBOLS: Record<string, string> = {
@@ -73,4 +75,25 @@ export function resolveBusinessCurrency(
   if (named && SYMBOLS[named.toUpperCase()]) return named.toUpperCase() as CurrencyCode;
 
   return currencyForLanguage(language);
+}
+
+/**
+ * A price held in minor units (cents), written for a reader in their language
+ * (credits boost slice 5a, SA C-1, NFR-9).
+ *
+ * The conversion is `refundMath`'s, never a typed `/ 100`: a currency's minor
+ * unit is not always a hundredth. A whole amount is written without decimals
+ * ("$25"), anything else with the currency's own ("$12.50"). The currency is
+ * the price's own: nothing here converts one currency into another (FR-28).
+ * `refundMath` has no imports, so this stays safe in a client bundle.
+ */
+export function formatMinorAmount(minor: number, currency: string, language: string): string {
+  const per = minorUnitsPerMajor(currency);
+  const digits = minor % per === 0 ? 0 : per === 1000 ? 3 : per === 1 ? 0 : 2;
+  return new Intl.NumberFormat(language, {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(fromMinorUnits(minor, currency));
 }

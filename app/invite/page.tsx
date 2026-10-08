@@ -59,6 +59,7 @@ import {
 } from 'lucide-react';
 
 import { googleSignInClientId } from '@/lib/business-os/invites/googleSignInConfig';
+import { isPlatformFallbackName } from '@/lib/business-os/invites/inviteSender';
 import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
 import { marketingUrl } from '@/lib/utils/origins';
 
@@ -401,6 +402,20 @@ export default function InvitePage() {
                 />
               )}
             </div>
+          )}
+
+          {/*
+            N-1 (N6, FR-42): the inviter hears when the invitee joins. Only
+            where the visitor can still sign up (the form is shown, no account
+            created yet). The platform fallback name ("AgentPilot", an admin
+            with no name on record) gets the unnamed wording.
+          */}
+          {visitor.status === 'signed_out' && tokenRef.current && !googleAccountReady && (
+            <p data-testid="invite-inviter-will-be-told" className="text-xs text-slate-500">
+              {isPlatformFallbackName(data.inviterDisplayName)
+                ? copy.inviterWillBeToldUnnamed
+                : copy.inviterWillBeTold(data.inviterDisplayName.trim())}
+            </p>
           )}
         </section>
       )}

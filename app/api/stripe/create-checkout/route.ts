@@ -1,34 +1,44 @@
 // app/api/stripe/create-checkout/route.ts
-// API route to create a Stripe checkout session for a boost pack.
+// Formerly: create a Stripe checkout session for an agent-platform purchase
+// (a credit subscription, or a one-time boost pack).
 //
-// Credit subscriptions (`custom_credits`) are no longer sold (plan payments P-1,
-// PF-12): their invoices are now denied by the webhook's Business OS router, so
-// selling one would take money that is never credited. The request is refused
-// with 410 before any Stripe or database call. The boost-pack branch stays (TK-5).
+// Every purchase is now refused with 410 after auth and validation, before any
+// Stripe, database or audit call:
+//
+//   - `custom_credits` since plan payments P-1 (PF-12): credit-subscription
+//     invoices are denied by the webhook's Business OS router, so selling one
+//     would take money that is never credited.
+//   - `boost_pack` since plan payments P-10, which owns Credits Boost FR-40
+//     (R-7, TK-5): the AgentsPilot boost purchase is switched off, not deleted.
+//     `StripeService.createBoostPackCheckout`, the webhook's `boost_pack` branch
+//     (so a session opened before this deploy still completes), the
+//     `boost_packs` / `boost_pack_purchases` tables and their history are kept.
+//     This 410 is the real control; `boost_packs.is_active = false` is display
+//     only, and the admin billing page can flip it back on.
+//
+// The body is still validated (CLAUDE.md rule 2), so a malformed request stays a
+// 400 that reads as a client bug, and a known purchase type gets a clear 410.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { platformOrigin } from '@/lib/utils/origins';
 import { z } from 'zod';
-import { AuditTrail as auditTrail } from '@/lib/services/AuditTrailService';
 import { createLogger } from '@/lib/logger';
 import { createServerClient } from '@supabase/ssr';
-import { supabaseServer } from '@/lib/supabaseServer';
 import { cookies } from 'next/headers';
-import { getStripeService } from '@/lib/stripe/StripeService';
-import { UserProfileRepository } from '@/lib/repositories/UserProfileRepository';
 
 const logger = createLogger({ module: 'StripeCreateCheckoutAPI' });
 
-// `custom_credits` is still parsed (other fields ignored) so the refusal is a
-// clear 410 rather than a 400 that reads as a client bug.
 const checkoutBodySchema = z.discriminatedUnion('purchaseType', [
   z.object({ purchaseType: z.literal('custom_credits') }),
   z.object({ purchaseType: z.literal('boost_pack'), boostPackId: z.string().optional() }),
 ]);
 
+const REFUSAL_MESSAGE: Record<z.infer<typeof checkoutBodySchema>['purchaseType'], string> = {
+  custom_credits: 'Credit subscriptions are no longer sold',
+  boost_pack: 'Boost packs are no longer sold',
+};
+
 export async function POST(request: NextRequest) {
   try {
-    // Create Supabase client with cookie handler (same pattern as working API routes)
     const cookieStore = await cookies();
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -42,10 +52,8 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    // Get authenticated user
+    // Auth first, so an anonymous caller still gets 401, as before.
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-    logger.debug({ hasUser: !!user, userId: user?.id, hasAuthError: !!authError }, 'Stripe checkout auth check');
 
     if (authError || !user) {
       logger.error({ err: authError }, 'Stripe checkout auth failed');
@@ -63,86 +71,19 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const body = parsed.data;
+    const { purchaseType } = parsed.data;
 
-    if (body.purchaseType === 'custom_credits') {
-      logger.warn(
-        { event: 'stripe_checkout_subscription_refused', userId: user.id },
-        'Credit subscription checkout refused: no longer sold'
-      );
-      return NextResponse.json(
-        { success: false, error: 'Credit subscriptions are no longer sold' },
-        { status: 410 }
-      );
-    }
-
-    // One-time boost pack purchase
-    const { boostPackId } = body;
-    if (!boostPackId) {
-      return NextResponse.json(
-        { error: 'Boost pack ID is required' },
-        { status: 400 }
-      );
-    }
-
-    // Name for a new Stripe customer. Read through the repository (CLAUDE.md
-    // rule 1) on the caller's own cookie client, so RLS still applies. A missing
-    // row or a failed read only means the customer is created without a name.
-    const { data: profile } = await new UserProfileRepository(supabase).findById(user.id);
-    const userName = profile?.full_name || undefined;
-
-    // Get Stripe service
-    const stripeService = getStripeService();
-
-    // Construct URLs
-    const baseUrl = request.headers.get('origin') || platformOrigin();
-    const successUrl = `${baseUrl}/v2/billing?success=true`;
-    const cancelUrl = `${baseUrl}/v2/billing?canceled=true`;
-
-    const session = await stripeService.createBoostPackCheckout({
-      // P0-FT-RLS (W-4): this reaches StripeService.getOrCreateCustomer, which
-      // UPDATEs/INSERTs `user_subscriptions` to persist `stripe_customer_id`.
-      // That table no longer accepts writes from `anon`/`authenticated`
-      // (supabase/migrations/20261001_user_subscriptions_write_lockdown.sql), and
-      // neither result is checked, so with the cookie client it would fail 42501
-      // in silence. `userId` below comes from the verified session and every
-      // statement inside is `.eq('user_id', userId)`.
-      supabase: supabaseServer,
-      userId: user.id,
-      email: user.email!,
-      name: userName,
-      boostPackId,
-      successUrl,
-      cancelUrl
-    });
-
-    // AUDIT TRAIL: Log boost pack checkout initiated
-    // In-process, not an HTTP call to /api/audit/log: that route now takes the
-    // account from the session, which a server-to-server fetch does not carry.
-    // Severity and flags come from EVENT_METADATA, set to exactly what this
-    // route sent before (Layer 3 step 0, Q-1, WC-12). Not awaited.
-    void auditTrail
-      .log({
-        action: 'BOOST_PACK_CHECKOUT_INITIATED',
-        entityType: 'boost_pack',
-        entityId: boostPackId,
-        resourceName: 'Boost Pack Purchase',
-        details: {
-          boost_pack_id: boostPackId,
-          session_id: session.id,
-          timestamp: new Date().toISOString()
-        },
-        userId: user.id,
-      })
-      .catch((err: unknown) => logger.error({ err, userId: user.id }, 'Audit entry could not be queued'));
-
-    return NextResponse.json({
-      sessionId: session.id,
-      clientSecret: session.client_secret // For embedded checkout
-    });
-
+    // No Stripe call, no database read or write, no audit entry.
+    logger.warn(
+      { event: 'stripe_checkout_refused', userId: user.id, purchaseType },
+      'Checkout refused: no longer sold'
+    );
+    return NextResponse.json(
+      { success: false, error: REFUSAL_MESSAGE[purchaseType] },
+      { status: 410 }
+    );
   } catch (error: unknown) {
-    logger.error({ err: error }, 'Creating the checkout session failed');
+    logger.error({ err: error }, 'Checkout refusal failed');
     return NextResponse.json(
       {
         success: false,

@@ -6,6 +6,9 @@
  * and correct fallback behavior for thread-based agent creation.
  */
 
+// AD-2a: a static import; this reader reads process.env at call time, so no module reset is needed.
+import { isAdminBusinessDeleteEnabled } from '../featureFlags';
+
 describe('Feature Flags', () => {
   const originalEnv = process.env;
 
@@ -369,5 +372,37 @@ describe('isBusinessOsCreditHistoryEnabled (credit deduction slice 7a — parked
   it('is listed by getFeatureFlags', async () => {
     const { getFeatureFlags } = await import('../featureFlags');
     expect(getFeatureFlags().isBusinessOsCreditHistoryEnabled).toBe(false);
+  });
+
+  describe('isAdminBusinessDeleteEnabled (admin delete BQ-1, server-only off switch)', () => {
+    const prev = process.env.ADMIN_BUSINESS_DELETE_ENABLED;
+    afterEach(() => {
+      if (prev === undefined) delete process.env.ADMIN_BUSINESS_DELETE_ENABLED;
+      else process.env.ADMIN_BUSINESS_DELETE_ENABLED = prev;
+    });
+
+    it('defaults to OFF when unset, blank or unrecognised', () => {
+      delete process.env.ADMIN_BUSINESS_DELETE_ENABLED;
+      expect(isAdminBusinessDeleteEnabled()).toBe(false);
+      process.env.ADMIN_BUSINESS_DELETE_ENABLED = '';
+      expect(isAdminBusinessDeleteEnabled()).toBe(false);
+      process.env.ADMIN_BUSINESS_DELETE_ENABLED = 'yes';
+      expect(isAdminBusinessDeleteEnabled()).toBe(false);
+    });
+
+    it('is on only for true / 1', () => {
+      process.env.ADMIN_BUSINESS_DELETE_ENABLED = 'true';
+      expect(isAdminBusinessDeleteEnabled()).toBe(true);
+      process.env.ADMIN_BUSINESS_DELETE_ENABLED = '1';
+      expect(isAdminBusinessDeleteEnabled()).toBe(true);
+    });
+
+    it('is not a NEXT_PUBLIC_ variable (never compiled into the client bundle)', () => {
+      const fs = jest.requireActual<typeof import('fs')>('fs');
+      const path = jest.requireActual<typeof import('path')>('path');
+      const src: string = fs.readFileSync(path.join(__dirname, '..', 'featureFlags.ts'), 'utf8');
+      expect(src).toContain('process.env.ADMIN_BUSINESS_DELETE_ENABLED');
+      expect(src).not.toContain('NEXT_PUBLIC_ADMIN_BUSINESS_DELETE');
+    });
   });
 });

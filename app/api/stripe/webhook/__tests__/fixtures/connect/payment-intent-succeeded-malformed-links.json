@@ -1,0 +1,20 @@
+{
+  "id": "evt_connect_pi_malformed_links",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "payment_intent.succeeded",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000500,
+  "data": {
+    "object": {
+      "id": "pi_website_malformed",
+      "object": "payment_intent",
+      "amount_received": 12000,
+      "currency": "usd",
+      "created": 1790000490,
+      "description": null,
+      "metadata": { "owner_id": "owner-a", "contact_id": "ct-1", "booking_id": "x'); drop table--", "service_id": " f5f5f5f5-05e5-4000-8000-0000000000e1 " }
+    }
+  }
+}

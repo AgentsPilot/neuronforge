@@ -55,9 +55,17 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +1 Business OS (BOS_QUEUE_DRAIN_STARTED): ADMIN_BOS_CLEANUP slice 7d, Drain now.
   // +1 Business OS (BOS_QUEUE_ITEM_CANCELLED): ADMIN_BOS_CLEANUP slice 7b, cancel one queue item (2026-10-04).
   // +1 Business OS (BUSINESS_DELETION_PREVIEWED): admin delete AD-1b, read-only deletion preview (2026-10-04).
-  it('pins the split: 34 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(179);
-    expect(eventsTagged('bos')).toHaveLength(34);
+  // +2 Business OS (BOS_INVITE_INVITER_NOTIFIED, _NOT_NOTIFIED): invite N-1, the inviter told (2026-10-05).
+  // +1 Business OS (BOS_QUEUE_ITEM_RETRIED): ADMIN_BOS_CLEANUP slice 7c, retry one queue item (2026-10-04).
+  // +1 Business OS (BUSINESS_DELETION_STARTED): admin delete AD-2a, the confirmed write-ahead row (2026-10-06).
+  // +1 Business OS (BUSINESS_TEST_ACCOUNT_REMOVED): operator test-account cleanup, OX-1 (2026-10-06).
+  // +1 Business OS (BOS_BOOST_CHECKOUT_STARTED): credits boost slice 3, the boost checkout (2026-10-06).
+  // +1 Business OS (BOS_BILLING_CHECKOUT_STARTED): plan payments P-3a, an owner opened a plan checkout (2026-10-07).
+  // +1 Business OS (BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED): admin Danger Zone cleanup, OX-1r (2026-10-07).
+  // +2 Business OS (BOS_BILLING_INVOICE_PAID, BOS_BILLING_PAYMENT_REFUSED): plan payments P-3b.1, registered ahead of the webhook (2026-10-07).
+  it('pins the split: 44 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(189);
+    expect(eventsTagged('bos')).toHaveLength(44);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

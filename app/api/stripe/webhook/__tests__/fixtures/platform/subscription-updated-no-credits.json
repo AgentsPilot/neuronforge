@@ -1,0 +1,31 @@
+{
+  "id": "evt_platform_subscription_updated_no_credits",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "customer.subscription.updated",
+  "livemode": false,
+  "created": 1790003100,
+  "data": {
+    "object": {
+      "id": "sub_platform_plain_1",
+      "object": "subscription",
+      "customer": "cus_platform_2",
+      "status": "active",
+      "cancel_at_period_end": false,
+      "canceled_at": null,
+      "items": {
+        "object": "list",
+        "data": [
+          {
+            "id": "si_platform_plain_1",
+            "object": "subscription_item",
+            "price": { "id": "price_unknown_plain_1", "object": "price", "unit_amount": 1500, "currency": "usd" }
+          }
+        ]
+      },
+      "metadata": {
+        "user_id": "agent-platform-user"
+      }
+    }
+  }
+}

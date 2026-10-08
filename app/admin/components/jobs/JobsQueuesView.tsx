@@ -5,11 +5,12 @@
  * part C). Renders only what `GET /api/admin/jobs-queues` sent; it imports no
  * registry, rule or read code (the C-21 pattern: `import type` only).
  *
- * READ-ONLY apart from two actions: a Refresh button, per queue the "Drain
- * now" dialog (ADMIN_BOS_CLEANUP slice 7d, DrainNowDialog.tsx), and per
- * cancellable item the "Cancel item" dialog (slice 7b, CancelQueueItemDialog.tsx,
- * rendered by the item list). Each dialog owns its one POST; this file makes
- * none. No retry or requeue here (slice 7c, later). No auto-refresh (A-11).
+ * READ-ONLY apart from a Refresh button, per queue the "Drain now" dialog
+ * (ADMIN_BOS_CLEANUP slice 7d, DrainNowDialog.tsx), per cancellable item the
+ * "Cancel item" dialog (slice 7b, CancelQueueItemDialog.tsx) and per
+ * re-sendable failed item the "Retry item" dialog (slice 7c,
+ * RetryQueueItemDialog.tsx), both rendered by the item list. Each dialog owns
+ * its one POST; this file makes none. No requeue. No auto-refresh (A-11).
  *
  * Slice 7a: each queue card has a "View items" toggle that opens the read-only
  * QueueItemsPanel, which owns the list's only request (a GET). The view bumps
@@ -300,7 +301,7 @@ export function JobsQueuesView() {
             The Business OS scheduled jobs and the queues they drain. Red needs action, amber needs a look, and
             the green label Healthy or Clear means checked and clear. Grey means no run recorded yet or could not
             check.{' '}
-            {"Each queue has a Drain now button, and a waiting, failed or orphaned item can be cancelled from its queue's list; everything else here is read-only."}
+            {"Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; everything else here is read-only."}
           </p>
           {view && (
             <p data-testid="as-of" className="mt-1 text-xs text-slate-500">

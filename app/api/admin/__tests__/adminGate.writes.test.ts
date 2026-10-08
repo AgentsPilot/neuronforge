@@ -96,6 +96,15 @@ const fakeClient = () => ({
     mockTablesTouched.push(`rpc:${fn}`);
     return builder();
   },
+  // Storage removals (test-account cleanup, SA-9): recorded as a touch.
+  storage: {
+    from: (bucket: string) => ({
+      remove: () => {
+        mockTablesTouched.push(`storage:${bucket}`);
+        return Promise.resolve({ data: [], error: null });
+      },
+    }),
+  },
   auth: {
     admin: {
       listUsers: () => {
@@ -107,6 +116,7 @@ const fakeClient = () => ({
 });
 
 jest.mock('@supabase/supabase-js', () => ({ createClient: () => fakeClient() }));
+
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: fakeClient() }));
 
 /*
@@ -242,6 +252,11 @@ import * as jobsQueuesDrain from '../jobs-queues/drain/route';
 import * as jobsQueuesItemAction from '../jobs-queues/items/action/route';
 // Admin delete AD-1b: the read-only deletion preview (a POST, gated from birth).
 import * as userDeletionPreview from '../users/[id]/deletion/preview/route';
+// Admin delete AD-2a: the deletion commit (DESTRUCTIVE once active; gated from birth).
+import * as userDeletionCommit from '../users/[id]/deletion/commit/route';
+// Test-account cleanup OX-1r (2026-10-07): probe, check, delete (DESTRUCTIVE; gated from birth).
+import * as testAccountCleanupCheck from '../test-account-cleanup/check/route';
+import * as testAccountCleanupDelete from '../test-account-cleanup/delete/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -402,6 +417,42 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
         params: { id: '00000000-0000-4000-8000-000000000000' },
       }),
   },
+
+  // ── Admin delete AD-2a (2026-10-06) ─────────────────────────────────────
+  // The DESTRUCTIVE commit (inactive: off switch + held RPC). Nothing (the
+  // token, the identity, the refusal facts, the blocked audit row) may happen
+  // before the gate. The admin case reaches the handler and refuses 409
+  // `admin_delete_disabled` (the off switch defaults off), never a 401/403.
+  {
+    name: 'POST /api/admin/users/[id]/deletion/commit',
+    call: () =>
+      userDeletionCommit.POST(
+        req('/api/admin/users/00000000-0000-4000-8000-000000000000/deletion/commit', 'POST', {
+          token: 'x.y',
+          confirmText: 'Some Business',
+        }),
+        { params: { id: '00000000-0000-4000-8000-000000000000' } }
+      ),
+  },
+
+  // ── Test-account cleanup OX-1r (2026-10-07) ─────────────────────────────
+  // Removes a test account completely, login included, through one
+  // secret-gated database function. Nothing (an rpc call, a storage removal,
+  // an audit row) may happen before the gate: both are recorded touches of
+  // the fake client. The secret is unset here, so the admin case reaches the
+  // handler and answers 503 "not configured", never 401/403.
+  { name: 'GET /api/admin/test-account-cleanup/check', call: () => testAccountCleanupCheck.GET(req('/api/admin/test-account-cleanup/check', 'GET')) },
+  {
+    name: 'POST /api/admin/test-account-cleanup/check',
+    call: () => testAccountCleanupCheck.POST(req('/api/admin/test-account-cleanup/check', 'POST', { email: 'a+test@example.net', tag: '+test' })),
+  },
+  {
+    name: 'POST /api/admin/test-account-cleanup/delete',
+    call: () =>
+      testAccountCleanupDelete.POST(
+        req('/api/admin/test-account-cleanup/delete', 'POST', { email: 'a+test@example.net', tag: '+test', confirmEmail: 'a+test@example.net' })
+      ),
+  },
 ];
 
 beforeEach(() => {
@@ -432,10 +483,16 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  = 59
     //  + 1  `users/[id]/deletion/preview#POST` (admin delete AD-1b), gated from birth;
     //       a read-only POST (body must be `{}`)
-    //  = 60, which is every admin handler now on the canonical gate EXCEPT the
+    //  = 60
+    //  + 1  `users/[id]/deletion/commit#POST` (admin delete AD-2a), gated from birth;
+    //       destructive once active, shipped inactive (off switch + held RPC)
+    //  = 61
+    //  + 3  `test-account-cleanup/check#GET` (probe), `#POST` and
+    //       `test-account-cleanup/delete#POST` (OX-1r), gated from birth
+    //  = 64, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(60);
+    expect(CASES).toHaveLength(64);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

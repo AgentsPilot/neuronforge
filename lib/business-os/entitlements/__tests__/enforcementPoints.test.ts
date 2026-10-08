@@ -226,10 +226,11 @@ describe('backward: a gate cannot ship unregistered', () => {
         'getEntitlementConfig',
         'getEntitlementService',
         'CACHE_TTL_SECONDS',
+        'recordPlanChange',
         'resolveAccountId',
         'getEntitlementMode',
       ],
-      why: 'The admin inspect-and-change endpoint. It reports and edits ONE account plan through the audited op union; it gates no product feature. `isGrantingValue` here answers a question for a screen, it does not refuse a request.',
+      why: 'The admin inspect-and-change endpoint. It reports and edits ONE account plan through the audited op union; it gates no product feature. `isGrantingValue` here answers a question for a screen, it does not refuse a request. `recordPlanChange` (plan payments P-3b.1) runs AFTER a completed op: it invalidates the cache and writes the audit entry, and can refuse nothing.',
     },
     {
       file: 'app/api/admin/business-os/entitlements/launch/route.ts',
@@ -392,6 +393,65 @@ describe('backward: a gate cannot ship unregistered', () => {
       file: 'lib/business-os/invites/redemptionDeps.ts',
       symbols: ['getEntitlementConfig'],
       why: 'Invite-only signup Slice 1b: the production wiring hands the config to the redemption flow so it can re-check the grant (GR-1). It resolves no account and refuses no capability.',
+    },
+    // ── Credits boost slice 3, 2026-10-06 — the boost checkout (slice 1 SA C-7) ─
+    {
+      file: 'lib/business-os/boost/boostCheckout.ts',
+      symbols: ['BoostPackage', 'BoostPackageSource', 'BoostPurchaseCap'],
+      why: 'Credits boost slice 3: the checkout orchestration borrows the boost catalogue TYPES only (the package, its loader seam and the cap shape). It refuses by catalogue validity, by the purchase cap and by the payment hold, never by plan, tier or capability, so it is not a capability gate. If it ever reads a snapshot or calls `check()`, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/boost/boostCheckoutDeps.ts',
+      symbols: ['codeBoostPackageSource', 'BOOST_PURCHASE_CAP_DEFAULT'],
+      why: 'Credits boost slice 3: the production wiring of the boost checkout hands it the catalogue loader and the default purchase cap. Neither reads a plan or a capability; the checkout refuses an invalid catalogue and a purchase over the cap, never a plan. If this file ever reads a snapshot or calls `check()`, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
+    // ── Credits boost slice 5a, 2026-10-07 — the owner's package picker ─────
+    {
+      file: 'app/api/business-os/credits/boost/packages/route.ts',
+      symbols: ['codeBoostPackageSource'],
+      why: 'Credits boost slice 5a: the packages read lists the active boost packages for display to every signed-in owner. It reads no plan, snapshot or capability, and refuses nothing by plan: its only refusals are 401 (signed out) and 503 (an invalid catalogue). If it ever calls `check()` or reads a snapshot, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/boost/boostPackagesView.ts',
+      symbols: ['BoostPackage'],
+      why: 'Credits boost slice 5a: a pure mapper that borrows the `BoostPackage` TYPE to pick the fields the picker shows. It resolves no account and refuses nothing. If it ever imports a value from the module, it is being asked to gate and this suite says so.',
+    },
+    // ── Plan payments P-2b, 2026-10-06 — plan prices in Stripe ─────────────
+    {
+      file: 'lib/business-os/billing/planPriceCatalog.ts',
+      symbols: ['TierId', 'allPlanLookupKeys', 'tierForPlanLookupKey'],
+      why: 'Plan payments P-2b (workplan §3.3): the webhook price catalog reads the configured plan LOOKUP KEYS (`allPlanLookupKeys`) to ask Stripe which price ids are plan prices, and re-exports the key-to-tier mapping (`tierForPlanLookupKey`, `TierId` type) for P-3b. It maps Stripe price ids to plan names for the router and resolves no account; it refuses nothing by plan. If it ever calls `check()` / `decide()`, it is a gate and moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/billing/planPriceCheck.ts',
+      symbols: ['PLAN_STRIPE_PRICES', 'PlanStripePrice', 'TIER_MATRIX', 'TIER_ORDER', 'TierId'],
+      why: 'Plan payments P-2b (workplan §3.4, SA-P12): a pure comparison of each tier\'s Stripe price with its DISPLAY price (`TIER_MATRIX.presentation.monthlyPriceUsd`), used by the price scripts and later by the P-3a checkout check. It reads configuration for comparison, resolves no account and refuses nothing by plan.',
+    },
+    // ── Plan payments P-3a, 2026-10-07 — the plan checkout (SA Q-4, Q-10) ──
+    {
+      file: 'app/api/business-os/billing/plan/checkout/route.ts',
+      symbols: ['TIER_ORDER', 'getEntitlementService', 'resolveAccountId'],
+      why: 'Plan payments P-3a (SA Q-4, Q-10): the plan checkout route. `TIER_ORDER` builds the body schema (which tier the owner names), `resolveAccountId` is the account seam for the session account, and `getEntitlementService().getSnapshot` is read ONLY to refuse an account with NO plan row (P-3b cannot apply a payment to one). It never calls `check()` / `decide()` and refuses nothing by tier or capability, so it is not a gate. If it ever does, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/billing/planCheckout.ts',
+      symbols: ['TierId'],
+      why: 'Plan payments P-3a (SA Q-4, Q-10): the checkout orchestration borrows the `TierId` TYPE for the tier the owner names. It refuses on a MISSING plan row (a P-3b precondition, read through an injected snapshot port), a live subscription, an open checkout or a price mismatch, never by tier or capability, and calls no `check()` / `decide()`. If it ever imports a value from the module, this suite asks again.',
+    },
+    {
+      file: 'lib/business-os/billing/planCheckoutEligibility.ts',
+      symbols: ['INVITE_ISSUANCE_POLICY', 'PLAN_STRIPE_PRICES', 'TIER_ORDER', 'TierId'],
+      why: 'Plan payments P-3a (SA-P11, SA Q-10): which tiers an account may BUY. Not held: every tier with a Stripe price (`PLAN_STRIPE_PRICES`, `TIER_ORDER`). Held by a friend invite: the friend tier only (`INVITE_ISSUANCE_POLICY.account.grantId`, FR-30). That applies invite policy to a purchase; it is not a plan or capability refusal and calls no `check()` / `decide()`, so it is not a gate.',
+    },
+    {
+      file: 'lib/business-os/billing/planCheckoutPrice.ts',
+      symbols: ['PLAN_STRIPE_PRICES', 'PlanStripePrices', 'TierId'],
+      why: 'Plan payments P-3a (SA-P12 b): resolves the tier lookup key (`PLAN_STRIPE_PRICES`) to one Stripe price and compares it with the display price. It compares two prices, resolves no account and refuses nothing by plan; it is the runtime twin of planPriceCheck.ts.',
+    },
+    {
+      file: 'components/test-business-os/PlanCheckoutPanel.tsx',
+      symbols: ['TIER_ORDER'],
+      why: 'Plan payments P-3a (SA Q-10): the internal /test-business-os Billing panel builds its tier select from `TIER_ORDER`, so the component holds no tier name. It is the demo trigger for the checkout route, displays nothing about a plan and refuses nothing.',
     },
   ];
 

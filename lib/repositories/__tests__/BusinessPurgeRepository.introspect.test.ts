@@ -48,9 +48,29 @@ describe('BusinessPurgeRepository.introspectSchema', () => {
     expect(error).toBeNull();
     expect(data?.columns).toEqual([{ table_name: 'a', column_name: 'user_id' }]);
     expect(data?.foreign_keys).toEqual(VALID.foreign_keys);
-    // Only the subset the reconciler reads is kept.
-    expect(data).not.toHaveProperty('triggers');
+    // Purge slice 3a: triggers are kept for the delete-graph check.
+    expect(data?.triggers).toEqual(VALID.triggers);
+    // Everything else outside the read subset is still dropped.
     expect(data).not.toHaveProperty('policies');
+  });
+
+  it('still parses a payload without triggers (back-compat); the graph check, not the parser, refuses it', async () => {
+    const withoutTriggers: Record<string, unknown> = { ...VALID };
+    delete withoutTriggers.triggers;
+    const { client } = clientReturning({ data: withoutTriggers, error: null });
+    const { data, error } = await new BusinessPurgeRepository(client).introspectSchema();
+    expect(error).toBeNull();
+    expect(data?.triggers).toBeUndefined();
+  });
+
+  it('treats a malformed trigger entry as an error', async () => {
+    const { client } = clientReturning({
+      data: { ...VALID, triggers: [{ trigger_name: 't', definition: 'x' }] },
+      error: null,
+    });
+    const { data, error } = await new BusinessPurgeRepository(client).introspectSchema();
+    expect(data).toBeNull();
+    expect(error?.message).toMatch(/unexpected shape/);
   });
 
   it('returns an error (never throws) when the RPC errors', async () => {

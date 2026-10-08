@@ -26,8 +26,11 @@ import { join } from 'path';
 import {
   BusinessOsStripeCustomerError,
   businessOsCustomerIdempotencyKey,
+  businessOsReplacementCustomerIdempotencyKey,
   ensureBusinessOsStripeCustomer,
+  replaceBusinessOsStripeCustomer,
   type EnsureBusinessOsStripeCustomerDeps,
+  type ReplaceBusinessOsStripeCustomerDeps,
 } from '@/lib/business-os/billing/businessOsStripeCustomer';
 import type { BusinessOsBillingAccount } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 
@@ -243,6 +246,109 @@ describe('ensureBusinessOsStripeCustomer', () => {
   });
 });
 
+describe('replaceBusinessOsStripeCustomer (P-3a §3.5, SA Q-8, C-3)', () => {
+  const NOW = new Date('2026-10-07T10:00:00.000Z');
+
+  function replaceSetup(options: {
+    replaced?: { data: { replaced: boolean } | null; error: Error | null };
+    stored?: { data: BusinessOsBillingAccount | null; error: Error | null };
+    stripeLivemode?: boolean | null;
+    newCustomerId?: string;
+    mode?: 'test' | 'live';
+  }) {
+    const replaceCustomer = jest.fn(async () => options.replaced ?? { data: { replaced: true }, error: null });
+    const findByUser = jest.fn(async () => options.stored ?? { data: null, error: null });
+    const findOrCreatePlatformCustomer = jest.fn(async () => ({
+      customerId: options.newCustomerId ?? 'cus_replacement',
+      created: true,
+      livemode: options.stripeLivemode === undefined ? options.mode === 'live' : options.stripeLivemode,
+    }));
+    const deps: ReplaceBusinessOsStripeCustomerDeps = {
+      repo: { findByUser, replaceCustomer } as unknown as ReplaceBusinessOsStripeCustomerDeps['repo'],
+      stripe: { findOrCreatePlatformCustomer },
+      mode: () => options.mode ?? 'test',
+      now: () => NOW,
+    };
+    return { deps, replaceCustomer, findByUser, findOrCreatePlatformCustomer };
+  }
+
+  const INPUT = { userId: USER, email: 'a@example.com', oldCustomerId: 'cus_deleted' };
+
+  it('creates the replacement under its OWN key (never bos-customer:<userId>) and swaps by compare-and-set', async () => {
+    const { deps, replaceCustomer, findOrCreatePlatformCustomer } = replaceSetup({});
+    await expect(replaceBusinessOsStripeCustomer(INPUT, deps)).resolves.toEqual({ customerId: 'cus_replacement', replaced: true });
+
+    const call = findOrCreatePlatformCustomer.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(call[0].idempotencyKey).toBe(`bos-customer:${USER}:replaces:cus_deleted`);
+    expect(call[0].idempotencyKey).not.toBe(businessOsCustomerIdempotencyKey(USER));
+    expect(businessOsReplacementCustomerIdempotencyKey(USER, 'cus_deleted')).toBe(`bos-customer:${USER}:replaces:cus_deleted`);
+    expect(call[0].existingCustomerId).toBeUndefined();
+    expect(call[0].metadata).toEqual({ product: 'business_os_plan', bos_user_id: USER });
+    expect(replaceCustomer).toHaveBeenCalledWith({
+      userId: USER,
+      livemode: false,
+      oldCustomerId: 'cus_deleted',
+      newCustomerId: 'cus_replacement',
+      nowIso: NOW.toISOString(),
+    });
+  });
+
+  it('a mode disagreement (incl. null) records nothing', async () => {
+    for (const stripeLivemode of [true, null]) {
+      const { deps, replaceCustomer } = replaceSetup({ stripeLivemode });
+      await expect(replaceBusinessOsStripeCustomer(INPUT, deps)).rejects.toMatchObject({ reason: 'stripe_mode_mismatch' });
+      expect(replaceCustomer).not.toHaveBeenCalled();
+    }
+  });
+
+  it('lost compare-and-set → re-reads and returns the STORED replacement', async () => {
+    const { deps, findByUser } = replaceSetup({
+      replaced: { data: { replaced: false }, error: null },
+      stored: { data: account({ stripeCustomerId: 'cus_winner' }), error: null },
+    });
+    await expect(replaceBusinessOsStripeCustomer(INPUT, deps)).resolves.toEqual({ customerId: 'cus_winner', replaced: false });
+    expect(findByUser).toHaveBeenCalledWith(USER, false);
+  });
+
+  it('lost compare-and-set but the stored customer is still the old one (or gone) → not recorded, never the old id', async () => {
+    for (const stored of [account({ stripeCustomerId: 'cus_deleted' }), null]) {
+      const { deps } = replaceSetup({ replaced: { data: { replaced: false }, error: null }, stored: { data: stored, error: null } });
+      await expect(replaceBusinessOsStripeCustomer(INPUT, deps)).rejects.toMatchObject({ reason: 'billing_row_not_recorded' });
+    }
+  });
+
+  it('a failed write (incl. the new id held by another account) → billing_row_not_recorded with an alert', async () => {
+    const { deps } = replaceSetup({ replaced: { data: null, error: new Error('stripe_customer_held_by_another_account') } });
+    await expect(replaceBusinessOsStripeCustomer(INPUT, deps)).rejects.toMatchObject({ reason: 'billing_row_not_recorded' });
+    expect(mockError).toHaveBeenCalledWith(expect.objectContaining({ alert: true }), expect.any(String));
+  });
+
+  it('a failed re-read after a lost race → billing_row_unreadable', async () => {
+    const { deps } = replaceSetup({
+      replaced: { data: { replaced: false }, error: null },
+      stored: { data: null, error: new Error('down') },
+    });
+    await expect(replaceBusinessOsStripeCustomer(INPUT, deps)).rejects.toMatchObject({ reason: 'billing_row_unreadable' });
+  });
+
+  it('a Stripe error rejects and records nothing', async () => {
+    const { deps, replaceCustomer, findOrCreatePlatformCustomer } = replaceSetup({});
+    findOrCreatePlatformCustomer.mockRejectedValueOnce(Object.assign(new Error('boom'), { type: 'StripeAPIError' }));
+    await expect(replaceBusinessOsStripeCustomer(INPUT, deps)).rejects.toThrow('boom');
+    expect(replaceCustomer).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ ...INPUT, email: '' }],
+    [{ ...INPUT, userId: 'nope' }],
+    [{ ...INPUT, oldCustomerId: 'sub_1' }],
+  ])('refuses invalid input %p before any call', async (input) => {
+    const { deps, findOrCreatePlatformCustomer } = replaceSetup({});
+    await expect(replaceBusinessOsStripeCustomer(input, deps)).rejects.toMatchObject({ reason: 'invalid_input' });
+    expect(findOrCreatePlatformCustomer).not.toHaveBeenCalled();
+  });
+});
+
 describe('source guards', () => {
   const source = readFileSync(join(process.cwd(), 'lib', 'business-os', 'billing', 'businessOsStripeCustomer.ts'), 'utf8');
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
@@ -256,7 +362,7 @@ describe('source guards', () => {
     expect(code).not.toMatch(/\buser_id\s*:/);
   });
 
-  it('no route or app code calls it in P-2a (SA Q-11: P-3a wires it in)', () => {
+  it('only the plan checkout calls it (P-3a wired it in; SA Q-11: no route calls it directly)', () => {
     const { readdirSync, statSync } = jest.requireActual<typeof import('fs')>('fs');
     const offenders: string[] = [];
     const walk = (dir: string) => {
@@ -270,6 +376,9 @@ describe('source guards', () => {
       }
     };
     for (const dir of ['app', 'lib', 'components', 'hooks']) walk(join(process.cwd(), dir));
-    expect(offenders).toEqual(['lib/business-os/billing/businessOsStripeCustomer.ts']);
+    expect(offenders).toEqual([
+      'lib/business-os/billing/businessOsStripeCustomer.ts',
+      'lib/business-os/billing/planCheckout.ts',
+    ]);
   });
 });

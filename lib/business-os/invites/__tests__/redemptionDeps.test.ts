@@ -30,7 +30,44 @@ jest.mock('@/lib/services/AuditTrailService', () => ({
     }),
   },
 }));
-jest.mock('@/lib/repositories/AuthAccountRepository', () => ({ authAccountRepository: {} }));
+// N-1: the inviter notification's lookups, keyed by id.
+const identityLookups: string[] = [];
+const adminChecks: string[] = [];
+const languageReads: string[] = [];
+jest.mock('@/lib/repositories/AuthAccountRepository', () => ({
+  authAccountRepository: {
+    findUserIdentity: async (id: string) => {
+      identityLookups.push(id);
+      return { data: { id, email: 'champion@example.org', createdAt: null }, error: null };
+    },
+  },
+}));
+jest.mock('@/lib/services/AdminAccessService', () => ({
+  AdminAccessService: {
+    getInstance: () => ({
+      isAdminById: async (id: string) => {
+        adminChecks.push(id);
+        return true;
+      },
+    }),
+  },
+}));
+jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
+  businessProfileRepository: {
+    findLanguage: async (id: string) => {
+      languageReads.push(`profile:${id}`);
+      return { data: 'he', error: null };
+    },
+  },
+}));
+jest.mock('@/lib/repositories/UserPreferencesRepository', () => ({
+  userPreferencesRepository: {
+    findPreferredLanguage: async (id: string) => {
+      languageReads.push(`preference:${id}`);
+      return { data: 'en', error: null };
+    },
+  },
+}));
 jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({ businessOsInviteRepository: {} }));
 const provision = jest.fn(async () => ({ data: 'inv', error: null }));
 const provisionFriend = jest.fn(async () => ({ data: { outcome: 'finalised', inviteId: 'inv', level: 2 }, error: null }));
@@ -43,6 +80,9 @@ jest.mock('@/lib/repositories/BusinessOsAccountPlanRepository', () => ({
   },
 }));
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 import { NextRequest } from 'next/server';
 
 import { verifyGoogleIdToken } from '../googleIdToken';
@@ -54,6 +94,9 @@ const request = new NextRequest('http://localhost:3000/api/public/invites/signup
 beforeEach(() => {
   sent.length = 0;
   audited.length = 0;
+  identityLookups.length = 0;
+  adminChecks.length = 0;
+  languageReads.length = 0;
   transport.sender = 'notifications@agentspilot.ai';
   jest.clearAllMocks();
 });
@@ -224,5 +267,81 @@ describe('refusalToHttp', () => {
       error: 'code_invalid',
       attemptsRemaining: 0,
     });
+  });
+});
+
+describe('N-1: the inviter notification wiring (workplan §5 test 12; SA Q-3, Q-4, C-2, C-3)', () => {
+  const friendInput = {
+    event: 'accepted' as const,
+    inviteId: 'inv',
+    issuerKind: 'account' as const,
+    issuerAccountId: 'champion-id',
+    issuerAdminId: null,
+    inviteeEmail: 'friend@example.com',
+    landing: 'awaiting_payment' as const,
+  };
+
+  it("emails the champion's live auth email in the champion's language, from the system sender", async () => {
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    await expect(deps.notifyInviter(friendInput)).resolves.toEqual({ outcome: 'sent', recipientKind: 'champion' });
+    expect(identityLookups).toEqual(['champion-id']);
+    expect(adminChecks).toEqual([]);
+    expect(languageReads.sort()).toEqual(['preference:champion-id', 'profile:champion-id']);
+    expect(sent).toHaveLength(1);
+    const params = sent[0];
+    expect(params.to).toEqual(['champion@example.org']);
+    expect(params.kind).toBe('transactional');
+    expect(params).not.toHaveProperty('from');
+    expect(params).not.toHaveProperty('replyTo');
+    expect(params).not.toHaveProperty('ownerUserId');
+    expect(params.redactRecipientInLogs).toBe(true);
+    expect(params.redactInLogs).toEqual(['friend@example.com']);
+    // The profile says he: the recipient's language, not the invite's.
+    expect(String(params.html)).toContain('dir="rtl"');
+  });
+
+  it('an admin invite checks the ISSUING admin, by the id from the row', async () => {
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    await deps.notifyInviter({ ...friendInput, issuerKind: 'admin', issuerAccountId: null, issuerAdminId: 'admin-id', landing: 'onboarding' });
+    expect(adminChecks).toEqual(['admin-id']);
+    expect(identityLookups).toEqual(['admin-id']);
+  });
+
+  it('audits through the same non-blocking path, with NO owner (SA Q-4) and the correlation id', async () => {
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    await deps.notifyInviter(friendInput);
+    expect(audited).toHaveLength(1);
+    expect(audited[0]).toMatchObject({
+      action: 'BOS_INVITE_INVITER_NOTIFIED',
+      entityType: 'business_os_invite',
+      entityId: 'inv',
+      userId: null,
+      actorId: null,
+      details: { correlationId: 'corr-1', recipientKind: 'champion', recipientAccountId: 'champion-id', status: 'not_subscribed_yet' },
+    });
+    expect(JSON.stringify(audited)).not.toContain('@');
+  });
+
+  it('fails closed without a platform sender: nothing looked up or sent, audited as not notified', async () => {
+    transport.sender = undefined;
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    await expect(deps.notifyInviter(friendInput)).resolves.toMatchObject({ outcome: 'not_sent', reason: 'sender_not_configured' });
+    expect(sent).toEqual([]);
+    expect(identityLookups).toEqual([]);
+    expect(audited[0]).toMatchObject({ action: 'BOS_INVITE_INVITER_NOT_NOTIFIED' });
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('@');
+  });
+
+  it('C-3: no address of anyone reaches a log line', async () => {
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    await deps.notifyInviter(friendInput);
+    const logged = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls, logger.error.mock.calls]);
+    expect(logged).not.toContain('champion@example.org');
+    expect(logged).not.toContain('friend@example.com');
+  });
+
+  it('the service-role reads are commented as an intentional RLS bypass (C-2)', () => {
+    const source = readFileSync(join(process.cwd(), 'lib', 'business-os', 'invites', 'redemptionDeps.ts'), 'utf8');
+    expect(source).toMatch(/INTENTIONAL SERVICE-ROLE READS \(RLS bypass\)/);
   });
 });

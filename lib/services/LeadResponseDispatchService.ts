@@ -75,7 +75,35 @@ export interface DispatchResult {
 }
 
 
-export async function dispatchLeadResponses(): Promise<DispatchResult> {
+export interface DispatchOptions {
+  /**
+   * How many rows to claim this run. Defaults to `BATCH`.
+   *
+   * The owner's "Send now" passes a small number so their click waits for a
+   * few rows, not a full batch (BL-7a part 2). Anything that is not a whole
+   * number in 1..BATCH falls back to `BATCH`, so no caller can widen a run.
+   */
+  batch?: number;
+  /**
+   * Whether to run the approved-chase sweep before claiming. Default true;
+   * only an explicit `false` skips the chase sweep. The reaper always runs.
+   *
+   * The owner's "Send now" passes `false`: the sweep lists every approved
+   * business, which is not this owner's work and would lengthen a click that
+   * now waits. The cron sweeps every 5 minutes, so nothing relies on the click
+   * to enqueue (CR-P2-2).
+   */
+  sweep?: boolean;
+}
+
+function batchSize(requested: number | undefined): number {
+  return typeof requested === 'number' && Number.isInteger(requested) && requested >= 1 && requested <= BATCH
+    ? requested
+    : BATCH;
+}
+
+export async function dispatchLeadResponses(options: DispatchOptions = {}): Promise<DispatchResult> {
+  const batch = batchSize(options.batch);
   const runnerId = randomUUID();
   const result: DispatchResult = { reaped: 0, enqueued: 0, claimed: 0, sent: 0, skipped: 0 };
 
@@ -89,9 +117,9 @@ export async function dispatchLeadResponses(): Promise<DispatchResult> {
    * to be claimed exclusively below, so a slow enqueue cannot produce a double
    * send.
    */
-  result.enqueued = await enqueueApprovedChases();
+  if (options.sweep !== false) result.enqueued = await enqueueApprovedChases();
 
-  const rows = await leadResponseRepository.claimDue(runnerId, BATCH);
+  const rows = await leadResponseRepository.claimDue(runnerId, batch);
   result.claimed = rows.length;
 
   for (const row of rows) {
