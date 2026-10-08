@@ -86,8 +86,11 @@ describe('CRMPluginExecutor — dispatch + user_id scoping', () => {
   });
 });
 
-describe('CRMPluginExecutor — T8 no-double-logging guardrail', () => {
-  it('create_contact does NOT write an activity (trigger T8 owns contact_created)', async () => {
+describe('CRMPluginExecutor — no-double-logging guardrail', () => {
+  // Was "trigger T8 owns contact_created". The trigger is not live; the
+  // repository owns it now, for every creation path. The assertion is the same
+  // either way: the executor must not write it a second time.
+  it('create_contact does NOT write an activity (the repository owns contact_created)', async () => {
     await run('create_contact', { first_name: 'Ada' });
     expect(activityRepo.create).not.toHaveBeenCalled();
   });
