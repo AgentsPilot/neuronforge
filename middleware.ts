@@ -136,10 +136,22 @@ export async function middleware(request: NextRequest) {
     pathname === '/book' ||
     pathname.startsWith('/book/') ||
     pathname.startsWith('/invoice/') || // Public invoice pages
+    // Choosing a new time. It used to live under `/book/manage/`, which the
+    // rule above already covered; on its own path it needs naming, or a client
+    // who happens to be a signed-in user is bounced into onboarding instead.
+    pathname.startsWith('/reschedule/') ||
     // The quote a client opens from their email. Unauthenticated by design —
     // the signed token in the URL is the authorisation — so it must never be
     // rewritten under /v2, where it 404s.
     pathname.startsWith('/proposal/') ||
+    // The marketing-consent confirmation a client opens from their email.
+    // Public for the same reason as the two above — the signed token in the
+    // URL is the authorisation — and it was the one client-facing surface
+    // missing from this list. A visitor with no session fell through
+    // harmlessly, but a client who also happens to be a signed-in AgentPilot
+    // user with onboarding unfinished was redirected into onboarding instead
+    // of being allowed to confirm, which is a consent decision silently lost.
+    pathname.startsWith('/consent/') ||
     // The two generic post-Stripe screens. Matched exactly, because the
     // owner-facing `/payments` dashboard lives under the same first segment and
     // must keep its auth and onboarding checks.

@@ -50,7 +50,7 @@ export class PricingDiscountAbuseDetector extends BaseDetector {
     description: 'Detects too many discounts eroding margins',
 
     watchedMetrics: ['pricing.discount_rate'],
-    eventTypes: ['discount.applied', 'payment.completed'],
+    documentsEventTypes: ['discount.applied', 'payment.completed'],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -66,10 +66,7 @@ export class PricingDiscountAbuseDetector extends BaseDetector {
     },
 
     pairedProcessId: undefined, // Advisory only
-    consentTier: 'observe',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 

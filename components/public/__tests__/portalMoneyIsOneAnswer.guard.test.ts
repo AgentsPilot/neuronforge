@@ -99,3 +99,96 @@ describe('an amount with no invoice behind it says so', () => {
     expect(code).toMatch(/payUrl: outstanding > 0 \? payUrl : null/);
   });
 });
+
+describe('the portal reports a partial refund', () => {
+  const route = fs.readFileSync(
+    path.join(process.cwd(), 'app/api/book/manage/[token]/route.ts'),
+    'utf8'
+  );
+  const card = fs.readFileSync(
+    path.join(process.cwd(), 'components/public/AppointmentCard.tsx'),
+    'utf8'
+  );
+
+  it('sums what came back across the booking’s invoices', () => {
+    /*
+     * `state` reaches 'refunded' only when `booking.payment_status` does, and
+     * that takes a FULL refund. A client refunded ₪2,250 of ₪9,000 opened their
+     * portal to "₪9,000 paid · 2 of 2 payments" — the money was back in their
+     * account and the one page they can check said nothing about it.
+     *
+     * Summed from the invoices because a job billed in stages carries the refund
+     * on whichever stage was returned.
+     */
+    expect(route).toMatch(/const refundedTotal = \(invoices \?\? \[\]\)\.reduce/);
+    expect(route).toMatch(/refunded_amount, refunded_at/);
+  });
+
+  it('sends it whatever the state says', () => {
+    expect(route).toMatch(/refunded: refundedTotal > 0 \? refundedTotal : null/);
+  });
+
+  it('the card shows it beside the paid figure, not instead of it', () => {
+    /*
+     * The client did pay ₪9,000; the refund is a second event. Replacing the
+     * figure would say they paid ₪6,750 on a day they paid ₪9,000 — the same
+     * misstatement the owner-side stage row had.
+     */
+    expect(card).toMatch(/payment\.state !== 'refunded' && Number\(payment\.refunded \|\| 0\) > 0/);
+  });
+});
+
+describe('the portal lists the payments themselves', () => {
+  const route = fs.readFileSync(
+    path.join(process.cwd(), 'app/api/book/manage/[token]/route.ts'),
+    'utf8'
+  );
+  const card = fs.readFileSync(
+    path.join(process.cwd(), 'components/public/AppointmentCard.tsx'),
+    'utf8'
+  );
+
+  it('sends a period per payment, joined to its own invoice', () => {
+    /*
+     * "2 of 2 paid" summarises something the client cannot see. On a job billed
+     * in stages they need to know which payment was which — and once money is
+     * returned, which one it came off. A refund attaches to the INVOICE a period
+     * raised, so the join is what makes "against which" answerable at all.
+     */
+    expect(route).toMatch(/periods: \[\.\.\.installments\]/);
+    expect(route).toMatch(/refundByInvoice\.get\(row\.invoice_id\)/);
+  });
+
+  /*
+   * The ORDER of that list, and the name on each row, are pinned next door in
+   * `portalNamesItsPayments.guard` — the date sort this used to require turned
+   * out to be the bug, because a milestone has no due date to sort on. Left as
+   * a pointer rather than restated, so the two cannot drift apart.
+   */
+
+  it('the card draws one line per payment, with its own refund', () => {
+    expect(card).toMatch(/payment\.plan!\.periods!\.map\(period =>/);
+    expect(card).toMatch(/const returned = Number\(period\.refunded \|\| 0\)/);
+  });
+
+  it('does not list a single payment under itself', () => {
+    /*
+     * One payment is already fully described by the line above the list, and
+     * repeating it as a one-row table says the same thing twice.
+     */
+    expect(card).toMatch(/\(payment\.plan\?\.periods\?\.length \?\? 0\) > 1/);
+  });
+
+  it('reads a bare DATE on the clock it was written in', () => {
+    /*
+     * `due_date` has no time and no zone, so it parses to midnight UTC. Read
+     * west of UTC that midnight is the previous day, and a client is told their
+     * payment fell due a day before the invoice says.
+     */
+    /* Two assertions rather than one window: the call spans several lines at
+       this indentation, and a character count that happens to span them today
+       is a count that breaks on the next reformat. */
+    expect(card).toMatch(/new Date\(`\$\{period\.dueDate\}T00:00:00Z`\)/);
+    expect(card).toMatch(/\{ day: 'numeric', month: 'short' \},\s*'UTC'/);
+  });
+});

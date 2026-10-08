@@ -44,7 +44,18 @@ export type SalesEventType =
   | 'proposal.sent'
   | 'proposal.viewed'
   | 'proposal.accepted'
-  | 'proposal.rejected';
+  | 'proposal.rejected'
+  /**
+   * A visitor asked for a quote, before one exists.
+   *
+   * `LeadAlertService` has emitted this since it was written and it has NEVER
+   * landed: the name was not in this union, so `getCategoryForEventType`
+   * returned undefined, `category` is NOT NULL, and every insert failed into a
+   * swallowed catch. It is the demand signal that precedes `proposal.sent`, so
+   * without it the quote funnel starts at the owner's response rather than at
+   * the request.
+   */
+  | 'quote.requested';
 
 // Cash flow events (extends PaymentEventService types)
 export type CashFlowEventType =
@@ -67,6 +78,15 @@ export type RetentionEventType =
   | 'booking.completed'
   | 'booking.no_show'
   | 'booking.cancelled'
+  /**
+   * Moved rather than called off.
+   *
+   * Emitted as the invalid `booking.moved` until 2026-10-06 and therefore never
+   * recorded. `RetRescheduleChurnDetector` exists precisely because repeated
+   * moves precede a cancellation, and `crm_activities` already logs
+   * `booking_rescheduled` -- this is the same fact on the rail.
+   */
+  | 'booking.rescheduled'
   | 'client.rebooking_due'
   | 'client.at_risk'
   | 'client.churned';
@@ -194,6 +214,7 @@ export const EVENT_TYPE_TO_CATEGORY: Record<BusinessEventType, BusinessEventCate
   'proposal.viewed': 'sales',
   'proposal.accepted': 'sales',
   'proposal.rejected': 'sales',
+  'quote.requested': 'sales',
 
   // Cash flow
   'invoice.created': 'cash_flow',
@@ -214,6 +235,7 @@ export const EVENT_TYPE_TO_CATEGORY: Record<BusinessEventType, BusinessEventCate
   'booking.completed': 'retention',
   'booking.no_show': 'retention',
   'booking.cancelled': 'retention',
+  'booking.rescheduled': 'retention',
   'client.rebooking_due': 'retention',
   'client.at_risk': 'retention',
   'client.churned': 'retention',

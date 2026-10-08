@@ -43,17 +43,13 @@ class TestDetector extends BaseDetector {
     category: 'cash_flow',
     description: 'A detector for exercising the contract',
     watchedMetrics: ['cashflow.ar_total'],
-    eventTypes: [],
     baselineWindow: 'week',
     thresholdType: 'absolute',
     threshold: 0,
     direction: 'above',
     minSamples: 10,
     severityFn: () => 'medium',
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 24,
   };
 

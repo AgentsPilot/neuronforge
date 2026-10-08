@@ -10,7 +10,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
-import { COMMON_GUARDRAILS } from '../types';
 
 export class CrmColdLeadsDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -20,7 +19,7 @@ export class CrmColdLeadsDetector extends BaseDetector {
     description: 'Detects leads without activity in 7+ days',
 
     watchedMetrics: ['conversion.cold_leads_count'],
-    eventTypes: ['contact.created', 'contact.stage_changed'],
+    documentsEventTypes: ['contact.created', 'contact.stage_changed'],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -42,33 +41,20 @@ export class CrmColdLeadsDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'automate',
+    /*
+     * `claimType: 'instance'`.
+     *
+     * A count of named contacts who have gone cold. Worth saying with five leads
+     * as much as with five hundred, which is exactly what an instance claim is.
+     *
+     * Declared rather than left to default: `effectiveClaimType` assumes
+     * `rate` for an undeclared detector, which holds the card until the
+     * vector is fully lit. For a claim that is true from the first row,
+     * that is silence with no safety benefit. Hazard H15.
+     */
+    claimType: 'instance',
+
     eligibleForAutomation: true,
-    ownerParameters: [
-      {
-        id: 'days_threshold',
-        label: 'Days Without Activity',
-        type: 'number',
-        default: 7,
-        min: 3,
-        max: 30,
-      },
-      {
-        id: 'tone',
-        label: 'Follow-up Tone',
-        type: 'select',
-        default: 'friendly',
-        options: [
-          { value: 'friendly', label: 'Friendly' },
-          { value: 'professional', label: 'Professional' },
-          { value: 'urgent', label: 'Urgent' },
-        ],
-      },
-    ],
-    guardrails: [
-      COMMON_GUARDRAILS.max_1_per_contact_per_7d,
-      COMMON_GUARDRAILS.max_20_per_run,
-    ],
     cooldownHours: 24,
   };
 

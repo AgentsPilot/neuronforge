@@ -142,6 +142,27 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1a. invoic
     {
       "chain": [
         [
+          "select",
+          "id, invoice_id",
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_invoice_1",
+        ],
+        [
+          "limit",
+          1,
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
           "insert",
           {
             "account_resolution": "recorded",
@@ -243,7 +264,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1a. invoic
       "chain": [
         [
           "select",
-          "user_id, client_email, client_name, invoice_number, currency, booking_id",
+          "id, user_id, client_email, client_name, invoice_number, currency, booking_id",
         ],
         [
           "eq",
@@ -538,7 +559,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1b. invoic
       "chain": [
         [
           "select",
-          "user_id, client_email, client_name, invoice_number, currency, booking_id",
+          "id, user_id, client_email, client_name, invoice_number, currency, booking_id",
         ],
         [
           "eq",

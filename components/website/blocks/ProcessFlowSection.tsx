@@ -2505,6 +2505,16 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       setError(null);
 
       try {
+        /*
+         * `subdomain` and `userCode` are deliberately absent in preview.
+         *
+         * The owner is previewing their OWN site while signed in, so the
+         * endpoint identifies the business from the session instead — the same
+         * arrangement `/api/website/booking/create` describes as "if not
+         * provided, authenticated user is used (preview mode)". A request made
+         * here is a real request, which is the point: an owner testing their
+         * quote form wants to see what arrives in their CRM.
+         */
         const response = await fetch('/api/website/proposal-request', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

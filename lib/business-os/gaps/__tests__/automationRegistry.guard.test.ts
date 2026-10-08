@@ -11,8 +11,23 @@
 import { OPERATIONAL_AUTOMATIONS, automationById } from '../automations';
 import { GAP_DEFINITIONS } from '../definitions';
 
-/** Every kind the queue can hold, from the repository's own union. */
-const QUEUE_KINDS = ['invite', 'chase', 'invoice_chase', 'intake_chase', 'meeting_reminder'];
+/**
+ * Every kind the queue can hold.
+ *
+ * Repeated here rather than imported on purpose: the authority is the CHECK
+ * constraint on `lead_responses.kind` (latest: `20261006d_auto_complete_meetings.sql`),
+ * and the TypeScript union can be widened without the database agreeing. A kind
+ * the column rejects is queued happily and skipped forever, so this list has to
+ * be maintained against the MIGRATION, not against the union.
+ */
+const QUEUE_KINDS = [
+  'invite',
+  'chase',
+  'invoice_chase',
+  'intake_chase',
+  'meeting_reminder',
+  'meeting_complete',
+];
 
 describe('the automation registry', () => {
   it('gives every entry at least one queue kind to cover', () => {

@@ -25,7 +25,7 @@ export class OpsLastMinuteCancelsDetector extends BaseDetector {
     description: 'Detects cancellations made <24h before booking time',
 
     watchedMetrics: ['operations.last_minute_cancels'],
-    eventTypes: ['booking.cancelled'],
+    documentsEventTypes: ['booking.cancelled'],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -61,19 +61,7 @@ export class OpsLastMinuteCancelsDetector extends BaseDetector {
      * that cannot work.
 
      */
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [
-      {
-        id: 'hours_threshold',
-        label: 'Hours Before (Last-Minute)',
-        type: 'number',
-        default: 24,
-        min: 12,
-        max: 48,
-      },
-    ],
-    guardrails: [],
     cooldownHours: 72, // 3 days
   };
 

@@ -5,6 +5,7 @@
  * individual detector signals into unified, story-driven insights.
  */
 
+import type { SharedSubject } from './sharedSubjects';
 import type { DetectionResult, InsightSeverity } from '../detectors/types';
 
 /**
@@ -133,6 +134,21 @@ export interface CorrelationSummary {
 
   /** Total patterns matched */
   patternsMatched: number;
+
+  /**
+   * Findings that concern the same client, grouped.
+   *
+   * The pattern list above matches only combinations somebody anticipated by
+   * name, and on the reporting account it has never matched anything. This
+   * needs no anticipation: it reads `affectedEntityIds`, which every detector
+   * already reports, and asks whether two findings are about the same person.
+   *
+   * Reported ALONGSIDE the standalone list rather than consuming from it. A
+   * caller may render "three things are going wrong with one client" instead of
+   * three cards, or ignore it; nothing is removed from the existing output, so
+   * this cannot make an insight disappear.
+   */
+  sharedSubjects: SharedSubject<DetectionResult>[];
 
   /** Total combined impact */
   totalImpactUsd: number;

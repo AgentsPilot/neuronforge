@@ -566,10 +566,28 @@ export function emailDetailsTable(rows: string[], branding?: BrandingData): stri
 /** One period of an instalment plan, as an email renders it. */
 export interface EmailPlanPeriod {
   number: number;
+  /**
+   * The milestone's name, as the owner wrote it.
+   *
+   * A bare "2." cannot tell the client WHICH payment a row is about, which
+   * matters most in the one case the list exists for: a refund shown against a
+   * number nobody can identify. Null on a uniform instalment plan, where the
+   * number is the only name the payment has and "1. Payment 1" repeats itself.
+   */
+  label?: string | null;
   amount: number;
   /** `YYYY-MM-DD`. A DATE — see the note in `emailPlanSchedule`. */
   dueDate: string | null;
   status: string;
+  /**
+   * How much of THIS period came back.
+   *
+   * A schedule listing "2. paid ₪4,500" after ₪2,250 was returned against that
+   * period tells the client the money is still with the business. The refund
+   * belongs to the period it was taken from — the whole point of listing the
+   * periods separately — so it is reported on that row and nowhere else.
+   */
+  refunded?: number | null;
 }
 
 export interface EmailPlanScheduleLabels {
@@ -578,6 +596,8 @@ export interface EmailPlanScheduleLabels {
   /** Marks the period being asked for, or the one just settled. */
   highlight: string;
   total: string;
+  /** Precedes a period's returned amount. Omit and no refund is reported. */
+  refunded?: string;
 }
 
 /**
@@ -632,10 +652,33 @@ export function emailPlanSchedule(params: {
       const note = paid ? labels.paid : highlighted ? labels.highlight : '';
       const ink = highlighted || paid ? c.ink : c.inkMuted;
 
+      const refunded = Number(period.refunded || 0);
+
+      /*
+       * The parts of the line, joined only where they exist.
+       *
+       * It was `${when}${note ? ' · ' + note : ''}`, and a period with no due
+       * date rendered "2. · paid" — a separator with nothing on its left. A
+       * milestone falls due when the work is done, so having no date is its
+       * ordinary state, not an edge case.
+       */
+      const parts = [when, note ? `<span style="color: ${branding.primaryColor};">${note}</span>` : '']
+        .filter(Boolean);
+
+      /* Owner-typed, so escaped. It reaches here from `payment_plan_installments.label`,
+         which the quote builder fills from a free-text field. */
+      const name = period.label ? escapeHtml(period.label) : '';
+
+      if (refunded > 0 && labels.refunded) {
+        parts.push(
+          `<span style="color: ${c.inkMuted};">${labels.refunded} ${formatCurrency(refunded, currency)}</span>`
+        );
+      }
+
       return `
         <tr>
           <td style="padding: 5px 0; font-size: 14px; color: ${ink};">
-            ${period.number}. ${when}${note ? ` · <span style="color: ${branding.primaryColor};">${note}</span>` : ''}
+            ${period.number}.${name ? ` ${name}` : ''}${parts.length ? ` ${parts.join(' · ')}` : ''}
           </td>
           <td align="${align}" style="padding: 5px 0; font-size: 14px; font-weight: ${highlighted ? '600' : '400'}; color: ${ink};">
             ${formatCurrency(period.amount, currency)}

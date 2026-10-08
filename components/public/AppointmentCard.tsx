@@ -69,7 +69,36 @@ interface AppointmentCardProps {
     currency: string | null;
     dueDate: string | null;
     overdue: boolean;
-    plan: { paid: number; total: number } | null;
+    /**
+     * How much of this booking's money has gone back.
+     *
+     * Separate from `state`, which only reaches 'refunded' on a FULL return — a
+     * partial leaves the booking 'paid', which is true and says nothing about
+     * the part the client already has back.
+     */
+    refunded?: number | null;
+    refundedAt?: string | null;
+    plan: {
+      paid: number;
+      total: number;
+      /**
+       * The payments themselves, and what came back against each.
+       *
+       * "2 of 2 paid" is a summary of something the client cannot see. On a job
+       * billed in stages they need to know which payment was which — and once
+       * money is returned, which one it came off.
+       */
+      periods?: Array<{
+        number: number;
+        /* The milestone's name. Null on a uniform instalment plan, where the
+           number IS the name and "1. Payment 1" would say it twice. */
+        label?: string | null;
+        amount: number;
+        status: string;
+        dueDate: string | null;
+        refunded?: number | null;
+      }> | null;
+    } | null;
     /**
      * Where this client can settle it.
      *
@@ -159,15 +188,18 @@ export function AppointmentCard({
   const settledState = payment ? (payment.state === 'paid' || payment.state === 'refunded' ? payment.state : null) : paymentStatus;
   const stamp = settledState ? PAYMENT_STAMP[settledState] : undefined;
 
+
   return (
     <section
-      className={variant === 'full' ? 'p-5' : 'p-4'}
+      className={`apc-panel ${variant === 'full' ? 'p-5' : 'p-4'}`}
+      /*
+        Surface, border and radius are the TEMPLATE's (apc-panel). What stays
+        here is only what no composition expresses: the recessed ground and
+        the dimming that say this booking is cancelled.
+      */
       style={{
-        background: muted ? 'var(--ap-surface-2)' : 'var(--ap-surface)',
-        border: '1px solid var(--ap-border)',
-        borderRadius: 'var(--ap-radius-lg)',
+        ...(muted ? { background: 'var(--ap-surface-2)', opacity: 0.75 } : null),
         boxShadow: muted ? 'none' : 'var(--ap-shadow-sm)',
-        opacity: muted ? 0.75 : 1,
       }}
     >
       {(booking.service?.service_name || badge) && (
@@ -231,7 +263,10 @@ export function AppointmentCard({
             <div className="flex items-center gap-2.5">
               <Calendar className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
               <span className="text-sm font-medium" style={{ color: 'var(--ap-text)' }}>
-                {formatPublicDate(start, locale)}
+                {/* The same zone the TIME two rows down is formatted on. Left
+                    off, this card named the right hour on the wrong day for
+                    any client reading it from another country. */}
+                {formatPublicDate(start, locale, undefined, timeZone)}
               </span>
             </div>
           )}
@@ -324,10 +359,20 @@ export function AppointmentCard({
                     ? t('portal.overdue')
                     : t('portal.due_by').replace(
                         '{date}',
-                        formatPublicDate(new Date(payment.dueDate), locale, {
-                          day: 'numeric',
-                          month: 'long',
-                        })
+                        /* `UTC`, and deliberately NOT the business's zone.
+                           `due_date` is a SQL DATE — a day with no time and no
+                           zone — so it parses to midnight UTC. Read on any zone
+                           west of UTC that midnight is the PREVIOUS day, which
+                           is how a client gets told their money was due a day
+                           before the invoice says. The business's zone would
+                           fix it east of UTC and break it west; UTC is right
+                           everywhere, because UTC is what it was written as. */
+                        formatPublicDate(
+                          new Date(payment.dueDate),
+                          locale,
+                          { day: 'numeric', month: 'long' },
+                          'UTC'
+                        )
                       )}
                 </span>
               )}
@@ -376,6 +421,31 @@ export function AppointmentCard({
             <span className="font-semibold">{t('refunded')}</span>
           )}
 
+          {/*
+            A PARTIAL refund, which no state can express.
+            ─────────────────────────────────────────────
+            `state` reaches 'refunded' only when the whole booking was returned.
+            Refund ₪2,250 of ₪9,000 and it stays 'paid' — true, and silent about
+            the part that came back. The client had the money in their account
+            and the one page they can check said "₪9,000 paid".
+
+            Shown beside the paid figure rather than replacing it: they did pay
+            ₪9,000, and the refund is a second event.
+          */}
+          {payment.state !== 'refunded' && Number(payment.refunded || 0) > 0 && (
+            <span style={{ color: '#B54708' }}>
+              {t('refunded')}
+              {' · '}
+              <bdi>
+                {formatPublicMoney(
+                  Number(payment.refunded),
+                  payment.currency || currency,
+                  locale
+                )}
+              </bdi>
+            </span>
+          )}
+
           {/* "2 of 6 made" — the question anyone on a plan is actually asking. */}
           {payment.plan && payment.plan.total > 1 && (
             <span>
@@ -385,6 +455,98 @@ export function AppointmentCard({
             </span>
           )}
         </div>
+      )}
+
+      {/*
+        THE PAYMENTS, one line each.
+        ────────────────────────────
+        "2 of 2 paid" summarises something the client cannot see. On a job billed
+        in stages they need to know which payment was which — and once money is
+        returned, which one it came off. A single refunded total above answers
+        neither.
+
+        Only for a real schedule: one payment is already fully described by the
+        line above, and listing it under itself would say the same thing twice.
+      */}
+      {payment && (payment.plan?.periods?.length ?? 0) > 1 && (
+        <ul
+          className="mt-3 flex flex-col gap-px overflow-hidden"
+          style={{
+            borderRadius: 'var(--ap-radius-md)',
+            border: '1px solid var(--ap-border)',
+            background: 'var(--ap-border)',
+            listStyle: 'none',
+            padding: 0,
+          }}
+        >
+          {payment.plan!.periods!.map(period => {
+            const returned = Number(period.refunded || 0);
+            const settled = period.status === 'paid';
+
+            return (
+              <li
+                key={period.number}
+                className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 py-2 text-sm"
+                style={{ background: 'var(--ap-surface)' }}
+              >
+                <span style={{ color: 'var(--ap-text-muted)' }}>{period.number}.</span>
+
+                {/*
+                  WHICH PAYMENT THIS IS.
+                  ──────────────────────
+                  A number alone cannot answer it. Shown a refund against "2.",
+                  a client has no way to tell which half of the job it came off;
+                  "עם סיום העבודה" tells them without asking anyone.
+
+                  Absent on a plain instalment plan, where the row's own number
+                  is the only name the payment has.
+                */}
+                {period.label && (
+                  <span className="min-w-0 truncate" style={{ color: 'var(--ap-text)' }}>
+                    {period.label}
+                  </span>
+                )}
+
+                <span style={{ color: 'var(--ap-text)' }}>
+                  <bdi>
+                    {formatPublicMoney(period.amount, payment.currency || currency, locale)}
+                  </bdi>
+                </span>
+
+                {/* Paid says so; unpaid says WHEN, which is the more useful
+                    half for a payment still to come. `due_date` is a bare SQL
+                    DATE, so it is read back on the clock it was written in —
+                    UTC — rather than the reader's, where it slips a day. */}
+                <span
+                  className="text-xs"
+                  style={{ color: settled ? '#15803D' : 'var(--ap-text-muted)' }}
+                >
+                  {settled
+                    ? t('paid')
+                    : period.dueDate
+                      ? formatPublicDate(
+                          new Date(`${period.dueDate}T00:00:00Z`),
+                          locale,
+                          { day: 'numeric', month: 'short' },
+                          'UTC'
+                        )
+                      : ''}
+                </span>
+
+                {/* What came off THIS payment — the question a single total
+                    cannot answer. */}
+                {returned > 0 && (
+                  <span className="ms-auto text-xs" style={{ color: '#B54708' }}>
+                    {t('refunded')}{' '}
+                    <bdi>
+                      {formatPublicMoney(returned, payment.currency || currency, locale)}
+                    </bdi>
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
 
       {children}

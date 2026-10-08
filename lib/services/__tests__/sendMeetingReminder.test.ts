@@ -13,6 +13,11 @@
  *
  * So these tests go through the real `sendMeetingReminder` with a booking
  * shaped the way the repository actually returns one.
+ *
+ * THE RESCHEDULE LINK MOVED. `/book/manage/<token>/reschedule` is now a redirect
+ * to the top-level `/reschedule/<token>`, and the email points at the canonical
+ * one — so these assertions name that path. The old one still resolves, which is
+ * why nothing broke for a client; only the assertion was stale.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -187,7 +192,7 @@ describe('sendMeetingReminder', () => {
       expect(result.sent).toBe(true);
       expect(sent).toHaveLength(2);
       expect(clientMail()!.html).toContain('Dana Levi');
-      expect(clientMail()!.html).not.toContain('/book/manage/');
+      expect(clientMail()!.html).not.toContain('/reschedule/');
     } finally {
       process.env.BOOKING_TOKEN_SECRET = 'test-signing-key';
     }
@@ -205,7 +210,7 @@ describe('sendMeetingReminder', () => {
       notifyOwner: false,
     });
 
-    expect(clientMail()!.html).toContain('https://app.example.test/book/manage/');
+    expect(clientMail()!.html).toContain('https://app.example.test/reschedule/');
     expect(clientMail()!.html).toContain('/reschedule');
   });
 
@@ -424,7 +429,7 @@ describe('the reschedule link is only offered while it would work', () => {
       notifyOwner: false,
     });
 
-    expect(clientHtml()).toContain('/book/manage/');
+    expect(clientHtml()).toContain('/reschedule/');
   });
 
   it('withholds it inside the window', async () => {
@@ -438,7 +443,7 @@ describe('the reschedule link is only offered while it would work', () => {
     });
 
     const html = clientHtml();
-    expect(html).not.toContain('/book/manage/');
+    expect(html).not.toContain('/reschedule/');
     // The reminder still goes — only the dead button is gone.
     expect(html).toContain('Initial assessment');
   });
@@ -457,7 +462,7 @@ describe('the reschedule link is only offered while it would work', () => {
       notifyOwner: false,
     });
 
-    expect(clientHtml()).not.toContain('/book/manage/');
+    expect(clientHtml()).not.toContain('/reschedule/');
   });
 
   it('respects a service with a longer window', async () => {
@@ -470,7 +475,7 @@ describe('the reschedule link is only offered while it would work', () => {
       notifyOwner: false,
     });
 
-    expect(clientHtml()).not.toContain('/book/manage/');
+    expect(clientHtml()).not.toContain('/reschedule/');
   });
 
   it('always offers it when the service has no window', async () => {
@@ -482,7 +487,7 @@ describe('the reschedule link is only offered while it would work', () => {
       notifyOwner: false,
     });
 
-    expect(clientHtml()).toContain('/book/manage/');
+    expect(clientHtml()).toContain('/reschedule/');
   });
 
   it('falls back to 24 hours when the service is unreadable', async () => {
@@ -496,6 +501,6 @@ describe('the reschedule link is only offered while it would work', () => {
       notifyOwner: false,
     });
 
-    expect(clientHtml()).not.toContain('/book/manage/');
+    expect(clientHtml()).not.toContain('/reschedule/');
   });
 });

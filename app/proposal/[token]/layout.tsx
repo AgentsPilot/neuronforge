@@ -1,9 +1,6 @@
 // app/proposal/[token]/layout.tsx
 
-import { PublicBrandProvider } from '@/components/public/PublicBrandProvider';
-import { PublicDirScript } from '@/components/public/PublicDirScript';
-import { PublicFontLinks } from '@/components/public/PublicFontLinks';
-import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
+import { PublicBrandFrame } from '@/components/public/PublicBrandFrame';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 
 /**
@@ -32,14 +29,6 @@ export default async function ProposalLayout({
   // An invalid or expired token still has to render — the page's own terminal
   // states explain what happened. It just does so unbranded, which is correct:
   // there is no business to brand it as.
-  if (!brand) return <>{children}</>;
 
-  return (
-    <>
-      <PublicDirScript brand={brand} />
-      <PublicFontLinks brand={brand} />
-      <PublicThemeStyle brand={brand} />
-      <PublicBrandProvider brand={brand}>{children}</PublicBrandProvider>
-    </>
-  );
+  return <PublicBrandFrame brand={brand}>{children}</PublicBrandFrame>;
 }

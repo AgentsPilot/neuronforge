@@ -70,7 +70,7 @@ export class ConvStageDropoffDetector extends BaseDetector {
     description: 'Finds the stage people reach and never move past',
 
     watchedMetrics: ['conversion.stage_progression_rate'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'percent_change',
@@ -90,12 +90,14 @@ export class ConvStageDropoffDetector extends BaseDetector {
      * against each other, not this month against last, so it needs no history
      * beyond the window it already requires.
      */
-    ignoresVectorMaturity: true,
+    /*
+     * `stage_progression_rate` is a cohort rate. The file header says it needs
+     * history rather than a snapshot, and then exempted itself from the gate
+     * that enforces exactly that.
+     */
+    claimType: 'rate',
 
-    consentTier: 'automate',
     eligibleForAutomation: true,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168,
   };
 

@@ -39,7 +39,8 @@ export type OperationalAutomationId =
   | 'reply_to_enquiries'
   | 'chase_invoices'
   | 'chase_intake'
-  | 'remind_about_meeting';
+  | 'remind_about_meeting'
+  | 'auto_complete_meetings';
 
 export interface OperationalAutomation {
   id: OperationalAutomationId;
@@ -54,7 +55,8 @@ export interface OperationalAutomation {
     | 'lead_autosend_enabled'
     | 'chase_invoices_enabled'
     | 'chase_intake_enabled'
-    | 'meeting_reminder_enabled';
+    | 'meeting_reminder_enabled'
+    | 'auto_complete_meetings_enabled';
 
   /** The gap this clears, so the advisor can count what is waiting. */
   gapId: GapId;
@@ -310,6 +312,41 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     requires: 'takes_bookings',
     labelKey: 'automation.remind_about_meeting',
     hintKey: 'automation.remind_about_meeting_hint',
+  },
+  {
+    /*
+     * The only automation here that sends nothing.
+     *
+     * Every other entry writes to somebody's CLIENT, which is why `delayHours`
+     * is described as the owner's room to do it themselves first. This one
+     * writes to the owner's own records: it marks a meeting that has already
+     * happened as completed, which is a click they would otherwise make.
+     *
+     * Chosen as the fifth automation on evidence rather than instinct. A
+     * coverage measurement across all six accounts found the platform able to
+     * perform 0.4% of what owners do, and `SCHEDULING_BOOKING_COMPLETED` was
+     * third by volume (52 across accounts) among the work nothing could take --
+     * with no judgement in it and no message to get wrong.
+     */
+    id: 'auto_complete_meetings',
+    column: 'auto_complete_meetings_enabled',
+    gapId: 'meeting_unmarked',
+    /*
+     * Twelve hours after the meeting's start time, which is what the gap's own
+     * `staleAfterHours` already uses. Long enough that a session running over,
+     * or an owner who marks it themselves that evening, happens first.
+     */
+    delayHours: 12,
+    covers: ['meeting_complete'],
+    sweepQueues: 'meeting_complete',
+    /*
+     * Only a business that takes bookings has meetings to mark. The same guard
+     * `remind_about_meeting` uses, and for the same reason: an invoicing
+     * practice should never be shown this card at all.
+     */
+    requires: 'takes_bookings',
+    labelKey: 'automation.auto_complete_meetings',
+    hintKey: 'automation.auto_complete_meetings_hint',
   },
 ];
 

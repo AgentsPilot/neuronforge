@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { Calendar, Clock, CreditCard, ClipboardList, ChevronDown, ChevronUp, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
 import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
+import { isMeetingPastDue } from '@/lib/business-os/quoteGate';
 
 interface IntakeResponses {
   template_id: string;
@@ -207,7 +208,15 @@ export function SessionCard({ session, locale, isRTL, t, onEdit, onViewIntake, i
           {/* Status badge */}
           <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${statusStyle.bg} ${statusStyle.text}`}>
             <StatusIcon className="h-3.5 w-3.5" />
-            <span>{t(`crm.booking.status.${booking.status}`)}</span>
+            {/* The status word, plus the clock when the meeting is behind and
+                nobody has marked it. The word itself is untouched: this card
+                said "Upcoming" about meetings weeks past, because the label is
+                chosen by `status` and nothing marks a booking past. */}
+            <span>
+              {isMeetingPastDue({ status: booking.status, startTime: bookingDate })
+                ? t('crm.journey.awaiting_outcome') || 'Awaiting an outcome'
+                : t(`crm.booking.status.${booking.status}`)}
+            </span>
           </div>
         </div>
 

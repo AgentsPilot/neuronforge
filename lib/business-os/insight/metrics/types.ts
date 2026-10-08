@@ -60,7 +60,15 @@ export type SalesMetricKey =
   | 'sales.enquiries_replied'
   | 'sales.avg_reply_time_hours'
   | 'sales.stalled_enquiries'
-  | 'sales.proposal_acceptance_rate';
+  | 'sales.proposal_acceptance_rate'
+  /**
+   * The same question asked of the assistant again and again.
+   *
+   * A question an owner repeats weekly is a report they do not have, or an
+   * automation nobody offered them. It is the loudest behavioural signal on the
+   * reporting account: 294 chat queries in 30 days, half of everything they did.
+   */
+  | 'sales.repeated_questions';
 
 // Cash flow metrics
 export type CashFlowMetricKey =
@@ -117,7 +125,22 @@ export type OperationsMetricKey =
   | 'operations.active_services'
   | 'operations.last_minute_cancels'
   | 'operations.service_performance'
-  | 'operations.peak_utilization';
+  | 'operations.peak_utilization'
+  /**
+   * The share of bookings the OWNER typed in, rather than a client making them.
+   *
+   * The first metric about how the owner WORKS rather than how the business
+   * performs. A booking page exists to take this job; a high share means it is
+   * not doing it, and that is work the platform promised to remove.
+   */
+  | 'operations.manual_booking_share'
+  /**
+   * Edits to one settings entity inside a short window.
+   *
+   * Repeatedly changing the same setting is not productive work, it is someone
+   * failing to get the result they want.
+   */
+  | 'operations.settings_churn';
 
 // Pricing metrics
 export type PricingMetricKey =
@@ -285,6 +308,115 @@ export const METRIC_DEFINITIONS: MetricDefinition[] = [
     periodTypes: ['daily'],
     eventTypes: ['invoice.overdue'],
     aggregation: 'snapshot',
+    minSamplesForBaseline: 7,
+  },
+  {
+    /*
+     * The series behind `cash_refund_pattern`, which had none.
+     *
+     * That detector is the one that showed an owner a 275% refund rate, and
+     * part of why it could is that nothing ever recorded what the rate
+     * actually was over time — there was no history to compare against, so a
+     * configured threshold got pressed into service as a baseline.
+     *
+     * Counts of events, never sums of money: a refund RATE is refunds over
+     * payments, and counting rows sidesteps the rule that money from
+     * different currencies must never be added. `payment.completed` and
+     * `refund.completed` are both emitted live and were backfilled, so the
+     * series starts with history rather than from today.
+     */
+    /*
+     * Money still owed, as a series rather than a figure on a card.
+     *
+     * `cash_ar_overdue` is the one detector on this account that has been
+     * acted on, and until now its metric had no history — so the measurement
+     * sweep could compare its "before" and "after" only by luck.
+     *
+     * The reader REFUSES to sum across currencies and returns null, which the
+     * sweep stores as `unmeasurable`. See `snapshots.ts`: there is no FX rate
+     * anywhere in the platform, and the sibling `cashflow.ar_overdue_usd`
+     * quietly breaks that rule already.
+     */
+    key: 'cashflow.ar_total',
+    name: 'Money Owed',
+    description: 'Unpaid invoice value, net of refunds, in the business’s own currency',
+    category: 'cash_flow',
+    unit: 'usd',
+    periodTypes: ['daily'],
+    // A state, not an event: nothing is counted. The reader queries invoices.
+    eventTypes: [],
+    aggregation: 'snapshot',
+    minSamplesForBaseline: 7,
+  },
+  {
+    /*
+     * Active links that cannot open for anybody but the owner, judged from
+     * the address with no network call. Shares `deadReason` with the detector
+     * so the series and the card cannot disagree about what "broken" means.
+     */
+    key: 'acquisition.broken_link_destinations',
+    name: 'Broken Link Destinations',
+    description: 'Active smart links whose destination cannot resolve for a visitor',
+    category: 'acquisition',
+    unit: 'count',
+    periodTypes: ['daily'],
+    eventTypes: [],
+    aggregation: 'snapshot',
+    minSamplesForBaseline: 7,
+  },
+  {
+    /*
+     * The series `computeRateMetric` has always been able to compute and
+     * nobody ever asked it for.
+     *
+     * Its branch has existed since the file was written, keyed on
+     * `retention.cancellation_rate`, and `METRIC_DEFINITIONS` never declared
+     * the key — so the code read as working coverage and was unreachable
+     * (hazard H22). Both events are emitted live, so declaring it costs one
+     * entry and turns dead code into a series.
+     */
+    key: 'retention.cancellation_rate',
+    name: 'Cancellation Rate',
+    description: 'Share of created bookings that were later cancelled',
+    category: 'retention',
+    unit: 'percentage',
+    periodTypes: ['daily', 'weekly', 'monthly'],
+    eventTypes: ['booking.cancelled', 'booking.created'],
+    aggregation: 'rate',
+    minSamplesForBaseline: 7,
+  },
+  {
+    /*
+     * Clients who have gone quiet, as a series.
+     *
+     * ⚠️ Three detectors write this key meaning three different things. The
+     * SERIES has one definition and it is the narrowest of them: no activity
+     * and no booking for 30 days, relationship at least that old. Decided
+     * 2026-10-07; see `snapshots.ts` for why, and for the stage-resolution
+     * trap (`lifecycle_stage` does not exist).
+     */
+    key: 'retention.clients_at_risk',
+    name: 'Clients At Risk',
+    description: 'Clients with no activity and no booking for 30 days',
+    category: 'retention',
+    unit: 'count',
+    periodTypes: ['daily'],
+    // A state, not an event: the reader queries contacts, activities, bookings.
+    eventTypes: [],
+    aggregation: 'snapshot',
+    minSamplesForBaseline: 7,
+  },
+  {
+    key: 'cashflow.refund_rate',
+    name: 'Refund Rate',
+    description: 'Share of completed payments that were later refunded',
+    category: 'cash_flow',
+    unit: 'percentage',
+    periodTypes: ['daily', 'weekly', 'monthly'],
+    // Numerator first — see the generic branch of `computeRateMetric`, though
+    // this key has its own case so the denominator is payments, not the sum.
+    eventTypes: ['refund.completed', 'payment.completed'],
+    aggregation: 'rate',
     minSamplesForBaseline: 7,
   },
 

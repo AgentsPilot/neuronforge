@@ -19,7 +19,7 @@ export class AcqTrafficDropDetector extends BaseDetector {
     description: 'Detects when website traffic drops 30%+ from previous week',
 
     watchedMetrics: ['acquisition.unique_visitors'],
-    eventTypes: ['page.viewed'],
+    documentsEventTypes: ['page.viewed'],
 
     baselineWindow: 'week',
     thresholdType: 'percent_change',
@@ -43,10 +43,7 @@ export class AcqTrafficDropDetector extends BaseDetector {
     },
 
     pairedProcessId: undefined, // Advisory only
-    consentTier: 'observe',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 

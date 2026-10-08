@@ -1,9 +1,6 @@
 // app/consent/confirm/[token]/layout.tsx
 
-import { PublicBrandProvider } from '@/components/public/PublicBrandProvider';
-import { PublicDirScript } from '@/components/public/PublicDirScript';
-import { PublicFontLinks } from '@/components/public/PublicFontLinks';
-import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
+import { PublicBrandFrame } from '@/components/public/PublicBrandFrame';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 import { verifyConsentConfirmToken } from '@/lib/consent/confirmToken';
 
@@ -45,14 +42,6 @@ export default async function ConsentConfirmLayout({
   if (!verdict.ok) return <>{children}</>;
 
   const brand = await resolvePublicBranding({ by: 'userId', userId: verdict.payload.u });
-  if (!brand) return <>{children}</>;
 
-  return (
-    <>
-      <PublicDirScript brand={brand} />
-      <PublicFontLinks brand={brand} />
-      <PublicThemeStyle brand={brand} />
-      <PublicBrandProvider brand={brand}>{children}</PublicBrandProvider>
-    </>
-  );
+  return <PublicBrandFrame brand={brand}>{children}</PublicBrandFrame>;
 }

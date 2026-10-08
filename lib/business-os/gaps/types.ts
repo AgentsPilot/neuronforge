@@ -135,6 +135,22 @@ export interface GapItem {
   note?: string;
   /** When it became stuck, so "how long" can be shown rather than a date. */
   since: string;
+  /**
+   * When the question became ANSWERABLE, where that is not when it arose.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The staleness window measures from here; `since` stays what the row SAYS,
+   * and for almost every gap they are the same instant, so this is omitted.
+   *
+   * A meeting is the exception, and it is why this exists. `since` is the START
+   * time, because that is what an owner recognises: "the 10am on Tuesday". But
+   * the question "did it happen" cannot be answered until the meeting has
+   * ENDED, so measuring the wait from the start charges the delay to the wrong
+   * moment — a long session is asked about while it is still running, and a
+   * late-afternoon one is held back until the small hours.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  staleFrom?: string;
   /** The proposal, booking or invoice this is about, for the action. */
   entityId?: string;
   /**

@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
 import { businessDayFor, resolveBusinessTimezone } from '@/lib/business-os/businessDay';
 import { buildBriefingFacts } from '@/lib/business-os/briefing/BriefingFactsService';
 import { getBriefing } from '@/lib/business-os/briefing/BriefingStore';
@@ -50,7 +51,7 @@ export async function GET(request: NextRequest) {
      * elsewhere in this codebase (chat-v4 resolves every date in UTC because
      * of it). Both reads are tolerant: a missing preferences row is normal.
      */
-    const [profileResult, briefingPrefResult, preferencesResult] = await Promise.all([
+    const [profileResult, briefingPrefResult, preferencesResult, profileRowResult] = await Promise.all([
       supabaseServer
         .from('business_profiles')
         /*
@@ -84,6 +85,15 @@ export async function GET(request: NextRequest) {
         .select('timezone, timezone_confirmed_at, preferred_language')
         .eq('user_id', user.id)
         .maybeSingle(),
+      /*
+       * The person's own name, from the row Settings writes.
+       *
+       * Through the repository rather than another `supabaseServer` select
+       * (CLAUDE.md rule 1): `profiles` already has one, and it is scoped by id.
+       * A missing row is normal and is not an error — see the note at the
+       * `userName` fallback below.
+       */
+      userProfileRepository.findById(user.id),
     ]);
 
     const profile = profileResult.data as
@@ -108,7 +118,30 @@ export async function GET(request: NextRequest) {
         }
       | null;
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE NAME THE OWNER CAN ACTUALLY EDIT COMES FIRST.
+     *
+     * This read `user_metadata.full_name` and nothing else. That value is
+     * written once, at sign-up, by whatever the provider handed over — and the
+     * profile form in Settings writes `profiles.full_name`, a different place
+     * entirely. So an owner could change their name, see it saved, and have
+     * this header go on greeting them by the name they had just replaced, with
+     * nothing on either screen to explain why.
+     *
+     * `profiles` is the editable one, so it wins. Auth metadata stays as the
+     * fallback for an account whose onboarding never wrote a profile row, which
+     * is what `UserProfileRepository.findById` documents as the expected
+     * treatment of its empty result.
+     *
+     * Still the FIRST name only: this greets somebody, it does not address an
+     * envelope.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const editedName = profileRowResult.data?.full_name?.trim();
+
     const userName =
+      editedName?.split(' ')[0] ||
       user.user_metadata?.full_name?.split(' ')[0] ||
       user.email?.split('@')[0] ||
       'there';

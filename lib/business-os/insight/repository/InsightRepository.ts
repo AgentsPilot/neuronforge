@@ -12,6 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
 import { createLogger } from '@/lib/logger';
 import type { DetectionResult, InsightSeverity } from '../detectors/types';
+import type { SegmentRate } from '../patterns/segmentRate';
 import type { PrioritizedInsight } from '../prioritizer/InsightPrioritizer';
 import type { BusinessEventCategory } from '../events/types';
 import type { CorrelatedInsight, CorrelationSummary } from '../correlation/types';
@@ -161,26 +162,28 @@ export interface RepositoryResult<T> {
 // Vector Maturity System (Progressive Data Revelation)
 // ===========================
 
-export type VectorKey = 'wins' | 'conv' | 'ops' | 'cash' | 'leads' | 'ret' | 'price';
-export type VectorState = 'dark' | 'learn' | 'lit';
-export type MaturityLevel = 'cold_start' | 'early' | 'running' | 'mature';
+/*
+ * Declared in `../vectorTypes`, and re-exported here so every existing
+ * importer keeps working.
+ *
+ * They were declared here AND in `hooks/useInsights.ts`, because a
+ * `'use client'` hook cannot import a repository — and the two had already
+ * drifted (hazard H9): the client's `VectorStatus` was missing `also`. The
+ * shared file carries no imports, so the client can reach it without reaching
+ * the server.
+ *
+ * `VectorMaturityData` is deliberately NOT shared — the server always computes
+ * `journeyAnchors` and the wire shape makes it optional for responses cached
+ * before anchors shipped. See the note in `vectorTypes.ts`.
+ */
+import type {
+  VectorKey,
+  VectorState,
+  MaturityLevel,
+  VectorStatus,
+} from '../vectorTypes';
 
-export interface VectorStatus {
-  key: VectorKey;
-  name: string;
-  state: VectorState;
-  dataPoints: number;
-  threshold: number;
-  note?: string;
-  /**
-   * The volume condition behind a time-based vector, with where it stands.
-   *
-   * Carried out of here so the journey timeline can tell the two apart: days
-   * are arithmetic and can be stated as a date, volume cannot. Absent on the
-   * vectors that have only one condition.
-   */
-  also?: { metric: string; current: number; threshold: number };
-}
+export type { VectorKey, VectorState, MaturityLevel, VectorStatus };
 
 /**
  * The dates the journey timeline counts from.
@@ -504,6 +507,75 @@ function hasRealBaseline(detection: {
     typeof detection.percentChange === 'number' &&
     typeof detection.baselineValue === 'number' &&
     detection.baselineValue !== 0
+  );
+}
+
+/**
+ * The money line, present only when there is money.
+ *
+ * `- Estimated impact: ${formatMoney(detection.estimatedImpactUsd, ...)}` was
+ * unconditional, and `formatMoney` turns null into `0` by design -- it is given
+ * `Number(amount) || 0` so a real zero and an absent figure print identically.
+ * So a detector that reports no impact was described to the model as having an
+ * impact of exactly nothing.
+ *
+ * The owner's dead-link card is what that produced: a title reading "קישור לא
+ * פעיל - השפעה גבוהה על העסק" (high impact on the business) above a body
+ * reading "ההשפעה הכספית היא ₪0". Both halves were invented, in opposite
+ * directions, from the same absent number. Given "impact: ₪0" and a severity of
+ * `high`, the model has two contradictory facts and no way to reconcile them.
+ *
+ * Absent and zero are different claims, and the same discipline already applies
+ * to the baseline line below and to `describeCurrentValue` above: a figure
+ * nobody supplied is not sent.
+ */
+function describeImpact(
+  detection: { estimatedImpactUsd?: number | null },
+  currency: string | null | undefined
+): string {
+  if (typeof detection.estimatedImpactUsd !== 'number') return '';
+  return `- Estimated impact: ${formatMoney(detection.estimatedImpactUsd, currency)}\n`;
+}
+
+/**
+ * One part of the business against the rest, present only when there is one.
+ *
+ * The line that turns a fact the owner already knows into one she cannot see:
+ * "30% of your bookings are cancelled" is on her own calendar, "Thursday 43%,
+ * everything else 8%" is not, and only the second names something to change.
+ *
+ * Absent far more often than present, and that is correct — `outlierSegment`
+ * refuses whenever a sample is too thin or the slices are level, which on a
+ * small account is most of the time. Same discipline as `describeImpact`
+ * above: a comparison nobody computed is not sent, so the model cannot write
+ * "compared to other days" with nothing after it.
+ *
+ * THE RAW SEGMENT KEY IS WITHHELD, AND THE DETECTOR NAMES THE SLICE INSTEAD.
+ *
+ * `comparison.segment` is a service UUID or a code like `'thu'`. Handing
+ * either to the model gets the UUID printed on the card. But the slice cannot
+ * simply be left out: "one group is four times worse" with no way to tell
+ * WHICH is the dead-link card again, whose owner replied "which link?" — see
+ * `narrationSubject` in `detectors/types.ts`.
+ *
+ * So the detector resolves it to a readable name and puts it in
+ * `narrationSubject`, which is the field that exists for exactly this and is
+ * already rendered into the prompt below. `process_parameters` cannot carry
+ * it: the card components declare the field and no component reads it.
+ *
+ * This line therefore supplies only the SHAPE of the gap. The name comes from
+ * the line above it.
+ */
+function describeComparison(detection: { comparison?: SegmentRate | null }): string {
+  const c = detection.comparison;
+  if (!c) return '';
+
+  const pct = (rate: number) => `${Math.round(rate * 100)}%`;
+
+  return (
+    `- One group stands out: ${c.hits} of ${c.of} (${pct(c.rate)}), ` +
+    `against ${c.rest.hits} of ${c.rest.of} (${pct(c.rest.rate)}) everywhere else ` +
+    `— ${c.ratio}x, confidence ${c.confidence}\n`
   );
 }
 
@@ -986,6 +1058,8 @@ export class InsightRepository {
 
       const detectorDescriptions: Record<string, string> = {
         // Original 6 detectors
+        sys_automation_unadopted: 'work waiting that an existing automation could do unasked, where the owner has never been asked the question -- NOT a telling-off about settings, and never about money: switching it on saves their TIME. Name what is waiting and offer to take it, in one sentence',
+        toil_manual_booking_entry: 'the owner keying in bookings by hand that their published booking page could have taken for them -- a cost in THEIR OWN TIME, never a loss of money, and never a mistake: taking a booking over the phone is legitimate. The point is that the self-serve route exists and is going unused',
         cash_ar_overdue: 'overdue invoices that need payment follow-up',
         cash_payment_issues: 'payment issues (failed, pending, or refunded payments)',
         ret_no_show_spike: 'increased no-show rate for appointments',
@@ -1061,8 +1135,7 @@ Business Context:
 Detection details:
 - Issue type: ${context}
 - Affected items: ${detection.affectedCount}
-${describeCurrentValue(detection, businessContext.currency)}- Estimated impact: ${formatMoney(detection.estimatedImpactUsd, businessContext.currency)}
-- Severity: ${detection.severity}
+${describeCurrentValue(detection, businessContext.currency)}${describeImpact(detection, businessContext.currency)}${describeComparison(detection)}- Severity: ${detection.severity}
 ${detection.narrationSubject ? `- Specifically: ${detection.narrationSubject}` : ''}
 ${hasRealBaseline(detection) ? `- Change from baseline: ${detection.percentChange!.toFixed(0)}%` : ''}
 ${issueType ? `- Specific issue: ${issueType}` : ''}
@@ -1726,6 +1799,11 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     // Hebrew titles
     if (language === 'he') {
       const hebrewTitles: Record<string, string> = {
+        sys_automation_unadopted: (() => {
+          const job = this.automationTitle(detection.processParameters?.lead_automation, 'he');
+          return job ? `אני יכול לקחת על עצמי: ${job}` : `${count} דברים שאפשר לטפל בהם אוטומטית`;
+        })(),
+        toil_manual_booking_entry: `דף ההזמנות שלך יכול לעשות יותר מזה`,
         cash_ar_overdue: `${count} חשבוניות שלא שולמו - ${formatMoney(value, currency)}`,
         cash_booking_unpaid: `${count} פגישות שטרם שולמו - ${formatMoney(impact, currency)}`,
         cash_work_unbilled: `${count} פגישות שהסתיימו ולא חויבו - ${formatMoney(impact, currency)}`,
@@ -1780,6 +1858,11 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
 
     // English titles (default)
     const titles: Record<string, string> = {
+      sys_automation_unadopted: (() => {
+        const job = this.automationTitle(detection.processParameters?.lead_automation, 'en');
+        return job ? `I Can Take Over ${job}` : `${count} Thing${count === 1 ? '' : 's'} I Could Handle For You`;
+      })(),
+      toil_manual_booking_entry: `Your Booking Page Could Be Doing More Of This`,
       cash_ar_overdue: `${formatMoney(value, currency)} in Overdue Invoices`,
       cash_booking_unpaid: `${count} Appointment${count === 1 ? '' : 's'} Not Paid For`,
       cash_work_unbilled: `${count} Completed Session${count === 1 ? '' : 's'} Never Billed`,
@@ -1874,6 +1957,67 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   /**
    * Generate a description for the insight (localized fallback)
    */
+  /**
+   * What the offered automation actually DOES, in words the owner uses.
+   *
+   * `sys_automation_unadopted` shipped saying "2 things I could handle for
+   * you" and never naming them, which is an offer nobody can accept: the owner
+   * is asked to switch something on without being told what it is. The
+   * automation id is already in `processParameters`; it was simply not read.
+   *
+   * Plain verbs rather than the labels on the settings screen ("Close off
+   * meetings once they have happened", not "auto_complete_meetings"), because
+   * the card is the first time most owners meet any of these.
+   */
+  private automationInWords(automationId: unknown, language: string): string | null {
+    const id = typeof automationId === 'string' ? automationId : '';
+
+    const words: Record<string, { en: string; he: string }> = {
+      auto_complete_meetings: {
+        en: 'mark meetings as done once they have happened',
+        he: 'לסמן פגישות כהתקיימו אחרי שהן עברו',
+      },
+      chase_invoices: {
+        en: 'remind clients about invoices they have not paid',
+        he: 'להזכיר ללקוחות על חשבוניות שלא שולמו',
+      },
+      reply_to_enquiries: {
+        en: 'reply to a new enquiry while they are still waiting',
+        he: 'להשיב לפנייה חדשה בזמן שהלקוח עוד ממתין',
+      },
+      chase_intake: {
+        en: 'chase the forms clients have not filled in',
+        he: 'להזכיר על טפסים שלקוחות לא מילאו',
+      },
+    };
+
+    const entry = words[id];
+    if (!entry) return null;
+    return language === 'he' ? entry.he : entry.en;
+  }
+
+  /**
+   * The same job, short enough for a title.
+   *
+   * A title is the only line some owners read, so "2 Things I Could Handle For
+   * You" wasted it on a number and a pronoun. Separate from the long form
+   * because a title has a length budget the sentence does not.
+   */
+  private automationTitle(automationId: unknown, language: string): string | null {
+    const id = typeof automationId === 'string' ? automationId : '';
+
+    const titles: Record<string, { en: string; he: string }> = {
+      auto_complete_meetings: { en: 'Closing Off Past Meetings', he: 'סגירת פגישות שהתקיימו' },
+      chase_invoices: { en: 'Chasing Unpaid Invoices', he: 'תזכורות על חשבוניות' },
+      reply_to_enquiries: { en: 'Replying To New Enquiries', he: 'מענה לפניות חדשות' },
+      chase_intake: { en: 'Chasing Unfilled Forms', he: 'תזכורות על טפסים' },
+    };
+
+    const entry = titles[id];
+    if (!entry) return null;
+    return language === 'he' ? entry.he : entry.en;
+  }
+
   private generateDescription(detection: DetectionResult, language: string = 'en', currency: string = 'USD'): string {
     const issueType = detection.processParameters?.issue_type as string | undefined;
     const count = detection.affectedCount || 0;
@@ -1918,6 +2062,13 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     // Hebrew descriptions
     if (language === 'he') {
       const hebrewDescriptions: Record<string, string> = {
+        sys_automation_unadopted: (() => {
+          const job = this.automationInWords(detection.processParameters?.lead_automation, 'he');
+          return job
+            ? `אני יכול ${job}. ${count} ממתינים לזה כרגע, ולא תצטרך לבקש שוב.`
+            : `${count} דברים ממתינים שאני יכול לטפל בהם במקומך.`;
+        })(),
+        toil_manual_booking_entry: `${count} מתוך ${Number(detection.processParameters?.total_bookings) || count} הפגישות האחרונות הוזנו על ידך ולא נקבעו על ידי הלקוח. חלק מהן הגיעו בטלפון ותמיד יגיעו כך. השאר הן כמה דקות כל אחת שדף ההזמנות היה חוסך לך.`,
         cash_ar_overdue: `יש לך ${count} חשבוניות בסך ${formatMoney(value, currency)} שנמצאות בפיגור של יותר מ-7 ימים.`,
         cash_booking_unpaid: `${count} פגישות קרובות היו אמורות להיות משולמות מראש והתשלום טרם הגיע. סה\"כ ${formatMoney(impact, currency)}.`,
         cash_work_unbilled: `${count} פגישות הסתיימו ומעולם לא נשלחה עליהן חשבונית. סה\"כ ${formatMoney(impact, currency)}.`,
@@ -1973,6 +2124,14 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     // English descriptions (default)
     const plural = count !== 1;
     const descriptions: Record<string, string> = {
+      sys_automation_unadopted: (() => {
+        const job = this.automationInWords(detection.processParameters?.lead_automation, 'en');
+        // Never the vague version: an offer with no subject cannot be accepted.
+        return job
+          ? `I can ${job}. There ${count === 1 ? 'is' : 'are'} ${count} waiting for it right now, and you would not have to ask again.`
+          : `${count} thing${count === 1 ? '' : 's'} ${count === 1 ? 'is' : 'are'} waiting that I could take care of for you.`;
+      })(),
+      toil_manual_booking_entry: `${count} of your last ${Number(detection.processParameters?.total_bookings) || count} bookings were added by you rather than booked by the client. Some of those will have come in by phone and always will. The rest are a few minutes each that your booking page would have saved you.`,
       cash_ar_overdue: `You have ${count} invoice${plural ? 's' : ''} totaling ${formatMoney(value, currency)} that ${plural ? 'are' : 'is'} more than 7 days overdue.`,
       cash_booking_unpaid: `${count} upcoming appointment${plural ? 's were' : ' was'} due to be paid for in advance and ${plural ? 'have' : 'has'} not been. ${formatMoney(impact, currency)} outstanding.`,
       cash_work_unbilled: `${count} completed appointment${plural ? 's were' : ' was'} never invoiced and never paid for. ${formatMoney(impact, currency)} never asked for.`,
@@ -2098,6 +2257,18 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     // Hebrew recommendations
     if (language === 'he') {
       const hebrewRecommendations: Record<string, string> = {
+        sys_automation_unadopted: `הפעל את האוטומציה ואטפל בזה מעכשיו בעצמי. תמיד אפשר לכבות.`,
+        toil_manual_booking_entry: (() => {
+          const broken = Number(detection.processParameters?.broken_links) || 0;
+          const usable = Number(detection.processParameters?.usable_links) || 0;
+          if (broken > 0 && usable === 0) {
+            return `פתח את עמוד האתר ותקן את הקישור שכבר יש לך — הוא לא נפתח לאף אחד חוץ ממך. אחרי שהוא יעבוד, שים אותו בחתימת המייל ובפרופיל הוואטסאפ.`;
+          }
+          if (usable > 0) {
+            return `פתח את עמוד האתר, העתק את קישור ההזמנות, ושים אותו במקום שבו לקוחות כבר מחפשים אותך: חתימת המייל, פרופיל הוואטסאפ, והתשובה שאת שולחת כשמישהו מבקש תור.`;
+          }
+          return `פתח את עמוד האתר ופרסם קישור הזמנות, ואז שים אותו במקום שבו לקוחות כבר מחפשים אותך: חתימת המייל, פרופיל הוואטסאפ, והתשובה שאת שולחת כשמישהו מבקש תור.`;
+        })(),
         cash_ar_overdue: `שלח תזכורות תשלום ללקוחות עם חשבוניות בפיגור. זה יכול לעזור לגבות עד ${formatMoney(impact, currency)}.`,
         cash_booking_unpaid: `בקש את התשלום לפני הפגישה. מומלץ להתחיל מהפגישה הקרובה ביותר.`,
         cash_work_unbilled: `שלח חשבונית על העבודה שכבר בוצעה, החל מהוותיקה ביותר.`,
@@ -2150,6 +2321,24 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
 
     // English recommendations (default)
     const recommendations: Record<string, string> = {
+      sys_automation_unadopted: `Switch the automation on and I will take this from here. You can turn it off any time.`,
+      toil_manual_booking_entry: (() => {
+        const broken = Number(detection.processParameters?.broken_links) || 0;
+        const usable = Number(detection.processParameters?.usable_links) || 0;
+        /*
+         * Three different situations, three different instructions. Telling an
+         * owner whose only link points at localhost to "share your link" is
+         * worse than silence -- the dead-link card is warning her about that
+         * same address.
+         */
+        if (broken > 0 && usable === 0) {
+          return `Open your website page and fix the link you already have — it does not open for anyone but you. Once it works, put it in your email signature and your WhatsApp profile.`;
+        }
+        if (usable > 0) {
+          return `Open your website page, copy your booking link, and put it where clients already look for you: your email signature, your WhatsApp profile, the reply you send when somebody asks for a time.`;
+        }
+        return `Open your website page and publish a booking link, then put it where clients already look for you: your email signature, your WhatsApp profile, the reply you send when somebody asks for a time.`;
+      })(),
       cash_ar_overdue: `Send payment reminders to clients with overdue invoices. This could help recover up to ${formatMoney(impact, currency)}.`,
       cash_booking_unpaid: `Request payment before the appointment, starting with the soonest one.`,
       cash_work_unbilled: `Invoice the work you have already done, starting with the oldest.`,
@@ -2501,10 +2690,27 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       const parsed = JSON.parse(jsonStr);
 
+      /*
+       * A reply missing a field falls back to the LOCALISED text, not to the
+       * raw pattern.
+       *
+       * `correlatedInsight.story`, `.patternName` and `.action` all come from
+       * `patterns.ts` and are hardcoded English, so `parsed.story || story`
+       * put an English sentence on a Hebrew card whenever the model returned
+       * valid JSON with a field missing — which a JSON parse cannot catch,
+       * because the reply is well formed. Reusing the fallback keeps one
+       * localised answer per language instead of two half-translated paths.
+       */
+      const localised = this.generateCorrelatedContentFallback(
+        correlatedInsight,
+        businessContext.language,
+        businessContext.currency
+      );
+
       return {
-        title: parsed.title || correlatedInsight.patternName,
-        story: parsed.story || correlatedInsight.story,
-        recommendation: parsed.recommendation || correlatedInsight.action,
+        title: parsed.title || localised.title,
+        story: parsed.story || localised.story,
+        recommendation: parsed.recommendation || localised.recommendation,
       };
     } catch (error) {
       logger.warn({ err: error }, 'LLM correlated content generation failed, using fallback');
@@ -2538,7 +2744,16 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       };
 
       const patternStories: Record<string, string> = {
-        funnel_breakdown: `מספר בעיות במשפך הרכישה שלך עובדות יחד נגדך. ${correlatedInsight.story}`,
+        /*
+         * No `${correlatedInsight.story}` here, deliberately.
+         *
+         * That field holds `patterns.ts`'s `storyTemplate`, which is hardcoded
+         * ENGLISH — so this line used to produce a Hebrew sentence with an
+         * English one spliced onto the end of it, on the card of an owner who
+         * does not read English. Every other entry in this map stands on its
+         * own and this one now does too.
+         */
+        funnel_breakdown: `מספר בעיות במשפך הרכישה שלך עובדות יחד נגדך. ${count} בעיות מקושרות מונעות מפניות להפוך ללקוחות.`,
         revenue_at_risk: `ההכנסה שלך בסיכון ממספר זוויות. ${count} בעיות מקושרות יוצרות חשיפה כוללת של ${formatMoney(impact, currency)}.`,
         retention_crisis: `הלקוחות שלך מתנתקים. ${count} סימני אזהרה מצביעים על בעיית שימור שדורשת תשומת לב מיידית.`,
         pipeline_stall: `צנרת המכירות שלך עומדת. לידים קרים ועסקאות תקועות יחד מסכנים ${formatMoney(impact, currency)}.`,
@@ -2552,8 +2767,69 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
 
       return {
         title: patternTitles[correlatedInsight.patternId] || `${count} בעיות מקושרות - ${formatMoney(impact, currency)} בסיכון`,
-        story: patternStories[correlatedInsight.patternId] || correlatedInsight.story,
+        /*
+         * A pattern with no Hebrew entry gets a GENERIC HEBREW sentence, not
+         * the English template. `|| correlatedInsight.story` was the silent
+         * leak: any pattern added to `patterns.ts` without a line in the map
+         * above — which is every future one, since the two files are edited
+         * separately — put English prose on a Hebrew card.
+         */
+        story:
+          patternStories[correlatedInsight.patternId] ||
+          `${count} בעיות מקושרות זוהו בעסק שלך. בדוק את הפרטים כדי לראות מה משפיע על מה.`,
         recommendation: 'בדוק את הפרטים ונקוט בפעולה על הבעיות הדחופות ביותר קודם.',
+      };
+    }
+
+    if (language === 'es') {
+      /*
+       * Spanish, added 2026-10-07.
+       *
+       * There was no branch at all, so a Spanish business reading a correlated
+       * card on the fallback path got English. The fallback runs when the
+       * `correlated_insight` area is switched off or its call fails, which is
+       * exactly when the owner is least able to shrug it off.
+       *
+       * Written to match the Hebrew block's register: plain trade language,
+       * second person, no jargon. Figures come from `formatMoney`, so the
+       * currency symbol is the business's own.
+       */
+      const patternTitles: Record<string, string> = {
+        funnel_breakdown: `Tu embudo de captación está roto - ${formatMoney(impact, currency)} en riesgo`,
+        revenue_at_risk: `Ingresos en riesgo por ${count} problemas - ${formatMoney(impact, currency)}`,
+        retention_crisis: `Crisis de retención de clientes - ${count} señales de alerta`,
+        pipeline_stall: `Tu cartera de ventas está detenida - ${formatMoney(impact, currency)} en riesgo`,
+        capacity_mismatch: `Tienes capacidad pero no demanda`,
+        service_health: `Problemas de calidad en el servicio`,
+        website_crisis: `Tu web no convierte visitantes`,
+        cash_flow_warning: `Aviso de flujo de caja - actúa ahora`,
+        pricing_issue: `Tu estrategia de precios necesita atención`,
+        ops_inefficiency: `La operativa no está rindiendo`,
+      };
+
+      const patternStories: Record<string, string> = {
+        funnel_breakdown: `Varios problemas de tu embudo de captación se están sumando. ${count} problemas conectados impiden que las consultas lleguen a ser clientes.`,
+        revenue_at_risk: `Tus ingresos están en riesgo por varios frentes. ${count} problemas conectados suman una exposición de ${formatMoney(impact, currency)}.`,
+        retention_crisis: `Tus clientes se están desvinculando. ${count} señales apuntan a un problema de retención que necesita atención inmediata.`,
+        pipeline_stall: `Tu cartera de ventas está parada. Contactos fríos y acuerdos atascados ponen en riesgo ${formatMoney(impact, currency)}.`,
+        capacity_mismatch: `Tienes horas libres y no suficientes reservas. El tráfico ha bajado y tu agenda no se llena.`,
+        service_health: `Varias señales apuntan a un problema de calidad en el servicio. Revisa los motivos de cancelación y los comentarios de tus clientes.`,
+        website_crisis: `Tu web recibe tráfico pero no lo convierte. Hay páginas sin llamada a la acción y los visitantes se marchan.`,
+        cash_flow_warning: `Están surgiendo problemas de flujo de caja desde varios frentes. Actúa ahora para evitar cortes de pago.`,
+        pricing_issue: `Tu estrategia de precios necesita atención. Demasiados descuentos, o una conversión baja de las ofertas de bienvenida, están erosionando los ingresos.`,
+        ops_inefficiency: `La operativa no está aprovechando tu capacidad. Hay horas punta vacías y servicios con bajo rendimiento.`,
+      };
+
+      return {
+        title:
+          patternTitles[correlatedInsight.patternId] ||
+          `${count} problemas conectados - ${formatMoney(impact, currency)} en riesgo`,
+        // Never `correlatedInsight.story`: that field holds the English
+        // template from `patterns.ts`. Same leak the Hebrew branch had.
+        story:
+          patternStories[correlatedInsight.patternId] ||
+          `Se han detectado ${count} problemas conectados en tu negocio. Revisa los detalles para ver qué está afectando a qué.`,
+        recommendation: 'Revisa los detalles y actúa primero sobre los problemas más urgentes.',
       };
     }
 
@@ -3615,14 +3891,36 @@ Generate in ${langName}. Respond with ONLY a JSON object:
         .limit(1)
         .maybeSingle();
 
-      const { data: firstClient } = await this.supabase
-        .from('crm_contacts')
-        .select('created_at')
-        .eq('user_id', userId)
-        .eq('lifecycle_stage', 'client')
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
+      /*
+       * Who counts as a client is per-vertical and configurable.
+       *
+       * Both queries below asked for `lifecycle_stage = 'client'`. THERE IS NO
+       * `lifecycle_stage` COLUMN on `crm_contacts`. PostgREST rejects the whole
+       * select for one unknown name, the error was destructured away, and both
+       * reads fell through to their defaults -- so `clientCount` was 0 and
+       * `firstClient` was null for EVERY account on the platform, which held
+       * the retention vector permanently `dark` and silently.
+       *
+       * Stages are rows in `crm_pipeline_stages` with a `stage_type`, and this
+       * account's are `family_enrolled` and `initial_consultation`: a therapist
+       * vertical whose stage keys were never going to equal the string
+       * 'client'. `buildClientStageFilter` is the existing resolver, already
+       * used by `CrmEngagementDecayDetector`, and it carries the legacy
+       * fallback for accounts whose `stage_type` is not populated.
+       */
+      const { buildClientStageFilter } = await import('@/lib/crm/StageTypeUtils');
+      const clientStageKeys = await buildClientStageFilter(this.supabase, userId);
+
+      const { data: firstClient } = clientStageKeys.length
+        ? await this.supabase
+            .from('crm_contacts')
+            .select('created_at')
+            .eq('user_id', userId)
+            .in('stage', clientStageKeys)
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle()
+        : { data: null };
 
       /*
        * How many clients, not just when the first one arrived.
@@ -3631,11 +3929,13 @@ Generate in ${langName}. Respond with ONLY a JSON object:
        * is possible, and enough clients for a lapse rate to be a rate rather
        * than an anecdote about one person.
        */
-      const { count: clientCount } = await this.supabase
-        .from('crm_contacts')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .eq('lifecycle_stage', 'client');
+      const { count: clientCount } = clientStageKeys.length
+        ? await this.supabase
+            .from('crm_contacts')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .in('stage', clientStageKeys)
+        : { count: 0 };
 
       /*
        * The first job the owner handed over, for the journey's last node.

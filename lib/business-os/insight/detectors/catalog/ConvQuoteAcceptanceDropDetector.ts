@@ -80,7 +80,7 @@ export class ConvQuoteAcceptanceDropDetector extends BaseDetector {
     description: 'Finds the share of answered quotes that were accepted falling against the previous period',
 
     watchedMetrics: ['conversion.quote_acceptance_rate'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: '90days',
     thresholdType: 'percent_change',
@@ -106,10 +106,7 @@ export class ConvQuoteAcceptanceDropDetector extends BaseDetector {
     // A rate over two quarters. Needs history to be a rate at all.
     ignoresVectorMaturity: false,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 336,
   };
 

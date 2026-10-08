@@ -25,7 +25,7 @@ export class RetCancellationSpikeDetector extends BaseDetector {
     description: 'Detects when booking cancellations spike 50%+ from previous week',
 
     watchedMetrics: ['retention.cancellation_rate'],
-    eventTypes: ['booking.cancelled'],
+    documentsEventTypes: ['booking.cancelled'],
 
     baselineWindow: 'week',
     thresholdType: 'percent_change',
@@ -41,10 +41,7 @@ export class RetCancellationSpikeDetector extends BaseDetector {
     },
 
     pairedProcessId: 'send_reminder_sequence',
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 72, // 3 days
   };
 

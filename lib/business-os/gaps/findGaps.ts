@@ -63,8 +63,15 @@ export async function findGaps(
        */
       const cutoff = now.getTime() - definition.staleAfterHours * 60 * 60 * 1000;
       const stale = found.filter(item => {
-        const since = Date.parse(item.since);
-        return Number.isNaN(since) ? true : since <= cutoff;
+        /*
+         * Measured from when the question became ANSWERABLE, which is not
+         * always when it arose. `staleFrom` is omitted by every gap where the
+         * two are the same instant; a meeting sets it to its end, so the wait
+         * is charged from the moment the owner could first answer rather than
+         * from a start time they may still be sitting in.
+         */
+        const basis = Date.parse(item.staleFrom ?? item.since);
+        return Number.isNaN(basis) ? true : basis <= cutoff;
       });
 
       return {

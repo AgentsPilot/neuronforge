@@ -352,7 +352,15 @@ export class InsightPrioritizer {
     const result: PrioritizedInsight[] = [];
 
     for (const insight of insights) {
-      const cooldownHours = CATEGORY_COOLDOWNS[insight.detection.category] || 24;
+      /*
+       * The DETECTOR's interval first, the category map only as a fallback.
+       *
+       * This read the category map alone, so a detector asking for 336 hours
+       * got its category's 168 and nobody could see why. Most values happened
+       * to agree, which is how it went unnoticed.
+       */
+      const cooldownHours =
+        insight.detection.cooldownHours ?? CATEGORY_COOLDOWNS[insight.detection.category] ?? 24;
       const cooldownCutoff = new Date(Date.now() - cooldownHours * 60 * 60 * 1000);
 
       // Check if this detector was surfaced within cooldown period

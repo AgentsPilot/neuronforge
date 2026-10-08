@@ -32,6 +32,11 @@ exports[`C: with the seeded rows, the resolver returns the same (FR-16, AC-2) is
     "provider": "openai",
     "temperature": 0.5,
   },
+  "insights/hypothesis": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.3,
+  },
   "insights/insight_content": {
     "model": "gpt-4o-mini",
     "provider": "openai",

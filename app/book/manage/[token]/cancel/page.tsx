@@ -8,7 +8,6 @@ import { AppointmentCard, type PublicBookingSummary } from '@/components/public/
 import { BrandButton } from '@/components/public/BrandButton';
 import { PortalHero } from '@/components/public/PortalHero';
 import { PublicPageSpinner } from '@/components/public/PublicSpinner';
-import { PublicShell } from '@/components/public/PublicShell';
 import { StatusCard } from '@/components/public/StatusCard';
 import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider';
 import { createPublicT } from '@/lib/i18n/public-pages';
@@ -148,25 +147,33 @@ export default function CancelBookingPage() {
 
   if (!brand || (error && !booking)) {
     return (
-      <div style={{ background: 'var(--ap-bg)' }}>
-        <StatusCard
-          standalone
-          tone="error"
-          title={t('bookingNotFound')}
-          description={error ?? t('bookingNotFoundDesc')}
-          actions={
-            <BrandButton href={`/book/manage/${token}`} variant="ghost">
-              {t('backToBooking')}
-            </BrandButton>
-          }
-        />
-      </div>
+      <StatusCard
+        standalone
+        tone="error"
+        title={t('bookingNotFound')}
+        description={error ?? t('bookingNotFoundDesc')}
+        actions={
+          <BrandButton href={`/book/manage/${token}`} variant="ghost">
+            {t('backToBooking')}
+          </BrandButton>
+        }
+      />
     );
   }
 
   if (cancelled) {
+    /*
+      NO SHELL OF ITS OWN.
+
+      This returned a `PublicShell` — but `app/book/manage/[token]/layout.tsx`
+      has already wrapped the whole segment in `PortalShell`, so the cancelled
+      state rendered a PortalBar AND a PublicHeader, and two footers under
+      them. The frame is the layout's; a screen inside it returns its content
+      bare. `ProposalAnswer`'s `embedded` flag is the same rule, and
+      `quoteAnsweredInThePortal.guard.test.ts:105-116` enforces it there.
+    */
     return (
-      <PublicShell brand={brand} width="narrow" header={{ compact: true }}>
+      <>
         <StatusCard
           standalone
           tone="success"
@@ -182,7 +189,7 @@ export default function CancelBookingPage() {
             ) : undefined
           }
         />
-      </PublicShell>
+      </>
     );
   }
 

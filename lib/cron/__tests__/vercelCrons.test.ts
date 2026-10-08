@@ -36,6 +36,17 @@ const vercel = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'vercel.json'
 const BOS_CRONS: CronEntry[] = [
   { path: '/api/cron/calendar-sync', schedule: '*/5 * * * *' },
   { path: '/api/cron/insight-metrics', schedule: '0 3 * * *' },
+  /*
+   * The 15th, and the only WEEKLY job: the hypothesis generator, which asks a
+   * model for findings no detector was written for. Sunday 04:30, after the
+   * nightly detection and metrics runs have settled.
+   *
+   * It was added to `vercel.json` without a registry row or a run recorder, so
+   * it ran invisibly and two registry tests failed on it. Both closed
+   * 2026-10-06; the weekly schedule shape was added to `intervalOf` and to the
+   * threshold table at the same time.
+   */
+  { path: '/api/cron/insight-hypotheses', schedule: '30 4 * * 0' },
   { path: '/api/cron/insight-detect', schedule: '30 3 * * *' },
   { path: '/api/cron/insight-automations', schedule: '*/5 * * * *' },
   { path: '/api/cron/insight-actions', schedule: '*/15 * * * *' },
@@ -56,6 +67,16 @@ const BOS_CRONS: CronEntry[] = [
    * other job.
    */
   { path: '/api/cron/stripe-settlement-gap', schedule: '17 5 * * *' },
+  /*
+   * The 16th: the insight measurement sweep (2026-10-07), which re-reads the
+   * metric behind each acted-on insight at 30 and 90 days. Wired only once
+   * `20261006g_insight_measurements.sql` was applied — scheduling it against
+   * a missing table would have bought a nightly error and nothing else.
+   *
+   * 04:55 shares a tick with no other job: 04:30 is the weekly hypothesis run
+   * and 04:45 is the credit leak check.
+   */
+  { path: '/api/cron/insight-measure', schedule: '55 4 * * *' },
 ];
 
 const RETIRED_AGENTSPILOT = [
@@ -67,8 +88,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 14 Business OS jobs, unchanged and in order', () => {
-    expect(crons).toHaveLength(14);
+  it('schedules exactly the 16 Business OS jobs, unchanged and in order', () => {
+    expect(crons).toHaveLength(16);
     expect(crons).toEqual(BOS_CRONS);
   });
 

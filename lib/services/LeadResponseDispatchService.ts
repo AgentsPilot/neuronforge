@@ -37,6 +37,7 @@ import { randomUUID } from 'crypto';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger, type Logger } from '@/lib/logger';
 import { leadResponseRepository, type LeadResponse } from '@/lib/repositories/LeadResponseRepository';
+import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { sendBookingLink } from '@/lib/services/LeadBookingLinkService';
 import { whenDue } from '@/lib/business-os/gaps/whenDue';
 import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
@@ -159,9 +160,94 @@ async function dispatchOne(row: LeadResponse): Promise<DispatchOutcome> {
   if (row.kind === 'invoice_chase') return chaseInvoice(row, log);
   if (row.kind === 'intake_chase') return chaseIntake(row, log);
   if (row.kind === 'meeting_reminder') return remindAboutMeeting(row, log);
+  if (row.kind === 'meeting_complete') return completeMeeting(row, log);
   return inviteOrChaseLead(row, log);
 }
 
+
+/**
+ * Mark a meeting that has already happened as completed.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ONLY DISPATCH THAT SENDS NOTHING.
+ *
+ * Every other branch here writes to a client. This one changes a status the
+ * owner would otherwise have clicked, which is why it is the lowest-risk
+ * automation on the board: nobody receives anything, and the worst case is a
+ * flag an owner flips back.
+ *
+ * It routes through `schedulingBookingRepository.complete()` rather than
+ * updating the row directly, and that matters for two reasons:
+ *
+ *   1. `update()` makes the status change an ATOMIC CLAIM
+ *      (`.neq('status', target)`), so a booking already completed matches zero
+ *      rows. Two concurrent drains cannot both "complete" the same meeting, and
+ *      a replayed queue row is a no-op rather than a second event.
+ *   2. That same path emits `booking.completed` on the event rail. Writing the
+ *      row here would mark the meeting and leave the rail silent, so the
+ *      retention metrics would quietly stop seeing completions the moment this
+ *      automation was switched on.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function completeMeeting(
+  row: LeadResponse,
+  log: Logger
+): Promise<DispatchOutcome> {
+  if (!row.entity_id) return { sent: false, reason: 'no_booking' };
+
+  const { data: booking } = await supabaseServer
+    .from('scheduling_bookings')
+    .select('id, status, start_time')
+    .eq('id', row.entity_id)
+    .eq('user_id', row.user_id)
+    .maybeSingle();
+
+  if (!booking) return { sent: false, reason: 'booking_gone' };
+
+  /*
+   * Only a meeting still waiting to be marked.
+   *
+   * The owner marking it themselves between queueing and draining is the
+   * expected case, not an error -- the delay exists to give them that chance.
+   * A cancelled meeting must never be completed: it did not happen.
+   */
+  const status = (booking.status ?? '').toLowerCase();
+  if (status !== 'confirmed' && status !== 'pending') {
+    return { sent: false, reason: 'already_resolved' };
+  }
+
+  /*
+   * And only one that is genuinely in the past.
+   *
+   * `dueAt` already encodes the twelve-hour wait, but a queue row can be
+   * drained late, replayed, or written against a booking that was later moved
+   * FORWARD. Checking the booking's own clock here means a rescheduled meeting
+   * is never completed before it happens.
+   */
+  const startedAt = booking.start_time ? Date.parse(booking.start_time) : NaN;
+  if (Number.isNaN(startedAt) || startedAt > Date.now()) {
+    return { sent: false, reason: 'not_yet_past' };
+  }
+
+  const { data, error } = await schedulingBookingRepository.complete(
+    booking.id,
+    row.user_id
+  );
+
+  if (error) {
+    log.warn({ err: error, bookingId: booking.id }, 'Could not mark the meeting completed');
+    return { sent: false, reason: 'complete_failed' };
+  }
+
+  /*
+   * A null row means the atomic claim found nothing to change: somebody else
+   * completed it first. Not a failure, and not a second event either.
+   */
+  if (!data) return { sent: false, reason: 'already_resolved' };
+
+  log.info({ bookingId: booking.id }, 'Meeting marked completed automatically');
+  return { sent: true };
+}
 
 /**
  * One reminder before the appointment, to whoever the owner asked for.

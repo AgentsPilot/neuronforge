@@ -354,10 +354,25 @@ export class AIAnalyticsService {
 
       if (error) throw error;
 
-      const totalCost = data.reduce((sum, row) => sum + parseFloat(row.cost_usd || 0), 0);
-      const totalCalls = data.length;
-      const avgLatency = data.length > 0 
-        ? data.reduce((sum, row) => sum + (row.latency_ms || 0), 0) / data.length 
+      /*
+       * `select('*')` gives PostgREST no shape to infer, so `row` was an
+       * implicit `any` in all three callbacks under `strict`. Named here
+       * rather than suppressed: these are the four columns actually read.
+       */
+      const rows = (data ?? []) as Array<{
+        cost_usd: number | string | null;
+        latency_ms: number | null;
+        activity_type: string | null;
+        activity_name: string | null;
+        success: boolean | null;
+        created_at: string | null;
+      }>;
+
+      // `parseFloat` was given `row.cost_usd || 0`, i.e. a number when absent.
+      const totalCost = rows.reduce((sum, row) => sum + (Number(row.cost_usd) || 0), 0);
+      const totalCalls = rows.length;
+      const avgLatency = rows.length > 0
+        ? rows.reduce((sum, row) => sum + (row.latency_ms || 0), 0) / rows.length
         : 0;
 
       return {
@@ -365,7 +380,7 @@ export class AIAnalyticsService {
         totalCost,
         totalCalls,
         avgLatency,
-        activities: data.map(row => ({
+        activities: rows.map(row => ({
           activity_type: row.activity_type,
           activity_name: row.activity_name,
           cost: row.cost_usd,
@@ -389,14 +404,19 @@ export class AIAnalyticsService {
     }
     
     const now = new Date();
-    const ranges = {
+    const ranges: Record<string, Date> = {
       'last_24h': new Date(now.getTime() - 24 * 60 * 60 * 1000),
       'last_7d': new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
       'last_30d': new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
       'last_90d': new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
     };
-    
-    const start = ranges[range] || ranges['last_30d'];
+
+    /*
+     * `range` is an optional string, so indexing an inferred object literal
+     * was `Type 'undefined' cannot be used as an index type`. Typed as a
+     * record and defaulted, which is what the `||` already intended.
+     */
+    const start = (range ? ranges[range] : undefined) ?? ranges['last_30d'];
     return { start: start.toISOString(), end: now.toISOString() };
   }
 

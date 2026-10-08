@@ -20,9 +20,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { sendQuoteReceivedEmail } from '@/lib/services/QuoteRequestEmailService';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 import { ConsentInputSchema } from '@/lib/validation/consent';
@@ -56,10 +59,29 @@ const ProposalRequestSchema = z
     page_url: z.string().max(500).optional(),
     /** Marketing consent, where the client ticked the box. Never required. */
     consent: ConsentInputSchema,
-  })
-  .refine(data => data.subdomain || data.userCode, {
-    message: 'Either subdomain or userCode is required',
   });
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NEITHER IDENTIFIER IS A VALID STATE: IT MEANS PREVIEW.
+ *
+ * This schema used to `.refine()` that a `subdomain` or a `userCode` was
+ * present. That is true of a visitor on a published site, and false of the one
+ * person most likely to use this form first: the owner, previewing their own
+ * page from the website editor while signed in. The preview deliberately sends
+ * neither — identifying the business from the session is the whole arrangement,
+ * and `/api/website/booking/create` states it plainly: "if not provided,
+ * authenticated user is used (preview mode)".
+ *
+ * So every quote request made from preview was refused with a 400, and nothing
+ * was recorded: `quote_requested` had zero rows across every account since the
+ * day this route was written.
+ *
+ * The owner is still never taken from the body. It comes from the address the
+ * client arrived at, or from the session, and a signed-in user can only file a
+ * request against their own business.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -70,6 +92,31 @@ export async function POST(request: NextRequest) {
     const parsed = ProposalRequestSchema.safeParse(body);
 
     if (!parsed.success) {
+      /*
+       * Say which field, in the log, where somebody will see it.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * This returned 400 silently. The reason existed only in the response
+       * body, so a client who could not request a quote produced a server with
+       * nothing to say about it, and the only way to find out was to open the
+       * browser's network tab on the failing machine.
+       *
+       * FIELD PATHS AND CODES ONLY. This is a public, unauthenticated endpoint
+       * carrying a name, an email and a phone number; logging the values that
+       * failed validation would put a stranger's contact details in the log
+       * every time one of them typed their email wrong.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      requestLogger.warn(
+        {
+          issues: parsed.error.errors.map(issue => ({
+            field: issue.path.join('.') || '(root)',
+            code: issue.code,
+          })),
+        },
+        'Quote request refused: the submitted form did not validate'
+      );
+
       return NextResponse.json(
         { success: false, error: 'Invalid request', details: parsed.error.errors },
         { status: 400 }
@@ -113,11 +160,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'Website not found' }, { status: 404 });
       }
       ownerId = page.user_id;
-    } else {
+    } else if (data.userCode) {
       const { data: profile, error } = await supabaseServer
         .from('business_profiles')
         .select('user_id')
-        .eq('user_code', (data.userCode || '').toLowerCase())
+        .eq('user_code', data.userCode.toLowerCase())
         .single();
 
       if (error || !profile) {
@@ -125,6 +172,21 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'Business not found' }, { status: 404 });
       }
       ownerId = profile.user_id;
+    } else {
+      /*
+       * Preview: the owner looking at their own page, signed in.
+       *
+       * Taken from the session, never from the body — the same branch
+       * `/api/website/booking/create` ends with, and the reason a quote request
+       * from the editor reaches the right CRM. An unauthenticated caller with
+       * no subdomain gets a 401 rather than a guess.
+       */
+      const user = await getUser();
+      if (!user) {
+        requestLogger.warn({}, 'Quote request with no subdomain, no user code and no session');
+        return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+      }
+      ownerId = user.id;
     }
 
     /*
@@ -378,16 +440,85 @@ export async function POST(request: NextRequest) {
      * a booking link; a quote request met with a booking link ducks the
      * question that was actually asked.
      */
-    notifyOwnerOfLead({
-      ownerId,
-      contactId,
-      kind: 'quote',
-      contactName: data.name,
-      contactEmail: data.email,
-      phone: data.phone,
-      message: data.note,
-      serviceName: service.service_name,
-    }).catch(err => requestLogger.warn({ err, contactId }, 'Owner alert failed (non-blocking)'));
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND TELL THE CLIENT, WHEN THEY HAVE JUST BOOKED A TIME.
+     *
+     * A quoted service can book a consultation: "come and see it and I'll
+     * quote you" is a real appointment, and the row written above is
+     * `status: 'confirmed'` like any other. Only the owner was told. The client
+     * chose a slot on a public page, was shown a confirmation screen, and
+     * received nothing at all — no date, no address, no way to cancel or move
+     * it. Every other booking on the platform sends that email.
+     *
+     * So this is `sendBookingConfirmation`, the same one the ordinary booking
+     * path sends, against the same booking row. No new template and no second
+     * kind of confirmation that could drift from the first.
+     *
+     * AWAITED, not fired and forgotten. A floating promise on a serverless
+     * function may never run: the instance freezes the moment the response is
+     * returned. That is the exact fault that cost this platform its booking
+     * confirmations once already, in `website/booking/create`.
+     *
+     * Neither failure fails the request: the lead is saved, the activity is
+     * logged, and a missing email is recoverable where a lost request is not.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const [ownerAlert, clientConfirmation] = await Promise.allSettled([
+      notifyOwnerOfLead({
+        ownerId,
+        contactId,
+        kind: 'quote',
+        contactName: data.name,
+        contactEmail: data.email,
+        phone: data.phone,
+        message: data.note,
+        serviceName: service.service_name,
+      }),
+      /*
+       * The client hears from us either way, and hears the right thing.
+       *
+       * WITH a consultation: the ordinary booking confirmation, carrying the
+       * date, the address and the links to move or cancel it.
+       *
+       * WITHOUT one: a receipt for the request itself. Nothing to confirm and
+       * nothing to calendar, so a booking confirmation would be describing an
+       * appointment that does not exist — but silence is worse, because from
+       * the client's side a form that answers nothing is indistinguishable
+       * from one that failed.
+       */
+      bookingId
+        ? BookingEmailService.sendBookingConfirmation(bookingId, ownerId)
+        : sendQuoteReceivedEmail({
+            ownerId,
+            contactId,
+            clientEmail: data.email,
+            clientName: data.name,
+            serviceName: service.service_name,
+            note: data.note,
+            timezone: data.timezone,
+          }),
+    ]);
+
+    if (ownerAlert.status === 'rejected') {
+      requestLogger.warn({ err: ownerAlert.reason, contactId }, 'Owner alert failed (non-blocking)');
+    }
+
+    /*
+     * One check for both, because both now return the same `{ sent, error }`
+     * and both are the same promise to the client: that something arrives.
+     */
+    if (clientConfirmation.status === 'rejected') {
+      requestLogger.warn(
+        { err: clientConfirmation.reason, bookingId, hasConsultation: !!bookingId },
+        'Client email failed (non-blocking)'
+      );
+    } else if (clientConfirmation.value && !clientConfirmation.value.sent) {
+      requestLogger.warn(
+        { bookingId, hasConsultation: !!bookingId, error: clientConfirmation.value.error },
+        'Client email reached no transport'
+      );
+    }
 
     requestLogger.info(
       { ownerId, contactId, serviceId: service.id },

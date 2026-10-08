@@ -9,6 +9,7 @@
 
 import type { BusinessEventCategory } from '../events/types';
 import type { MetricKey } from '../metrics/types';
+import type { SegmentRate } from '../patterns/segmentRate';
 
 // ===========================
 // Consent & Automation Tiers
@@ -20,7 +21,6 @@ import type { MetricKey } from '../metrics/types';
  * - suggest: Show recommendation, user must approve
  * - automate: Can run automatically once enabled
  */
-export type ConsentTier = 'observe' | 'suggest' | 'automate';
 
 // ===========================
 // Severity Levels
@@ -116,6 +116,15 @@ export type BaselineWindow = 'week' | 'month' | '90days';
 /**
  * Full detector definition
  */
+/**
+ * The kind of assertion a detector makes about the business.
+ *
+ * `instance` names specific things and is true however little history exists.
+ * The other three are inferences over a population and are only as good as the
+ * population behind them.
+ */
+export type ClaimType = 'instance' | 'rate' | 'trend' | 'pattern';
+
 export interface DetectorDefinition {
   /** Unique detector ID (e.g., 'cash_ar_overdue') */
   id: string;
@@ -134,8 +143,22 @@ export interface DetectorDefinition {
   /** Metrics this detector evaluates */
   watchedMetrics: MetricKey[];
 
-  /** Event types that can trigger evaluation (optional) */
-  eventTypes?: string[];
+  /**
+   * Event types this detector is ABOUT. Documentation, not wiring.
+   *
+   * Nothing reads this. It looks like a subscription and is not one: a detector
+   * is evaluated on every run regardless, and reads whatever tables its
+   * `evaluate` names. An audit on 2026-10-06 found five detectors apparently
+   * "waiting on" events that can never exist -- `client.at_risk`,
+   * `service.booked`, `intro_offer.used`, `enquiry.stalled`,
+   * `calendar.utilization_low` -- and two of them work fine, because they were
+   * quietly rewritten to read module tables and this field was left behind.
+   *
+   * Renamed so the next reader cannot mistake it for a trigger. The field that
+   * IS consumed is `eventTypes` on a METRIC definition
+   * (`insight/metrics/types.ts`), which `MetricsComputeService` counts.
+   */
+  documentsEventTypes?: string[];
 
   // === Threshold ===
 
@@ -164,17 +187,11 @@ export interface DetectorDefinition {
   /** Kernel process that can fix this issue (optional) */
   pairedProcessId?: string;
 
-  /** Consent tier required */
-  consentTier: ConsentTier;
 
   /** Can this become a standing automation? */
   eligibleForAutomation: boolean;
 
-  /** Parameters owner can customize */
-  ownerParameters?: ParameterDefinition[];
 
-  /** Guardrails to apply */
-  guardrails?: Guardrail[];
 
   // === Cooldown ===
 
@@ -194,7 +211,46 @@ export interface DetectorDefinition {
    */
   ignoresVectorMaturity?: boolean;
 
+  /**
+   * What KIND of claim this detector makes, which decides how much evidence it
+   * needs before it may speak.
+   *
+   * The maturity gate used to read one boolean, and the boolean was set by hand
+   * until 22 of 44 detectors claimed the exemption. The kind of claim is the
+   * thing that was actually being decided each time, so it is declared directly
+   * now and the exemption is derived from it.
+   *
+   *   instance  "these 2 bookings hold ₪150"          true at n=1
+   *   rate      "18.8% of payments were refunded"     needs a denominator
+   *   trend     "traffic is down 40% on last week"    needs two full periods
+   *   pattern   "price is the top objection"          needs a share of a sample
+   *
+   * Only `instance` may run on a vector that is still `learn`. See
+   * `effectiveClaimType` below for what an undeclared detector gets, and why
+   * the default is the strict one.
+   */
+  claimType?: ClaimType;
+
   cooldownHours: number;
+}
+
+/**
+ * The claim type to gate on, for a detector that may not declare one yet.
+ *
+ * Derived rather than required so this change does not have to edit 44 files at
+ * once, and defaulted to `rate` -- the STRICT side -- on purpose. A field that
+ * looks like a guard and is not is the mistake this module has already made
+ * twice: `minSamples` was declared by all 44 detectors and read by none, and
+ * `ignoresVectorMaturity` was read but hand-set. Defaulting to strict means a
+ * new detector that forgets to declare gets quieter, never louder, so the
+ * failure mode of forgetting is a card that waits rather than a card that lies.
+ */
+export function effectiveClaimType(definition: {
+  claimType?: ClaimType;
+  ignoresVectorMaturity?: boolean;
+}): ClaimType {
+  if (definition.claimType) return definition.claimType;
+  return definition.ignoresVectorMaturity ? 'instance' : 'rate';
 }
 
 // ===========================
@@ -221,6 +277,22 @@ export interface DetectionResult {
 
   /** Which metric triggered */
   metricKey: MetricKey;
+
+  /**
+   * The detector's own re-surfacing interval, carried onto the result.
+   *
+   * `InsightPrioritizer` applied `CATEGORY_COOLDOWNS[category]` and never read
+   * the detector's `cooldownHours`, so every carefully chosen value was
+   * silently replaced by its category's. `toil_manual_booking_entry` asks for
+   * 336 hours on purpose -- changing how you take bookings is not a weekly nag
+   * -- and was re-surfaced every 168. Two sources of truth, the visible one
+   * losing.
+   *
+   * Stamped by `createDetectionResult` from the definition, like `category`
+   * and `pairedProcessId`, because the prioritizer sees results and not
+   * definitions.
+   */
+  cooldownHours?: number;
 
   /** Current value of the metric */
   currentValue: number;
@@ -275,6 +347,25 @@ export interface DetectionResult {
 
   /** Direction of breach */
   direction: 'above' | 'below';
+
+  /**
+   * One part of this business measured against the rest of it.
+   *
+   * The difference between "30% of your bookings are cancelled", which the
+   * owner can read off her own calendar, and "Thursday 43%, everything else
+   * 8%", which she cannot see and which names the thing to change.
+   *
+   * Optional, and absent far more often than present: `outlierSegment` refuses
+   * rather than guesses whenever a sample is too thin or the segments are
+   * level, and on a small account that is the usual outcome. A card with no
+   * comparison renders exactly as it does today — see `describeImpact` in
+   * `InsightRepository` for the precedent, and never emit a dangling
+   * "compared to".
+   *
+   * Always a RATE against a pooled remainder, never a volume. See
+   * `patterns/segmentRate.ts` for why that is the whole point.
+   */
+  comparison?: SegmentRate;
 
   // === Affected entities ===
 

@@ -12,7 +12,7 @@
  * acted — the precise failure double opt-in exists to prevent. Those get the
  * button instead, which a scanner cannot press. See `looksLikeHumanClick`.
  *
- * Built from `PublicShell` and `StatusCard` like the quote, the invoice and the
+ * Built from `PortalShell` and `StatusCard` like the quote, the invoice and the
  * booking-management pages, so it wears the business's own template rather than
  * the platform's default. For most people this is the second thing they will
  * ever have seen from that business, and it has to be recognisable as theirs.
@@ -26,7 +26,8 @@ import { headers } from 'next/headers';
 
 import { ConfirmButton } from './ConfirmButton';
 import { BrandButton } from '@/components/public/BrandButton';
-import { PublicShell } from '@/components/public/PublicShell';
+import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
+import { PortalShell } from '@/components/public/PortalShell';
 import { StatusCard } from '@/components/public/StatusCard';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 import { verifyConsentConfirmToken } from '@/lib/consent/confirmToken';
@@ -262,9 +263,15 @@ export default async function ConsentConfirmPage({ params }: PageProps) {
     );
   }
 
+  /*
+    The same shell as every other public page. A consent confirmation is one
+    short statement and one button, so it hands the shell a narrow document
+    for the lead slot and the business's details follow beneath it, where they
+    sit on the portal and the invoice too.
+  */
   return (
-    <PublicShell brand={brand} width="narrow" header={{ compact: true }}>
-      {body}
-    </PublicShell>
+    <PortalShell brand={brand} aside={<BusinessInfoPanel brand={brand} variant="card" show={['contact', 'links']} />}>
+      <div className="mx-auto max-w-lg">{body}</div>
+    </PortalShell>
   );
 }

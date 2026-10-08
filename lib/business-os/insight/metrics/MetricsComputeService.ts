@@ -24,6 +24,7 @@ import {
   getMetricDefinition,
 } from './types';
 import { BaselineCalculator } from './BaselineCalculator';
+import { readSnapshot } from './snapshots';
 
 const logger = createLogger({ service: 'MetricsComputeService' });
 
@@ -122,6 +123,24 @@ export class MetricsComputeService {
         periodEnd
       );
 
+      /*
+       * Nothing computable means nothing stored.
+       *
+       * Distinct from a computed zero, which is a real measurement and still
+       * written: no page views yesterday IS zero page views. Null only comes
+       * back when no code exists to answer the question, and a row then would
+       * be a figure nobody measured — the shape of bug this module spent a
+       * cycle removing. `data: null, error: null` is the honest result, and
+       * `computeMetricsForUser` already counts a null `data` as not-computed.
+       */
+      if (!computed) {
+        logger.debug(
+          { userId, metricKey, periodType },
+          'Metric not computable; no row written'
+        );
+        return { data: null, error: null };
+      }
+
       // Get baseline for comparison
       const baseline = await this.baselineCalculator.computeBaseline(
         userId,
@@ -185,7 +204,7 @@ export class MetricsComputeService {
     definition: typeof METRIC_DEFINITIONS[0],
     periodStart: Date,
     periodEnd: Date
-  ): Promise<ComputedMetricResult> {
+  ): Promise<ComputedMetricResult | null> {
     const fromDate = periodStart.toISOString();
     const toDate = periodEnd.toISOString();
 
@@ -206,7 +225,17 @@ export class MetricsComputeService {
         return this.computeSnapshotMetric(userId, definition.key, definition.category, definition.unit);
 
       default:
-        return { value: 0, unit: definition.unit, sampleSize: 0 };
+        /*
+         * An aggregation nobody implemented. Null, not zero, for the reason
+         * spelled out on `computeSnapshotMetric`: a fabricated zero is
+         * indistinguishable from a measurement and feeds every baseline
+         * built on top of it.
+         */
+        logger.warn(
+          { userId, metricKey: definition.key, aggregation: definition.aggregation },
+          'Metric has no computation for its aggregation; storing nothing'
+        );
+        return null;
     }
   }
 
@@ -354,6 +383,32 @@ export class MetricsComputeService {
       return { value: rate, unit: 'percentage', sampleSize: total };
     }
 
+    if (metricKey === 'cashflow.refund_rate') {
+      /*
+       * Refunds over PAYMENTS, not over refunds-plus-payments.
+       *
+       * The generic branch below divides the first event type by the sum of
+       * all of them, which for these two would answer "what share of cash
+       * movements were refunds" — a different and smaller number. A refund
+       * is a payment that came back, so the denominator is the payments.
+       *
+       * Counts, never amounts: money in different currencies must never be
+       * added, and a rate of counts needs no conversion.
+       */
+      const refunds = countResult.data['refund.completed'] || 0;
+      const payments = countResult.data['payment.completed'] || 0;
+
+      if (payments === 0) {
+        return { value: 0, unit: 'percentage', sampleSize: 0 };
+      }
+
+      return {
+        value: (refunds / payments) * 100,
+        unit: 'percentage',
+        sampleSize: payments,
+      };
+    }
+
     if (metricKey === 'retention.cancellation_rate') {
       const cancelled = countResult.data['booking.cancelled'] || 0;
       const created = countResult.data['booking.created'] || 0;
@@ -388,17 +443,29 @@ export class MetricsComputeService {
   }
 
   /**
-   * Get a snapshot metric (current state, not time-based)
+   * Get a snapshot metric (current state, not time-based).
+   *
+   * ───────────────────────────────────────────────────────────────────────
+   * RETURNS NULL FOR A KEY NOBODY IMPLEMENTED, AND THAT IS THE POINT.
+   *
+   * This used to end `return { value: 0, unit, sampleSize: 0 }`, so a
+   * snapshot metric with no reader wrote a real row saying the business's
+   * figure was EXACTLY ZERO. Nothing downstream can tell that apart from a
+   * measured zero: `BaselineCalculator` averages it into the mean, the
+   * percent-change line is computed off it, and the measurement sweep added
+   * in 20261006g would read it as "the metric did not move".
+   *
+   * It is the same class of bug as the `₪0` impact line and the 275% refund
+   * rate — an absent number rendered as a measurement — and the fix is the
+   * same one: say nothing. Null means the caller writes no row at all.
+   * ───────────────────────────────────────────────────────────────────────
    */
   private async computeSnapshotMetric(
     userId: string,
     metricKey: MetricKey,
     category: BusinessEventCategory,
     unit: MetricUnit
-  ): Promise<ComputedMetricResult> {
-    // For snapshot metrics like AR overdue, we query the actual tables
-    // This is a placeholder - actual implementation depends on the metric
-
+  ): Promise<ComputedMetricResult | null> {
     if (metricKey === 'cashflow.ar_overdue_usd') {
       // Overdue AR total via the repository. Reuses getOverdueInvoices with an
       // overdue-only status filter. A far-future `asOfDate` neutralizes the method's
@@ -413,14 +480,79 @@ export class MetricsComputeService {
       });
 
       if (error || !data) {
-        return { value: 0, unit, sampleSize: 0 };
+        /*
+         * An unreadable query is not a zero. Null, so no row is written --
+         * the same correction applied to every other absent figure in this
+         * module. Previously this returned `value: 0`, which is
+         * indistinguishable from "nothing is overdue".
+         */
+        return null;
+      }
+
+      /*
+       * ⚠️ REFUSES TO SUM ACROSS CURRENCIES, like `cashflow.ar_total`.
+       *
+       * This metric's NAME says USD and it has always summed whatever `amount`
+       * happened to hold, so an Israeli business invoicing one client in
+       * dollars got ₪ and $ added together and stored under a dollar label.
+       * There is no FX rate anywhere in the platform (CLAUDE.md § Currency &
+       * Timezone), so the only honest answers are a per-currency series or
+       * none. Null is reported as `unmeasurable` by the measurement sweep.
+       *
+       * The `_usd` suffix is kept because the key is a stored identifier that
+       * detectors and `derived_metrics` rows already reference; renaming it is
+       * a migration, not a cleanup.
+       */
+      const currencies = new Set(
+        data
+          .map(inv => ((inv as { currency?: string | null }).currency ?? '').trim().toUpperCase())
+          .filter(Boolean)
+      );
+
+      if (currencies.size > 1) {
+        logger.debug(
+          { userId, metricKey, currencies: [...currencies], invoices: data.length },
+          'Overdue AR spans more than one currency; refusing to sum'
+        );
+        return null;
       }
 
       const total = data.reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
       return { value: total, unit, sampleSize: data.length };
     }
 
-    return { value: 0, unit, sampleSize: 0 };
+    /*
+     * Every other current-state metric lives in `snapshots.ts`.
+     *
+     * Kept out of this file because each reader is a real query with its own
+     * judgement — which invoice statuses count as owed, what makes a link
+     * dead — and a switch of those inside the compute service is how the
+     * detector catalogue grew unreadable. `readSnapshot` returns null for a
+     * key it has no reader for, which falls through to the refusal below.
+     */
+    const snapshot = await readSnapshot(this.supabase, userId, metricKey, unit);
+    if (snapshot) {
+      return {
+        value: snapshot.value,
+        unit: snapshot.unit,
+        sampleSize: snapshot.sampleSize,
+        breakdown: snapshot.breakdown,
+      };
+    }
+
+    /*
+     * No reader for this key, or the reader declined to answer. Write nothing
+     * rather than zero.
+     *
+     * `warn`, not `debug`: a definition declaring `aggregation: 'snapshot'`
+     * with no branch here is a wiring mistake, and the only symptom used to
+     * be a column of zeroes that looked like data.
+     */
+    logger.warn(
+      { userId, metricKey, category },
+      'Snapshot metric has no reader; storing nothing rather than a zero'
+    );
+    return null;
   }
 
   /**

@@ -62,6 +62,14 @@ export type AiActionType =
   | 'chat_turn'
   | 'chat_website_operation'
   | 'insight_run'
+  /*
+   * The weekly hypothesis pass. Its own type rather than reusing
+   * `insight_run`: the two have different shapes (one detector sweep per night
+   * versus one model proposal per week) and different cost profiles, and an
+   * operator reading the audit trail needs to tell a run that cost a model call
+   * from one that cost forty queries.
+   */
+  | 'insight_hypothesis_run'
   | 'briefing_narration'
   | 'website_full_site'
   | 'website_landing_page'
@@ -127,6 +135,21 @@ export const AI_ACTION_DECLARATIONS = {
   insight_run: {
     area: 'insights', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
     diaryLabels: { en: 'Checked your business for insights', he: 'בדיקת תובנות לעסק', es: 'Revisión de novedades del negocio' },
+  },
+  insight_hypothesis_run: {
+    /*
+     * `audience: 'owner'` because the run is about their business and is
+     * charged to them, even though the findings pass through an operator review
+     * before any of them can appear on their dashboard. The diary label says
+     * "looked for" rather than "found": most weeks it finds nothing, and a
+     * label promising a finding would be a small lie repeated weekly.
+     */
+    area: 'insights', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: {
+      en: 'Looked for patterns in your business',
+      he: 'חיפוש דפוסים בעסק שלך',
+      es: 'Búsqueda de patrones en tu negocio',
+    },
   },
   briefing_narration: {
     area: 'briefing', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,

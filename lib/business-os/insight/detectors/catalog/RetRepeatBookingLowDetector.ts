@@ -19,7 +19,7 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
     description: 'Detects when >60% of clients are one-time only',
 
     watchedMetrics: ['retention.rebooking_rate'],
-    eventTypes: ['booking.completed'],
+    documentsEventTypes: ['booking.completed'],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -35,19 +35,7 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
     },
 
     pairedProcessId: 'send_followup_nudge',
-    consentTier: 'automate',
     eligibleForAutomation: true,
-    ownerParameters: [
-      {
-        id: 'days_lookback',
-        label: 'Days to Analyze',
-        type: 'number',
-        default: 60,
-        min: 30,
-        max: 180,
-      },
-    ],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 
@@ -112,8 +100,48 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
 
     const repeatRate = (repeatClients.length / uniqueClients.length) * 100;
 
-    // Only fire if repeat rate is below threshold
-    if (repeatRate >= this.definition.threshold) {
+    /*
+     * Is this low FOR THIS BUSINESS, or just low against a number we typed?
+     * ─────────────────────────────────────────────────────────────────────────
+     * `threshold: 40` is a judgement with no evidence behind it. A therapist
+     * running a course of six sessions will sit near 100%; somebody selling a
+     * one-off survey will never pass 10% and nothing is wrong with them. Told
+     * weekly that they are "below 40%", the second owner learns to ignore the
+     * advisor -- which is the complaint that started this work.
+     *
+     * So the business's own history is asked first. `compareToOwnBaseline`
+     * returns null when the rate sits inside this business's normal range, and
+     * THAT SILENCE IS THE POINT: a card appearing now means the rate actually
+     * moved, not that it is still where it has always been.
+     *
+     * The absolute threshold remains the fallback for an account with no
+     * history yet, which is the behaviour this detector had before -- a new
+     * business gets the generic advice, and stops getting it once there is
+     * enough of its own past to say something truer.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const comparison = await this.compareToOwnBaseline(
+      userId,
+      'retention.rebooking_rate',
+      repeatRate,
+      // The only period this metric is computed for; see METRIC_DEFINITIONS.
+      'monthly'
+    );
+
+    if (comparison) {
+      /*
+       * There is a history, so it decides, and 40 stops mattering.
+       *
+       * Unremarkable means unremarkable however it compares to a constant, and
+       * a rate ABOVE their mean is good news this detector has nothing to say
+       * about.
+       */
+      if (!comparison.unusual || comparison.direction === 'above') {
+        this.logDetection(userId, null);
+        return null;
+      }
+    } else if (repeatRate >= this.definition.threshold) {
+      // No usable baseline: fall back to the absolute rule this detector had.
       this.logDetection(userId, null);
       return null;
     }
@@ -175,9 +203,21 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
        * had fallen 40%. The threshold belongs in `thresholdValue`, where it
        * already is, and nothing here was measured twice.
        */
-      baselineValue: 0,
+      /*
+       * The business's OWN mean where there is one, and 0 where there is not.
+       *
+       * `hasRealBaseline` in InsightRepository omits the change line when this
+       * is 0, so an account with no history says nothing comparative rather
+       * than comparing itself to a constant -- which is exactly how
+       * `cash_refund_pattern` came to report an impossible 275%.
+       */
+      baselineValue: comparison?.mean ?? 0,
       thresholdValue: this.definition.threshold,
-      percentChange: 0,
+      /*
+       * Points below their own mean, not a percentage of it: the figure is
+       * already a rate, and a percent change of a percent reads as nonsense.
+       */
+      percentChange: comparison ? Math.round(comparison.mean - repeatRate) * -1 : 0,
       direction: 'below',
       affectedEntityType: 'contact',
       affectedEntityIds: [], // Would need to map emails to contact IDs

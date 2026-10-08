@@ -10,7 +10,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
-import { COMMON_GUARDRAILS } from '../types';
 import { getStageKeysByType, CLIENT_STAGE_TYPES, TERMINAL_STAGE_TYPES } from '@/lib/crm/StageTypeUtils';
 
 export class ConvPipelineStuckDetector extends BaseDetector {
@@ -21,7 +20,7 @@ export class ConvPipelineStuckDetector extends BaseDetector {
     description: 'Detects contacts stuck in same stage for 14+ days',
 
     watchedMetrics: ['conversion.pipeline_velocity'],
-    eventTypes: ['contact.stage_changed'],
+    documentsEventTypes: ['contact.stage_changed'],
 
     baselineWindow: 'week',
     thresholdType: 'absolute',
@@ -43,22 +42,7 @@ export class ConvPipelineStuckDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'automate',
     eligibleForAutomation: true,
-    ownerParameters: [
-      {
-        id: 'days_threshold',
-        label: 'Days Before Stuck',
-        type: 'number',
-        default: 14,
-        min: 7,
-        max: 60,
-      },
-    ],
-    guardrails: [
-      COMMON_GUARDRAILS.max_1_per_contact_per_7d,
-      COMMON_GUARDRAILS.max_20_per_run,
-    ],
     cooldownHours: 48,
   };
 

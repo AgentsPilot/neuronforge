@@ -70,6 +70,65 @@ import type { AgentRepositoryResult as RepositoryResult } from './types';
  * export's audit read (listOwnerEntriesForExport) uses the same set, so changing
  * this also changes what the export holds: a privacy decision.
  */
+/**
+ * How many audit rows one behaviour read will scan.
+ *
+ * `audit_trail` is shared with the agent platform and that side is far noisier,
+ * so a window that looks small in Business OS terms can still be thousands of
+ * rows. A cap keeps the read bounded; `OwnerActionCount` carries enough for a
+ * caller to notice it was hit.
+ */
+const OWNER_ACTIVITY_SCAN_CAP = 5000;
+
+/**
+ * What counts as the owner operating their BUSINESS, as opposed to the agent
+ * platform running underneath them.
+ *
+ * Defined once, here, because every behaviour detector needs the same answer
+ * and a detector with its own regex would quietly measure something else. On
+ * the reporting account these prefixes select 611 of 615 rows in a 30-day
+ * window; everything excluded is `AGENTKIT_*`, `PILOT_*`, `MEMORY_*`,
+ * `ORCHESTRATOR_*`, `AIS_*` and `AGENT_*` telemetry, which says nothing about
+ * how the owner runs their business.
+ */
+export const BUSINESS_OS_ACTION_PREFIXES = [
+  'BUSINESS_',
+  'SCHEDULING_',
+  'PAYMENT_',
+  'INVOICE_',
+  'PROPOSAL_',
+  'CRM_',
+  'INTAKE_',
+  'WEBSITE_',
+  'SETTINGS_',
+  'USER_LOGIN',
+  'USER_LOGOUT',
+] as const;
+
+/** Whether one audit action is the owner operating their business. */
+export function isBusinessOsAction(action: string): boolean {
+  return BUSINESS_OS_ACTION_PREFIXES.some(prefix => action.startsWith(prefix));
+}
+
+/**
+ * One kind of thing the owner did, and how often.
+ *
+ * `days` and `entityIds` are Sets rather than counts because the questions that
+ * matter need distinctness: nineteen invoices sent across nineteen days is a
+ * routine, and nineteen sent in one afternoon is a backlog being cleared. The
+ * two call for different cards.
+ */
+export interface OwnerActionCount {
+  action: string;
+  entityType: string | null;
+  count: number;
+  /** Distinct YYYY-MM-DD the action occurred on. */
+  days: Set<string>;
+  /** Distinct entities it was done to. */
+  entityIds: Set<string>;
+  lastAt: string;
+}
+
 const OWNER_COLUMNS =
   'id, user_id, actor_id, action, entity_type, entity_id, resource_name, changes, details, ' +
   'ip_address, user_agent, session_id, severity, compliance_flags, created_at';
@@ -238,6 +297,98 @@ export class AuditTrailRepository {
       };
     } catch (error) {
       this.logger.error({ err: error, userId, page: q.page, limit: q.limit }, 'Failed to list owner audit entries');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * What the OWNER did, for the insight module's behaviour detectors.
+   *
+   * The insight catalogue reasons only about business OUTCOMES -- a booking was
+   * made, an invoice was paid -- and has never been able to see what the owner
+   * themselves does. So it can report a cancelled booking and cannot report that
+   * the owner typed in 29 bookings by hand last month while a booking page sat
+   * published. This is the read that closes that, and the data has been sitting
+   * in `audit_trail` the whole time: 611 Business OS owner actions in 30 days on
+   * the reporting account, across 37 action types.
+   *
+   * THREE THINGS THIS MUST GET RIGHT.
+   *
+   * 1. The BD-26 owner exclusions, exactly as `listOwnerEntries` applies them.
+   *    A detector's output is shown to the owner, so an operator-only entry
+   *    reaching a card leaks it just as surely as the audit page would. Both
+   *    exclusions are here for that reason and
+   *    `lib/audit/__tests__/ownerAuditReads.guard.test.ts` is what keeps them.
+   *
+   * 2. The table is SHARED with the agent platform, which dominates it by
+   *    volume -- `AGENTKIT_*`, `PILOT_*`, `MEMORY_*`, `ORCHESTRATOR_*` outnumber
+   *    everything Business OS writes. An unfiltered read measures agent
+   *    telemetry and calls it owner behaviour. `BUSINESS_OS_ACTION_PREFIXES` is
+   *    the single definition of what counts, so no detector invents its own.
+   *
+   * 3. Counts only. No `details`, no `changes`, no `resource_name`: a behaviour
+   *    detector asks HOW OFTEN something was done, never what was in it. Keeping
+   *    the payload out means a card cannot accidentally quote a client's name
+   *    out of an audit row, and means this read stays cheap.
+   *
+   * `session_id` is deliberately not returned: it is NULL on these rows, so any
+   * session-shaped question ("how long does entering a booking take") is
+   * unanswerable and must not be attempted from here.
+   */
+  async countOwnerActionsSince(
+    userId: string,
+    since: string
+  ): Promise<RepositoryResult<OwnerActionCount[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('audit_trail')
+        .select('action, entity_type, entity_id, created_at')
+        .eq('user_id', userId)
+        .gte('created_at', since)
+        // The two BD-26 exclusions, identical to listOwnerEntries.
+        .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
+        .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)
+        .order('created_at', { ascending: false })
+        .limit(OWNER_ACTIVITY_SCAN_CAP);
+
+      if (error) throw error;
+
+      const rows = (data ?? []) as { action: string; entity_type: string | null; entity_id: string | null; created_at: string }[];
+
+      /*
+       * Grouped in memory rather than by the database.
+       *
+       * PostgREST cannot GROUP BY without an RPC, and the alternative -- a view
+       * or a function -- is a migration for an aggregate over at most
+       * OWNER_ACTIVITY_SCAN_CAP rows. Revisit if an account ever approaches
+       * that cap, which the `scanned` field below is there to reveal.
+       */
+      const byAction = new Map<string, OwnerActionCount>();
+
+      for (const row of rows) {
+        if (!isBusinessOsAction(row.action)) continue;
+
+        const existing = byAction.get(row.action);
+        if (existing) {
+          existing.count += 1;
+          existing.days.add(row.created_at.slice(0, 10));
+          if (row.entity_id) existing.entityIds.add(row.entity_id);
+          if (row.created_at > existing.lastAt) existing.lastAt = row.created_at;
+        } else {
+          byAction.set(row.action, {
+            action: row.action,
+            entityType: row.entity_type,
+            count: 1,
+            days: new Set([row.created_at.slice(0, 10)]),
+            entityIds: new Set(row.entity_id ? [row.entity_id] : []),
+            lastAt: row.created_at,
+          });
+        }
+      }
+
+      return { data: [...byAction.values()].sort((a, b) => b.count - a.count), error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId, since }, 'Failed to count owner actions');
       return { data: null, error: error as Error };
     }
   }
