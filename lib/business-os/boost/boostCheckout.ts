@@ -98,7 +98,16 @@ export type BoostCheckoutOutcome =
       currency: 'USD';
       livemode: boolean;
     }
-  | { ok: false; error: BoostCheckoutRefusal };
+  | {
+      ok: false;
+      error: BoostCheckoutRefusal;
+      /**
+       * Only on `cap_reached` (slice 5b SA C-5): the account's cap (an override
+       * included) and its window, so the owner's message can name them. Never
+       * the amount already counted.
+       */
+      cap?: { capMinor: number; windowDays: number };
+    };
 
 export interface BoostCheckoutLogger {
   info(obj: Record<string, unknown>, msg: string): void;
@@ -205,7 +214,7 @@ export async function runBoostCheckout(deps: BoostCheckoutDeps, input: BoostChec
       { userId: accountId, code: 'cap_reached', capMinor: reservation.data.capMinor, countedMinor: reservation.data.countedMinor },
       'bos_boost_checkout_refused'
     );
-    return refuse('cap_reached');
+    return { ok: false, error: 'cap_reached', cap: { capMinor: reservation.data.capMinor, windowDays: deps.cap.windowDays } };
   }
   const purchaseId = reservation.data.purchaseId;
 
