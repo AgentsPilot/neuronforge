@@ -19,7 +19,10 @@ import { logAndFlush } from '@/lib/audit/boundedAuditFlush';
 import { getBusinessOsStripeClient } from '@/lib/business-os/billing/stripeClient';
 import { currentStripeMode, isLiveMode } from '@/lib/business-os/billing/stripeMode';
 import { createBoostResolver } from '@/lib/business-os/boost/boostWebhookResolver';
-import { createBoostWebhookHandler, type BoostWebhookDeps } from '@/lib/business-os/boost/boostWebhookHandler';
+import { createBoostWebhookHandler, type BoostWebhookDeps, type BoostWebhookLogger } from '@/lib/business-os/boost/boostWebhookHandler';
+import { createBoostChargeHandler } from '@/lib/business-os/boost/boostChargeHandler';
+import { isBoostChargeEventType } from '@/lib/business-os/boost/boostChargeEvents';
+import type Stripe from 'stripe';
 import { recordBoostReceipt, type BoostReceiptStripePort } from '@/lib/business-os/boost/boostReceipt';
 
 async function repository(): Promise<BusinessOsBoostPurchaseRepository> {
@@ -28,9 +31,11 @@ async function repository(): Promise<BusinessOsBoostPurchaseRepository> {
 }
 
 /** The repository calls the webhook makes, each loading the repository on first use. */
-const purchases: BoostWebhookDeps['purchases'] & { recordReceipt: BusinessOsBoostPurchaseRepository['recordReceipt'] } = {
+const purchases: BoostWebhookDeps['purchases'] &
+  Pick<BusinessOsBoostPurchaseRepository, 'recordReceipt' | 'findByPaymentIntentIdForWebhook'> = {
   findBySessionIdForWebhook: async (sessionId) => (await repository()).findBySessionIdForWebhook(sessionId),
   findByIdForWebhook: async (purchaseId) => (await repository()).findByIdForWebhook(purchaseId),
+  findByPaymentIntentIdForWebhook: async (paymentIntentId) => (await repository()).findByPaymentIntentIdForWebhook(paymentIntentId),
   credit: async (input) => (await repository()).credit(input),
   transition: async (input) => (await repository()).transition(input),
   recordReceipt: async (input) => (await repository()).recordReceipt(input),
@@ -38,9 +43,15 @@ const purchases: BoostWebhookDeps['purchases'] & { recordReceipt: BusinessOsBoos
 
 export const boostResolver = createBoostResolver({ purchases });
 
-export const handleBoostWebhookEvent = createBoostWebhookHandler({
+const auditWrite: BoostWebhookDeps['audit'] = (entry, log) =>
+  logAndFlush(entry, log, { reason: 'boost webhook', continues: 'the webhook outcome is unaffected' });
+
+/** 4b.1: refunds and disputes on a boost payment. */
+const handleBoostChargeEvent = createBoostChargeHandler({ purchases, audit: auditWrite });
+
+const handleBoostSessionEvent = createBoostWebhookHandler({
   purchases,
-  audit: (entry, log) => logAndFlush(entry, log, { reason: 'boost webhook', continues: 'the webhook outcome is unaffected' }),
+  audit: auditWrite,
   receipt: (input, log) =>
     recordBoostReceipt(
       input,
@@ -64,3 +75,12 @@ export const handleBoostWebhookEvent = createBoostWebhookHandler({
       log
     ),
 });
+
+/**
+ * The boost flow handler registered in the Stripe webhook route: checkout
+ * session events (4a) and refund / dispute events (4b.1) on one flow.
+ */
+export async function handleBoostWebhookEvent(event: Stripe.Event, log: BoostWebhookLogger): Promise<void> {
+  if (isBoostChargeEventType(event.type)) return handleBoostChargeEvent(event, log);
+  return handleBoostSessionEvent(event, log);
+}

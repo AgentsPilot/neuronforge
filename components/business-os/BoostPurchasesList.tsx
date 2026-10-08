@@ -88,6 +88,7 @@ const CHIP_COLOR: Record<BoostPurchaseView['status'], string> = {
   refunded: MUTED,
   partially_refunded: MUTED,
   under_review: ALERT,
+  reversed: ALERT,
 };
 
 export function BoostPurchasesList({ open }: { open: boolean }) {

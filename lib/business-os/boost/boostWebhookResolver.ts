@@ -7,6 +7,12 @@
  *       no row but the boost marker → `deny metadata_mismatch` (alerted);
  *       no row, no marker → `not_business_os` (agent-platform packs keep their path).
  *   - `mode = subscription`: `not_business_os` (the plan resolver's).
+ *   - `charge.refunded`, `charge.dispute.created` / `.closed` /
+ *     `.funds_reinstated` (slice 4b.1): the purchase whose STORED payment
+ *     intent is the event's → `flow: 'boost'`; no such purchase, or no payment
+ *     intent at all → `not_business_os` (the legacy path, unchanged). No
+ *     metadata is read and no deny is raised for charge events: a charge does
+ *     not carry the session's metadata (SA Q-2, 4a SA N-1).
  *   - anything else: `not_business_os`.
  *
  * Identity is OUR purchase row (a row the platform created), never metadata:
@@ -30,12 +36,17 @@
 import type Stripe from 'stripe';
 
 import type { BusinessOsResolver, DispatchOutcome } from '@/lib/business-os/billing/webhookDispatcher';
+import type { BusinessOsBoostPurchaseRepository } from '@/lib/repositories/BusinessOsBoostPurchaseRepository';
 import {
   findBoostPurchaseForSession,
   isBoostSessionEventType,
   sessionKeysOf,
   type BoostPurchaseLookupPort,
 } from '@/lib/business-os/boost/boostWebhookSession';
+import { isBoostChargeEventType, paymentIntentOfChargeEvent } from '@/lib/business-os/boost/boostChargeEvents';
+
+/** The reads the resolver makes: by session / reference (4a), by stored payment intent (4b.1). */
+export type BoostResolverLookupPort = BoostPurchaseLookupPort & Pick<BusinessOsBoostPurchaseRepository, 'findByPaymentIntentIdForWebhook'>;
 
 const NOT_OURS: DispatchOutcome = { kind: 'not_business_os' };
 
@@ -47,11 +58,21 @@ export class BoostResolverLookupError extends Error {
   }
 }
 
-export function createBoostResolver(deps: { purchases: BoostPurchaseLookupPort }): BusinessOsResolver {
+export function createBoostResolver(deps: { purchases: BoostResolverLookupPort }): BusinessOsResolver {
   return {
     flow: 'boost',
     async resolve(event: Stripe.Event): Promise<DispatchOutcome> {
       if (event.account) return NOT_OURS; // Belt and braces: the dispatcher already returned.
+
+      if (isBoostChargeEventType(event.type)) {
+        // 4b.1: only OUR stored payment intent identifies the purchase.
+        const paymentIntentId = paymentIntentOfChargeEvent(event.data.object);
+        if (!paymentIntentId) return NOT_OURS; // Not a PaymentIntent charge: never a boost payment.
+        const byIntent = await deps.purchases.findByPaymentIntentIdForWebhook(paymentIntentId);
+        if (byIntent.error) throw new BoostResolverLookupError(byIntent.error);
+        return byIntent.data ? { kind: 'flow', flow: 'boost', lookupKeys: [] } : NOT_OURS;
+      }
+
       if (!isBoostSessionEventType(event.type)) return NOT_OURS;
 
       const raw = event.data.object as { mode?: unknown };

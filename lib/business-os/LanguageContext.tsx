@@ -1376,6 +1376,7 @@ export const translations = {
     'usage.boost.purchases.status.refunded': 'Refunded',
     'usage.boost.purchases.status.partially_refunded': 'Partly refunded',
     'usage.boost.purchases.status.under_review': 'Payment under review',
+    'usage.boost.purchases.status.reversed': 'Payment reversed',
     // Credit history (credit deduction slice 7a, D-i to D-q). Neutral wording, never 'AI' (BD-15).
     'credits.history.link': 'Credit history',
     'credits.history.title': 'Credit history',
@@ -5417,6 +5418,7 @@ export const translations = {
     'usage.boost.purchases.status.refunded': 'Reembolsado',
     'usage.boost.purchases.status.partially_refunded': 'Reembolsado en parte',
     'usage.boost.purchases.status.under_review': 'Pago en revisión',
+    'usage.boost.purchases.status.reversed': 'Pago revertido',
     // Credit history (credit deduction slice 7a, D-i to D-q). Neutral wording, never 'AI' (BD-15). Draft — native review before release.
     'credits.history.link': 'Historial de créditos',
     'credits.history.title': 'Historial de créditos',
@@ -11565,6 +11567,7 @@ export const translations = {
     'usage.boost.purchases.status.refunded': 'הוחזר',
     'usage.boost.purchases.status.partially_refunded': 'הוחזר חלקית',
     'usage.boost.purchases.status.under_review': 'התשלום בבדיקה',
+    'usage.boost.purchases.status.reversed': 'התשלום בוטל',
     // Credit history (credit deduction slice 7a, D-i to D-q). Neutral wording, never 'AI' (BD-15). Draft — native review before release.
     'credits.history.link': 'היסטוריית קרדיטים',
     'credits.history.title': 'היסטוריית קרדיטים',
