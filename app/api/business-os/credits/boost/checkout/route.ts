@@ -108,8 +108,11 @@ export async function POST(request: NextRequest) {
     );
 
     if (!outcome.ok) {
+      // Slice 5b SA C-5: the cap answer names the cap and its window (server
+      // figures; an override included), never the amount already counted.
+      const cap = outcome.error === 'cap_reached' && outcome.cap ? { capMinor: outcome.cap.capMinor, windowDays: outcome.cap.windowDays } : {};
       return NextResponse.json(
-        { success: false, error: outcome.error },
+        { success: false, error: outcome.error, ...cap },
         { status: BOOST_CHECKOUT_REFUSAL_STATUS[outcome.error], headers: NO_STORE }
       );
     }

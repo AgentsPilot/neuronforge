@@ -4,15 +4,17 @@
  * user decision B, 2026-10-07).
  *
  * Every signed-in owner may read it: the packages are public prices. It sells
- * nothing and reads no purchase switch. `purchaseAvailable` is the literal
- * `false` in 5a (SA Q-4, C-3); slice 5b sets it on the server.
+ * nothing. `purchaseAvailable` (slice 5b, SA C-2) is decided here, on the
+ * server: the checkout switch and allow-list for THIS account, and a browser
+ * Stripe key in the same mode as the server key (`isBoostPurchaseAvailableFor`).
+ * The checkout route stays the authority whatever the panel shows.
  *
  * - No input: no body, and any query string is ignored (so no Zod schema).
  * - Any rejection from the catalogue, or an empty list, is 503
  *   `packages_unavailable`: an empty picker would hide a broken catalogue as
  *   "nothing to sell" (slice 1 C-7 E-2). The issues are logged, never returned.
- * - `Cache-Control: private, max-age=60` (SA Q-2): the same for every owner
- *   and changes only on deploy; `private` keeps it out of shared caches.
+ * - `Cache-Control: private, no-store` (5a SA Q-2, revisited in 5b): the
+ *   answer is now per account and follows the switch.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -20,6 +22,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { codeBoostPackageSource } from '@/lib/business-os/entitlements/boostCatalogue';
 import { toBoostPackageView } from '@/lib/business-os/boost/boostPackagesView';
+import { isBoostPurchaseAvailableFor } from '@/lib/business-os/boost/boostCheckoutAccess';
 import type { BoostPackagesPayload } from '@/lib/business-os/boost/boostPackagesTypes';
 
 export const runtime = 'nodejs';
@@ -27,7 +30,6 @@ export const dynamic = 'force-dynamic';
 
 const logger = createLogger({ module: 'BoostPackagesAPI' });
 
-const CACHE = { 'Cache-Control': 'private, max-age=60' };
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 export async function GET(request: NextRequest) {
@@ -56,9 +58,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'packages_unavailable' }, { status: 503, headers: NO_STORE });
     }
 
-    const data: BoostPackagesPayload = { packages: packages.map(toBoostPackageView), purchaseAvailable: false };
-    requestLogger.info({ userId: user.id, count: data.packages.length }, 'Boost packages read');
-    return NextResponse.json({ success: true, data }, { headers: CACHE });
+    const data: BoostPackagesPayload = {
+      packages: packages.map(toBoostPackageView),
+      purchaseAvailable: isBoostPurchaseAvailableFor(user.id, requestLogger),
+    };
+    requestLogger.info({ userId: user.id, count: data.packages.length, purchaseAvailable: data.purchaseAvailable }, 'Boost packages read');
+    return NextResponse.json({ success: true, data }, { headers: NO_STORE });
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to read the boost packages');
     return NextResponse.json(

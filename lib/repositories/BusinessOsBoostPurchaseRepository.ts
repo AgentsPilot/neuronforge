@@ -749,6 +749,34 @@ export class BusinessOsBoostPurchaseRepository {
     }
   }
 
+  /**
+   * One purchase of THIS account by its Stripe checkout session (credits boost
+   * slice 5b, SA C-3): the owner's return page asks "what happened to my
+   * payment?". Service role (the repository's client) because the owner's
+   * column grant does not include the session id; scoped by `user_id` from
+   * the session (`getUser()` in the route), so another account's session
+   * answers `null`, exactly like a missing one. A malformed session id is
+   * refused before any query.
+   */
+  async findForAccountBySessionId(accountId: string, sessionId: string): Promise<RepositoryResult<BusinessOsBoostPurchase | null>> {
+    const method = 'findForAccountBySessionId';
+    try {
+      this.assertUuid(accountId, 'An account id');
+      this.assertSessionId(sessionId);
+      const { data, error } = await this.supabase
+        .from('business_os_boost_purchases')
+        .select(BOOST_PURCHASE_COLUMNS)
+        .eq('user_id', accountId)
+        .eq('stripe_checkout_session_id', sessionId)
+        .maybeSingle();
+      if (error) throw error;
+      if (data === null || data === undefined) return { data: null, error: null };
+      return { data: mapPurchase(data as unknown as Record<string, unknown>), error: null };
+    } catch (error) {
+      return this.fail(method, error, { accountId });
+    }
+  }
+
   /** The account's purchases in one Stripe mode, newest first (admin view, slice 6). */
   async listForAccount(
     accountId: string,

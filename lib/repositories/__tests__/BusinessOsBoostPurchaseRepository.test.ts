@@ -731,3 +731,36 @@ describe('slice 4a: findByIdForWebhook and the failure classification (SA C-1, C
     expect(offenders).toEqual([]);
   });
 });
+
+describe('slice 5b.1: findForAccountBySessionId (SA C-3)', () => {
+  it('reads one row scoped by user_id AND the session id, with the explicit column list', async () => {
+    const { repo, calls } = readClient({ data: PURCHASE_ROW, error: null });
+    const found = await repo.findForAccountBySessionId(ACCOUNT, SESSION);
+    expect(calls).toEqual([
+      ['from', ['business_os_boost_purchases']],
+      ['select', [BOOST_PURCHASE_COLUMNS]],
+      ['eq', ['user_id', ACCOUNT]],
+      ['eq', ['stripe_checkout_session_id', SESSION]],
+      ['maybeSingle', []],
+    ]);
+    expect(found.data?.id).toBe(PURCHASE);
+  });
+
+  it('another owner or a missing session → null (the filter decides, the caller cannot tell them apart)', async () => {
+    expect(await readClient({ data: null, error: null }).repo.findForAccountBySessionId(ACCOUNT, SESSION)).toEqual({ data: null, error: null });
+  });
+
+  it('a malformed session id or account is refused before any query', async () => {
+    for (const [account, session] of [
+      [ACCOUNT, 'pi_test_1'],
+      [ACCOUNT, ''],
+      ['not-a-uuid', SESSION],
+    ] as const) {
+      const { repo, calls } = readClient({ data: PURCHASE_ROW, error: null });
+      const result = await repo.findForAccountBySessionId(account, session);
+      expect(result.data).toBeNull();
+      expect(isDeterministicRepositoryError(result.error)).toBe(true);
+      expect(calls).toEqual([]);
+    }
+  });
+});
