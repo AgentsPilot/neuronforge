@@ -19,6 +19,10 @@ import {
   type ResolverContext,
 } from '@/lib/business-os/billing/webhookDispatcher';
 import { planResolver } from '@/lib/business-os/billing/planInvoiceResolver';
+import { boostResolver } from '@/lib/business-os/boost/boostWebhookDeps';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as ts from 'typescript';
 import type { Logger } from '@/lib/logger';
 
 const error = jest.fn();
@@ -46,8 +50,39 @@ const DENY: DispatchOutcome = {
 beforeEach(() => error.mockReset());
 
 describe('dispatchBusinessOsEvent (SA-P6)', () => {
-  it('P-1 registers exactly the plan resolver', () => {
-    expect(DEFAULT_RESOLVERS).toEqual([planResolver]);
+  it('registers exactly the plan resolver (P-1) and the boost resolver (boost 4a), in that order', () => {
+    expect(DEFAULT_RESOLVERS).toEqual([planResolver, boostResolver]);
+    expect(DEFAULT_RESOLVERS.map((r) => r.flow)).toEqual(['plan', 'boost']);
+  });
+
+  it('boost SA C-2: every flow a default resolver can return has a handler registered in the webhook route', () => {
+    // A recognised flow with no handler releases the claim and loops Stripe for
+    // days, so a resolver must never ship without its handler. P-3b.2 adds `plan`.
+    const routeFile = path.join(process.cwd(), 'app/api/stripe/webhook/route.ts');
+    const source = ts.createSourceFile(routeFile, fs.readFileSync(routeFile, 'utf8'), ts.ScriptTarget.Latest, true);
+    let handlerKeys: string[] | null = null;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === 'BUSINESS_OS_FLOW_HANDLERS' &&
+        node.initializer &&
+        ts.isObjectLiteralExpression(node.initializer)
+      ) {
+        handlerKeys = node.initializer.properties
+          .map((property) => (property.name && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) ? property.name.text : null))
+          .filter((name): name is string => name !== null);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(handlerKeys).not.toBeNull();
+    // The plan flow's handler is P-3b.2's; until it lands, the plan resolver only
+    // returns `flow: 'plan'` for a known plan price, which is released on purpose
+    // (P-3a SA Q-1). Every OTHER flow must be handled.
+    const mustBeHandled = DEFAULT_RESOLVERS.map((r) => r.flow).filter((flow) => flow !== 'plan' || (handlerKeys ?? []).includes('plan'));
+    for (const flow of mustBeHandled) expect(handlerKeys).toContain(flow);
+    expect(handlerKeys).toContain('boost');
   });
 
   it('a Connect event is not Business OS, and no resolver is consulted', async () => {
@@ -139,5 +174,23 @@ describe('BusinessOsHandlerMissingError', () => {
     expect(err.flow).toBe('plan');
     expect(err.name).toBe('BusinessOsHandlerMissingError');
     expect(err.message).toContain("'plan'");
+  });
+});
+
+describe('boost 4a QA R-5: a Connect session carrying the boost marker', () => {
+  it('the default resolvers answer not_business_os with ZERO boost reads (the dispatcher returns before any resolver)', async () => {
+    const { createBoostResolver } = jest.requireActual('@/lib/business-os/boost/boostWebhookResolver');
+    const purchases = { findBySessionIdForWebhook: jest.fn(), findByIdForWebhook: jest.fn() };
+    const boost = createBoostResolver({ purchases });
+    const event = {
+      id: 'evt_c',
+      type: 'checkout.session.completed',
+      account: 'acct_connect_1',
+      livemode: false,
+      data: { object: { id: 'cs_test_c', mode: 'payment', client_reference_id: '44444444-4444-4444-8444-444444444444', metadata: { product: 'business_os_boost' } } },
+    } as unknown as Stripe.Event;
+    expect(await dispatchBusinessOsEvent(event, ctx, [planResolver, boost])).toEqual({ kind: 'not_business_os' });
+    expect(purchases.findBySessionIdForWebhook).not.toHaveBeenCalled();
+    expect(purchases.findByIdForWebhook).not.toHaveBeenCalled();
   });
 });

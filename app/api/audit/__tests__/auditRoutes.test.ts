@@ -431,3 +431,32 @@ describe('existing browser callers keep working (T-C1)', () => {
     expect(mockLog.mock.calls[0][0]).toMatchObject({ action: body.action, entityType: body.entityType, userId: OWNER_A.id });
   });
 });
+
+describe('GET /api/audit/query: owner presentation (credits boost 4a, SA C-5)', () => {
+  it('a BOS_BOOST_FLAGGED row reaches the owner with a neutral label and no details; other rows are unchanged', async () => {
+    mockGetUser.mockResolvedValue(OWNER_A);
+    mockListOwnerEntries.mockResolvedValue({
+      data: {
+        logs: [
+          { id: 'row-1', action: 'USER_LOGIN', details: { a: 1 } },
+          { id: 'row-2', action: 'BOS_BOOST_FLAGGED', details: { reason: 'amount_mismatch', stripe_payment_intent_id: 'pi_1' } },
+        ],
+        total: 2,
+        page: 1,
+        limit: 1000,
+        hasMore: false,
+      },
+      error: null,
+    });
+    const res = await queryGET(get('?limit=1000'));
+    const body = await res.json();
+    expect(body.logs[0]).toEqual({ id: 'row-1', action: 'USER_LOGIN', details: { a: 1 } });
+    expect(body.logs[1]).toEqual({
+      id: 'row-2',
+      action: 'BOS_BOOST_FLAGGED',
+      details: {},
+      owner_label: { en: 'Payment under review', he: 'התשלום בבדיקה', es: 'Pago en revisión' },
+    });
+    expect(JSON.stringify(body)).not.toContain('amount_mismatch');
+  });
+});

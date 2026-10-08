@@ -29,6 +29,7 @@ import {
   dispatchBusinessOsEvent,
   type BusinessOsFlow,
 } from '@/lib/business-os/billing/webhookDispatcher';
+import { handleBoostWebhookEvent } from '@/lib/business-os/boost/boostWebhookDeps';
 import Stripe from 'stripe';
 
 // Disable body parsing for webhook signature verification
@@ -2252,12 +2253,16 @@ async function completeClaim(eventId: string) {
 
 /**
  * Business OS flow handlers, registered by the slices that build them (P-3b adds
- * `plan`; boost adds `boost`). Empty in P-1: a recognised flow with no handler
- * throws, the claim is released and Stripe retries (SA Q-6).
+ * `plan`; boost 4a adds `boost`). A recognised flow with no handler throws, the
+ * claim is released and Stripe retries (SA Q-6) — so a resolver and its handler
+ * ship together (boost SA C-2). A handler that returns means "complete"; one
+ * that throws means "release for retry".
  */
 const BUSINESS_OS_FLOW_HANDLERS: Partial<
   Record<BusinessOsFlow, (event: Stripe.Event, log: Logger) => Promise<void>>
-> = {};
+> = {
+  boost: handleBoostWebhookEvent,
+};
 
 /**
  * Main webhook handler
