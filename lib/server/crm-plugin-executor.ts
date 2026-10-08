@@ -21,11 +21,17 @@ const pluginName = 'crm';
  * verified BOS tenant and `connection.user_id` is the server-resolved user id.
  *
  * GUARDRAIL (SA feasibility review §2.5): this executor DELEGATES ONLY and must NOT re-emit
- * cross-capability side-effects. The existing Postgres triggers own them — in particular
- * trigger T8 logs a `contact_created` activity on every `crm_contacts` INSERT, so
- * `create_contact` must NOT also write that activity (would double-log). `update_contact` and
- * `move_stage` write no activity. `log_activity` is the ONLY activity-writing operation, and it
- * writes exactly the caller-supplied activity — nothing implicit.
+ * cross-capability side-effects. The conclusion still holds and the reason has changed:
+ * `create_contact` must NOT write a `contact_created` activity, because
+ * `CRMContactRepository.create` writes it for every creation path.
+ *
+ * It was trigger T8 that owned this. That trigger turned out not to be live (measured on
+ * production 2026-10-08), which is why nine of the ten creation paths — this one included —
+ * recorded nothing at all. Writing it here now would double-log.
+ *
+ * `update_contact` and `move_stage` write no activity. `log_activity` is the ONLY
+ * activity-writing operation, and it writes exactly the caller-supplied activity — nothing
+ * implicit.
  */
 export class CRMPluginExecutor extends BasePluginExecutor {
   constructor(userConnections: UserPluginConnections, pluginManager: PluginManagerV2) {
