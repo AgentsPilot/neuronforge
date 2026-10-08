@@ -1,6 +1,6 @@
 # SECURITY DEFINER Functions Inventory
 
-> **Last Updated**: 2026-10-07
+> **Last Updated**: 2026-10-08
 
 ## Overview
 
@@ -15,6 +15,8 @@ Nothing in this doc changes the database. The production side comes from [`scrip
 - **50** of those are not triggers, so they are reachable over PostgREST.
 - **20 functions exist only in production**, with no definition anywhere in the repo.
 - **4 repo functions are not SECURITY DEFINER in production.**
+
+**Since then:** slice 1 (`20261044`, applied 2026-10-08) closed 13 functions, so **55** remain anon-executable (37 non-trigger). Arithmetic from the counts above, not a re-run of the inventory script. Per-slice state lives in the requirement [§4.3](/docs/requirements/SECURITY_DEFINER_FUNCTIONS_LOCKDOWN_REQUIREMENT.md#43-slice-status).
 
 ## Table of Contents
 
@@ -274,7 +276,7 @@ The migration must name the **prod identity signatures** taken from the TSV. Exa
 | # | Migration | Scope | Functions | Count | Code change | Why this order |
 |---|---|---|---|---|---|---|
 | 0 | — | Inventory (this) | — | — | none | done |
-| 1 | `20261044` | Drain machinery and no-arg mutators → SR only | `claim_due_daily_briefings`, `claim_due_insight_actions`, `claim_due_lead_responses`, `claim_due_payment_automation_executions`, `claim_due_payment_reminders`, `reap_stale_daily_briefings`, `reap_stale_insight_actions`, `reap_stale_lead_responses`, `reap_stale_payment_automation_executions`, `reap_stale_payment_reminders`, `pg_try_advisory_lock`, `pg_advisory_unlock`, `auto_disable_ineffective_behavior_rules` | 13 | none | Worst exposure. Every caller is already SR (crons and the service-key lock client) |
+| 1 | `20261044` | Drain machinery and no-arg mutators → SR only | `claim_due_daily_briefings`, `claim_due_insight_actions`, `claim_due_lead_responses`, `claim_due_payment_automation_executions`, `claim_due_payment_reminders`, `reap_stale_daily_briefings`, `reap_stale_insight_actions`, `reap_stale_lead_responses`, `reap_stale_payment_automation_executions`, `reap_stale_payment_reminders`, `pg_try_advisory_lock`, `pg_advisory_unlock`, `auto_disable_ineffective_behavior_rules` | 13 | none | Worst exposure. Every caller is already SR (crons and the service-key lock client). **✅ Done 2026-10-08** (PR #261, applied on prod, checker PASS 78/0) |
 | 2 | next | Dead and prod-only cross-tenant readers/writers → SR only | `get_user_credit_balance`, `get_user_subscription_info`, `get_user_usage_summary`, `get_user_workflow_stats`, `has_sufficient_credits`, `is_reward_eligible`, `get_last_perfect_calibration`, `get_unviewed_insights_count`, `match_behavior_rules`, `record_behavior_rule_result`, `check_execution_anomaly`, `dismiss_setup_step`, `upsert_plugin_performance` | 13 | none | No live caller, so zero breakage risk, and they are the highest-value tenant leaks. Dropping them is a later, separate decision |
 | 3 | next | Remaining SR / internal callables → SR only, plus close anon on `is_platform_admin` | `search_business_chat_plans_semantic`, `record_business_chat_plan_outcome`, `match_verified_questions`, `increment_verified_question_uses`, `get_or_create_user_organization`, `check_subdomain_available`, `generate_subdomain`, `upsert_intent_example`, `find_similar_intent_examples`, `record_intent_example_usage`, `upsert_workflow_pattern`, `get_similar_patterns`, `record_global_failure`, `get_active_failures`, `advance_contact_stage`, `increment_calibration_count`, `record_business_event`; plus `is_platform_admin` (revoke PUBLIC and anon, keep authenticated) | 17 + 1 | none | Every caller is SR or the owner (trigger / internal SQL). `is_platform_admin`'s policies are all `TO authenticated`. Pre-check `record_business_event`'s callers first (§8) |
 | 4a | next | Class 2: close PUBLIC and anon, keep authenticated | `increment_executions_used`, `update_execution_baseline`, `record_execution_anomaly`, `upsert_error_pattern`, `record_auto_fix_result`, `get_top_insights` | 6 | none | Removes the anonymous path now. Signed-in users can still forge rows for another tenant until 4b |
@@ -380,3 +382,4 @@ Grantees are `postgres service_role`, and anon, authenticated and PUBLIC all mea
 | 2026-10-07 | `promote_contact_on_confirmed_booking` reclassified (TL) | §7.2 and §8: dropped on purpose by `20260920_pipeline_transitions.sql`, not a gap. Only `log_crm_contact_created` remains unconfirmed (reported to Offir) |
 | 2026-10-07 | Slice 1 migration number (Dev) | §6: slice 1 is now `20261043`, because `20261042` was taken on main by `operator_test_account_cleanup_billing_events`. Rule unchanged: next free number at PR time. No other content changed |
 | 2026-10-07 | Slice 1 number again (Dev) | §6: slice 1 is now `20261044`, because `20261043` is claimed by open PR #256. No other content changed |
+| 2026-10-08 | Slice 1 done (Dev) | §6 row 1 marked done (PR #261 merged 2026-10-08, `20261044` applied on prod, checker PASS). Overview notes 13 closed, 55 anon-executable remain (37 non-trigger), by arithmetic. No other content changed |
