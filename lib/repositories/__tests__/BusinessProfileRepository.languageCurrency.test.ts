@@ -126,4 +126,13 @@ describe('findLanguage (N-1, N7: the inviter notification reads the recipient la
     expect(result.data).toBeNull();
     expect((result.error as Error & { code?: string }).code).toBe('42703');
   });
+
+  it('a rejected query rejects: the Stripe webhook must still fail and let Stripe retry (CF-5 PR 2, SA CR-P2-1)', async () => {
+    const builder: Record<string, unknown> = {};
+    for (const method of ['select', 'eq']) builder[method] = () => builder;
+    builder.maybeSingle = () => Promise.reject(new Error('socket hang up'));
+    const client = { from: () => builder } as unknown as SupabaseClient;
+
+    await expect(new BusinessProfileRepository(client).findLanguage(USER)).rejects.toThrow('socket hang up');
+  });
 });
