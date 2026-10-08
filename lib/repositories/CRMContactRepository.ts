@@ -7,6 +7,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import { activitySentence } from '@/lib/business-os/activityText';
 
 const logger = createLogger({ service: 'CRMContactRepository' });
 
@@ -119,10 +120,85 @@ export class CRMContactRepository {
       if (error) throw error;
 
       logger.info({ contactId: data.id, userId: contact.user_id }, 'CRM contact created');
+      await this.logCreationActivity(data);
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId: contact.user_id }, 'Failed to create CRM contact');
       return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The first entry on a contact's own timeline.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS LIVES HERE AND NOT IN A TRIGGER OR A ROUTE
+   *
+   * `20260722_crm_contact_creation_activity.sql` defined a trigger to do this,
+   * and that trigger is not live. Measured on production 2026-10-08: of 20
+   * contacts, 14 had no creation entry, the only contact predating the route's
+   * own write had none, and NOT ONE contact had two. If the trigger existed,
+   * every contact added through `/api/crm/contacts` would carry two entries,
+   * because that route also wrote one. So nothing in the database writes it.
+   *
+   * That route was the single one of about ten creation paths that compensated.
+   * The other nine relied on the trigger and recorded nothing: website
+   * bookings, intake forms, subscribers, chat, the AI data layer, bizql
+   * mutate, the CRM plugin and the scheduling plugin. The production split was
+   * exactly that -- all six `website_booking` contacts missing, `website_form`,
+   * `newsletter` and `instagram` missing, while the hand-added ones had it.
+   *
+   * Every one of those paths already goes through this method, so writing it
+   * once here is what makes the entry unconditional. The route's own write is
+   * removed in the same change: leaving both would double-log, which is the
+   * trap in simply re-applying the migration.
+   *
+   * Non-blocking by construction. A timeline entry is worth less than the
+   * contact, so a failure here is logged and swallowed -- it must never turn a
+   * saved contact into a failed request.
+   */
+  private async logCreationActivity(contact: CRMContact): Promise<void> {
+    try {
+      /*
+       * The sentence is stored already written, in the business's language:
+       * the drawer renders `title` as-is and reserves the JSON `description`
+       * for the facts it re-translates at display time.
+       */
+      const { data: profile } = await this.supabase
+        .from('business_profiles')
+        .select('language')
+        .eq('user_id', contact.user_id)
+        .maybeSingle();
+
+      const source = contact.source || null;
+      const title = source
+        // Named only when we know where they came from: "added from unknown"
+        // is worse than saying nothing about it.
+        ? activitySentence('contact_created_from', { source }, profile?.language)
+        : activitySentence('contact_created', {}, profile?.language);
+
+      const { error } = await this.supabase.from('crm_activities').insert({
+        user_id: contact.user_id,
+        contact_id: contact.id,
+        activity_type: 'contact_created',
+        title,
+        description: JSON.stringify({
+          kind: 'contact_created',
+          source: source || undefined,
+          stage: contact.stage || undefined,
+        }),
+        auto_logged: true,
+        source_capability: 'crm',
+        source_entity_id: contact.id,
+        activity_date: contact.created_at,
+      });
+
+      if (error) throw error;
+    } catch (err) {
+      logger.warn(
+        { err, contactId: contact.id, userId: contact.user_id },
+        'Contact-created activity logging failed (non-blocking)'
+      );
     }
   }
 
