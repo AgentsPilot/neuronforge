@@ -1302,24 +1302,29 @@ export class BusinessProfileRepository {
    * `null` when it has none or has no business row. Not validated here: the
    * caller normalises it (`resolveUserLanguage`). Read by the inviter
    * notification (N-1, N7) for the RECIPIENT's language; the caller passes an
-   * id taken from the matched invite row, never from a request.
+   * id taken from the matched invite row, never from a request. Also read by
+   * the Stripe webhook's `invoice.payment_failed` activity (CF-5 PR 2), keyed by
+   * the owner of an invoice the route has proved the sending account owns.
+   *
+   * A returned query error is logged and handed back. There is no try/catch
+   * (CF-5 PR 2, SA CR-P2-1): a query that REJECTS reaches the caller, so the
+   * webhook still answers 500 and Stripe retries, as its inline read did. The
+   * inviter notification wraps this call in `settle()`, which catches.
    */
   async findLanguage(userId: string): Promise<BusinessProfileRepositoryResult<string | null>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('business_profiles')
-        .select('language')
-        .eq('user_id', userId)
-        .maybeSingle();
+    const { data, error } = await this.supabase
+      .from('business_profiles')
+      .select('language')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-      if (error) throw error;
-
-      const language = (data as { language?: unknown } | null)?.language;
-      return { data: typeof language === 'string' ? language : null, error: null };
-    } catch (error) {
+    if (error) {
       logger.error({ err: error, userId }, 'Failed to read business language');
-      return { data: null, error: error as Error };
+      return { data: null, error };
     }
+
+    const language = (data as { language?: unknown } | null)?.language;
+    return { data: typeof language === 'string' ? language : null, error: null };
   }
 
   /**

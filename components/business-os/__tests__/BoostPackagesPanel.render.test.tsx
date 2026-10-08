@@ -150,7 +150,7 @@ describe('the package picker', () => {
     expect(screen.getByTestId('boost-package-bonus')).toHaveTextContent('12%');
   });
 
-  it('every Buy is disabled and reads "Coming soon"', async () => {
+  it('purchaseAvailable false: every Buy is disabled and reads "Coming soon", with no tooltip (5a N-1)', async () => {
     await openWith(okReply(payload()));
     const buys = screen.getAllByTestId('boost-package-buy');
     expect(buys).toHaveLength(3);
@@ -158,18 +158,23 @@ describe('the package picker', () => {
       expect(buy).toBeDisabled();
       expect(buy).toHaveAttribute('aria-disabled', 'true');
       expect(buy).toHaveTextContent('Coming soon');
-      expect(buy).toHaveAttribute('title', 'Purchasing opens soon');
+      expect(buy).not.toHaveAttribute('title');
     }
   });
 
-  it('SA C-3: purchaseAvailable true still renders every Buy disabled, and clicking does nothing', async () => {
-    await openWith(okReply(payload({ purchaseAvailable: true })));
-    for (const buy of screen.getAllByTestId('boost-package-buy')) {
-      expect(buy).toBeDisabled();
-      fireEvent.click(buy);
-    }
+  it('purchaseAvailable false: clicking a Buy sends nothing (5b.1: the server decides)', async () => {
+    await openWith(okReply(payload()));
+    for (const buy of screen.getAllByTestId('boost-package-buy')) fireEvent.click(buy);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     for (const [url] of fetchMock.mock.calls) expect(String(url)).toBe('/api/business-os/credits/boost/packages');
+  });
+
+  it('5b.1: purchaseAvailable true → every Buy is enabled and reads "Buy" (the flow is tested in BoostPackagesPanel.buy.render.test.tsx)', async () => {
+    await openWith(okReply(payload({ purchaseAvailable: true })));
+    for (const buy of screen.getAllByTestId('boost-package-buy')) {
+      expect(buy).toBeEnabled();
+      expect(buy).toHaveTextContent('Buy');
+    }
   });
 
   it('the footer says USD and excluding tax', async () => {

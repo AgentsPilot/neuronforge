@@ -411,6 +411,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['codeBoostPackageSource'],
       why: 'Credits boost slice 5a: the packages read lists the active boost packages for display to every signed-in owner. It reads no plan, snapshot or capability, and refuses nothing by plan: its only refusals are 401 (signed out) and 503 (an invalid catalogue). If it ever calls `check()` or reads a snapshot, it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Credits boost slice 5b.1, 2026-10-08 — the owner's purchase status ──
+    {
+      file: 'app/api/business-os/credits/boost/purchases/route.ts',
+      symbols: ['codeBoostPackageSource'],
+      why: 'Credits boost slice 5b.1: the owner purchase-status read names the bought package from the active catalogue for display. It reads no plan, snapshot or capability and refuses nothing by plan: its only refusals are 401, 400 and a 500 on a failed read. If it ever calls `check()` or reads a snapshot, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
     {
       file: 'lib/business-os/boost/boostPackagesView.ts',
       symbols: ['BoostPackage'],

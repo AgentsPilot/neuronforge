@@ -4,7 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence } from '@/lib/business-os/activityText';
-import { createClient } from '@supabase/supabase-js';
+import { supabaseServer } from '@/lib/supabaseServer';
+import { processedWebhookEventRepository } from '@/lib/repositories/ProcessedWebhookEventRepository';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 import { QuotaAllocationService } from '@/lib/services/QuotaAllocationService';
@@ -21,6 +22,13 @@ import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import {
+  paymentInvoiceRepository,
+  WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS,
+  WEBHOOK_INVOICE_LOOKUP_COLUMNS,
+  WEBHOOK_INVOICE_RECEIPT_COLUMNS,
+} from '@/lib/repositories/PaymentRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
 import { createLogger, type Logger } from '@/lib/logger';
 import {
@@ -29,6 +37,7 @@ import {
   dispatchBusinessOsEvent,
   type BusinessOsFlow,
 } from '@/lib/business-os/billing/webhookDispatcher';
+import { handleBoostWebhookEvent } from '@/lib/business-os/boost/boostWebhookDeps';
 import Stripe from 'stripe';
 
 // Disable body parsing for webhook signature verification
@@ -39,17 +48,17 @@ export const runtime = 'nodejs';
 // line a delivery writes can be found from the event id alone.
 const logger = createLogger({ module: 'stripe-webhook', route: '/api/stripe/webhook' });
 
-// Create admin Supabase client (bypasses RLS)
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-);
+// Service role on purpose (CLAUDE.md Security Rules): a Stripe webhook has no
+// user session. Every row is reached by a Stripe id from a signed event or by a
+// row already proved to belong to the sending account (`accountOwns`); see the
+// tenant-isolation notes in docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md §5.
+//
+// CF-5 PR 1 replaced this route's private service-role client with the shared
+// `supabaseServer` (the same URL and key; the dropped auth options only matter
+// for a signed-in session, which a service-role client never has, workplan §4).
+// The alias keeps the remaining direct queries compiling while later PRs move
+// them behind repositories; PR 5 removes it.
+const supabaseAdmin = supabaseServer;
 
 // Plan payments P-1 removed `handleInvoicePaid`, the agent-platform conversion
 // of a platform `invoice.paid` into Pilot Credits. It took the account from
@@ -1264,17 +1273,15 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   let platformInvoice: {
     id: string;
     user_id: string;
-    contact_id: string;
+    // `string | null`, as the column is: the row now comes typed from the
+    // invoice repository instead of as `any` (CF-5 PR 2).
+    contact_id: string | null;
     invoice_number: string;
     booking_id?: string | null;
     amount?: number;
   } | null = null;
 
-  const { data: invoiceByStripeId, error: lookupError } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('*')
-    .eq('stripe_invoice_id', invoice.id)
-    .single();
+  const { data: invoiceByStripeId, error: lookupError } = await paymentInvoiceRepository.findByStripeInvoiceId(invoice.id);
 
   if (invoiceByStripeId) {
     platformInvoice = invoiceByStripeId;
@@ -1300,11 +1307,8 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
     if (metadataInvoiceId) {
       log.info({ invoiceId: metadataInvoiceId }, 'Looking up platform invoice by metadata');
-      const { data: invoiceByMetadata, error: metadataLookupError } = await supabaseAdmin
-        .from('payment_invoices')
-        .select('*')
-        .eq('id', metadataInvoiceId)
-        .single();
+      const { data: invoiceByMetadata, error: metadataLookupError } =
+        await paymentInvoiceRepository.findByIdUnscoped(metadataInvoiceId);
 
       if (invoiceByMetadata && !metadataLookupError) {
         platformInvoice = invoiceByMetadata;
@@ -1325,13 +1329,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
         }
 
         // Update the invoice with stripe_invoice_id for future lookups
-        await supabaseAdmin
-          .from('payment_invoices')
-          .update({
-            stripe_invoice_id: invoice.id,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', invoiceByMetadata.id);
+        await paymentInvoiceRepository.recordStripeInvoiceId(invoiceByMetadata.id, invoice.id);
         log.info({ invoiceId: invoiceByMetadata.id, stripeInvoiceId: invoice.id }, 'Updated invoice with stripe_invoice_id');
       }
     }
@@ -1533,16 +1531,11 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
   // Then the invoice. The update_invoice_on_payment trigger also does this when
   // the transaction lands; this is idempotent and covers databases without it.
-  const { error: updateError } = await supabaseAdmin
-    .from('payment_invoices')
-    .update({
-      status: 'paid',
-      paid_at: paidAt,
-      stripe_hosted_invoice_url: invoice.hosted_invoice_url,
-      stripe_invoice_pdf: invoice.invoice_pdf,
-      updated_at: paidAt
-    })
-    .eq('id', platformInvoice.id);
+  const { error: updateError } = await paymentInvoiceRepository.markPaidFromStripeInvoice(platformInvoice.id, {
+    paidAt,
+    hostedInvoiceUrl: invoice.hosted_invoice_url,
+    invoicePdf: invoice.invoice_pdf,
+  });
 
   if (updateError) {
     log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
@@ -1653,11 +1646,10 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
    */
   void (async () => {
     try {
-      const { data: receiptInvoice } = await supabaseAdmin
-        .from('payment_invoices')
-        .select('id, user_id, client_email, client_name, invoice_number, currency, booking_id')
-        .eq('id', platformInvoice.id)
-        .maybeSingle();
+      const { data: receiptInvoice } = await paymentInvoiceRepository.readFieldsUnscoped(
+        platformInvoice.id,
+        WEBHOOK_INVOICE_RECEIPT_COLUMNS
+      );
 
       if (!receiptInvoice?.client_email) {
         log.info({ invoiceId: platformInvoice.id }, 'No client email on this invoice; no receipt to send');
@@ -1772,11 +1764,7 @@ async function handleConnectCheckoutCompleted(
     log.info({ invoiceId, sessionId: session.id }, 'Checkout session for invoice');
 
     // Look up the platform invoice
-    const { data: platformInvoice, error: lookupError } = await supabaseAdmin
-      .from('payment_invoices')
-      .select('*')
-      .eq('id', invoiceId)
-      .single();
+    const { data: platformInvoice, error: lookupError } = await paymentInvoiceRepository.findByIdUnscoped(invoiceId);
 
     if (lookupError || !platformInvoice) {
       log.error({ err: lookupError, invoiceId }, 'Platform invoice not found');
@@ -1851,14 +1839,7 @@ async function handleConnectCheckoutCompleted(
     // Now the invoice. The update_invoice_on_payment trigger already does this
     // when the transaction lands, so this is belt-and-braces for databases where
     // that trigger is not present — and it is idempotent either way.
-    const { error: updateError } = await supabaseAdmin
-      .from('payment_invoices')
-      .update({
-        status: 'paid',
-        paid_at: paidAt,
-        updated_at: paidAt
-      })
-      .eq('id', invoiceId);
+    const { error: updateError } = await paymentInvoiceRepository.markPaidFromCheckout(invoiceId, paidAt);
 
     if (updateError) {
       log.error({ err: updateError, invoiceId }, 'Failed to update invoice status');
@@ -1996,11 +1977,10 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
   }
 
   // Look up the platform invoice by Stripe invoice ID
-  const { data: platformInvoice, error: lookupError } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('id, invoice_number, user_id')
-    .eq('stripe_invoice_id', invoice.id)
-    .single();
+  const { data: platformInvoice, error: lookupError } = await paymentInvoiceRepository.findByStripeInvoiceId(
+    invoice.id,
+    WEBHOOK_INVOICE_LOOKUP_COLUMNS
+  );
 
   if (lookupError || !platformInvoice) {
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
@@ -2019,13 +1999,7 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
   }
 
   // Update platform invoice to overdue
-  const { error: updateError } = await supabaseAdmin
-    .from('payment_invoices')
-    .update({
-      status: 'overdue',
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', platformInvoice.id);
+  const { error: updateError } = await paymentInvoiceRepository.setStatusFromStripe(platformInvoice.id, 'overdue');
 
   if (updateError) {
     log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
@@ -2039,19 +2013,16 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
    * declining" was a pattern with no trail behind it — the invoice quietly
    * turned overdue and the drawer said nothing.
    */
-  const { data: failedInvoice } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('contact_id, amount, currency')
-    .eq('id', platformInvoice.id)
-    .maybeSingle();
+  const { data: failedInvoice } = await paymentInvoiceRepository.readFieldsUnscoped(
+    platformInvoice.id,
+    WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS
+  );
 
   if (failedInvoice?.contact_id) {
-    const { data: ownerProfile } = await supabaseAdmin
-      .from('business_profiles')
-      .select('language')
-      .eq('user_id', platformInvoice.user_id)
-      .maybeSingle();
-    const ownerLocale = ownerProfile?.language || 'en';
+    // The raw stored language, or null when there is none (same as the old
+    // `profile?.language`); `|| 'en'` below is unchanged.
+    const { data: ownerLanguage } = await businessProfileRepository.findLanguage(platformInvoice.user_id);
+    const ownerLocale = ownerLanguage || 'en';
     const currency = failedInvoice.currency || 'USD';
 
     crmActivityRepository.create({
@@ -2090,11 +2061,10 @@ async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAcc
   log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.finalized');
 
   // Look up the platform invoice by Stripe invoice ID
-  const { data: platformInvoice, error: lookupError } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('id, invoice_number, user_id')
-    .eq('stripe_invoice_id', invoice.id)
-    .single();
+  const { data: platformInvoice, error: lookupError } = await paymentInvoiceRepository.findByStripeInvoiceId(
+    invoice.id,
+    WEBHOOK_INVOICE_LOOKUP_COLUMNS
+  );
 
   if (lookupError || !platformInvoice) {
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
@@ -2112,14 +2082,10 @@ async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAcc
   }
 
   // Update with hosted URL and PDF
-  const { error: updateError } = await supabaseAdmin
-    .from('payment_invoices')
-    .update({
-      stripe_hosted_invoice_url: invoice.hosted_invoice_url,
-      stripe_invoice_pdf: invoice.invoice_pdf,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', platformInvoice.id);
+  const { error: updateError } = await paymentInvoiceRepository.recordStripeDocuments(platformInvoice.id, {
+    hostedInvoiceUrl: invoice.hosted_invoice_url,
+    invoicePdf: invoice.invoice_pdf,
+  });
 
   if (updateError) {
     log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
@@ -2140,11 +2106,10 @@ async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connec
   log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.marked_uncollectible');
 
   // Look up the platform invoice by Stripe invoice ID
-  const { data: platformInvoice, error: lookupError } = await supabaseAdmin
-    .from('payment_invoices')
-    .select('id, invoice_number, user_id')
-    .eq('stripe_invoice_id', invoice.id)
-    .single();
+  const { data: platformInvoice, error: lookupError } = await paymentInvoiceRepository.findByStripeInvoiceId(
+    invoice.id,
+    WEBHOOK_INVOICE_LOOKUP_COLUMNS
+  );
 
   if (lookupError || !platformInvoice) {
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
@@ -2162,13 +2127,7 @@ async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connec
   }
 
   // Update platform invoice to cancelled
-  const { error: updateError } = await supabaseAdmin
-    .from('payment_invoices')
-    .update({
-      status: 'cancelled',
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', platformInvoice.id);
+  const { error: updateError } = await paymentInvoiceRepository.setStatusFromStripe(platformInvoice.id, 'cancelled');
 
   if (updateError) {
     log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
@@ -2304,20 +2263,21 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription, log:
  * use it (SA P1-C4).
  */
 async function completeClaim(eventId: string) {
-  await supabaseAdmin
-    .from('processed_webhook_events')
-    .update({ status: 'completed', completed_at: new Date().toISOString() })
-    .eq('event_id', eventId);
+  await processedWebhookEventRepository.complete(eventId);
 }
 
 /**
  * Business OS flow handlers, registered by the slices that build them (P-3b adds
- * `plan`; boost adds `boost`). Empty in P-1: a recognised flow with no handler
- * throws, the claim is released and Stripe retries (SA Q-6).
+ * `plan`; boost 4a adds `boost`). A recognised flow with no handler throws, the
+ * claim is released and Stripe retries (SA Q-6) — so a resolver and its handler
+ * ship together (boost SA C-2). A handler that returns means "complete"; one
+ * that throws means "release for retry".
  */
 const BUSINESS_OS_FLOW_HANDLERS: Partial<
   Record<BusinessOsFlow, (event: Stripe.Event, log: Logger) => Promise<void>>
-> = {};
+> = {
+  boost: handleBoostWebhookEvent,
+};
 
 /**
  * Main webhook handler
@@ -2428,11 +2388,7 @@ export async function POST(request: NextRequest) {
     //
     // Only 'completed' suppresses a retry now. A 'failed' row is reclaimed
     // below so Stripe's next delivery can do the work.
-    const { data: existingEvent, error: checkError } = await supabaseAdmin
-      .from('processed_webhook_events')
-      .select('event_id, status')
-      .eq('event_id', event.id)
-      .maybeSingle();
+    const { data: existingEvent, error: checkError } = await processedWebhookEventRepository.findClaim(event.id);
 
     if (checkError) {
       log.error({ err: checkError }, 'Error checking for duplicate event');
@@ -2453,24 +2409,19 @@ export async function POST(request: NextRequest) {
     if (existingEvent) {
       // A previous attempt failed. Claim it for this attempt.
       log.info('Retrying previously failed event');
-      await supabaseAdmin
-        .from('processed_webhook_events')
-        .update({ status: 'processing', failure_message: null, processed_at: new Date().toISOString() })
-        .eq('event_id', event.id);
+      await processedWebhookEventRepository.reclaimFailed(event.id);
       processedEventId = event.id;
     } else {
-      const { error: insertError } = await supabaseAdmin
-        .from('processed_webhook_events')
-        .insert({
-          event_id: event.id,
-          event_type: event.type,
-          status: 'processing',
-          processed_at: new Date().toISOString(),
-          metadata: {
-            created: event.created,
-            livemode: event.livemode
-          }
-        });
+      const { error: insertError } = await processedWebhookEventRepository.insertClaim({
+        event_id: event.id,
+        event_type: event.type,
+        status: 'processing',
+        processed_at: new Date().toISOString(),
+        metadata: {
+          created: event.created,
+          livemode: event.livemode
+        }
+      });
 
       if (insertError) {
         // Unique violation means another request claimed it between our SELECT
@@ -2695,13 +2646,10 @@ export async function POST(request: NextRequest) {
     // signature, malformed body), where there is nothing to release.
     if (processedEventId) {
       try {
-        await supabaseAdmin
-          .from('processed_webhook_events')
-          .update({
-            status: 'failed',
-            failure_message: String(error?.message ?? error).slice(0, 500)
-          })
-          .eq('event_id', processedEventId);
+        await processedWebhookEventRepository.markFailed(
+          processedEventId,
+          String(error?.message ?? error).slice(0, 500)
+        );
       } catch (releaseError) {
         // Nothing further to do — the original failure is the one that matters,
         // and swallowing this keeps it from masking the real error.

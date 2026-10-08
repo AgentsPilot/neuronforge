@@ -71,11 +71,18 @@
  * mounted on first open, so the card's own mount makes no extra request. It
  * reads nothing from the card and changes nothing on it: the percentage, the
  * band and "Extra credits" are untouched (FR-24, BD-25).
+ *
+ * ── RETURN FROM A BOOST PAYMENT (slice 5b.1) ────────────────────────────────
+ * `BoostReturnNotice` sits under the title row. On a normal visit it renders
+ * nothing and reads nothing; after a boost payment it shows the payment's
+ * progress and, once credited, raises the credit-usage signal so this card
+ * re-reads.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Plus, RefreshCw } from 'lucide-react';
 import { BoostPackagesPanel } from '@/components/business-os/BoostPackagesPanel';
+import { BoostReturnNotice } from '@/components/business-os/BoostReturnNotice';
 import { CreditHistoryPanel } from '@/components/business-os/CreditHistoryPanel';
 import { isBusinessOsCreditHistoryEnabled } from '@/lib/utils/featureFlags';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -360,6 +367,11 @@ export function UsageCard() {
           </button>
         </span>
       </div>
+
+      {/* Boost 5b.1: after paying, Stripe returns here; the notice reads what
+          happened (it never credits) and makes the card re-read once credited.
+          Renders nothing on a normal visit. */}
+      <BoostReturnNotice />
 
       {/* Says WHY it is empty. A blank card and a broken card look identical
           otherwise — and a failed read is never shown as zero. */}

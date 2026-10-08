@@ -184,9 +184,21 @@ describe('refusals before the reservation write nothing', () => {
     ['reservation error (deterministic, N-1 / I-3)', { data: null, error: new Error('22023') }, 'reservation_failed'],
   ] as const)('%s → %s, with no Stripe call and nothing to release', async (_name, reserveResult, error) => {
     const { deps, log, create, abandon } = setup({ reserve: reserveResult });
-    expect(await runBoostCheckout(deps, INPUT, log)).toEqual({ ok: false, error });
+    expect(await runBoostCheckout(deps, INPUT, log)).toMatchObject({ ok: false, error });
     expect(create).not.toHaveBeenCalled();
     expect(abandon).not.toHaveBeenCalled();
+  });
+
+  it('5b SA C-5: cap_reached carries the cap (an override included) and its window, never the counted amount', async () => {
+    const { deps, log } = setup({ reserve: { data: { outcome: 'cap_reached', capMinor: 30000, countedMinor: 29000 }, error: null } });
+    const outcome = await runBoostCheckout(deps, INPUT, log);
+    expect(outcome).toEqual({ ok: false, error: 'cap_reached', cap: { capMinor: 30000, windowDays: deps.cap.windowDays } });
+    expect(JSON.stringify(outcome)).not.toContain('29000');
+  });
+
+  it('5b SA C-5: no other refusal carries cap figures', async () => {
+    const { deps, log } = setup({ reserve: { data: { outcome: 'no_plan_row' }, error: null } });
+    expect(await runBoostCheckout(deps, INPUT, log)).toEqual({ ok: false, error: 'not_eligible' });
   });
 
   it('Q-7: cap_reached is a warn with the counted amount and no email', async () => {

@@ -5833,6 +5833,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X44. bo
     {
       "chain": [
         [
+          "select",
+          "id, user_id, livemode, status, package_id, package_version, retail_version, credit_value_version, price_minor, currency, tax_exclusive, credits_base, credits_bonus, credits_total, checkout_expires_at, stripe_checkout_session_id, stripe_payment_intent_id, stripe_charge_id, receipt_url, amount_subtotal_minor, amount_tax_minor, amount_total_minor, amount_refunded_minor, stripe_dispute_id, flag_reason, lot_id, paid_at, status_changed_at, created_at, updated_at",
+        ],
+        [
+          "eq",
+          "stripe_checkout_session_id",
+          "cs_platform_boost",
+        ],
+      ],
+      "operation": "select",
+      "table": "business_os_boost_purchases",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
           "update",
           {
             "completed_at": "<NOW>",
@@ -5901,6 +5918,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X45. bo
       "operation": "insert",
       "table": "processed_webhook_events",
       "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, livemode, status, package_id, package_version, retail_version, credit_value_version, price_minor, currency, tax_exclusive, credits_base, credits_bonus, credits_total, checkout_expires_at, stripe_checkout_session_id, stripe_payment_intent_id, stripe_charge_id, receipt_url, amount_subtotal_minor, amount_tax_minor, amount_total_minor, amount_refunded_minor, stripe_dispute_id, flag_reason, lot_id, paid_at, status_changed_at, created_at, updated_at",
+        ],
+        [
+          "eq",
+          "stripe_checkout_session_id",
+          "cs_platform_boost",
+        ],
+      ],
+      "operation": "select",
+      "table": "business_os_boost_purchases",
+      "terminal": "maybeSingle",
       "type": "db",
     },
     {
@@ -6081,6 +6115,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X46. bo
       "operation": "insert",
       "table": "processed_webhook_events",
       "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, livemode, status, package_id, package_version, retail_version, credit_value_version, price_minor, currency, tax_exclusive, credits_base, credits_bonus, credits_total, checkout_expires_at, stripe_checkout_session_id, stripe_payment_intent_id, stripe_charge_id, receipt_url, amount_subtotal_minor, amount_tax_minor, amount_total_minor, amount_refunded_minor, stripe_dispute_id, flag_reason, lot_id, paid_at, status_changed_at, created_at, updated_at",
+        ],
+        [
+          "eq",
+          "stripe_checkout_session_id",
+          "cs_platform_boost",
+        ],
+      ],
+      "operation": "select",
+      "table": "business_os_boost_purchases",
+      "terminal": "maybeSingle",
       "type": "db",
     },
     {
@@ -7156,6 +7207,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X54. bo
       "operation": "insert",
       "table": "processed_webhook_events",
       "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, livemode, status, package_id, package_version, retail_version, credit_value_version, price_minor, currency, tax_exclusive, credits_base, credits_bonus, credits_total, checkout_expires_at, stripe_checkout_session_id, stripe_payment_intent_id, stripe_charge_id, receipt_url, amount_subtotal_minor, amount_tax_minor, amount_total_minor, amount_refunded_minor, stripe_dispute_id, flag_reason, lot_id, paid_at, status_changed_at, created_at, updated_at",
+        ],
+        [
+          "eq",
+          "stripe_checkout_session_id",
+          "cs_platform_boost",
+        ],
+      ],
+      "operation": "select",
+      "table": "business_os_boost_purchases",
+      "terminal": "maybeSingle",
       "type": "db",
     },
     {
@@ -13294,6 +13362,23 @@ exports[`Stripe webhook, platform path through the Business OS router (P-1) P6. 
       "operation": "insert",
       "table": "processed_webhook_events",
       "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, livemode, status, package_id, package_version, retail_version, credit_value_version, price_minor, currency, tax_exclusive, credits_base, credits_bonus, credits_total, checkout_expires_at, stripe_checkout_session_id, stripe_payment_intent_id, stripe_charge_id, receipt_url, amount_subtotal_minor, amount_tax_minor, amount_total_minor, amount_refunded_minor, stripe_dispute_id, flag_reason, lot_id, paid_at, status_changed_at, created_at, updated_at",
+        ],
+        [
+          "eq",
+          "stripe_checkout_session_id",
+          "cs_platform_boost",
+        ],
+      ],
+      "operation": "select",
+      "table": "business_os_boost_purchases",
+      "terminal": "maybeSingle",
       "type": "db",
     },
     {

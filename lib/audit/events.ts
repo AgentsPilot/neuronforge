@@ -233,6 +233,18 @@ export const AUDIT_EVENTS = {
   // carry the package id and version, the price in minor units, the currency
   // and the Stripe mode; never the client secret, the session id or the email.
   BOS_BOOST_CHECKOUT_STARTED: 'BOS_BOOST_CHECKOUT_STARTED',
+  // Credits boost slice 4a: written by the Stripe webhook's boost handler, then
+  // flushed (bounded). Entity type 'business_os_boost_purchase', id = the
+  // purchase id, user = the purchase row's account (never the event's).
+  //   CREDITED: a paid boost became one credit lot (FR-17): package, version,
+  //     credits, price, currency, lot id, the payment intent id, the mode.
+  //   PAYMENT_FAILED: a delayed payment method failed (the row moved to failed).
+  //   FLAGGED: a boost payment needs a person: a mismatch, a paid session that
+  //     cannot be credited, a disallowed move, a deterministic failure. Details
+  //     are codes only; the owner sees a neutral label (SA C-5).
+  BOS_BOOST_CREDITED: 'BOS_BOOST_CREDITED',
+  BOS_BOOST_PAYMENT_FAILED: 'BOS_BOOST_PAYMENT_FAILED',
+  BOS_BOOST_FLAGGED: 'BOS_BOOST_FLAGGED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -879,6 +891,19 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_BOOST_CHECKOUT_STARTED]: {
     severity: 'info',
     description: 'A Business OS owner started a credits boost purchase (package, price and Stripe mode recorded)',
+  },
+  // Credits boost slice 4a. The writer passes NO severity: these are the source.
+  [AUDIT_EVENTS.BOS_BOOST_CREDITED]: {
+    severity: 'info',
+    description: 'A paid Business OS credits boost was credited (package, credits, price and Stripe payment recorded)',
+  },
+  [AUDIT_EVENTS.BOS_BOOST_PAYMENT_FAILED]: {
+    severity: 'info',
+    description: 'A delayed payment for a Business OS credits boost failed',
+  },
+  [AUDIT_EVENTS.BOS_BOOST_FLAGGED]: {
+    severity: 'warning',
+    description: 'A Business OS credits boost payment was flagged for review (reason code recorded)',
   },
   // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
   // (and possibly send) queued items across every account, outside the schedule.

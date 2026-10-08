@@ -70,8 +70,21 @@ describe('business data ownership', () => {
     expect(BUSINESS_OWNED_TABLES.length).toBeGreaterThan(40);
   });
 
+  /**
+   * Business-owned on the live database but created outside supabase/migrations,
+   * so the (applied, never edited) ownership migration cannot name them. Each
+   * carries a live `<table>_business_fk` CASCADE to business_profiles, measured
+   * with purge_schema_introspect.
+   *
+   * Empty since 2026-10-08: insight_hypotheses and insight_measurements were the
+   * entries (measured 2026-10-07), and PR #257 committed their CREATE TABLEs
+   * (20261006e, 20261006g) and named them in the ownership migration's array, so
+   * the exception stopped being true. Kept as the mechanism for the next one.
+   */
+  const LIVE_ONLY: Record<string, string> = {};
+
   it('names the same tables in TypeScript and in SQL', () => {
-    const sql: string[] = [...tablesInMigration()].sort();
+    const sql: string[] = [...tablesInMigration(), ...Object.keys(LIVE_ONLY)].sort();
     // Annotated, because the registry is `as const`: spreading it keeps the
     // union-of-literals element type, and `.includes` then refuses a plain
     // string. Comparing table NAMES is the whole point here.
@@ -81,6 +94,17 @@ describe('business data ownership', () => {
     // than printing two long lists and leaving the reader to compare them.
     expect(sql.filter(t => !ts.includes(t))).toEqual([]);
     expect(ts.filter(t => !sql.includes(t))).toEqual([]);
+  });
+
+  it('each LIVE_ONLY exception is still absent from every migration, and still registered', () => {
+    // Once someone commits the CREATE TABLE, the exception must go: the table then
+    // needs its own ownership migration, which the array test above would demand.
+    const owned: readonly string[] = BUSINESS_OWNED_TABLES;
+    for (const t of Object.keys(LIVE_ONLY)) {
+      expect(owned).toContain(t);
+      expect(tablesInMigration()).not.toContain(t);
+      expect(tablesWithUserIdInMigrations().has(t)).toBe(false);
+    }
   });
 
   it('never claims a table for both the business and the person', () => {

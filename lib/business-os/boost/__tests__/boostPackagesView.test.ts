@@ -50,19 +50,60 @@ describe('toBoostPackageView', () => {
   });
 });
 
-describe('slice 5a is inert (SA C-3)', () => {
-  const FILES = [
-    'components/business-os/BoostPackagesPanel.tsx',
+describe('who may open a checkout (5a SA C-3, replaced in 5b.1 per workplan §3.6)', () => {
+  const read = (file: string) => readFileSync(join(process.cwd(), file), 'utf8');
+  const stripComments = (code: string) => code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  it('(a) the panel names the checkout route exactly once, and starts a checkout only after purchaseAvailable === true', () => {
+    const code = read('components/business-os/BoostPackagesPanel.tsx');
+    expect(code.match(/\/api\/business-os\/credits\/boost\/checkout/g)).toHaveLength(1);
+    const body = stripComments(code);
+    expect(body.match(/fetch\(CHECKOUT_URL/g)).toHaveLength(1);
+    const start = body.indexOf('async function startCheckout');
+    const guard = body.indexOf("if (payload?.purchaseAvailable !== true) return;", start);
+    const call = body.indexOf('fetch(CHECKOUT_URL', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(start);
+    expect(call).toBeGreaterThan(guard);
+  });
+
+  it.each([
     'lib/business-os/boost/boostPackagesView.ts',
     'lib/business-os/boost/boostPackagesTypes.ts',
-    'app/api/business-os/credits/boost/packages/route.ts',
-  ];
-  const BANNED = ['/checkout', 'boostCheckout', 'isBoostCheckoutOpenFor', 'BUSINESS_OS_CREDITS_BOOST'];
+    'lib/business-os/boost/boostPurchasesView.ts',
+    'lib/business-os/boost/boostPurchasesTypes.ts',
+    'app/api/business-os/credits/boost/purchases/route.ts',
+    'components/business-os/BoostReturnNotice.tsx',
+  ])('(b) %s never names the boost switch or the access checks', (file) => {
+    const code = read(file);
+    for (const word of ['BUSINESS_OS_CREDITS_BOOST', 'isBoostCheckoutOpenFor', 'isBoostPurchaseAvailableFor', '/credits/boost/checkout']) {
+      expect({ file, word, found: code.includes(word) }).toEqual({ file, word, found: false });
+    }
+  });
 
-  it.each(FILES)('%s never names the checkout, its access check or the boost flag', (file) => {
-    // Whole file, comments included: a pointer to the checkout in a comment is
-    // how the import arrives next.
-    const code = readFileSync(join(process.cwd(), file), 'utf8');
-    for (const word of BANNED) expect({ file, word, found: code.includes(word) }).toEqual({ file, word, found: false });
+  it('(c) only the packages route decides purchaseAvailable; only the checkout route and the access module call isBoostCheckoutOpenFor', () => {
+    const ROOT = process.cwd();
+    const { readdirSync, statSync } = jest.requireActual('fs') as typeof import('fs');
+    const callers: Record<string, string[]> = { isBoostCheckoutOpenFor: [], isBoostPurchaseAvailableFor: [] };
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(join(ROOT, dir))) {
+        if (entry === 'node_modules' || entry === '__tests__') continue;
+        const rel = `${dir}/${entry}`;
+        if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+        else if (/\.tsx?$/.test(entry)) {
+          const code = stripComments(read(rel));
+          for (const name of Object.keys(callers)) if (new RegExp(`\\b${name}\\(`).test(code)) callers[name].push(rel);
+        }
+      }
+    };
+    for (const root of ['app', 'lib', 'components']) walk(root);
+    expect(callers.isBoostPurchaseAvailableFor.sort()).toEqual([
+      'app/api/business-os/credits/boost/packages/route.ts',
+      'lib/business-os/boost/boostCheckoutAccess.ts',
+    ]);
+    expect(callers.isBoostCheckoutOpenFor.sort()).toEqual([
+      'app/api/business-os/credits/boost/checkout/route.ts',
+      'lib/business-os/boost/boostCheckoutAccess.ts',
+    ]);
   });
 });

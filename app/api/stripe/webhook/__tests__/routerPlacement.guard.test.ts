@@ -93,9 +93,71 @@ function callsTo(root: ts.Node, name: string): ts.CallExpression[] {
 }
 
 /** Code text without comments, for "this call is gone" checks. */
-function codeOf(node: ts.Node): string {
+function codeOf(node: ts.Node, file: ts.SourceFile = sf): string {
   const printer = ts.createPrinter({ removeComments: true });
-  return ts.isSourceFile(node) ? printer.printFile(node) : printer.printNode(ts.EmitHint.Unspecified, node, sf);
+  return ts.isSourceFile(node) ? printer.printFile(node) : printer.printNode(ts.EmitHint.Unspecified, node, file);
+}
+
+/** Calls of the form `<receiver>.<method>(…)` under `root`. */
+function methodCallsTo(root: ts.Node, receiver: string, method: string): ts.CallExpression[] {
+  const out: ts.CallExpression[] = [];
+  walk(root, (n) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      ts.isIdentifier(n.expression.expression) &&
+      n.expression.expression.text === receiver &&
+      n.expression.name.text === method
+    ) {
+      out.push(n);
+    }
+  });
+  return out;
+}
+
+/**
+ * Lines of every `status: 'completed'` property in `file`, outside `except`.
+ * The completing write of the claim table (CF-5 PR 1 moved it from the route
+ * into `ProcessedWebhookEventRepository.complete`).
+ */
+function completingWritesIn(file: ts.SourceFile, except?: ts.Node): number[] {
+  const lines: number[] = [];
+  walk(file, (n) => {
+    if (
+      ts.isPropertyAssignment(n) &&
+      n.name.getText(file) === 'status' &&
+      n.initializer.getText(file) === "'completed'" &&
+      !(except && n.pos >= except.pos && n.end <= except.end)
+    ) {
+      lines.push(file.getLineAndCharacterOfPosition(n.getStart(file)).line + 1);
+    }
+  });
+  return lines;
+}
+
+// The claim repository (CF-5 PR 1). A small file, parsed once for the claim checks.
+const CLAIM_REPO = path.join(ROOT, 'lib/repositories/ProcessedWebhookEventRepository.ts');
+const claimRepoSf = ts.createSourceFile(
+  CLAIM_REPO,
+  fs.readFileSync(CLAIM_REPO, 'utf8'),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS
+);
+
+function claimRepositoryMethod(name: string): ts.MethodDeclaration | undefined {
+  let found: ts.MethodDeclaration | undefined;
+  walk(claimRepoSf, (n) => {
+    if (
+      ts.isMethodDeclaration(n) &&
+      n.name.getText(claimRepoSf) === name &&
+      ts.isClassDeclaration(n.parent) &&
+      n.parent.name?.text === 'ProcessedWebhookEventRepository'
+    ) {
+      found = n;
+    }
+  });
+  return found;
 }
 
 const post = topLevelFunction('POST');
@@ -136,27 +198,143 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     expect(guarded).toBe(true);
   });
 
+  // CF-5 PR 1 moved the completing update into
+  // `ProcessedWebhookEventRepository.complete` (workplan §7.3.2). The check
+  // followed it: completeClaim() must call that method, the method must be the
+  // one completing update in the repository, the route must hold none of its
+  // own, and nothing in the route may call the method around completeClaim().
   it('every claim completion goes through completeClaim(), and completeClaim is the one completing update', () => {
     const helper = topLevelFunction('completeClaim');
     expect(helper).toBeDefined();
-    expect(codeOf(helper!)).toContain("status: 'completed'");
+    expect(methodCallsTo(helper!, 'processedWebhookEventRepository', 'complete')).toHaveLength(1);
 
-    // No other place writes status 'completed'.
-    const completingWrites: number[] = [];
-    walk(sf, (n) => {
-      if (
-        ts.isPropertyAssignment(n) &&
-        n.name.getText(sf) === 'status' &&
-        n.initializer.getText(sf) === "'completed'" &&
-        !(n.pos >= helper!.pos && n.end <= helper!.end)
-      ) {
-        completingWrites.push(sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1);
-      }
-    });
-    expect(completingWrites).toEqual([]);
+    // The repository's complete() is the one completing write there.
+    const complete = claimRepositoryMethod('complete');
+    expect(complete).toBeDefined();
+    expect(codeOf(complete!, claimRepoSf)).toContain("status: 'completed'");
+    expect(completingWritesIn(claimRepoSf, complete!)).toEqual([]);
+
+    // The route writes status 'completed' nowhere itself.
+    expect(completingWritesIn(sf)).toEqual([]);
+
+    // Nothing in the route reaches complete() except through completeClaim().
+    const direct = methodCallsTo(sf, 'processedWebhookEventRepository', 'complete').filter(
+      (c) => !(c.pos >= helper!.pos && c.end <= helper!.end)
+    );
+    expect(direct).toEqual([]);
 
     // Deny path + flow path + end-of-switch path.
     expect(callsTo(post!, 'completeClaim').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('the claim table is reached only through its repository (CF-5 PR 1)', () => {
+    // Comments excluded, so a line explaining the history cannot trip or satisfy it.
+    // Any quote style, backticks included (SA O-P1-1).
+    expect(codeOf(sf)).not.toMatch(/from\(\s*['"`]processed_webhook_events['"`]\s*\)/);
+    // Only the singleton: a `new ProcessedWebhookEventRepository()` built in the
+    // route could call complete() around completeClaim() unseen (SA O-P1-1).
+    // AST identifiers, so the import path string does not count.
+    const classMentions: number[] = [];
+    walk(sf, (n) => {
+      if (ts.isIdentifier(n) && n.text === 'ProcessedWebhookEventRepository') {
+        classMentions.push(sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1);
+      }
+    });
+    expect(classMentions).toEqual([]);
+    for (const method of ['findClaim', 'reclaimFailed', 'insertClaim', 'markFailed']) {
+      expect(methodCallsTo(post!, 'processedWebhookEventRepository', method)).toHaveLength(1);
+    }
+  });
+
+  // CF-5 PR 2 (workplan §7.3.3): the 15 invoice and business-profile sites.
+  // Expected calls per handler; together they are every call in the route.
+  const INVOICE_CALLS: Record<string, Record<string, number>> = {
+    handleConnectInvoicePaid: {
+      findByStripeInvoiceId: 1,
+      findByIdUnscoped: 1,
+      recordStripeInvoiceId: 1,
+      markPaidFromStripeInvoice: 1,
+      readFieldsUnscoped: 1,
+    },
+    handleConnectCheckoutCompleted: { findByIdUnscoped: 1, markPaidFromCheckout: 1 },
+    handleConnectInvoicePaymentFailed: { findByStripeInvoiceId: 1, setStatusFromStripe: 1, readFieldsUnscoped: 1 },
+    handleConnectInvoiceFinalized: { findByStripeInvoiceId: 1, recordStripeDocuments: 1 },
+    handleConnectInvoiceUncollectible: { findByStripeInvoiceId: 1, setStatusFromStripe: 1 },
+  };
+  const INVOICE_WRITES = ['recordStripeInvoiceId', 'markPaidFromStripeInvoice', 'markPaidFromCheckout', 'setStatusFromStripe', 'recordStripeDocuments'];
+
+  /** Every `<receiver>.<anything>(…)` call under `root`, as method names. */
+  function receiverCalls(root: ts.Node, receiver: string): ts.CallExpression[] {
+    const out: ts.CallExpression[] = [];
+    walk(root, (n) => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        ts.isIdentifier(n.expression.expression) &&
+        n.expression.expression.text === receiver
+      ) {
+        out.push(n);
+      }
+    });
+    return out;
+  }
+
+  it('the invoice and business-profile tables are reached only through their repositories (CF-5 PR 2)', () => {
+    const code = codeOf(sf);
+    expect(code).not.toMatch(/from\(\s*['"`]payment_invoices['"`]\s*\)/);
+    expect(code).not.toMatch(/from\(\s*['"`]business_profiles['"`]\s*\)/);
+
+    // Only the singletons, never the classes (no instance built around the checks).
+    const classMentions: string[] = [];
+    walk(sf, (n) => {
+      if (ts.isIdentifier(n) && (n.text === 'PaymentInvoiceRepository' || n.text === 'BusinessProfileRepository')) {
+        classMentions.push(n.text);
+      }
+    });
+    expect(classMentions).toEqual([]);
+
+    // Each handler makes exactly its expected calls, and no other function makes any.
+    let expectedTotal = 0;
+    for (const [fn, expected] of Object.entries(INVOICE_CALLS)) {
+      const node = topLevelFunction(fn);
+      expect(node).toBeDefined();
+      const actual: Record<string, number> = {};
+      for (const call of receiverCalls(node!, 'paymentInvoiceRepository')) {
+        const name = (call.expression as ts.PropertyAccessExpression).name.text;
+        actual[name] = (actual[name] ?? 0) + 1;
+      }
+      expect({ fn, calls: actual }).toEqual({ fn, calls: expected });
+      expectedTotal += Object.values(expected).reduce((a, b) => a + b, 0);
+    }
+    expect(receiverCalls(sf, 'paymentInvoiceRepository')).toHaveLength(expectedTotal);
+
+    const languageReads = receiverCalls(sf, 'businessProfileRepository');
+    expect(languageReads.map((c) => (c.expression as ts.PropertyAccessExpression).name.text)).toEqual(['findLanguage']);
+    const failed = topLevelFunction('handleConnectInvoicePaymentFailed')!;
+    expect(languageReads[0].pos >= failed.pos && languageReads[0].end <= failed.end).toBe(true);
+  });
+
+  it('F-1 stays fixed: every invoice write comes after an ownership check on an invoice row (CF-5 PR 2)', () => {
+    // The nearest `accountOwns(…)` before each write must test an invoice row's
+    // owner, not, say, a plan's. Moving a write above its check (the F-1 shape)
+    // makes the nearest check a different one, or none.
+    for (const fn of Object.keys(INVOICE_CALLS)) {
+      const node = topLevelFunction(fn)!;
+      const checks = callsTo(node, 'accountOwns');
+      const writes = receiverCalls(node, 'paymentInvoiceRepository').filter((c) =>
+        INVOICE_WRITES.includes((c.expression as ts.PropertyAccessExpression).name.text)
+      );
+      expect(writes.length).toBeGreaterThan(0);
+      for (const write of writes) {
+        const before = checks.filter((c) => c.end <= write.getStart(sf));
+        const nearest = before[before.length - 1];
+        expect({ fn, write: write.expression.getText(sf), check: nearest?.arguments[1]?.getText(sf) }).toEqual({
+          fn,
+          write: write.expression.getText(sf),
+          check: expect.stringMatching(/^(platformInvoice|invoiceByMetadata)\.user_id$/),
+        });
+      }
+    }
   });
 
   it('handleInvoicePaid and the customer-subscription fallback are gone', () => {

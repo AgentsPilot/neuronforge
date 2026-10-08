@@ -1,4 +1,4 @@
-import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 
@@ -712,6 +712,60 @@ export type CreatePaymentInvoiceInput =
  */
 export const ISSUED_INVOICE_STATUSES = ['sent', 'pending', 'overdue'] as const;
 
+// ── Stripe webhook: invoice column lists and result shapes (CF-5 PR 2) ───────
+// Each list is the exact select string the webhook issued inline before it moved
+// here (docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md
+// §7.3.3). Literal types, so a caller can pass only these (SA C-3).
+
+/** `invoice.payment_failed` / `.finalized` / `.marked_uncollectible`: find the row and its owner. */
+export const WEBHOOK_INVOICE_LOOKUP_COLUMNS = 'id, invoice_number, user_id';
+/** `invoice.paid`: what the receipt e-mail needs. */
+export const WEBHOOK_INVOICE_RECEIPT_COLUMNS =
+  'id, user_id, client_email, client_name, invoice_number, currency, booking_id';
+/** `invoice.payment_failed`: what the client-timeline activity needs. */
+export const WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS = 'contact_id, amount, currency';
+
+/** Closed set of column lists `findByStripeInvoiceId` may select. */
+export type WebhookInvoiceByStripeIdColumns = '*' | typeof WEBHOOK_INVOICE_LOOKUP_COLUMNS;
+/** Closed set of column lists `readFieldsUnscoped` may select. */
+export type WebhookInvoiceFieldColumns =
+  | typeof WEBHOOK_INVOICE_RECEIPT_COLUMNS
+  | typeof WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS;
+
+export type WebhookInvoiceLookup = Pick<PaymentInvoice, 'id' | 'invoice_number' | 'user_id'>;
+
+/** The row shape each `readFieldsUnscoped` column list returns. */
+export interface WebhookInvoiceFields {
+  [WEBHOOK_INVOICE_RECEIPT_COLUMNS]: Pick<
+    PaymentInvoice,
+    'id' | 'user_id' | 'client_email' | 'client_name' | 'invoice_number' | 'currency' | 'booking_id'
+  >;
+  [WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS]: Pick<PaymentInvoice, 'contact_id' | 'amount' | 'currency'>;
+}
+
+/** The two statuses the webhook sets on an invoice from a Stripe event, besides `paid`. */
+export type WebhookInvoiceStatusFromStripe = 'overdue' | 'cancelled';
+
+/** The Stripe-hosted documents of an invoice, as the Stripe event carries them. */
+export interface WebhookInvoiceDocuments {
+  hostedInvoiceUrl: string | null | undefined;
+  invoicePdf: string | null | undefined;
+}
+
+/**
+ * supabase-js's result, passed through unchanged (the same error object, so a
+ * caller can still read `code`). Used by the webhook methods, which neither
+ * catch nor log (see their section). The reused `findByStripeInvoiceId` keeps
+ * `PaymentRepositoryResult` and logs errors other than PGRST116 (SA C-5).
+ */
+export interface WebhookInvoiceResult<T> {
+  data: T | null;
+  error: PostgrestError | null;
+}
+
+/** PostgREST's "no row" answer to `.single()`: a routine miss, not a fault. */
+const NO_ROW_CODE = 'PGRST116';
+
 // Invoice Repository
 export class PaymentInvoiceRepository {
   private supabase: SupabaseClient;
@@ -1316,22 +1370,47 @@ export class PaymentInvoiceRepository {
   }
 
   /**
-   * Find invoice by Stripe invoice ID (for webhook handling)
+   * ⟨unscoped-by-design⟩ Find invoice by Stripe invoice ID (for webhook
+   * handling). Keyed by the Stripe invoice id of a signature-verified event,
+   * which a business cannot choose; the webhook then checks that the sending
+   * connected account owns the row (`accountOwns`) before it writes anything.
+   *
+   * `columns` defaults to the whole row (the `invoice.paid` lookup); the other
+   * Connect invoice handlers pass `WEBHOOK_INVOICE_LOOKUP_COLUMNS` (CF-5 PR 2).
+   *
+   * `.single()`, so "no such invoice" is the PGRST116 error. For the webhook
+   * that is a routine miss (plan invoices, invoices made directly in Stripe),
+   * so it is not logged; any other error is (SA C-5 / Q-5). The error object
+   * is returned either way, unchanged.
+   *
+   * No try/catch (CF-5 PR 2, like the webhook section below): a query that
+   * REJECTS still reaches the caller, as the inline query it replaced did, so
+   * the webhook answers 500 and Stripe retries instead of reading a rejection
+   * as "no such invoice". supabase-js returns query errors rather than
+   * throwing, so on that path nothing changes.
    */
-  async findByStripeInvoiceId(stripeInvoiceId: string): Promise<PaymentRepositoryResult<PaymentInvoice>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('payment_invoices')
-        .select('*')
-        .eq('stripe_invoice_id', stripeInvoiceId)
-        .single();
+  findByStripeInvoiceId(stripeInvoiceId: string): Promise<PaymentRepositoryResult<PaymentInvoice>>;
+  findByStripeInvoiceId(
+    stripeInvoiceId: string,
+    columns: typeof WEBHOOK_INVOICE_LOOKUP_COLUMNS
+  ): Promise<PaymentRepositoryResult<WebhookInvoiceLookup>>;
+  async findByStripeInvoiceId(
+    stripeInvoiceId: string,
+    columns: WebhookInvoiceByStripeIdColumns = '*'
+  ): Promise<PaymentRepositoryResult<PaymentInvoice | WebhookInvoiceLookup>> {
+    const { data, error } = await this.supabase
+      .from('payment_invoices')
+      .select(columns)
+      .eq('stripe_invoice_id', stripeInvoiceId)
+      .single<PaymentInvoice | WebhookInvoiceLookup>();
 
-      if (error) throw error;
-      return { data, error: null };
-    } catch (error) {
-      logger.error({ err: error, stripeInvoiceId }, 'Failed to find invoice by Stripe ID');
-      return { data: null, error: error as Error };
+    if (error) {
+      if (error.code !== NO_ROW_CODE) {
+        logger.error({ err: error, stripeInvoiceId }, 'Failed to find invoice by Stripe ID');
+      }
+      return { data: null, error };
     }
+    return { data, error: null };
   }
 
   /**
@@ -1491,6 +1570,161 @@ export class PaymentInvoiceRepository {
       logger.error({ err: error }, 'Failed to create payment invoice with details');
       return { data: null, error: error as Error };
     }
+  }
+
+  // Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)
+  //
+  // Moved out of `app/api/stripe/webhook/route.ts` with no behaviour change
+  // (CF-5 PR 2, CLAUDE.md rule 1). Each method issues exactly the query the
+  // route issued inline: same table, operation, columns, payload keys in the
+  // same order, filter and terminal. The webhook's characterisation harness
+  // records the full chain, so a method that drifted would fail its snapshot.
+  //
+  // No `user_id` filter, as an exception to rule 4, bounded per
+  // docs/REPOSITORY_STRATEGY.md ("unscoped by design"): each doc below names the
+  // owner check it relies on instead. A unit test asserts none adds one.
+  //
+  // Errors: supabase-js's own `{ data, error }`, with no try/catch and no
+  // logging, as in `ProcessedWebhookEventRepository`. The route logs every error
+  // it acts on with the correlation and Stripe event ids; a catch here would
+  // turn a thrown query into a quiet miss where the route used to fail and let
+  // Stripe retry.
+
+  /**
+   * ⟨unscoped-by-design⟩ The whole invoice row by our own id, `.single()`.
+   *
+   * The id comes from metadata the CONNECTED ACCOUNT writes, so it proves
+   * nothing. Owner check relied on: every caller compares the row's `user_id`
+   * with the sending account's owner (`accountOwns`) before anything is written
+   * (Fix-1, F-1).
+   */
+  async findByIdUnscoped(id: string): Promise<WebhookInvoiceResult<PaymentInvoice>> {
+    const { data, error } = await this.supabase
+      .from('payment_invoices')
+      .select('*')
+      .eq('id', id)
+      .single<PaymentInvoice>();
+    return { data, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Records the Stripe invoice id on our invoice, for
+   * later lookups by Stripe id. Owner check relied on: the route has already
+   * proved the sending account owns this row (`accountOwns`, moved ahead of
+   * this write by Fix-1). Without that order, this write is how F-1 planted a
+   * Stripe id on another business's invoice.
+   */
+  async recordStripeInvoiceId(id: string, stripeInvoiceId: string): Promise<WebhookInvoiceResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_invoices')
+      .update({
+        stripe_invoice_id: stripeInvoiceId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ `invoice.paid`: marks the invoice paid and stores the
+   * Stripe-hosted page and PDF. `paidAt` is the caller's, because the same
+   * instant is written on the payment row. Owner check relied on: the row was
+   * proved owned (`accountOwns`) before the payment row was written.
+   *
+   * Never touches `booking_id` (`noBookingGuess.guard`).
+   */
+  async markPaidFromStripeInvoice(
+    id: string,
+    paid: { paidAt: string } & WebhookInvoiceDocuments
+  ): Promise<WebhookInvoiceResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_invoices')
+      .update({
+        status: 'paid',
+        paid_at: paid.paidAt,
+        stripe_hosted_invoice_url: paid.hostedInvoiceUrl,
+        stripe_invoice_pdf: paid.invoicePdf,
+        updated_at: paid.paidAt,
+      })
+      .eq('id', id);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Connect `checkout.session.completed` for an invoice:
+   * marks it paid. `paidAt` is the caller's (shared with the payment row).
+   * Owner check relied on: the row was proved owned (`accountOwns`) right after
+   * it was read.
+   */
+  async markPaidFromCheckout(id: string, paidAt: string): Promise<WebhookInvoiceResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_invoices')
+      .update({
+        status: 'paid',
+        paid_at: paidAt,
+        updated_at: paidAt,
+      })
+      .eq('id', id);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Mirrors a Stripe invoice state onto ours:
+   * `invoice.payment_failed` → `overdue`, `invoice.marked_uncollectible` →
+   * `cancelled`. Owner check relied on: the row was found by the event's Stripe
+   * invoice id and proved owned (`accountOwns`, Fix-1).
+   */
+  async setStatusFromStripe(
+    id: string,
+    status: WebhookInvoiceStatusFromStripe
+  ): Promise<WebhookInvoiceResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_invoices')
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ `invoice.finalized`: stores the Stripe-hosted page and
+   * PDF. Owner check relied on: the row was found by the event's Stripe invoice
+   * id and proved owned (`accountOwns`, Fix-1), so one business cannot replace
+   * another's payment link.
+   */
+  async recordStripeDocuments(
+    id: string,
+    documents: WebhookInvoiceDocuments
+  ): Promise<WebhookInvoiceResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_invoices')
+      .update({
+        stripe_hosted_invoice_url: documents.hostedInvoiceUrl,
+        stripe_invoice_pdf: documents.invoicePdf,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ A fixed column list of one invoice, `.maybeSingle()`:
+   * the receipt fields (`invoice.paid`) or the failed-payment activity fields
+   * (`invoice.payment_failed`). Owner check relied on: the row was proved owned
+   * (`accountOwns`) earlier in the same handler.
+   */
+  async readFieldsUnscoped<C extends WebhookInvoiceFieldColumns>(
+    id: string,
+    columns: C
+  ): Promise<WebhookInvoiceResult<WebhookInvoiceFields[C]>> {
+    const { data, error } = await this.supabase
+      .from('payment_invoices')
+      .select(columns)
+      .eq('id', id)
+      .maybeSingle<WebhookInvoiceFields[C]>();
+    return { data, error };
   }
 }
 

@@ -34,7 +34,7 @@ type Satisfies<Expected, Actual extends Expected> = Actual;
 /** What POST .../check sends as `data` (the route adds `functionUpToDate`). */
 type ServerCheck = CleanupCheckResult & { functionUpToDate: boolean };
 /** What POST .../delete sends as `data` on success. */
-type ServerDelete = Pick<Extract<CleanupDeleteOutcome, { kind: 'removed' }>, 'targetUserId' | 'filesRemoved' | 'report'>;
+type ServerDelete = Pick<Extract<CleanupDeleteOutcome, { kind: 'removed' }>, 'targetUserId' | 'filesRemoved' | 'report' | 'serverMs'>;
 /**
  * Every `error` code of POST .../delete: the outcome reasons and stages from
  * runCleanupDelete, plus the two literals the route writes itself (invalid

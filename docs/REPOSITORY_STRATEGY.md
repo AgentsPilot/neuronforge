@@ -127,6 +127,7 @@ lib/repositories/
 ├── ExecutionLogRepository.ts      # Step-by-step execution logs (legacy path)
 ├── MemoryRepository.ts            # Agent run memories
 ├── PluginConnectionRepository.ts  # Plugin connection persistence (OAuth tokens, status)
+├── ProcessedWebhookEventRepository.ts # Stripe webhook idempotency claim (processed_webhook_events); unscoped by design
 ├── SharedAgentRepository.ts       # Shared/template agents for marketplace
 └── SystemConfigRepository.ts      # System-wide settings configuration
 ```
@@ -401,6 +402,32 @@ interface CreateExecutionLogInput {
 | `listArchivedForUser(userId, source)` | GDPR export: one account's archived rows of one source (`source_id`, `payload`, `archived_at`), newest first, read in 1,000-row pages. The only method that selects `payload` (slice 3) |
 
 **Writes (slice 2b).** It writes `archive_runs` only. Rows of `audit_trail` and `archived_records` move **only** through the database function, which copies, deletes and records a batch in one transaction and refuses a run that is not `running` with exactly the stored cutoff. The function name lives in this server-only file, never in the client-safe registry. The callers are `POST /api/admin/archiving/runs` and its runner `lib/archiving/server/runArchive.ts`, both behind `requireAdmin`; the route's source test pins that the runner is the only caller of `runBatchAllAccounts` and the route the only caller of the runner, after its runs-enabled check. **Per-user (slice 3).** `deleteArchivedForUser` is the one other write: a delete by one account's `user_id`, no payload. Both per-user methods are called only by `AuditTrailService.anonymizeUserData` / `exportUserData`, whose callers must pass the authenticated or admin-verified account id, never a request-body value (the argument is the tenant boundary on a service-role path).
+
+### ProcessedWebhookEventRepository
+**Location:** `lib/repositories/ProcessedWebhookEventRepository.ts`
+
+**Purpose:** The Stripe webhook's idempotency claim on `processed_webhook_events`: one row per Stripe event id, `processing` → `completed`, or `failed` so that Stripe's next delivery may reclaim it. Moved out of `app/api/stripe/webhook/route.ts` with no behaviour change (CF-5 PR 1, [workplan](/docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md) §7.3.2).
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `findClaim(eventId)` | `event_id, status` of the claim, or null |
+| `insertClaim(row)` | New `processing` claim; a `23505` comes back as the same error object (another delivery won) |
+| `reclaimFailed(eventId)` | A `failed` claim back to `processing` |
+| `complete(eventId)` | `completed`; reached only through the route's `completeClaim()` (source guard) |
+| `markFailed(eventId, message)` | Releases the claim after a handler threw |
+
+#### Pattern: unscoped by design, owner proven by the caller (Stripe webhook repositories)
+
+The Stripe webhook runs on the service role with no user session, and its queries are keyed by Stripe ids or by rows it already loaded, not by a session user. The repositories it uses (this one first; the invoice, money-row, plan and booking methods follow in CF-5 PRs 2 to 5) therefore carry methods **without a `user_id` filter**, as an exception to Rule 4. The exception is bounded:
+
+- **Section header.** Such methods sit in one section per class, headed `// Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)`.
+- **Marker and owner check named.** Each method's doc comment carries `⟨unscoped-by-design⟩` and names what replaces the owner filter. Either the key is a Stripe id from a signature-verified event, which a business cannot forge, or the row was proved to belong to the sending connected account before the call (the route's `accountOwns`). Adding a `user_id` filter there would change the query, and these moves are behaviour-preserving.
+- **Tested.** Each such method has a unit test asserting that it adds no owner filter, so a later "fix" that adds one has to change the test on purpose.
+- **Fixed shape.** Column lists are module constants (a closed union type). Inserts take a typed row that the caller passes as an object literal (or with `satisfies`), so an extra key fails `tsc`. There is no generic patch or update method: each update is a named transition with its patch fixed in the repository (SA Q-3 / C-3 of the workplan; `tenant-isolation-guard` Step 3).
+- **Errors passed through.** Methods return supabase-js's own `{ data, error }`, the same error object, so callers keep reading `error.code`. They do not catch, so a query that rejects still fails the webhook and Stripe retries. They log only where SA ruled it; otherwise the route logs what it acts on, with the correlation and Stripe event ids. The one ruling so far: `PaymentInvoiceRepository.findByStripeInvoiceId` logs any error except PostgREST's "no row" (`PGRST116`), which is a routine miss for the webhook (workplan SA C-5 / Q-5). `BusinessProfileRepository.findLanguage`, reused for the failed-payment activity, logs a returned error and no longer catches either (SA CR-P2-1); its other caller, the inviter notification, wraps it in `settle()`, which catches.
+
+**`PaymentInvoiceRepository` webhook section (CF-5 PR 2).** `findByIdUnscoped`, `recordStripeInvoiceId`, `markPaidFromStripeInvoice`, `markPaidFromCheckout`, `setStatusFromStripe(id, 'overdue' | 'cancelled')`, `recordStripeDocuments` and `readFieldsUnscoped(id, RECEIPT | FAILED_ACTIVITY)`, plus the reused `findByStripeInvoiceId(id, columns = '*')`. The two lookups return a row the route then checks with `accountOwns`; every write and every later read happens only after that check. `noBookingGuess.guard` pins that the paid handler writes the table through `recordStripeInvoiceId` and `markPaidFromStripeInvoice` only, and that neither writes `booking_id`.
 
 ## Type Definitions
 
@@ -776,3 +803,5 @@ When creating a new repository:
 | 2026-09-26 | Added `ArchiveRepository` | Admin Archiving slice 1: three read-only, all-accounts count methods over `audit_trail`, service role documented. Added to the structure tree and the catalog. |
 | 2026-09-27 | `ArchiveRepository`: per-user erasure and export | Admin Archiving slice 3: `deleteArchivedForUser` (GDPR erasure deletes archived rows, C-8) and `listArchivedForUser` (GDPR export, the one `payload` read), both scoped by `userId` and refusing a non-UUID |
 | 2026-09-26 | `ArchiveRepository`: run lifecycle | Admin Archiving slice 2b: `takeOverStaleRuns`, `createRun`, `claimRunForContinue`, `runBatchAllAccounts` (through `archive_audit_trail_batch`), `finishRun`. The repository now writes `archive_runs`; archive rows move only through the database function |
+| 2026-10-07 | Added `ProcessedWebhookEventRepository` | CF-5 PR 1: the Stripe webhook's claim queries (five) moved behind a repository with exact chains. Recorded the "unscoped by design, owner proven by the caller" pattern for the webhook repositories (SA C-6) |
+| 2026-10-08 | `PaymentInvoiceRepository`: Stripe webhook section | CF-5 PR 2: the webhook's 14 `payment_invoices` queries moved behind seven new purpose methods and the reused `findByStripeInvoiceId` (now quiet on `PGRST116`, SA C-5); the `business_profiles` language read reuses `BusinessProfileRepository.findLanguage`. "Errors passed through" reworded (SA CR-P1-1) |

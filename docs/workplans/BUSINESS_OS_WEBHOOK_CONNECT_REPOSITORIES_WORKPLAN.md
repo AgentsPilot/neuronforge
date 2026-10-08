@@ -1,6 +1,6 @@
 # Workplan: Stripe webhook onto repositories (CLAUDE.md rule 1), no behaviour change
 
-> **Last Updated**: 2026-10-07
+> **Last Updated**: 2026-10-08
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): SR-16 (every route on repositories), §9.4, the tenant-isolation ruling and "Standards for every workplan" (SA-3). Tracked follow-up from [P-0](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md) SA review ("Rule 1 / direct Supabase … record it as a tracked follow-up") and [P-1](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P1_WORKPLAN.md) condition P1-C6.
@@ -8,7 +8,9 @@
 **Date:** 2026-10-06
 **Branch:** `feature/bos-webhook-connect-repos` (worktree `neuronforge-webhook-repos`), created by RM off `origin/main` `248de6be`. `origin/main` is now `05815f69`; the only change since is one requirement doc (#239), so `route.ts` and every file this plan touches are identical on both.
 **PR 0 branch:** `feature/webhook-repos-pr0-harness`, off `origin/main` `0c3c1800` (includes Fix-1 #242, Fix-1b #246, FU-5 #250, P-3a #248), same worktree.
-**Status:** SA approved (C-1 to C-9). Fix-1, Fix-1b and FU-5 merged. **PR 0 code complete 2026-10-07**, uncommitted; waiting for SA code review. Evidence in §7.3.1.
+**PR 1 branch:** `feature/webhook-repos-pr1-claim-client`, off `origin/main` `90da8301` (PR 0 merged as #254), same worktree.
+**PR 2 branch:** `feature/webhook-repos-pr2-invoices`, off `origin/main` `933d661c` (PR 1 merged as #258), same worktree.
+**Status:** SA approved (C-1 to C-9). Fix-1, Fix-1b and FU-5 merged. PR 0 merged (#254). PR 1 merged (#258). **PR 2 code complete 2026-10-08**, uncommitted; waiting for SA code review. Refresh and evidence in §7.3.3.
 
 ## Overview
 
@@ -538,6 +540,264 @@ Each mutant is killed by exactly its own test. The file now has 34 tests, all pa
 | PR0-Q5 | **Snapshot size**: 6,011 → 13,418 lines. Every entry is a full effect trace by design (P-0) | Accept; trimming the format would change the 45 existing entries |
 | PR0-Q6 | **Pre-existing type error** `fix1Ownership.qa.test.ts:596` (from FU-5), seen in the scoped `tsc` | **Fixed in PR 0** (SA: optional, single annotation): `as Record<string, string>[]` on the `for … of` array (now `:595`). No runtime change; scoped `tsc` 0 errors |
 
+### 7.3.2 PR 1 refresh (2026-10-07, against `90da8301`)
+
+Branch `feature/webhook-repos-pr1-claim-client`, off `origin/main` `90da8301` (PR 0 merged as #254). `route.ts` is still blob `df671c4a…` (2,668 lines, 51 `.from(`), so the PR 0 line numbers hold. The route now has **20** top-level functions, not the 18 of §7.1 (Fix-1 added `ownedOrNull`, FU-5 `accountOwner`), so PR 1's untouched set is **18**.
+
+**Sites, exact lines at `90da8301`:**
+
+| Site | Lines | Today | After PR 1 |
+|---|---|---|---|
+| client | `:7` import, `:42–51` | `createClient(URL, SERVICE_ROLE_KEY, { auth: … })` | `import { supabaseServer } from '@/lib/supabaseServer'` at `:7`; `const supabaseAdmin = supabaseServer;` with the §4 RLS-bypass comment. PR 5 removes the alias |
+| O1 `completeClaim` | `:2246–2251` | update `{status:'completed', completed_at}` · eq `event_id` | `await processedWebhookEventRepository.complete(eventId)` |
+| P1 | `:2371–2375` | select `'event_id, status'` · eq · `maybeSingle` | `processedWebhookEventRepository.findClaim(event.id)`, same destructuring |
+| P2 | `:2396–2399` | update `{status:'processing', failure_message:null, processed_at}` · eq | `processedWebhookEventRepository.reclaimFailed(event.id)` |
+| P3 | `:2402–2413` | insert `{event_id, event_type, status:'processing', processed_at, metadata:{created, livemode}}` | `processedWebhookEventRepository.insertClaim({ …the same object literal… })` |
+| P4 | `:2638–2644` | update `{status:'failed', failure_message}` · eq, inside the release `try/catch` | `processedWebhookEventRepository.markFailed(processedEventId, String(…).slice(0, 500))`, same `try/catch` |
+
+**Final method names** (the §3 names, kept): `findClaim(eventId)`, `insertClaim(row)`, `reclaimFailed(eventId)`, `complete(eventId)`, `markFailed(eventId, failureMessage)`. New file `lib/repositories/ProcessedWebhookEventRepository.ts`; no existing repository names the table, so there is nothing to reuse.
+
+**Design, per SA C-3 and Q-3:**
+
+- One section headed `// Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)`. All five methods sit in it. Each doc comment carries `⟨unscoped-by-design⟩` and names what it relies on instead of an owner check: the claim row is keyed by Stripe's globally unique event id, taken from an event whose signature `POST` verified before the first claim query. The table has a `user_id` column (purge descriptors), but the claim never writes or reads it, and a filter on it would change the query.
+- One column constant, `CLAIM_COLUMNS = 'event_id, status'`, typed as its own literal (a closed union of one).
+- `insertClaim(row: NewWebhookClaimRow)`: the row type fixes `status: 'processing'` and the metadata shape. The route passes an object literal, so an extra key fails `tsc`.
+- No generic update. Each update is a named transition with its patch fixed inside the method; the route passes only the event id (and, for `markFailed`, the message it already truncates).
+- Exact chains: same table, operation, payload keys, filter and terminal; no `.select()` after a write; `new Date().toISOString()` called once per write that has it today.
+- **No `try/catch` in the methods, and no logging.** Each returns supabase-js's own `{ data, error }` (the same error object, so `insertError.code === '23505'` still works). supabase-js does not throw on a failed query. If something below it ever did throw, `POST`'s release `try/catch` must still see it, so "Could not release failed event" is still logged (the §11 PR 1 note). A catch in the repository would silence that line. No logging because the route already logs every error it acts on, and Q-4 keeps the discarded ones (P2, P4, O1) a follow-up (FU-9).
+- Default client `supabaseServer`, optional injected client, singleton, `index.ts` export (new-repository skill).
+
+**The PR 1 note, kept as a note.** When the database is fully down, the release (P4) returns an error that `POST` ignores (supabase-js returns, it does not throw), so the row stays `processing` and later deliveries are answered "duplicate". PR 1 does not change that. It is written into the repository's `markFailed` comment, so the next reader of the claim code meets it.
+
+**Guard audit (C-2): every check on `route.ts` text that names this table, the claim or the client, and where it bites after PR 1:**
+
+| Guard | Check today | After PR 1 |
+|---|---|---|
+| `routerPlacement.guard` "every claim completion goes through completeClaim()" | Positive: `completeClaim`'s code contains `status: 'completed'`. Negative: no other `status: 'completed'` property in the route, outside `completeClaim` | **Moved and tightened.** Positive: `completeClaim` calls `processedWebhookEventRepository.complete(`, and the repository's `complete` method contains `status: 'completed'`. Negatives: (a) **no** `status: 'completed'` property anywhere in the route (the `completeClaim` exception is gone, because it no longer needs one); (b) none in the repository file outside `complete`; (c) `processedWebhookEventRepository.complete(` is called only inside `completeClaim`, so the deny, flow and switch paths cannot complete a claim around it. The "`completeClaim` called at least 3 times in POST" check is unchanged |
+| **New** `it` in the same suite (C-7: no new suite, the route's `SourceFile` is reused) | — | The route code (comments excluded) has no `from('processed_webhook_events')`, and `POST` calls `findClaim`, `reclaimFailed`, `insertClaim` and `markFailed` once each. This is PR 1's "every site converted" check |
+| `userSubscriptionsWriteLockdown.qa` writer list, `route.ts // supabaseAdmin` | The route writes `user_subscriptions` | Unchanged, still true: the writes still go through `supabaseAdmin`, now an alias of `supabaseServer`. PR 5 removes the entry (§8) |
+| `userSubscriptionsWriteLockdown.qa` construction site `QuotaAllocationService(supabaseAdmin)` | Text of the call | Unchanged (`handleCheckoutCompleted` is in the `--exact` untouched set) |
+| `noBookingGuess.guard:66` `not.toMatch(from('payment_invoices')…booking_id:)` | `handleConnectInvoicePaid` | Unaffected: that handler is in the untouched set. Re-homed in PR 2 (C-2) |
+| `pinoLogging.guard` (≥ 133 log calls), `emptyBody.guard`, `receiptOnPaid.guard`, `deferredFirstPayment.guard` | Log calls, strings | Unaffected: no log line moves, none of their strings is in the claim code |
+| `planSurfaces.guard:32` `not.toMatch(from('payment_plan_installments'))` | `PaymentsSection.tsx`, not the route | Unaffected |
+
+The QA suites that read the claim as behaviour (`fix1Ownership.qa`, `ownerCacheRetry.qa`, `planOwnership.qa`, `routerEdgeCases.qa`, `stripeAuditEntries`) mock `@supabase/supabase-js`'s `createClient`, which `lib/supabaseServer.ts` calls too, so the repository's queries reach the same mock and record the same effects. They are run unedited.
+
+**Proof, as §9:** harness `--ci`, blob `a673a901…` before and after, all 100 entries compared by hash; the 18 other functions `--exact` identical to `90da8301`; `grep -c "\.from("` 51 → 46; unit tests for the five methods; the webhook, `lib/payments` and guard regression set; scoped `tsc` and `eslint`. No snapshot is written.
+
+#### PR 1 evidence (2026-10-07)
+
+Tree: worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr1-claim-client`, `HEAD` `90da8301`, uncommitted, Node 22.19.0. Every Jest run was `node node_modules/jest/bin/jest.js --ci --runTestsByPath …`. **No run wrote a snapshot; none used `-u`.**
+
+**Before (untouched `90da8301`):**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, **102 tests, 100 snapshots**, all passed |
+| Snapshot blob | **`a673a9019e8486375aaf240575f325f701870413`** (= `HEAD`), 13,418 lines, 100 `exports[` |
+| Per-entry hashes | sha256 of each of the **100** `exports[…]` values (a script evaluates the `.snap` in a `vm` context), from `git show 90da8301:<snap>`; the working copy matched it 100/100. Kept in the session scratchpad (`pr1/before-hashes.json`, file sha256 `ec99e97b…`) |
+| `route.ts` | blob `df671c4a…`, 2,668 lines, **51** `.from(`, 20 top-level functions |
+| `check-logging-only-diff --exact`, all 20 functions | 20 × identical (sanity) |
+| Frozen test files | harness `a7cc9992…`, `fix1Ownership.qa` `f509e75e…`, `bindPlanSubscription.test` `2e7b9731…` |
+
+**After:**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, **102 tests, 100 snapshots**, all passed |
+| Snapshot blob | **`a673a901…`, unchanged**, after every run in this PR (including the mutant runs below). `git diff --exit-code` on `__snapshots__/` and on the harness: exit 0 |
+| Entry by entry | **100 identical, 0 changed, 0 missing, 0 added** (same script; the after-hash file has the same sha256 `ec99e97b…` as the before) |
+| Frozen test files | harness `a7cc9992…`, `fix1Ownership.qa` `f509e75e…`, `bindPlanSubscription.test` `2e7b9731…`: all unchanged |
+| `check-logging-only-diff --exact`, base `90da8301` | the 18 untouched functions: **18 × identical, exit 0**. All 20: `completeClaim` and `POST` **differ**, the other 18 identical |
+| `grep -c "\.from("` on `route.ts` | **51 → 46** (the five claim sites). `createClient` no longer appears in the route; `BUSINESS_OS_FLOW_HANDLERS` and the dispatcher call site are not in the diff |
+| Coverage, harness only (`route.ts` + the repository) | repository **100 %** statements, branches, functions and lines. Calls per method: `findClaim` 104, `insertClaim` 101, `reclaimFailed` 1, `complete` 91, `markFailed` 9. In `route.ts` every new call site executes: `:2248` complete 91, `:2369` findClaim 104, `:2390` reclaimFailed 1, `:2393` insertClaim 101, `:2627` markFailed 9. Route statements 91.5 %, branches 75.6 % (was 91.49 % / 75.6 %; the denominator shrank by the moved chains) |
+| Repository unit tests (`lib/repositories/__tests__/ProcessedWebhookEventRepository.test.ts`) | **18 tests**, all passed: exact chain of each method (table, operation, columns, payload and its key order, filter, terminal or `await`); the same error object returned (identity), including a `23505`; no `user_id` anywhere in any chain (all five); the insert payload is the caller's object, untouched; an extra key in the insert row is a compile error (`@ts-expect-error`, checked by the scoped `tsc`); `markFailed` does not catch a throw; default client is `supabaseServer`; barrel export; C-3 source shape (section header, the marker on every method's doc, no spread payload, no generic update, no `select('*')`, no `delete`/`upsert`/`rpc`, no `user_id`, no `try`) |
+| `routerPlacement.guard` | 13 tests (was 12), all passed |
+| Regression set (58 files: every `app/api/stripe/webhook/__tests__/*.test.ts`, every `lib/payments/__tests__/*.test.ts`, `noBookingGuess.guard`, `stripeAuditEntries`, `userSubscriptionsWriteLockdown.qa`, `userSubscriptionsWriteLockdownMigration`, `bookingPaymentStatusReaders.guard`, `noPilotCreditTableReads.guard`, `mutationOrSelect.guard`, `scripts/__tests__/check-logging-only-diff`, and the new repository test) | **58 suites, 983 tests, 100 snapshots, all passed.** Snapshot blob still `a673a901…` |
+| Also run | `businessOsEntitlements.imports.guard`, and two repository suites that import the barrel (`BosCronRunRepository`, `AdminJobsQueuesRepository`): 3 suites, 83 tests, passed |
+| Scoped `tsc` (scratch tsconfig, `files` = `route.ts`, the repository, its test, the guard; 8 GB heap) | **0 errors in the changed files.** 64 pre-existing errors in transitively imported files, the same total as §7.1. With `lib/repositories/index.ts` added: still 64, none in it |
+| ESLint on the 5 changed `.ts` files | **0 errors.** 6 warnings, all in `route.ts` lines this PR does not touch (unused `planSchedule` imports at `:21`, two `any`, an unused `lookupError` at `:1274`) |
+| `console.*` | 0 in `route.ts`, the repository and `index.ts` |
+
+**The harness and the moved guard bite on the new code (mutants).** The real files were copied to the scratchpad, mutated in place one at a time, the suite run with `--ci`, then copied back. The blobs were checked after each restore (`route.ts` `e82720b2…`, repository `4c8b3351…`), and the snapshot blob stayed `a673a901…` throughout.
+
+| # | Mutation | Suite | Result |
+|---|---|---|---|
+| G1 | `completeClaim` writes `status: 'completed'` inline again | guard | **2 red** |
+| G2 | `POST` calls `processedWebhookEventRepository.complete(…)` directly, around `completeClaim` | guard | **1 red** |
+| G3 | `POST` reads the claim with an inline `from('processed_webhook_events')` | guard | **1 red** |
+| G4 | The repository's `markFailed` writes `'completed'` | guard | **1 red** |
+| H1 | `reclaimFailed` drops `failure_message: null` | harness | **1 red** (the reclaim entry) |
+| H2 | `findClaim` ends in `.single()` instead of `.maybeSingle()` | harness | **100 red** |
+
+**Guard moves (C-2 audit, done as planned above):** the `routerPlacement` claim check moved with the code and got stricter. `completeClaim` must call `processedWebhookEventRepository.complete` once. The repository's `complete` holds the only `status: 'completed'` in that file. The route holds none at all, and calls `complete` nowhere outside `completeClaim`. A new `it` in the same suite asserts that the route code has no `from('processed_webhook_events')` and that `POST` calls `findClaim`, `reclaimFailed`, `insertClaim` and `markFailed` once each. No other guard's text changed. `userSubscriptionsWriteLockdown.qa` still lists `route.ts // supabaseAdmin`, which stays accurate (an alias now); PR 5 removes it.
+
+#### PR 1: after the SA code review (CR-P1-2, O-P1-1), 2026-10-07
+
+SA approved PR 1 (see "PR 1 code review"). Dev took the two optional items. CR-P1-1 is a PR 2 condition, recorded on the §11 PR 2 task; `REPOSITORY_STRATEGY.md` is not changed here.
+
+| Item | Change |
+|---|---|
+| **CR-P1-2** | `lib/repositories/index.ts` re-exports the repository's types (`NewWebhookClaimRow`, `ProcessedWebhookEventColumns`, `WebhookClaim`, `WebhookClaimResult`, `WebhookClaimStatus`) with one `export type { … } from './ProcessedWebhookEventRepository'`, as `ArchiveRepository` does |
+| **O-P1-1 (a)** | `routerPlacement.guard`, in "the claim table is reached only through its repository": the `from(` match now also accepts a backtick-quoted table name |
+| **O-P1-1 (b)** | Same `it`: the route never names the class `ProcessedWebhookEventRepository` as an AST identifier; only the singleton is allowed. That closes a `new ProcessedWebhookEventRepository().complete(…)` bypass of "complete only via `completeClaim`". The import path string does not count, because the check reads identifiers, not text |
+
+**Mutants.** These were temporary edits of `route.ts`. The original was copied to the scratchpad, copied back after each run, and its blob checked.
+
+| # | Mutation | Result |
+|---|---|---|
+| M5 | `POST` adds a `supabaseAdmin.from(…)` on `processed_webhook_events` with the table name in backticks, behind a dead `if`. The four repository calls are kept, so only the new arm can catch it | **1 red**: the backtick-aware `not.toMatch` (guard `:233`). The old pattern accepted only `'` and `"` |
+| M6 | The import also takes the class, and `POST` adds `new ProcessedWebhookEventRepository().complete(event.id)` | **1 red**: `classMentions` (guard `:243`; the import specifier and the `new`). The "every claim completion goes through completeClaim()" test **stayed green** on this mutant: that is the bypass SA described |
+
+`route.ts` blob before and after both mutants: `e82720b2…`.
+
+**Re-runs** (`--ci --runTestsByPath`):
+
+- `routerPlacement.guard` (13 tests), `ProcessedWebhookEventRepository.test` (18 tests) and the harness (102 tests, 100 snapshots): **3 suites, 133 tests and 100 snapshots, all passed.**
+- Snapshot blob still **`a673a901…`**.
+- ESLint on the two changed files: 0 problems.
+- Scoped `tsc` (`files` = `index.ts` and the guard): 0 errors in either file. 3 errors already exist in other files (`MemoryManager` 2, `CalibrationSessionRepository` 1).
+- Blobs now: guard `d1432ba4…`, `index.ts` `1ff1e48c…`. `route.ts` and the repository are unchanged (`e82720b2…`, `4c8b3351…`).
+
+#### PR 1: deviations and questions for SA
+
+| # | Item | Dev's position |
+|---|---|---|
+| PR1-D1 | **No `try/catch` in the repository methods**, unlike the `new-repository` template. supabase-js returns query errors and does not throw, so the template's catch would change nothing on that path. On a real throw, though, a catch in `markFailed` would silence the route's "Could not release failed event" log, which the §11 note asks to keep. A unit test pins "does not catch" | Accept |
+| PR1-D2 | **No logger in the repository.** It has nothing to log: the route logs every claim error it acts on, and the discarded ones are FU-9 (SA Q-4). An unused logger field would be dead code | Accept, or SA asks for the field for template conformity |
+| PR1-D3 | **Own result type `WebhookClaimResult<T>`** (`error: PostgrestError \| null`), not `AgentRepositoryResult<T>`. The shared type declares `error: Error`, which loses `.code`, so the route's `insertError.code === '23505'` would not type-check | Accept |
+| PR1-D4 | **Order of evaluation inside two calls.** In P3 and P4 the payload values (`new Date().toISOString()`, `String(error…).slice(0, 500)`) are now computed before the query builder is created, not after. The query, its payload and the effects are identical (the harness proves it). The only case where the difference shows is an error whose `String()` itself throws. Then no builder is created at all, where before one was created and abandoned. Either way the throw lands in the same release `catch` and is logged | Accept; noted for completeness |
+| PR1-D5 | **The guard reads a second file.** `routerPlacement.guard` now parses the repository (165 lines) once, besides the route. C-7 asked for no second parse of the route, which still holds | Accept |
+| PR1-D6 | **20 functions, not 18.** §7.1's count predates `ownedOrNull` (Fix-1) and `accountOwner` (FU-5). PR 1's untouched set is the other 18 | Recorded |
+| PR1-Q1 | The PR 1 note (DB fully down, claim left `processing`) is kept as a note, now in `markFailed`'s doc comment as well as §11. No fix here | SA to confirm that placement |
+
+### 7.3.3 PR 2 refresh (2026-10-08, against `933d661c`)
+
+Branch `feature/webhook-repos-pr2-invoices`, off `origin/main` `933d661c` (PR 1 merged as #258). `route.ts` is blob `31434a7f…`, 2,714 lines, **48** `.from(` (PR 1 took five; Offir's #257 added three `payment_transactions` sites, which are PR 3's). 20 top-level functions.
+
+**What changed since §2.2:**
+
+- **Fix-1 (#242)** moved `accountOwns` **before** H3 and added it to J, K and L. The J1, K1 and L1 lookups now all select `'id, invoice_number, user_id'`, so the two planned column constants (`LOOKUP`, `FAILURE`) collapse into one.
+- **#257** (Stripe settlement recovery) added, inside `handleConnectInvoicePaid`, a `payment_transactions` lookup by intent and an attach update (`:1452–1474`). Both are PR 3's and stay inline, untouched. The receipt read (H8) now also selects `id`.
+
+**Sites, exact lines at `933d661c`** (the `.from(` line in brackets):
+
+| Site | Lines | Chain today | After PR 2 |
+|---|---|---|---|
+| H1 | `:1274–1278` (1275) | `payment_invoices` select `'*'` · eq `stripe_invoice_id` · `single` | `paymentInvoiceRepository.findByStripeInvoiceId(invoice.id)` (reuse; default columns `'*'`) |
+| H2 | `:1304–1308` (1305) | select `'*'` · eq `id` · `single` | `.findByIdUnscoped(metadataInvoiceId)` |
+| H3 | `:1329–1335` (1330) | update `{stripe_invoice_id, updated_at}` · eq `id` · await, **after** `accountOwns` (Fix-1) | `.recordStripeInvoiceId(invoiceByMetadata.id, invoice.id)` |
+| H6 | `:1537–1545` (1538) | update `{status:'paid', paid_at, stripe_hosted_invoice_url, stripe_invoice_pdf, updated_at}` · eq `id` | `.markPaidFromStripeInvoice(platformInvoice.id, { paidAt, hostedInvoiceUrl, invoicePdf })` |
+| H8 | `:1657–1661` (1658) | select `'id, user_id, client_email, client_name, invoice_number, currency, booking_id'` · eq `id` · `maybeSingle` | `.readFieldsUnscoped(platformInvoice.id, WEBHOOK_INVOICE_RECEIPT_COLUMNS)` |
+| I1 | `:1776–1780` (1777) | select `'*'` · eq `id` · `single` | `.findByIdUnscoped(invoiceId)` |
+| I3 | `:1855–1862` (1856) | update `{status:'paid', paid_at, updated_at}` · eq `id` | `.markPaidFromCheckout(invoiceId, paidAt)` |
+| J1 | `:2000–2004` (2001) | select `'id, invoice_number, user_id'` · eq `stripe_invoice_id` · `single` | `.findByStripeInvoiceId(invoice.id, WEBHOOK_INVOICE_LOOKUP_COLUMNS)` |
+| J2 | `:2023–2029` (2024) | update `{status:'overdue', updated_at}` · eq `id` | `.setStatusFromStripe(platformInvoice.id, 'overdue')` |
+| J3 | `:2043–2047` (2044) | select `'contact_id, amount, currency'` · eq `id` · `maybeSingle` | `.readFieldsUnscoped(platformInvoice.id, WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS)` |
+| J4 | `:2050–2054` (2051) | `business_profiles` select `'language'` · eq `user_id` · `maybeSingle` | `businessProfileRepository.findLanguage(platformInvoice.user_id)` (reuse) |
+| K1 | `:2094–2098` (2095) | as J1 | `.findByStripeInvoiceId(invoice.id, WEBHOOK_INVOICE_LOOKUP_COLUMNS)` |
+| K2 | `:2116–2123` (2117) | update `{stripe_hosted_invoice_url, stripe_invoice_pdf, updated_at}` · eq `id` | `.recordStripeDocuments(platformInvoice.id, { hostedInvoiceUrl, invoicePdf })` |
+| L1 | `:2144–2148` (2145) | as J1 | `.findByStripeInvoiceId(invoice.id, WEBHOOK_INVOICE_LOOKUP_COLUMNS)` |
+| L2 | `:2166–2172` (2167) | update `{status:'cancelled', updated_at}` · eq `id` | `.setStatusFromStripe(platformInvoice.id, 'cancelled')` |
+
+15 sites, so `.from(` goes **48 → 33**. Converted functions: `handleConnectInvoicePaid`, `handleConnectCheckoutCompleted`, `handleConnectInvoicePaymentFailed`, `handleConnectInvoiceFinalized`, `handleConnectInvoiceUncollectible`. The other **15** must be `--exact` identical. Inside the two converted functions that also hold other PRs' sites (H4, the #257 lookup and attach, H5, H7 in the paid handler; I2, I4, I5 in checkout), those lines stay byte-identical; the diff hunks show it.
+
+**Methods (`PaymentInvoiceRepository`, one new section with the C-3 header; 7 new, 1 reused with an optional column list):**
+
+| Method | Chain | Owner check it relies on (⟨unscoped-by-design⟩) |
+|---|---|---|
+| `findByStripeInvoiceId(id, columns = '*')` (reuse) | select `columns` · eq `stripe_invoice_id` · `single` | Key is the Stripe invoice id of a signed event; the route calls `accountOwns` on the row before any write |
+| `findByIdUnscoped(id)` | select `'*'` · eq `id` · `single` | The id is connected-account metadata, so **not** trusted: every caller checks `accountOwns` on the returned row before anything is written (Fix-1) |
+| `recordStripeInvoiceId(id, stripeInvoiceId)` | update `{stripe_invoice_id, updated_at}` · eq `id` | Row proved owned (`accountOwns`, moved before this write by Fix-1) |
+| `markPaidFromStripeInvoice(id, {paidAt, hostedInvoiceUrl, invoicePdf})` | update `{status:'paid', paid_at, stripe_hosted_invoice_url, stripe_invoice_pdf, updated_at: paidAt}` · eq `id` | Row proved owned |
+| `markPaidFromCheckout(id, paidAt)` | update `{status:'paid', paid_at, updated_at: paidAt}` · eq `id` | Row proved owned |
+| `setStatusFromStripe(id, 'overdue' \| 'cancelled')` | update `{status, updated_at}` · eq `id` | Row found by Stripe id and proved owned (Fix-1 J/L) |
+| `recordStripeDocuments(id, {hostedInvoiceUrl, invoicePdf})` | update `{stripe_hosted_invoice_url, stripe_invoice_pdf, updated_at}` · eq `id` | Row found by Stripe id and proved owned (Fix-1 K) |
+| `readFieldsUnscoped(id, RECEIPT \| FAILED_ACTIVITY)` | select constant · eq `id` · `maybeSingle` | Row proved owned earlier in the same handler |
+
+Column constants, a closed union each: `WEBHOOK_INVOICE_LOOKUP_COLUMNS = 'id, invoice_number, user_id'`, `WEBHOOK_INVOICE_RECEIPT_COLUMNS`, `WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS`. No insert in this PR, so no typed row. No generic update: each update is a named transition, and `paidAt` is passed in because the route uses the same value for the transaction row and the invoice. `new Date().toISOString()` is called the same number of times as before (once in H3, J2, K2, L2; zero in H6, I3).
+
+**Errors and logging.** The seven new methods follow PR 1: no try/catch, no logger, supabase-js's own `{ data, error }`. **C-5:** `findByStripeInvoiceId` no longer logs a `PGRST116` (no row, a routine miss for H1, J1, K1, L1); any other error still logs at `error` through the file's `createLogger({ service: 'PaymentRepository' })`. *(Updated during implementation, PR2-D1:)* its try/catch is also removed, so a rejected query reaches the route as the inline one did. `findLanguage` is reused; *(updated after the SA review, CR-P2-1, PR2-Q1 ruled (c))* its try/catch is removed the same way, and it still logs a returned error with `createLogger({ service: 'BusinessProfileRepository' })`. Its other caller, the inviter notification, wraps it in `settle()`. New log lines on a real DB error in H1/J1/K1/L1/J4 are log-only (P0-C1, accepted in Q-5).
+
+**Guard audit (C-2): every negative check on `route.ts` text, and where it bites after PR 2.**
+
+| Guard | Check | After PR 2 |
+|---|---|---|
+| `noBookingGuess.guard:66` | the paid handler does not match `from('payment_invoices')…booking_id:` | **Re-homed, three arms, the old one kept.** (a) Old negative stays on the handler text. (b) New: the handler has **no** `from(` on `payment_invoices` in any quote style, never names the class `PaymentInvoiceRepository`, and every mention of `paymentInvoiceRepository` is a direct call to one of five methods; the ones of those that write (read from the repository's AST: `.update(`/`.insert(`/`.upsert(`/`.delete(`) are exactly `recordStripeInvoiceId` and `markPaidFromStripeInvoice`. (c) New: neither write method's body contains `booking_id`, and no method the handler calls touches `scheduling_` tables or `servicePrice` |
+| `noBookingGuess.guard:56` `matchingBooking`, `:73–74` `servicePrice` / `scheduling_services(price)` | whole route / handler | Unchanged; (c) extends the second to the repository methods the handler calls |
+| `routerPlacement.guard:233` claim table | `from('processed_webhook_events')` | Unaffected |
+| **New** `it` in `routerPlacement.guard` (C-7: same suite, same parsed route) | — | Route code has no `from(` on `payment_invoices` or `business_profiles`, and never names `PaymentInvoiceRepository` or `BusinessProfileRepository` as identifiers. Each of the five handlers makes exactly its expected repository calls, and no other function makes any; `findLanguage` is called once, in `handleConnectInvoicePaymentFailed`. PR 2's "every site converted" check |
+| **New** `it` in `routerPlacement.guard` (F-1) | — | For each invoice write in the five handlers, the nearest preceding `accountOwns(…)` tests `platformInvoice.user_id` or `invoiceByMetadata.user_id`. Moving a write above its check makes the nearest check a plan's, or none |
+| `receiptOnPaid.guard` | `currency: receiptInvoice.currency \|\| invoiceCurrency`, the IIFE, the log line | Kept true: the variable stays `receiptInvoice`, the IIFE and its catch are unchanged |
+| `invoiceIntentsStayUnowned.guard:82`, `:90` | `paymentIntents.update(`, `invoice.payment_intent` | Unaffected (no such text moves) |
+| `emptyBody.guard`, `pinoLogging.guard` (≥ 133 log calls), `deferredFirstPayment.guard` | strings and log calls | Unaffected: no log line moves |
+| `planSurfaces.guard:32` | `PaymentsSection.tsx` | Unaffected |
+| `userSubscriptionsWriteLockdown.qa` | `user_subscriptions` writers | Unaffected (PR 5) |
+
+**F-1 stays fixed.** In each of H (metadata path), I, J, K and L, the `accountOwns` refusal stays ahead of every write. The snapshot pins it (Fix-1's refusal entries), and the `--exact`-equal hunks show the checks did not move.
+
+**Proof:** as §9, against `933d661c`: harness `--ci`, snapshot blob **`ae7b32c4…`** before and after, all 100 entries compared by hash; the 15 untouched functions `--exact` identical; `.from(` 48 → 33; unit tests for the new and changed methods; regression set; scoped `tsc` and ESLint. No snapshot is written.
+
+#### PR 2 evidence (2026-10-08)
+
+Tree: worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr2-invoices`, `HEAD` `933d661c`, uncommitted, Node 22.19.0. Every Jest run was `node node_modules/jest/bin/jest.js --ci --runTestsByPath …`. **No run wrote a snapshot; none used `-u`.** TL's edit to `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` is in the tree and was not touched.
+
+**Before (untouched `933d661c`):**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, **102 tests, 100 snapshots**, all passed |
+| Snapshot blob | **`ae7b32c4480ad7f7a1d4945763dd00acf81083bc`** (= `HEAD`), 13,502 lines, 100 `exports[` |
+| Per-entry hashes | sha256 of each of the 100 `exports[…]` values (the `.snap` evaluated in a `vm` context), from `git show 933d661c:<snap>`; the working copy matched 100/100. Hash file sha256 `18097317…` (session scratchpad, `pr2/before-base.json`) |
+| `route.ts` | blob `31434a7f…`, 2,714 lines, **48** `.from(`, 20 top-level functions |
+| `check-logging-only-diff --exact`, all 20 functions | 20 × identical (sanity) |
+| Frozen test files | harness `a7cc9992…`, `fix1Ownership.qa` `f509e75e…`, `bindPlanSubscription.test` `2e7b9731…`, `claimRepository.qa` `fa012262…` |
+
+**After:**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, **102 tests, 100 snapshots**, all passed |
+| Snapshot blob | **`ae7b32c4…`, unchanged** after every run in this PR, mutant runs included. `git diff --exit-code` on `__snapshots__/` and on the harness: exit 0 |
+| Entry by entry | **100 identical, 0 changed, 0 missing, 0 added**; the after-hash file has the same sha256 `18097317…` |
+| Frozen test files | all four blobs unchanged |
+| `check-logging-only-diff --exact`, base `933d661c` | the 15 untouched functions: **15 × identical, exit 0**. All 20: the five converted handlers differ, the other 15 identical |
+| Module-level diff (§7.4: not seen by `--exact`) | Two imports only: `paymentInvoiceRepository` + the three column constants from `@/lib/repositories/PaymentRepository`, and `businessProfileRepository`. `BUSINESS_OS_FLOW_HANDLERS` and the dispatcher call are not in the diff |
+| Inside the converted handlers | Only the 15 sites change, plus one type annotation (`contact_id: string \| null` on the paid handler's local, PR2-D2) and one comment at J4. H4, the #257 lookup and attach, H5, H7, I2, I4 and I5 are byte-identical (diff hunks) |
+| `grep -c "\.from("` on `route.ts` | **48 → 33** |
+| Coverage, harness only | Every new call site executes: H1 `:1283` 12, H2 `:1310` 4, H3 `:1331` 1, H6 `:1533` 4, H8 `:1648` 3, I1 `:1766` 8, I3 `:1841` 4, J1 `:1979` 7, J2 `:2001` 5, J3 `:2015` 4, J4 `:2023` 2, K1 `:2063` 8, K2 `:2084` 5, L1 `:2108` 4, L2 `:2129` 2. Repository: `findByStripeInvoiceId` 31 calls, `findByIdUnscoped` 12, `setStatusFromStripe` 7. Route statements 90.66 % (534/589) |
+| Repository unit tests (`lib/repositories/__tests__/PaymentInvoiceRepository.webhook.test.ts`, new) | **38 tests**, all passed: exact chain of each method (table, operation, columns, payload and key order, filter, terminal or `await`); same error object returned (identity); no `user_id` filter or payload key (all eight methods); `findByStripeInvoiceId` quiet on `PGRST116`, logs any other error at `error` with `service: 'PaymentRepository'`, logs nothing on a hit (C-5); a rejected query rejects (no catch) in every method incl. `findByStripeInvoiceId`; document keys kept when Stripe sends `undefined`; closed column and status sets (`@ts-expect-error`, consumed in the scoped `tsc`); default client `supabaseServer`; C-3 source shape (section header once, marker on every method doc and on `findByStripeInvoiceId`, no generic update, spread, insert/delete/upsert/rpc, `user_id`, `try`, logger or `booking_id` in the section) |
+| Guards | `noBookingGuess.guard` 7 tests (was 5); `routerPlacement.guard` 15 tests (was 13); `receiptOnPaid.guard` unchanged and green |
+| Regression set (178 files: every `app/api/stripe/webhook/__tests__/*.test.ts`, every `lib/payments/__tests__/*.test.ts`, every `lib/repositories/__tests__/*.test.ts`, `noBookingGuess.guard`, `stripeAuditEntries`, `invoiceIntentsStayUnowned.guard`, `noPilotCreditTableReads.guard`, `check-logging-only-diff`, and the 53 other test files that import `PaymentRepository` or `BusinessProfileRepository`) | **178 suites, 3,842 tests, 119 snapshots, all passed.** Snapshot blob still `ae7b32c4…` |
+| Scoped `tsc` (scratch tsconfig, `files` = `route.ts`, `PaymentRepository.ts`, the new test, both guards; 8 GB heap) | **0 errors in the changed files.** 58 errors in transitively imported files, the **same 58** (file and position) as the untouched `933d661c` route gives on the same tree |
+| ESLint on the 5 changed `.ts` files | **0 errors.** 10 warnings, all on lines this PR does not touch (unused `planSchedule` imports, `any`s, the existing unused `lookupError` at H1) |
+| `console.*` | 0 in `route.ts` and `PaymentRepository.ts` |
+
+**The moved guards and the harness bite on the new code (mutants).** Each mutant was applied to the real file after copying it to the scratchpad, the suites were run with `--ci`, the file was copied back and its blob checked (`route.ts` `7507a6bd…`, `PaymentRepository.ts` `99226b4e…`); the snapshot blob stayed `ae7b32c4…` throughout.
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | `markPaidFromStripeInvoice` also writes `booking_id: null` | **3 red**: `noBookingGuess` (writer contains `booking_id`), the unit chain test, the C-3 source check |
+| M2 | Paid handler also calls the generic `paymentInvoiceRepository.update(…, { booking_id })` behind a dead `if` | **2 red**: `noBookingGuess` allow-list and writer set |
+| M3 | Paid handler reaches the repository through an alias (`const invoices = paymentInvoiceRepository`) | **1 red**: `noBookingGuess` mentions-equal-calls check |
+| M4 | H3 written again **above** its `accountOwns` check (the F-1 shape) | **5 red**: the new F-1 `it`, the call-count `it`, and three harness entries (Fix-1's F1-1, F1-2 refusals and 1b) |
+| M5 | `invoice.finalized` gains an inline `` from(`payment_invoices`) `` update (backticks) behind a dead `if` | **1 red**: the new "reached only through their repositories" `it` |
+| M6 | `findByStripeInvoiceId` logs on `PGRST116` too | **1 red**: the C-5 unit test |
+| M7 | `readFieldsUnscoped` ends in `.single()` | **9 red**: two unit tests and seven harness entries (incl. X20, X37, X50, X52) |
+
+**Guard moves (C-2, done as planned above).** The `noBookingGuess:66` negative is kept on the handler text and now has two arms that follow the writes into the repository: (b) the handler has no inline `payment_invoices` query in any quote style, never names the class, and every mention of `paymentInvoiceRepository` is a direct call to one of five allow-listed methods; (c) of those, the ones whose code (from the repository's AST, comments removed) writes are exactly `recordStripeInvoiceId` and `markPaidFromStripeInvoice`; neither contains `booking_id`, and no called method touches `scheduling_` or `servicePrice`. The other negatives on route text are unaffected (table above). `routerPlacement.guard` gained the PR 2 "every site converted" check and an F-1 ordering check, in the same suite and on the same parsed route (C-7).
+
+#### PR 2: deviations and questions for SA
+
+| # | Item | Dev's position |
+|---|---|---|
+| PR2-D1 | **`findByStripeInvoiceId` lost its try/catch**, beyond C-5's logging change. With the catch, a query that *rejects* became `{ data: null, error }`: the paid handler would fall through to the metadata lookup and J/K/L would return quietly, where the inline query threw, answered 500 and let Stripe retry. QA's `claimRepository.qa` caught it (3 tests went red on the first version, on a rejected `payment_invoices` select). It has no other caller. Same reasoning as PR1-D1. Pinned by a unit test | Accept |
+| PR2-D2 | **Type annotation in the paid handler**: `contact_id: string \| null` (was `string`). The row now arrives typed as `PaymentInvoice`, whose `contact_id` is nullable; before it was `any`. No runtime change | Accept |
+| PR2-D3 | **One lookup constant, not two** (§3 planned `LOOKUP` and `FAILURE`). Fix-1 made J1, K1 and L1 select the same `'id, invoice_number, user_id'` | Accept |
+| PR2-D4 | **The `findByStripeInvoiceId` result keeps `PaymentRepositoryResult` (`error: Error`)**, not `WebhookInvoiceResult` (`PostgrestError`). The route reads only `lookupError ||`, and changing the reused method's declared type would touch its other users' types. `PostgrestError` extends `Error`, so the object is the same | Accept |
+| PR2-Q1 | **`findLanguage` keeps its try/catch** (it has another caller, invite redemption). On a *rejected* `business_profiles` read in J4, the old inline query threw (500, Stripe retries); the reused method logs "Failed to read business language", returns null, and the activity is written in English (200). The invoice was already marked overdue in both cases. supabase-js returns query errors rather than throwing, so this differs only on a thrown query, and the harness cannot see it. Options: (a) accept as is; (b) a non-catching method for the webhook (a second method for the same query); (c) drop the catch in `findLanguage` and check the invite caller | (a), since the reuse was ruled; SA to choose. **SA ruled (c), CR-P2-1: done.** The try/catch is gone, the returned-error log and the string check are kept, a "rejected query rejects" test was added, and the inviter notification and redemption tests pass unchanged |
+| PR2-Q2 | **The new F-1 ordering check is positional** (nearest preceding `accountOwns` in source order), not flow-aware. It catches a write moved above its check (M4) and a check that tests a plan rather than an invoice. It would not catch a check moved into a branch that does not dominate the write | Accept as a guard; the harness's Fix-1 entries remain the behavioural proof |
+
 ### 7.4 What `check-logging-only-diff.ts` can and cannot prove here
 
 - **Can:** with `--functions <list> --exact`, prove that every top-level function a PR is **not** meant to touch is textually identical to `origin/main`. Each PR names its untouched set (§9) and records 18 verdicts.
@@ -611,7 +871,7 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 | `app/api/stripe/webhook/__tests__/fixtures/platform/subscription-deleted-legacy.json` | create | 0 | X1, X42. X2/X3/X43/X55 reuse `invoice-payment-failed-unknown-price.json` |
 | `app/api/stripe/webhook/__tests__/fix1Ownership.qa.test.ts` | modify | 0 | The same two named delegations. **Replaces** `routerEdgeCases.qa.test.ts`, which never reaches `handlePlanSubscriptionEnded` (§7.3.1) |
 | `app/api/stripe/webhook/route.ts` | modify | 1–5 | The conversion |
-| `lib/repositories/ProcessedWebhookEventRepository.ts` | create | 1 | §3 |
+| `lib/repositories/ProcessedWebhookEventRepository.ts` (+ `lib/repositories/__tests__/ProcessedWebhookEventRepository.test.ts`) | create | 1 | §3, §7.3.2 |
 | `lib/repositories/PaymentRepository.ts` | modify | 2, 3 | `PaymentInvoiceRepository`, `PaymentTransactionRepository` methods |
 | `lib/repositories/PaymentRefundRepository.ts` | create | 3 | §3 |
 | `lib/repositories/PaymentPlanRepository.ts` | modify | 4 | Instalment methods; also the methods bind's inline queries need (scope addition, Fix-1b C-4) |
@@ -625,7 +885,7 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
 | `app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts` | modify | 1, 5 | §8 |
 | `app/api/stripe/__tests__/noBookingGuess.guard.test.ts`, `lib/payments/__tests__/planSurfaces.guard.test.ts` | modify | 4 | §8 |
 | `lib/repositories/__tests__/userSubscriptionsWriteLockdown.qa.test.ts` | modify | 5 | §8 |
-| `docs/REPOSITORY_STRATEGY.md` | modify | 5 | Note the webhook repositories and the "unscoped by design, owner proven by `accountOwns`" pattern, if SA wants it recorded there |
+| `docs/REPOSITORY_STRATEGY.md` | modify | 1 (SA C-6) | Note the webhook repositories and the "unscoped by design, owner proven by `accountOwns`" pattern, if SA wants it recorded there |
 | Migrations | **none** | — | §1 |
 
 ---
@@ -648,9 +908,26 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
   - [x] ✅ Regression set (55 suites, 931 tests, 100 snapshots), ESLint, scoped `tsc`.
   - [x] ✅ SA code review: approved with CR-1. CR-1 done (three bind error-path tests, §7.3.1); PR0-Q6 fixed.
   - [ ] SA re-check of the CR-1 test diff; QA; user sees the diff; RM commits.
-- [ ] PR 1: claim repository, client alias, `routerPlacement` guard moved.
+- [ ] PR 1: claim repository, client alias, `routerPlacement` guard moved. **Code complete 2026-10-07, uncommitted**, on `feature/webhook-repos-pr1-claim-client` off `90da8301`. Refresh and evidence: §7.3.2.
+  - [x] ✅ Plan refreshed against `90da8301` (§7.3.2): exact lines, method names, C-2 guard audit.
+  - [x] ✅ Before recorded: 100 entry hashes, blob `a673a901`, 51 `.from(`, 20 × identical.
+  - [x] ✅ `ProcessedWebhookEventRepository` (5 methods, C-3 controls) + 18 unit tests; barrel export.
+  - [x] ✅ `route.ts`: client is the `supabaseServer` alias with the RLS-bypass comment; P1–P4 and O1 through the repository.
+  - [x] ✅ `routerPlacement.guard` claim check moved and tightened; new "claim table only via its repository" check.
+  - [x] ✅ `REPOSITORY_STRATEGY.md` note (C-6).
+  - [x] ✅ After recorded: 100/100 entries identical, blob unchanged, 18 × identical, 51 → 46 `.from(`, regression 58 suites / 983 tests, scoped `tsc` and ESLint clean in changed files, mutants G1–G4 and H1–H2 red.
+  - [x] ✅ SA code review: approved (D1–D6 accepted, Q1 confirmed). Optional CR-P1-2 and O-P1-1 done, with mutants M5 and M6 (§7.3.2).
+  - [ ] QA; user sees the diff; RM commits.
   - *Note (FU-5 SA review, Q-2 observation; pre-existing, not a behaviour change for PR 1):* when the database is fully down, `POST`'s catch can fail to release the claim (`status: 'failed'`). The row then stays `processing`, and later deliveries are answered 200 "duplicate", so the event is not retried. This holds for every handler throw today. FU-5 did not introduce or widen it. Record it when the claim moves behind its repository, and keep the release's failure logged. Any fix (e.g. a stale-`processing` reclaim) is its own change, not part of the byte-identical PR 1.
-- [ ] PR 2: invoices.
+- [ ] PR 2: invoices. **Code complete 2026-10-08, uncommitted**, on `feature/webhook-repos-pr2-invoices` off `933d661c`. Refresh and evidence: §7.3.3.
+  - *Condition from the PR 1 code review (CR-P1-1):* reword the `REPOSITORY_STRATEGY.md` pattern bullet "Errors passed through". Its "They neither catch nor log" stops being true once C-5 makes `findByStripeInvoiceId` log errors other than PGRST116. New wording: "They do not catch; they log only where SA ruled it (C-5)", or equivalent. ✅ Done (bullet reworded, plus a short `PaymentInvoiceRepository` webhook-section note and a Change History row).
+  - [x] ✅ Plan refreshed against `933d661c` (§7.3.3): exact lines incl. #257's receipt `id`, method names, C-2 guard audit.
+  - [x] ✅ Before recorded: 100 entry hashes, blob `ae7b32c4`, 48 `.from(`, 20 × identical.
+  - [x] ✅ `PaymentInvoiceRepository`: 7 new methods in the C-3 section, `findByStripeInvoiceId` with a closed column list, quiet on PGRST116 (C-5) and without its try/catch (PR2-D1); 38 unit tests.
+  - [x] ✅ `route.ts`: the 15 sites through the repositories (`findLanguage` reused for J4); 48 → 33 `.from(`.
+  - [x] ✅ `noBookingGuess.guard:66` re-homed (C-2, two new arms, old kept); `routerPlacement.guard` gained the "every site converted" and F-1 ordering checks.
+  - [x] ✅ After recorded: 100/100 entries identical, blob unchanged, 15 × identical, regression 178 suites / 3,842 tests, scoped `tsc` (0 in changed files, same 58 elsewhere) and ESLint clean, mutants M1–M7 red.
+  - [ ] SA code review (PR2-D1 to D4, PR2-Q1, PR2-Q2); QA; user sees the diff; RM commits.
 - [ ] PR 3: money rows.
 - [ ] PR 4: plans and bookings; two guards moved; plus bind's five inline queries (scope addition, Fix-1b C-4). Also (FU-5 SA Q-3): move the owner check at the plan checkout site (route.ts ~1669) above its `try`, so a lookup failure is no longer logged as "Could not bound a payment plan" before it is rethrown.
   - *PR 0 CR-1 contract:* PR 4 must pass the three CR-1 tests in `bindPlanSubscription.test.ts` **unedited** (and the three read-chain tests from the QA note; blob `2e7b9731…`, §7.3.1). That file also mocks `PaymentPlanSubscriptionRepository` (only `create`, `attachStripe`, `findBySubscriptionId`). If PR 4 moves a bind query behind a `PaymentPlanSubscriptionRepository` method that mock does not list, it needs an explicit delegation there in the shape PR 0 used, and must bring that edit to SA before making it. The method names for bind's five queries are not fixed in §3 yet, so PR 0 does not plan it. Queries moved into `PaymentPlanRepository` / `SchedulingRepository` need no mock change, since that file does not mock them.
@@ -911,6 +1188,177 @@ SA spot-checks the bind test diff, then QA proceeds. Nothing else is required. T
 
 **Optimisation (Low, not blocking):** in the `:483–484` test, also assert that the `scheduling_bookings` `select('contact_id')` read was issued (in `mockQueries`). Today `contact_id: null` would also follow if a later change dropped the booking before the read; the extra assertion would tell the two causes apart. If it is added, update the blob recorded in §7.3.1.
 
+### PR 1 code review
+
+**Code Review by SA — 2026-10-07**
+**Status:** ✅ Code Approved (APPROVED_CODE_REVIEW). No blocking finding. CR-P1-1 is a condition on **PR 2**, not on this PR.
+
+Scope reviewed: the uncommitted diff on `feature/webhook-repos-pr1-claim-client` against `90da8301`: `route.ts`, the new `ProcessedWebhookEventRepository.ts` and its test, `routerPlacement.guard.test.ts`, `lib/repositories/index.ts` and `docs/REPOSITORY_STRATEGY.md`. The `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` edit is TL's and out of scope.
+
+#### What SA checked itself (not taken from §7.3.2)
+
+| # | Check | SA's evidence | Verdict |
+|---|---|---|---|
+| 1a | Snapshot unchanged | `git hash-object` on the `.snap` before and after SA's harness run: `a673a9019e84…` both times. Harness `--ci`: **102 tests, 100 snapshots passed**, no obsolete or written entries | ✅ |
+| 1b | Entry by entry (SA's own method) | SA loaded `git show 90da8301:<snap>` and the working copy as CommonJS modules and compared an md5 of each `exports[…]` value: **base 100, work 100, 100 identical, 0 differing, 0 missing, 0 added**. Separately, the harness matches every one of them against what the moved code now records, and it records the full query chain (294 `processed_webhook_events` lines in the snapshot, every claim scenario incl. `23505`, DB-down insert, failed read, failed-row reclaim) | ✅ |
+| 1c | Harness and frozen tests untouched | `git diff --stat 90da8301 -- app/api/stripe/webhook/__tests__/ lib/payments`: only `routerPlacement.guard.test.ts`. Harness blob `a7cc9992…` = `90da8301`'s | ✅ |
+| 1d | `check-logging-only-diff --exact`, all 20 top-level functions, base `90da8301` | Run by SA (`tsx`): **18 identical; `completeClaim` and `POST` differ**, and the printed hunks are exactly the five claim sites (the rest of `POST` prints as context, unchanged). Module-level diff read by hand: the `createClient` import → `supabaseServer` + repository imports, and the client block → the alias with its comment. Nothing else | ✅ |
+| 2 | Client | `lib/supabaseServer.ts`: `createClient(NEXT_PUBLIC_SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!)`, same URL and key; only the `auth` options differ, which SA ruled harmless in the workplan review (no session ever set on the singleton; Dev's request-capture measurement). The RLS-bypass comment is present at the alias, per §4 and CLAUDE.md Security Rules | ✅ |
+| 3a | Each method's chain = the old inline chain | Read side by side with the `-` lines: `findClaim` `select('event_id, status')·eq('event_id')·maybeSingle`; `insertClaim` `insert(row)` awaited, no `.select()`; `reclaimFailed` `update({status:'processing', failure_message:null, processed_at})·eq`; `complete` `update({status:'completed', completed_at})·eq`; `markFailed` `update({status:'failed', failure_message})·eq`. Key order identical. `maybeSingle<WebhookClaim>()` is a type argument only | ✅ |
+| 3b | 23505 path | `insertClaim` returns `{ data: null, error }` with supabase-js's own object; the route's `insertError.code === '23505'` branch is byte-identical; unit test asserts identity (`toBe`) | ✅ |
+| 3c | `.slice(0, 500)` and the release `try/catch` | Both remain in the route at the `markFailed` call; the repository does not truncate and does not catch (test: "does not catch a throw") | ✅ |
+| 3d | Q-3 / C-3 controls | Section header verbatim; `⟨unscoped-by-design⟩` on all five method docs (source test pins it); `CLAIM_COLUMNS` constant with its literal type; `NewWebhookClaimRow` with `status: 'processing'`, route passes an object literal; `@ts-expect-error` on an injected `user_id` — **SA's scoped `tsc` (scratch tsconfig: repository, its test, `route.ts`, the guard, `index.ts`; 8 GB) reports 0 errors in those files**, so the directive is consumed (an unused one would be TS2578); 64 pre-existing errors elsewhere, the §7.1 total. No generic update, no spread payload, no `delete`/`upsert`/`rpc`. Every method has a no-owner-filter test | ✅ |
+| 4 | Tenant isolation (`tenant-isolation-guard`) | See below | ✅ |
+| 5 | `routerPlacement.guard` rewrite | See below | ✅ stricter |
+| 6 | Shared surface with P-3b.2 | `git diff 90da8301` contains no `BUSINESS_OS_FLOW_HANDLERS` or `dispatchBusinessOsEvent` line (the one hit is the workplan's own prose); `--exact` shows them only as unchanged context in `POST` | ✅ |
+| 7 | `REPOSITORY_STRATEGY.md` | Tree entry, catalog section and the pattern match the code: method list and semantics, "complete only via `completeClaim()` (source guard)", "Rule 4" is CLAUDE.md rule 4, typed literal insert, no generic update, same error object. One sentence will go stale in PR 2 (CR-P1-1) | ✅ |
+| 8 | Rules 1, 3, 4, 6; console; entitlements | Rule 1: the five claim sites leave the route (51 → 46 `.from(`). Rule 3: `console.` count 0 in all four `.ts` files; no log line added, moved or removed. Rule 4: the exception is documented in the file header, the section comment, each method doc and the strategy doc. Rule 6: no `any` added (the test uses `as unknown as` casts only). Entitlements: the repository imports only `@supabase/supabase-js` types and `@/lib/supabaseServer`; the barrel line added is this repository only, and the barrel's existing entitlement exports are repository files, not `lib/business-os/entitlements/`; `businessOsEntitlements.imports.guard` passes. ESLint on the repository, its test, the guard and `index.ts`: exit 0. Only importers of the new file: the route, the barrel and two tests (no `'use client'`) | ✅ |
+| 9 | Runs (`--ci --runTestsByPath`, no `-u`) | Every `app/api/stripe/webhook/__tests__/*.test.ts`, every `lib/payments/__tests__/*.test.ts`, the new repository test, `noBookingGuess.guard`, `stripeAuditEntries`, `userSubscriptionsWriteLockdown.qa`, `userSubscriptionsWriteLockdownMigration`, `bookingPaymentStatusReaders.guard`, `noPilotCreditTableReads.guard`, `mutationOrSelect.guard`, `businessOsEntitlements.imports.guard`, `check-logging-only-diff`: **59 suites, 1,008 tests, 100 snapshots, all passed**. Snapshot blob after the run: `a673a901…` | ✅ |
+
+#### Tenant isolation (item 4)
+
+"Unscoped by design" is correct here, and it is documented in four places (file header, section comment, each method's doc, `REPOSITORY_STRATEGY.md`).
+
+- **Key.** Every method filters on `event_id` only. That id comes from `event`, which exists only after `stripeService.constructWebhookEvent(body, signature, secret)` succeeded; a failed signature returns 400 before the first claim query. Stripe event ids are globally unique, Connect events included, and a business cannot choose another tenant's.
+- **Payload.** No caller-controlled field reaches a write. The insert row is a fixed type built from the verified event, `user_id` is rejected at compile time, and each update's patch is fixed inside its method (Step 3 allow-list, by construction).
+- **Scope-defeating three (Step 4).** No trigger on `processed_webhook_events` in `supabase/migrations/` (the only `ON processed_webhook_events` is an index). No upsert. No injected field.
+- **What the row holds.** A claim holds no business data. Client grants on the table were revoked in `20261038`, so it is server-write-only.
+- **Purge descriptors.** They record that the table carries a `user_id` and exclude it deliberately. Leaving that column unread and unwritten is today's behaviour, and filtering on it would change the query (C-9).
+
+#### `routerPlacement.guard` (item 5): every old assertion still bites
+
+| Old assertion | Where it bites now |
+|---|---|
+| `completeClaim` exists | Unchanged |
+| `completeClaim`'s code contains `status: 'completed'` | Split in two, both required: `completeClaim` calls `processedWebhookEventRepository.complete` exactly once, **and** the repository's `complete` method contains `status: 'completed'` |
+| No other `status: 'completed'` in the route, outside `completeClaim` | **Stricter:** none anywhere in the route, the `completeClaim` exception is gone. **New:** none in the repository outside `complete`. **New:** the route calls `processedWebhookEventRepository.complete` nowhere outside `completeClaim` |
+| `completeClaim` called ≥ 3 times in `POST` | Unchanged |
+| (new `it`) | The route code without comments has no `from('processed_webhook_events')`, and `POST` calls each of the other four methods exactly once |
+
+Dev's mutants G1 to G4 show each new arm going red, and the "inline write sneaks back" case is caught twice (the `from(` check and the status check). The old guard's blind spots (a `'completed'` held in a variable; a write from another file) are unchanged, so nothing is weaker. Optional hardening is in O-P1-1.
+
+#### Rulings on PR1-D1 to PR1-D6 and PR1-Q1
+
+| # | Ruling |
+|---|---|
+| **PR1-D1** no `try/catch` | **Accepted. This is the only choice that keeps behaviour identical.** The template's catch exists to keep a repository from throwing at its caller. supabase-js already returns query errors without throwing, so on the error path the template's catch would change nothing and the "returns `{ data, error }`" checklist item is met. It matters only on a real throw, and there it would change behaviour in two places. In `findClaim`, a thrown read today reaches `POST`'s outer catch with `processedEventId` null and gets a 500, so Stripe retries. A catch would turn it into `checkError`, log it and carry on processing **without a claim**. In `markFailed`, a catch would silence "Could not release failed event". So the absence is required, and it is documented in the header and pinned by a test. Record it as the webhook-repository exception in `REPOSITORY_STRATEGY.md`, which the "Errors passed through" bullet already does |
+| **PR1-D2** no logger | **Accepted, no field.** A logger field that is never called is dead code (SA Phase 2 item 8). The checklist's actual aim, "no `console.*`", is met. Adding log lines for the errors the route discards is FU-9 (Q-4) and would make this PR a log-change PR. When FU-9, or C-5 in PR 2, gives a repository something to log, it uses `createLogger({ service: '<Name>Repository' })` per the template |
+| **PR1-D3** own `WebhookClaimResult<T>` | **Accepted.** `AgentRepositoryResult`'s `error: Error` would drop `.code` from the type, and the 23505 check needs it. Keep `PostgrestError \| null` |
+| **PR1-D4** order of evaluation | **Accepted.** The payload values are pure, and the only observable difference needs a `String()` that throws. Either way that throw lands in the same release `catch`. The harness shows the effects are identical |
+| **PR1-D5** guard parses a second file | **Accepted.** C-7 forbade re-parsing the **route**. A 165-line file parsed once costs nothing measurable, and the guard needs it to follow the completing write |
+| **PR1-D6** 20 functions, untouched set 18 | **Recorded.** SA's `--exact` run enumerated 20 top-level functions: 18 identical, 2 differing |
+| **PR1-Q1** PR 1 note placement | **Confirmed.** It stays a note, in `markFailed`'s doc comment and in §11. That is the right place: the next reader of the release code meets it. A fix (for example reclaiming a stale `processing` row) is a behaviour change that needs its own requirement, outside CF-5 (C-9) |
+
+#### Code Review Comments
+
+1. **CR-P1-1** `docs/REPOSITORY_STRATEGY.md`, pattern bullet "Errors passed through": "They neither catch nor log" is stated for all the webhook repositories, but C-5 / Q-5 has `PaymentRepository.findByStripeInvoiceId` log on non-PGRST116 errors in PR 2. **Condition on PR 2, not PR 1:** PR 2 rewords it to "They do not catch; they log only where SA ruled it (C-5)", or something equivalent. — Priority: Low
+2. **CR-P1-2** `ProcessedWebhookEventRepository.ts`: the new-repository checklist asks for types re-exported from `index.ts`. `NewWebhookClaimRow`, `WebhookClaim`, `WebhookClaimResult` and `WebhookClaimStatus` are not. The only consumer imports the file directly, so nothing is broken. **Optional.** If wanted, one `export type { … } from './ProcessedWebhookEventRepository'` line, as `ArchiveRepository` has. — Priority: Low
+
+#### Optimisation Suggestions
+
+- **O-P1-1 (guard, optional).** Two cheap extra arms in the new `it`. First, the route never names the class `ProcessedWebhookEventRepository`, only the singleton: a `new ProcessedWebhookEventRepository().complete(…)` would otherwise get around "complete only via `completeClaim`". Second, the `from(` regex also matches a backtick-quoted table name.
+- The `--exact` per-function check cannot see module-level statements (§7.4). For PR 2 onward, keep quoting the module-level diff in the evidence; SA checked it by hand here.
+
+#### Code Approved for QA: Yes
+
+No change is required before QA. CR-P1-2 and O-P1-1 are Dev's choice; if Dev takes either, SA needs only the re-run of the guard and repository suites, not a fresh review. CR-P1-1 is carried to PR 2's review.
+
+### PR 2 code review
+
+**Code Review by SA — 2026-10-08**
+**Status:** 🔄 Fix Required (NEEDS REVISION), one finding: CR-P2-1, the PR2-Q1 ruling. Everything else is approved as it stands.
+
+Scope reviewed: the uncommitted diff on `feature/webhook-repos-pr2-invoices` against `933d661c`. That covers `route.ts`, `PaymentRepository.ts`, the new `PaymentInvoiceRepository.webhook.test.ts`, `noBookingGuess.guard.test.ts`, `routerPlacement.guard.test.ts` and `docs/REPOSITORY_STRATEGY.md`. The `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` edit is TL's and is out of scope.
+
+#### What SA checked itself (not taken from §7.3.3)
+
+| # | Check | SA's evidence | Verdict |
+|---|---|---|---|
+| 1a | Snapshot unchanged | `git hash-object` on the `.snap` before and after SA's runs gave `ae7b32c4480a…` both times, equal to `git rev-parse 933d661c:<snap>` | ✅ |
+| 1b | Entry by entry (SA's own method, not Dev's sha256) | SA wrote `git show 933d661c:<snap>` to the scratchpad, evaluated both files in a `vm` context and compared a sha1 of each `exports[…]` value. Result: **base 100, work 100, 100 identical, 0 differing, 0 missing, 0 added** | ✅ |
+| 1c | `check-logging-only-diff --exact`, base `933d661c` | SA ran it (`tsx`) on the 15 untouched functions, named one by one (`handleInvoicePaymentFailed`, `handleCheckoutCompleted`, `handleSubscriptionUpdated`, `handleDispute`, `handleChargeRefunded`, `ownedOrNull`, `handleConnectPaymentIntentSucceeded`, `recordPlanPeriodPaid`, `handleConnectPlanSubscriptionCreated`, `accountOwns`, `accountOwner`, `handlePlanSubscriptionEnded`, `handleSubscriptionDeleted`, `completeClaim`, `POST`): **15 × identical, exit 0**. Together with the five converted handlers that makes the 20 top-level functions | ✅ |
+| 1d | Module-level diff | Read by hand. The only change is two import statements (`paymentInvoiceRepository` and the three column constants, then `businessProfileRepository`). `BUSINESS_OS_FLOW_HANDLERS` and the dispatcher are not in the diff | ✅ |
+| 1e | Each converted site against its old inline chain | Read side by side with the `-` lines. **H1**: `'*'`, `eq stripe_invoice_id`, `single`; the route reads only `data` (the `lookupError` was already unused). **H2/I1**: `'*'`, `eq id`, `single`; the same `{data, error}` reaches `invoiceByMetadata && !metadataLookupError` and `lookupError \|\| !platformInvoice`, and I1's error still reaches `log.error({ err: lookupError … })`. **H3**: `{stripe_invoice_id, updated_at: new Date()…}` in that order, `eq id`, awaited, result ignored as before. **H6**: `{status:'paid', paid_at, stripe_hosted_invoice_url, stripe_invoice_pdf, updated_at: paidAt}`, the same order and the same `paidAt`; an `undefined` from Stripe is still passed through (the unit test pins it); `updateError` still reaches the same `log.error` and `throw`. **H8 (#257)**: `'id, user_id, client_email, client_name, invoice_number, currency, booking_id'` (`id` included), `maybeSingle`, still inside the IIFE's `try`, so a rejection still lands in its existing `catch`. **I3**: `{status, paid_at, updated_at: paidAt}`. **J1/K1/L1**: `'id, invoice_number, user_id'` (one constant, PR2-D3), `single`, error or no data → the same `log.info` + return. **J2/L2**: `{status, updated_at}` with the literal now passed as an argument; key order unchanged. **J3**: `'contact_id, amount, currency'`, `maybeSingle`, error ignored as before. **K2**: `{stripe_hosted_invoice_url, stripe_invoice_pdf, updated_at}`. **J4**: see CR-P2-1. `new Date().toISOString()` runs the same number of times, at the same point (after `.from()`, while the payload is built) | ✅ (J4 has one finding) |
+| 1f | Data reaching the route | `findLanguage` turns a non-string `language` into null. The column is `TEXT` (`20260721_create_business_profiles.sql:36`), so `ownerLanguage \|\| 'en'` gives the same result as `ownerProfile?.language \|\| 'en'`. PR2-D2 (`contact_id: string \| null`) is a type-only change | ✅ |
+| 1g | Extra `await` hops | Each repository call adds a microtask or two before the same query. The fire-and-forget work (receipt IIFE, CRM activity) talks to the network, so its order relative to this work was never fixed. The harness, which records order, is identical | ✅ no change |
+| 1h | `.from(` count | `route.ts`: 48 → **33**. No `from(` on `payment_invoices` or `business_profiles` remains | ✅ |
+| 2 | **F-1 by hand (control flow, not position)** | **H3** (`:1331`): it sits inside `if (invoiceByMetadata && !metadataLookupError)`, after `if (!(await accountOwns(…, invoiceByMetadata.user_id …))) { …; return; }` (`:1322`) in the same block. **H6** (`:1533`) and **H8** (`:1648`): every path to them passes `:1337` (`platformInvoice && !owns → return`) and `:1354` (`!platformInvoice → return`). No other `accountOwns`, and no earlier invoice write, sits between those and `:1533`. **I3** (`:1841`): it sits in the same `if (invoiceId)` block as `:1773` (`!owns → return`), after the `lookupError \|\| !platformInvoice → return`. **J2/J3/J4** (`:2001`, `:2015`, `:2023`): at function top level, after `:1992`. **K2** (`:2084`): after `:2075`. **L2** (`:2129`): after `:2120`. In every case the check is an unconditional early return that dominates the write | ✅ |
+| 3 | Q-3 / C-3 controls | The C-3 section header is verbatim, once. `⟨unscoped-by-design⟩` appears on all seven new method docs and on `findByStripeInvoiceId`. The column constants are literal-typed and the parameters are closed unions (`WebhookInvoiceByStripeIdColumns`, `WebhookInvoiceFieldColumns`, `WebhookInvoiceStatusFromStripe`). Each update is a named transition with a fixed patch: no spread and no generic update. No insert, so no typed row is needed. Every method has a no-`user_id` test | ✅ |
+| 3t | Tenant isolation (`tenant-isolation-guard`): the proof named in each doc exists at each call site | `findByStripeInvoiceId` (H1, J1, K1, L1): keyed by the event's Stripe invoice id, owner checked before any write (row 2). `findByIdUnscoped` (H2, I1): the doc says "not trusted, every caller checks `accountOwns` before anything is written"; true at `:1322`/`:1337` and `:1773`. `recordStripeInvoiceId`: `:1322`. `markPaidFromStripeInvoice`: `:1337`. `markPaidFromCheckout`: `:1773`. `setStatusFromStripe`: `:1992` / `:2120`. `recordStripeDocuments`: `:2075`. `readFieldsUnscoped`: H8 after `:1337`, J3 after `:1992`. Payloads: no caller-controlled key; the values come from the signed event or from `paidAt`. Scope-defeating three: no upsert, no injected field. The `payment_invoices` triggers (`update_invoice_on_payment`) were not touched and fire as before | ✅ |
+| 4 | C-5 | `findByStripeInvoiceId`: on `PGRST116` it returns the same error object and logs nothing; on any other error it logs `error` through the file's `createLogger({ service: 'PaymentRepository' })` with `{ err, stripeInvoiceId }`. The unit tests cover the quiet miss, the logged other error (level, service, args), a hit logging nothing, and identity (`toBe`) | ✅ |
+| 5 | C-2 guards | See below | ✅ stricter |
+| 6 | PR2-D1 | See the rulings | ✅ |
+| 7 | PR2-Q1 | See CR-P2-1 | 🔄 |
+| 8 | CR-P1-1 and `REPOSITORY_STRATEGY.md` | "They do not catch … They log only where SA ruled it … The one ruling so far: `findByStripeInvoiceId` …" is accurate for the code as submitted. The new section paragraph matches the methods, and its "14 `payment_invoices` queries + the `business_profiles` read" adds up to the 15 sites. **But** its last sentence ("`findLanguage` … keeps its own try/catch") goes stale under CR-P2-1 and must change with it | ✅ now, update with CR-P2-1 |
+| 9 | Rules 1, 3, 4, 6; console; entitlements | **Rule 1**: 15 sites leave the route. **Rule 3**: 0 `console.` in all five `.ts` files; the only new log line is the C-5 one, through Pino. **Rule 4**: the exception is documented in the section comment, in each method doc and in the strategy doc. **Rule 6**: no `any` added (the test uses `as unknown as` only). **Entitlements**: no import from `lib/business-os/entitlements/` in the diff; `businessOsEntitlements.imports.guard` passes. **Scoped `tsc`** (SA's own scratch tsconfig over the five changed `.ts` files, 8 GB): **0 errors in those files**, so the two `@ts-expect-error` lines are consumed (an unused one would raise TS2578). There are 58 errors in transitively imported files, the same count Dev reports for the base. **ESLint**: 0 errors; the 10 warnings are all on lines this PR does not touch | ✅ |
+| 10 | Runs (`--ci --runTestsByPath`, no `-u`) | Every `app/api/stripe/webhook/__tests__/*.test.ts`, every `lib/payments/__tests__/*.test.ts`, the new repository test, `noBookingGuess.guard`, `invoiceIntentsStayUnowned.guard`, `stripeAuditEntries`, `noPilotCreditTableReads.guard`, `bookingPaymentStatusReaders.guard`, `businessOsEntitlements.imports.guard`, `mutationOrSelect.guard`, `userSubscriptionsWriteLockdown.qa` + `…Migration`, `BusinessProfileRepository.languageCurrency` + `.searchForAdmin`, `PaymentRepository.getOverdueInvoices`, `inviterNotification`, `redemptionDeps` and `check-logging-only-diff`: **66 suites, 1,127 tests, 100 snapshots, all passed**. Snapshot blob after the run: `ae7b32c4…` | ✅ |
+
+#### C-2: every old guard assertion still bites
+
+| Old assertion | Where it bites now |
+|---|---|
+| `noBookingGuess`: no `matchingBooking` in the route | Unchanged (the diff only adds lines) |
+| `noBookingGuess:66`: the handler does not match `from('payment_invoices')…booking_id:` | **Kept verbatim**, plus two new arms. (b) No inline `payment_invoices` query in any quote style. The class is never named. Every mention of `paymentInvoiceRepository` is a direct call (so an alias fails, M3), and every call is to one of five allow-listed methods (so the generic, user-scoped `update` fails, M2). (c) Which called methods write is read from the repository's AST with comments stripped, not from their names. The writers must be exactly `recordStripeInvoiceId` and `markPaidFromStripeInvoice`, and neither may contain `booking_id` (M1). A `this.update(…)` helper call would also match `.update(` and so be counted as a writer |
+| `noBookingGuess`: `servicePrice` / `scheduling_services(price)` on the handler | Unchanged, and now also applied to the code of every repository method the handler calls |
+| `routerPlacement`: claim table checks | Unaffected (no `processed_webhook_events` line moved) |
+| (new) every site converted | No `from(` on either table in any quote style, and neither class name appears as an identifier. Exact per-handler call counts, and the route-wide total equals their sum (so no stray call elsewhere). `findLanguage` is the only `businessProfileRepository` call, and it sits inside `handleConnectInvoicePaymentFailed` |
+| (new) F-1 ordering | The nearest preceding `accountOwns` before each of the five write calls must test `platformInvoice.user_id` or `invoiceByMetadata.user_id` |
+| `receiptOnPaid`, `invoiceIntentsStayUnowned`, `emptyBody`, `pinoLogging`, `deferredFirstPayment`, `planSurfaces` | No text they read moved; all green on SA's run |
+
+**M1–M7 are plausible.** Each targets one arm, and the red counts are what that arm and the harness would give. M4 (H3 above its check) turns 5 tests red, as expected. The harness records the extra update in Fix-1's three refusal scenarios (F1-1, F1-2, 1b), and the two route guards see the order and the count. M7 (`maybeSingle` → `single`) reaching seven harness entries fits the harness recording the terminal.
+
+#### Rulings on PR2-D1 to D4, PR2-Q1 and PR2-Q2
+
+| # | Ruling |
+|---|---|
+| **PR2-D1** (no try/catch in `findByStripeInvoiceId`) | **Accepted. Behaviour-preserving, and required.** Inline, a rejected H1/J1/K1/L1 query threw out of the handler to `POST`'s outer catch, which answered 500 and released the claim, so Stripe retried. With the old catch it would have become `{ data: null, error }`, so H1 would fall through to the metadata lookup and J/K/L would return 200 quietly. Without the catch, the old behaviour is back (`claimRepository.qa` and the new unit test pin it). **No other caller depends on the catch.** SA grepped the whole repo (`.ts`, `.tsx`, `.js`, `.mjs`, `.cjs`, `.sql`) both at `933d661c` and in the working tree. At the base, the method's only occurrences are its definition and a comment at `:1341`. Now the only callers are the four route sites, and no `jest.mock` stubs it. Same reasoning as PR1-D1 |
+| **PR2-D2** `contact_id: string \| null` | **Accepted.** Type-only change; scoped `tsc` is clean |
+| **PR2-D3** one lookup constant | **Accepted.** Fix-1 made the three selects identical, so this is collapsing literals, as Q-3 asked |
+| **PR2-D4** `findByStripeInvoiceId` keeps `PaymentRepositoryResult` | **Accepted.** The object is the same, the route reads only truthiness, and `tsc` accepts the `PostgrestError` → `Error` assignment |
+| **PR2-Q1** | **(c). See CR-P2-1.** (a) is rejected because it is a behaviour change: a thrown J4 read would answer 200 instead of 500, so Stripe would not retry, and the overdue activity would be written in English. The user's rule for CF-5 is none. (b) is rejected because it would mean two methods for the same query, which is the bloat Q-3 rules out |
+| **PR2-Q2** (positional F-1 guard) | **Accepted as a guard.** SA checked dominance by hand (row 2), so the code as submitted is right. The behavioural proof is still the harness's Fix-1 refusal entries, which would go red on any reordering that lets a write run. The guard's blind spot (a check moved into a branch that does not dominate the write) is recorded here, so no one reads the guard as a flow analysis |
+
+#### Code Review Comments
+
+1. **CR-P2-1** `lib/repositories/BusinessProfileRepository.ts:1307` `findLanguage`, used by `route.ts:2023` (J4). This is a behaviour change on a thrown read: the method's `try/catch` turns a rejected `business_profiles` query into `{ data: null, error }`, so the webhook answers 200 with English where the inline query answered 500 and Stripe retried. **Fix (option c, minimal):** drop the `try/catch` and keep the returned-error path as it is:
+   - `const { data, error } = await this.supabase.from('business_profiles').select('language').eq('user_id', userId).maybeSingle();`
+   - `if (error) { logger.error({ err: error, userId }, 'Failed to read business language'); return { data: null, error }; }`
+   - then the existing string check.
+   With that, a returned error behaves exactly as today for both callers (logged, `data: null`), and a rejection reaches the caller again.
+
+   **The invite caller is safe.** SA checked it. `redemptionDeps.ts:102` → `inviterNotification.ts:180` wraps the call in `settle(() => deps.findProfileLanguage(id), LOOKUP_FAILED)` (`:133–139`), which catches a rejection and returns `{ data: null, error }`. `:190` then treats any `.error` as "absent". So on a thrown read the invite still sends with the same fallback language as today. The only difference there is that the repository's own "Failed to read business language" line is no longer written on a *thrown* read. That is log-only and on a path supabase-js practically never takes. If Dev wants to keep that line, `catch (err) { logger.error(…); throw err; }` around the query is also acceptable, as long as the returned-error branch still returns and does not throw.
+
+   **With the fix:**
+   - Add a unit test in `BusinessProfileRepository.languageCurrency.test.ts`: a rejected query rejects. The existing three tests must stay green unedited.
+   - Update `REPOSITORY_STRATEGY.md`'s "Errors passed through" sentence on `findLanguage` (it no longer "keeps its own try/catch"), plus §7.3.3's "Errors and logging" paragraph and the PR2-Q1 row.
+   - SA re-check needs only: `languageCurrency`, `inviterNotification`, `redemptionDeps`, the webhook `__tests__` dir (snapshot blob still `ae7b32c4`), and a read of the method and the doc sentence.
+
+   — Priority: **High** (blocking: it breaks the "no behaviour change" contract), effort small
+2. **CR-P2-2** `noBookingGuess.guard.test.ts` arm (c) classifies a method as a writer by `.update|insert|upsert|delete(` in its own body. A write delegated to a module-level helper outside the class would not be seen. Nothing does that today, and the C-3 source test forbids such shapes inside the section. **Optional; no action needed.** — Priority: Low
+
+#### Optimisation Suggestions
+
+- `WebhookInvoiceResult`'s doc says "used by the webhook methods, which neither catch nor log". `findByStripeInvoiceId` is in the same family but returns `PaymentRepositoryResult` and logs (C-5, PR2-D4). Adding a half-sentence would save the next reader a double take. Style only.
+
+#### Code Approved for QA: No, not until CR-P2-1 is in
+
+Everything except CR-P2-1 is approved, and SA does not need a fresh review. Once CR-P2-1 is done, SA runs the re-check listed under it and then marks the PR approved for QA.
+
+#### CR-P2-1 re-check (SA, 2026-10-08)
+
+**Status:** ✅ Code Approved (APPROVED_CODE_REVIEW). CR-P2-1 is met.
+
+| Check | SA's evidence | Verdict |
+|---|---|---|
+| `findLanguage` | `git diff 933d661c`. The try/catch is gone. The chain `select('language')·eq('user_id')·maybeSingle` is unchanged. A returned error still logs `{ err, userId }`, 'Failed to read business language', and returns `{ data: null, error }`. The string check is unchanged. A rejection now reaches the caller. The doc names both callers and the `settle()` wrapper | ✅ |
+| Invite caller | `inviterNotification.ts:180` `settle()` still catches. `inviterNotification` and `redemptionDeps` pass, and neither file is edited | ✅ |
+| Tests | One new test in `languageCurrency` ("a rejected query rejects": `maybeSingle` rejects, and so does `findLanguage`). The three existing tests are unchanged in the diff and green | ✅ |
+| Docs | The REPOSITORY_STRATEGY "Errors passed through" sentence now says `findLanguage` logs a returned error, does not catch, and its invite caller's `settle()` does. §7.3.3's "Errors and logging" paragraph and the PR2-Q1 row record the (c) ruling. The `WebhookInvoiceResult` half-sentence was added (the optional item). CR-P2-2 was not taken, which is accepted | ✅ |
+| Runs (`--ci --runTestsByPath`, no `-u`) | All 11 suites in the webhook `__tests__` dir, plus `languageCurrency`, `inviterNotification`, `redemptionDeps`, `PaymentInvoiceRepository.webhook` and `noBookingGuess.guard`: **15 suites, 378 tests, 100 snapshots passed**. Snapshot blob `ae7b32c4…` before and after | ✅ |
+| Scoped `tsc` | SA's scratch tsconfig, with `BusinessProfileRepository.ts` and its test added: **0 errors in the changed files**, and 58 elsewhere, the same as before | ✅ |
+
+#### Code Approved for QA (after the CR-P2-1 re-check): Yes
+
 ---
 
 ## QA Testing Report
@@ -1085,6 +1533,314 @@ After everything: snapshot a673a901, route.ts df671c4a, every temporary file del
 - [x] All acceptance criteria pass. The harness kills every behaviour mutant in PR groups 1–5 and stays green under refactors that keep behaviour, so it is fit to prove PRs 1 to 5.
 - [ ] Note for SA/Dev before commit (not blocking): Edge case 1, the three bind query chains PR 4 moves. Recommended in PR 0, so that the frozen test file is the "before". Otherwise it becomes PR 4's first commit.
 
+### PR 1: Claim table and client
+
+**QA — 2026-10-07**
+**Test mode:** full
+**Strategy used:** A (Jest), plus a direct old-vs-new equivalence run and mutation testing. PR 1 must not change behaviour, so the main test runs the same scenarios through the `90da8301` route and the new route and compares the traces. Mutants were temporary copies of the repository or `route.ts`. A scratch Jest config pointed `@/lib/repositories/ProcessedWebhookEventRepository` or `../route` at the copy. Copies of the guard, the repository unit test and the QA test read the copy through an env path. The real harness and snapshot were used unedited.
+**Focus:** api (the claim path), security (the service-role client), schema (each method's query chain)
+**Skipped:** e2e (no UI). `npm run test:bos-entitlements` is not needed: the diff imports nothing from `lib/business-os/entitlements/`. The import guard ran anyway (below).
+**Input source:** prompt from TL, plus §7.3.2 (including "after the SA code review") and the PR 1 code review.
+
+**Tree:** worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr1-claim-client`, base `90da8301`, uncommitted, Node 22.19.0. Every Jest run used `--ci --runTestsByPath`. None used `-u`.
+
+#### Invariants (checked before, during and after)
+
+| Check | Result |
+|---|---|
+| Snapshot blob | `a673a901…` before, after every mutant (the runner checked it each time and would have stopped) and at the end ✅ |
+| Dev's files, never edited by QA | `route.ts` `e82720b2`, repository `4c8b3351`, its test `1ee78dfb`, guard `d1432ba4`, `index.ts` `1ff1e48c`, harness `a7cc9992`. All the same at the start and the end ✅ |
+| Old route used for the comparison | `git show 90da8301:app/api/stripe/webhook/route.ts` into a temp folder: blob `df671c4a` = the base ✅ |
+| Temp files | the temp folder (old route, equivalence test, mutants, test copies, scratch config) deleted. Only `claimRepository.qa.test.ts` is new ✅ |
+
+#### Test coverage
+
+| Acceptance criterion (PR 1, §7.3.2) | Tested? | Result | Notes |
+|---|---|---|---|
+| 1. Same behaviour on the claim path, old vs new | ✅ | Pass | **17 of 17 scenarios identical.** Status, body, every DB op with its payload, and every log line (level, bindings, arguments) compared byte for byte (table below) |
+| 2. The route uses `supabaseServer` and builds no client | ✅ | Pass | With `supabaseServer` mocked, all queries reach it and `createClient` is never called. `route.ts` has no `createClient`, no `@supabase/supabase-js` value import and no Supabase env read |
+| 3. Repository unit tests; each chain = the old inline chain | ✅ | Pass | 18 tests, including the no-owner-filter test on all five methods. The chains match the `-` lines of the diff. The old-vs-new traces confirm it at the route |
+| 4. Mutants caught | ✅ | Pass | **29 of 29 killed** (below). Without the new QA file, 7 would survive |
+| 5. Regression | ✅ | Pass | 119 suites, 2,387 tests, 100 snapshots, plus 8 guard suites (74 tests) |
+| Scoped type-check and lint of the QA file | ✅ | Pass | `tsc` (scratch tsconfig, the QA file only): 0 errors. ESLint: exit 0 |
+
+#### 1. Equivalence, old route vs new
+
+Both routes ran in the same Jest process, under the same mocks and a fixed clock, with a fresh module per run. Random correlation ids were renamed in order of appearance (`<UUID#1>`). Error objects were written out with their name, message and own fields. "Module load" (the `createClient` calls made at import) is compared on its own in §2.
+
+| # | Scenario | Status | Trace old = new |
+|---|---|---|---|
+| E1 | First delivery, platform event with no handler | 200 | ✅ (select → insert → complete) |
+| E2 | First delivery, Connect `invoice.finalized` | 200 | ✅ |
+| E3 | Duplicate in flight (`processing`) | 200 duplicate | ✅ |
+| E4 | Duplicate completed | 200 duplicate | ✅ (only the select) |
+| E5 | `23505` race on insert | 200 duplicate | ✅ |
+| E6 | Insert returns another error (DB down): logged, processed anyway | 200 | ✅ |
+| E7 | Reclaim of `failed` | 200 | ✅ (select → reclaim → complete) |
+| E8 | Reclaim and complete both return errors (ignored, no log, FU-9) | 200 | ✅ |
+| E9 | Handler throws a 700-character message → `markFailed`, `failure_message` cut to 500 | 500 | ✅ |
+| E10 | Handler throws a string, not an Error | 500 | ✅ |
+| E11 | Handler throws with `NODE_ENV=development` (`details` in the body) | 500 | ✅ |
+| E12 | Release returns an error (DB down): no "Could not release" line | 500 | ✅ |
+| E13 | Release **rejects**: "Could not release failed event" logged with `processedEventId` | 500 | ✅ |
+| E14 | Release throws **synchronously** at `.update()` | 500 | ✅ (same log line: old code caught it in the `try`, new code gets a rejected promise from the async method) |
+| E15 | `findClaim` returns an error: logged, claimed and processed anyway | 200 | ✅ |
+| E16 | `findClaim` **rejects** (thrown read) | 500 | ✅ (no claim written, nothing released: SA's PR1-D1 holds) |
+| E17 | `findClaim` throws synchronously at `.select()` | 500 | ✅ |
+
+**Negative control.** The same comparison, run with a route copy whose release swallows a throw (`.catch(() => undefined)`), went red on E13 and E14 only. So the comparison does see a log-only change.
+
+#### 2. Client equivalence
+
+- Module load, measured in the equivalence run: the old route made 2 `createClient` calls (the shared `supabaseServer` and its own, with `auth: { autoRefreshToken: false, persistSession: false }`). The new route makes 1, which is `supabaseServer`. Same URL and key.
+- With `@/lib/supabaseServer` mocked to a tagged client, a full delivery runs both the claim (repository) and a remaining direct query (`supabaseAdmin`). Every query is on the tagged client, and `createClient` is not called at all.
+- Static, from the AST with comments excluded: no `createClient`, `NEXT_PUBLIC_SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` identifier in `route.ts`, and no value import of `@supabase/supabase-js`. The route's only `process.env` reads are the Stripe keys and secrets and `NODE_ENV`.
+- The QA test's two client tests fail against the old route (checked through the scratch mapping), so they are not vacuous.
+
+#### 3. Repository
+
+`lib/repositories/__tests__/ProcessedWebhookEventRepository.test.ts`: 18 tests, all pass. Every method has an exact-chain test and a no-owner-filter test, and the error object is passed through by identity. QA checked each chain against the removed lines of the diff:
+
+| Method | Chain | Same as old? |
+|---|---|---|
+| `findClaim` | `from · select('event_id, status') · eq('event_id') · maybeSingle` | ✅ |
+| `insertClaim` | `from · insert(row)`, awaited, no `.select()` | ✅ (the route passes the same object literal) |
+| `reclaimFailed` | `from · update({status:'processing', failure_message:null, processed_at}) · eq('event_id')` | ✅ key order too |
+| `complete` | `from · update({status:'completed', completed_at}) · eq('event_id')` | ✅ |
+| `markFailed` | `from · update({status:'failed', failure_message}) · eq('event_id')`, the route still does `.slice(0, 500)` | ✅ |
+
+#### 4. Mutation results
+
+Columns are red tests per suite. H = harness, G = guard, U = repository unit test, QA = `claimRepository.qa.test.ts`.
+
+| # | Target | Mutation | H | G | U | QA |
+|---|---|---|---|---|---|---|
+| R01 | repo | `complete`: `'completed'` → `'complete'` | 87 | 1 | 1 | 0 |
+| R02 | repo | `findClaim` drops `.eq('event_id')` | 100 | 0 | 1 | 0 |
+| R03 | repo | `findClaim` `maybeSingle` → `single` | 100 | 0 | 1 | 0 |
+| R04 | repo | `reclaimFailed` drops `failure_message: null` | 1 | 0 | 1 | 0 |
+| R05 | repo | `complete` writes `processed_at` instead of `completed_at` | 87 | 0 | 1 | 0 |
+| R06 | repo | `complete` writes a `Date`, not an ISO string | 87 | 0 | 1 | 0 |
+| R07 | repo | `insertClaim` swallows `23505` (error nulled) | 1 | 0 | 1 | 0 |
+| R08 | repo | `insertClaim` adds `.select()` | 97 | 0 | 1 | 0 |
+| R09 | repo | `insertClaim` adds `user_id: null` (via `Object.assign`, no spread) | 97 | 0 | 2 | 0 |
+| R10 | repo | `markFailed` cuts the message again, to 100 | 0 | 0 | 1 | 1 |
+| R11 | repo | `markFailed` writes `'error'` | 9 | 0 | 1 | 1 |
+| R12 | repo | `CLAIM_COLUMNS` widened | 100 | 0 | 2 | 0 |
+| R13 | repo | `reclaimFailed` adds `.eq('status', 'failed')` | 1 | 0 | 1 | 0 |
+| R14 | repo | `complete` adds `.eq('status', 'processing')` | 87 | 0 | 1 | 0 |
+| R15 | repo | `findClaim` catches a rejection with `.then(ok, err)` (no `try`, so the source check passes) | 0 | 0 | 0 | **1** |
+| R16 | repo | `markFailed` catches a rejection the same way | 0 | 0 | 0 | **1** |
+| R17 | repo | `complete` also writes `failure_message: null` | 87 | 0 | 1 | 0 |
+| R18 | repo | `complete` does not wait for its update | 87 | 0 | 2 | 2 |
+| T01 | route | `23505` → `23503` | 1 | 0 | 0 | 0 |
+| T02 | route | release `.slice(0, 500)` → `.slice(0, 499)` | 0 | 0 | 0 | **1** |
+| T03 | route | route swallows a thrown release (`.catch` on `markFailed`) | 0 | 0 | 0 | **1** |
+| T04 | route | `reclaimFailed` call removed | 1 | 1 | 0 | 0 |
+| T05 | route | `findClaim` keyed by the object id, not the event id | 100 | 0 | 0 | 0 |
+| T06 | route | claim metadata drops `livemode` | 97 | 0 | 0 | 0 |
+| T07 | route | `completeClaim` does not await `complete` | 0 | 0 | 0 | **1** |
+| T08 | route | route builds its own service-role client again (the old code) | 0 | 0 | 0 | **2** |
+| T09 | route | a `findClaim` error answered as a duplicate | 1 | 0 | 0 | 0 |
+| T10 | route | `processing` no longer short-circuited | 1 | 0 | 0 | 0 |
+| T11 | route | the release (`markFailed`) not awaited | 0 | 0 | 0 | **2** |
+| T12 | route | claim insert not awaited | 72 | 0 | 0 | 1 |
+
+**29 of 29 killed.** Bold = killed by the new QA file only. Without it, **7 survive: R15, R16, T02, T03, T07, T08 and T11. All of them affect PR 1.** They fall into three groups:
+
+- **A catch that silences or reroutes a throw** (R15, R16, T03). The harness answers every query with `{ data, error }` and records no logs, so it cannot see these. The unit test "does not catch a throw" uses a client whose `from()` throws synchronously. A rejection caught by `.then(ok, err)` gets past it, and gets past the source check that bans `try`. R15 is exactly the case SA's PR1-D1 ruling warns about: a thrown claim read would become "process without a claim".
+- **A dropped `await`** (T07, T11). The mock answers at once, so the write is recorded either way. For real, a serverless function can stop once it has answered. An un-awaited completion then leaves the row `processing`, and every retry is answered "duplicate". This blind spot exists before PR 1 too.
+- **Client and long message** (T08, T02). The client is not part of any recorded effect. The harness's failure messages are all shorter than 500 characters.
+
+#### 5. Regression
+
+| Run | Suites | Tests | Snapshots | Time |
+|---|---|---|---|---|
+| `app/api/stripe/webhook/__tests__/*.test.ts` (10, including the new QA file), `lib/payments/__tests__/*.test.ts` (40), `lib/repositories/__tests__/*.test.ts` (69: the barrel change, the new repository test and `businessOsEntitlements.imports.guard`) | **119 passed** | **2,387 passed** | 100 passed | Jest 42.1 s, wall 46 s |
+| Dev's guard set: `noBookingGuess.guard`, `stripeAuditEntries`, `noPilotCreditTableReads.guard`, `bookingPaymentStatusReaders.guard`, `mutationOrSelect.guard`, `userSubscriptionsWriteLockdown.qa`, `userSubscriptionsWriteLockdownMigration`, `check-logging-only-diff` | 8 passed | 74 passed | — | 28.9 s |
+| `claimRepository.qa.test.ts`, 3 runs in a row | 1 | 9/9 each time | — | 3.1–3.2 s each (stable) |
+
+Snapshot blob after all runs: `a673a901…`.
+
+**New file (QA):** `app/api/stripe/webhook/__tests__/claimRepository.qa.test.ts`, 9 tests, no snapshots. It covers what the harness cannot see: the client identity (2 tests), the claim throws (4) and the awaited claim writes (3). It kills R15, R16, T02, T03, T07, T08 and T11. The cost is one suite of about 3 s, which runs in parallel inside the existing Jest shards.
+
+### Issues found (PR 1)
+
+#### Bugs (must fix before commit)
+
+None.
+
+#### Performance issues
+
+None. The route makes one `createClient` call fewer at module load.
+
+#### Edge cases (nice to fix, Low)
+
+1. **The unit test "does not catch a throw" only tries a synchronous throw.** File: `lib/repositories/__tests__/ProcessedWebhookEventRepository.test.ts`. A `.then(ok, err)` on a rejected query (R15, R16) passes it, and passes the `try` ban in the source check. The route-level QA test now catches both. Optional for Dev: add a rejecting-builder case for `findClaim` and `markFailed` in the unit test, so the repository's own suite pins it.
+2. **The guard's "complete only via `completeClaim`" check matches the receiver by name.** File: `routerPlacement.guard.test.ts`. An alias (`const r = processedWebhookEventRepository; r.complete(…)`) would pass it. This is the same kind of blind spot the old guard had (SA: "nothing is weaker"). Not a regression; noted for PR 5, when the alias work happens.
+3. **Pre-existing, unchanged (FU-5 / FU-9):** a release that returns an error is not logged, and the row stays `processing` (E8, E12). PR 1 keeps this behaviour, as ruled (PR1-Q1).
+
+### Final status (PR 1)
+
+**Verdict: PASS.**
+
+- [x] All acceptance criteria pass. PR 1 preserves behaviour: 17 of 17 claim scenarios give byte-identical traces (status, body, DB ops with payloads, logs), the route uses `supabaseServer` and builds no client, each repository chain equals the old inline chain, and 29 of 29 mutants are killed. Regression: 119 + 8 suites green. Snapshot `a673a901` unchanged.
+- [ ] Dev must review the new QA file `claimRepository.qa.test.ts`, which goes into PR 1. Edge cases 1 and 2 are optional.
+
+### PR 2: Connect invoices
+
+**QA — 2026-10-08**
+**Test mode:** full
+**Strategy used:** A (Jest), plus a direct old-vs-new equivalence run and mutation testing, the same method as PR 1. PR 2 must not change behaviour, so the main test runs the same scenarios through the `933d661c` route and the new route and compares the traces. Mutants were temporary copies of `PaymentRepository.ts`, `BusinessProfileRepository.ts` or `route.ts`. A scratch Jest config pointed `@/lib/repositories/PaymentRepository`, `@/lib/repositories/BusinessProfileRepository` or `../route` at the copy. Copies of the two guards and the two repository unit tests read the copy through an env path. The real harness and snapshot were used unedited.
+**Focus:** api (the five Connect invoice handlers), security (F-1 ordering, unscoped methods), schema (each method's query chain)
+**Skipped:** e2e (no UI). `npm run test:bos-entitlements` is not needed: the diff imports nothing from `lib/business-os/entitlements/` (the one match in the diff is a doc sentence). `businessOsEntitlements.imports.guard` ran anyway (regression).
+**Input source:** prompt from TL, plus §7.3.3, the PR 2 code review and the CR-P2-1 re-check.
+
+**Tree:** worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr2-invoices`, base `933d661c`, uncommitted, Node 22.19.0. Every Jest run used `--ci` and `--runTestsByPath`. None used `-u`.
+
+#### Invariants (checked before, during and after)
+
+| Check | Result |
+|---|---|
+| Snapshot blob | `ae7b32c4480ad7f7a1d4945763dd00acf81083bc` before, after every mutant (the runner hashed it after each run and would have stopped) and at the end ✅ |
+| Dev's files, never edited by QA | `route.ts` `7507a6bd`, `PaymentRepository.ts` `8729ea84`, `BusinessProfileRepository.ts` `dfe05e30`, `PaymentInvoiceRepository.webhook.test.ts` `8fdd4af6`, `languageCurrency` test `c50469fd`, `noBookingGuess.guard` `b73833cb`, `routerPlacement.guard` `112426be`, harness `a7cc9992`. All the same at the start and the end. The runner also re-hashed the three source files after every mutant ✅ |
+| Old route used for the comparison | `git show 933d661c:app/api/stripe/webhook/route.ts` into a temp folder: blob `31434a7f` = the base ✅ |
+| Temp files | The temp folder (old route, equivalence test, mutants, test copies, scratch config, runner) was at the repo root, outside the `app/` and `lib/` trees that `routerPlacement.guard` scans. It and the scratchpad dumps are deleted. The only new file is `invoiceRepository.qa.test.ts` ✅ |
+
+#### Test coverage
+
+| Acceptance criterion (PR 2, §7.3.3) | Tested? | Result | Notes |
+|---|---|---|---|
+| 1. Same behaviour in the five converted handlers, old vs new | ✅ | Pass | **79 scenarios. 74 are byte-identical.** 4 differ only by the accepted repository log line (P0-C1 / Q-5). 1 differs on an input supabase-js cannot produce (Edge case 1). The comparison covers status, body, every DB op with its payload and terminal, every log line (level, bindings, arguments) and every side call, all in order (table below) |
+| 1a. A rejected `findByStripeInvoiceId` or `findLanguage` → 500 and claim `failed`, as the old code did | ✅ | Pass | H-23, J-15, K-06, L-05 (`findByStripeInvoiceId`) and J-08, J-09 (`findLanguage`, rejected and thrown synchronously) are identical to the old route: 500, generic body, claim released `failed`. Pinned in the new QA file at all 14 delivery-failing sites |
+| 2. Tenant isolation: each unscoped method is reached only after its owner check | ✅ | Pass | 11 foreign or unmapped scenarios across all five handlers write nothing but the claim, and send no receipt and no activity. The new QA file pins one per handler, plus the metadata path before `recordStripeInvoiceId` |
+| 3. Mutants caught | ✅ | Pass | **38 of 39 killed. The 1 survivor is an equivalent mutant** (T14, below). Without the new QA file, 3 more survive: T07, T08 and T17, a catch added at a call site |
+| 4. Regression | ✅ | Pass | 129 suites, 2,569 tests, 100 snapshots, all passed. Jest 99.4 s, wall 124 s |
+| Scoped type-check and lint of the QA file | ✅ | Pass | `tsc` (scratch tsconfig, the QA file only, 8 GB): exit 0, 0 errors. ESLint: 0 errors, 0 warnings |
+
+#### 1. Equivalence, old route vs new
+
+Both routes ran in the same Jest process, under the same mocks, with a fresh module per run. `Date` was frozen at `2026-10-08T09:00:00.000Z`, with only `Date` faked so the timers stayed real. The correlation id was fixed through `x-correlation-id`. The trace recorded:
+
+- every query (table, operation, the full chain with payload, and the terminal: `single`, `maybeSingle` or `await`);
+- every log line, with the logger's merged bindings (`module`/`service`, correlation id, event id, account);
+- `resolveAccountOwner`, `resolveInvoicePaymentIntent`, `resolveProcessorFee`, `auditLog`, `crmActivityRepository.create` (with the localised title) and `BookingEmailService.sendPaymentReceipt`.
+
+Fire-and-forget work was allowed to settle before the trace was read. Errors were written out with their name, message and own fields, and `undefined` was kept visible, so a missing key and an `undefined` value do not compare equal.
+
+| Group | Scenarios | Result |
+|---|---|---|
+| **H `invoice.paid`** (32) | By Stripe id, with and without booking (H-01, H-02); hosted URL and PDF `undefined` or `null` (H-03, H-04); by metadata under both keys (H-05, H-06); not found three ways (H-07 to H-09); **F-1**: foreign by Stripe id, foreign by metadata, unmapped account, owner `null` (H-10 to H-13); write errors on the invoice and on the transaction (H-14, H-15); already paid (H-16); #257 attach-by-intent (H-17); **receipt read with #257's `id`**: no e-mail, returned error, rejected, not sent, null currency and name (H-18 to H-22); **rejections**: H1 rejected or thrown synchronously, H2 rejected, H3 rejected, H6 rejected or thrown synchronously (H-23, H-24, H-26, H-28, H-30, H-31); H2 error with data (H-27); H3 returned error ignored (H-29) | 30 identical. H-25 log-only. H-32 unreachable input |
+| **I checkout** (12) | Paid with a pending booking confirmed, paid with no booking and a null currency, already paid, foreign, foreign and already paid, not found, other lookup error, I1 rejected, I3 error, I3 rejected, transaction insert error, unmapped account | 12 identical |
+| **J `invoice.payment_failed`** (20) | Overdue + activity in **he / en / no profile / es / null / empty / non-string** language; `findLanguage` returned error (J-07) and **rejected** (J-08) and thrown synchronously (J-09); no contact; activity read error and rejected; not found; other lookup error; J1 rejected; foreign; overdue update error and rejected; empty invoice number | 18 identical. J-07 and J-14 log-only |
+| **K `invoice.finalized`** (8) | URLs recorded, URLs `undefined`, not found, foreign, update error, K1 rejected, K2 rejected, other lookup error | 7 identical. K-08 log-only |
+| **L `invoice.marked_uncollectible`** (7) | Cancelled, not found, foreign, update error, L1 rejected, L2 rejected, unmapped account | 7 identical |
+
+**Every rejection or synchronous throw at a converted site** (H1, H2, H3, H6, I1, I3, J1, J2, J3, J4, K1, K2, L1, L2) gives the same 500, generic body and claim release to `failed` as the old route. The receipt read (H8) is the exception, as before: it sits inside the receipt's own try/catch, so a rejection logs "Payment settled but the receipt did not go out" and the delivery answers 200 (H-20, identical).
+
+**Log-only differences, accepted (P0-C1 / Q-5, §7.3.3).** H-25, J-14 and K-08 are a Stripe-id lookup that returns an error other than `PGRST116`. In those, the new route adds one `error` line, `service: 'PaymentRepository'`, "Failed to find invoice by Stripe ID". J-07 is a language read that returns an error: one `error` line, `service: 'BusinessProfileRepository'`, "Failed to read business language". Everything else in those four traces is byte-identical, including the activity written in English. A **`PGRST116` miss stays quiet** (H-07, H-08, J-13, K-03 and L-02 are identical, so C-5 holds).
+
+**Language (J4).** `he` → "התשלום נכשל: ‏120.00 ‏₪", `es` → "Pago fallido: 99,50 €", and `en`, no profile, `null` and `''` → "Payment failed: …", the same in both routes. A non-string `language` (J-20, which the `TEXT` column cannot hold) also gives the same trace.
+
+#### 2. Tenant isolation
+
+- **In the equivalence run**, every foreign or unmapped scenario was also checked on the new route: no DB write other than the claim table, no receipt, no activity, and 200. That covers H-10 to H-13, I-04, I-05, I-12, J-16, K-04, L-03 and L-07, so all five handlers.
+- **In the new QA file**, one case per handler, plus the metadata path, checks four things: the handler's own refusal line is logged; there is no write; there is no `business_profiles` read; the claim is `completed`.
+- **Ordering, by mutation:** T01, T02, T03 and T05 each add the handler's write above its `accountOwns` check, and T04 removes the checkout check. Each was killed by the harness (Fix-1 entries), `fix1Ownership.qa`, `routerPlacement.guard` (F-1 ordering), the new QA file and the equivalence run. So the owner check precedes every unscoped write on all paths tested.
+
+#### 3. Mutation results
+
+Columns are red tests per suite. H = harness, F1 = `fix1Ownership.qa`, CQ = `claimRepository.qa`, QA = the new `invoiceRepository.qa`, GB = `noBookingGuess.guard`, GR = `routerPlacement.guard`, U = `PaymentInvoiceRepository.webhook`, UL = `BusinessProfileRepository.languageCurrency`, EQ = the temporary equivalence run (79 scenarios). A baseline run with no mutant was all green.
+
+| # | Target | Mutation | H | F1 | CQ | QA | GB | GR | U | UL | EQ |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| R01 | repo | `findByIdUnscoped` drops `.eq('id')` | 12 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 23 |
+| R02 | repo | `recordStripeInvoiceId` drops `.eq('id')` | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 5 |
+| R03 | repo | `markPaidFromStripeInvoice` drops `stripe_hosted_invoice_url` | 4 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 16 |
+| R04 | repo | `markPaidFromStripeInvoice` writes `booking_id: null` | 4 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 16 |
+| R05 | repo | `WEBHOOK_INVOICE_LOOKUP_COLUMNS` gains `status` | 19 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 34 |
+| R06 | repo | receipt columns lose `id` (#257) | 3 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 14 |
+| R07 | repo | `readFieldsUnscoped` `maybeSingle` → `single` | 7 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 27 |
+| R08 | repo | `findByIdUnscoped` `single` → `maybeSingle` | 12 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 23 |
+| R09 | repo | `findByStripeInvoiceId` logs `PGRST116` too | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 14 |
+| R10 | repo | `findByStripeInvoiceId` catches a rejection with `.then(ok, err)` | 0 | 0 | 3 | 4 | 0 | 0 | 1 | 0 | 4 |
+| R11 | repo | `findByStripeInvoiceId` re-adds `try/catch` (the pre-PR shape) | 0 | 0 | 3 | 4 | 0 | 0 | 1 | 0 | 5 |
+| R12 | repo | `setStatusFromStripe` always writes `overdue` | 2 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 3 |
+| R13 | repo | `recordStripeDocuments` swaps URL and PDF | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 |
+| R14 | repo | `recordStripeInvoiceId` never awaits its query | 1 | 1 | 0 | 0 | 0 | 0 | 3 | 0 | 5 |
+| R15 | repo | `findByStripeInvoiceId` default columns `'*'` → the lookup list | 11 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 30 |
+| R16 | repo | `findByStripeInvoiceId` filters `id`, not `stripe_invoice_id` | 30 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 64 |
+| R17 | repo | `markPaidFromCheckout` also writes `stripe_invoice_pdf: null` | 4 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 4 |
+| B01 | profile repo | `findLanguage` re-adds `try/catch` (the pre-CR-P2-1 shape) | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 | 2 |
+| B02 | profile repo | `findLanguage` drops `.eq('user_id')` | 2 | 0 | 0 | 1 | 0 | 0 | 0 | 1 | 9 |
+| B03 | profile repo | `findLanguage` `maybeSingle` → `single` | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 9 |
+| B04 | profile repo | `findLanguage` returns `'en'` instead of null when missing | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **2** | 0 |
+| B05 | profile repo | `findLanguage` throws a returned error instead of returning it | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 | 1 |
+| T01 | route | H3 written above its `accountOwns` (F-1) | 3 | 3 | 0 | 1 | 0 | 2 | 0 | 0 | 7 |
+| T02 | route | J2 overdue written above its check | 6 | 4 | 0 | 2 | 0 | 2 | 0 | 0 | 16 |
+| T03 | route | K2 documents written above its check | 7 | 7 | 0 | 1 | 0 | 2 | 0 | 0 | 5 |
+| T04 | route | checkout owner check removed | 7 | 2 | 0 | 1 | 0 | 1 | 0 | 0 | 9 |
+| T05 | route | L2 cancelled written above its check | 3 | 4 | 0 | 1 | 0 | 2 | 0 | 0 | 5 |
+| T06 | route | `findLanguage` keyed by the invoice id | 2 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 9 |
+| T07 | route | `.catch` on the `findLanguage` call | 0 | 0 | 0 | **2** | 0 | 0 | 0 | 0 | 2 |
+| T08 | route | `.catch` on the H1 `findByStripeInvoiceId` call | 0 | 0 | 0 | **1** | 0 | 0 | 0 | 0 | 2 |
+| T09 | route | uncollectible writes `overdue` | 2 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| T10 | route | receipt read with the failed-activity columns | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 14 |
+| T11 | route | `markPaidFromStripeInvoice` gets URL and PDF swapped | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 14 |
+| T12 | route | J3 reads the receipt columns | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 13 |
+| T13 | route | H6 not awaited, its error ignored | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 17 |
+| T14 | route | `ownerLanguage \|\| 'en'` → `?? 'en'` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| T15 | route | H2 looks up the metadata id by Stripe id | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 11 |
+| T16 | route | the H1-path owner check skipped | 6 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 17 |
+| T17 | route | `.catch` on the I1 `findByIdUnscoped` call | 0 | 0 | 0 | **1** | 0 | 0 | 0 | 0 | 1 |
+
+**38 of 39 killed** by the permanent suites. Bold = killed by that suite alone among the permanent ones.
+
+- **T14 survives, and is equivalent.** `??` differs from `||` only when the stored language is `''`. With `''`, the locale passed on is `''` rather than `'en'`, but `Intl` gets `en-US` either way and `activitySentence` falls back to English. The equivalence run's J-06 (language `''`) stayed identical under the mutant. No test can kill it, because it changes nothing observable.
+- **Without the new QA file, T07, T08 and T17 survive** (all PR 2). Each is a catch added at a route call site, which turns a rejected read into a quiet 200. The harness answers every query with `{ data, error }`, the guards read structure rather than behaviour, and the repository unit tests do not see the route. The pre-PR shapes of the two reused methods (R11 re-adds the `findByStripeInvoiceId` catch; B01 re-adds the `findLanguage` catch) are also killed by `claimRepository.qa` and the unit tests, as Dev and SA reported.
+- B04 is killed only by the `languageCurrency` unit test. It is equivalent at the webhook, because of `|| 'en'`, but not for the invite caller. R09 is killed by the C-5 unit test (and by EQ).
+
+#### 4. Regression
+
+| Run | Suites | Tests | Snapshots | Time |
+|---|---|---|---|---|
+| `app/api/stripe/webhook/__tests__/*.test.ts` (11, including the new QA file), `lib/payments/__tests__/*.test.ts` (40), `lib/repositories/__tests__/*.test.ts` (71, including `PaymentInvoiceRepository.webhook`, `languageCurrency`, `businessOsEntitlements.imports.guard`, `bookingPaymentStatusReaders.guard`, `mutationOrSelect.guard`, `userSubscriptionsWriteLockdown.qa` + `…Migration`), `inviterNotification`, `redemptionDeps`, `noBookingGuess.guard`, `invoiceIntentsStayUnowned.guard`, `stripeAuditEntries`, `noPilotCreditTableReads.guard`, `check-logging-only-diff` | **129 passed** | **2,569 passed** | 100 passed | Jest 99.4 s, wall 124 s |
+| `invoiceRepository.qa.test.ts`, 3 runs in a row | 1 | 24/24 each time | — | 3.3–3.4 s each (stable) |
+
+Snapshot blob after all runs: `ae7b32c4…`.
+
+**New file (QA):** `app/api/stripe/webhook/__tests__/invoiceRepository.qa.test.ts`, 24 tests, no snapshots. It covers four things:
+
+- A rejected query at each of the 14 delivery-failing sites gives 500, the generic body and the claim `failed`, and nothing downstream runs.
+- A rejected J4 read leaves the invoice overdue with no activity.
+- A rejected receipt read does not fail the delivery.
+- J4 behaves the same on a returned error (200, English) and keeps its language and chain.
+
+It also has the six foreign-owner cases. It kills T07, T08 and T17. It sets `jest.setTimeout(30000)` because each scenario loads the route afresh: under 9 suites in parallel, the first load took more than 5 s once. The cost is one suite of about 3.3 s, which runs in parallel inside the existing Jest shards.
+
+### Issues found (PR 2)
+
+#### Bugs (must fix before commit)
+
+None.
+
+#### Performance issues
+
+None. Each converted call adds one async hop before the same query, and the order of the recorded traces is unchanged.
+
+#### Edge cases (nice to fix, Low)
+
+1. **`findByStripeInvoiceId` drops `data` when an error comes back with it.** File: `lib/repositories/PaymentRepository.ts`. Inline, H1 used `invoiceByStripeId` whenever it was truthy, even alongside an error. Now an error returns `{ data: null, error }`, so H1 falls through to the metadata lookup (H-32, the only real trace difference). **Unreachable today:** in `@supabase/postgrest-js` 2.75.1, `error` is set only on a non-2xx response, where `data` stays `null` (and `PGRST116` from `single()` also has `data: null`). The old repository method did the same. No action needed; recorded so no one reads H-32 as an oversight.
+2. **Log-only differences on a returned non-`PGRST116` error** (H-25, J-07, J-14, K-08): one new repository `error` line each. These are accepted per P0-C1 / Q-5 and documented in §7.3.3. A routine miss stays quiet.
+3. **The F-1 ordering guard is positional** (PR2-Q2, accepted by SA). The behavioural proof is the harness's Fix-1 entries, `fix1Ownership.qa` and now the new QA file's six refusal cases. All of them killed T01 to T05 and T16.
+
+### Final status (PR 2)
+
+**Verdict: PASS WITH NOTES.** The notes are the four accepted log-only lines and one difference on an input supabase-js cannot produce (Edge cases 1 and 2). Neither changes behaviour.
+
+- [x] All acceptance criteria pass. PR 2 preserves behaviour in all 79 scenarios. 74 are byte-identical (status, body, DB ops with payloads and terminals, logs, side calls). 4 differ only by the accepted repository log line. 1 differs on an input supabase-js cannot produce. A rejected `findByStripeInvoiceId` or `findLanguage` still gives 500 with the claim `failed`. The owner check precedes every unscoped write in all five handlers. 38 of 39 mutants are killed, and the survivor is equivalent. Regression 129 suites / 2,569 tests / 100 snapshots. Snapshot `ae7b32c4` and all of Dev's files are unchanged, and the temp files are deleted.
+- [ ] Dev must review the new QA file `invoiceRepository.qa.test.ts`, which goes into PR 2. Edge cases 1 to 3 need no action.
+
 ---
 
 ## Commit Info
@@ -1109,3 +1865,12 @@ After everything: snapshot a673a901, route.ts df671c4a, every temporary file del
 | 2026-10-07 | SA re-check of CR-1 | CR-1 met. With the knobs off the mock answers as before; the 28 old tests are unedited; the three new tests pin `:431`, `:454` and `:483–484` by outcome. On SA's runs: bind lines 100 %, 31/31 bind tests, and harness + `fix1Ownership.qa` at 149 tests / 100 snapshots, snapshot blob `a673a901`. PR0-Q6 annotation accepted. One optional assertion suggested (the contact read was issued). **Code approved for QA** |
 | 2026-10-07 | QA of PR 0 | **PASS WITH NOTES.** Mutation-tested through temporary copies of `route.ts` loaded by a scratch `moduleNameMapper`, with the real harness unedited. 35/35 behaviour mutants across PR groups 1–5 killed under `--ci`; the `0c3c1800` harness lets 16 of them survive. 4 behaviour-preserving refactors and a PR 4 simulation of the two named delegations (harness + `fix1Ownership.qa`) stay green. Only expected survivors: 2 log-only (P0-C1) and 1 equivalent. Harness 5/5 stable; about +0.9 s (C-7); 51/51 `.from(` executed; regression 56 suites / 937 tests / 100 snapshots. Snapshot `a673a901` and `route.ts` `df671c4a` unchanged. Note: three bind query chains PR 4 moves are not pinned (contact read `user_id`, installment count `subscription_id`, plan fallback `is_active`); recommended in PR 0 |
 | 2026-10-07 | PR 0: QA note (bind read filters) done (Dev) | Three read-chain tests in `bindPlanSubscription.test.ts` pin the full chain of the contact read (`:479` tenant filter), the period count (`:146`) and the plan fallback read (`:513`). The `:483–484` test also asserts that the contact read was issued (SA suggestion). Mutants on a temp copy of bind: each filter removed → exactly its test fails; real bind untouched (`23a38fdd`). 34 tests; regression 55 suites / 937 tests / 100 snapshots; snapshot blob still `a673a901`. Test blob `2e7b9731`, re-recorded in §7.3.1 and the §11 PR 4 note |
+| 2026-10-07 | PR 1 implemented (Dev): claim table and client | §7.3.2 added (refresh against `90da8301`, C-2 guard audit, evidence). New `ProcessedWebhookEventRepository` (`findClaim`, `insertClaim`, `reclaimFailed`, `complete`, `markFailed`; ⟨unscoped-by-design⟩ section, fixed columns, typed insert row, no generic update, no try/catch, no logging) with 18 unit tests; `route.ts` client is now the `supabaseServer` alias with the RLS-bypass comment, and P1–P4 and O1 go through the repository (51 → 46 `.from(`). Snapshot blob `a673a901` unchanged, 100/100 entries identical by hash; the 18 other functions `--exact` identical; `routerPlacement.guard` claim check moved and tightened, plus a "claim table only via its repository" check; regression 58 suites / 983 tests / 100 snapshots. `REPOSITORY_STRATEGY.md` note (C-6). Deviations PR1-D1 to D6 and PR1-Q1 for SA |
+| 2026-10-07 | SA code review of PR 1 | **Code approved (APPROVED_CODE_REVIEW)**, no blocking finding. SA re-verified on its own: snapshot blob `a673a901` before and after its run, 100/100 entries identical by its own per-entry md5 against `90da8301`, harness and frozen tests unchanged; its own `check-logging-only-diff --exact` over all 20 functions gives 18 identical, only `completeClaim` and `POST` differ, at the five claim sites; method chains read side by side; scoped `tsc` 0 errors in changed files (`@ts-expect-error` consumed), ESLint clean; 59 suites / 1,008 tests / 100 snapshots passed. Tenant isolation: "unscoped by design" is correct (signature-verified Stripe event id, fixed payloads, no trigger, server-only grants). Guard rewrite is stricter, and every old arm still bites. PR1-D1 (no `try/catch`, required for identical behaviour: a catch would turn a thrown claim read into "process without a claim"), D2 to D5 accepted; D6 recorded; Q1 placement confirmed. CR-P1-1 (strategy doc "neither catch nor log" vs C-5) is carried to PR 2; CR-P1-2 and O-P1-1 optional |
+| 2026-10-07 | PR 1: SA optional items done (Dev) | CR-P1-2: the repository types are re-exported from `lib/repositories/index.ts`. O-P1-1: `routerPlacement.guard` now also catches a backtick-quoted `from(` and any mention of the class name in the route, which closes a `new …().complete()` bypass. Mutants M5 and M6 each go red on their own new check; `route.ts` blob restored to `e82720b2`. Re-run: 3 suites / 133 tests / 100 snapshots, snapshot blob `a673a901`. CR-P1-1 recorded on the §11 PR 2 task |
+| 2026-10-07 | QA of PR 1 | **PASS.** Behaviour preserved: the `90da8301` route and the new route, run side by side under the same mocks, give byte-identical traces (status, body, DB ops with payloads, logs) in 17 of 17 claim scenarios. The scenarios include `23505`, reclaim, a release that is cut to 500 characters, a release that fails or throws, and a claim read that errors or throws. A negative control shows the comparison sees a log-only change. Client: the route builds no client and every query reaches `supabaseServer`. 29 of 29 mutants killed. 7 of them (a catch that swallows a rejection, a dropped `await`, the client, the 500-character cut) are killed only by the new `claimRepository.qa.test.ts` (9 tests). Regression 119 suites / 2,387 tests / 100 snapshots (46 s wall) plus 8 guard suites / 74 tests. Snapshot `a673a901` and all of Dev's files unchanged; temp files deleted. Edge cases (Low, optional): the unit test's "does not catch" only tries a synchronous throw; the guard matches the receiver by name, so an alias passes |
+| 2026-10-08 | PR 2 implemented (Dev): Connect invoices | §7.3.3 added (refresh against `933d661c`: Fix-1 made J1/K1/L1 select the same columns, #257 added `id` to the receipt read and three PR 3 sites; C-2 guard audit; evidence). `PaymentInvoiceRepository` gains seven ⟨unscoped-by-design⟩ purpose methods (`findByIdUnscoped`, `recordStripeInvoiceId`, `markPaidFromStripeInvoice`, `markPaidFromCheckout`, `setStatusFromStripe`, `recordStripeDocuments`, `readFieldsUnscoped`) with closed column constants; the reused `findByStripeInvoiceId` takes an optional column list, is quiet on PGRST116 (C-5) and no longer catches (PR2-D1); J4 reuses `findLanguage`. 15 sites moved, `.from(` 48 → 33. Snapshot blob `ae7b32c4` unchanged, 100/100 entries identical by hash; the 15 untouched functions `--exact` identical. `noBookingGuess:66` re-homed onto the repository methods (C-2); `routerPlacement.guard` gains the "every site converted" and an F-1 ordering check. 38 unit tests; regression 178 suites / 3,842 tests / 119 snapshots; mutants M1–M7 red. `REPOSITORY_STRATEGY.md` "Errors passed through" reworded (CR-P1-1). Deviations PR2-D1 to D4, questions PR2-Q1 (findLanguage keeps its catch) and PR2-Q2 for SA |
+| 2026-10-08 | SA code review of PR 2 | **NEEDS REVISION**, one blocking finding (CR-P2-1). SA re-verified on its own. Snapshot blob `ae7b32c4` before and after its runs, and 100/100 entries identical by its own per-entry sha1 against `933d661c`. Its own `check-logging-only-diff --exact` on the 15 untouched functions: 15 identical. All 15 sites read against the old chains, including #257's receipt `id`. `.from(` 48 → 33. F-1 checked by hand: every invoice write is dominated by an `accountOwns` early return. Q-3 / C-3 and tenant isolation met, with the named proof present at every call site. C-5 met and tested. C-2 guard moves are stricter, and every old arm is kept. Scoped `tsc` 0 errors in the changed files; ESLint 0 errors; 66 suites / 1,127 tests / 100 snapshots passed. PR2-D1 accepted (it restores 500-on-throw; no other caller, repo-wide grep at base and now). D2–D4 accepted. Q2 accepted as a guard. **PR2-Q1 → (c):** `findLanguage` drops its try/catch and keeps logging returned errors. Otherwise a thrown J4 read answers 200 + English instead of 500 + retry. The invite caller is unaffected because `settle()` catches. Needs a rejection unit test and the strategy-doc sentence updated. CR-P2-2 optional |
+| 2026-10-08 | PR 2: SA CR-P2-1 done (Dev) | PR2-Q1 ruled (c). `BusinessProfileRepository.findLanguage` no longer has a try/catch: a returned error is still logged ("Failed to read business language") and handed back, the string check is unchanged, and a rejected read now reaches the webhook (500, Stripe retries), as the inline J4 read did. One test added to `BusinessProfileRepository.languageCurrency.test.ts` ("a rejected query rejects"); the three existing tests are unedited. The inviter notification (`settle()`) and redemption tests pass unchanged. Docs updated: `REPOSITORY_STRATEGY.md`, the "Errors and logging" paragraph in §7.3.3, the PR2-Q1 row, and the optional half-sentence in the `WebhookInvoiceResult` doc. CR-P2-2 not taken (optional, SA: no action). Re-run: 15 suites / 378 tests / 100 snapshots; snapshot blob `ae7b32c4`, 100/100 entries identical; scoped `tsc` 0 errors in changed files (same 58 elsewhere); ESLint 0 errors |
+| 2026-10-08 | SA re-check of CR-P2-1 | **APPROVED_CODE_REVIEW; code approved for QA.** `findLanguage` no longer catches. A returned error is still logged and returned, and the chain and string check are unchanged. A rejection reaches the webhook again, which answers 500 and Stripe retries. The invite caller is unchanged, because `settle()` catches. A "rejected query rejects" test was added and the three old tests are unedited. Strategy doc, §7.3.3 and the PR2-Q1 row updated. SA's run: 15 suites / 378 tests / 100 snapshots, snapshot blob `ae7b32c4` unchanged. Scoped `tsc` 0 errors in the changed files |
+| 2026-10-08 | QA of PR 2 | **PASS WITH NOTES.** The `933d661c` route and the new route were run side by side under the same mocks with a frozen clock, across all five converted handlers: 79 scenarios. 74 traces are byte-identical (status, body, DB ops with payloads and terminals, logs, side calls). 4 differ only by the accepted repository log line on a returned non-PGRST116 error (P0-C1 / Q-5). 1 differs on an input supabase-js 2.75 cannot produce (error and data together). A rejected or synchronously thrown `findByStripeInvoiceId` or `findLanguage`, and every other converted site except the receipt read, still gives 500 and releases the claim as `failed`. The foreign-owner path writes nothing in all five handlers. 38 of 39 mutants are killed, and the one survivor (`|| 'en'` → `?? 'en'`) is equivalent. A catch added at a route call site (T07, T08, T17) is killed only by the new `invoiceRepository.qa.test.ts` (24 tests). Regression 129 suites / 2,569 tests / 100 snapshots (124 s wall). Snapshot `ae7b32c4` and all of Dev's files are unchanged; the temp files are deleted |

@@ -689,6 +689,15 @@ describe('SA-S3 — classification is snapshotted, not re-decided per slice', ()
     // the table is still user-scoped and live.
     expect(removed).toEqual([]);
   });
+
+  it('every descriptor is in the baseline', () => {
+    // The level check above skips a table the baseline does not name, so a
+    // descriptor added without a baseline entry has a level nothing freezes.
+    // Four tables sat outside it that way until 2026-10-08. Adding a table
+    // means adding it here too, with a dated review note.
+    const missing = PURGE_DESCRIPTORS.map((d) => d.table).filter((t) => !(t in baseline.levels));
+    expect(missing).toEqual([]);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -801,7 +810,10 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     // 144 at the SC-8 pass; +1 business_addresses (2026-10-06, PR #229's table);
     // +2 credits boost slice 2a: business_os_boost_purchases and business_os_boost_cap_overrides (both never).
     // +1 plan payments P-3b.1: business_os_billing_events, the money history (never).
-    expect(baseline.count).toBe(148);
+    // +2 test-account cleanup first live run (2026-10-07): insight_hypotheses and insight_measurements (both reset).
+    // +4 never entered when added (2026-10-08): business_subscribers, marketing_consent_events,
+    // marketing_consent_state, marketing_consent_settings.
+    expect(baseline.count).toBe(154);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {
@@ -813,6 +825,21 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     expect(descriptorsForRun('reset', { integrations: false, agents: false, activityHistory: false })
       .some((x) => x.table === 'insight_actions')).toBe(true);
   });
+
+  it.each(['insight_hypotheses', 'insight_measurements'])(
+    '%s (found by the first test-account cleanup run, committed by #257) is a reset LEAF with a dated review note',
+    (table) => {
+      const d = byTable.get(table)!;
+      expect(d.level).toBe('reset');
+      expect(d.area).toBe('insights');
+      expect(d.scope).toEqual({ kind: 'user_id' });
+      expect(d.order).toBe(byTable.get('crm_tasks')!.order); // the LEAF band
+      expect(d.order).toBeLessThan(byTable.get('insights')!.order); // child before its CASCADE parent
+      expect(d.notes).toMatch(/business_profiles/);
+      expect(baseline.levels[table]).toBe('reset');
+      expect(baseline.reviewNotes?.[table]).toMatch(/^2026-10-07 TAC-1: .{20,}/);
+    }
+  );
 
   it.each(FU9_NO_ACTION)('%s notes its NO ACTION FK for FU-9', (table) => {
     expect(byTable.get(table)?.notes).toMatch(/NO ACTION/);
