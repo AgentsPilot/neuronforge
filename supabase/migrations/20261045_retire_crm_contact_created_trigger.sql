@@ -1,0 +1,34 @@
+-- Retire the contact-creation activity trigger.
+--
+-- WHY
+--
+-- `20260722_crm_contact_creation_activity.sql` created `log_crm_contact_created`
+-- and its AFTER INSERT trigger on `crm_contacts`. That trigger is not live on
+-- production, and has not been for as long as there is data to judge by.
+--
+-- Measured read-only on production 2026-10-08:
+--   * 20 contacts, 5 with a `contact_created` activity, 14 without
+--   * the one contact predating the API route's own write had no entry, and at
+--     that point the trigger was the only thing that could have written one
+--   * NOT ONE contact had two entries, which it would if both the trigger and
+--     the route had written
+--
+-- So the trigger was either never applied or applied in some other form, and
+-- nine of the ten contact-creation paths recorded nothing: website bookings,
+-- intake forms, subscribers, chat, the AI data layer, bizql mutate, the CRM
+-- plugin and the scheduling plugin. Only `/api/crm/contacts` compensated, in
+-- application code.
+--
+-- The entry is now written once in `CRMContactRepository.create`, which every
+-- one of those paths already goes through, and the route's own write is gone.
+--
+-- This migration exists so a FRESH database matches production rather than
+-- replaying the trigger: with the repository writing the entry, a live trigger
+-- would double-log every contact. Dropping it is the safe direction either way,
+-- because on production there is nothing here to drop.
+--
+-- Not related to `advance_contact_on_completed_booking` (20260920), which
+-- promotes a contact when a booking completes and is deliberately kept.
+
+DROP TRIGGER IF EXISTS log_crm_contact_created_trigger ON crm_contacts;
+DROP FUNCTION IF EXISTS log_crm_contact_created();

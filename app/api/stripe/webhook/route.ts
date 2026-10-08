@@ -27,7 +27,13 @@ import {
   WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS,
   WEBHOOK_INVOICE_LOOKUP_COLUMNS,
   WEBHOOK_INVOICE_RECEIPT_COLUMNS,
+  paymentTransactionRepository,
+  WEBHOOK_TRANSACTION_ATTACH_COLUMNS,
+  WEBHOOK_TRANSACTION_DISPUTE_COLUMNS,
+  WEBHOOK_TRANSACTION_ID_COLUMNS,
+  WEBHOOK_TRANSACTION_REFUND_COLUMNS,
 } from '@/lib/repositories/PaymentRepository';
+import { paymentRefundRepository } from '@/lib/repositories/PaymentRefundRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
 import { createLogger, type Logger } from '@/lib/logger';
@@ -425,16 +431,10 @@ async function handleDispute(
   const paymentIntentId =
     typeof dispute.payment_intent === 'string' ? dispute.payment_intent : dispute.payment_intent?.id;
 
-  let query = supabaseAdmin
-    .from('payment_transactions')
-    .select('id, user_id, status, amount, currency, contact_id, metadata')
-    .limit(1);
-
-  query = paymentIntentId
-    ? query.eq('stripe_payment_intent_id', paymentIntentId)
-    : query.eq('stripe_charge_id', chargeId || '');
-
-  const { data: matches } = await query;
+  const { data: matches } = await paymentTransactionRepository.findFirstByStripeReference(
+    { paymentIntentId, chargeId: chargeId || '' },
+    WEBHOOK_TRANSACTION_DISPUTE_COLUMNS
+  );
   const transaction = matches?.[0];
 
   if (!transaction) {
@@ -456,28 +456,24 @@ async function handleDispute(
 
   const nextStatus = won ? restored : 'disputed';
 
-  const { error } = await supabaseAdmin
-    .from('payment_transactions')
-    .update({
-      status: nextStatus,
-      metadata: {
-        ...metadata,
-        // Written only when the dispute opens, so a second event cannot
-        // overwrite the original with `disputed` and lose the way back.
-        status_before_dispute:
-          phase === 'opened' ? transaction.status : metadata.status_before_dispute,
-        dispute: {
-          id: dispute.id,
-          phase,
-          status: dispute.status,
-          reason: dispute.reason,
-          amount_minor: dispute.amount,
-          evidence_due_by: dispute.evidence_details?.due_by ?? null,
-        },
+  const { error } = await paymentTransactionRepository.recordDisputeState(transaction.id, {
+    status: nextStatus,
+    metadata: {
+      ...metadata,
+      // Written only when the dispute opens, so a second event cannot
+      // overwrite the original with `disputed` and lose the way back.
+      status_before_dispute:
+        phase === 'opened' ? transaction.status : metadata.status_before_dispute,
+      dispute: {
+        id: dispute.id,
+        phase,
+        status: dispute.status,
+        reason: dispute.reason,
+        amount_minor: dispute.amount,
+        evidence_due_by: dispute.evidence_details?.due_by ?? null,
       },
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', transaction.id);
+    },
+  });
 
   if (error) {
     log.error({ err: error, disputeId: dispute.id, transactionId: transaction.id }, 'Failed to record dispute');
@@ -523,16 +519,10 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
 
   // Located by either reference, because which one was recorded depends on the
   // flow that created the payment.
-  let query = supabaseAdmin
-    .from('payment_transactions')
-    .select('id, user_id, invoice_id, currency')
-    .limit(1);
-
-  query = paymentIntentId
-    ? query.eq('stripe_payment_intent_id', paymentIntentId)
-    : query.eq('stripe_charge_id', charge.id);
-
-  const { data: matches } = await query;
+  const { data: matches } = await paymentTransactionRepository.findFirstByStripeReference(
+    { paymentIntentId, chargeId: charge.id },
+    WEBHOOK_TRANSACTION_REFUND_COLUMNS
+  );
   const transaction = matches?.[0];
 
   if (!transaction) {
@@ -562,31 +552,29 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
      */
     const amountMajor = fromMinorUnits(stripeRefund.amount, refundCurrency);
 
-    const { error } = await supabaseAdmin.from('payment_refunds').upsert(
-      {
-        user_id: transaction.user_id,
-        transaction_id: transaction.id,
-        invoice_id: transaction.invoice_id,
-        amount: amountMajor,
-        amount_minor: stripeRefund.amount,
-        currency: refundCurrency,
-        // Stripe can report a refund as still pending for some payment methods;
-        // only a succeeded one may count toward the refunded total.
-        status: stripeRefund.status === 'succeeded' ? 'succeeded' : 'pending',
-        processor_type: 'stripe',
-        processor_refund_id: stripeRefund.id,
-        stripe_connect_account_id: connectAccountId,
-        // Deterministic, so a redelivery of this event cannot open a second row.
-        idempotency_key: `stripe:${stripeRefund.id}`,
-        source: 'webhook',
-        succeeded_at:
-          stripeRefund.status === 'succeeded'
-            ? new Date(stripeRefund.created * 1000).toISOString()
-            : null,
-        metadata: { origin: 'charge.refunded', charge_id: charge.id }
-      },
-      { onConflict: 'processor_refund_id' }
-    );
+    // Upserted on `processor_refund_id` (inside the repository).
+    const { error } = await paymentRefundRepository.upsertFromStripe({
+      user_id: transaction.user_id,
+      transaction_id: transaction.id,
+      invoice_id: transaction.invoice_id,
+      amount: amountMajor,
+      amount_minor: stripeRefund.amount,
+      currency: refundCurrency,
+      // Stripe can report a refund as still pending for some payment methods;
+      // only a succeeded one may count toward the refunded total.
+      status: stripeRefund.status === 'succeeded' ? 'succeeded' : 'pending',
+      processor_type: 'stripe',
+      processor_refund_id: stripeRefund.id,
+      stripe_connect_account_id: connectAccountId,
+      // Deterministic, so a redelivery of this event cannot open a second row.
+      idempotency_key: `stripe:${stripeRefund.id}`,
+      source: 'webhook',
+      succeeded_at:
+        stripeRefund.status === 'succeeded'
+          ? new Date(stripeRefund.created * 1000).toISOString()
+          : null,
+      metadata: { origin: 'charge.refunded', charge_id: charge.id }
+    });
 
     if (error) {
       log.error({ err: error, refundId: stripeRefund.id, chargeId: charge.id }, 'Failed to record refund');
@@ -701,12 +689,10 @@ async function handleConnectPaymentIntentSucceeded(
     return;
   }
 
-  const { data: existing } = await supabaseAdmin
-    .from('payment_transactions')
-    .select('id')
-    .eq('stripe_payment_intent_id', intent.id)
-    .limit(1)
-    .maybeSingle();
+  const { data: existing } = await paymentTransactionRepository.findByPaymentIntentId(
+    intent.id,
+    WEBHOOK_TRANSACTION_ID_COLUMNS
+  );
 
   if (existing) {
     log.info({ paymentIntentId: intent.id }, 'Payment already recorded');
@@ -755,7 +741,7 @@ async function handleConnectPaymentIntentSucceeded(
     paymentIntentId: intent.id,
   });
 
-  const { error } = await supabaseAdmin.from('payment_transactions').insert({
+  const { error } = await paymentTransactionRepository.insertFromWebhook({
     user_id: ownerId,
     contact_id: contactId,
     // `/ 100` assumed every currency has two decimal places. JPY has none, so a
@@ -899,7 +885,7 @@ async function recordPlanPeriodPaid(
     paymentIntentId: planPaymentIntent,
   });
 
-  const { data: periodTransaction, error: txError } = await supabaseAdmin.from('payment_transactions').insert({
+  const { data: periodTransaction, error: txError } = await paymentTransactionRepository.insertFromWebhookReturningId({
     user_id: plan.data.user_id,
     contact_id: plan.data.contact_id,
     booking_id: plan.data.booking_id,
@@ -944,9 +930,7 @@ async function recordPlanPeriodPaid(
       installment_count: plan.data.installment_count,
     },
     ...describeChargeAccount(connectAccountId),
-  })
-    .select('id')
-    .single();
+  });
 
   if (txError) {
     log.error({ err: txError, stripeInvoiceId: invoice.id, subscriptionId }, 'Could not record a plan period');
@@ -1369,13 +1353,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   // failed attempt is now retried, so this handler has to be safe to run twice.
   // Without this guard a retry would add a second payment against one invoice
   // and double the recorded revenue.
-  const { data: existingTx } = await supabaseAdmin
-    .from('payment_transactions')
-    .select('id')
-    .eq('invoice_id', platformInvoice.id)
-    .in('status', ['succeeded', 'refunded'])
-    .limit(1)
-    .maybeSingle();
+  const { data: existingTx } = await paymentTransactionRepository.findSettledIdForInvoice(platformInvoice.id);
 
   if (existingTx) {
     log.info(
@@ -1446,21 +1424,19 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   let alreadyRecorded = false;
 
   if (paymentIntentId) {
-    const { data: byIntent } = await supabaseAdmin
-      .from('payment_transactions')
-      .select('id, invoice_id')
-      .eq('stripe_payment_intent_id', paymentIntentId)
-      .limit(1)
-      .maybeSingle();
+    const { data: byIntent } = await paymentTransactionRepository.findByPaymentIntentId(
+      paymentIntentId,
+      WEBHOOK_TRANSACTION_ATTACH_COLUMNS
+    );
 
     if (byIntent) {
       alreadyRecorded = true;
 
       if (!byIntent.invoice_id) {
-        const { error: attachError } = await supabaseAdmin
-          .from('payment_transactions')
-          .update({ invoice_id: platformInvoice.id })
-          .eq('id', byIntent.id);
+        const { error: attachError } = await paymentTransactionRepository.attachToInvoice(
+          byIntent.id,
+          platformInvoice.id
+        );
 
         if (attachError) {
           log.error(
@@ -1479,9 +1455,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
   const { error: txError } = alreadyRecorded
     ? { error: null }
-    : await supabaseAdmin
-    .from('payment_transactions')
-    .insert({
+    : await paymentTransactionRepository.insertFromWebhook({
       user_id: platformInvoice.user_id,
       contact_id: platformInvoice.contact_id,
       invoice_id: platformInvoice.id,
@@ -1800,28 +1774,26 @@ async function handleConnectCheckoutCompleted(
     const paidAt = new Date().toISOString();
     const amountPaid = (session.amount_total || 0) / 100;
 
-    const { error: txError } = await supabaseAdmin
-      .from('payment_transactions')
-      .insert({
-        user_id: platformInvoice.user_id,
-        contact_id: platformInvoice.contact_id,
-        invoice_id: invoiceId,
-        amount: amountPaid,
-        currency: platformInvoice.currency || 'USD',
-        status: 'succeeded',
-        processor_type: 'stripe',
-        payment_method: 'card',
-        paid_at: paidAt,
-        stripe_payment_intent_id: session.payment_intent as string,
-        description: `Payment for invoice ${platformInvoice.invoice_number}`,
-        metadata: {
-          checkout_session_id: session.id,
-          connect_account_id: connectAccountId
-        },
-        // Same reasoning as the invoice handler: recorded at charge time,
-        // never inferred at refund time.
-        ...describeChargeAccount(connectAccountId)
-      });
+    const { error: txError } = await paymentTransactionRepository.insertFromWebhook({
+      user_id: platformInvoice.user_id,
+      contact_id: platformInvoice.contact_id,
+      invoice_id: invoiceId,
+      amount: amountPaid,
+      currency: platformInvoice.currency || 'USD',
+      status: 'succeeded',
+      processor_type: 'stripe',
+      payment_method: 'card',
+      paid_at: paidAt,
+      stripe_payment_intent_id: session.payment_intent as string,
+      description: `Payment for invoice ${platformInvoice.invoice_number}`,
+      metadata: {
+        checkout_session_id: session.id,
+        connect_account_id: connectAccountId
+      },
+      // Same reasoning as the invoice handler: recorded at charge time,
+      // never inferred at refund time.
+      ...describeChargeAccount(connectAccountId)
+    });
 
     if (txError) {
       // Thrown, not logged and swallowed. The caller turns this into a non-2xx

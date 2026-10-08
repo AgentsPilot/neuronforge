@@ -337,6 +337,98 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     }
   });
 
+  // CF-5 PR 3 (workplan §7.3.4): the 12 money-row sites (11 `payment_transactions`,
+  // 1 `payment_refunds`). Expected calls per function; together they are every
+  // call in the route.
+  const MONEY_ROW_CALLS: Record<string, Record<string, Record<string, number>>> = {
+    paymentTransactionRepository: {
+      handleDispute: { findFirstByStripeReference: 1, recordDisputeState: 1 },
+      handleChargeRefunded: { findFirstByStripeReference: 1 },
+      handleConnectPaymentIntentSucceeded: { findByPaymentIntentId: 1, insertFromWebhook: 1 },
+      recordPlanPeriodPaid: { insertFromWebhookReturningId: 1 },
+      handleConnectInvoicePaid: {
+        findSettledIdForInvoice: 1,
+        findByPaymentIntentId: 1,
+        attachToInvoice: 1,
+        insertFromWebhook: 1,
+      },
+      handleConnectCheckoutCompleted: { insertFromWebhook: 1 },
+    },
+    paymentRefundRepository: {
+      handleChargeRefunded: { upsertFromStripe: 1 },
+    },
+  };
+
+  it('the money-row tables are reached only through their repositories (CF-5 PR 3)', () => {
+    const code = codeOf(sf);
+    expect(code).not.toMatch(/from\(\s*['"`]payment_transactions['"`]\s*\)/);
+    expect(code).not.toMatch(/from\(\s*['"`]payment_refunds['"`]\s*\)/);
+
+    // Only the singletons, never the classes (no instance built around the checks).
+    const classMentions: string[] = [];
+    walk(sf, (n) => {
+      if (ts.isIdentifier(n) && (n.text === 'PaymentTransactionRepository' || n.text === 'PaymentRefundRepository')) {
+        classMentions.push(n.text);
+      }
+    });
+    expect(classMentions).toEqual([]);
+
+    // Each function makes exactly its expected calls, and no other function makes any.
+    for (const [receiver, perFunction] of Object.entries(MONEY_ROW_CALLS)) {
+      let expectedTotal = 0;
+      for (const [fn, expected] of Object.entries(perFunction)) {
+        const node = topLevelFunction(fn);
+        expect(node).toBeDefined();
+        const actual: Record<string, number> = {};
+        for (const call of receiverCalls(node!, receiver)) {
+          const name = (call.expression as ts.PropertyAccessExpression).name.text;
+          actual[name] = (actual[name] ?? 0) + 1;
+        }
+        expect({ receiver, fn, calls: actual }).toEqual({ receiver, fn, calls: expected });
+        expectedTotal += Object.values(expected).reduce((a, b) => a + b, 0);
+      }
+      expect({ receiver, total: receiverCalls(sf, receiver).length }).toEqual({ receiver, total: expectedTotal });
+    }
+  });
+
+  it('every owner-checked money-row write comes after that check, and carries the proved owner (CF-5 PR 3)', () => {
+    // The owner each function proves with `accountOwns` before it records money.
+    // The dispute and refund writes have no such check (FU-3): they are keyed by
+    // a Stripe reference and copy the owner from the row they found.
+    const OWNER_PROVED: Record<string, string> = {
+      handleConnectPaymentIntentSucceeded: 'ownerId',
+      recordPlanPeriodPaid: 'plan.data.user_id',
+      handleConnectInvoicePaid: 'platformInvoice.user_id',
+      handleConnectCheckoutCompleted: 'platformInvoice.user_id',
+    };
+    const WRITES = ['insertFromWebhook', 'insertFromWebhookReturningId', 'attachToInvoice'];
+
+    for (const [fn, owner] of Object.entries(OWNER_PROVED)) {
+      const node = topLevelFunction(fn)!;
+      const checks = callsTo(node, 'accountOwns');
+      const writes = receiverCalls(node, 'paymentTransactionRepository').filter((c) =>
+        WRITES.includes((c.expression as ts.PropertyAccessExpression).name.text)
+      );
+      expect(writes.length).toBeGreaterThan(0);
+      for (const write of writes) {
+        const before = checks.filter((c) => c.end <= write.getStart(sf));
+        const nearest = before[before.length - 1];
+        const row = write.arguments[0];
+        const rowOwner =
+          row && ts.isObjectLiteralExpression(row)
+            ? row.properties
+                .filter(ts.isPropertyAssignment)
+                .find((p) => p.name.getText(sf) === 'user_id')
+                ?.initializer.getText(sf)
+            : undefined;
+        const method = (write.expression as ts.PropertyAccessExpression).name.text;
+        expect({ fn, method, check: nearest?.arguments[1]?.getText(sf) }).toEqual({ fn, method, check: owner });
+        // An insert writes the owner it proved; the attach writes no owner at all.
+        expect({ fn, method, rowOwner }).toEqual({ fn, method, rowOwner: method === 'attachToInvoice' ? undefined : owner });
+      }
+    }
+  });
+
   it('handleInvoicePaid and the customer-subscription fallback are gone', () => {
     expect(topLevelFunction('handleInvoicePaid')).toBeUndefined();
     const code = codeOf(sf);

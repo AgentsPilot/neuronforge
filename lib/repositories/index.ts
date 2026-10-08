@@ -235,6 +235,19 @@ export type {
   WebhookClaimResult,
   WebhookClaimStatus,
 } from './ProcessedWebhookEventRepository';
+// CF-5 PR 3: the refund ledger's Stripe webhook write (payment_refunds).
+export { PaymentRefundRepository, paymentRefundRepository } from './PaymentRefundRepository';
+export type { NewStripeRefundRow, PaymentRefundResult } from './PaymentRefundRepository';
+// CF-5 PR 3: the types of PaymentTransactionRepository's Stripe webhook section (payment_transactions).
+export type {
+  NewWebhookTransactionRow,
+  WebhookDisputeState,
+  WebhookStripeReference,
+  WebhookTransactionByIntentColumns,
+  WebhookTransactionByReferenceColumns,
+  WebhookTransactionFields,
+  WebhookTransactionResult,
+} from './PaymentRepository';
 export type {
   LedgerCallRow,
   LedgerLabelRow,
