@@ -1,6 +1,6 @@
 # Test Account Cleanup Runbook
 
-> **Last Updated**: 2026-10-07
+> **Last Updated**: 2026-10-08
 
 ## Overview
 
@@ -100,6 +100,7 @@ When the cleanup plan changes after 20261041 was applied, the change ships as a 
 |---|---|---|
 | `20261042_operator_test_account_cleanup_billing_events.sql` | `business_os_billing_events` (plan payments P-3b.1): guard G-5 counts its live rows, and the plan removes its rows | `20261041_operator_test_account_cleanup.sql` **and** `20261027_business_os_billing_events.sql` |
 | `20261043_operator_test_account_cleanup_insight_links.sql` | `insight_hypotheses` and `insight_measurements` classified and their links reviewed (G-18 no longer blocks every account), cheaper G-18 and survivor scans, trigger events in the check, `serverMs` on every answer | `20261042_operator_test_account_cleanup_billing_events.sql` |
+| `20261045_operator_test_account_cleanup_notnull_order.sql` | `scheduling_bookings` removed before `crm_contacts` (its `contact_id` is NOT NULL with ON DELETE SET NULL, so the old order failed with 23502 on prod), and G-19 refuses any plan that removes such a parent first. 20261044 is the unrelated SECURITY DEFINER lockdown | `20261043_operator_test_account_cleanup_insight_links.sql` |
 
 The migration checks this itself: it refuses, and applies nothing, with `Apply <migration> first` until both are in place.
 
@@ -222,6 +223,7 @@ On a `+test` account only: run one check, then one delete, from the Danger Zone 
 | G-16 | Another account imported an agent this account shared |
 | G-17 | A trigger nobody has reviewed sits on a table the script empties, or on a table the login delete reaches |
 | G-18 | A row of another account points at something the script removes, so it would be deleted or emptied with it. Or such a link has not been reviewed yet |
+| G-19 | Removing a row would empty a NOT NULL column of another table this script empties later (ON DELETE SET NULL or SET DEFAULT), which the database refuses with 23502. A plan defect, never an account one: engineering reorders the generator |
 
 ---
 
@@ -229,6 +231,7 @@ On a `+test` account only: run one check, then one delete, from the Danger Zone 
 
 | Date | Change | Details |
 |---|---|---|
+| 2026-10-08 | Order fix, migration 20261045 | The first prod delete of an account with a booking for a contact rolled back with 23502: `scheduling_bookings.contact_id` is NOT NULL with ON DELETE SET NULL to `crm_contacts`, and the plan removed contacts first. Bookings now go first; G-19 refuses any plan that removes such a parent before its child; the purge delete-graph check refuses the same class |
 | 2026-10-07 | Section 6.6, 8-second limit (SA C-3) | Server-side `serverMs` on every answer; over 3 s on a check, or a delete timeout, means the pasted path for that account and the numbers to SA. No role timeout changes |
 | 2026-10-07 | First live run fixes, migration 20261043 | `insight_hypotheses` and `insight_measurements` (live-only tables) classified and their three links reviewed, so G-18 no longer blocks every account. G-18 skips counts that are zero by construction, the survivor scan counts each table once. The trigger section shows each trigger's events |
 | 2026-10-07 | Section 6.1.1, function versions | 20261041 is applied history (bytes pinned by test). Plan changes ship as a new dated `CREATE OR REPLACE` migration: 20261042 adds `business_os_billing_events` (plan payments P-3b.1), refuses until 20261041 and 20261027 are applied, keeps the secret. Version query, deploy timing, one-version-back rollback |

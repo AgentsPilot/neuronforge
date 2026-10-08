@@ -21,11 +21,15 @@
 // them were wrong when measured. The database is the fact.
 //
 // ── How ordering works, and why it is only a handful of constraints ─────────
-// The full FK graph is CYCLIC and cannot be topologically sorted:
-// `scheduling_bookings.contact_id -> crm_contacts` is SET NULL while other
-// edges run the other way. That does not matter, because only RESTRICT and
-// NO ACTION edges can make a DELETE fail — CASCADE removes the child for you,
-// SET NULL nulls it. Restricted to blocking edges the graph IS acyclic, and
+// The full FK graph is CYCLIC and cannot be topologically sorted: SET NULL
+// edges such as `proposals.booking_id -> scheduling_bookings` run against
+// others. That does not matter, because only RESTRICT and NO ACTION edges can
+// make a DELETE fail — CASCADE removes the child for you, SET NULL nulls it —
+// with ONE exception: SET NULL (or SET DEFAULT) into a NOT NULL column fails
+// the parent delete with 23502, exactly as NO ACTION fails it with 23503.
+// Those are NOT_NULL_OVERWRITE_EDGES below, held to the same child-first rule
+// (test-account cleanup live failure, 2026-10-08). Restricted to blocking
+// edges the graph IS acyclic, and
 // there are exactly TEN of them whose parent is in the delete set, of which
 // FIVE constrain a purge (the other five are billing-to-billing, never-to-never),
 // plus `crm_activities`-last. (B4, a trigger rather than an FK, was retired in
@@ -123,6 +127,34 @@ export const BLOCKING_EDGES: ReadonlyArray<{
   // reclassifying any billing table knows it inherits an ordering problem.
 ];
 
+/**
+ * SET NULL / SET DEFAULT edges whose child column is NOT NULL, both ends in a
+ * run. Deleting the parent first tries to null the column and fails with
+ * 23502 (not_null_violation), rolling back the whole run, so they block
+ * exactly like BLOCKING_EDGES and the invariant test asserts the same
+ * `order[child] < order[parent]` for each.
+ *
+ * Measured on prod 2026-10-08 (purge_schema_introspect: on_delete per
+ * constraint, `columns[].is_nullable` per column): of the 73 SET NULL / SET
+ * DEFAULT FKs in `public`, exactly two land on a NOT NULL column. This one,
+ * and `shared_agent_imports.imported_by_user_id -> auth.users`, whose parent is
+ * the login rather than a run table (the cleanup's G-10 already refuses any
+ * row of it naming the target). There is no SET DEFAULT FK at all.
+ *
+ * The live check does not rely on this list: `deleteGraph.ts` (and G-19 in the
+ * test-account cleanup) detect the class from the schema, so a new one is
+ * refused before it fails. This list makes the ORDER verified, not detected.
+ */
+export const NOT_NULL_OVERWRITE_EDGES: ReadonlyArray<{
+  child: string;
+  column: string;
+  parent: string;
+  onDelete: 'SET NULL' | 'SET DEFAULT';
+  id: string;
+}> = [
+  { child: 'scheduling_bookings', column: 'contact_id', parent: 'crm_contacts', onDelete: 'SET NULL', id: 'N1' },
+];
+
 // ── B4 retired — review note (purge slice 3a, 2026-10-05, §0.10 F-SA-4) ─────
 // B4 was an ordering assertion, `payment_plan_subscriptions` before
 // `crm_contacts`, because `delete_future_bookings_on_contact_delete_trigger`
@@ -207,8 +239,8 @@ const IN_SCOPE: PurgeDescriptor[] = [
 
   // ── §3.4 Scheduling ──────────────────────────────────────────────────────
   { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
-    notes: 'Blocked by B2 (payment_plan_subscriptions RESTRICT). No longer reached by a crm_contacts trigger: T1 was dropped (B4 retired, slice 3a).' },
+  { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT - 2, snapshot: 'rows',
+    notes: 'Blocked by B2 (payment_plan_subscriptions RESTRICT). No longer reached by a crm_contacts trigger: T1 was dropped (B4 retired, slice 3a). ROOT - 2 (2026-10-08): N1 — contact_id is NOT NULL with ON DELETE SET NULL to crm_contacts, so deleting a contact first fails with 23502; it must run before crm_contacts (ROOT). Still after payment_plan_subscriptions (B2) and before scheduling_services, its CASCADE parent.' },
   { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
   { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'calendar-sync repopulates within ~5 min after a Reset (business_profiles is kept and drives its enumeration) — FR-26.' },
