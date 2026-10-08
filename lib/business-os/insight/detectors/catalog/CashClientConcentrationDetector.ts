@@ -62,7 +62,7 @@ export class CashClientConcentrationDetector extends BaseDetector {
     description: 'Finds a single client accounting for an outsized share of money received',
 
     watchedMetrics: ['cashflow.client_concentration'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -87,10 +87,7 @@ export class CashClientConcentrationDetector extends BaseDetector {
      */
     ignoresVectorMaturity: false,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 720,
   };
 

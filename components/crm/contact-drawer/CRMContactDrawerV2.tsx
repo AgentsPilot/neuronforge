@@ -102,6 +102,17 @@ interface ExtendedBookingData {
      */
     status: EmailSendStatus;
     sentAt?: string;
+    /**
+     * Accepted by the recipient's mail server.
+     *
+     * Carried alongside `openedAt`, which was already here, because the two
+     * answer the same question at different depths: did it arrive, and did they
+     * look at it. The provider webhook records BOTH as timestamps and leaves
+     * `status` at `'sent'`, so a card reading `status` alone can never report
+     * either — which is why the confirmation step said nothing about delivery
+     * for as long as this field was missing.
+     */
+    deliveredAt?: string;
     openedAt?: string;
     subject?: string;  // Email subject line
   };
@@ -178,6 +189,10 @@ export interface DrawerProposal {
     amount: number;
     currency: string;
     due_date: string | null;
+    /* Derived by trigger from the `payment_refunds` ledger. Carried for a quote
+       billed in one go, which has no stages to sum the refund from. */
+    refunded_amount: number | null;
+    refunded_at: string | null;
   } | null;
   /** Every stage of the agreed plan. Empty for a single payment. */
   stages: Array<{
@@ -192,6 +207,17 @@ export interface DrawerProposal {
     invoice_id: string | null;
     completed_at: string | null;
     paid_at: string | null;
+    /**
+     * Money returned against THIS stage's invoice.
+     *
+     * Derived by trigger from the `payment_refunds` ledger and flattened onto
+     * the stage by the proposals route, because a refund belongs to the
+     * milestone whose money came back — not to the job. Two paid milestones can
+     * be refunded independently, and only the stage knows which.
+     */
+    refunded_amount: number | null;
+    refund_status: string | null;
+    refunded_at: string | null;
   }>;
 }
 
@@ -256,7 +282,27 @@ function quotedPayment(
   proposal: DrawerProposal | null,
   currency: string
 ): SessionPayment | null {
-  if (!proposal || proposal.status !== 'accepted' || !proposal.invoice) return null;
+  /*
+   * ACCEPTED OR STOPPED. It used to be accepted alone.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Stopping a job rewrites the proposal to 'stopped', and this returned null
+   * for it — so the payment step VANISHED from the card the moment the owner
+   * stopped the work. On a job paid in full that erased ₪9,000 of collected
+   * money, both receipts and the whole stage history from the one screen that
+   * holds a client's record.
+   *
+   * Stopping ends the work. It does not unmake the money: what was collected
+   * was still collected, and it is precisely then that an owner needs to see
+   * it, because the next decision is whether any of it goes back.
+   *
+   * Nothing else needs a stopped case. The figures below are read from the
+   * stages, which keep their own statuses, and a stage already paid stays paid.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const answered = proposal?.status === 'accepted' || proposal?.status === 'stopped';
+
+  if (!proposal || !answered || !proposal.invoice) return null;
 
   const stages = proposal.stages ?? [];
   const paidStages = stages.filter(s => s.status === 'paid');
@@ -291,10 +337,62 @@ function quotedPayment(
   const anyMoneyCollected =
     paidStages.length > 0 || (stages.length === 0 && proposal.invoice.status === 'paid');
 
+  /*
+   * WHAT CAME BACK, across the whole job.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Summed from the stages, because each milestone raises its own invoice and a
+   * refund attaches to whichever one was paid. Two paid stages can be refunded
+   * independently, and only the stage knows which money came back — so the job
+   * figure is a sum of stage figures, never a reading of one invoice.
+   *
+   * This object carried no refund fields at all, and every refund surface in
+   * the drawer reads exactly them: the chip, the charged/returned/kept ledger,
+   * and the strip's returned and kept cells. A refunded quote therefore looked
+   * untouched on the booking card while the payments list showed it correctly.
+   *
+   * Falls back to the proposal's own invoice for a quote billed in one go,
+   * which has no stages to sum.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const refundedAmount = stages.length
+    ? stages.reduce((sum, s) => sum + Number(s.refunded_amount || 0), 0)
+    : Number(proposal.invoice.refunded_amount || 0);
+
+  /* The most recent one: a job refunded in two goes has two dates, and the
+     summary line can only carry the latest. The stage rows carry their own. */
+  const refundedAt = stages
+    .map(s => s.refunded_at)
+    .filter((at): at is string => Boolean(at))
+    .sort()
+    .pop() ?? proposal.invoice.refunded_at ?? undefined;
+
+  /*
+   * `collected` is what the stages actually took, so "everything came back" is
+   * a comparison against that and not against the agreement. A ₪7,000 job with
+   * one ₪2,000 stage paid and refunded is fully refunded — there is no other
+   * money to return.
+   */
+  const collected = stages.length
+    ? paidStages.reduce((sum, s) => sum + Number(s.amount || 0), 0)
+    : anyMoneyCollected
+      ? proposal.invoice.amount
+      : 0;
+
+  const fullyRefunded = refundedAmount > 0 && collected > 0 && refundedAmount >= collected;
+
   return {
     amount: subject ? Number(subject.amount) : proposal.invoice.amount,
     currency,
-    status: anyMoneyCollected ? 'paid' : 'pending',
+    /*
+     * `refunded` only when ALL of it went back. A partial refund leaves the
+     * status at `paid` and is carried by `refundedAmount` — the same rule
+     * `SessionPayment.refundedAmount` documents, and the reason that field
+     * exists separately from the status at all.
+     */
+    status: fullyRefunded ? 'refunded' : anyMoneyCollected ? 'paid' : 'pending',
+    refundedAmount: refundedAmount > 0 ? refundedAmount : undefined,
+    refundedAt,
     // The invoice behind the payment being DESCRIBED, so a refund finds that
     // transaction rather than the deposit's by default.
     // `invoice_id` reading in, `invoiceId` going out: the stage rows are database
@@ -331,6 +429,8 @@ function quotedPayment(
             invoiceId: s.invoice_id,
             dueDate: s.due_date,
             paidAt: s.paid_at,
+            refundedAmount: s.refunded_amount ?? null,
+            refundedAt: s.refunded_at ?? null,
           })),
         }
       : undefined,
@@ -1034,7 +1134,34 @@ function buildJourneySteps(
             emailStatus === 'bounced' || emailStatus === 'complained' || emailStatus === 'failed' ? 'failed' :
             emailStatus === 'pending' ? 'active' : 'completed',
     details: emailDetails,
-    timestamp: confirmationEmail?.sentAt || booking.created_at  // Email sent when booking created
+    timestamp: confirmationEmail?.sentAt || booking.created_at,  // Email sent when booking created
+    /*
+     * WHAT BECAME OF IT, not just what it said.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The card printed `details` — the SUBJECT LINE — and nothing else, so it
+     * read as a sentence in the CLIENT's voice ("your meeting has been
+     * confirmed") on the OWNER's screen, and never said whether the mail
+     * actually arrived. A bounced confirmation looked exactly like a delivered
+     * one: same subject, same row.
+     *
+     * Every field below was already on the row and already selected. None of it
+     * reached the card.
+     *
+     * `hasRecord` is the one that is not a passthrough, and it matters: the
+     * status above falls back to `'sent'` when no email row exists at all
+     * ("assume sent if no data"), which is a reasonable default for colouring a
+     * step and a lie if the card states it as a fact. The card uses this to say
+     * "not recorded" instead of claiming a send nothing witnessed.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    metadata: {
+      emailStatus,
+      hasRecord: Boolean(confirmationEmail),
+      sentAt: confirmationEmail?.sentAt,
+      deliveredAt: confirmationEmail?.deliveredAt,
+      openedAt: confirmationEmail?.openedAt
+    }
   });
 
   // Step 6: Final status (Session for services, Fulfillment for products)
@@ -1126,6 +1253,14 @@ interface CRMContactDrawerV2Props {
   onContactUpdated: (updated?: CRMContact) => void;
   onTasksUpdated?: () => void;
   initialSection?: 'details' | 'bookings' | 'tasks' | 'forms' | 'files' | 'payments';
+  /**
+   * A booking to open expanded, when a link named one.
+   *
+   * Paired with `initialSection='bookings'`: the section says which list, this
+   * says which row in it. Undefined for every ordinary open, where expanding
+   * something the owner did not ask for would be noise.
+   */
+  focusBookingId?: string;
 }
 
 // Document types for upload
@@ -1449,7 +1584,8 @@ export function CRMContactDrawerV2({
   onClose,
   onContactUpdated,
   onTasksUpdated,
-  initialSection = 'details'
+  initialSection = 'details',
+  focusBookingId
 }: CRMContactDrawerV2Props) {
   const { t, isRTL, language, timezone, timeZoneOptions } = useLanguage();
   // Whether the configuration dialog is up — see the Sheet below for why this
@@ -1722,6 +1858,21 @@ export function CRMContactDrawerV2({
     amount: number;
     currency: string;
   } | null>(null);
+  /**
+   * One milestone's money, being returned.
+   *
+   * Addressed by INVOICE, not by booking. A booking-scoped refund on a job with
+   * several payments is a group refund — all of them, in full — because a single
+   * figure cannot honestly be split across two charges. Naming the invoice is
+   * what makes "return the deposit and nothing else" expressible.
+   */
+  const [refundStage, setRefundStage] = useState<{
+    invoiceId: string;
+    amount: number;
+    refunded: number;
+    currency: string;
+    label: string;
+  } | null>(null);
   const [sendingIntake, setSendingIntake] = useState(false);
   // Invoice resend confirmation dialog state
   const [showInvoiceConfirm, setShowInvoiceConfirm] = useState(false);
@@ -1787,8 +1938,18 @@ export function CRMContactDrawerV2({
   interface EmailRecord {
     id: string;
     subject: string;
-    status: 'pending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+    /*
+     * The shared roster, not a hand-copied union.
+     *
+     * This one omitted `'complained'` — the same omission `types.ts` records as
+     * the reason a spam complaint could be painted as a completed step. Naming
+     * `EmailSendStatus` means the next status added reaches here on its own.
+     */
+    status: EmailSendStatus;
     sent_at: string | null;
+    /* Written by the provider webhook while `status` stays `'sent'`, so a
+       reader that consults only `status` can never report delivery. */
+    delivered_at: string | null;
     opened_at: string | null;
     created_at: string;
   }
@@ -1957,7 +2118,43 @@ export function CRMContactDrawerV2({
                   planPhases(servicePrice, serviceCurrency, service!.installment_count!)[0].amountMinor,
                   serviceCurrency
                 ),
-            totalAmount: servicePrice,
+            /*
+             * THIS BOOKING'S OWN PERIODS — not the service's price, and not the
+             * plan row's total either.
+             *
+             * ─────────────────────────────────────────────────────────────────
+             * Both of those are SERVICE-level and both move when the owner edits
+             * the service. `syncServicePaymentPlan` rewrites
+             * `payment_plans.total_amount` and `installment_count` from the
+             * service every time it is saved, and `scheduling_services.price` is
+             * the live figure itself. Neither is a record of what any particular
+             * client agreed to.
+             *
+             * The installments ARE. They are written once, at checkout, from the
+             * `plan_total` and `plan_count` frozen into the Stripe session
+             * metadata — so they record the deal that client actually accepted
+             * and nothing can move them afterwards.
+             *
+             * The two diverge the moment a service is repriced after a sale. A
+             * client who bought at ₪200 in two payments, on a service since
+             * raised to ₪800, had their card report ₪800 total, ₪100 collected
+             * and ₪700 outstanding — ₪600 of it money nobody had ever agreed to
+             * pay. Arithmetically consistent, factually wrong, and nothing about
+             * it looks off.
+             *
+             * `bindPlanSubscription` writes every installment in one insert, so a
+             * booking's rows are its whole schedule and summing them cannot
+             * understate it. The comment a dozen lines above already calls these
+             * rows the billing truth, "not a projection of the service's
+             * configuration" — this line was the projection.
+             *
+             * Falls back to the price only before any schedule exists, where it
+             * is the sole estimate available and no period contradicts it.
+             * ─────────────────────────────────────────────────────────────────
+             */
+            totalAmount: planPeriods.length
+              ? planPeriods.reduce((sum, period) => sum + Number(period.amount || 0), 0)
+              : servicePrice,
             frequency: (service!.installment_frequency || 'monthly') as SessionPaymentPlan['frequency'],
             periodsPaid: planPeriods.length ? paidPeriods.length : undefined,
             /*
@@ -2079,6 +2276,7 @@ export function CRMContactDrawerV2({
             confirmationEmail: confirmationEmail ? {
               status: confirmationEmail.status,
               sentAt: confirmationEmail.sent_at || confirmationEmail.created_at,
+              deliveredAt: confirmationEmail.delivered_at || undefined,
               openedAt: confirmationEmail.opened_at || undefined,
               subject: confirmationEmail.subject
             } : undefined,
@@ -2417,8 +2615,9 @@ export function CRMContactDrawerV2({
       interface EmailRecord {
         id: string;
         subject: string;
-        status: 'pending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+        status: EmailSendStatus;
         sent_at: string | null;
+        delivered_at: string | null;
         opened_at: string | null;
         created_at: string;
       }
@@ -2536,6 +2735,7 @@ export function CRMContactDrawerV2({
                 confirmationEmail: confirmationEmail ? {
                   status: confirmationEmail.status,
                   sentAt: confirmationEmail.sent_at || confirmationEmail.created_at,
+                  deliveredAt: confirmationEmail.delivered_at || undefined,
                   openedAt: confirmationEmail.opened_at || undefined,
                   subject: confirmationEmail.subject
                 } : undefined,
@@ -3220,6 +3420,7 @@ export function CRMContactDrawerV2({
               {/* Bookings Section - Timeline flow with cards */}
               <BookingsTab
                 sessions={sessions}
+                focusBookingId={focusBookingId}
                 /*
                  * Add a meeting to a package already under way. The money is the
                  * owner's answer — see the route — and it is only asked where it
@@ -3280,9 +3481,6 @@ export function CRMContactDrawerV2({
                  * a quoted job can be refunded without the caller knowing which
                  * stage invoice holds the money.
                  */
-                onRefundJob={(bookingId, currency, amount) =>
-                  setRefundAfterCancel({ bookingId, amount, currency })
-                }
                 onIntakeSaved={() => {
                   fetchSessions(contact.id, { silent: true });
                   fetchActivities(contact.id, { silent: true });
@@ -3324,6 +3522,7 @@ export function CRMContactDrawerV2({
                 onCompleteStage={(stageId, label, amount) =>
                   setPendingStage({ id: stageId, label, amount })
                 }
+                onRefundStage={setRefundStage}
                 /* Record how the appointment went, from the card header.
                    Each outcome has its own endpoint — they are not interchangeable
                    writes to a status column: completing may settle money, a
@@ -3819,7 +4018,7 @@ export function CRMContactDrawerV2({
         proposalId={stopQuoteTarget?.id ?? null}
         proposalTitle={stopQuoteTarget?.title ?? null}
         onClose={() => setStopQuoteTarget(null)}
-        onStopped={held => {
+        onStopped={() => {
           /*
            * Both, and silently.
            *
@@ -3831,30 +4030,25 @@ export function CRMContactDrawerV2({
           fetchActivities(contact.id, { silent: true });
 
           /*
-           * Then the STANDARD refund dialog, exactly as cancelling a booking
-           * does it — and only when money is actually held, so a job nobody paid
-           * for does not open a refund over nothing.
+           * AND NOTHING ELSE. It used to open the refund dialog from here.
            *
-           * Handed off rather than built into the stop dialog: this one carries
-           * the partial amounts, the over-refund guard and the notify toggle,
-           * and a second refund control in the same drawer behaving differently
-           * reads as a bug.
+           * ───────────────────────────────────────────────────────────────────
+           * Stopping a job and returning money are two decisions, and only the
+           * first has been made. An owner who stops a job half-delivered may owe
+           * nothing, may owe part, or may owe all of it — that is a judgement
+           * about the work, not something that follows from the stop.
+           *
+           * It was worse than merely premature on a job with several payments:
+           * the dialog it opened was addressed to the BOOKING, so it resolved
+           * every settled payment and refused a partial outright. The owner was
+           * pushed, at the moment of stopping, into an all-or-nothing refund of
+           * the whole job — the opposite of deciding what to return.
+           *
+           * The decision now has its own door: each paid milestone carries its
+           * own refund on its row, where a partial is meaningful because there
+           * is one charge for it to come off.
+           * ───────────────────────────────────────────────────────────────────
            */
-          if (held.collected > 0 && stopQuoteTarget) {
-            const bookingId = sessions.find(s =>
-              (s.journeySteps ?? []).some(
-                step => step.metadata?.proposalId === stopQuoteTarget.id
-              )
-            )?.booking.id;
-
-            if (bookingId) {
-              setRefundAfterCancel({
-                bookingId,
-                amount: held.collected,
-                currency: held.currency || 'USD',
-              });
-            }
-          }
         }}
       />
 
@@ -4144,6 +4338,42 @@ export function CRMContactDrawerV2({
         way they do everywhere else — this is a prompt at the right moment, not
         a second way to refund.
       */}
+      {/*
+        ONE MILESTONE'S REFUND.
+        ──────────────────────
+        The same dialog every refund opens, addressed to this stage's invoice
+        rather than to the booking — which is the whole difference. On a booking
+        it would resolve every settled payment and refuse a partial; on an
+        invoice it resolves one, and a partial is meaningful again because there
+        is only one charge for it to come off.
+
+        `alreadyRefunded` is what this stage has already returned, so the
+        dialog's maximum is what is genuinely left on it. The server checks the
+        same figure and is the authority; this stops the dialog OPENING with a
+        number the server will refuse.
+      */}
+      {refundStage && (
+        <RefundModal
+          isOpen
+          onClose={() => setRefundStage(null)}
+          invoiceId={refundStage.invoiceId}
+          originalAmount={refundStage.amount}
+          alreadyRefunded={refundStage.refunded}
+          currency={refundStage.currency}
+          contactName={contact.first_name || undefined}
+          isRTL={isRTL}
+          onSuccess={() => {
+            setRefundStage(null);
+            /* The stage's own row, the strip above it and the journey all read
+               this money. Refetched together so none of them is left showing
+               what it was worth a moment ago. */
+            fetchSessions(contact.id, { silent: true });
+            fetchActivities(contact.id, { silent: true });
+          }}
+          onError={message => toast.error(message)}
+        />
+      )}
+
       {refundAfterCancel && (
         <RefundModal
           isOpen

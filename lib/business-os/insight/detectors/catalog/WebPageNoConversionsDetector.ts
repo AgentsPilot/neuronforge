@@ -145,7 +145,7 @@ export class WebPageNoConversionsDetector extends BaseDetector {
     description: 'Finds published pages with real traffic that produced no enquiries at all',
 
     watchedMetrics: ['acquisition.page_conversion_rate'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -164,10 +164,7 @@ export class WebPageNoConversionsDetector extends BaseDetector {
     pairedProcessId: undefined,
     ignoresVectorMaturity: false,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 336,
   };
 

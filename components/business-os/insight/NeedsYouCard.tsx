@@ -293,6 +293,36 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
     }
   };
 
+  /**
+   * Open the booking this row is about, expanded.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `entityId` is the booking the gap was raised from — the consultation
+   * awaiting a quote, the phase to be billed, the meeting with no outcome
+   * recorded. The card has always known it and has never passed it on, so every
+   * one of these buttons landed the owner on a LIST of that contact's bookings
+   * and left them to work out which one the card meant. On a contact with one
+   * booking that is invisible; on a regular client it is the whole problem.
+   *
+   * This is the third attempt at the same target. It first sent `&action=quote`,
+   * which nothing on the CRM page read, so the drawer opened on `details`. Then
+   * `bill_stage` sent `section=payments`, which is the wrong tab — the "mark
+   * done and bill" control is a prop of `BookingsTab`, not the payments
+   * section. Each round got nearer the row without reaching it.
+   *
+   * `&booking=` is read by the CRM page and threaded to `BookingsTab`, which
+   * opens that row expanded. Omitted when the gap carries no entity, so the
+   * link degrades to what it did before rather than naming a booking that does
+   * not exist.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const openBooking = (item: GapItemView) => {
+    const target = item.entityId
+      ? `&booking=${encodeURIComponent(item.entityId)}`
+      : '';
+    router.push(`/business-os/crm?contact=${item.contactId}&section=bookings${target}`);
+  };
+
   const act = async (gap: GapView, item: GapItemView) => {
     const key = rowKey(gap, item);
     const action = actionFor(gap, item);
@@ -304,16 +334,7 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
      * they already use rather than pretending a button can answer it.
      */
     if (action === 'write_quote') {
-      /*
-       * Straight to the booking the quote is for.
-       *
-       * `&section=bookings` opens the drawer on the bookings section, where the
-       * consultation and its quote action are. This used to send
-       * `&action=quote`, which nothing on the CRM page read — so the button
-       * landed the owner on the contact's details with the booking collapsed,
-       * and the one thing they came to do was two clicks further on.
-       */
-      router.push(`/business-os/crm?contact=${item.contactId}&section=bookings`);
+      openBooking(item);
       return;
     }
 
@@ -331,7 +352,7 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
      * owner on a tab where the thing they came to do does not exist.
      */
     if (action === 'bill_stage') {
-      router.push(`/business-os/crm?contact=${item.contactId}&section=bookings`);
+      openBooking(item);
       return;
     }
 
@@ -346,7 +367,7 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
      * this is the route to it for an owner who has not opened the contact.
      */
     if (action === 'mark_meeting') {
-      router.push(`/business-os/crm?contact=${item.contactId}&section=bookings`);
+      openBooking(item);
       return;
     }
 
@@ -446,9 +467,23 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
         <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">
           {t('gaps.card_title')}
         </h3>
+        {/*
+          NEUTRAL, not primary. Filling this pill with `--v2-primary` put the
+          card's heaviest colour on a number nobody can act on, in the same
+          colour as the action buttons that ARE meant to be pressed.
+
+          A primary TINT with primary text fixes the competition and breaks
+          something worse: `--v2-primary` is #6366F1 in both theme blocks — it
+          is not redefined for dark — so indigo text on the dark card lands near
+          3:1, below the solid pill it replaced. The count is metadata, so the
+          neutral pair is both quieter and legible on either ground.
+        */}
         <span
-          className="text-[11px] font-medium px-2 py-0.5 rounded-full"
-          style={{ background: 'var(--v2-primary)', color: '#fff' }}
+          className="text-[11px] font-semibold px-2 py-0.5 rounded-full tabular-nums"
+          style={{
+            background: 'var(--v2-bg)',
+            color: 'var(--v2-text-secondary)',
+          }}
         >
           {total}
         </span>
@@ -457,11 +492,19 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
       <div className="flex flex-col gap-3">
         {gaps.map(gap => (
           <div key={gap.id}>
-            {/* The kind, said once, rather than repeated on every row. */}
-            <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)] mb-1.5">
+            {/*
+              The kind, said once, rather than repeated on every row.
+
+              Set in sentence case rather than `uppercase tracking-wide` at
+              11px. This card carries one of these above every group, so that
+              treatment put the heaviest emphasis in each block on the one line
+              the owner cannot act on. The names under it are the content; this
+              only has to label them.
+            */}
+            <p className="text-[12px] font-semibold text-[var(--v2-text-secondary)] mb-1.5">
               {t(`gaps.kind.${gap.id}`)}
               {gap.count > gap.items.length && (
-                <span className="normal-case"> · {gap.count}</span>
+                <span className="font-normal text-[var(--v2-text-muted)]"> · {gap.count}</span>
               )}
             </p>
 
@@ -477,8 +520,47 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                 return (
                   <div
                     key={key}
-                    className="p-2.5 rounded-xl border border-[var(--v2-border)]"
-                    style={{ background: 'var(--v2-bg)' }}
+                    /*
+                      A rail instead of a box, and a fill only on hover.
+                      ─────────────────────────────────────────────────────────
+                      Each row used to be an outlined, filled card inside an
+                      outlined, filled card, so the list read as a grid of equal
+                      cells with no front to it. Removing the row's border and
+                      its resting fill leaves a 2px rail on the start edge to
+                      give the list a spine, and frees the fill to mean
+                      something: it now appears under the pointer.
+
+                      `border-s-2` / `ps-3` are LOGICAL, so the spine sits on
+                      the right in Hebrew without a second rule. The hover fill
+                      is `--v2-bg`, the token one step from the card's own
+                      `--v2-surface`, which lifts in light mode and deepens in
+                      dark from the same single declaration.
+
+                      The rail carries the one signal this card already treats
+                      as loudest: amber when a payment plan is still charging
+                      for an appointment that is not happening, because that row
+                      is money leaving an account while it waits.
+                    */
+                    className="p-2.5 ps-3 rounded-xl border-s-2 transition-colors hover:bg-[var(--v2-bg)]"
+                    style={{
+                      /*
+                        `--v2-warning` is #F59E0B in BOTH theme blocks, which is
+                        the same amber the plan-still-charging sentence beside it
+                        reaches for through Tailwind, so the rail and the text it
+                        marks cannot drift apart.
+
+                        `color-mix` degrades safely HERE but would not as a
+                        Tailwind class: compiling `hover:bg-[color-mix(...)]`
+                        emits bare `background-color: var(--v2-primary)` as its
+                        pre-`@supports` fallback, which paints the whole row
+                        solid indigo on anything lacking color-mix. An
+                        unsupported INLINE declaration is simply dropped, and
+                        the border falls back to currentColor.
+                      */
+                      borderInlineStartColor: item.planLive
+                        ? 'var(--v2-warning)'
+                        : 'color-mix(in srgb, var(--v2-primary) 50%, transparent)',
+                    }}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
@@ -569,8 +651,35 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                           type="button"
                           onClick={() => act(gap, item)}
                           disabled={state.kind === 'working' || state.kind === 'done'}
-                          className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-opacity disabled:opacity-60"
-                          style={{ background: 'var(--v2-primary)', color: '#fff' }}
+                          /*
+                            The one thing on the row meant to be pressed, so it
+                            is allowed to look like it: a little more padding, a
+                            lift in its own colour, and a press state. It was a
+                            flat rectangle that read as a label.
+
+                            Once DONE it stops asking. Keeping the solid fill on
+                            a finished action left the loudest element on the row
+                            pointing at the one thing already handled, and it is
+                            `disabled` by then — so it goes to a quiet success
+                            tint and drops the lift, while `opacity` stays for
+                            `working`, which is still in flight.
+                          */
+                          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] disabled:active:scale-100 disabled:hover:brightness-100"
+                          style={
+                            state.kind === 'done'
+                              ? {
+                                  background:
+                                    'color-mix(in srgb, var(--v2-success) 14%, transparent)',
+                                  color: 'var(--v2-success)',
+                                }
+                              : {
+                                  background: 'var(--v2-primary)',
+                                  color: '#fff',
+                                  boxShadow:
+                                    '0 2px 8px -2px color-mix(in srgb, var(--v2-primary) 55%, transparent)',
+                                  opacity: state.kind === 'working' ? 0.6 : undefined,
+                                }
+                          }
                         >
                           {state.kind === 'done' ? (
                             <>

@@ -86,14 +86,19 @@ export const QUEUE_ITEM_KIND_LABELS: Readonly<Record<BosQueueId, string | Readon
   },
   payment_automations: 'Payment automation',
   daily_briefing_sends: 'Morning briefing',
-  // Every kind of the live CHECK (20260923_meeting_reminder.sql); a test reads
-  // that migration, so a new kind fails a test instead of showing "Other" (W7B-11).
+  // Every kind of the live CHECK (20261006d_auto_complete_meetings.sql); a test
+  // reads that migration, so a new kind fails a test instead of showing "Other"
+  // (W7B-11).
   lead_responses: {
     invite: 'Booking invite to a new lead',
     chase: 'Follow-up to a lead',
     invoice_chase: 'Invoice chase to a client',
     intake_chase: 'Intake form reminder',
     meeting_reminder: 'Meeting reminder',
+    // The one kind that sends nobody anything: it marks a meeting that has
+    // already happened as completed, in the owner's own records. Named for what
+    // it does rather than who hears about it, because no client does.
+    meeting_complete: 'Marking a past meeting complete',
   },
   insight_actions: {
     chase_invoice: 'Invoice chase',

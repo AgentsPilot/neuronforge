@@ -24,6 +24,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { TestAccountCleanupPanel } from '@/components/business-os/purge/TestAccountCleanupPanel';
 
 interface TableCount {
   table: string;
@@ -743,6 +744,9 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
           )}
         </div>
       )}
+
+      {/* Admin only: this branch renders after the server access check said admin. */}
+      <TestAccountCleanupPanel onLog={onLog} />
     </div>
   );
 }

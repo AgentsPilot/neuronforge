@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getUser } from '@/lib/auth'
 import { createLogger } from '@/lib/logger'
 import { InsightRepository } from '@/lib/repositories/InsightRepository'
+import { supabaseServer } from '@/lib/supabaseServer'
 import { OutcomeRepository } from '@/lib/repositories/OutcomeRepository'
 import { InsightActionEngine } from '@/lib/pilot/insight/InsightActionEngine'
 import { z } from 'zod'
@@ -42,8 +43,18 @@ export async function GET(request: NextRequest, context: RouteContext) {
       )
     }
 
-    // Fetch the insight
-    const insightRepo = new InsightRepository()
+    /*
+     * Service role, with ownership checked on the very next line.
+     *
+     * `new InsightRepository()` took NO client, so `this.supabase` was
+     * undefined and every call to this route threw on its first query --
+     * two `tsc` errors that `next.config.js` ignores at build time, which is
+     * why it shipped. `findById` is deliberately unscoped (it selects by id
+     * alone), so the client has to bypass RLS and the route verifies
+     * `user_id !== user.id` immediately: the fetch-then-verify shape the
+     * `tenant-isolation-guard` skill sanctions when it is documented.
+     */
+    const insightRepo = new InsightRepository(supabaseServer)
     const insightResult = await insightRepo.findById(insightId)
 
     if (!insightResult || insightResult.user_id !== user.id) {
@@ -120,8 +131,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const { action_type, preview_only } = validation.data
 
-    // Fetch the insight
-    const insightRepo = new InsightRepository()
+    /*
+     * Service role, with ownership checked on the very next line.
+     *
+     * `new InsightRepository()` took NO client, so `this.supabase` was
+     * undefined and every call to this route threw on its first query --
+     * two `tsc` errors that `next.config.js` ignores at build time, which is
+     * why it shipped. `findById` is deliberately unscoped (it selects by id
+     * alone), so the client has to bypass RLS and the route verifies
+     * `user_id !== user.id` immediately: the fetch-then-verify shape the
+     * `tenant-isolation-guard` skill sanctions when it is documented.
+     */
+    const insightRepo = new InsightRepository(supabaseServer)
     const insight = await insightRepo.findById(insightId)
 
     if (!insight || insight.user_id !== user.id) {
@@ -169,9 +190,29 @@ export async function POST(request: NextRequest, context: RouteContext) {
       )
     }
 
-    // Record the outcome
+    /*
+     * Record the outcome.
+     *
+     * ⚠️ THIS CURRENTLY NEVER SUCCEEDS. `public.insight_outcomes` does not
+     * exist — no migration in this repository creates it, and a live probe on
+     * 2026-10-06 returned `relation "public.insight_outcomes" does not exist`.
+     * So every action applied here has failed to record its outcome for as
+     * long as the route has existed.
+     *
+     * It was invisible because the result was discarded: `create` catches,
+     * logs and returns `{ data: null, error }`, and the next line logged
+     * "Action applied successfully" regardless. The outcome write is
+     * deliberately non-blocking — a missing audit row must not fail an action
+     * the user already got — so the fix is to make the failure VISIBLE, not
+     * to throw.
+     *
+     * Creating the table belongs to the agent platform, whose shape this
+     * repository shares (`executions_measured`, success per run). Business OS
+     * has its own loop in `insight_measurements` (20261006g) and deliberately
+     * does not reuse this one.
+     */
     const outcomeRepo = new OutcomeRepository()
-    await outcomeRepo.create({
+    const outcome = await outcomeRepo.create({
       insight_id: insightId,
       user_id: user.id,
       action_type,
@@ -179,6 +220,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
       metric_name: 'success_rate',
       metric_unit: 'percentage',
     })
+
+    if (outcome.error) {
+      requestLogger.warn(
+        { insightId, actionType: action_type, errName: outcome.error.name },
+        'Action applied, but its outcome was NOT recorded'
+      )
+    }
 
     requestLogger.info({
       userId: user.id,

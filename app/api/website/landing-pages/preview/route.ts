@@ -12,6 +12,10 @@ import { createLogger } from '@/lib/logger';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { imageForSection } from '@/lib/services/StockImageService';
 import { repairBlockLinks } from '@/lib/website-builder/linkIntegrity';
+import { loadLiveServiceCards, narrowToPageService } from '@/lib/website-builder/liveServiceCards';
+import { leadSentence } from '@/lib/website-builder/leadSentence';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { getBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { completeTheme } from '@/lib/branding/theme';
@@ -53,15 +57,60 @@ const PreviewSchema = z.object({
   subdomain: z.string().optional()
 });
 
-// Offering types that require booking vs direct purchase
-const BOOKABLE_TYPES = ['service', 'coaching', 'treatment', 'session', 'consultation'];
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DOES A CLIENT PICK A TIME? THE SERVICE ROW SAYS SO.
+ *
+ * This read `offering_type` — a word a language model chose while describing
+ * the offering — and matched it against a hardcoded list to decide whether the
+ * page gets a booking section. Two things were wrong with that. The platform
+ * already HOLDS the answer in `scheduling_services.is_scheduled`, so it was
+ * guessing at a fact it owns; and the list could only ever recognise the words
+ * somebody had thought of, so a business selling a "programme" or a "retainer"
+ * lost its booking widget for using an unfamiliar noun.
+ *
+ * The prompt no longer offers the model a fixed vocabulary at all, which would
+ * have made that list wrong far more often. `offering_type` still travels with
+ * the content and still shapes the WORDING; it no longer decides the layout.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function serviceTakesBookings(userId: string, serviceId: string | undefined): Promise<boolean> {
+  /*
+   * The preview can be asked for before a service is chosen — `serviceId` is
+   * optional on this route alone. With nothing to ask about, the safe answer is
+   * the same as an unreadable row: no booking section, and a CTA that points at
+   * the pricing one, rather than an anchor leading to a section that is not
+   * there.
+   */
+  if (!serviceId) return false;
 
-// Get blocks based on offering type - courses/products don't need booking
-function getBlocksForOfferingType(
-  offeringType: string | undefined,
+  const { data, error } = await supabaseServer
+    .from('scheduling_services')
+    .select('is_scheduled')
+    .eq('id', serviceId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error || !data) {
+    /*
+     * Unreadable, or a service that is not this owner's. Treated as NOT
+     * bookable, which is the safe direction: the other branch builds a CTA
+     * pointing at the pricing section, so the page still has a way to act,
+     * whereas a booking anchor with no booking section is a button that
+     * scrolls nowhere.
+     */
+    return false;
+  }
+
+  // Null means "never said", and every service that predates the column takes
+  // appointments — the column was added to mark the exceptions.
+  return data.is_scheduled !== false;
+}
+
+function getBlocksForOffering(
+  needsBooking: boolean,
   language: string = 'en'
 ): Array<{ block_type: string; defaultContent: Record<string, unknown> }> {
-  const needsBooking = !offeringType || BOOKABLE_TYPES.includes(offeringType.toLowerCase());
 
   // Localized CTA text
   const ctaText = {
@@ -116,6 +165,22 @@ function getBlocksForOfferingType(
          */
         title: language === 'he' ? 'מה כלול' : language === 'es' ? 'Qué Incluye' : "What's Included",
         features: []
+      }
+    },
+    {
+      /*
+       * Who the reader would be buying from.
+       *
+       * A landing page is reached from an ad by someone who has never seen the
+       * business: no familiar logo, no navigation to explore, no second page to
+       * check. Between knowing what is on offer and being asked to pay, they
+       * get one short section saying who is behind it — see the note on the
+       * `landing` recipe, which this block set mirrors.
+       */
+      block_type: 'about',
+      defaultContent: {
+        title: language === 'he' ? 'מי אנחנו' : language === 'es' ? 'Quiénes somos' : 'Who we are',
+        content: ''
       }
     },
     {
@@ -223,9 +288,10 @@ export async function POST(request: NextRequest) {
     // same place the published header will read it from.
     const previewLogoUrl = validated.showLogo ? await resolveBusinessLogo(user.id) : null;
 
-    // Get offering type from AI-generated content to determine which blocks to include
+    // Kept for the logs and for wording; it no longer decides the layout.
     const offeringType = (validated.generatedContent?.offering_type as string) || undefined;
-    const landingPageBlocks = getBlocksForOfferingType(offeringType, validated.language);
+    const needsBooking = await serviceTakesBookings(user.id, validated.serviceId);
+    const landingPageBlocks = getBlocksForOffering(needsBooking, validated.language);
 
     /*
      * A picture for the hero, and nothing else.
@@ -242,17 +308,58 @@ export async function POST(request: NextRequest) {
      * existed.
      */
     const wantsHeroImage = landingPageBlocks.some(block => block.block_type === 'hero');
-    const previewProfile = wantsHeroImage
+    /*
+     * Also read for the "who we are" section, so the profile is fetched when
+     * either needs it rather than only for a photograph.
+     */
+    const wantsProfile = wantsHeroImage || landingPageBlocks.some(block => block.block_type === 'about');
+    const pageProfile = wantsProfile
       ? (await businessProfileRepository.findByUserId(user.id)).data
       : null;
+    const previewProfile = pageProfile;
     const heroImage = wantsHeroImage
       ? await imageForSection(user.id, previewProfile?.vertical ?? null, 'portrait', 'hero')
       : null;
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE REAL SERVICE, NOT THE ONE THE GENERATOR DESCRIBED.
+     *
+     * A landing page must behave exactly like the website and the smart link.
+     * The only thing that differs is that it sells ONE service — and that
+     * service has to work the way it works everywhere else.
+     *
+     * It did not. The published site and the website preview both replace the
+     * services block with the live catalogue; this route never did, so the page
+     * rendered the generator's own cards. Those carry a name and a price and
+     * none of `id`, `is_scheduled`, `collection` or `sale_mode` — the facts
+     * `flowForService` reads to choose a service's journey. So every card fell
+     * back to the page's default flow, and one invented card ("קורס מומחים", on
+     * an account with no such service) resolved to nothing at all.
+     *
+     * Narrowed to `serviceId` where the page has one: one card, live, behaving
+     * as itself.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * The live card is needed by the PRICING block too, not only by a services
+     * block — and a landing page has pricing and no services block, so gating
+     * on services alone meant it was never loaded for the page that needs it
+     * most. See the pricing branch below for what depends on it.
+     */
+    const wantsLiveService = landingPageBlocks.some(
+      block => block.block_type === 'services' || block.block_type === 'pricing'
+    );
+    const liveServiceCards = wantsLiveService
+      ? narrowToPageService(await loadLiveServiceCards(user.id), validated.serviceId)
+      : [];
+    const pageServiceCard = liveServiceCards[0] ?? null;
 
     requestLogger.info({
       offeringType,
       blockTypes: landingPageBlocks.map(b => b.block_type),
       hasBookingWidget: landingPageBlocks.some(b => b.block_type === 'booking_widget'),
+      liveServiceCards: liveServiceCards.length,
       language: validated.language
     }, 'Generating preview blocks based on offering type');
 
@@ -287,6 +394,19 @@ export async function POST(request: NextRequest) {
         content.logo_text = validated.companyName || '';
       }
 
+      /*
+       * The services block carries the live card, and that is what the journey
+       * is built from: `WebsiteBlocks` reads `journeyServices` straight out of
+       * this block's content, so a card without the three facts cannot have a
+       * journey of its own however the rest of the page is configured.
+       *
+       * Empty when the page's service has been deleted or deactivated, which is
+       * deliberate — see `narrowToPageService`.
+       */
+      if (block.block_type === 'services') {
+        content.services = liveServiceCards;
+      }
+
       // For booking_widget, set client flow and service
       // Default to scheduling + client_info + confirmation for bookable services
       if (block.block_type === 'booking_widget') {
@@ -298,6 +418,32 @@ export async function POST(request: NextRequest) {
 
       // For pricing, add service info for booking integration
       // Default to scheduling + client_info + confirmation for bookable services
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * WHO WE ARE, FROM THE PROFILE — OR NOT AT ALL.
+       *
+       * The generator writes this section from the business facts. When it
+       * falls back, or when it correctly returns nothing because those facts
+       * are empty, the block was still built: a heading reading "מי אנחנו" with
+       * silence underneath, which is worse than no section — it advertises that
+       * the business has nothing to say about itself on the page where a
+       * stranger is deciding whether to trust it.
+       *
+       * So the profile fills it where it can, and where it cannot the block is
+       * dropped below.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (block.block_type === 'about' && !String(content.content || '').trim()) {
+        content.content = [
+          pageProfile?.company_name,
+          pageProfile?.unique_value_proposition,
+        ]
+          .map(part => (part || '').trim())
+          .filter(Boolean)
+          .join(' · ');
+      }
+
       if (block.block_type === 'pricing') {
         /*
          * "Pricing" is the page's word, not the model's.
@@ -315,6 +461,49 @@ export async function POST(request: NextRequest) {
         content.serviceId = validated.serviceId;
         content.serviceName = validated.serviceName;
         content.durationMinutes = validated.serviceDuration || 60;
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * THE ONE SERVICE THIS PAGE SELLS, WHERE THE RENDERER LOOKS FOR IT.
+         *
+         * `WebsiteBlocks` resolves a landing page's single service from
+         * `pricing.plans` — and only when there is EXACTLY ONE entry. The
+         * generator fills that array, so a page whose generation fell back to
+         * the starting draft had `plans: []`, no page service, and every
+         * page-level button opened the booking dialog at its catalogue step:
+         * "start now" offering a list of services the page never mentioned, and
+         * the closing CTA opening on nothing at all. Both were reported.
+         *
+         * The facts come from the service row and overwrite whatever the model
+         * wrote, because `is_scheduled`, `collection`, `sale_mode` and the price
+         * decide the client's journey and are not the model's to invent. Its
+         * copy — the inclusions it listed — is kept underneath.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        if (pageServiceCard) {
+          const written = Array.isArray(content.plans) ? content.plans[0] : undefined;
+          content.plans = [{
+            ...(written as Record<string, unknown> | undefined),
+            serviceId: pageServiceCard.id,
+            serviceName: pageServiceCard.name,
+            name: pageServiceCard.name,
+            /*
+             * A line, not the brief. `description` here is printed on the
+             * pricing card, and the service's own description is an owner's
+             * notes — eleven lines on the reporting account, repeated verbatim
+             * beside the price.
+             */
+            description: leadSentence(pageServiceCard.description) ?? '',
+            price: pageServiceCard.price,
+            priceRaw: pageServiceCard.priceRaw,
+            currency: pageServiceCard.currency,
+            durationMinutes: pageServiceCard.durationMinutes,
+            is_scheduled: pageServiceCard.is_scheduled,
+            collection: pageServiceCard.collection,
+            sale_mode: pageServiceCard.sale_mode,
+            paymentPlan: pageServiceCard.paymentPlan,
+          }];
+        }
         content.currency = validated.serviceCurrency || 'USD';
         content.client_flow = validated.clientFlow || ['scheduling', 'client_info', 'confirmation'];
       }
@@ -385,7 +574,20 @@ export async function POST(request: NextRequest) {
      * cannot demonstrate a destination the saved page will not have — which is
      * where this was first noticed.
      */
-    const { blocks: checkedBlocks, repairs: linkRepairs } = repairBlockLinks(blocks);
+
+    /*
+     * A section with nothing in it is not a section.
+     *
+     * "Who we are" with an empty body tells a stranger the business has nothing
+     * to say about itself, on the page where they are deciding whether to trust
+     * it. Dropped rather than drawn empty — the profile fills it as soon as
+     * there is anything to fill it with.
+     */
+    const withContent = blocks.filter(
+      block => block.block_type !== 'about' || String((block.content as Record<string, unknown>)?.content || '').trim().length > 0
+    );
+
+    const { blocks: checkedBlocks, repairs: linkRepairs } = repairBlockLinks(withContent);
 
     requestLogger.info({
       userId: user.id,
@@ -399,7 +601,17 @@ export async function POST(request: NextRequest) {
       blocks: checkedBlocks,
       theme,
       language: validated.language,
-      subdomain: validated.subdomain
+      subdomain: validated.subdomain,
+      /*
+       * Whether a card can actually be charged, the same answer the website
+       * preview and the published page are given.
+       *
+       * Without it the journey draws no payment step, so a service sold online
+       * behaved on a landing page like one that is invoiced — the second half
+       * of "the service must behave the same". Read here rather than in the
+       * client, which has no business asking Stripe anything.
+       */
+      paymentsEnabled: (await resolvePaymentCollectionCapability(supabaseServer, user.id)).canCollect
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

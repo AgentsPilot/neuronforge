@@ -2,12 +2,10 @@
 
 import type { Metadata } from 'next';
 
-import { PortalRail, type PortalMeeting } from '@/components/public/PortalRail';
+import { PortalContextProvider } from '@/components/public/PortalContextProvider';
+import type { PortalMeeting } from '@/components/public/PortalMeetings';
+import { PublicBrandFrame } from '@/components/public/PublicBrandFrame';
 import { PortalShell } from '@/components/public/PortalShell';
-import { PublicBrandProvider } from '@/components/public/PublicBrandProvider';
-import { PublicDirScript } from '@/components/public/PublicDirScript';
-import { PublicFontLinks } from '@/components/public/PublicFontLinks';
-import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 import { publicT } from '@/lib/i18n/public-pages';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -236,10 +234,7 @@ export default async function BookingManageLayout({
 
   return (
     <>
-      <PublicDirScript brand={brand} />
-      <PublicFontLinks brand={brand} />
-      <PublicThemeStyle brand={brand} />
-      <PublicBrandProvider brand={brand}>
+      <PublicBrandFrame brand={brand}>
         {/*
           The portal's frame, mounted ONCE for the whole section.
 
@@ -250,22 +245,32 @@ export default async function BookingManageLayout({
           the bar was drawn again. In the layout it simply stays, and the
           spinner appears underneath it.
         */}
-        <PortalShell
-          brand={brand}
-          clientName={portal.clientName}
-          aside={
-            <PortalRail
-              brand={brand}
-              clientName={portal.clientName}
-              clientEmail={portal.clientEmail}
-              timeZone={portal.timeZone}
-              meetings={portal.meetings}
-            />
-          }
+        {/*
+          The rail is no longer drawn here for every screen.
+
+          It was, and that put the client's whole appointment history and the
+          business's opening hours underneath the calendar on the reschedule
+          screen and underneath the confirmation on cancel. Those are single
+          tasks; the cards belonged to the index all along.
+
+          The DATA still resolves here, once for the section — moving the query
+          into the page would run it again on every navigation, which is what
+          putting it in the layout was for. It travels as context and the index
+          renders the cards from it.
+        */}
+        <PortalContextProvider
+          value={{
+            clientName: portal.clientName,
+            clientEmail: portal.clientEmail,
+            timeZone: portal.timeZone,
+            meetings: portal.meetings,
+          }}
         >
-          {children}
-        </PortalShell>
-      </PublicBrandProvider>
+          <PortalShell brand={brand} clientName={portal.clientName}>
+            {children}
+          </PortalShell>
+        </PortalContextProvider>
+      </PublicBrandFrame>
     </>
   );
 }

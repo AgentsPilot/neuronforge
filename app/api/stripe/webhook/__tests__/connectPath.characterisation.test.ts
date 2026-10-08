@@ -41,6 +41,12 @@
  * the route logged, so the logger mock now keeps lines in `mockLogLines`, a side
  * channel that the P-1 scenarios assert on explicitly and that `run()` never
  * returns: logging still does not reach any snapshot (P0-C1 holds).
+ *
+ * CF-5 PR 0 (webhook queries to repositories) added the last `describe`, the
+ * `eventPatch` and `dispatch` knobs, and two named delegations on the plan
+ * subscription repository mock. The 45 entries before it are byte-identical.
+ * This file is not edited again during CF-5 PRs 1 to 5: they prove themselves
+ * against it as it stands.
  */
 
 import fs from 'fs';
@@ -73,6 +79,18 @@ interface Scenario {
   planLookup?: Answer;
   invoicePaymentIntent?: string | null;
   processorFee?: { fee: number; net: number; feeCurrency: string } | null;
+  /**
+   * CF-5 PR 0: deep-merged into the fixture before the run. Plain objects merge;
+   * anything else (`null` included) replaces. Unset → the fixture as read.
+   */
+  eventPatch?: Record<string, unknown>;
+  /**
+   * CF-5 PR 0: overrides the Business OS router's outcome for this scenario
+   * only, and records that it did. Unset → the real dispatcher, unrecorded.
+   * Used to reach `handleInvoicePaymentFailed`, which the router keeps out of
+   * reach of `POST` today (workplan §7.3.1, X2/X3).
+   */
+  dispatch?: 'not_business_os';
 }
 
 const mockEffects: unknown[] = [];
@@ -230,8 +248,37 @@ jest.mock('@/lib/repositories/PaymentPlanSubscriptionRepository', () => ({
       mockRecord({ type: 'planRepo.close', args });
       return Promise.resolve({ data: null, error: null });
     },
+    /*
+     * CF-5 PR 4's two methods (workplan §3), delegated to the REAL repository by
+     * name, so they record nothing of their own: their query records through
+     * `mockSupabase` exactly as the inline query in `handlePlanSubscriptionEnded`
+     * does today, and entries 8, X6, X40, X41 and X51 must not move when PR 4
+     * lands.
+     * An explicit list, not a catch-all (SA C-4): any other unlisted method is
+     * still a TypeError, not a silent trip to the DB mock. Resolved at call time
+     * because the methods do not exist until PR 4.
+     */
+    findEndStateBySubscriptionId: (...args: unknown[]) =>
+      jest.requireActual('@/lib/repositories/PaymentPlanSubscriptionRepository')
+        .paymentPlanSubscriptionRepository.findEndStateBySubscriptionId(...args),
+    endFromStripe: (...args: unknown[]) =>
+      jest.requireActual('@/lib/repositories/PaymentPlanSubscriptionRepository')
+        .paymentPlanSubscriptionRepository.endFromStripe(...args),
   },
 }));
+
+// The Business OS router, real unless a scenario sets `dispatch` (CF-5 PR 0).
+jest.mock('@/lib/business-os/billing/webhookDispatcher', () => {
+  const actual = jest.requireActual('@/lib/business-os/billing/webhookDispatcher');
+  return {
+    ...actual,
+    dispatchBusinessOsEvent: (...args: unknown[]) => {
+      if (!mockScenario.dispatch) return actual.dispatchBusinessOsEvent(...args);
+      mockRecord({ type: 'dispatchBusinessOsEvent (scenario override)', outcome: mockScenario.dispatch });
+      return Promise.resolve({ kind: mockScenario.dispatch });
+    },
+  };
+});
 
 jest.mock('@/lib/repositories/CRMActivityRepository', () => ({
   crmActivityRepository: {
@@ -293,6 +340,17 @@ function sanitise(value: unknown): unknown {
   return value;
 }
 
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** `patch` over `base`: plain objects merge key by key; any other value replaces. */
+function deepMerge(base: unknown, patch: unknown): unknown {
+  if (!isPlainObject(base) || !isPlainObject(patch)) return patch;
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) out[key] = deepMerge(base[key], value);
+  return out;
+}
+
 async function run(scenario: Scenario) {
   mockEffects.length = 0;
   for (const key of Object.keys(mockDbQueues)) delete mockDbQueues[key];
@@ -301,9 +359,10 @@ async function run(scenario: Scenario) {
   }
   mockLogLines.length = 0;
   mockScenario = scenario;
-  mockEvent = JSON.parse(
+  const fixtureEvent: unknown = JSON.parse(
     fs.readFileSync(path.join(FIXTURES, scenario.fixtureDir ?? 'connect', scenario.fixture), 'utf8')
   );
+  mockEvent = scenario.eventPatch ? deepMerge(fixtureEvent, scenario.eventPatch) : fixtureEvent;
   runStartedAt = Date.now();
 
   let POST: (req: NextRequest) => Promise<Response> = async () => {
@@ -1150,6 +1209,638 @@ describe('Stripe webhook, FU-5: owner lookup failure', () => {
         ownerLookupFails: ['acct_owner_a'],
         db: { 'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }) },
       })
+    ).toMatchSnapshot();
+  });
+});
+
+/**
+ * CF-5 PR 0: the arms the repository moves will touch and nothing ran yet.
+ *
+ * Every DB query in `route.ts` moves behind a repository in PRs 1 to 5, and the
+ * snapshot is the proof each move changed nothing. A move can only be proved on
+ * an arm that executes, so these entries run the arms the 45 above leave cold:
+ * the miss, the error and the hit of each moved query, and the early returns
+ * that sit between a moved read and a moved write. Recorded on the untouched
+ * route (workplan §7.3.1 lists each one with its line and its PR).
+ *
+ * They pin what the route DOES today, holes included (SA C-9). An entry here is
+ * not a statement that the behaviour is right.
+ */
+
+const fail = (code: string, message: string): Answer => ({ data: null, error: { code, message } });
+const DB_DOWN = fail('XX000', 'write rejected');
+
+const PLAN_ROW = {
+  id: 'plan-1',
+  user_id: 'owner-a',
+  contact_id: 'ct-2',
+  booking_id: 'bk-plan-1',
+  service_id: 'svc-1',
+  currency: 'ILS',
+  periods_paid: 0,
+  installment_count: 3,
+};
+
+const PLAN_PERIOD_DB: Record<string, Answer | Answer[]> = {
+  'payment_plan_installments:select': [ok(null), ok({ due_date: '2026-12-01', amount: '333.33' })],
+  'payment_transactions:insert': ok({ id: 'tx-plan-1' }),
+};
+
+const CHECKOUT_INVOICE = {
+  id: 'pinv-0002',
+  user_id: 'owner-a',
+  contact_id: 'ct-1',
+  invoice_number: 'INV-002',
+  currency: 'EUR',
+  status: 'sent',
+  booking_id: 'bk-0003',
+};
+
+const FAILED_INVOICE = { id: 'pinv-0003', invoice_number: 'INV-003', user_id: 'owner-a' };
+const ENDING_PLAN = { id: 'plan-1', user_id: 'owner-a', status: 'active', installment_count: 3, periods_paid: 1 };
+
+const REFUND_TX = ok([{ id: 'tx-1', user_id: 'owner-a', invoice_id: 'pinv-0001', currency: 'usd' }]);
+const DISPUTE_TX = ok([
+  {
+    id: 'tx-1',
+    user_id: 'owner-a',
+    status: 'succeeded',
+    amount: 150,
+    currency: 'USD',
+    contact_id: 'ct-1',
+    metadata: { source: 'payment_intent_webhook' },
+  },
+]);
+
+const NO_USER_ID = { data: { object: { metadata: { user_id: null } } } };
+
+describe('Stripe webhook, CF-5 PR 0: arms the repository moves will touch', () => {
+  // ── PR 1: the claim table ──────────────────────────────────────────────────
+
+  it('X10. claim insert answers 23505 (claimed in between): duplicate, 200', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-finalized.json',
+        owners: OWNER_A,
+        db: { 'processed_webhook_events:insert': fail('23505', 'duplicate key value') },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X12. claim insert answers another error: logged, processed anyway, completed at the end', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-finalized.json',
+        owners: OWNER_A,
+        db: {
+          'processed_webhook_events:insert': DB_DOWN,
+          'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }),
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X13. claim lookup answers an error: logged, claimed and processed anyway', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-finalized.json',
+        owners: OWNER_A,
+        db: {
+          'processed_webhook_events:select': fail('XX000', 'read failed'),
+          'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }),
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X53. claim insert fails, then the handler throws: 500, and there is no claim to release', async () => {
+    expect(
+      await run({
+        fixture: 'payment-intent-succeeded.json',
+        owners: OWNER_A,
+        db: { ...OWNED_LINKS, 'processed_webhook_events:insert': DB_DOWN, 'payment_transactions:insert': DB_DOWN },
+      })
+    ).toMatchSnapshot();
+  });
+
+  // ── PR 2: Connect invoices ─────────────────────────────────────────────────
+
+  it('X9. checkout for an invoice already paid returns before any write', async () => {
+    expect(
+      await run({
+        fixture: 'checkout-completed-invoice.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok({ ...CHECKOUT_INVOICE, status: 'paid' }) },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X14. checkout for an invoice that is not found returns before any write', async () => {
+    expect(await run({ fixture: 'checkout-completed-invoice.json', owners: OWNER_A })).toMatchSnapshot();
+  });
+
+  it('X15. checkout for an invoice another business owns is refused', async () => {
+    expect(
+      await run({
+        fixture: 'checkout-completed-invoice.json',
+        owners: OWNED_BY_OTHER,
+        db: { 'payment_invoices:select': ok(CHECKOUT_INVOICE) },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X16. checkout: marking the invoice paid fails after the payment is recorded, 500', async () => {
+    expect(
+      await run({
+        fixture: 'checkout-completed-invoice.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok(CHECKOUT_INVOICE), 'payment_invoices:update': DB_DOWN },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X17. invoice.paid: marking the invoice paid fails after the payment is recorded, 500', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok(PLATFORM_INVOICE), 'payment_invoices:update': DB_DOWN },
+        invoicePaymentIntent: 'pi_invoice_1',
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X18. invoice.payment_failed with no platform invoice returns before any write', async () => {
+    expect(await run({ fixture: 'invoice-payment-failed.json', owners: OWNER_A })).toMatchSnapshot();
+  });
+
+  it('X19. invoice.payment_failed: the overdue update fails, logged, no activity', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-payment-failed.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok(FAILED_INVOICE), 'payment_invoices:update': DB_DOWN },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X20. invoice.payment_failed on an invoice with no contact: no profile read, no activity', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-payment-failed.json',
+        owners: OWNER_A,
+        db: {
+          'payment_invoices:select': [ok(FAILED_INVOICE), ok({ contact_id: null, amount: 120, currency: 'USD' })],
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X48. invoice.paid found neither by Stripe id nor by the metadata id: no write', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid.json',
+        owners: OWNER_A,
+        db: {
+          'payment_invoices:select': [
+            { data: null, error: { code: 'PGRST116', message: 'no rows' } },
+            { data: null, error: { code: 'PGRST116', message: 'no rows' } },
+          ],
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X49. checkout for an invoice with no booking: paid, no booking write', async () => {
+    expect(
+      await run({
+        fixture: 'checkout-completed-invoice.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok({ ...CHECKOUT_INVOICE, booking_id: null }) },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X52. invoice.payment_failed, the owner has no business profile: the activity is phrased in English', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-payment-failed.json',
+        owners: OWNER_A,
+        db: {
+          'payment_invoices:select': [ok(FAILED_INVOICE), ok({ contact_id: 'ct-1', amount: 120, currency: 'USD' })],
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X21. invoice.finalized with no platform invoice returns before any write', async () => {
+    expect(await run({ fixture: 'invoice-finalized.json', owners: OWNER_A })).toMatchSnapshot();
+  });
+
+  it('X22. invoice.finalized: the update fails, logged, 200', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-finalized.json',
+        owners: OWNER_A,
+        db: {
+          'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }),
+          'payment_invoices:update': DB_DOWN,
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X23. invoice.marked_uncollectible with no platform invoice returns before any write', async () => {
+    expect(await run({ fixture: 'invoice-marked-uncollectible.json', owners: OWNER_A })).toMatchSnapshot();
+  });
+
+  it('X24. invoice.marked_uncollectible: the update fails, logged, 200', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-marked-uncollectible.json',
+        owners: OWNER_A,
+        db: {
+          'payment_invoices:select': ok({ id: 'pinv-0005', invoice_number: 'INV-005', user_id: 'owner-a' }),
+          'payment_invoices:update': DB_DOWN,
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  // ── PR 3: money rows ───────────────────────────────────────────────────────
+
+  it('X4. platform charge.refunded with no payment intent: found by charge id, refund on no connected account', async () => {
+    expect(
+      await run({
+        fixture: 'charge-refunded.json',
+        eventPatch: { account: null, data: { object: { payment_intent: null } } },
+        db: { 'payment_transactions:select': REFUND_TX },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X5. charge.dispute.closed, won, charge id only: the status before the dispute is restored', async () => {
+    expect(
+      await run({
+        fixture: 'charge-dispute-created.json',
+        owners: OWNER_A,
+        eventPatch: { type: 'charge.dispute.closed', data: { object: { payment_intent: null, status: 'won' } } },
+        db: {
+          'payment_transactions:select': ok([
+            {
+              id: 'tx-1',
+              user_id: 'owner-a',
+              status: 'disputed',
+              amount: 150,
+              currency: 'USD',
+              contact_id: 'ct-1',
+              metadata: { source: 'payment_intent_webhook', status_before_dispute: 'refunded' },
+            },
+          ]),
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X25. charge.refunded for a payment never recorded: logged, nothing written', async () => {
+    expect(await run({ fixture: 'charge-refunded.json', owners: OWNER_A })).toMatchSnapshot();
+  });
+
+  it('X26. charge.refunded: the refund upsert fails, 500', async () => {
+    expect(
+      await run({
+        fixture: 'charge-refunded.json',
+        owners: OWNER_A,
+        db: { 'payment_transactions:select': REFUND_TX, 'payment_refunds:upsert': DB_DOWN },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X27. dispute for a payment never recorded: logged, nothing written', async () => {
+    expect(await run({ fixture: 'charge-dispute-created.json', owners: OWNER_A })).toMatchSnapshot();
+  });
+
+  it('X28. dispute: the update fails, logged, no alert', async () => {
+    expect(
+      await run({
+        fixture: 'charge-dispute-created.json',
+        owners: OWNER_A,
+        db: { 'payment_transactions:select': DISPUTE_TX, 'payment_transactions:update': DB_DOWN },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X29. payment_intent.succeeded already recorded returns before the links are read', async () => {
+    expect(
+      await run({
+        fixture: 'payment-intent-succeeded.json',
+        owners: OWNER_A,
+        db: { 'payment_transactions:select': ok({ id: 'tx-existing' }) },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X30. plan period: the transaction insert fails, the raw error is thrown, 500', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid-plan-period.json',
+        owners: OWNER_A,
+        planLookup: ok(PLAN_ROW),
+        db: { ...PLAN_PERIOD_DB, 'payment_transactions:insert': DB_DOWN },
+        invoicePaymentIntent: 'pi_plan_1',
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X31. invoice.paid already recorded for the invoice returns before any write', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok(PLATFORM_INVOICE), 'payment_transactions:select': ok({ id: 'tx-existing' }) },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X32. invoice.paid: the transaction insert fails, the invoice is not marked paid, 500', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok(PLATFORM_INVOICE), 'payment_transactions:insert': DB_DOWN },
+        invoicePaymentIntent: 'pi_invoice_1',
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X33. checkout invoice: the transaction insert fails, the invoice is not marked paid, 500', async () => {
+    expect(
+      await run({
+        fixture: 'checkout-completed-invoice.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok(CHECKOUT_INVOICE), 'payment_transactions:insert': DB_DOWN },
+      })
+    ).toMatchSnapshot();
+  });
+
+  // ── PR 4: plans and bookings ───────────────────────────────────────────────
+
+  it('X6. Connect customer.subscription.deleted on a plan paid in full: completed, no period cancelled', async () => {
+    expect(
+      await run({
+        fixture: 'subscription-deleted.json',
+        owners: OWNER_A,
+        db: { 'payment_plan_subscriptions:select': ok({ ...ENDING_PLAN, periods_paid: 3 }) },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X7. the last plan period, no booking: the plan is closed, no booking write', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid-plan-period.json',
+        owners: OWNER_A,
+        planLookup: ok({ ...PLAN_ROW, periods_paid: 2, booking_id: null }),
+        db: { 'payment_transactions:insert': ok({ id: 'tx-plan-3' }) },
+        invoicePaymentIntent: 'pi_plan_3',
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X8. a plan period already recorded returns before any write', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid-plan-period.json',
+        owners: OWNER_A,
+        planLookup: ok(PLAN_ROW),
+        db: { 'payment_plan_installments:select': ok({ id: 'inst-1' }) },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X11. Connect invoice.payment_failed for an owned plan: recordFailure, no invoice lookup', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-payment-failed.json',
+        owners: OWNER_A,
+        planLookup: ok(PLAN_ROW),
+        eventPatch: {
+          data: {
+            object: {
+              parent: { type: 'subscription_details', subscription_details: { subscription: 'sub_plan_1', metadata: {} } },
+              last_finalization_error: { code: 'card_declined' },
+            },
+          },
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X50. invoice.payment_failed whose subscription names no plan: falls through to the invoice path', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-payment-failed.json',
+        owners: OWNER_A,
+        eventPatch: {
+          data: {
+            object: {
+              parent: { type: 'subscription_details', subscription_details: { subscription: 'sub_not_a_plan', metadata: {} } },
+            },
+          },
+        },
+        db: {
+          'payment_invoices:select': [ok(FAILED_INVOICE), ok({ contact_id: null, amount: 120, currency: 'USD' })],
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X51. Connect customer.subscription.deleted for a subscription that is not our plan: no write', async () => {
+    expect(await run({ fixture: 'subscription-deleted.json', owners: OWNER_A })).toMatchSnapshot();
+  });
+
+  it('X34. plan period: the booking update fails, logged, 200', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid-plan-period.json',
+        owners: OWNER_A,
+        planLookup: ok(PLAN_ROW),
+        db: { ...PLAN_PERIOD_DB, 'scheduling_bookings:update': DB_DOWN },
+        invoicePaymentIntent: 'pi_plan_1',
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X35. plan period from an account that does not own the plan: refused before the period lookup', async () => {
+    expect(
+      await run({ fixture: 'invoice-paid-plan-period.json', owners: OWNED_BY_OTHER, planLookup: ok(PLAN_ROW) })
+    ).toMatchSnapshot();
+  });
+
+  it('X36. plan invoice that collected nothing (proration credit): no period lookup, no write', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid-plan-period.json',
+        owners: OWNER_A,
+        planLookup: ok(PLAN_ROW),
+        eventPatch: { data: { object: { amount_paid: 0, total: -33333 } } },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X37. invoice.paid: the booking update fails, logged, 200', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok(PLATFORM_INVOICE), 'scheduling_bookings:update': DB_DOWN },
+        invoicePaymentIntent: 'pi_invoice_1',
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X38. checkout invoice: the booking confirm fails, logged, 200', async () => {
+    expect(
+      await run({
+        fixture: 'checkout-completed-invoice.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok(CHECKOUT_INVOICE), 'scheduling_bookings:update': DB_DOWN },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X39. checkout booking: the update fails, logged, 200', async () => {
+    expect(
+      await run({
+        fixture: 'checkout-completed-booking.json',
+        owners: OWNER_A,
+        db: { 'scheduling_bookings:update': DB_DOWN },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X40. Connect customer.subscription.deleted on a plan another business owns: refused, no write', async () => {
+    expect(
+      await run({
+        fixture: 'subscription-deleted.json',
+        owners: OWNED_BY_OTHER,
+        db: { 'payment_plan_subscriptions:select': ok(ENDING_PLAN) },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X41. Connect customer.subscription.deleted on a plan already cancelled: no write', async () => {
+    expect(
+      await run({
+        fixture: 'subscription-deleted.json',
+        owners: OWNER_A,
+        db: { 'payment_plan_subscriptions:select': ok({ ...ENDING_PLAN, status: 'cancelled' }) },
+      })
+    ).toMatchSnapshot();
+  });
+
+  // ── PR 5: agent-platform legacy tables ─────────────────────────────────────
+
+  it('X1. platform customer.subscription.deleted with a legacy user_id: cancelled, billing event', async () => {
+    expect(await run({ fixtureDir: 'platform', fixture: 'subscription-deleted-legacy.json' })).toMatchSnapshot();
+  });
+
+  it('X42. platform customer.subscription.deleted with no user_id: nothing written', async () => {
+    expect(
+      await run({ fixtureDir: 'platform', fixture: 'subscription-deleted-legacy.json', eventPatch: NO_USER_ID })
+    ).toMatchSnapshot();
+  });
+
+  it('X2. legacy dunning, unreachable through POST today (dispatch overridden): grace from the user row', async () => {
+    expect(
+      await run({
+        fixtureDir: 'platform',
+        fixture: 'invoice-payment-failed-unknown-price.json',
+        dispatch: 'not_business_os',
+        db: {
+          'user_subscriptions:select': ok({ payment_retry_count: 1, grace_period_days: 5, current_period_end: null }),
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X3. legacy dunning, unreachable through POST today (dispatch overridden): grace from system config', async () => {
+    expect(
+      await run({
+        fixtureDir: 'platform',
+        fixture: 'invoice-payment-failed-unknown-price.json',
+        dispatch: 'not_business_os',
+        db: {
+          'user_subscriptions:select': ok({ payment_retry_count: null, grace_period_days: null, current_period_end: null }),
+          'system_settings_config:select': ok({ value: '7' }),
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X43. legacy dunning, unreachable through POST today (dispatch overridden): no user_id, nothing written', async () => {
+    expect(
+      await run({
+        fixtureDir: 'platform',
+        fixture: 'invoice-payment-failed-unknown-price.json',
+        dispatch: 'not_business_os',
+        eventPatch: NO_USER_ID,
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X55. legacy dunning, unreachable through POST today (dispatch overridden): no user row, no config row', async () => {
+    expect(
+      await run({
+        fixtureDir: 'platform',
+        fixture: 'invoice-payment-failed-unknown-price.json',
+        dispatch: 'not_business_os',
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X54. boost-pack checkout on an existing balance: the credit transaction id reaches the purchase row', async () => {
+    expect(
+      await run({
+        fixtureDir: 'platform',
+        fixture: 'checkout-completed-boost-pack.json',
+        db: {
+          'user_subscriptions:select': ok({ balance: 2500, total_earned: 9000 }),
+          'credit_transactions:insert': ok({ id: 'ctx-1' }),
+        },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X44. boost-pack checkout with no user_id: nothing written', async () => {
+    expect(
+      await run({ fixtureDir: 'platform', fixture: 'checkout-completed-boost-pack.json', eventPatch: NO_USER_ID })
+    ).toMatchSnapshot();
+  });
+
+  it('X45. boost-pack checkout: the credit transaction and purchase inserts both fail, logged, not thrown', async () => {
+    expect(
+      await run({
+        fixtureDir: 'platform',
+        fixture: 'checkout-completed-boost-pack.json',
+        db: { 'credit_transactions:insert': DB_DOWN, 'boost_pack_purchases:insert': DB_DOWN },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X46. boost-pack checkout without a boost_pack_id: no purchase row', async () => {
+    expect(
+      await run({
+        fixtureDir: 'platform',
+        fixture: 'checkout-completed-boost-pack.json',
+        eventPatch: { data: { object: { metadata: { boost_pack_id: null } } } },
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X47. platform customer.subscription.updated with no user_id: nothing written', async () => {
+    expect(
+      await run({ fixtureDir: 'platform', fixture: 'subscription-updated-legacy.json', eventPatch: NO_USER_ID })
     ).toMatchSnapshot();
   });
 });

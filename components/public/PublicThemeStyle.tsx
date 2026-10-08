@@ -133,6 +133,29 @@ export function PublicThemeStyle(props: PublicThemeStyleProps) {
 
   const radius = parseFloat(borderRadius) || 8;
   const radiusUnit = borderRadius.replace(/[\d.]/g, '') || 'px';
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TEMPLATE'S RADIUS IS THE PANEL'S RADIUS, NOT HALF OF IT.
+   *
+   * `lg` used to be `radius * 2`, and `lg` is what every card, panel and tile
+   * on every public surface is drawn with. So a template declaring 26px got
+   * 52px cards, and one declaring 30px got 60px — corners so round the cards
+   * read as lozenges.
+   *
+   * That the declared value is meant to BE the panel radius is not a guess:
+   * the archetypes describe themselves that way. Stone is "24px panels with
+   * pill controls"; Lumen is "30px radii — the largest of the four, which is
+   * most of why it reads as recent". Doubling made Stone's panels 48px and
+   * Lumen's 60px, which is not what either of those sentences describes.
+   *
+   * So `lg` is now the declared radius and the scale steps DOWN from it by
+   * halves. Rounded to two decimals rather than to an integer, because the
+   * unit is whatever the theme wrote — a theme in `rem` must not have 1.5
+   * rounded to 2.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const radiusStep = (factor: number) =>
+    `${Math.round(radius * factor * 100) / 100}${radiusUnit}`;
   const step = 4 * (SPACING_SCALE[spacing] ?? 1);
 
   /*
@@ -199,9 +222,9 @@ export function PublicThemeStyle(props: PublicThemeStyleProps) {
       --ap-danger-tint: ${withAlpha(DANGER_INK[dark ? 'dark' : 'light'], 0.12)};
       --ap-danger-border: ${withAlpha(DANGER_INK[dark ? 'dark' : 'light'], 0.55)};
 
-      --ap-radius-sm: ${radius / 2}${radiusUnit};
-      --ap-radius-md: ${radius}${radiusUnit};
-      --ap-radius-lg: ${radius * 2}${radiusUnit};
+      --ap-radius-sm: ${radiusStep(0.25)};
+      --ap-radius-md: ${radiusStep(0.5)};
+      --ap-radius-lg: ${radiusStep(1)};
 
       /* Neutral, never brand-tinted: a coloured shadow reads as cheap, and on
          a dark template it disappears entirely. */

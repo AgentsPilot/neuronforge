@@ -3,6 +3,8 @@
 // Allows clients to view their booking details using a signed token
 
 import { NextRequest, NextResponse } from 'next/server';
+
+import type { PortalResponse } from '@/types/portal';
 import { createLogger } from '@/lib/logger';
 import { verifyBookingToken, generateBookingToken } from '@/lib/services/BookingEmailService';
 import { generateProposalToken } from '@/lib/business-os/proposalToken';
@@ -251,12 +253,12 @@ export async function GET(
     const [{ data: invoices }, { data: installments }] = await Promise.all([
       supabaseServer
         .from('payment_invoices')
-        .select('amount, currency, status, due_date')
+        .select('id, amount, currency, status, due_date, refunded_amount, refunded_at')
         .eq('booking_id', booking.id)
         .eq('user_id', booking.user_id),
       supabaseServer
         .from('payment_plan_installments')
-        .select('status, amount, currency, due_date, invoice_id')
+        .select('installment_number, label, status, amount, currency, due_date, invoice_id')
         .eq('booking_id', booking.id)
         .eq('user_id', booking.user_id),
     ]);
@@ -290,6 +292,36 @@ export async function GET(
     const paidTotal = settled.reduce((sum, invoice) => sum + Number(invoice.amount ?? 0), 0);
 
     /*
+     * WHAT CAME BACK, which the portal was silent about.
+     *
+     * ───────────────────────────────────────────────────────────────────────────
+     * `state` reached 'refunded' only when `booking.payment_status` did, and that
+     * takes a FULL refund. A client refunded ₪2,250 of ₪9,000 opened their portal
+     * to "₪9,000 paid · 2 of 2 payments" — the money was back in their account
+     * and the one page they can check said nothing about it.
+     *
+     * Summed from the invoices, because a job billed in stages has a refund
+     * against whichever stage was returned, and `refunded_amount` is derived by
+     * trigger from the `payment_refunds` ledger on each.
+     *
+     * The paid total stays what was paid. The client paid it; the refund is a
+     * second event and reads as one.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const refundedTotal = (invoices ?? []).reduce(
+      (sum, invoice) => sum + Number((invoice as { refunded_amount?: number }).refunded_amount ?? 0),
+      0
+    );
+
+    /* The most recent, for a job returned in more than one go. */
+    const refundedAt =
+      (invoices ?? [])
+        .map(invoice => (invoice as { refunded_at?: string | null }).refunded_at)
+        .filter((at): at is string => Boolean(at))
+        .sort()
+        .pop() ?? null;
+
+    /*
      * The soonest deadline, since that is the one that matters to the client.
      *
      * A stage with no due date is waiting on the BUSINESS — a milestone billed
@@ -304,11 +336,64 @@ export async function GET(
         .filter((value): value is string => Boolean(value))
         .sort()[0] ?? null;
 
+    /*
+     * THE PAYMENTS THEMSELVES, and what came back against each.
+     *
+     * ───────────────────────────────────────────────────────────────────────────
+     * The portal reported "2 of 2 paid" and a single total. For a job billed in
+     * stages that is a summary of something the client cannot see: which payment
+     * was which, and — once money is returned — which one it came off. A client
+     * refunded ₪2,250 could read the figure and still not know which of their two
+     * ₪4,500 payments it related to.
+     *
+     * A refund attaches to the INVOICE a period raised, so the periods are joined
+     * to the invoices already fetched above. A period never invoiced has none,
+     * which is correct: nothing was charged, so nothing came back.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const refundByInvoice = new Map<string, number>();
+
+    for (const invoice of invoices ?? []) {
+      const amount = Number((invoice as { refunded_amount?: number }).refunded_amount ?? 0);
+      const id = (invoice as { id?: string }).id;
+      if (id && amount > 0) refundByInvoice.set(id, amount);
+    }
+
     const plan =
       installments && installments.length > 0
         ? {
             paid: installments.filter(row => String(row.status) === 'paid').length,
             total: installments.length,
+            periods: [...installments]
+              /*
+                BY INSTALMENT NUMBER, which is the agreement's own order.
+                ─────────────────────────────────────────────────────────
+                This sorted by due date and renumbered, and a MILESTONE has no
+                due date — it falls due when the work is done. Null sorted as
+                the empty string, which precedes every real date, so a two-stage
+                job listed its final milestone as "1." and its deposit as "2.".
+
+                The refund then appeared against the wrong number: right data,
+                wrong row, which is worse than not showing it. The column that
+                answers "which payment is this" already exists.
+              */
+              .sort(
+                (a, b) => Number(a.installment_number ?? 0) - Number(b.installment_number ?? 0)
+              )
+              .map(row => ({
+                number: Number(row.installment_number ?? 0),
+                /* The milestone's NAME. "1." and "2." cannot tell a client which
+                   payment a refund came off; "עם סיום העבודה" can. Null on a
+                   uniform instalment plan, where the number is the whole name. */
+                label: (row.label as string | null) ?? null,
+                amount: Number(row.amount ?? 0),
+                status: String(row.status),
+                dueDate: (row.due_date as string | null) ?? null,
+                refunded:
+                  typeof row.invoice_id === 'string'
+                    ? refundByInvoice.get(row.invoice_id) ?? null
+                    : null,
+              })),
           }
         : null;
 
@@ -384,6 +469,10 @@ export async function GET(
       currency: moneyCurrency,
       dueDate,
       overdue: owing.some(invoice => String(invoice.status) === 'overdue'),
+      /* Reported whatever the state says: a PARTIAL refund leaves the booking
+         'paid', which is true and silent about the part that came back. */
+      refunded: refundedTotal > 0 ? refundedTotal : null,
+      refundedAt,
       plan,
       /*
        * Only where money is genuinely outstanding. An unbilled quote stage —
@@ -405,6 +494,15 @@ export async function GET(
             service: service as { sale_mode?: string | null; is_scheduled?: boolean | null } | null,
           });
 
+    /*
+     * Whether a quote is EXPECTED on this booking — which is a different
+     * question from whether one exists.
+     *
+     * It gates the "a quote is coming" placeholder, and only that. A service
+     * sold on request promises the client a price; an ordinary booking does
+     * not, and telling its client to sit tight for a quote nobody is writing
+     * would be an invention.
+     */
     const quotesExpected =
       (service as { sale_mode?: string | null } | null)?.sale_mode === 'proposal';
 
@@ -415,7 +513,23 @@ export async function GET(
       token: string | null;
     } | null = null;
 
-    if (quotesExpected) {
+    /*
+     * ALWAYS LOOKED FOR, whatever the service says.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This ran only when `sale_mode === 'proposal'`, and the quote builder has
+     * no such restriction: it takes any booking, and a `serviceId` that may be
+     * null. So an owner could raise and send a quote against an ordinary
+     * booking, the client would open their portal, and there was nothing there
+     * — no quote, no price, and no way to accept or decline it. The one screen
+     * the client was sent to could not show the thing they were sent it for.
+     *
+     * Existence is the honest test. If a proposal was written against this
+     * booking and sent, the client it was addressed to may see it and answer
+     * it, regardless of how the service behind it happens to be configured.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    {
       const { data: proposal } = await supabaseServer
         .from('proposals')
         .select('id, status, total, currency')
@@ -447,7 +561,13 @@ export async function GET(
       }
     }
 
-    return NextResponse.json({
+    /*
+      ANNOTATED, so the page's type cannot drift from what is actually sent.
+      `business` is deliberately outside the annotation: the pages read the
+      brand from `PublicBrandProvider`, not from this payload, and modelling
+      the whole `PublicBrand` here would tie the wire format to a server type.
+    */
+    const payload: PortalResponse & { business: unknown } = {
       success: true,
       booking: {
         id: booking.id,
@@ -459,7 +579,23 @@ export async function GET(
         status: booking.status,
         paymentStatus: booking.payment_status,
         notes: booking.notes,
-        service: booking.service,
+        /*
+          The NORMALISED service, not `booking.service`.
+
+          PostgREST returns an embedded relation as an object for a
+          many-to-one join and as an array otherwise, and the generated types
+          widen it to an array — which is why line ~205 above already does
+          `Array.isArray(booking.service) ? booking.service[0] : booking.service`
+          before this route uses it for anything itself.
+
+          That normalisation was not applied to the value actually SENT. The
+          client reads `booking.service?.service_name`, so on any response
+          where the relation came back as an array the service name, duration
+          and price would all be silently undefined — the appointment card with
+          no service on it. Sending the same value this route trusts closes
+          that, and is what the response type now asserts.
+        */
+        service,
         canReschedule: canModify,
         canCancel: canModify,
         /*
@@ -471,8 +607,8 @@ export async function GET(
         /** False for a product purchase: nothing about it is scheduled. */
         isScheduled: Boolean(booking.start_time)
       },
-      /** Null unless this booking is one that produces a quote. */
-      quote: quotesExpected ? quote : undefined,
+      /** The quote raised against this booking, if any was. */
+      quote: quote ?? undefined,
       /** True when a quote is expected and none has been raised yet. */
       awaitingQuote: quotesExpected && !quote,
       /** What is owed or has been paid, however this booking was sold. */
@@ -535,7 +671,9 @@ export async function GET(
         userCode: brand.userCode,
         info: brand.info
       } : null
-    });
+    };
+
+    return NextResponse.json(payload);
 
   } catch (error) {
     requestLogger.error({ err: error }, 'Error fetching booking');

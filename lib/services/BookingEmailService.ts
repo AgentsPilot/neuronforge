@@ -156,7 +156,7 @@ function manageUrlFor(
   if (!appUrl()) return null;
 
   try {
-    return `${appUrl()}/book/manage/${generateBookingToken(bookingId, clientEmail)}/reschedule`;
+    return `${appUrl()}/reschedule/${generateBookingToken(bookingId, clientEmail)}`;
   } catch (err) {
     log.warn({ err, bookingId }, 'Could not sign a manage link; sending the reminder without one');
     return null;
@@ -882,7 +882,7 @@ export class BookingEmailService {
 
     const { data, error } = await supabaseServer
       .from('payment_plan_installments')
-      .select('installment_number, amount, due_date, status, paid_at')
+      .select('installment_number, label, amount, due_date, status, paid_at, invoice_id')
       .eq('booking_id', bookingId)
       .eq('user_id', userId)
       .order('installment_number');
@@ -897,14 +897,59 @@ export class BookingEmailService {
       .filter(row => row.status === 'paid' && row.paid_at)
       .sort((a, b) => String(b.paid_at).localeCompare(String(a.paid_at)))[0]?.installment_number;
 
+    /*
+     * WHAT CAME BACK, period by period.
+     *
+     * ───────────────────────────────────────────────────────────────────────────
+     * The schedule listed "2. paid ₪4,500" after ₪2,250 had been returned against
+     * that very period — telling the client, in their own receipt, that money
+     * they already had back was still with the business.
+     *
+     * The installments do not carry it: `refunded_amount` is derived by trigger
+     * onto the INVOICE each period raised, so the periods are joined to their
+     * invoices here. A period billed but never invoiced simply has none.
+     *
+     * Non-fatal. A schedule without its refunds is worse than one with them and
+     * far better than no receipt at all.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const invoiceIds = data
+      .map(row => row.invoice_id)
+      .filter((id): id is string => typeof id === 'string' && Boolean(id));
+
+    const refundByInvoice = new Map<string, number>();
+
+    if (invoiceIds.length) {
+      const { data: invoices, error: refundError } = await supabaseServer
+        .from('payment_invoices')
+        .select('id, refunded_amount')
+        .eq('user_id', userId)
+        .in('id', invoiceIds);
+
+      if (refundError) {
+        log.warn({ err: refundError, bookingId }, 'Receipt schedule sent without its refunds');
+      }
+
+      for (const invoice of invoices ?? []) {
+        const amount = Number((invoice as { refunded_amount?: number }).refunded_amount ?? 0);
+        if (amount > 0) refundByInvoice.set(invoice.id as string, amount);
+      }
+    }
+
     return {
       totalAmount: data.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
       paidPeriodNumber: paidPeriodNumber ? Number(paidPeriodNumber) : undefined,
       periods: data.map(row => ({
         number: Number(row.installment_number),
+        /* So a refunded row says which milestone it came off. */
+        label: (row.label as string | null) ?? null,
         amount: Number(row.amount),
         dueDate: (row.due_date as string | null) ?? null,
         status: String(row.status),
+        refunded:
+          typeof row.invoice_id === 'string'
+            ? refundByInvoice.get(row.invoice_id) ?? null
+            : null,
       })),
     };
   }
@@ -919,6 +964,21 @@ export class BookingEmailService {
       receiptNumber?: string;
       paymentMethod?: string;
       bookingId?: string;
+      /**
+       * The invoice this receipt is for, so a refund against it can be read.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * Resolved HERE rather than passed by each caller. There are four — the
+       * manual send, settlement, the Stripe webhook and the booking finalise —
+       * and a refund is a fact about the invoice, not about which path happened
+       * to send the receipt. Asking each to look it up would mean four lookups
+       * that can disagree, and the owner pressing "send receipt" after a refund
+       * is exactly the path that must not be the one that forgot.
+       *
+       * Optional: a caller with no invoice sends the receipt it always sent.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      invoiceId?: string;
     }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ userId, bookingId: paymentData.bookingId, action: 'sendPaymentReceipt' });
@@ -973,7 +1033,39 @@ export class BookingEmailService {
       const receiptNumber = paymentData.receiptNumber || `RCP-${Date.now().toString(36).toUpperCase()}`;
 
       // Generate email
+      /*
+       * `refunded_amount` and `refunded_at` are derived by trigger from the
+       * `payment_refunds` ledger, so they are the record of money that went
+       * back. Read non-fatally: a receipt that cannot check is still a correct
+       * receipt for the payment, and refusing to send one over a failed lookup
+       * would be the worse outcome.
+       */
+      let refund: { amount: number; at?: Date | null } | undefined;
+
+      if (paymentData.invoiceId) {
+        const { data: row, error: refundError } = await supabaseServer
+          .from('payment_invoices')
+          .select('refunded_amount, refunded_at')
+          .eq('id', paymentData.invoiceId)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (refundError) {
+          requestLogger.error(
+            { err: refundError, invoiceId: paymentData.invoiceId },
+            'Could not read the refund for this receipt; sending it without one'
+          );
+        }
+
+        const amount = Number(row?.refunded_amount || 0);
+
+        if (amount > 0) {
+          refund = { amount, at: row?.refunded_at ? new Date(row.refunded_at as string) : null };
+        }
+      }
+
       const { subject, html } = generatePaymentReceiptEmail({
+        refund,
         clientName: paymentData.customerName,
         amount: paymentData.amount,
         currency: paymentData.currency,

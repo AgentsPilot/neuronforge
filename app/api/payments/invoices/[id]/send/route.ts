@@ -78,6 +78,10 @@ export async function POST(
         }
 
         const receipt = await BookingEmailService.sendPaymentReceipt(user.id, {
+          /* The owner pressing "send receipt" after a refund is the path this
+             most matters on: without it the client is handed a document saying
+             the full amount is still paid. */
+          invoiceId,
           customerEmail: invoice.client_email,
           customerName: invoice.client_name || '',
           amount: Number(invoice.amount),

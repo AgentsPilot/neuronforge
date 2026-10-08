@@ -10,7 +10,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
-import { COMMON_GUARDRAILS } from '../types';
 
 export class PricingIntroOfferStuckDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -20,7 +19,7 @@ export class PricingIntroOfferStuckDetector extends BaseDetector {
     description: 'Detects low conversion from intro offers to full price',
 
     watchedMetrics: ['pricing.intro_conversion'],
-    eventTypes: ['intro_offer.used', 'intro_offer.converted'],
+    documentsEventTypes: ['intro_offer.used', 'intro_offer.converted'],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -40,36 +39,14 @@ export class PricingIntroOfferStuckDetector extends BaseDetector {
      * Runs even while this category's vector is dark, because someone on an intro offer who has not moved to full price is a countable
      * person, while `price` gates on 42 days of bookings.
      */
-    ignoresVectorMaturity: true,
+    /*
+     * `pricing.intro_conversion` is a conversion rate. This is the detector
+     * behind the day-52 complaint: the timeline drew the pricing node locked
+     * and this ran anyway, 17 days early, because of the flag below.
+     */
+    claimType: 'rate',
 
-    consentTier: 'automate',
     eligibleForAutomation: true,
-    ownerParameters: [
-      {
-        id: 'days_after_intro',
-        label: 'Days After Intro to Follow Up',
-        type: 'number',
-        default: 7,
-        min: 3,
-        max: 14,
-      },
-      {
-        id: 'offer_incentive',
-        label: 'Follow-up Incentive',
-        type: 'select',
-        default: 'none',
-        options: [
-          { value: 'none', label: 'No Incentive' },
-          { value: 'discount_10', label: '10% Discount' },
-          { value: 'discount_15', label: '15% Discount' },
-          { value: 'bonus_session', label: 'Bonus Session' },
-        ],
-      },
-    ],
-    guardrails: [
-      COMMON_GUARDRAILS.max_1_per_contact_per_7d,
-      COMMON_GUARDRAILS.max_20_per_run,
-    ],
     cooldownHours: 168, // 1 week
   };
 

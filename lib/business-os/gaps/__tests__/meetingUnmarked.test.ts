@@ -99,10 +99,59 @@ describe('meeting_unmarked', () => {
     });
   });
 
-  it('waits twelve hours, so nobody is nagged about a session they just left', async () => {
-    tables.scheduling_bookings = [booking({ start_time: JUST_NOW })];
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE WAIT RUNS FROM THE END OF THE MEETING, NOT ITS START.
+   *
+   * It used to be twelve hours from the start, which charged the delay to the
+   * wrong moment twice: a long session was asked about while it was still
+   * running, and a 15:30 appointment did not become a row until 03:30 the next
+   * morning — so the evening glance at the card, which is when an owner closes
+   * off the day, showed nothing about the day they had just worked.
+   *
+   * `since` is still the START, because that is what the row says and what the
+   * owner recognises. `staleFrom` is what the window measures.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('says nothing about a meeting that is still running', async () => {
+    // Started an hour ago, ends an hour from now.
+    tables.scheduling_bookings = [
+      booking({ start_time: '2026-10-02T11:00:00.000Z', end_time: '2026-10-02T13:00:00.000Z' }),
+    ];
 
     expect((await run())?.count ?? 0).toBe(0);
+  });
+
+  it('waits a short grace after it ends, so nobody is nagged on the way out', async () => {
+    // Ended half an hour ago: past, but the owner may still be walking out.
+    tables.scheduling_bookings = [
+      booking({ start_time: JUST_NOW, end_time: '2026-10-02T11:30:00.000Z' }),
+    ];
+
+    expect((await run())?.count ?? 0).toBe(0);
+  });
+
+  /*
+   * The case the change exists for. Under the old rule this meeting became a
+   * row at 03:30 the following morning; it is now there for the evening.
+   */
+  it('asks about an afternoon meeting the same evening', async () => {
+    tables.scheduling_bookings = [
+      booking({ start_time: '2026-10-02T08:00:00.000Z', end_time: '2026-10-02T09:00:00.000Z' }),
+    ];
+
+    const gap = await run();
+    expect(gap.count).toBe(1);
+    // Still named by when it STARTED, which is how the owner refers to it.
+    expect(gap.items[0]).toMatchObject({ since: '2026-10-02T08:00:00.000Z' });
+  });
+
+  /* A booking with no end recorded keeps the old basis rather than never
+     becoming stale at all. */
+  it('falls back to the start when no end was recorded', async () => {
+    tables.scheduling_bookings = [booking({ start_time: YESTERDAY })];
+
+    expect((await run()).count).toBe(1);
   });
 
   it('asks about a pending booking too — it can still be marked', async () => {

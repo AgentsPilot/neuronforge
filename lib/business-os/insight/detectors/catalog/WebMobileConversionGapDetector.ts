@@ -67,7 +67,7 @@ export class WebMobileConversionGapDetector extends BaseDetector {
     description: 'Finds mobile visitors getting in touch at a much lower rate than desktop visitors',
 
     watchedMetrics: ['acquisition.mobile_conversion_gap'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -86,10 +86,7 @@ export class WebMobileConversionGapDetector extends BaseDetector {
     pairedProcessId: undefined,
     ignoresVectorMaturity: false,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 336,
   };
 

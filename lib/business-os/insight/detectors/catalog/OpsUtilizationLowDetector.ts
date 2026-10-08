@@ -116,7 +116,7 @@ export class OpsUtilizationLowDetector extends BaseDetector {
     description: 'Detects when calendar utilization is below 50%',
 
     watchedMetrics: ['operations.calendar_utilization'],
-    eventTypes: ['calendar.utilization_low'],
+    documentsEventTypes: ['calendar.utilization_low'],
 
     baselineWindow: 'month',
     thresholdType: 'absolute',
@@ -133,10 +133,7 @@ export class OpsUtilizationLowDetector extends BaseDetector {
 
     // No paired process - this is advisory only
     pairedProcessId: undefined,
-    consentTier: 'observe',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 

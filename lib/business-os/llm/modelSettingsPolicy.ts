@@ -205,6 +205,26 @@ export const BOS_LLM_CALL_POLICY: BosLlmCallPolicyMap = {
     insight_content: tokenCall('gpt-4o-mini', 0.3, { switchable: true }),
     correlated_insight: tokenCall('gpt-4o-mini', 0.4, { switchable: true }),
     health_summary: tokenCall('gpt-4o-mini', 0.5, { switchable: true }),
+    /*
+     * The weekly hypothesis generator.
+     *
+     * Ships at the area default of 0.3 and will probably want to be HIGHER.
+     * The other three calls here narrate a finding code already made, where
+     * variation is only a way to be wrong; this one has to propose something no
+     * detector was written to look for, and a low temperature returns the same
+     * obvious groupings every week.
+     *
+     * Left at the default anyway, on purpose. Layer 2 exists so an operator can
+     * raise a temperature from the settings screen without a deploy, and the
+     * right number is a thing to learn from the reject pile rather than guess
+     * here -- raising it would mean a migration shipping a number nobody has
+     * evidence for. The seeded per-call overrides (`correlated_insight` 0.4,
+     * `health_summary` 0.5) are what this would join once there is a reason.
+     *
+     * `switchable: true` with a real off path: disabled, the weekly cron makes
+     * no call, writes nothing, and the 44 detectors carry on as before.
+     */
+    hypothesis: tokenCall('gpt-4o-mini', 0.3, { switchable: true }),
   },
   briefing: {
     daily_narration: tokenCall('gpt-4o-mini', 0.3, { switchable: true }),

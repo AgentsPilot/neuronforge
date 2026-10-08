@@ -1423,7 +1423,66 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     paymentIntentId,
   });
 
-  const { error: txError } = await supabaseAdmin
+  /*
+    ───────────────────────────────────────────────────────────────────────────
+    THE OTHER HANDLER MAY HAVE GOT HERE FIRST.
+
+    The guard above dedupes on `invoice_id`; `payment_intent.succeeded` dedupes
+    on `stripe_payment_intent_id` and writes NO `invoice_id`, because it does
+    not know which invoice a standalone charge belongs to. So a row written by
+    that handler is invisible to this one, and the insert below — carrying the
+    same payment intent — then violates the unique constraint and throws. The
+    invoice is marked paid only AFTER the insert, deliberately, so the throw
+    leaves money taken and the bill still outstanding, and every Stripe retry
+    hits the same wall.
+
+    Unreachable today: Stripe creates an invoice's PaymentIntent itself, with
+    no metadata of ours, so the other handler drops it on the `owner_id` check
+    and never writes the row. That is the whole reason embedding invoice
+    payment must not stamp `owner_id` onto such an intent, which
+    `invoiceIntentsStayUnowned.guard.test.ts` now asserts.
+
+    Belt as well as braces: if the row is there, ATTACH the invoice to it
+    rather than insert a second one, and carry on to mark the invoice paid.
+    ───────────────────────────────────────────────────────────────────────────
+  */
+  let alreadyRecorded = false;
+
+  if (paymentIntentId) {
+    const { data: byIntent } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id, invoice_id')
+      .eq('stripe_payment_intent_id', paymentIntentId)
+      .limit(1)
+      .maybeSingle();
+
+    if (byIntent) {
+      alreadyRecorded = true;
+
+      if (!byIntent.invoice_id) {
+        const { error: attachError } = await supabaseAdmin
+          .from('payment_transactions')
+          .update({ invoice_id: platformInvoice.id })
+          .eq('id', byIntent.id);
+
+        if (attachError) {
+          log.error(
+            { err: attachError, invoiceId: platformInvoice.id, paymentIntentId },
+            'Could not attach an existing payment row to its invoice'
+          );
+        }
+      }
+
+      log.info(
+        { invoiceId: platformInvoice.id, paymentIntentId, transactionId: byIntent.id },
+        'Payment already recorded under this intent; attached rather than inserted'
+      );
+    }
+  }
+
+  const { error: txError } = alreadyRecorded
+    ? { error: null }
+    : await supabaseAdmin
     .from('payment_transactions')
     .insert({
       user_id: platformInvoice.user_id,
@@ -1597,7 +1656,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     try {
       const { data: receiptInvoice } = await supabaseAdmin
         .from('payment_invoices')
-        .select('user_id, client_email, client_name, invoice_number, currency, booking_id')
+        .select('id, user_id, client_email, client_name, invoice_number, currency, booking_id')
         .eq('id', platformInvoice.id)
         .maybeSingle();
 
@@ -1609,6 +1668,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
 
       const receipt = await BookingEmailService.sendPaymentReceipt(receiptInvoice.user_id, {
+        invoiceId: receiptInvoice.id,
         customerEmail: receiptInvoice.client_email,
         customerName: receiptInvoice.client_name || '',
         // What the client was charged, in the currency they were charged it —

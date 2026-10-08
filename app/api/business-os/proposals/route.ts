@@ -128,26 +128,6 @@ export async function GET(request: NextRequest) {
      * endpoint is the drawer's only source of quotes.
      */
     const proposals = result.data ?? [];
-    const invoiceIds = proposals
-      .map(p => p.created_invoice_id)
-      .filter((id): id is string => Boolean(id));
-
-    let invoicesById: Record<string, { status: string; amount: number; currency: string; due_date: string | null }> = {};
-
-    if (invoiceIds.length > 0) {
-      const { data: invoices } = await supabaseServer
-        .from('payment_invoices')
-        .select('id, status, amount, currency, due_date')
-        .eq('user_id', user.id)
-        .in('id', invoiceIds);
-
-      invoicesById = Object.fromEntries(
-        (invoices ?? []).map(i => [
-          i.id,
-          { status: i.status, amount: i.amount, currency: i.currency, due_date: i.due_date },
-        ])
-      );
-    }
 
     /*
      * The plan's stages, so the drawer can tell half-paid from finished.
@@ -182,6 +162,72 @@ export async function GET(request: NextRequest) {
     }
 
     /*
+     * ONE invoice fetch, covering the proposal's AND every stage's.
+     *
+     * It read `created_invoice_id` alone, which is the deposit's invoice. Each
+     * milestone raises its OWN invoice when it is billed, and a refund attaches
+     * to whichever one was paid — so a refund taken against the second stage was
+     * not in this payload under any column, and the drawer could not have shown
+     * it however hard it looked.
+     *
+     * Moved below the stages for that reason: their invoice ids are not known
+     * until they are read.
+     */
+    const stageInvoiceIds = Object.values(stagesByPlan)
+      .flat()
+      .map(stage => stage.invoice_id)
+      .filter((id): id is string => typeof id === 'string' && Boolean(id));
+
+    const invoiceIds = Array.from(
+      new Set([
+        ...proposals.map(p => p.created_invoice_id).filter((id): id is string => Boolean(id)),
+        ...stageInvoiceIds,
+      ])
+    );
+
+    /*
+     * `refunded_amount` and `refund_status` are DERIVED by trigger from the
+     * `payment_refunds` ledger — see `20260828d_invoice_refund_state.sql`. They
+     * are the only record of money that came back, and selecting neither is why
+     * a refunded quote looked untouched on the booking card while the payments
+     * list showed it correctly.
+     */
+    type InvoiceSummary = {
+      status: string;
+      amount: number;
+      currency: string;
+      due_date: string | null;
+      refunded_amount: number | null;
+      refund_status: string | null;
+      refunded_at: string | null;
+    };
+
+    let invoicesById: Record<string, InvoiceSummary> = {};
+
+    if (invoiceIds.length > 0) {
+      const { data: invoices } = await supabaseServer
+        .from('payment_invoices')
+        .select('id, status, amount, currency, due_date, refunded_amount, refund_status, refunded_at')
+        .eq('user_id', user.id)
+        .in('id', invoiceIds);
+
+      invoicesById = Object.fromEntries(
+        (invoices ?? []).map(i => [
+          i.id,
+          {
+            status: i.status,
+            amount: i.amount,
+            currency: i.currency,
+            due_date: i.due_date,
+            refunded_amount: i.refunded_amount ?? null,
+            refund_status: i.refund_status ?? null,
+            refunded_at: i.refunded_at ?? null,
+          },
+        ])
+      );
+    }
+
+    /*
      * Each version's document, so the drawer can show what was actually sent
      * with it. A revision that changed the scope carries a different file, and
      * the history is only honest if it says which.
@@ -209,7 +255,22 @@ export async function GET(request: NextRequest) {
       proposals: proposals.map(p => ({
         ...p,
         invoice: p.created_invoice_id ? (invoicesById[p.created_invoice_id] ?? null) : null,
-        stages: p.created_plan_id ? (stagesByPlan[p.created_plan_id] ?? []) : [],
+        stages: p.created_plan_id
+          ? (stagesByPlan[p.created_plan_id] ?? []).map(stage => {
+              const stageInvoice =
+                typeof stage.invoice_id === 'string' ? invoicesById[stage.invoice_id] : undefined;
+
+              return {
+                ...stage,
+                /* Flattened onto the stage because that is where the drawer
+                   reads it: a refund belongs to the milestone whose money came
+                   back, not to the job as a whole. */
+                refunded_amount: stageInvoice?.refunded_amount ?? null,
+                refund_status: stageInvoice?.refund_status ?? null,
+                refunded_at: stageInvoice?.refunded_at ?? null,
+              };
+            })
+          : [],
         document: p.document_id ? (documentsById[p.document_id] ?? null) : null,
       })),
     });

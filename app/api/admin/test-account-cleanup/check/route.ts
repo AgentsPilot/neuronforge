@@ -110,6 +110,7 @@ export async function POST(request: NextRequest) {
         storageObjects: check.storageObjects.length,
         rows: check.rows.length,
         functionUpToDate,
+        serverMs: check.serverMs,
         elapsedMs: Date.now() - started,
       },
       'Test-account cleanup check ran'

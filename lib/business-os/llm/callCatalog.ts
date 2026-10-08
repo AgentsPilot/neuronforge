@@ -56,7 +56,7 @@ export const BOS_LLM_CALLS = {
     'verified_question_embedding', // VerifiedQuestions.similar(): match (lookup)
     'verified_question_store_embedding', // VerifiedQuestions.remember(): store
   ],
-  insights: ['insight_content', 'correlated_insight', 'health_summary'],
+  insights: ['insight_content', 'correlated_insight', 'health_summary', 'hypothesis'],
   briefing: ['daily_narration'],
   website: [
     'full_site',

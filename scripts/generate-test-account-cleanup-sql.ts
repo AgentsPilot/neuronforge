@@ -105,10 +105,13 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * once it is applied, and regenerates.
  *
  * 20261042: the plan gained business_os_billing_events (plan payments P-3b.1).
+ * 20261043: insight_hypotheses and insight_measurements classified, their links
+ * reviewed (G-18), cheaper G-18 and survivor scans, trigger events shown, and
+ * the database time returned as server_ms (test-account cleanup first live run).
  */
-export const FUNCTION_MIGRATION = '20261042_operator_test_account_cleanup_billing_events';
+export const FUNCTION_MIGRATION = '20261043_operator_test_account_cleanup_insight_links';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = INITIAL_FUNCTION_MIGRATION;
+export const PREVIOUS_FUNCTION_MIGRATION = '20261042_operator_test_account_cleanup_billing_events';
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
 export const PREVIOUS_MIGRATION_FILE = `supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql`;
@@ -428,6 +431,10 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['insight_automations', 'insight_automations_business_fk', 'user_id'],
   ['insight_automations', 'insight_automations_created_from_insight_id_fkey', 'user_id'],
   ['insight_automations', 'insight_automations_last_run_execution_id_fkey', 'user_id'],
+  // Live-only tables (no CREATE TABLE in the repo), measured 2026-10-07 on the first live run.
+  ['insight_hypotheses', 'insight_hypotheses_business_fk', 'user_id'],
+  ['insight_measurements', 'insight_measurements_business_fk', 'user_id'],
+  ['insight_measurements', 'insight_measurements_insight_id_fkey', 'user_id'],
   ['insights', 'insights_business_fk', 'user_id'],
   ['insights', 'insights_correlation_parent_id_fkey', 'user_id'],
   ['kernel_action_log', 'kernel_action_log_execution_id_fkey', 'user_id'],
@@ -718,11 +725,25 @@ inbound_joined AS (
       THEN format('%I = %L', plan.key_column, target.user_id)
       ELSE format('%I IN (SELECT id FROM public.%I WHERE user_id = %L)', plan.key_column, plan.parent_table, target.user_id)
     END AS parent_predicate,
+    plan.ord AS parent_ord,
+    plan.parent_table IS NULL AND inbound_catalog.parent_column = plan.key_column
+      AND inbound_catalog.child_column = inbound_review.owner_column AS owner_is_target,
     target.user_id
   FROM inbound_catalog
   JOIN plan ON plan.table_name = inbound_catalog.parent_table
   CROSS JOIN target
   LEFT JOIN inbound_review USING (child_table, fk_name)
+),
+inbound_parents AS (
+  SELECT
+    needed.parent_ord,
+    ${countOf(`format('SELECT count(*) AS row_count FROM (SELECT 1 FROM public.%I WHERE %s LIMIT 1) AS one_row', needed.parent_table, needed.parent_predicate)`)} AS found
+  FROM (
+    SELECT DISTINCT inbound_joined.parent_ord, inbound_joined.parent_table, inbound_joined.parent_predicate
+    FROM inbound_joined
+    WHERE inbound_joined.user_id IS NOT NULL AND inbound_joined.reviewed AND inbound_joined.owner_column IS NOT NULL
+      AND inbound_joined.owner_ok AND inbound_joined.key_width = 1 AND NOT inbound_joined.owner_is_target
+  ) AS needed
 ),
 inbound_rows AS (
   SELECT
@@ -730,9 +751,11 @@ inbound_rows AS (
     CASE
       WHEN inbound_joined.user_id IS NULL OR NOT inbound_joined.reviewed OR inbound_joined.owner_column IS NULL
         OR NOT inbound_joined.owner_ok OR inbound_joined.key_width <> 1 THEN 0
+      WHEN inbound_joined.owner_is_target OR inbound_parents.found = 0 THEN 0
       ELSE ${countOf(`format('SELECT count(*) AS row_count FROM %I.%I AS child_rows WHERE child_rows.%I IN (SELECT %I FROM public.%I WHERE %s) AND child_rows.%I IS DISTINCT FROM %L', inbound_joined.child_schema, inbound_joined.child_table, inbound_joined.child_column, inbound_joined.parent_column, inbound_joined.parent_table, inbound_joined.parent_predicate, inbound_joined.owner_column, inbound_joined.user_id)`)}
     END AS found
   FROM inbound_joined
+  LEFT JOIN inbound_parents USING (parent_ord)
 )`;
 }
 
@@ -968,7 +991,10 @@ report AS (
   CROSS JOIN target
   WHERE objects.bucket_id IN (${buckets}) AND starts_with(objects.name, target.user_id::text || '/')
   UNION ALL
-  SELECT 4, 'trigger', 0, 'info', 'auth.users.' || trg.tgname, NULL, 'Fires when the login is deleted.'
+  SELECT 4, 'trigger', 0, 'info', 'auth.users.' || trg.tgname, NULL,
+    CASE WHEN (trg.tgtype::integer & 8) <> 0 THEN 'Fires when the login is deleted. Events: ' ELSE 'Does not fire on this delete. Events: ' END
+      || concat_ws(' OR ', CASE WHEN (trg.tgtype::integer & 4) <> 0 THEN 'INSERT' END, CASE WHEN (trg.tgtype::integer & 8) <> 0 THEN 'DELETE' END,
+        CASE WHEN (trg.tgtype::integer & 16) <> 0 THEN 'UPDATE' END, CASE WHEN (trg.tgtype::integer & 32) <> 0 THEN 'TRUNCATE' END) || '.'
   FROM pg_catalog.pg_trigger AS trg
   WHERE trg.tgrelid = 'auth.users'::regclass AND NOT trg.tgisinternal
   UNION ALL
@@ -1067,16 +1093,21 @@ ${planValues('      ')}
   END IF;
 
   v_survivors := (
+    WITH plan_keys AS (
+      SELECT plan_values.table_name, plan_values.key_column
+      FROM (VALUES
+${planValues('        ')}
+      ) AS plan_values(ord, step, table_name, key_column, parent_table)
+      WHERE plan_values.parent_table IS NULL
+    )
     SELECT string_agg(left_over.item || ' ' || left_over.found, ', ' ORDER BY left_over.item)
     FROM (
       SELECT 'auth.users'::text AS item, (SELECT count(*) FROM auth.users AS users WHERE users.id = v_user_id)::bigint AS found
       UNION ALL
-      SELECT plan_values.table_name,
-        ${countOf(`format('SELECT count(*) AS row_count FROM public.%I WHERE %I = %L', plan_values.table_name, plan_values.key_column, v_user_id)`)}
-      FROM (VALUES
-${planValues('        ')}
-      ) AS plan_values(ord, step, table_name, key_column, parent_table)
-      WHERE plan_values.parent_table IS NULL AND to_regclass(format('public.%I', plan_values.table_name)) IS NOT NULL
+      SELECT plan_keys.table_name,
+        ${countOf(`format('SELECT count(*) AS row_count FROM public.%I WHERE %I = %L', plan_keys.table_name, plan_keys.key_column, v_user_id)`)}
+      FROM plan_keys
+      WHERE to_regclass(format('public.%I', plan_keys.table_name)) IS NOT NULL
       UNION ALL
       SELECT nsp.nspname || '.' || rel.relname || '.' || att.attname,
         ${countOf(`format('SELECT count(*) AS row_count FROM %I.%I WHERE %I = %L', nsp.nspname, rel.relname, att.attname, v_user_id)`)}
@@ -1085,6 +1116,7 @@ ${planValues('        ')}
       JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
       JOIN pg_catalog.pg_attribute AS att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
       WHERE con.contype = 'f' AND con.confrelid = 'auth.users'::regclass AND nsp.nspname <> 'auth'
+        AND NOT (nsp.nspname = 'public' AND (rel.relname::text, att.attname::text) IN (SELECT plan_keys.table_name, plan_keys.key_column FROM plan_keys))
     ) AS left_over
     WHERE left_over.found > 0
   );
@@ -1215,7 +1247,8 @@ ${buildDeleteReportJson()}
     );
   END IF;
 
-  RETURN pg_catalog.jsonb_build_object('version', ${lit(version)}, 'mode', p_mode, 'rows', coalesce(v_result, '[]'::jsonb));
+  RETURN pg_catalog.jsonb_build_object('version', ${lit(version)}, 'mode', p_mode, 'rows', coalesce(v_result, '[]'::jsonb),
+    'server_ms', (pg_catalog.date_part('epoch', pg_catalog.clock_timestamp() - pg_catalog.statement_timestamp()) * 1000)::bigint);
 END
 $operator_cleanup$`;
 }

@@ -46,6 +46,34 @@ const GenerateContentSchema = z.object({
 });
 
 /**
+ * The language the business has actually chosen, as this generator names them.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The page was written in whatever language the SERVICE TEXT happened to be in,
+ * and that is not the same question. A business working in Hebrew names a
+ * service "Couple training" or "Gym Public Training Course" — both real rows on
+ * the reporting account — and `detectLanguage` reads Latin characters and
+ * answers English. Their clients then get an English landing page from a Hebrew
+ * business, and the only way to fix it is to rename the service.
+ *
+ * The configured language is a fact; the script of a service name is a hint.
+ * The fact wins, and detection stays as the fallback for an account that has
+ * never been asked.
+ *
+ * Null for anything unrecognised, so the caller can fall through rather than
+ * being handed a wrong confident answer.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function configuredLanguage(locale: string | null | undefined): 'hebrew' | 'english' | 'spanish' | null {
+  switch ((locale || '').trim().toLowerCase().slice(0, 2)) {
+    case 'he': return 'hebrew';
+    case 'es': return 'spanish';
+    case 'en': return 'english';
+    default: return null;
+  }
+}
+
+/**
  * Detect the primary language of the text
  */
 function detectLanguage(text: string): 'hebrew' | 'english' | 'spanish' | 'other' {
@@ -81,23 +109,74 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const validated = GenerateContentSchema.parse(body);
 
-    // Get business profile for additional context
-    const { data: profile } = await supabaseServer
-      .from('business_profiles')
-      .select('company_name, vertical, sub_vertical, target_audience, unique_value_proposition')
-      .eq('user_id', user.id)
-      .single();
+    // Get business profile for additional context, and the preference rows that
+    // say which language this business works in.
+    const [{ data: profile }, { data: preferences }] = await Promise.all([
+      supabaseServer
+        .from('business_profiles')
+        .select('company_name, vertical, sub_vertical, target_audience, unique_value_proposition, language')
+        .eq('user_id', user.id)
+        .single(),
+      supabaseServer
+        .from('user_preferences')
+        .select('preferred_language')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+    ]);
 
-    // Detect language from service description or name
-    const contentLanguage = detectLanguage(validated.serviceDescription || validated.serviceName);
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE LANGUAGE THE BUSINESS WORKS IN, NOT THE ONE ITS SERVICE NAME IS IN.
+     *
+     * This was `detectLanguage(description || name)` alone, which answers a
+     * different question. The reporting account has services called "Couple
+     * training" and "Gym Public Training Course" beside Hebrew ones — so a
+     * Hebrew business generating a page for one of those got an English page
+     * for its Hebrew clients, and the only lever was to rename the service.
+     *
+     * `preferred_language` first, then the profile's, matching the precedence
+     * `my-day` uses: the preference row is the one a person can change.
+     * Detection remains for an account that has set neither, where the text is
+     * the only evidence there is.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const contentLanguage =
+      configuredLanguage(preferences?.preferred_language)
+      ?? configuredLanguage(profile?.language)
+      ?? detectLanguage(validated.serviceDescription || validated.serviceName);
 
     // One usage group per generation request; never taken from the request.
     const groupId = newBosGroupId();
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHY THE STARTING DRAFT WAS USED, WHERE SOMEBODY WILL SEE IT.
+     *
+     * Three paths return the default content — the area switched off, a reply
+     * missing its sections, and unparseable JSON — and all three returned it as
+     * `{ success: true, content }`, indistinguishable from a page the model
+     * actually wrote. The `warning` the wizard logs was only ever set by the
+     * catch block, so a generation that ran, answered and was REJECTED looked
+     * like a generation that worked.
+     *
+     * That cost a real investigation: the owner reported a page of placeholder
+     * copy, the usage table showed a successful 5.2-second gpt-4o call, and
+     * nothing anywhere said those two facts belonged to the same request.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    let draftReason: string | null = null;
+    let draftDetail: Record<string, unknown> | undefined;
+
     requestLogger.info({
       userId: user.id,
       groupId,
-      detectedLanguage: contentLanguage,
+      contentLanguage,
+      // Which answer won, so a page that came out in the wrong language can be
+      // diagnosed without guessing: a configured one, or the text's own script.
+      languageSource:
+        configuredLanguage(preferences?.preferred_language) ? 'preference'
+        : configuredLanguage(profile?.language) ? 'profile'
+        : 'detected',
       descriptionLength: validated.serviceDescription?.length || 0,
       serviceName: validated.serviceName
     }, 'Starting AI content generation');
@@ -127,6 +206,7 @@ export async function POST(request: NextRequest) {
             { userId: user.id, reason: 'disabled' },
             'Landing page AI is switched off; using the default content'
           );
+          draftReason = 'ai_disabled';
           return getDefaultContent(validated);
         }
 
@@ -169,6 +249,10 @@ export async function POST(request: NextRequest) {
             requestLogger.warn({ keys: Object.keys(parsed) }, 'AI response missing expected fields');
             requestLogger.debug({ generatedContent: parsed }, 'AI response missing expected fields: content');
             h.markFailed('content_fallback');
+            draftReason = 'missing_sections';
+            // Key names only: the copy itself is the owner's and stays in the
+            // debug log, not in an HTTP response.
+            draftDetail = { returned: Object.keys(parsed), required: ['hero', 'features', 'faq'] };
             return getDefaultContent(validated);
           }
           return parsed;
@@ -180,6 +264,8 @@ export async function POST(request: NextRequest) {
           );
           requestLogger.debug({ err: parseError }, 'Failed to parse AI response: detail');
           h.markFailed('content_fallback');
+          draftReason = 'unparseable_json';
+          draftDetail = { errName: parseError instanceof Error ? parseError.name : typeof parseError };
           return getDefaultContent(validated);
         }
       }
@@ -192,7 +278,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      content: generatedContent
+      content: generatedContent,
+      // Present only when the page is the starting draft, so the wizard can say
+      // so instead of presenting placeholder copy as generated work.
+      ...(draftReason
+        ? { warning: `Used the starting draft (${draftReason})`, debug: draftDetail }
+        : {}),
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -251,12 +342,35 @@ Always respond with valid JSON matching the exact structure requested.`;
 
 function buildGenerationPrompt(
   data: z.infer<typeof GenerateContentSchema>,
-  profile: { company_name?: string; vertical?: string; target_audience?: string; unique_value_proposition?: string } | null,
+  profile: {
+    company_name?: string;
+    vertical?: string;
+    sub_vertical?: string;
+    target_audience?: string;
+    unique_value_proposition?: string;
+  } | null,
   language: 'hebrew' | 'english' | 'spanish' | 'other'
 ): string {
   const businessName = profile?.company_name || '';
   const vertical = profile?.vertical || '';
   const targetAudience = profile?.target_audience || '';
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TWO THE PROFILE ALREADY ANSWERED, AND THE PROMPT NEVER ASKED.
+   *
+   * `unique_value_proposition` and `sub_vertical` were SELECTED from the
+   * profile on every generation — the first was even declared in this
+   * function's parameter type — and neither reached the model. So the one
+   * sentence a business has written about what makes it different was fetched,
+   * typed, and dropped, while the page it was meant to shape got its
+   * differentiators invented from the service description alone.
+   *
+   * That is the difference between marketing copy about a service and
+   * marketing copy from THIS business about that service.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const uniqueValue = profile?.unique_value_proposition || '';
+  const specialism = profile?.sub_vertical || '';
 
   // Format duration in a readable way
   let durationText = '';
@@ -325,19 +439,22 @@ PRICING: ${data.servicePrice ? `${data.servicePrice}` : 'Contact for pricing'}
 DURATION: ${durationText || 'Varies'}
 ${businessName ? `BUSINESS: ${businessName}` : ''}
 ${vertical ? `INDUSTRY: ${vertical}` : ''}
+${specialism ? `SPECIALISM: ${specialism}` : ''}
 ${targetAudience ? `TARGET AUDIENCE: ${targetAudience}` : ''}
+${uniqueValue ? `WHAT SETS THIS BUSINESS APART (the business's own words — use this rather than inventing a differentiator): ${uniqueValue}` : ''}
 
 ═══════════════════════════════════════════════════════════════
-STEP 1: DETECT THE TYPE OF OFFERING
+STEP 1: UNDERSTAND WHAT IS BEING SOLD
 ═══════════════════════════════════════════════════════════════
 
-From the description, determine if this is:
-- A COURSE/TRAINING (keywords: קורס, הכשרה, לימוד, course, training, workshop, certification)
-- A COACHING/CONSULTATION (keywords: אימון, ייעוץ, coaching, mentoring, consultation)
-- A TREATMENT/THERAPY (keywords: טיפול, treatment, therapy, session)
-- A PRODUCT/SERVICE (anything else)
+Work it out from the DESCRIPTION, the INDUSTRY and the SPECIALISM above. Say
+what it is in the business's own terms rather than sorting it into a category:
+a page for a six-week programme should read like a programme, a page for a home
+visit like a home visit.
 
-Adapt ALL content accordingly - use course-specific language for courses, service language for services, etc.
+Then adapt EVERYTHING to that: the nouns, the verbs, the questions a buyer
+would ask, and what the call to action asks them to do. A reader should not be
+able to tell the page was produced from a template.
 
 ═══════════════════════════════════════════════════════════════
 STEP 2: CONTENT GENERATION INSTRUCTIONS
@@ -346,41 +463,58 @@ STEP 2: CONTENT GENERATION INSTRUCTIONS
 1. HERO SECTION:
    - Subheadline: Create a compelling 1-2 sentence summary that captures:
      * What the offering IS (course, training, service, etc.)
-     * WHO it's for (the target audience from the description)
+     * WHO it's for — use TARGET AUDIENCE above where the business has stated
+       one, and fall back to the audience implied by the description
      * What TRANSFORMATION or OUTCOME they'll achieve
-   - Example for a course: "קורס מעשי להורים ומטפלים, לזיהוי וטיפול מוצלח בילדים עם הפרעת קשב"
-   - Example for a service: "טיפול מותאם אישית שיעזור לך להתגבר על חרדות ולחיות חיים מלאים"
+   - One sentence, two at most. Name the thing, name the reader, name what
+     changes for them. No sentence that would still be true of a different
+     business in the same industry
 
 2. FEATURES SECTION (extract 4 REAL benefits from the description):
-   - Title should match the offering type:
-     * For courses: "${language === 'hebrew' ? 'מה תלמדו בקורס' : language === 'spanish' ? 'Qué Aprenderás' : 'What You Will Learn'}"
-     * For services: "${l.whyChoose}"
+   - Write the section's own title, in the language above, naming what the
+     reader gets from THIS offering. "${l.whyChoose}" is a safe fallback when
+     nothing better fits
    - Each feature should be a SPECIFIC benefit mentioned or implied in the description
    - Don't use generic benefits - be specific to THIS offering
+   - Where WHAT SETS THIS BUSINESS APART is given, let it shape one of the four.
+     It is the business's own answer to "why us", and a differentiator you
+     invent instead is one they never claimed and may not be able to keep
 
-3. PRICING SECTION:
+3. ABOUT SECTION (who the reader would be buying from):
+   - A landing page is reached by someone who has never seen this business:
+     no familiar logo, no navigation, no second page to check. Two or three
+     sentences, between knowing what is on offer and being asked to pay
+   - Built ONLY from the business facts above. Where they are missing, return
+     an empty string rather than filling the gap — an invented claim about who
+     somebody is, is the one kind of copy they cannot stand behind
+
+4. PRICING SECTION:
    - Do NOT write a title for this section. The page sets it.
    - List 4-5 specific inclusions from the description
 
-4. FAQ SECTION (create 4 questions a real customer would ask):
-   - FOR COURSES: questions about format, prerequisites, schedule, certification, what they'll learn
-   - FOR SERVICES: questions about the process, duration, expected outcomes
-   - FOR TREATMENTS: questions about the experience, preparation, results
-   - Answers should be helpful and based on information in the description
+5. FAQ SECTION (create 4 questions a real customer would ask):
+   - The questions follow from what this is. Ask what someone about to buy THIS
+     would actually want settled before they commit: how it runs, what is
+     needed of them, what they are left with afterwards
+   - Every answer comes from the description. Do not answer what it does not say
 
-5. CALL-TO-ACTION SECTIONS:
-   - For courses: "${language === 'hebrew' ? 'מוכנים להירשם?' : language === 'spanish' ? '¿Listo para inscribirte?' : 'Ready to Enroll?'}"
-   - For services: "${l.readyToStart}"
+6. CALL-TO-ACTION SECTIONS:
+   - Ask for the step this offering actually takes next, in the language above.
+     "${l.readyToStart}" is the fallback when nothing more specific fits
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT (JSON)
 ═══════════════════════════════════════════════════════════════
 
 {
-  "offering_type": "course|service|coaching|treatment",
+  "offering_type": "a short lowercase English noun for what this is, e.g. course, programme, treatment, rental, workshop — your own word, not from a list",
   "hero": {
     "headline": "Short, impactful headline (3-6 words) that captures the essence of the offering",
     "subheadline": "Compelling 1-2 sentence summary that explains what this is, who it's for, and the transformation"
+  },
+  "about": {
+    "title": "A heading that introduces the business, in the language above",
+    "content": "2-3 sentences on WHO is behind this offering: the business, what it does, and why a stranger should trust it with their money. Written from BUSINESS, INDUSTRY, SPECIALISM and WHAT SETS THIS BUSINESS APART above — never invented. Return an empty string if the information above does not support any of it"
   },
   "features": {
     "title": "Appropriate title based on offering type",

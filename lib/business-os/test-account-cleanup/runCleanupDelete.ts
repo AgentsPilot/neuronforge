@@ -31,8 +31,14 @@ import {
 /** Why the tool cannot run at all on this deployment: answered 503. */
 export type CleanupUnavailableReason = 'not_configured' | 'not_authorised' | 'function_missing' | 'function_out_of_date';
 
+/** Database time of each function call in this run, in ms (SA C-2). Null when that call did not return. */
+export interface CleanupServerMs {
+  check: number | null;
+  delete: number | null;
+}
+
 export type CleanupDeleteOutcome =
-  | { kind: 'removed'; targetUserId: string | null; filesRemoved: number; report: CleanupReport }
+  | { kind: 'removed'; targetUserId: string | null; filesRemoved: number; report: CleanupReport; serverMs: CleanupServerMs }
   | {
       kind: 'refused';
       reason: 'confirmation_mismatch' | 'blocked';
@@ -41,6 +47,8 @@ export type CleanupDeleteOutcome =
       blockers: CleanupBlocker[];
       filesRemoved: number;
       message: string;
+      /** Set once the check returned. */
+      serverMs?: CleanupServerMs;
     }
   | { kind: 'unavailable'; reason: CleanupUnavailableReason; targetUserId: string | null; filesRemoved: number; error: Error | null }
   | {
@@ -92,8 +100,11 @@ export async function runCleanupDelete(
     return { kind: 'unavailable', reason: 'function_out_of_date', targetUserId: check.targetUserId, filesRemoved: 0, error: null };
   }
 
-  const hardBlockers = check.blockers.filter((blocker) => blocker.guard !== 'G-12');
-  if (hardBlockers.length > 0 || check.targetUserId === null) {
+  // Go on only on OK, or on BLOCKED where at least one blocker exists and every
+  // one is G-12. A BLOCKED verdict with no parsed blocker (a row the parser
+  // missed) must refuse here: storage would go and the function would refuse.
+  const storageOnly = check.blockers.length > 0 && check.blockers.every((blocker) => blocker.guard === 'G-12');
+  if (!(check.verdict === 'OK' || storageOnly) || check.targetUserId === null) {
     return {
       kind: 'refused',
       reason: 'blocked',
@@ -102,6 +113,7 @@ export async function runCleanupDelete(
       blockers: check.blockers,
       filesRemoved: 0,
       message: 'BLOCKED, nothing was removed.',
+      serverMs: { check: check.serverMs, delete: null },
     };
   }
 
@@ -137,7 +149,14 @@ export async function runCleanupDelete(
       blockers: [],
       filesRemoved,
       message: filesRemoved > 0 ? `Files removed, account kept: ${removed.data.reason}` : removed.data.reason,
+      serverMs: { check: check.serverMs, delete: null },
     };
   }
-  return { kind: 'removed', targetUserId: check.targetUserId, filesRemoved, report: removed.data.report };
+  return {
+    kind: 'removed',
+    targetUserId: check.targetUserId,
+    filesRemoved,
+    report: removed.data.report,
+    serverMs: { check: check.serverMs, delete: removed.data.serverMs },
+  };
 }

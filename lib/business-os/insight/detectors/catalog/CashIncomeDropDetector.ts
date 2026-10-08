@@ -71,7 +71,7 @@ export class CashIncomeDropDetector extends BaseDetector {
     description: 'Finds money received over four weeks falling well below the four weeks before',
 
     watchedMetrics: ['cashflow.income_received'],
-    eventTypes: [],
+    documentsEventTypes: [],
 
     baselineWindow: 'month',
     thresholdType: 'percent_change',
@@ -101,10 +101,7 @@ export class CashIncomeDropDetector extends BaseDetector {
      */
     ignoresVectorMaturity: false,
 
-    consentTier: 'suggest',
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168,
   };
 

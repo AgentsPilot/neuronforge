@@ -32,7 +32,16 @@ export type LeadResponseKind =
   | 'chase'
   | 'invoice_chase'
   | 'intake_chase'
-  | 'meeting_reminder';
+  | 'meeting_reminder'
+  /**
+   * Mark a meeting that has already happened as completed.
+   *
+   * The first queue kind that SENDS NOTHING. The queue is the record of work
+   * the platform did on the owner's behalf, and changing a status they would
+   * otherwise have clicked is exactly that -- so it belongs here, with the same
+   * consent, the same dedupe and the same visibility as a send.
+   */
+  | 'meeting_complete';
 export type LeadResponseStatus = 'pending' | 'processing' | 'sent' | 'skipped' | 'failed';
 
 export interface LeadResponse {

@@ -459,3 +459,33 @@ html.dark input,
 :root.dark input {
   color-scheme: dark;
 }
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A FORM FIELD ON A PHONE IS 16px, OR IOS TAKES THE SCREEN AWAY.
+ *
+ * Safari on iOS zooms the page whenever focus lands on a control whose font is
+ * smaller than 16px. That alone is survivable on a normal page: the reader
+ * pinches back out. It is not survivable inside the settings dialogs, which are
+ * `position: fixed` at `100dvh` — the zoomed layer cannot be panned back to the
+ * field, the keyboard covers what is left, and the owner is looking at a form
+ * they cannot type into and a Save button they cannot reach. That is the
+ * "I can't edit a service on my phone" report, exactly.
+ *
+ * Every field in the services editor was below the line: `text-sm` (14px) for
+ * the name, the description and the durations, 15px for the price, 13px for the
+ * selects. So this is not one component's bug and is not fixed one component at
+ * a time — it is a rule about what a form control may be on a small screen.
+ *
+ * Scoped to the `sm` breakpoint, so nothing on a desktop moves. Checkboxes,
+ * radios and ranges are excluded: they render no text, and sizing them by font
+ * would change the controls themselves.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+@media (max-width: 639.98px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

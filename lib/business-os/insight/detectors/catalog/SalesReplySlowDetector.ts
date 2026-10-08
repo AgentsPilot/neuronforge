@@ -19,7 +19,7 @@ export class SalesReplySlowDetector extends BaseDetector {
     description: 'Detects when reply time is slower than baseline',
 
     watchedMetrics: ['sales.avg_reply_time_hours'],
-    eventTypes: ['enquiry.replied'],
+    documentsEventTypes: ['enquiry.replied'],
 
     baselineWindow: 'month',
     thresholdType: 'std_deviation',
@@ -47,11 +47,8 @@ export class SalesReplySlowDetector extends BaseDetector {
      * Replying sooner is something a person does. The finding is worth stating;
      * the button was not.
      */
-    pairedProcessId: undefined,
-    consentTier: 'suggest', // Not automatable - just advice
+    pairedProcessId: undefined, // Not automatable - just advice
     eligibleForAutomation: false,
-    ownerParameters: [],
-    guardrails: [],
     cooldownHours: 168, // 1 week
   };
 

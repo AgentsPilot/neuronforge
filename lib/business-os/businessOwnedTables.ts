@@ -85,6 +85,17 @@ export const BUSINESS_OWNED_TABLES = [
   'channel_metrics_daily',
   'derived_metrics',
   'insight_automations',
+  // Model-proposed findings awaiting review (20261006e). Operator-only to
+  // READ, but the rows are about this business and go when it does -- a claim
+  // about a deleted business is not a claim about anything.
+  'insight_hypotheses',
+  // Re-readings of an insight's own metric, weeks after the owner acted
+  // (20261006g). Operator-only to READ, same as the hypotheses above, and
+  // likewise gone when the business is: a measurement of advice given to a
+  // deleted account measures nothing. The row already CASCADEs from
+  // `insights`; this entry is what makes the purge descriptors own it too,
+  // rather than relying on a cascade nobody can see from here.
+  'insight_measurements',
   'insight_outcomes',
   'insights',
   'owner_insight_history',
@@ -116,6 +127,12 @@ export const BUSINESS_OWNED_TABLES = [
   'user_capabilities',
   // Queued actions the platform takes on the business's behalf
   'insight_actions',
+  // Insight hypotheses and their outcome measurements. Created outside
+  // supabase/migrations (live only, measured 2026-10-07), each with a
+  // `<table>_business_fk` CASCADE to business_profiles, so the ownership
+  // migration's array never named them (LIVE_ONLY in the test beside this file).
+  'insight_hypotheses',
+  'insight_measurements',
   // Business chat
   'business_chat_action_log',
   'business_chat_conversation',

@@ -211,15 +211,14 @@ export function BusinessInfoPanel({
 
   return (
     <section
-      className={isCard ? 'p-5' : variant === 'footer' ? 'pt-6' : 'mt-4'}
+      /* `apc-panel` only on the card variant: inline and footer deliberately
+         draw no surface, and a composition's panel would give them one. */
+      className={
+        isCard ? 'apc-panel p-5' : variant === 'footer' ? 'pt-6' : 'mt-4'
+      }
       style={
         isCard
-          ? {
-              background: 'var(--ap-surface)',
-              border: '1px solid var(--ap-border)',
-              borderRadius: 'var(--ap-radius-lg)',
-              boxShadow: 'var(--ap-shadow-sm)',
-            }
+          ? { boxShadow: 'var(--ap-shadow-sm)' }
           : // The footer variant sits directly above the page's own footer,
             // which already draws a rule. Two hairlines a few rows apart read
             // as a mistake rather than as structure, and the spacing separates
@@ -242,7 +241,21 @@ export function BusinessInfoPanel({
             >
               {t('contactDetails')}
             </h3>
-            <ul className="space-y-2.5">
+            {/*
+              THREE TO A COLUMN, filling downwards.
+
+              Phone, WhatsApp, email, address and a website are each a few
+              characters in a card half the page wide, so one per line left
+              most of every row empty and made the card twice as tall as it
+              needed to be.
+
+              `grid-flow-col` with three rows fills the first column top to
+              bottom before starting the next, which is how a list of contact
+              details reads. Row-first flow would have put the phone beside the
+              WhatsApp link and broken the pairs apart. One column on a phone,
+              where there is no second column to flow into.
+            */}
+            <ul className="grid gap-x-6 gap-y-2.5 sm:grid-flow-col sm:grid-rows-3">
               {rows.map(row => {
                 const Icon = row.icon;
                 const body = (

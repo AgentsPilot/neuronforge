@@ -138,7 +138,15 @@ describe('B-1: fixed kind labels (C7-13)', () => {
     expect(lists.length).toBeGreaterThanOrEqual(2);
     const latest = lists[lists.length - 1];
     expect(latest.name >= '20260923').toBe(true);
-    expect(latest.kinds.sort()).toEqual(['chase', 'intake_chase', 'invite', 'invoice_chase', 'meeting_reminder']);
+    expect(latest.kinds.sort()).toEqual([
+      'chase',
+      'intake_chase',
+      'invite',
+      'invoice_chase',
+      // Added by 20261006d_auto_complete_meetings.sql.
+      'meeting_complete',
+      'meeting_reminder',
+    ]);
     const labels = QUEUE_ITEM_KIND_LABELS.lead_responses;
     expect(typeof labels).toBe('object');
     expect(Object.keys(labels).sort()).toEqual(latest.kinds.sort());

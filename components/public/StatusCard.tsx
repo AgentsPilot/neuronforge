@@ -66,12 +66,14 @@ export function StatusCard({
 
   const body = (
     <div
+      /*
+        This already carried apc-panel and then inlined a background and a
+        border straight over it, so the composition's panel never applied.
+        The shadow stays: no composition sets one, and it is what lifts a
+        standalone card off the page.
+      */
       className={`apc-panel ${standalone ? 'p-8 text-center' : 'p-5'}`}
-      style={{
-        background: 'var(--ap-surface)',
-        border: '1px solid var(--ap-border)',
-        boxShadow: standalone ? 'var(--ap-shadow-md)' : 'var(--ap-shadow-sm)',
-      }}
+      style={{ boxShadow: standalone ? 'var(--ap-shadow-md)' : 'var(--ap-shadow-sm)' }}
     >
       <div className={standalone ? 'flex flex-col items-center' : 'flex items-start gap-3'}>
         <div

@@ -10,7 +10,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
-import { COMMON_GUARDRAILS } from '../types';
 import { PaymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 
 export class CashArOverdueDetector extends BaseDetector {
@@ -21,7 +20,7 @@ export class CashArOverdueDetector extends BaseDetector {
     description: 'Detects invoices that are 7+ days overdue',
 
     watchedMetrics: ['cashflow.ar_overdue_usd'],
-    eventTypes: ['invoice.overdue'],
+    documentsEventTypes: ['invoice.overdue'],
 
     baselineWindow: 'week', // Not used for absolute threshold
     thresholdType: 'absolute',
@@ -43,34 +42,22 @@ export class CashArOverdueDetector extends BaseDetector {
      */
     ignoresVectorMaturity: true,
 
-    consentTier: 'automate',
+    /*
+     * `claimType: 'instance'`.
+     *
+     * Money owed on NAMED invoices. The sum is true at any sample size -- three
+     * overdue invoices are three overdue invoices whether the business has
+     * taken thirty payments or three -- so there is no denominator to declare
+     * and no rate being claimed.
+     *
+     * Declared rather than left to default: `effectiveClaimType` assumes
+     * `rate` for an undeclared detector, which holds the card until the
+     * vector is fully lit. For a claim that is true from the first row,
+     * that is silence with no safety benefit. Hazard H15.
+     */
+    claimType: 'instance',
+
     eligibleForAutomation: true,
-    ownerParameters: [
-      {
-        id: 'days_threshold',
-        label: 'Days Overdue',
-        type: 'number',
-        default: 7,
-        min: 1,
-        max: 90,
-      },
-      {
-        id: 'tone',
-        label: 'Tone',
-        type: 'select',
-        default: 'professional',
-        options: [
-          { value: 'friendly', label: 'Friendly' },
-          { value: 'professional', label: 'Professional' },
-          { value: 'firm', label: 'Firm' },
-        ],
-      },
-    ],
-    guardrails: [
-      COMMON_GUARDRAILS.max_1_per_invoice_per_7d,
-      COMMON_GUARDRAILS.max_20_per_run,
-      COMMON_GUARDRAILS.quiet_hours,
-    ],
     cooldownHours: 24,
   };
 

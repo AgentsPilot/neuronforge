@@ -39,6 +39,8 @@ export type BosCronJobId =
   | 'channel-metrics-sync'
   | 'insight-metrics'
   | 'insight-detect'
+  | 'insight-hypotheses'
+  | 'insight-measure'
   | 'credit-leak-check'
   | 'stripe-settlement-gap'
   | 'payment-reminders';
@@ -134,6 +136,12 @@ const EVERY_5 = { intervalMinutes: 5, graceMinutes: 10, keepsFailingAfter: 3 } a
 const EVERY_15 = { intervalMinutes: 15, graceMinutes: 10, keepsFailingAfter: 3 } as const;
 const HOURLY = { intervalMinutes: 60, graceMinutes: 10, keepsFailingAfter: 3 } as const;
 const DAILY = { intervalMinutes: 1440, graceMinutes: 60, keepsFailingAfter: 2 } as const;
+/*
+ * A weekly job gets a wider grace and a shorter patience than a daily one: it
+ * has six more days of slack before anyone notices a miss, so waiting two
+ * misses would be a fortnight of silence. One failure is worth surfacing.
+ */
+const WEEKLY = { intervalMinutes: 10_080, graceMinutes: 180, keepsFailingAfter: 1 } as const;
 
 const ASSUMED = {
   timeLimitSeconds: ASSUMED_PLATFORM_LIMIT_SECONDS,
@@ -346,6 +354,82 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     ],
     partlyDoneWhen: [
       { kind: 'atLeast', key: 'errors', value: 1 },
+      { kind: 'atLeast', key: 'usersRemaining', value: 1 },
+    ],
+  },
+  {
+    id: 'insight-measure',
+    path: '/api/cron/insight-measure',
+    /*
+     * 04:55, and the minute is chosen rather than inherited.
+     *
+     * After `insight-metrics` (03:00) and `insight-detect` (03:30), because
+     * both of this job's readings come from `derived_metrics` and measuring
+     * first would read yesterday's series. Not 04:30, which is
+     * `insight-hypotheses` every Sunday, and not 04:45, which is the credit
+     * leak check — the file's convention is one job per tick.
+     */
+    schedule: '55 4 * * *',
+    ...DAILY,
+    timeLimitSeconds: 300,
+    timeLimitSource: 'maxDuration',
+    label: 'Insight measurement',
+    description: 'Re-reads the metric behind each acted-on insight, 30 and 90 days later',
+    scheduleWords: 'Daily at 04:55 UTC',
+    drainsQueue: null,
+    counts: [
+      { key: 'failed', path: ['data', 'failed'], label: 'insights that could not be measured' },
+    ],
+    /*
+     * `unmeasurable` is NOT a partly-done condition. The engine aggregates
+     * events while most detector metrics are states, so only 2 of 11 live
+     * insight metric keys have a series at all — a sweep of entirely
+     * unmeasurable rows is a true report of that, not a degraded run, and
+     * amber for it would train the operator to ignore the one colour that
+     * matters. `failed` means the sweep itself broke, which is different.
+     */
+    partlyDoneWhen: [{ kind: 'atLeast', key: 'failed', value: 1 }],
+  },
+  {
+    id: 'insight-hypotheses',
+    path: '/api/cron/insight-hypotheses',
+    /*
+     * Weekly, and the only job on that cadence.
+     *
+     * It was scheduled in `vercel.json` without a row here, which broke the
+     * registry-is-vercel.json invariant: `BOS_CRON_JOBS` had 14 entries
+     * against 15 scheduled jobs, so the operator page could not show it and
+     * `withCronRunRecord` could not name it. Two tests had been failing on it.
+     */
+    schedule: '30 4 * * 0',
+    ...WEEKLY,
+    timeLimitSeconds: 300,
+    timeLimitSource: 'maxDuration',
+    label: 'Insight hypotheses',
+    description: 'Asks the model for findings no detector was written for, then verifies them',
+    scheduleWords: 'Weekly, Sunday at 04:30 UTC',
+    drainsQueue: null,
+    counts: [
+      { key: 'asked', path: ['data', 'asked'], label: 'businesses asked' },
+      { key: 'confirmed', path: ['data', 'confirmed'], label: 'confirmed by a query' },
+      { key: 'rejected', path: ['data', 'rejected'], label: 'turned away' },
+      { key: 'skipped', path: ['data', 'skipped'], label: 'too little data to ask' },
+      { key: 'failed', path: ['data', 'failed'], label: 'businesses that failed' },
+      {
+        key: 'usersRemaining',
+        path: ['data', 'usersRemaining'],
+        label: 'businesses left for the next run',
+      },
+    ],
+    /*
+     * Nothing confirmed is NOT partly-done. The reject pile is the expected
+     * output early on and the more useful half — it is the record of what the
+     * generator gets wrong, and amber for it would train the operator to
+     * ignore the one colour that matters. A failure or an unfinished sweep is
+     * a different thing, and both are amber — matching `insight-detect`.
+     */
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'failed', value: 1 },
       { kind: 'atLeast', key: 'usersRemaining', value: 1 },
     ],
   },
