@@ -6,12 +6,16 @@
 // and the read goes through AuditTrailRepository, which never returns an AI audit
 // entry (FR-27) or an admin credit / plan entry (BD-26, lib/audit/ownerVisibility.ts).
 // The response shape is unchanged: { success, logs, total, page,
-// limit, hasMore }.
+// limit, hasMore }. Credits boost 4a (SA C-5): each row passes through
+// presentOwnerAuditRow, which adds a neutral `owner_label` to the few labelled
+// events and empties the details of operator-only ones (BOS_BOOST_FLAGGED);
+// every other row is returned as read.
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditReadQuerySchema } from '@/lib/audit/requestSchemas';
 import { auditTrailRepository } from '@/lib/repositories/AuditTrailRepository';
+import { presentOwnerAuditRow } from '@/lib/audit/ownerEventPresentation';
 
 const logger = createLogger({ module: 'AuditQueryAPI' });
 
@@ -57,7 +61,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, ...result.data });
+    return NextResponse.json({ success: true, ...result.data, logs: result.data.logs.map(presentOwnerAuditRow) });
   } catch (error) {
     requestLogger.error({ err: error }, 'Audit query failed');
     return NextResponse.json(
