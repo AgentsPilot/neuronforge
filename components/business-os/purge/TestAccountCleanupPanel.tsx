@@ -45,6 +45,19 @@ const box: React.CSSProperties = {
 const cell: React.CSSProperties = { padding: '2px 8px', borderBottom: '1px solid #eee', textAlign: 'left' };
 const inputStyle: React.CSSProperties = { padding: 6, border: '1px solid #ccc', borderRadius: 4, width: 320 };
 
+/** Same look as the Danger Zone's "Run dry-run preview" button; grey when it cannot be pressed. */
+function actionButtonStyle(colour: string, isDisabled: boolean): React.CSSProperties {
+  return {
+    padding: '8px 16px',
+    borderRadius: 4,
+    border: `1px solid ${isDisabled ? '#ccc' : colour}`,
+    background: isDisabled ? '#ccc' : colour,
+    color: 'white',
+    fontWeight: 600,
+    cursor: isDisabled ? 'default' : 'pointer',
+  };
+}
+
 /** Same rule as the server's G-3 comparison: trimmed, case-insensitive. */
 export const normaliseEmail = (value: string): string => value.trim().toLowerCase();
 
@@ -260,6 +273,7 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
   if (probe === 'hidden') return null;
 
   const disabled = probe !== 'configured';
+  const checkDisabled = disabled || checking || deleting || !email.trim() || !tag.trim();
   const view = check?.view ?? null;
   const offerDelete = view !== null && canOfferDelete(view);
   const confirmMatches = check !== null && normaliseEmail(confirmEmail) === normaliseEmail(check.email);
@@ -323,13 +337,26 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
             }}
             style={inputStyle}
             autoComplete="off"
+            aria-describedby={!tag.trim() ? 'cleanup-empty-tag-hint' : undefined}
           />
         </label>
+        {/* Check is disabled on an empty tag on purpose (it would match every
+            account); say so, or the button just looks broken. */}
+        {!tag.trim() && !disabled && (
+          <p
+            id="cleanup-empty-tag-hint"
+            data-testid="cleanup-empty-tag-hint"
+            style={{ margin: 0, fontSize: 13, color: '#b02a37' }}
+          >
+            Enter a test tag. An empty tag would match every account, so Check stays off.
+          </p>
+        )}
       </div>
       <button
         type="button"
         onClick={runCheck}
-        disabled={disabled || checking || deleting || !email.trim() || !tag.trim()}
+        disabled={checkDisabled}
+        style={actionButtonStyle('#0d6efd', checkDisabled)}
       >
         {checking ? 'Checking…' : 'Check'}
       </button>
@@ -456,7 +483,7 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
                   type="button"
                   onClick={runDelete}
                   disabled={!confirmMatches || deleting || disabled}
-                  style={{ background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, padding: '6px 12px' }}
+                  style={actionButtonStyle('#dc3545', !confirmMatches || deleting || disabled)}
                 >
                   {deleting ? 'Deleting…' : 'Delete this test account'}
                 </button>
