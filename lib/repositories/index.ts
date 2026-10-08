@@ -226,6 +226,15 @@ export type {
 } from './ArchiveRepository';
 // S-6 free-tier grant (docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md)
 export { UserSubscriptionRepository, userSubscriptionRepository } from './UserSubscriptionRepository';
+// CF-5 PR 1: the Stripe webhook's idempotency claim table (processed_webhook_events).
+export { ProcessedWebhookEventRepository, processedWebhookEventRepository } from './ProcessedWebhookEventRepository';
+export type {
+  NewWebhookClaimRow,
+  ProcessedWebhookEventColumns,
+  WebhookClaim,
+  WebhookClaimResult,
+  WebhookClaimStatus,
+} from './ProcessedWebhookEventRepository';
 export type {
   LedgerCallRow,
   LedgerLabelRow,
