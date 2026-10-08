@@ -367,6 +367,12 @@ The pins in `eventAudience.test.ts` move by +3 (deliberately). The `BOS_BOOST_` 
   The first raw preview of route.ts reported a conflict only because the working copy is CRLF and main's blob is LF; with line endings normalised there is none.
 - **Next:** RM commits the 4a work, then merges `origin/main`; after that, the 4a bar and the characterisation are re-run.
 
+**After RM's merge of `origin/main` (e9a0b0ed, 2026-10-08):** #254 added four platform agent-platform boost-pack characterisation entries (X44, X45, X46, X54). Each one now shows the same single keyed boost read as P6: one `select` on `business_os_boost_purchases`, `.eq('stripe_checkout_session_id', 'cs_platform_boost')`, `.maybeSingle()`, before the unchanged legacy branch. That is the known 4a effect, accepted under QA I-1 and SA's P6 ruling.
+- Only those four entries were regenerated (`-t "X(44|45|46|54)\. boost-pack" -u`).
+- The snapshot diff against HEAD is exactly **+68 / −0**: four hunks of 17 lines, each that read and nothing else. No Connect entry was touched.
+- **4a bar** (`--ci`): **47 suites, 1,220 tests, 100 snapshots, all green.**
+- Left uncommitted for RM.
+
 **Re-run after the conversion (on the current base):**
 - the 4a bar (`--ci`): **47 suites, 1,165 tests, 45 snapshots**;
 - the wider set (the entitlements file set, credits, admin users and audit-trail, usage, data export, and `oneAddressPolicy` on a Linux-path copy): **197 suites, 5,261 tests**;
@@ -760,3 +766,4 @@ Scoped tsc: 67 errors, 0 in changed files (20 untouched files)
 | 2026-10-08 | SA CR-1 resolved; branch update stopped | The user chose to convert: `monitoring/page.tsx` now uses `createLogger` (`error` for the fetch failure, `debug` for the five traces); 0 `console.*` left. The merge of `origin/main` (711fe71e: #253–#257) was refused on the dirty tree, as expected. It overlaps `route.ts` and the Connect snapshot, and both merge cleanly in a scratch preview. P-3b.2 has not landed, so the C-2 exemption stays. 4a bar 47 / 1,165 / 45 snapshots, wider set 197 / 5,261, all green; 0 tsc errors in 4a files. Nothing committed |
 | 2026-10-08 | SA: CR-1 closed; merge plan approved | `monitoring/page.tsx` converted to the client Pino logger (no PII in the logged fields). Commit, then merge `origin/main` 711fe71e. Watch the CRLF/LF diff on `route.ts`. #257's Connect dedupe is independent of the boost resolver; re-run the characterisation |
 | 2026-10-08 | Approved and committed, PR open | The user saw the diff and approved the commit (2026-10-08). RM committed on `feature/bos-credits-boost-slice-4a`, merged `origin/main` in, and opened a PR to `main`. After deploy the user subscribes the Stripe events (§7) |
+| 2026-10-08 | Post-merge characterisation (#254) | After the merge with main, #254's four agent-platform boost-pack entries (X44, X45, X46, X54) gain the same keyed boost read as P6 (accepted per QA I-1 and the SA P6 ruling). Only those four were regenerated: +68 / −0, 17 lines each, no Connect entry touched. 4a bar 47 suites / 1,220 tests / 100 snapshots green. Uncommitted for RM |
