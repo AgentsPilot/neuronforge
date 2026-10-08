@@ -240,7 +240,7 @@ describe('nothing else writes it, or the entry doubles', () => {
 
   it('and the retired trigger is dropped, so a fresh database matches production', () => {
     const sql = fs.readFileSync(
-      path.join(process.cwd(), 'supabase/migrations/20261044_retire_crm_contact_created_trigger.sql'),
+      path.join(process.cwd(), 'supabase/migrations/20261045_retire_crm_contact_created_trigger.sql'),
       'utf8'
     );
     expect(sql).toMatch(/DROP TRIGGER IF EXISTS log_crm_contact_created_trigger ON crm_contacts/i);
