@@ -61,9 +61,14 @@ const repositorySf = ts.createSourceFile(
 
 /** The methods of `PaymentInvoiceRepository`, by name (overload signatures skipped). */
 function invoiceRepositoryMethods(): Map<string, ts.MethodDeclaration> {
+  return repositoryMethods('PaymentInvoiceRepository');
+}
+
+/** The methods of one class in `PaymentRepository.ts`, by name (overload signatures skipped). */
+function repositoryMethods(className: string): Map<string, ts.MethodDeclaration> {
   const methods = new Map<string, ts.MethodDeclaration>();
   const visit = (node: ts.Node) => {
-    if (ts.isClassDeclaration(node) && node.name?.text === 'PaymentInvoiceRepository') {
+    if (ts.isClassDeclaration(node) && node.name?.text === className) {
       for (const member of node.members) {
         if (ts.isMethodDeclaration(member) && member.body) methods.set(member.name.getText(repositorySf), member);
       }
@@ -88,6 +93,14 @@ const PAID_HANDLER_INVOICE_METHODS = [
   'recordStripeInvoiceId',
   'markPaidFromStripeInvoice',
   'readFieldsUnscoped',
+];
+
+/** The only transaction-repository methods the paid handler may call (CF-5 PR 3). */
+const PAID_HANDLER_TRANSACTION_METHODS = [
+  'findSettledIdForInvoice',
+  'findByPaymentIntentId',
+  'attachToInvoice',
+  'insertFromWebhook',
 ];
 
 /** The `invoice.paid` handler, where the guess used to live. */
@@ -159,6 +172,37 @@ describe('paying an invoice never invents a booking link', () => {
       const code = codeOfMethod(methods.get(name)!);
       expect(code).not.toMatch(/scheduling_/);
       expect(code).not.toMatch(/servicePrice/);
+    }
+  });
+
+  /*
+   * CF-5 PR 3 moved the paid handler's payment-row queries into
+   * `PaymentTransactionRepository` (workplan §7.3.4, SA C-2). The handler-side
+   * checks on `servicePrice` and `scheduling_services(price)` below would not
+   * see a booking search hidden in one of those methods, so they follow the
+   * calls the same way the invoice arm does.
+   */
+  it('reaches payment_transactions only through allow-listed repository methods, none of which looks for a booking (CF-5 PR 3)', () => {
+    const handler = connectInvoicePaidHandler();
+
+    expect(handler).not.toMatch(/from\(\s*['"`]payment_transactions['"`]\s*\)/);
+    expect(handler).not.toMatch(/\bPaymentTransactionRepository\b/);
+
+    const mentions = handler.match(/\bpaymentTransactionRepository\b/g) ?? [];
+    const calls = [...handler.matchAll(/\bpaymentTransactionRepository\.(\w+)\(/g)].map((m) => m[1]);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls).toHaveLength(mentions.length);
+    for (const method of calls) expect(PAID_HANDLER_TRANSACTION_METHODS).toContain(method);
+
+    const methods = repositoryMethods('PaymentTransactionRepository');
+    for (const name of new Set(calls)) {
+      const method = methods.get(name);
+      expect(method).toBeDefined();
+      const code = codeOfMethod(method!);
+      expect(code).toMatch(/from\('payment_transactions'\)/);
+      expect(code).not.toMatch(/scheduling_/);
+      expect(code).not.toMatch(/servicePrice/);
+      expect(code).not.toContain('booking_id');
     }
   });
 
