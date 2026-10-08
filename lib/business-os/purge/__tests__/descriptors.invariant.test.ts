@@ -689,6 +689,15 @@ describe('SA-S3 — classification is snapshotted, not re-decided per slice', ()
     // the table is still user-scoped and live.
     expect(removed).toEqual([]);
   });
+
+  it('every descriptor is in the baseline', () => {
+    // The level check above skips a table the baseline does not name, so a
+    // descriptor added without a baseline entry has a level nothing freezes.
+    // Four tables sat outside it that way until 2026-10-08. Adding a table
+    // means adding it here too, with a dated review note.
+    const missing = PURGE_DESCRIPTORS.map((d) => d.table).filter((t) => !(t in baseline.levels));
+    expect(missing).toEqual([]);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -802,7 +811,9 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     // +2 credits boost slice 2a: business_os_boost_purchases and business_os_boost_cap_overrides (both never).
     // +1 plan payments P-3b.1: business_os_billing_events, the money history (never).
     // +2 test-account cleanup first live run (2026-10-07): insight_hypotheses and insight_measurements (both reset).
-    expect(baseline.count).toBe(150);
+    // +4 never entered when added (2026-10-08): business_subscribers, marketing_consent_events,
+    // marketing_consent_state, marketing_consent_settings.
+    expect(baseline.count).toBe(154);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {
