@@ -469,7 +469,11 @@ describe('PaymentInvoiceRepository: Stripe webhook methods (CF-5 PR 2)', () => {
   describe('source shape (SA C-3)', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'lib/repositories/PaymentRepository.ts'), 'utf8');
     const header = '// Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)';
-    const sectionStart = source.indexOf(header);
+    // C-3 is one section per touched class. CF-5 PR 3 gave
+    // PaymentTransactionRepository (earlier in the file) its own, so this one
+    // is looked up inside PaymentInvoiceRepository.
+    const classStart = source.indexOf('export class PaymentInvoiceRepository');
+    const sectionStart = source.indexOf(header, classStart);
     // The section runs to the end of the PaymentInvoiceRepository class.
     const sectionEnd = source.indexOf('// Stripe Connect Repository', sectionStart);
     const section = source.slice(sectionStart, sectionEnd);
@@ -485,8 +489,10 @@ describe('PaymentInvoiceRepository: Stripe webhook methods (CF-5 PR 2)', () => {
     ];
 
     it('has the section header once, holding every new method, each doc carrying the marker', () => {
-      expect(sectionStart).toBeGreaterThan(-1);
-      expect(source.split(header)).toHaveLength(2);
+      expect(classStart).toBeGreaterThan(-1);
+      expect(sectionStart).toBeGreaterThan(classStart);
+      // Once in this class (from the class to the end of the section, nothing before it).
+      expect(source.slice(classStart, sectionEnd).split(header)).toHaveLength(2);
       for (const method of NEW_METHODS) {
         const doc = new RegExp(`/\\*\\*[^/]*⟨unscoped-by-design⟩[\\s\\S]*?\\*/\\s*async ${method}[(<]`);
         expect(section).toMatch(doc);

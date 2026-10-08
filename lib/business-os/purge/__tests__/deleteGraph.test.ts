@@ -21,7 +21,9 @@ jest.mock('@/lib/repositories/BusinessPurgeRepository', () => ({
 import {
   checkDeleteGraph,
   isDeleteCapableTrigger,
+  isNullableOverwrite,
   runDeleteGraphCheck,
+  type ColumnFact,
   type DeleteGraphInput,
   type ForeignKeyFact,
   type TriggerFact,
@@ -140,6 +142,69 @@ describe('checkDeleteGraph — each blocking verdict fires on its planted case',
     ];
     const result = checkDeleteGraph(input({ triggers }));
     expect(result.unreviewedDeleteTriggers).toEqual([{ table: 'alpha_root', trigger: 'alpha_root_new' }]);
+  });
+});
+
+describe('checkDeleteGraph — SET NULL into a NOT NULL column blocks like NO ACTION (23502, 2026-10-08)', () => {
+  // gamma_child.parent_id -> alpha_root, ON DELETE SET NULL. Named in Postgres's
+  // default `<table>_<column>_fkey` form so the column can be resolved.
+  const setNull = (onDelete = 'n', name = 'gamma_child_parent_id_fkey'): ForeignKeyFact[] => [
+    ...fixture.foreign_keys,
+    { constraint_name: name, table_name: 'gamma_child', references: 'alpha_root', on_delete: onDelete },
+  ];
+  const column = (isNullable: string | undefined): ColumnFact[] => [
+    { table_name: 'gamma_child', column_name: 'id', is_nullable: 'NO' },
+    { table_name: 'gamma_child', column_name: 'parent_id', is_nullable: isNullable },
+  ];
+  const after = ['alpha_blocker', 'alpha_leaf', 'alpha_root', 'gamma_child', 'alpha_tail'];
+  const before = ['alpha_blocker', 'alpha_leaf', 'gamma_child', 'alpha_root', 'alpha_tail'];
+  const edge = { constraint: 'gamma_child_parent_id_fkey', child: 'gamma_child', parent: 'alpha_root' };
+
+  it('NOT NULL child ordered after its parent is refused, named as a blocking-order violation', () => {
+    const result = checkDeleteGraph(input({ run: after, foreignKeys: setNull(), columns: column('NO') }));
+    expect(result.status).toBe('refused');
+    expect(result.blockingOrderViolations).toEqual([edge]);
+  });
+
+  it('the same edge passes once the child is ordered before its parent', () => {
+    const result = checkDeleteGraph(input({ run: before, foreignKeys: setNull(), columns: column('NO') }));
+    expect(result.status).toBe('ok');
+    expect(result.blockingOrderViolations).toEqual([]);
+  });
+
+  it('a NULLABLE child may sit after its parent: SET NULL is harmless there (the graph stays cyclic)', () => {
+    const result = checkDeleteGraph(input({ run: after, foreignKeys: setNull(), columns: column('YES') }));
+    expect(result.status).toBe('ok');
+  });
+
+  it('SET DEFAULT into a NOT NULL column is held to the same rule', () => {
+    const result = checkDeleteGraph(input({ run: after, foreignKeys: setNull('d'), columns: column('NO') }));
+    expect(result.blockingOrderViolations).toEqual([edge]);
+  });
+
+  it.each([
+    ['no columns were read', undefined],
+    ['the nullability is missing', column(undefined)],
+    ['the column is not on the child', [{ table_name: 'gamma_child', column_name: 'other', is_nullable: 'YES' }]],
+  ])('fails closed when %s', (_label, columns) => {
+    const result = checkDeleteGraph(
+      input({ run: after, foreignKeys: setNull(), columns: columns as ColumnFact[] | undefined })
+    );
+    expect(result.blockingOrderViolations).toEqual([edge]);
+  });
+
+  it('fails closed when the constraint name does not name its column', () => {
+    const result = checkDeleteGraph(
+      input({ run: after, foreignKeys: setNull('n', 'fk_gamma_parent'), columns: column('YES') })
+    );
+    expect(result.blockingOrderViolations).toEqual([{ ...edge, constraint: 'fk_gamma_parent' }]);
+  });
+
+  it('isNullableOverwrite reads only `<child>_<column>_fkey` with a YES column', () => {
+    const fk = { constraint_name: 'gamma_child_parent_id_fkey', table_name: 'gamma_child', references: 'alpha_root', on_delete: 'n' };
+    expect(isNullableOverwrite(fk, column('YES'))).toBe(true);
+    expect(isNullableOverwrite(fk, column('NO'))).toBe(false);
+    expect(isNullableOverwrite({ ...fk, constraint_name: 'gamma_child__fkey' }, column('YES'))).toBe(false);
   });
 });
 

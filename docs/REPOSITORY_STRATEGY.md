@@ -126,6 +126,7 @@ lib/repositories/
 ├── ExecutionRepository.ts         # Agent execution records and token usage
 ├── ExecutionLogRepository.ts      # Step-by-step execution logs (legacy path)
 ├── MemoryRepository.ts            # Agent run memories
+├── PaymentRefundRepository.ts     # Refund ledger (payment_refunds): the Stripe webhook's upsert; unscoped by design
 ├── PluginConnectionRepository.ts  # Plugin connection persistence (OAuth tokens, status)
 ├── ProcessedWebhookEventRepository.ts # Stripe webhook idempotency claim (processed_webhook_events); unscoped by design
 ├── SharedAgentRepository.ts       # Shared/template agents for marketplace
@@ -428,6 +429,18 @@ The Stripe webhook runs on the service role with no user session, and its querie
 - **Errors passed through.** Methods return supabase-js's own `{ data, error }`, the same error object, so callers keep reading `error.code`. They do not catch, so a query that rejects still fails the webhook and Stripe retries. They log only where SA ruled it; otherwise the route logs what it acts on, with the correlation and Stripe event ids. The one ruling so far: `PaymentInvoiceRepository.findByStripeInvoiceId` logs any error except PostgREST's "no row" (`PGRST116`), which is a routine miss for the webhook (workplan SA C-5 / Q-5). `BusinessProfileRepository.findLanguage`, reused for the failed-payment activity, logs a returned error and no longer catches either (SA CR-P2-1); its other caller, the inviter notification, wraps it in `settle()`, which catches.
 
 **`PaymentInvoiceRepository` webhook section (CF-5 PR 2).** `findByIdUnscoped`, `recordStripeInvoiceId`, `markPaidFromStripeInvoice`, `markPaidFromCheckout`, `setStatusFromStripe(id, 'overdue' | 'cancelled')`, `recordStripeDocuments` and `readFieldsUnscoped(id, RECEIPT | FAILED_ACTIVITY)`, plus the reused `findByStripeInvoiceId(id, columns = '*')`. The two lookups return a row the route then checks with `accountOwns`; every write and every later read happens only after that check. `noBookingGuess.guard` pins that the paid handler writes the table through `recordStripeInvoiceId` and `markPaidFromStripeInvoice` only, and that neither writes `booking_id`.
+
+**`PaymentTransactionRepository` webhook section and `PaymentRefundRepository` (CF-5 PR 3).** Seven `payment_transactions` methods:
+- `findFirstByStripeReference(ref, DISPUTE | REFUND)` keeps the inline order `select` → `limit(1)` → `eq` on the payment intent, or on the charge when there is no intent, and returns an array.
+- `recordDisputeState(id, { status, metadata })` fixes its key set. The dispute metadata is built in the route (SA ruling on PR3-D4).
+- `findByPaymentIntentId(pi, ID | ATTACH)` serves the `payment_intent.succeeded` dedupe and the `invoice.paid` (#257) lookup.
+- `attachToInvoice(id, invoiceId)` writes `invoice_id` only.
+- `findSettledIdForInvoice(invoiceId)` is the `invoice.paid` dedupe.
+- `insertFromWebhook(row)` and `insertFromWebhookReturningId(row)` take the typed `NewWebhookTransactionRow`, which the route passes as an object literal.
+
+The new `PaymentRefundRepository` has one method, `upsertFromStripe(row)`, which takes the typed `NewStripeRefundRow` and upserts with `onConflict: 'processor_refund_id'`.
+
+Every insert (the plan-period one included) and the attach run after `accountOwns` on the owner they write. The **dispute and refund paths have no `accountOwns`** (FU-3). The payment row is found by a Stripe payment intent or charge id from a signature-verified event, and the refund's owner fields are copied from that row. The upsert's conflict target is Stripe's refund id. This is safe as long as Stripe ids cannot be forged by a connected account. An owner comparison there is tracked defence in depth (FU-3), not part of this behaviour-preserving move.
 
 ## Type Definitions
 
@@ -805,3 +818,4 @@ When creating a new repository:
 | 2026-09-26 | `ArchiveRepository`: run lifecycle | Admin Archiving slice 2b: `takeOverStaleRuns`, `createRun`, `claimRunForContinue`, `runBatchAllAccounts` (through `archive_audit_trail_batch`), `finishRun`. The repository now writes `archive_runs`; archive rows move only through the database function |
 | 2026-10-07 | Added `ProcessedWebhookEventRepository` | CF-5 PR 1: the Stripe webhook's claim queries (five) moved behind a repository with exact chains. Recorded the "unscoped by design, owner proven by the caller" pattern for the webhook repositories (SA C-6) |
 | 2026-10-08 | `PaymentInvoiceRepository`: Stripe webhook section | CF-5 PR 2: the webhook's 14 `payment_invoices` queries moved behind seven new purpose methods and the reused `findByStripeInvoiceId` (now quiet on `PGRST116`, SA C-5); the `business_profiles` language read reuses `BusinessProfileRepository.findLanguage`. "Errors passed through" reworded (SA CR-P1-1) |
+| 2026-10-08 | `PaymentTransactionRepository`: Stripe webhook section; added `PaymentRefundRepository` | CF-5 PR 3: the webhook's 11 `payment_transactions` queries and its `payment_refunds` upsert moved behind seven purpose methods and `upsertFromStripe`, with exact chains and typed insert rows. Added to the structure tree; recorded that the dispute and refund paths have no `accountOwns` (FU-3) |

@@ -150,6 +150,107 @@ export type PaymentRepositoryResult<T> = {
   error: Error | null;
 };
 
+// ── Stripe webhook: transaction column lists and row shapes (CF-5 PR 3) ──────
+// Each list is the exact select string the webhook issued inline before it moved
+// here (docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md
+// §7.3.4). Literal types, so a caller can pass only these (SA C-3).
+
+/** `charge.dispute.*`: the payment, its owner and what the dispute alert needs. */
+export const WEBHOOK_TRANSACTION_DISPUTE_COLUMNS = 'id, user_id, status, amount, currency, contact_id, metadata';
+/** `charge.refunded`: what each refund row needs from its payment. */
+export const WEBHOOK_TRANSACTION_REFUND_COLUMNS = 'id, user_id, invoice_id, currency';
+/** `payment_intent.succeeded`: is this intent already recorded? */
+export const WEBHOOK_TRANSACTION_ID_COLUMNS = 'id';
+/** `invoice.paid` (#257): the row recorded under this intent, and whether it has an invoice yet. */
+export const WEBHOOK_TRANSACTION_ATTACH_COLUMNS = 'id, invoice_id';
+
+/** Closed set of column lists `findFirstByStripeReference` may select. */
+export type WebhookTransactionByReferenceColumns =
+  | typeof WEBHOOK_TRANSACTION_DISPUTE_COLUMNS
+  | typeof WEBHOOK_TRANSACTION_REFUND_COLUMNS;
+/** Closed set of column lists `findByPaymentIntentId` may select. */
+export type WebhookTransactionByIntentColumns =
+  | typeof WEBHOOK_TRANSACTION_ID_COLUMNS
+  | typeof WEBHOOK_TRANSACTION_ATTACH_COLUMNS;
+
+/**
+ * The row shape each column list returns. `status` is a plain string here:
+ * a disputed payment reads `disputed`, which `PaymentTransaction['status']`
+ * does not list.
+ */
+export interface WebhookTransactionFields {
+  [WEBHOOK_TRANSACTION_DISPUTE_COLUMNS]: {
+    id: string;
+    user_id: string;
+    status: string;
+    amount: number;
+    currency: string;
+    contact_id: string | null;
+    metadata: Record<string, unknown> | null;
+  };
+  [WEBHOOK_TRANSACTION_REFUND_COLUMNS]: Pick<PaymentTransaction, 'id' | 'user_id' | 'invoice_id' | 'currency'>;
+  [WEBHOOK_TRANSACTION_ID_COLUMNS]: Pick<PaymentTransaction, 'id'>;
+  [WEBHOOK_TRANSACTION_ATTACH_COLUMNS]: Pick<PaymentTransaction, 'id' | 'invoice_id'>;
+}
+
+/** Which Stripe reference a payment is found by: the intent when there is one, else the charge. */
+export interface WebhookStripeReference {
+  paymentIntentId: string | null | undefined;
+  chargeId: string;
+}
+
+/** What a dispute event writes on the payment: its new status and the metadata built from the dispute. */
+export interface WebhookDisputeState {
+  status: string;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * A payment row the webhook records: a standalone Connect payment
+ * (`payment_intent.succeeded`), a plan period, or an invoice payment
+ * (`invoice.paid`, Connect checkout). The route builds it as an object literal,
+ * so an extra key fails `tsc` (SA C-3).
+ *
+ * The fee columns arrive by spreading `feeColumns(fee)`, which is typed
+ * `Record<string, unknown>` and so adds nothing to the literal's type; they are
+ * listed here only so that a literal naming them is accepted.
+ */
+export interface NewWebhookTransactionRow {
+  user_id: string;
+  contact_id: string | null;
+  invoice_id?: string;
+  booking_id?: string | null;
+  service_id?: string | null;
+  amount: number;
+  currency: string;
+  status: 'succeeded';
+  processor_type: 'stripe';
+  payment_method: 'card';
+  stripe_payment_intent_id: string | null;
+  stripe_customer_id?: string | null;
+  processor_fee?: number;
+  net_amount?: number;
+  fee_currency?: string;
+  paid_at: string;
+  description: string;
+  refund_status?: 'none';
+  refunded_amount?: 0;
+  metadata: Record<string, unknown>;
+  stripe_connect_account_id: string | null;
+  charge_account_kind: 'connect' | 'platform';
+  account_resolution: string;
+}
+
+/**
+ * supabase-js's result, passed through unchanged (the same error object, so a
+ * caller can still read `message` or rethrow it). The webhook transaction
+ * methods neither catch nor log (see their section).
+ */
+export interface WebhookTransactionResult<T> {
+  data: T | null;
+  error: PostgrestError | null;
+}
+
 // Transaction Repository
 export class PaymentTransactionRepository {
   private supabase: SupabaseClient;
@@ -652,6 +753,157 @@ export class PaymentTransactionRepository {
       logger.error({ err: error, userId }, 'Failed to record manual payment');
       return { data: null, error: error as Error };
     }
+  }
+
+  // Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)
+  //
+  // Moved out of `app/api/stripe/webhook/route.ts` with no behaviour change
+  // (CF-5 PR 3, CLAUDE.md rule 1). Each method issues exactly the query the
+  // route issued inline: same table, operation, columns, filters in the same
+  // order, `.limit`, payload and terminal. The webhook's characterisation
+  // harness records the full chain, so a method that drifted would fail its
+  // snapshot.
+  //
+  // No `user_id` filter, as an exception to rule 4, bounded per
+  // docs/REPOSITORY_STRATEGY.md ("unscoped by design"): each doc below names the
+  // owner check it relies on instead. A unit test asserts none adds one.
+  //
+  // Errors: supabase-js's own `{ data, error }`, with no try/catch and no
+  // logging, as in `ProcessedWebhookEventRepository` and the invoice section.
+  // The route logs every error it acts on with the correlation and Stripe event
+  // ids; a catch here would turn a thrown query into a quiet miss where the
+  // route used to fail and let Stripe retry.
+
+  /**
+   * ⟨unscoped-by-design⟩ The first payment recorded under a Stripe reference:
+   * by payment intent when there is one, otherwise by charge. Returns an array
+   * (at most one row), as the route always read it. The filter comes after
+   * `.limit(1)`, the order the route built it in.
+   *
+   * Owner check relied on: none in the route (FU-3). The key is a Stripe id from
+   * a signature-verified `charge.dispute.*` or `charge.refunded` event, which no
+   * business can choose, and the row found carries its own `user_id`, which is
+   * what every later write uses.
+   */
+  async findFirstByStripeReference<C extends WebhookTransactionByReferenceColumns>(
+    reference: WebhookStripeReference,
+    columns: C
+  ): Promise<WebhookTransactionResult<Array<WebhookTransactionFields[C]>>> {
+    let query = this.supabase.from('payment_transactions').select(columns).limit(1);
+
+    query = reference.paymentIntentId
+      ? query.eq('stripe_payment_intent_id', reference.paymentIntentId)
+      : query.eq('stripe_charge_id', reference.chargeId);
+
+    const { data, error } = await query;
+    return { data: data as Array<WebhookTransactionFields[C]> | null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ `charge.dispute.*`: the payment's new status and the
+   * metadata the route built from the dispute (it keeps the status from before
+   * the dispute, so winning restores it). Owner check relied on: the row was
+   * found by the dispute's Stripe reference (`findFirstByStripeReference`), and
+   * the id comes from that row, never from the event.
+   */
+  async recordDisputeState(id: string, state: WebhookDisputeState): Promise<WebhookTransactionResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_transactions')
+      .update({
+        status: state.status,
+        metadata: state.metadata,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ The payment recorded under a Stripe payment intent, or
+   * `null`: `'id'` to dedupe a `payment_intent.succeeded`, `'id, invoice_id'`
+   * for `invoice.paid` to find a row the other handler wrote (#257).
+   *
+   * Owner check relied on: the intent id is from a signed event or from Stripe's
+   * own invoice, never from metadata. `payment_intent.succeeded` calls this
+   * after `accountOwns` on the claimed owner; `invoice.paid` after `accountOwns`
+   * on the invoice.
+   */
+  async findByPaymentIntentId<C extends WebhookTransactionByIntentColumns>(
+    paymentIntentId: string,
+    columns: C
+  ): Promise<WebhookTransactionResult<WebhookTransactionFields[C]>> {
+    const { data, error } = await this.supabase
+      .from('payment_transactions')
+      .select(columns)
+      .eq('stripe_payment_intent_id', paymentIntentId)
+      .limit(1)
+      .maybeSingle<WebhookTransactionFields[C]>();
+    return { data, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ `invoice.paid` (#257): attaches our invoice to a payment
+   * row that `payment_intent.succeeded` recorded first without one. Writes
+   * `invoice_id` only (no `updated_at`, as the route never did). Owner check
+   * relied on: the invoice was proved owned (`accountOwns`), and the row was
+   * found by the payment intent Stripe resolved for that invoice.
+   */
+  async attachToInvoice(id: string, invoiceId: string): Promise<WebhookTransactionResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_transactions')
+      .update({ invoice_id: invoiceId })
+      .eq('id', id);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ `invoice.paid`: the id of a payment already recorded
+   * against this invoice (succeeded or refunded), or `null`. It is what makes a
+   * redelivery safe. Owner check relied on: the invoice was proved owned
+   * (`accountOwns`) before this read.
+   */
+  async findSettledIdForInvoice(invoiceId: string): Promise<WebhookTransactionResult<{ id: string }>> {
+    const { data, error } = await this.supabase
+      .from('payment_transactions')
+      .select('id')
+      .eq('invoice_id', invoiceId)
+      .in('status', ['succeeded', 'refunded'])
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    return { data, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Records a payment the webhook saw settle. The row is
+   * built by the route as an object literal and inserted as it is; nothing is
+   * added, reordered or read back.
+   *
+   * Owner check relied on: the route proves `user_id` first. A standalone
+   * payment's owner comes from connected-account metadata and is checked with
+   * `accountOwns` (its contact, booking and service ids are vetted by
+   * `ownedOrNull`, Fix-1 F-4); an invoice payment's owner is the invoice's,
+   * proved with `accountOwns`.
+   */
+  async insertFromWebhook(row: NewWebhookTransactionRow): Promise<WebhookTransactionResult<null>> {
+    const { error } = await this.supabase.from('payment_transactions').insert(row);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Records a plan period's payment and returns its id,
+   * which the period row then links to. Same row type as `insertFromWebhook`.
+   * Owner check relied on: the plan, whose `user_id` this row carries, was
+   * proved owned (`accountOwns`) before anything was read for it.
+   */
+  async insertFromWebhookReturningId(
+    row: NewWebhookTransactionRow
+  ): Promise<WebhookTransactionResult<{ id: string }>> {
+    const { data, error } = await this.supabase
+      .from('payment_transactions')
+      .insert(row)
+      .select('id')
+      .single<{ id: string }>();
+    return { data, error };
   }
 }
 

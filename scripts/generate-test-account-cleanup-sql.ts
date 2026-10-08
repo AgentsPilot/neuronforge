@@ -108,10 +108,14 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * 20261043: insight_hypotheses and insight_measurements classified, their links
  * reviewed (G-18), cheaper G-18 and survivor scans, trigger events shown, and
  * the database time returned as server_ms (test-account cleanup first live run).
+ * 20261046: scheduling_bookings deleted before crm_contacts (its contact_id is
+ * NOT NULL with ON DELETE SET NULL, so the old order failed with 23502 on prod,
+ * 2026-10-08), and G-19 refuses any plan that deletes a parent before such a
+ * child. 20261044 is the unrelated SECURITY DEFINER lockdown, slice 1.
  */
-export const FUNCTION_MIGRATION = '20261043_operator_test_account_cleanup_insight_links';
+export const FUNCTION_MIGRATION = '20261046_operator_test_account_cleanup_notnull_order';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261042_operator_test_account_cleanup_billing_events';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261043_operator_test_account_cleanup_insight_links';
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
 export const PREVIOUS_MIGRATION_FILE = `supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql`;
@@ -765,7 +769,7 @@ function guard(id: string, item: string, countSql: string, clears: string, block
   FROM (SELECT (${countSql}) AS found, params.target_email, params.test_tag FROM target CROSS JOIN params) AS counted`;
 }
 
-/** The guard rows (G-1, G-2, G-4 to G-18). G-3, the typed confirmation, is checked in the delete block. */
+/** The guard rows (G-1, G-2, G-4 to G-19). G-3, the typed confirmation, is checked in the delete block. */
 function guardRowsCte(): string {
   const uid = 'target.user_id';
   const reviewedTriggers = [...REVIEWED_DELETE_TRIGGERS, ...EXTRA_REVIEWED_TRIGGERS]
@@ -909,6 +913,26 @@ function guardRowsCte(): string {
   FROM inbound_rows
   WHERE NOT inbound_rows.reviewed OR inbound_rows.key_width <> 1 OR NOT inbound_rows.owner_ok OR inbound_rows.found > 0`,
     `SELECT 'G-18'::text AS guard, 'links pointing at removed tables, reviewed'::text AS item, count(*)::bigint AS found, false AS blocked, ''::text AS clears FROM inbound_catalog`,
+    // G-19 (2026-10-08): ON DELETE SET NULL / SET DEFAULT into a NOT NULL
+    // column fails the parent delete with 23502, as NO ACTION fails it with
+    // 23503. Read from pg_catalog, never from a list, so any such link between
+    // two plan tables is checked, and a plan that removes the parent first is
+    // refused before anything is removed. Every key column counts, the
+    // conservative reading of a column-list SET NULL (none exists on prod).
+    `SELECT 'G-19'::text AS guard, child_plan.table_name || '.' || att.attname || ' to ' || parent_plan.table_name AS item, 1::bigint AS found, true AS blocked,
+    'Removing a row of the second table empties a NOT NULL column of the first (ON DELETE SET NULL or SET DEFAULT), which the database refuses, and the plan removes the second table first. Engineering must order the first table before it in the generator.'::text AS clears
+  FROM pg_catalog.pg_constraint AS con
+  JOIN pg_catalog.pg_class AS child_rel ON child_rel.oid = con.conrelid
+  JOIN pg_catalog.pg_namespace AS child_nsp ON child_nsp.oid = child_rel.relnamespace
+  JOIN pg_catalog.pg_class AS parent_rel ON parent_rel.oid = con.confrelid
+  JOIN pg_catalog.pg_namespace AS parent_nsp ON parent_nsp.oid = parent_rel.relnamespace
+  JOIN plan AS parent_plan ON parent_plan.table_name = parent_rel.relname::text
+  JOIN plan AS child_plan ON child_plan.table_name = child_rel.relname::text
+  JOIN pg_catalog.pg_attribute AS att ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)
+  WHERE con.contype = 'f' AND con.confdeltype IN ('n', 'd') AND con.conrelid <> con.confrelid
+    AND parent_nsp.nspname = 'public' AND child_nsp.nspname = 'public'
+    AND att.attnotnull AND (con.confdeltype = 'n' OR NOT att.atthasdef)
+    AND child_plan.ord > parent_plan.ord`,
   ];
 
   return `guard_rows AS (
@@ -1286,7 +1310,7 @@ export function renderMigrationSql(): string {
 -- The app pins the version stamp this function returns. Until the deployed build and this function agree, the Danger Zone check and delete refuse
 -- Rollback supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql restores the function of ${PREVIOUS_FUNCTION_MIGRATION}
 -- Operator exception OX-1r. One secret-gated function for the admin-only test-account cleanup routes
--- It runs the same generated guards G-1 to G-18 as scripts/test-account-cleanup-delete.sql
+-- It runs the same generated guards G-1 to G-19 as scripts/test-account-cleanup-delete.sql
 -- It refuses with 42501 unless the caller sends the second secret whose sha256 only this database holds
 -- Requirement docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md, SA re-ruling R-1 to R-9
 -- Runbook docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md, section 6
