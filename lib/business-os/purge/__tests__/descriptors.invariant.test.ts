@@ -816,7 +816,7 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
   });
 
   it.each(['insight_hypotheses', 'insight_measurements'])(
-    '%s (live-only, found by the first test-account cleanup run) is a reset LEAF with a dated review note',
+    '%s (found by the first test-account cleanup run, committed by #257) is a reset LEAF with a dated review note',
     (table) => {
       const d = byTable.get(table)!;
       expect(d.level).toBe('reset');
