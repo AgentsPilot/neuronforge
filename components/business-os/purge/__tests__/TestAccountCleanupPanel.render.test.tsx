@@ -156,9 +156,13 @@ describe('the check', () => {
     const user = await ready();
     await user.type(screen.getByLabelText(/Email of the test account/), 'a@walla.co.il');
     const tagInput = screen.getByLabelText(/Test tag/);
+    expect(screen.queryByTestId('cleanup-empty-tag-hint')).toBeNull();
     await user.clear(tagInput);
     expect(screen.getByRole('button', { name: 'Check' })).toBeDisabled();
+    // The disabled button explains itself: an empty tag would match every account.
+    expect(screen.getByTestId('cleanup-empty-tag-hint')).toHaveTextContent(/empty tag would match every account/);
     await user.type(tagInput, '@walla.co.il');
+    expect(screen.queryByTestId('cleanup-empty-tag-hint')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Check' }));
     await screen.findByTestId('cleanup-check-result');
     expect(posts('/check')[0].body).toEqual({ email: 'a@walla.co.il', tag: '@walla.co.il' });
