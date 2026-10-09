@@ -22,9 +22,39 @@
 
 import fs from 'fs';
 import path from 'path';
+import * as ts from 'typescript';
 import { planStartDate } from '../PaymentPlanService';
 
 const read = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
+
+/**
+ * One top-level function's text, ending at its closing brace (CF-5 PR 4, SA
+ * C-2: the slices below used to run to the end of the file, so a later
+ * function could satisfy them).
+ */
+function functionText(rel: string, name: string): string {
+  const sf = ts.createSourceFile(rel, read(rel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const fn = sf.statements.find((s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === name);
+  expect(fn).toBeDefined();
+  return fn!.getText(sf);
+}
+
+/** One method's code, comments removed, from a named class. */
+function methodCode(rel: string, className: string, method: string): string {
+  const sf = ts.createSourceFile(rel, read(rel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let found: ts.MethodDeclaration | undefined;
+  const visit = (node: ts.Node) => {
+    if (ts.isClassDeclaration(node) && node.name?.text === className) {
+      for (const member of node.members) {
+        if (ts.isMethodDeclaration(member) && member.body && member.name.getText(sf) === method) found = member;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  expect(found).toBeDefined();
+  return ts.createPrinter({ removeComments: true }).printNode(ts.EmitHint.Unspecified, found!, sf);
+}
 
 const ROUTE = 'app/api/website/payment-intent/route.ts';
 const FORM = 'components/website/blocks/StripePaymentForm.tsx';
@@ -298,17 +328,27 @@ describe('a deferred booking is not called paid before any money moves', () => {
   it('the webhook flips it to paid when the money actually arrives', () => {
     // Without this the deferred booking reads `pending` for ever, through
     // every period — the regression the `pending` change would have caused.
-    const webhook = read('app/api/stripe/webhook/route.ts');
-    const record = webhook.slice(webhook.indexOf('async function recordPlanPeriodPaid'));
+    const record = functionText('app/api/stripe/webhook/route.ts', 'recordPlanPeriodPaid');
 
-    expect(record).toMatch(/from\('scheduling_bookings'\)[\s\S]{0,160}payment_status: 'paid'/);
-    expect(record).toMatch(/\.eq\('user_id', plan\.data\.user_id\)/);
+    // CF-5 PR 4: the update moved into the booking repository. The route still
+    // makes it, for the plan's booking and scoped to the plan's owner, only
+    // when the plan has a booking...
+    expect(record).toMatch(
+      /if \(plan\.data\.booking_id\) \{\s*const \{ error: bookingError \} = await schedulingBookingRepository\.markPaidForOwner\(plan\.data\.booking_id, plan\.data\.user_id\)/
+    );
+    expect(record).not.toMatch(/from\(\s*['"`]scheduling_bookings['"`]\s*\)/);
+
+    // ...and the method is the write the route used to make inline.
+    const method = methodCode('lib/repositories/SchedulingRepository.ts', 'SchedulingBookingRepository', 'markPaidForOwner');
+    expect(method).toMatch(/from\('scheduling_bookings'\)[\s\S]{0,160}payment_status: 'paid'/);
+    expect(method).toMatch(/\.eq\('id', id\)/);
+    expect(method).toMatch(/\.eq\('user_id', userId\)/);
   });
 
   it('does not fail the webhook if only the booking update fails', () => {
     // The money is the part that must not be lost.
-    const webhook = read('app/api/stripe/webhook/route.ts');
-    const record = webhook.slice(webhook.indexOf('async function recordPlanPeriodPaid'));
+    const record = functionText('app/api/stripe/webhook/route.ts', 'recordPlanPeriodPaid');
+    expect(record.indexOf('if (bookingError)')).toBeGreaterThan(-1);
     const branch = record.slice(record.indexOf('if (bookingError)'));
 
     expect(branch.slice(0, 400)).not.toMatch(/throw/);

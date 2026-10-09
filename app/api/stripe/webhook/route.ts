@@ -20,6 +20,7 @@ import { syncBookingsForTransactions } from '@/lib/payments/syncBookingPaymentSt
 import { resolveProcessorFee, feeColumns } from '@/lib/payments/processorFee';
 import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
+import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import {
@@ -835,11 +836,7 @@ async function recordPlanPeriodPaid(
     return true;
   }
 
-  const { data: alreadyRecorded } = await supabaseAdmin
-    .from('payment_plan_installments')
-    .select('id')
-    .eq('stripe_invoice_id', invoice.id)
-    .maybeSingle();
+  const { data: alreadyRecorded } = await paymentPlanRepository.findInstallmentIdByStripeInvoiceId(invoice.id);
 
   if (alreadyRecorded) {
     log.info({ stripeInvoiceId: invoice.id }, 'Plan period already recorded');
@@ -950,20 +947,10 @@ async function recordPlanPeriodPaid(
    * row that was marked paid still claimed it had not been touched since it was
    * projected.
    */
-  await supabaseAdmin
-    .from('payment_plan_installments')
-    .update({
-      status: 'paid',
-      paid_at: new Date().toISOString(),
-      stripe_invoice_id: invoice.id,
-      payment_method: 'card',
-      processor_type: 'stripe',
-      transaction_id: periodTransaction?.id ?? null,
-      next_retry_at: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('subscription_id', plan.data.id)
-    .eq('installment_number', periodsPaid);
+  await paymentPlanRepository.markPeriodPaidFromStripe(plan.data.id, periodsPaid, {
+    stripeInvoiceId: invoice.id,
+    transactionId: periodTransaction?.id ?? null,
+  });
 
   /*
    * When the next period falls due.
@@ -975,14 +962,7 @@ async function recordPlanPeriodPaid(
    * already local, and a webhook should not make a network call to answer a
    * question it can answer from its own tables.
    */
-  const { data: nextPeriod } = await supabaseAdmin
-    .from('payment_plan_installments')
-    .select('due_date, amount')
-    .eq('subscription_id', plan.data.id)
-    .eq('status', 'pending')
-    .order('installment_number')
-    .limit(1)
-    .maybeSingle();
+  const { data: nextPeriod } = await paymentPlanRepository.findNextPendingPeriod(plan.data.id);
 
   await paymentPlanSubscriptionRepository.recordPeriodPaid(plan.data.id, periodsPaid, {
     chargeAt: nextPeriod?.due_date ?? null,
@@ -1007,11 +987,7 @@ async function recordPlanPeriodPaid(
    * wrote `paid`: this writes the same value again.
    */
   if (plan.data.booking_id) {
-    const { error: bookingError } = await supabaseAdmin
-      .from('scheduling_bookings')
-      .update({ payment_status: 'paid', updated_at: new Date().toISOString() })
-      .eq('id', plan.data.booking_id)
-      .eq('user_id', plan.data.user_id);
+    const { error: bookingError } = await schedulingBookingRepository.markPaidForOwner(plan.data.booking_id, plan.data.user_id);
 
     if (bookingError) {
       // Not fatal: the money is recorded, which is the part that must not be
@@ -1521,13 +1497,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   // Update linked booking's payment_status if invoice has a booking_id
   if (platformInvoice.booking_id) {
     log.info({ bookingId: platformInvoice.booking_id }, 'Updating booking payment_status');
-    const { error: bookingUpdateError } = await supabaseAdmin
-      .from('scheduling_bookings')
-      .update({
-        payment_status: 'paid',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', platformInvoice.booking_id);
+    const { error: bookingUpdateError } = await schedulingBookingRepository.markPaidUnscoped(platformInvoice.booking_id);
 
     if (bookingUpdateError) {
       log.error(
@@ -1696,12 +1666,18 @@ async function handleConnectCheckoutCompleted(
       typeof session.subscription === 'string' ? session.subscription : session.subscription.id;
     const ownerId = session.metadata?.owner_id;
 
-    try {
-      // The webhook has no module-level client; the one at the invoice handler
-      // is function-scoped. Constructed here for the same reason.
-      const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!);
+    // The webhook has no module-level client; the one at the invoice handler
+    // is function-scoped. Constructed here for the same reason.
+    const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
-      if (ownerId && (await accountOwns(connectAccountId, ownerId, log))) {
+    // Checked BEFORE the `try` below (FU-5 SA Q-3, CF-5 PR 4): an owner lookup
+    // that fails still throws (500, claim released, Stripe retries), but it is
+    // not a failed bind, so it must not be logged as "Could not bound a payment
+    // plan". Same order of effects as before: the client, the lookup, the bind.
+    const ownsPlan = ownerId ? await accountOwns(connectAccountId, ownerId, log) : false;
+
+    try {
+      if (ownerId && ownsPlan) {
         await bindPlanSubscription({
           stripe: stripeClient,
           connectAccountId,
@@ -1838,26 +1814,20 @@ async function handleConnectCheckoutCompleted(
     // Update linked booking's payment_status if invoice has a booking_id
     if (platformInvoice.booking_id) {
       log.info({ bookingId: platformInvoice.booking_id, invoiceId }, 'Updating booking payment status for invoice booking');
-      const { error: bookingError } = await supabaseAdmin
-        .from('scheduling_bookings')
-        .update({
-          payment_status: 'paid',
-          /*
-           * And confirm it, if it was only pending because money was owed.
-           *
-           * This set `payment_status` alone, so a booking taken with payment
-           * up front stayed `pending` forever once paid — while the website's
-           * own finalize route set it `confirmed` for the same event. Two paths
-           * through the same purchase left the booking in two different states.
-           *
-           * Scoped to `pending` by the filter below so a cancelled or completed
-           * booking is never resurrected by a late webhook.
-           */
-          status: 'confirmed',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', platformInvoice.booking_id)
-        .eq('status', 'pending');
+      /*
+       * Paid, and confirmed if it was only pending because money was owed.
+       *
+       * This set `payment_status` alone, so a booking taken with payment
+       * up front stayed `pending` forever once paid — while the website's
+       * own finalize route set it `confirmed` for the same event. Two paths
+       * through the same purchase left the booking in two different states.
+       *
+       * Scoped to `pending` (inside the method) so a cancelled or completed
+       * booking is never resurrected by a late webhook.
+       */
+      const { error: bookingError } = await schedulingBookingRepository.markPaidAndConfirmIfPending(
+        platformInvoice.booking_id
+      );
 
       if (bookingError) {
         log.error({ err: bookingError, bookingId: platformInvoice.booking_id }, 'Failed to update booking payment status');
@@ -1887,17 +1857,10 @@ async function handleConnectCheckoutCompleted(
 
     // Update booking payment status. `count` (never `.select()` after an
     // update) is how a foreign id is told apart: it updates nothing.
-    const { error: bookingError, count: bookingsUpdated } = await supabaseAdmin
-      .from('scheduling_bookings')
-      .update(
-        {
-          payment_status: 'paid',
-          updated_at: new Date().toISOString()
-        },
-        { count: 'exact' }
-      )
-      .eq('id', bookingId)
-      .eq('user_id', owner);
+    const { error: bookingError, count: bookingsUpdated } = await schedulingBookingRepository.markPaidForOwnerCounted(
+      bookingId,
+      owner
+    );
 
     if (bookingError) {
       log.error({ err: bookingError, bookingId }, 'Failed to update booking payment status');
@@ -2138,11 +2101,7 @@ async function handlePlanSubscriptionEnded(
   connectAccountId: string,
   log: Logger
 ) {
-  const { data: plan } = await supabaseAdmin
-    .from('payment_plan_subscriptions')
-    .select('id, user_id, status, installment_count, periods_paid')
-    .eq('stripe_subscription_id', subscription.id)
-    .maybeSingle();
+  const { data: plan } = await paymentPlanSubscriptionRepository.findEndStateBySubscriptionId(subscription.id);
 
   // Not a plan this platform sold. Connected accounts have subscriptions of
   // their own and they are none of our business.
@@ -2160,31 +2119,22 @@ async function handlePlanSubscriptionEnded(
 
   const completed = (plan.periods_paid ?? 0) >= (plan.installment_count ?? 0);
 
-  await supabaseAdmin
-    .from('payment_plan_subscriptions')
-    .update({
-      status: completed ? 'completed' : 'cancelled',
-      [completed ? 'completed_at' : 'cancelled_at']: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', plan.id);
+  await paymentPlanSubscriptionRepository.endFromStripe(plan.id, completed ? 'completed' : 'cancelled');
 
   // Periods that will now never be charged stop counting as owed. `cancelled`
   // is a settled status, which is what takes them out of receivables.
+  //
+  // Everything unsettled, not only `pending`: the method filters out only `paid`
+  // and `cancelled`. A billed-but-unpaid period kept counting as owed on a
+  // subscription Stripe had already ended — the exact thing this write exists
+  // to prevent.
+  //
+  // `subscription.id` is Stripe's id, compared with a column that holds our plan
+  // row's UUID, so this never matches today: PostgREST rejects the value and
+  // the error is discarded (F-3, reported, pinned by the harness). CF-5 moves it
+  // unchanged; the fix is its own decision.
   if (!completed) {
-    await supabaseAdmin
-      .from('payment_plan_installments')
-      .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
-      .eq('user_id', plan.user_id)
-      .eq('subscription_id', subscription.id)
-      /*
-       * Everything unsettled, not only `pending`.
-       *
-       * A billed-but-unpaid period kept counting as owed on a subscription
-       * Stripe had already ended — the exact thing the comment above says this
-       * write exists to prevent.
-       */
-      .not('status', 'in', '(paid,cancelled)');
+    await paymentPlanRepository.cancelOpenPeriodsForEndedPlan(plan.user_id, subscription.id);
   }
 
   log.info(

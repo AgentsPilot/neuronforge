@@ -402,18 +402,36 @@ describe('guards', () => {
   });
 });
 
+const ACTOR = "NULLIF(current_setting('cleanup.actor_id', true), '')::uuid";
+
 describe('audit row (SA TQ-5, C-7)', () => {
   it('uses a registered event whose severity and flags match the SQL', () => {
     expect(AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED).toBe(AUDIT_ACTION);
     const meta = EVENT_METADATA[AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED];
     expect(meta.severity).toBe(AUDIT_SEVERITY);
     expect([...(meta.complianceFlags ?? [])]).toEqual([...AUDIT_COMPLIANCE_FLAGS]);
-    expect(deleteSql).toContain(
-      `'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, NULLIF(current_setting('cleanup.actor_id', true), '')::uuid,`
-    );
+    expect(deleteSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,\n    ${ACTOR}, ${ACTOR},`);
     // SA-5: unset (the pasted file), actor_id is NULL and source is 'operator_sql', as before.
     expect(deleteSql).toContain("'source', coalesce(NULLIF(current_setting('cleanup.source', true), ''), 'operator_sql')");
     expect(deleteSql).toContain(`'${AUDIT_SEVERITY}', ARRAY['SOC2']::text[], now()`);
+  });
+
+  // 20261047 (AD-2 convention): /admin/audit-trail names a row only from user_id,
+  // so the admin who ran the delete is user_id AND actor_id; entity = the removed login.
+  it('names the admin as user_id and actor_id on the admin page, and NULL for the pasted operator_sql file', () => {
+    const columns = 'action, entity_type, entity_id, resource_name, user_id, actor_id,';
+    for (const sql of [deleteSql, migrationSql]) {
+      expect(sql).toContain(`INSERT INTO public.audit_trail (${columns}`);
+      expect(sql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,\n    ${ACTOR}, ${ACTOR},`);
+    }
+    // admin_page: the function sets the actor from p_actor on a delete (and refuses a delete without one).
+    expect(migrationSql).toContain("PERFORM pg_catalog.set_config('cleanup.actor_id', CASE WHEN p_mode = 'delete' THEN p_actor::text ELSE '' END, true);");
+    expect(migrationSql).toContain("PERFORM pg_catalog.set_config('cleanup.source', 'admin_page', true);");
+    expect(migrationSql).toContain("IF p_mode = 'delete' AND p_actor IS NULL THEN");
+    // operator_sql: the pasted file never sets an actor or a source, so user_id = actor_id = NULL.
+    expect(deleteSql).not.toMatch(/set_config\('cleanup\.(actor_id|source)'/);
+    // The restored 20261046 function still writes user_id NULL: the rollback really is the old behaviour.
+    expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
   });
 });
 
@@ -635,6 +653,9 @@ describe('applied history: a function migration is never edited once applied', (
     // Applied to prod 2026-10-07/08 (test-account cleanup first live run, insight links).
     ['supabase/migrations/20261043_operator_test_account_cleanup_insight_links.sql', '5f4c0d5650e7158506f65fbbe25f8818fed9b5875ae78ef040c83561276b800f'],
     ['supabase/SQL Scripts/20261043_operator_test_account_cleanup_insight_links_rollback.sql', '7c16da55c512d10307ea9df995d23f7b4e8e5aeef11f0fd9ca701cb03b26a27b'],
+    // Applied to prod 2026-10-08 (scheduling_bookings before crm_contacts, G-19).
+    ['supabase/migrations/20261046_operator_test_account_cleanup_notnull_order.sql', 'e401f27fbe77e7a67fadb54e74fd36fc568a904c90eec410cc37d73ab45fa3b9'],
+    ['supabase/SQL Scripts/20261046_operator_test_account_cleanup_notnull_order_rollback.sql', 'd86a4874dcf2161d1849433061ce2b9c9c7841c1a216175cee3d4d20c1d7293b'],
   ];
 
   it.each(APPLIED)('%s is byte-identical to what was applied', (file, sha256) => {
