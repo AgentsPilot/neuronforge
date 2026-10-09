@@ -339,6 +339,40 @@ describe('resolveAccountOwner', () => {
     const db = ownerDb({ expressError: { message: 'x' } as { code: string; message: string } });
     await expect(resolveAccountOwner(db, 'acct_a')).rejects.toThrow('(code unknown)');
   });
+
+  /*
+   * CF-5 PR 5 moved both reads behind repositories built on `db`. Neither may
+   * catch: a read that REJECTS (rather than returning an error) must still
+   * reject out of the resolver as it is, so the webhook answers 500 and Stripe
+   * retries. Written and run against the inline resolver first.
+   */
+  function rejectingDb(table: 'stripe_connect_accounts' | 'plugin_connections') {
+    const thrown = new Error(`socket hang up on ${table}`);
+    const tablesRead: string[] = [];
+    const answer = (t: string, value: unknown) => (t === table ? Promise.reject(thrown) : Promise.resolve(value));
+    return {
+      thrown,
+      tablesRead,
+      from(t: string) {
+        tablesRead.push(t);
+        if (t === 'stripe_connect_accounts') {
+          return { select: () => ({ eq: () => ({ maybeSingle: () => answer(t, { data: null, error: null }) }) }) };
+        }
+        return { select: () => ({ eq: () => answer(t, { data: [], error: null }) }) };
+      },
+    };
+  }
+
+  it.each(['stripe_connect_accounts', 'plugin_connections'] as const)(
+    'CF-5 PR 5: a rejected %s read rejects with that same error (no catch on the way)',
+    async (table) => {
+      const db = rejectingDb(table);
+      await expect(resolveAccountOwner(db, 'acct_b')).rejects.toBe(db.thrown);
+      expect(db.tablesRead).toEqual(
+        table === 'stripe_connect_accounts' ? ['stripe_connect_accounts'] : ['stripe_connect_accounts', 'plugin_connections']
+      );
+    }
+  );
 });
 
 /**
