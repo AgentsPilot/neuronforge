@@ -11,7 +11,9 @@ import type { BoostLabels } from '@/lib/business-os/boost/boostPackagesTypes';
 /**
  * The owner-facing status. Internal states are folded so the owner never reads
  * an operator code: `pending` → processing, `paid` → credited, `abandoned` →
- * expired, any flag or dispute → under review.
+ * expired, any flag or OPEN dispute → under review, a LOST dispute → reversed
+ * (user decision BQ-1, 2026-10-08: "under review" forever is not true once the
+ * bank has decided).
  */
 export const BOOST_PURCHASE_OWNER_STATUSES = [
   'processing',
@@ -20,6 +22,7 @@ export const BOOST_PURCHASE_OWNER_STATUSES = [
   'failed',
   'expired',
   'under_review',
+  'reversed',
   'refunded',
   'partially_refunded',
 ] as const;

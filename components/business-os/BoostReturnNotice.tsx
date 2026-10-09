@@ -134,6 +134,8 @@ export function BoostReturnNotice() {
               return finish('under_review');
             case 'refunded':
             case 'partially_refunded':
+            case 'reversed':
+              // Not an answer to "did my payment go through?" moments after paying.
               return finish('hidden');
             default:
               break; // processing: keep asking

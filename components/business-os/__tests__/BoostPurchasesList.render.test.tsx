@@ -152,6 +152,7 @@ describe('BoostPurchasesList', () => {
     ['refunded', 'Refunded'],
     ['partially_refunded', 'Partly refunded'],
     ['under_review', 'Payment under review'],
+    ['reversed', 'Payment reversed'],
   ] as const)('status %s → "%s"', async (status, text) => {
     await show([purchase({ status })]);
     expect(screen.getByTestId('boost-purchase-status')).toHaveTextContent(text);
@@ -324,5 +325,24 @@ describe('the catalogue fails: the purchases notice (user decision 2026-10-08)',
       expect(screen.queryByTestId('boost-purchases-unavailable')).not.toBeInTheDocument();
       view.unmount();
     }
+  });
+});
+
+describe('BQ-1 (user decision 2026-10-08): a lost chargeback reads "Payment reversed"', () => {
+  it.each([
+    ['en', 'Payment reversed'],
+    ['he', 'התשלום בוטל'],
+    ['es', 'Pago revertido'],
+  ] as const)('%s: the chip, with no digits', async (language, text) => {
+    mockLang.language = language;
+    await show([purchase({ status: 'reversed' })]);
+    const chip = screen.getByTestId('boost-purchase-status');
+    expect(chip).toHaveTextContent(text);
+    expect(chip.textContent).not.toMatch(/[0-9]/);
+  });
+
+  it('an open dispute keeps "Payment under review"; refunds keep their own words', async () => {
+    await show([purchase({ id: 'a', status: 'under_review' }), purchase({ id: 'b', status: 'refunded' }), purchase({ id: 'c', status: 'partially_refunded' })]);
+    expect(screen.getAllByTestId('boost-purchase-status').map((el) => el.textContent)).toEqual(['Payment under review', 'Refunded', 'Partly refunded']);
   });
 });
