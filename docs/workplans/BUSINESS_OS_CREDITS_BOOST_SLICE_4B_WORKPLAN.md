@@ -1,6 +1,6 @@
 # Workplan: Business OS Credits Boost — Slice 4b "Refunds, disputes and the stuck-purchase pass"
 
-> **Last Updated**: 2026-10-08
+> **Last Updated**: 2026-10-09
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md): FR-35, FR-36, FR-37, FR-43; T-9; R-6, R-8, R-10; F-1; the go-live gate (4a §7)
@@ -10,9 +10,9 @@
 - **Slice 3 §9:** C-8 (b) `bos_boost_paid_not_creditable` rows are listed by the reconcile pass.
 - **Plan payments SA-P4 / PF-5:** one `bos-billing-reconcile` cron with pluggable passes, created by whichever of P-8b and boost 4b lands first. The in-webhook reclaim of stale `processing` claims is P-8b's.
 
-**Branch:** `feature/bos-credits-boost-slice-4b`, cut from `origin/main` `790e2ca8` (after #267)
+**Branch:** 4b.1 `feature/bos-credits-boost-slice-4b`, cut from `origin/main` `790e2ca8` (after #267); 4b.2 `feature/bos-credits-boost-slice-4b2`, cut from `origin/main` `88b1938f` (after #272)
 **Date:** 2026-10-08
-**Status:** **4b.1 "refunds and disputes": approved and committed 2026-10-08, [PR #272](https://github.com/AgentsPilot/neuronforge/pull/272) open.** **QA PASS WITH NOTES 2026-10-08** (QA4b-M1 Medium: a re-delivered dispute.created reopens a won dispute; QA4b-L1 Low wording; see QA Testing Report). SA code review approved 2026-10-08 (Code Complete 2026-10-08) (results in §6.1). 4b.2 (reconcile) not started. *(Earlier: **SA approved with conditions 2026-10-08** (C-1 to C-8; split 4b.1 / 4b.2). BQ-1 (owner wording after a lost dispute) is with the user. Nothing is committed.)*
+**Status:** **4b.2 approved and committed 2026-10-09, PR open; the user applies 20261032 on PROD before the merge.** **4b.2 "the stuck-purchase pass": review fixes applied 2026-10-09 (SA CR-1 to CR-3, QA4b2-M1, QA R-1 to R-5), SA re-check 2026-10-09: Code Approved for QA; QA re-check 2026-10-09: PASS (QA4b2-M1 closed)** (§6.2). *(Earlier:* **QA PASS WITH NOTES 2026-10-09 (QA4b2-M1 = SA CR-1 open; re-check after CR-1 to CR-3)**; implemented 2026-10-09; SA code review approved 2026-10-09 after the CR-1 to CR-3 re-check; awaiting the QA re-check and the user diff** (results in §6.2; nothing committed; migration 20261032 not yet applied). **4b.1 "refunds and disputes": merged 2026-10-09 ([PR #272](https://github.com/AgentsPilot/neuronforge/pull/272), 88b1938f).** *(Earlier: 4b.2 in progress.)* *(Earlier: approved and committed 2026-10-08, PR #272 open.)* **QA PASS WITH NOTES 2026-10-08** (QA4b-M1 Medium: a re-delivered dispute.created reopens a won dispute; QA4b-L1 Low wording; see QA Testing Report). SA code review approved 2026-10-08 (Code Complete 2026-10-08) (results in §6.1). 4b.2 (reconcile) not started. *(Earlier: **SA approved with conditions 2026-10-08** (C-1 to C-8; split 4b.1 / 4b.2). BQ-1 (owner wording after a lost dispute) is with the user. Nothing is committed.)*
 
 ## Overview
 
@@ -232,12 +232,12 @@ CREATE INDEX business_os_boost_purchases_receipt_backfill_idx
 - ✅ T4b.4 Route integration (refund → `partially_refunded`; dispute created → `disputed`; won → `paid`; legacy pack charge unchanged; Connect untouched) + characterisation byte-identical for Connect
 
 **4b.2**
-- [ ] T4b.5 Repository `listForReconcile` + tests
-- [ ] T4b.6 The boost pass + tests (stuck → credited / expired / failed / still processing; no session past 48 h; late reversal; receipt backfill; deadline; idempotent twice in a row; one bad row never stops the batch)
-- [ ] T4b.7 The cron route (fail-closed auth, run record, passes seam) + tests
-- [ ] T4b.8 The admin trigger route (`requireAdmin` first) + tests
-- [ ] T4b.9 Migration 20261032 + runbook (if Q-7); `vercel.json` last
-- [ ] T4b.10 Docs: 4a §7 step 6 → fallback; requirement; go-live gate
+- ✅ T4b.5 Repository `listForReconcile` + tests
+- ✅ T4b.6 The boost pass + tests (stuck → credited / expired / failed / still processing; no session past 48 h; late reversal; receipt backfill; deadline; idempotent twice in a row; one bad row never stops the batch; C-9 disputes)
+- ✅ T4b.7 The cron route (fail-closed auth, run record, passes seam) + tests
+- ✅ T4b.8 The admin trigger route (`requireAdmin` first) + tests; admin access register (C-5)
+- ✅ T4b.9 Migration 20261032 + pre-check, checker, rollback, migration test and the PROD runbook (§7); `vercel.json` last
+- ✅ T4b.10 Docs: 4a §7 step 6 → fallback; requirement; go-live gate (C-6)
 
 ---
 
@@ -331,19 +331,83 @@ CREATE INDEX business_os_boost_purchases_receipt_backfill_idx
 4. **Unreadable charge events** (e.g. a negative amount) are flagged in the audit (`reversal_unreadable`) and complete; the row is not moved.
 5. **C-8 in 4b.1:** the webhook's dispute object carries its own id, so nothing needs expanding here. The expanded read is the 4b.2 pass's.
 
+### 6.2 Results (Dev, 2026-10-09): 4b.2
+
+**What was built:**
+- **`BusinessOsBoostPurchaseRepository.listForReconcile({ kind, livemode, before, limit })`**, unscoped by design: `stuck` (`pending` / `awaiting_payment` with `checkout_expires_at < before`), `receipt_missing` (`paid`, no `receipt_url`, `paid_at < before`) and `disputed` (`status_changed_at < before`, for C-9). One mode per read, oldest first, the id as tie-break, at most 50. A source guard keeps it to the reconcile wiring.
+- **`lib/business-os/boost/boostReconcilePass.ts`** (pure, ports injected) and **`boostReconcileDeps.ts`** (server-only wiring, lazy repository, the Business OS Stripe client, the key's mode). Three reads in order: stuck, disputed, receipts.
+  - **Stuck:** a row with no session is expired after expiry + 48 h, with no Stripe read and never a credit (C-3). Otherwise `checkout.sessions.retrieve(id, { expand: ['payment_intent.latest_charge'] }, { timeout: 5000, maxNetworkRetries: 0 })` with a 6 s local bound. Paid → `credit` with the session's figures (4a's Zod narrowing), `BOS_BOOST_CREDITED` (with `source: 'reconcile'`), the receipt from the charge already in hand (no second Stripe read), then the charge's refund and dispute state. Expired, or open past `expires_at` → `expired`. Complete but unpaid with the intent at `requires_payment_method` / `canceled` → `failed` + `BOS_BOOST_PAYMENT_FAILED`. Still processing or open → left and counted. A 404 session, an unreadable session, a livemode or marker mismatch and a free session are findings with no write.
+  - **C-2:** `already_credited` is a race (info). `not_allowed` and `not_creditable` re-read the row: if a webhook moved it out of the stuck set (or to paid), it is `raced`, with no alert and no audit; otherwise a finding.
+  - **Late reversals (N-2, C-8):** the charge's cumulative `amount_refunded` goes through 4b.1's `plan`; a charge showing `disputed` has its dispute listed by the payment intent (see deviation 1), opened as `created` would, then concluded if Stripe says won or lost. No readable dispute is a finding (`dispute_id_unreadable`).
+  - **C-9:** each `disputed` row's dispute is retrieved by the stored id: won → `dispute_won`, lost → `dispute_lost`, open → left. `warning_closed` and unknown statuses are findings (see deviation 4).
+  - **Receipts:** the 4a `recordBoostReceipt` for `paid` rows 10 min after payment; a receipt not filled is counted, never alerted.
+  - **Isolation:** a transient Stripe or SQL failure defers the row; a deterministic one is a finding; XX000 is deferred and alerted; an unexpected throw is deferred and alerted; the next row always runs. A Stripe key refusal (authentication / permission), a missing client or an unknown key mode **stops** the pass (every row would fail the same way) and is reported. **C-4:** no row starts with less than 10 s left; `deadlineHit` and `rowsLeft` are reported.
+  - **Counts** (run record keys `boost<Key>`): examined, credited, expired, failed, stillProcessing, stillOpen, flagged, raced, reversalsApplied, disputesExamined, disputesConcluded, disputesStillOpen, receiptsExamined, receiptsFilled, receiptsNotFilled, deferred, deadlineHit, rowsLeft, batchFull, listFailed, stripeUnavailable. Findings do not colour the job (the settlement-gap precedent); deferred rows, the deadline, a failed list, no Stripe and a failed pass make it "partly done".
+- **`lib/business-os/billing/reconcilePassRunner.ts`** (the `ReconcilePass` contract and `runReconcilePasses`: in order, one shared deadline, counters flattened as `<pass><Key>`, a throwing pass counted without stopping the next) and **`reconcilePasses.ts`** (THE SEAM: `RECONCILE_PASSES = [boostReconcilePass]`, the 45 s budget). P-8b appends its pass there and adds its counters to the job's registry entry.
+- **`app/api/cron/bos-billing-reconcile/route.ts`**: the settlement-gap shape (fail-closed `verifyCronSecret`, `withCronRunRecord('bos-billing-reconcile', runJob)`, `maxDuration = 60`, `runtime = 'nodejs'`). Registered in `lib/cron/bosCronJobs.ts` (daily, `MAX_60`, `addedOn: '2026-10-09'`, 23 counts, 5 partly-done conditions). `vercel.json` gained `41 5 * * *`, added last.
+- **`POST /api/admin/business-os/credits/boost/reconcile`**: `requireAdmin` first; the body must be empty or `{}` (strict Zod); a write-ahead `BOS_BOOST_RECONCILE_TRIGGERED` (`warning`, SOC2, audience `bos`) flushed before the pass, on entity `system` with a server-generated run id and the admin as user and actor (C-7); then the boost pass once, trigger `admin`, 45 s deadline; counts only in the response. Registered as row 102 of the admin access register (C-5), with the census re-measured (99 = 93 + 6 + 0 open, 69 files; rows 99–101 register the three test-account cleanup handlers that `main` already had unregistered).
+- **Migration 20261032** (two partial indexes, plain `CREATE INDEX` in one transaction), its rollback (`DROP INDEX IF EXISTS`), a read-only pre-check and a checker with a VERDICT row, all pinned by `business-os-boost-reconcile-indexes.migration.test.ts`; the runbook is in §7.
+- **4a §7 step 6** is marked "fallback only"; its SQL is unchanged (still pinned by `boostRecoverySql.doc.test.ts`).
+- **Lots are never touched:** a source guard over the six new production files bans the lot tables, repository, function and take-back names.
+
+| Run (scratch configs, `--runTestsByPath`, `--ci`) | Result |
+|---|---|
+| New `boostReconcilePass.test.ts`: 72 (a fake following 20261031 + a fake Stripe that moves a fake clock): every stuck state × Stripe outcome; C-3 incl. an expired no-session row + a late paid event → `mismatch no_session`, alerted, no lot; C-2 (credit race, expire race, a genuine disagreement, two overlapping runs → one credit, one audit); run twice → identical rows and audits; C-4 (9 of 20 rows at 4 s per read, `rowsLeft` 11, later reads not started); the 50-row bound; per-row isolation (5xx, connection error, 23514, 40001, a thrown defect, XX000); key refusal stops; late refund (partial, full), late dispute (open, won, lost), C-8 no readable dispute, currency mismatch; C-9 (won, lost, two open statuses, the out-of-order `closed(won)` before `created` healed, `warning_closed`, 404, another payment, unreadable, no stored id, timeout); receipts; the counters equal the registry; every audit on the purchase and its own account | ✅ |
+| Repository (+8: each kind's exact query, no `user_id`, the clamp, refusals before any query, transient vs unreadable, the caller guard; the 4a `findByIdForWebhook` guard now allows `boostReconcileDeps.ts`, see deviation 2) | ✅ 81 |
+| `reconcilePassRunner.test.ts` 5; cron route 8 (no header / wrong / no Bearer → 401, production with no secret → 401 + error, development, order + shared deadline + flattened counts, a throwing pass, the route shape); admin route 22 (G-1…G-6, six refused bodies, three accepted, the audit before the pass on `system` with the run id, boost pass only, counts, no cron record, no `CRON_SECRET`, no email in logs); migration test 42 | ✅ |
+| Registry and gates: `bosCronJobs` 93 and `vercelCrons` 10 (17 jobs), `runRecord.adoption` 55 (the new job records start + finish as succeeded with numeric counts; a test-mode key is set so "nothing to do" is a clean run), `adminGate.writes` 328 (64 → 65 cases), `eventAudience` (194 / 49 bos) | ✅ |
+| **`test:authz-guard` equivalent**: `admin-authz-surface.guard.test.ts` + `security-definer-surface.guard.test.ts` | ✅ |
+| Mutations (each restored, SHA-1 checked): C-2 re-read removed → 1 red; the C-4 margin set to 0 → 1 red; C-3 no-session branch removed → 4 red | ✅ |
+| **Connect characterisation** run with `--ci` (no snapshot can be written): **all snapshots pass; no snapshot file changed** | ✅ |
+| **Broad set** (`--ci`, 338 files: every boost, billing, entitlements, cron, audit, admin API, Stripe, payments, credits, `components/business-os`, `supabase/__tests__` and migration suite) | ✅ **337 suites, 9,567 tests, 110 snapshots**. The one red suite, `scripts/__tests__/stripePlanPriceScripts.test.ts` (2 tests), spawns `<worktree>/node_modules/tsx`, which this worktree does not have (no junction, by rule); it is environmental, and none of its files are touched here |
+| `oneAddressPolicy` on a Linux-path copy (deleted after) | ✅ 4 |
+| Scoped tsc, types-first (`tsconfig.4b2.json`) | ✅ **0 errors in 4b.2 files** (73 elsewhere, untouched, pulled in through the admin gate test's imports) |
+
+**Deviations (for SA):**
+1. **C-8, the dispute id:** in Stripe API `2025-10-29.clover` (SDK 19) a Charge has `disputed: boolean` but **no `dispute` field**, so `latest_charge.dispute` cannot be expanded. The pass lists the disputes **by the payment intent** (`disputes.list({ payment_intent, limit: 10 })`, same 5 s bound) and takes the newest. No readable dispute is a finding, as C-8 asks. This costs a second Stripe read, only for a charge that shows `disputed`.
+2. **The C-2 re-read uses `findByIdForWebhook`** (the row by its own id, which the pass read from our table a moment ago). Its source guard (SA Q-1) now also allows `lib/business-os/boost/boostReconcileDeps.ts`; the pass itself names only a `reread` port. The alternative was a duplicate by-id method.
+3. **The admin trigger writes no `bos_cron_runs` row.** `withCronRunRecord` records only a proven Vercel call and its repository has one permitted caller, and the "Drain now" precedent (7d C7-11) says an admin press must not record a run of the scheduled job, so a dead cron still shows as dead. The durable trace of a press is the write-ahead audit row (with the run id) plus the counts in the response and the log. §3.5 said "through `withCronRunRecord` with `trigger: 'admin'`".
+4. **`warning_closed` (and any unknown dispute status) is a finding, not a conclusion.** C-9 named won, lost and open only. An inquiry that closed without becoming a chargeback leaves the purchase `disputed` ("Payment under review") until a person looks; mapping it to `dispute_won` would be a guess. It repeats nightly until handled. **Question for SA:** map `warning_closed` to `dispute_won`?
+5. **No reversal check on receipt-backfill rows.** Those rows were credited by the webhook, so their refunds and disputes reach the webhook (or are the C-6 residual); the extra Stripe read was not worth it.
+6. **The pass never flags a row itself** for its own findings (a 404 session, an unreadable session, a livemode or marker mismatch, a free session): it alerts and audits `BOS_BOOST_FLAGGED` with the reason and leaves the row, so a finding repeats each night until a person acts (slice 6 lists them). Only the SQL's own `mismatch` flags a row.
+7. **Two runner files** instead of one: `reconcilePassRunner.ts` (pure contract and runner) and `reconcilePasses.ts` (the server-only pass list, the seam). The split keeps the runner testable without the server-only wiring.
+8. **`addedOn: '2026-10-09'`** in the job registry must be the real deploy day (a date before the deploy brings back a false "Stopped"). If the merge lands later, RM updates it in the same PR.
+9. **The disputed read has no index** (the approved migration has two). Disputed rows are rare; a third index was not added without SA.
+
+**Review fixes (Dev, 2026-10-09): SA CR-1 to CR-3, QA4b2-M1, QA R-1 to R-5.**
+
+| # | Change | Tests |
+|---|---|---|
+| **CR-1 / QA4b2-M1** (Medium) | **One record per problem, not one per night.** `finding()` now has three modes. **A stuck row** (`pending` / `awaiting_payment`) with any finding (404 / 400 / unreadable session, session, livemode or marker mismatch, a free session, a missing intent or amounts, a still-stuck `not_allowed`) is flagged once with `transition('flagged_mismatch', reason)` (2b allows it from both; `flag_reason` is free text of at most 64 characters). That writes the one `BOS_BOOST_FLAGGED` (with `flag_applied: true`), takes the row out of the stuck set (no nightly Stripe re-read) and lists it for slice 6. If the row moved before the flag (a webhook won), or the flag call fails, it falls back to "audit once". **A row that cannot be flagged** (`disputed`, `paid`, a moved row) is alerted (`error`, `alert: true`) on every run, with `repeat: true` after the first, but audited **only the first time**. **"First" is detected without a migration** by a new, narrow existence check, `AuditTrailRepository.hasFindingEntry({ accountId, purchaseId, reason })`: a head count (no row, no `details` returned) on `audit_trail` scoped `.eq('user_id', <the purchase's own account>)`, entity `business_os_boost_purchase` + the purchase id (the indexed entity id), action `BOS_BOOST_FLAGGED`, `details->>reason`. Its only caller is `boostReconcileDeps.ts` (a source guard pins it). If the check fails, the audit is **skipped** (a `warn`; the alert still fires), so a broken read can never turn into a nightly duplicate. **Why this and not the alternatives:** an operator-only repeat needs a new owner-hidden entity type plus an owner-policy migration; a `status_changed_at` window misses a finding that first appears weeks after the row moved (an open dispute that later takes an unknown status) and double-counts a cron run plus an admin press on the same day; "never audit" loses the one owner-visible record SA asked for. Known limit: two runs overlapping on the same row can each see "no record yet" and both audit (rare: the cron plus an admin press at the same second). **The SQL's own flags** (`credit` → `mismatch`, `transition` → `mismatch`) are audited as before: the row has already left the stuck set, so they cannot repeat. A deterministic SQL failure is never followed by a flag call (`once` mode). | R-1: six stuck causes (404, 400, unreadable, livemode, marker, free) × two runs → exactly one FLAGGED and run 2 reads nothing; five disputed causes (unknown status, 404, another payment, `eur`, unreadable) × two runs → alerted twice, one FLAGGED, `repeat` false then true, no transition; the lookup failing → no audit, alert kept; a row that moved before the flag → audit once. `hasFindingEntry`: 4 (exact query, false, errors and bad input read nothing, the caller guard). Mutations: the "first only" check removed → 5 red; the stuck flag removed → 12 red |
+| **CR-2** (Low) | `warning_closed` → `dispute_won` in the pass (C-9 and after a credit) **and** in 4b.1's webhook `plan()` (`charge.dispute.closed`), so the live event and the nightly pass agree. Other unknown statuses stay findings in the pass and `info` in the webhook | R-2: the pass (`disputed` + `warning_closed` → `paid`, one REVERSED, no finding); the webhook (`closed warning_closed` on a disputed row → `dispute_won` → `paid`, alert + REVERSED); the 132-cell matrix row for `closed warning_closed` now equals `closed won`; `prevented` stays ignored / a finding |
+| **CR-3** (Low) | `ROW_MARGIN_MS` 10 s → **15 s**: one row can make two 6 s-bounded Stripe reads plus SQL, so 45 s + 15 s = `maxDuration` | C-4 test: 8 rows (not 9) at 4 s per read, `rowsLeft` 12. R-3: a row making two 6 s reads is not started at 34 s (11 s left) and the run ends at 34 s; started at 29.75 s it ends at 41.75 s; never past the 45 s deadline. Mutation: the margin back to 10 s → 3 red |
+| R-4 | Cron route: an **empty** `CRON_SECRET` in production refuses `Bearer `, `Bearer`, `Bearer undefined`, `Bearer null` and no header; a lower-case `bearer` scheme → 401 | +2 |
+| R-5 | Admin route: bodies `0`, `"x"`, `{"runId":…}` and a truncated `{` → 400 with no audit and no pass | +4 |
+
+**Re-run after the fixes:** the pass 88, the charge handler 183 (incl. the matrix), cron route 10, admin route 26, `hasFindingEntry` 4: all green. **Broad set** (`--ci`, 341 files, now also `AuditTrailRepository*` and `adminReadMethods.guard`): **340 suites, 9,655 tests, 110 snapshots**; no snapshot file changed (Connect characterisation unchanged); the one red suite is again the environmental `stripePlanPriceScripts` (no `node_modules/tsx` in this worktree). `oneAddressPolicy` on a Linux-path copy: 4 green. Types-first tsc: **0 errors in changed files** (73 elsewhere, unchanged). All mutations restored (SHA-1 identical).
+
+**Deviation rulings applied:** 4 (SA: `warning_closed` → `dispute_won`) and 6 (not accepted → CR-1) are superseded by the rows above.
+
 ## 7. Go-live and operations
 
 **After 4b.1 deploys:**
 - Refunds and disputes on boost charges are recorded and alerted.
 - The Stripe events `charge.refunded` and `charge.dispute.*` are already on the DEP-9 list (4a §7).
 
-**After 4b.2 deploys:**
-1. Confirm `CRON_SECRET` is set on Vercel Production (it is, per the payment queue-drain).
-2. If Q-7 is approved: apply 20261032 with the checker **before** the deploy that schedules the cron.
-3. The nightly run appears in `bos_cron_runs` as `bos-billing-reconcile`.
-4. Admins can trigger a run from the route now, and from the slice 6 button later.
+**Before the 4b.2 deploy: the PROD runbook for migration 20261032** (Supabase SQL editor; nothing here writes to `auth.users`; no file contains a comment or the word "into"):
+1. **Pre-check** (one tab): paste `scripts/precheck-bos-boost-reconcile-indexes.sql`. It makes the session read-only, so **open a NEW tab for step 2**. Expect: `Q1 … exists`; both `Q2 index absent …` rows `yes` (a `NO … stop here` means it was already applied: skip to step 3); `Q3` lists the table's current indexes; `Q4` gives row counts only (total, pending or awaiting payment, paid with no receipt link, disputed).
+2. **Apply** (a NEW tab): paste `supabase/migrations/20261032_business_os_boost_reconcile_indexes.sql` (one `BEGIN … COMMIT`, two `CREATE INDEX`). It takes a brief write lock on `business_os_boost_purchases` only; the table is small. A second paste fails with "already exists", which is safe.
+3. **Checker** (any tab): paste `scripts/check-bos-boost-reconcile-indexes-migration.sql`. Expect `VERDICT PASS` (10 pass, 0 fail): each index exists, is on the purchases table, valid and ready, on one column, and partial on the right statuses.
+4. **Rollback, only if needed:** `supabase/SQL Scripts/20261032_business_os_boost_reconcile_indexes_rollback.sql` (two `DROP INDEX IF EXISTS`). The pass still works without the indexes; it only reads more of the table.
 
-**Real-money gate (4a SA point 7):** 4b.1 and 4b.2 merged and deployed. **Residual (SA C-6):** a refund or dispute event whose webhook claim gets stuck in `processing` is not recovered by the pass; the money facts stay in Stripe and only the flag is missing. P-8b's in-webhook reclaim closes it, or an admin resends the event from Stripe. P-8b's in-webhook reclaim is not required for boost, because this pass covers boost purchases without it (R-8). Then DEP-3, DEP-7, DEP-8, DEP-9 and the first live receipt.
+**After 4b.2 deploys:**
+1. Confirm `CRON_SECRET` is set on Vercel Production (it is, per the payment queue-drain). Without it every call is refused (fail-closed).
+2. The `STRIPE_SECRET_KEY` mode decides which rows are read (test key → test purchases only).
+3. The nightly run (05:41 UTC) appears in `bos_cron_runs` as `bos-billing-reconcile` and on `/admin/jobs-queues` as "Billing reconcile". `boostFlagged` > 0 means a `bos_boost_reconcile_finding` error log to read.
+4. Admins can trigger a run with `POST /api/admin/business-os/credits/boost/reconcile` (body `{}`) now, and from the slice 6 button later. Each press is one `BOS_BOOST_RECONCILE_TRIGGERED` audit row.
+5. 4a §7 step 6 (SQL plus Resend) is now the emergency fallback only.
+
+**Real-money gate (4a SA point 7):** 4b.1 and 4b.2 merged and deployed, and migration 20261032 applied with a `VERDICT PASS`. **Residual (SA C-6), recorded at 4b.2:** a refund or dispute event whose webhook claim gets stuck in `processing` is not recovered by the pass; the money facts stay in Stripe and only the flag is missing. P-8b's in-webhook reclaim closes it, or an admin resends the event from Stripe. P-8b's in-webhook reclaim is not required for boost, because this pass covers boost purchases without it (R-8). Then DEP-3, DEP-7, DEP-8, DEP-9 and the first live receipt.
 
 ---
 
@@ -370,7 +434,7 @@ CREATE INDEX business_os_boost_purchases_receipt_backfill_idx
 
 | For | Note |
 |---|---|
-| P-8b | Append `planReconcilePass` to `PASSES` in `lib/business-os/billing/reconcilePasses.ts`; the route needs no change. The in-webhook reclaim stays P-8b's |
+| P-8b | Append `planReconcilePass` to `RECONCILE_PASSES` in `lib/business-os/billing/reconcilePasses.ts` (contract in `reconcilePassRunner.ts`); the route needs no change. Add the pass's counters (`plan<Key>`) to the `bos-billing-reconcile` entry in `lib/cron/bosCronJobs.ts`, or the run record drops them. The in-webhook reclaim stays P-8b's |
 | Slice 6 | The admin view lists `flagged_mismatch` (with reason), refunded, disputed and `bos_boost_reconcile_finding` rows, and hosts the reconcile button |
 | Clawback | Automatic clawback stays parked (T-9); slice 11b's take-back is the tool |
 | **BQ-1: decided by the user 2026-10-08 (yes)** | A lost dispute (`dispute_lost`) shows **"Payment reversed"** in the Purchases list; an open dispute keeps "Payment under review"; refunds keep their words. Built in 4b.1 (§6.1) |
@@ -506,7 +570,90 @@ It closes FR-35, FR-36 and FR-43, and with 4b.2 it satisfies the real-money gate
 #### §6.1 deviations: all four accepted
 
 #### Code Approved for QA: **Yes**
-**SA re-check of the 4b.1 follow-ups (2026-10-08, diff only):** ✅ still Code Approved, **ready for the user's diff and commit**.- **QA4b-M1:** a `dispute.created` repeating the stored dispute id on a paid-family row is answered as info, with no call and no audit; a new dispute id still opens.- **BQ-1 (user: yes):** `dispute_lost` maps to the owner status `reversed` ("Payment reversed"; he/es drafts), and the return notice hides on it.- **QA tests:** R-1 to R-5 and the matrix pass. 376 tests and 100 snapshots green, and the Connect snapshots are unchanged.- **Ruling on the out-of-order dispute gap ("closed won" before "created"): option (b), recorded as condition C-9 on 4b.2.** The nightly pass also selects rows in `disputed` (current mode, bounded, oldest `status_changed_at` first, within the same deadline and C-4 margin). For each it retrieves the dispute **by the stored `stripe_dispute_id`** (5 s, no retries): `won` → `transition('dispute_won')`; `lost` → `transition('dispute_lost')`; still open → leave it. Because `created` stored the id, 2b's id match succeeds, so **no SQL change is needed**. Missed or stuck `closed` / `funds_reinstated` events also self-heal. Option (a) is rejected because it changes 2b's state machine for a rare order. Option (c) is rejected because "under review" would stay wrong indefinitely.
+
+**SA re-check of the 4b.1 follow-ups (2026-10-08, diff only):** ✅ still Code Approved, **ready for the user's diff and commit**.
+- **QA4b-M1:** a `dispute.created` repeating the stored dispute id on a paid-family row is answered as info, with no call and no audit; a new dispute id still opens.
+- **BQ-1 (user: yes):** `dispute_lost` maps to the owner status `reversed` ("Payment reversed"; he/es drafts), and the return notice hides on it.
+- **QA tests:** R-1 to R-5 and the matrix pass. 376 tests and 100 snapshots green, and the Connect snapshots are unchanged.
+- **Ruling on the out-of-order dispute gap ("closed won" before "created"): option (b), recorded as condition C-9 on 4b.2.** The nightly pass also selects rows in `disputed` (current mode, bounded, oldest `status_changed_at` first, within the same deadline and C-4 margin). For each it retrieves the dispute **by the stored `stripe_dispute_id`** (5 s, no retries): `won` → `transition('dispute_won')`; `lost` → `transition('dispute_lost')`; still open → leave it. Because `created` stored the id, 2b's id match succeeds, so **no SQL change is needed**. Missed or stuck `closed` / `funds_reinstated` events also self-heal. Option (a) is rejected because it changes 2b's state machine for a rare order. Option (c) is rejected because "under review" would stay wrong indefinitely.
+
+### SA Code Review (4b.2)
+
+**Code Review by SA — 2026-10-09 (branch `feature/bos-credits-boost-slice-4b2`, off `88b1938f`)**
+**Status:** 🔄 **Fix Required: one Medium (CR-1), two Low (CR-2, CR-3).** Everything else is approved. After the fixes, SA re-checks only that diff, and the code goes to QA.
+
+#### What I verified myself
+
+| Check | Result |
+|---|---|
+| 14 suites (`--ci`): the pass, the runner, the cron and admin routes, the migration test, the repository, `bosCronJobs`, `vercelCrons`, `runRecord.adoption`, `adminGate.writes`, **`admin-authz-surface.guard`**, `eventAudience`, the Connect characterisation, `entitlementSqlScripts.guard` | ✅ **1,031 passed, 103 snapshots** (no snapshot written: `--ci`) |
+| Mutation M1: the pass credits any session that is not `no_payment_required` (i.e. `unpaid` too) | ✅ Caught (8 red) |
+| Mutation M2: the cron auth check bypassed | ✅ Caught (4 red) |
+| Restoration after each mutation | ✅ SHA-1 checked |
+| The Dev's `stripePlanPriceScripts` red | ✅ **Environmental:** it spawns `<root>/node_modules/tsx/dist/cli.mjs`, which this worktree has no `node_modules` for (no junction, by rule). The test file is byte-identical to `origin/main`, and nothing it covers is touched. CI has `node_modules`, so it runs green there |
+| The SQL files (migration, pre-check, checker, rollback) | ✅ No comments, no word **into** in a literal, no `auth.users`. Plain `CREATE INDEX` in one transaction; the rollback uses `DROP INDEX IF EXISTS`; the pre-check is read-only |
+
+#### C-2 to C-9, end to end
+
+- **C-2 race:** `already_credited` is info. `not_allowed` / `not_creditable` re-read the row (`findByIdForWebhook`, deviation 2, accepted); if it is no longer stuck it counts as `raced`, with no alert or audit. ✅
+- **C-3:** a no-session row is expired after 48 h with no Stripe read and is never credited. A late paid event becomes `mismatch` / `no_session` (tested). ✅
+- **C-4:** no row starts with less than 10 s left. ✅ But see CR-3.
+- **C-5:** the admin route has `requireAdmin` as its **first statement** and passes the required `admin-authz-surface` guard (`adminGate.writes` goes 64 → 65). Register row 102 is added, and doc-only rows 99–101 record the pre-existing test-account-cleanup handlers; census 99 = 93 + 6 + 0. ✅
+- **C-6:** the residual is recorded (§7). ✅
+- **C-7:** `BOS_BOOST_RECONCILE_TRIGGERED` is written on entity `system`, with the **admin** as `userId` and a server run id only. `system` is owner-visible, so the **admin** can see their own action in their own audit and no other owner can. That meets C-7's intent ✅ (Info: if a strictly operator-only trace is wanted later, an operator entity type is a small follow-up.)
+- **C-8:** deviation 1, accepted. In API `2025-10-29.clover` a Charge has no `dispute` field, so `disputes.list({ payment_intent, limit: 10 })` with the same 5 s bound, newest dispute taken, none readable → finding. ✅
+- **C-9:** `disputed` rows are re-read by the stored id: won → `dispute_won`, lost → `dispute_lost`, open → left. ✅
+- **Lots never touched:** a source guard covers the six new production files. ✅
+- **Overlap with the webhook:** every write goes through 2b's row-locked, idempotent functions, and the "two overlapping runs → one credit, one audit" test passes. ✅
+- **Cron auth:** fail-closed `verifyCronSecret` (production without `CRON_SECRET` → 401 + `error`, M2). `maxDuration = 60`. ✅
+- **Tenant isolation of `listForReconcile`:** cross-account **by design** (a cron). Its source guard keeps it to the reconcile wiring, the result never leaves the server (the cron and admin responses are counts only), and every write runs on the row's own `user_id` through SQL. ✅
+- **Logs:** ids, statuses, codes and SQLSTATEs; no Stripe key, client secret or email. ✅
+- **No added CI time:** mocked suites in existing jobs. ✅
+
+#### Deviations
+
+| # | Ruling |
+|---|---|
+| 1 | **Accepted** (C-8 via `disputes.list`) |
+| 2 | **Accepted** (`findByIdForWebhook` for the C-2 re-read, guard widened to `boostReconcileDeps.ts`) |
+| 3 | **Accepted** (the admin trigger writes no `bos_cron_runs` row; the write-ahead audit row is its trace, per the "Drain now" precedent) |
+| 4 | **Ruling: map `warning_closed` → `dispute_won`** (CR-2). An inquiry that closes without becoming a chargeback took no funds; that is Stripe's definitive outcome, not a guess. `dispute_won` restores the pre-dispute status from the refunded amount (2b), which is exactly right. Other unknown statuses stay findings |
+| 5 | **Accepted** (no reversal read on receipt-backfill rows; covered by the webhook, or the C-6 residual) |
+| 6 | **Not accepted as is.** See CR-1 |
+| 7 | **Accepted** (two runner files) |
+| 8 | **Accepted**: RM sets `addedOn` to the real deploy day in the PR |
+| 9 | **Accepted** (no index for the `disputed` read: a tiny set) |
+
+#### Findings
+
+| # | File | Finding | Priority |
+|---|---|---|---|
+| **CR-1** | `boostReconcilePass.ts` (`finding`) | **A repeating finding writes a new owner-visible audit entry every night.** `BOS_BOOST_FLAGGED` is owner-visible with the neutral label "Payment under review". A stuck row with a deterministic finding (a 404 or unreadable session, a livemode / marker mismatch, a free session) is left as is (deviation 6), so the owner's activity log gains one "Payment under review" row **per night, forever**. It also re-reads Stripe nightly for the same row. **Fix:** for a deterministic finding on a **stuck** row (`pending` / `awaiting_payment`), **flag the row** with `transition('flagged_mismatch', <reason>)`, which 2b allows from both statuses. That writes one audit entry, takes the row out of the stuck set, and lists it for slice 6. For findings on a **`disputed`** row (which cannot be flagged): log `error` with `alert: true` each night, but write the audit entry **only on the first occurrence**. The simplest marker is to audit only when the row's `status_changed_at` is newer than its last audit; or audit never and rely on the alert plus slice 6. Tests: run twice → exactly one `BOS_BOOST_FLAGGED` for a stuck-row finding, and the row is out of the next run's set. | **Medium (must-fix)** |
+| **CR-2** | `boostReconcilePass.ts` (C-9 branch) **and** `boostChargeHandler.ts` (`plan`) | **`warning_closed` → `dispute_won`** (deviation 4 ruling), in both the pass and the 4b.1 webhook's `charge.dispute.closed` branch, so the live event and the nightly pass agree. One test each. | Low (must-fix) |
+| **CR-3** | `boostReconcilePass.ts` (`BOOST_RECONCILE_LIMITS.ROW_MARGIN_MS`) | **The margin is below one row's worst case.** A stuck row can now make two bounded Stripe reads (the session, 6 s locally bounded, plus `disputes.list`, 6 s) and several SQL calls. Ten seconds can be exceeded, and 45 s + about 13 s approaches `maxDuration = 60`. Raise the margin to **15 s** (or bound the row as a whole to 10 s), and update the C-4 test. | Low (must-fix) |
+
+#### Code Approved for QA: **No, pending CR-1 to CR-3**
+
+SA re-checks the diff only. The PROD runbook (§7: the pre-check in its own tab, then the migration, then the checker, before the deploy that schedules the cron) is approved as written.
+
+#### Re-check of CR-1 to CR-3 (SA, 2026-10-09, diff only)
+
+✅ **Code Approved for QA** (QA re-check, then the user's diff).
+
+- **CR-1:**
+  - A stuck row with a deterministic finding is flagged once through `transition('flagged_mismatch', reason)` and leaves the stuck set.
+  - An unflaggable row (`disputed` / `paid` / moved) alerts every run, and writes the owner-visible `BOS_BOOST_FLAGGED` only on the first occurrence.
+  - **The new `AuditTrailRepository.hasFindingEntry` is acceptable:**
+    - repository pattern, scoped `.eq('user_id', <the purchase's own account>)` (rule 4);
+    - `count: 'exact', head: true`, so no row or audit content is returned;
+    - UUID and reason validation before the query;
+    - a single caller (`boostReconcileDeps.ts`, which is `server-only`), pinned by its own caller guard; `adminReadMethods.guard` still passes;
+    - a failed check skips the audit (`warn`) while the alert still fires.
+  - **Query cost:** `audit_trail` has a btree index on `entity_id` (`idx_audit_trail_entity_id`), which is highly selective (one purchase), plus `user_id` and `action` indexes. The `details->>reason` filter applies to a handful of rows, so the cost is negligible at today's and foreseeable sizes.
+  - **Archived rows:** once Admin Archiving moves an old `BOS_BOOST_FLAGGED` row out of `audit_trail`, a still-open finding is audited **once more**. That is at most once per archive cycle, which is acceptable. The known overlap limit (two simultaneous runs could both audit) is also accepted.
+- **CR-2:** `warning_closed` → `dispute_won` in both the pass (C-9 branch) and the 4b.1 webhook `plan()`. ✅
+- **CR-3:** `ROW_MARGIN_MS` is 15 s. ✅
+- **Re-run by SA (`--ci`):** `hasFindingEntry`, the pass, the charge handler, `adminReadMethods.guard` and the Connect characterisation pass, **426 tests**.
 
 ## QA Testing Report
 
@@ -622,6 +769,147 @@ Scoped tsc: 61 errors, 0 in changed files
 - [x] The 4b.1 acceptance criteria pass for money correctness (FR-35, FR-36, FR-37, T-9). **Recommended before the PR:** the small QA4b-M1 handler fix with its sequence test, and the QA4b-L1 wording.
 - [ ] Issues found that the Dev must address before commit
 
+### QA — 4b.2 (2026-10-09)
+
+**Verdict:** ✅ **PASS WITH NOTES. Not ready for commit until SA's CR-1 to CR-3 land; QA re-checks that diff.**
+
+Money handling is correct in every case QA tried:
+- stuck purchases are credited only when Stripe says `paid`, exactly once, on the row's own account;
+- expired, failed and still-processing rows are handled as specified;
+- a webhook race is quiet;
+- one bad row never stops the batch;
+- lots are never touched;
+- the routes fail closed;
+- the migration, pre-check, checker and rollback behave on PGlite.
+
+QA independently reproduced SA's **CR-1**: a repeating finding writes a new owner-visible "Payment under review" audit entry every night. It is open in the code under test and recorded here as **QA4b2-M1**.
+
+**Test mode:** full
+**Strategy used:** A + B + C.
+- **Jest (mocked):** three scratch suites, none committed:
+  - `qa/boostReconcile4b2.qa.test.ts`: 46 tests on the real pass, with a fake repository following 20261030/31, a fake Stripe and a fake clock;
+  - `qa/routes4b2.qa.test.ts`: 24 tests on the real cron and admin routes, with the gate, audit, recorder and pass mocked.
+- **PGlite 0.5.8 / PG 18.3:** `pglite/qa4b2mig.mjs` runs the migration, pre-check, checker and rollback.
+
+**Focus:** cron pass and money correctness, routes and auth, migration runbook
+**Skipped:**
+- my own source mutations: SA mutates this worktree in parallel; every run was bracketed by SHA-1 checks of all 26 non-doc files (PRE_OK / POST_OK);
+- `oneAddressPolicy` (the Dev's Linux-path copy).
+
+**Input source:** coordinator brief + workplan §6.2, §7
+
+#### Commands run
+
+| Check | Result |
+|---|---|
+| 4b.2 bar (JSX scratch config, `--ci`, 112 suites):<br>• `lib/business-os/boost` and `billing`;<br>• every Stripe webhook suite;<br>• `app/api/cron`, `app/api/admin/business-os`, `app/api/admin/__tests__`;<br>• `lib/cron`;<br>• audit tests and routes;<br>• **all migration tests**;<br>• the repository;<br>• `enforcementPoints`;<br>• `admin-authz-surface.guard`, `security-definer-surface.guard` | ✅ **111 passed, 4,191 tests, 103 snapshots**; no snapshot file changed. The one red suite is `scripts/__tests__/stripePlanPriceScripts.test.ts` (2 tests): **confirmed environmental**. It spawns `<worktree>/node_modules/tsx/dist/cli.mjs` (line 249), and this worktree has no `node_modules` (`ls node_modules` → absent). It expects exit 2 and gets 1, the spawn failure. The file is untouched |
+| Types-first tsc (`tsconfig.4b2.json`) | ✅ **0 errors in changed files**; 73 elsewhere, none of them in this diff |
+| QA pass suite | 44 / 46. The 2 reds are **my fake's** limitation: it does not re-check amount or currency inside `credit`, which 20261031 does (a mismatch is flagged by the SQL). They are not a code defect |
+| QA routes suite | 23 / 24. The 1 red is a QA expectation: `"Bearer sekret "` (trailing space) is accepted because the Fetch `Headers` object trims values, which is the HTTP standard and not a defect |
+| PGlite migration run | ✅ See the migration row below |
+| Source untouched | ✅ SHA-1 of the 26 non-doc files and `git status --porcelain` match the pre-QA snapshot |
+
+#### Test matrix
+
+| Area | Result | Notes |
+|---|---|---|
+| Stuck × session state | ✅ | `pending` / `awaiting` + complete + paid → **credited**, 1 lot, `CREDITED`. complete + unpaid with intent `processing` → left, `stillProcessing`. `requires_payment_method` / `canceled` → **failed** + `PAYMENT_FAILED`. open, not yet expired → left, `stillOpen`. open past `expires_at`, or expired → **expired**. 404 → finding (`reconcile_session_missing`). 400 → finding (`…_refused`). Network or 5xx → **deferred** (no alert). Session livemode `true` on a test row, another product's marker, `no_payment_required` → finding, no write |
+| Timeout | ✅ | A hanging session read → deferred after the 6 s local bound (fake timers); **the next row still credits** |
+| Auth error | ✅ | `StripeAuthenticationError` on the first row → the **pass stops**: 1 Stripe call, `stripeUnavailable` 1, `rowsLeft` 3, no write. An unknown key mode → no list read at all |
+| Mode scope | ✅ | Every list read uses `livemode=false` (the test key). A live row slipping into the batch is never read from Stripe or written |
+| 50-row bound and order | ✅ | Every read has `limit: 50`; with 60 stuck rows `batchFull` = 1, and the first 50 are processed in the order the repository returns them (oldest first, pinned in the repository suite) |
+| Deadline (C-4) | ✅ | At 4 s per Stripe read: 9 examined, 11 left, `deadlineHit` 1; no row starts with less than 10 s left. (SA CR-3 raises the margin to 15 s, because a row can make two 6 s reads) |
+| Idempotence | ✅ | Run twice → identical row, 1 lot, 1 `CREDITED`, 1 `PAYMENT_REVERSED` (partial refund on the charge) |
+| Race (C-2) | ✅ | The webhook credits between the batch read and the call → `already_credited` → `raced` 1, **no alert, no audit** from the pass, still 1 lot |
+| Isolation | ✅ | A row whose `credit` **throws** → deferred + alert; the rows before and after are credited |
+| No-session rows (C-3) | ✅ | 47 h after expiry → left, **no Stripe read**; 49 h → expired; never credited (0 lots). The late-paid → `no_session` path is the 4a webhook's, covered by the Dev's suite |
+| Post-credit reversals | ✅ | A full refund on the charge → `refunded`, applied **once** over two runs. Charge `disputed` → disputes listed by payment intent → `disputed` then `won` → `paid`; the second run changes nothing. Listed but empty → `dispute_id_unreadable` finding |
+| C-9 disputed rows | ✅ / ⚠️ | won → `paid`, lost → `dispute_lost` (1 audit, none on run 2). `needs_response` / `under_review` → left, no audit. `warning_closed`, an unknown status, another payment intent, `eur`, unreadable, 404 → finding **and a new `BOS_BOOST_FLAGGED` audit on every run** (QA4b2-M1). No stored id → finding with no Stripe read |
+| Receipt backfill | ✅ | Only `paid`, no receipt, `paid_at` < now − 10 min (the read's `before` is exactly now − 10 min): 1 of 3 rows examined and filled. A non-https charge receipt after a reconcile credit is not stored |
+| Logs and audit | ✅ | With the email planted in the session, the charge and a Stripe error message, and the client secret in the session, neither appears in any log or audit. Every audit is on `business_os_boost_purchase` with the row's account |
+| Lots | ✅ | A source guard over the six new production files (comments stripped) finds no lot table, function, repository or take-back name. The fake repository has no lot method, and lots were written only by `credit` |
+| Cron route | ✅ | Exports `GET`, `maxDuration`, `runtime` (no POST; Vercel cron calls GET). No header, `Bearer wrong`, no scheme, or lower-case `bearer` → 401 and the pass never runs. **Production with no `CRON_SECRET`** (unset or empty) → 401 for every header, including `Bearer undefined` / `Bearer ` / `Bearer null`. Correct secret → wrapped by `withCronRunRecord`, the pass runs with trigger `nightly` and a 45 s budget, and the counts are flattened (`boostExamined`, `boostCredited`, `passesRun`) |
+| Admin route | ✅ | Exports `POST` only. Gate 401 / 403 → returned **before anything** (no body read, audit or pass). The bodies `{"x":1}`, `[]`, `null`, `"x"`, a truncated `{`, `{"dryRun":true}`, `0` and `{"runId":"x"}` → 400 with no audit, no pass and no details. Empty, whitespace, `{}` and ` {} ` → `BOS_BOOST_RECONCILE_TRIGGERED` on entity `system`, with the admin as user and actor and the server `runId` (equal to the response's), **then** the pass with trigger `admin`. **No cron run record.** No admin email in the response or logs |
+| Migration (PGlite) | ✅ | Pre-check before: Q1 exists, Q2 both `yes`, Q4 counts. Checker before: `FAIL 0/10`. **Apply → checker `VERDICT PASS 10/0`.** **A second paste fails with `42P07 … already exists`** and changes nothing. The pre-check after shows `NO it already exists stop here`. The planner uses `business_os_boost_purchases_reconcile_idx` for the stuck query. The rollback (twice, idempotent) → checker FAIL; re-apply → PASS. Paste scan of all four files: no comments, no **into**, no `auth.`, all literals `[A-Za-z0-9_ ]` |
+
+#### Issues Found
+
+##### Bugs
+
+1. **QA4b2-M1 (= SA CR-1): a repeating finding writes a new owner-visible "Payment under review" every night.** Severity: **Medium**. File: `boostReconcilePass.ts` (`finding`).
+   - Steps to reproduce: a `disputed` row whose dispute is `warning_closed` (or unknown, another payment intent, `eur`, unreadable, 404), or a stuck row with a 404 / unreadable / mode-mismatched / free session. Run the pass twice.
+   - Expected: one record per problem.
+   - Actual: `BOS_BOOST_FLAGGED` on **each** run (run 1 = 1, run 2 = 1), and owners see it as "Payment under review". The same rows are also re-read from Stripe and re-alerted every night.
+   - Fix: as SA CR-1 (flag stuck rows once with `transition('flagged_mismatch', reason)`; audit `disputed`-row findings only once). CR-2 (`warning_closed` → `dispute_won` in both the pass and the 4b.1 webhook) removes the most common case.
+
+##### Info
+
+- **I-1:** the cron route trims the `Authorization` header value (`"Bearer sekret "` passes) because the Fetch `Headers` object does. That is standard and harmless.
+- **I-2:** CR-3 (margin 10 s → 15 s) is consistent with QA's measurement: one stuck row can make two 6 s-bounded Stripe reads plus SQL.
+- **I-3:** `stripePlanPriceScripts.test.ts` is red only in this worktree (no `node_modules/tsx`); CI is unaffected.
+
+#### Recommended additions
+
+| # | Test | Where | Priority |
+|---|---|---|---|
+| R-1 | Run the pass twice on a stuck-row finding → exactly one `BOS_BOOST_FLAGGED`, and the row leaves the next run's stuck set; the same for a `disputed`-row finding | pass test | **With CR-1** |
+| R-2 | `warning_closed` → `dispute_won` in the pass **and** the webhook handler | both suites | **With CR-2** |
+| R-3 | A row making two Stripe reads at the bound never pushes past `deadline + margin` | pass test | **With CR-3** |
+| R-4 | The cron route with `CRON_SECRET=''` and `Bearer `, and `bearer` lower-case → 401 | cron route test | Nice |
+| R-5 | The admin route bodies `0`, `"x"` and `{"runId":…}` → 400 with no audit | admin route test | Nice |
+
+#### Test Outputs / Logs
+
+```text
+4b.2 bar:  Test Suites: 1 failed (stripePlanPriceScripts: node_modules/tsx absent), 111 passed   Tests: 4191 passed   Snapshots: 103 passed
+QA pass:   44/46 (2 reds = fake credit has no amount/currency check; the SQL does)   QA routes: 23/24 (trailing-space header trimmed by Headers)
+  pending / missing (404): audits=[FLAGGED:reconcile_session_missing] flagged=1 | network / 5xx: deferred=1
+  deadline: examined 9 rowsLeft 11 deadlineHit 1
+  C-9 warning_closed: final=disputed audits run1=1 run2=1   (QA4b2-M1 / SA CR-1)
+  C-9 won: final=paid audits run1=1 run2=0 | lost: final=dispute_lost run1=1 run2=0
+PGlite:    checker before FAIL 0/10 -> apply -> VERDICT PASS 10/0; second paste 42P07; rollback x2 -> FAIL; re-apply -> PASS
+Scoped tsc: 73 errors, 0 in changed files
+```
+
+#### Final Status
+- [ ] All acceptance criteria pass, ready for commit
+- [x] **Issues found that the Dev must address before commit:** SA CR-1 (= QA4b2-M1, Medium), CR-2 and CR-3. QA re-checks that diff with R-1 to R-3; everything else in 4b.2 passed.
+
+### QA re-check (4b.2) — 2026-10-09
+
+**Scope:** the §6.2 "Review fixes" diff only (SA CR-1 to CR-3 = QA4b2-M1, QA R-1 to R-5). **Strategy:** A (Jest, scratch suites against the new code, fakes only, no Stripe or Supabase), with every run SHA-bracketed (30 files, PRE_OK / POST_OK) because SA was re-checking in parallel. The worktree was unchanged at the end.
+
+| Check | Result | Evidence |
+|---|---|---|
+| QA4b2-M1 closed: stuck rows, two runs | ✅ | Six causes: 404, 400, unreadable, livemode, wrong product marker, `no_payment_required`. In each case run 1 gives one `BOS_BOOST_FLAGGED` and `flagged_mismatch`. Run 2 gives **no new audit and no Stripe read**, because the row has left the stuck set |
+| QA4b2-M1 closed: disputed rows, two runs | ✅ | Five causes: unknown status, 404, another payment intent, `eur`, unreadable. **One alert per run**, **exactly one FLAGGED** over both runs, and the row stays `disputed` |
+| `findingRecorded` cannot tell (null) | ✅ | The alert is kept every run and no audit is written. This fails safe: no owner entry rather than a duplicate |
+| CR-2 pass | ✅ | A `disputed` row with Stripe `warning_closed` → `paid` and one `PAYMENT_REVERSED`. The second run is quiet |
+| CR-2 webhook | ✅ | `plan('charge.dispute.closed', warning_closed)` → `transition dispute_won`, the same as `won`. `prevented` stays ignored |
+| CR-3 margin 15 s | ✅ | 10 rows with two Stripe reads each at 6 s per read. Three rows are examined, 7 are left, and the run ends at +36 s (≤ 45 s). `deadlineHit` 1 |
+| R-4 / R-5 routes | ✅ | Repo route suites green. QA routes re-check 23/23 (the known trailing-space case is dropped: Headers trims it) |
+| Regression bar | ✅ | 13 changed or new suites, 946 tests green. tsc at the 73-error baseline, 0 in changed files |
+
+**Old QA pins that now differ (expected, not defects):** 8 of the original 46 tests fail, and each one is a deliberate behaviour change or a known fake limit:
+- 5 old stuck pins expected `pending` and now get `flagged_mismatch` (CR-1);
+- 1 old `warning_closed` → `disputed` pin now gets `paid` (CR-2);
+- 2 are the known fake limit: my fake `credit` has no amount or currency check, while 20261031 SQL has one.
+
+All 38 new re-check tests pass (76 / 84 overall).
+
+```text
+stuck 404|400|unreadable|livemode|marker|free: status=flagged_mismatch flagged=1 reads run1=1 run2=0
+disputed unknown status|404|another PI|eur|unreadable: alerts run1=1 run2=1 FLAGGED=1 status=disputed
+C-9 warning_closed: final=paid audits run1=1 run2=0 tags=PAYMENT_REVERSED
+webhook prevented -> {"kind":"ignore","reason":"dispute_closed_prevented"}
+CR-3: examined=3 rowsLeft=7 end offset s=36 stripe calls=6
+Repo bar: 11 suites / 597 tests + 2 suites / 349 tests passed   tsc: 73 (baseline), 0 in changed files
+```
+
+#### Final Status (re-check)
+- [x] **QA PASS.** QA4b2-M1 is closed, CR-2 and CR-3 are confirmed, and R-4 / R-5 are present and green. 4b.2 is ready for the user's diff and the commit. Migration 20261032 still has to be applied in PROD before the deploy that schedules the cron (§7)
+- [ ] Issues found
+
 ## Commit Info
 
 ---
@@ -638,3 +926,11 @@ Scoped tsc: 61 errors, 0 in changed files
 | 2026-10-08 | QA follow-ups applied; BQ-1 built | SA code review approved; QA PASS WITH NOTES. QA4b-M1: a repeated dispute.created for a concluded dispute is stale (handler only). The out-of-order case (won before created) needs SQL and is reported, pinned as a known gap. QA4b-L1 wording. R-1 to R-5 added (the 132-cell matrix). BQ-1 (user, yes): `dispute_lost` → "Payment reversed" (en / he / es drafts). Results in the table below. Nothing committed |
 | 2026-10-08 | SA re-check of the 4b.1 follow-ups; out-of-order dispute ruling | QA4b-M1 guard, BQ-1 "Payment reversed", QA R-1 to R-5: still Code Approved; 4b.1 ready for the user's diff and commit. Out-of-order `closed won` before `created`: option (b), new condition C-9 on 4b.2 (the nightly pass re-reads open disputes by stored id and concludes them; no migration) |
 | 2026-10-08 | 4b.1 approved and committed, PR #272 open | The user saw the diff and approved the commit (2026-10-08). RM committed on `feature/bos-credits-boost-slice-4b` and opened [PR #272](https://github.com/AgentsPilot/neuronforge/pull/272) to `main` |
+| 2026-10-09 | 4b.1 merged; 4b.2 started | PR #272 merged into main (88b1938f). 4b.2 (the reconcile cron, the boost pass with C-9, the admin trigger, migration 20261032) starts on `feature/bos-credits-boost-slice-4b2` |
+| 2026-10-09 | 4b.2 implemented, awaiting SA code review | The reconcile cron (`41 5 * * *`, added last), the boost pass with C-2 to C-4, C-8 and C-9, the admin trigger (C-5, C-7), migration 20261032 with pre-check, checker, rollback and the PROD runbook (§7), 4a §7 step 6 as the fallback, the C-6 residual in the gate. Results and nine deviations in §6.2 (incl. the dispute id listed by payment intent, and a question on `warning_closed`). Nothing committed |
+| 2026-10-09 | SA code review (4b.2): Fix Required | 1,031 tests and 103 snapshots green; mutations caught (crediting unpaid sessions, cron auth bypassed); `stripePlanPriceScripts` red is environmental (no `node_modules/tsx` in the worktree; the file is unchanged from main). Deviations ruled (6 rejected, 4 mapped). CR-1 (Medium): flag stuck rows on deterministic findings, and audit `disputed`-row findings once, so owners don't get a nightly "Payment under review". CR-2: `warning_closed` → `dispute_won` in the pass and the webhook. CR-3: row margin 15 s |
+| 2026-10-09 | QA (4b.2): PASS WITH NOTES, not ready for commit | 4b.2 bar 111 suites / 4,191 tests / 103 snapshots green (no snapshot changed). The `stripePlanPriceScripts` red is environmental (no `node_modules/tsx` in the worktree). tsc 0 in changed files. QA scratch suites (46 pass + 24 routes) cover:<br>• every stuck state × Stripe session state (paid → credited once; expired / open-past-expiry → expired; requires_payment_method / canceled → failed; processing / open → left; 404 / 400 / mismatches → findings; network / 5xx / timeout → deferred; an auth error stops the pass);<br>• mode scope, the 50-row bound and order, the C-4 deadline, run-twice idempotence, a webhook race kept quiet, per-row isolation;<br>• no-session rows (48 h, never credited), post-credit refund and dispute applied once, C-9 won / lost / open, receipts (https only, paid_at + 10 min);<br>• no email or secret in logs, lots never touched;<br>• cron auth fail-closed (no secret → 401 for all), the admin gate before anything, strict empty body, the write-ahead audit on `system` with the server run id, no cron record.<br>PGlite: migration → checker PASS 10/0, a second paste 42P07, rollback and re-apply clean; the paste rules hold. **QA4b2-M1 (Medium, = SA CR-1):** repeating findings add an owner-visible "Payment under review" audit every night (reproduced for `warning_closed`, 404, mismatches). Re-check after CR-1 to CR-3 with R-1 to R-3 |
+| 2026-10-09 | 4b.2 review fixes applied | SA CR-1 / QA4b2-M1: a stuck row with a finding is flagged once (`flagged_mismatch`), a row that cannot be flagged is alerted each run but audited only the first time (new scoped existence check `AuditTrailRepository.hasFindingEntry`, no migration). CR-2: `warning_closed` → `dispute_won` in the pass and the 4b.1 webhook. CR-3: start margin 15 s. QA R-1 to R-5 added. Broad set green bar the environmental script suite; tsc 0 in changed files. Nothing committed |
+| 2026-10-09 | SA re-check of CR-1 to CR-3: Code Approved for QA | Stuck-row findings flagged once; unflaggable findings audited once via `hasFindingEntry` (user-scoped head count, single `server-only` caller, `entity_id` index). `warning_closed` → `dispute_won` in the pass and the webhook. 15 s margin. 426 tests green |
+| 2026-10-09 | QA re-check (4b.2): PASS | QA4b2-M1 closed. Each of six stuck findings, run twice, gives one FLAGGED, and run 2 makes no Stripe read. Each of five disputed findings alerts every run with one FLAGGED in total. `warning_closed` → won in the pass and the webhook. The 15 s margin holds (two-read rows end at +36 s). R-4 / R-5 green. Repo bar 946 tests green; tsc baseline. 8 old QA pins differ by design (CR-1 / CR-2) or from the fake limit. Ready for the user diff |
+| 2026-10-09 | 4b.2 approved and committed, PR open | The user saw the diff and approved the commit (2026-10-09). RM committed on `feature/bos-credits-boost-slice-4b2` and opened a PR to `main`. Before the merge the user applies 20261032 on PROD (precheck, apply, checker VERDICT PASS). `bos-billing-reconcile` `addedOn` 2026-10-09 must equal the merge/deploy day |
