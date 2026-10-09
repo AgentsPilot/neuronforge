@@ -62,6 +62,7 @@ The SQL never deletes stored files (SA ruling C-4).
 
 - One row per table, in table-name order. The `line` column is the table and `rows_removed` is how many of its rows were removed.
 - A final **TOTAL** row. `rows_removed` there is the sum of the rows above, and `tables_removed` is how many tables they came from. It also shows the `result` (below), the `removed_login` id, `removed_at`, and `same_run`.
+- Rows removed automatically by a cascade from a deleted parent (for example `crm_activities` with `crm_contacts`) are gone but not listed in the report, so the TOTAL can be lower than the check's "Rows to remove".
 
 The report is read back from the audit row of the most recent removal in the last 15 minutes. With no such removal, the report is only the TOTAL row, showing NO RECENT REMOVAL. The login itself is not one of the table rows: CLEAN means it is gone too.
 
@@ -101,6 +102,7 @@ When the cleanup plan changes after 20261041 was applied, the change ships as a 
 | `20261042_operator_test_account_cleanup_billing_events.sql` | `business_os_billing_events` (plan payments P-3b.1): guard G-5 counts its live rows, and the plan removes its rows | `20261041_operator_test_account_cleanup.sql` **and** `20261027_business_os_billing_events.sql` |
 | `20261043_operator_test_account_cleanup_insight_links.sql` | `insight_hypotheses` and `insight_measurements` classified and their links reviewed (G-18 no longer blocks every account), cheaper G-18 and survivor scans, trigger events in the check, `serverMs` on every answer | `20261042_operator_test_account_cleanup_billing_events.sql` |
 | `20261046_operator_test_account_cleanup_notnull_order.sql` | `scheduling_bookings` removed before `crm_contacts` (its `contact_id` is NOT NULL with ON DELETE SET NULL, so the old order failed with 23502 on prod), and G-19 refuses any plan that removes such a parent first. 20261044 is the unrelated SECURITY DEFINER lockdown | `20261043_operator_test_account_cleanup_insight_links.sql` |
+| `20261047_operator_test_account_cleanup_audit_actor.sql` | The `BUSINESS_TEST_ACCOUNT_REMOVED` audit row names the admin who ran the delete as `user_id` as well as `actor_id`, so /admin/audit-trail shows who did it. The pasted file has no signed-in admin and still writes both as NULL | `20261046_operator_test_account_cleanup_notnull_order.sql` |
 
 The migration checks this itself: it refuses, and applies nothing, with `Apply <migration> first` until both are in place.
 
@@ -231,6 +233,8 @@ On a `+test` account only: run one check, then one delete, from the Danger Zone 
 
 | Date | Change | Details |
 |---|---|---|
+| 2026-10-08 | Section 6.1.1, 20261047 | The admin page delete writes the admin as `user_id` and `actor_id` on its audit row (AD-2 convention); the pasted file still writes NULL |
+| 2026-10-08 | Cascade note | Reading the result: rows removed by a cascade from a deleted parent are not listed, so the TOTAL can be lower than the check's "Rows to remove" |
 | 2026-10-08 | Order fix, migration 20261045 | The first prod delete of an account with a booking for a contact rolled back with 23502: `scheduling_bookings.contact_id` is NOT NULL with ON DELETE SET NULL to `crm_contacts`, and the plan removed contacts first. Bookings now go first; G-19 refuses any plan that removes such a parent before its child; the purge delete-graph check refuses the same class |
 | 2026-10-07 | Section 6.6, 8-second limit (SA C-3) | Server-side `serverMs` on every answer; over 3 s on a check, or a delete timeout, means the pasted path for that account and the numbers to SA. No role timeout changes |
 | 2026-10-07 | First live run fixes, migration 20261043 | `insight_hypotheses` and `insight_measurements` (live-only tables) classified and their three links reviewed, so G-18 no longer blocks every account. G-18 skips counts that are zero by construction, the survivor scan counts each table once. The trigger section shows each trigger's events |
