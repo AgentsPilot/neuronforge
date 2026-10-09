@@ -1,7 +1,7 @@
 // lib/repositories/SystemConfigRepository.ts
 // Repository for managing system_settings_config table
 
-import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { SystemSettingsConfig, AgentRepositoryResult } from './types';
@@ -590,6 +590,45 @@ export class SystemConfigRepository {
     if (key.startsWith('agent_creation_')) return 'agent_creation';
     return 'general';
   }
+
+  // Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)
+  //
+  // Moved out of `app/api/stripe/webhook/route.ts` (the agent-platform dunning
+  // handler, FU-1) with no behaviour change (CF-5 PR 5, CLAUDE.md rule 1). It
+  // issues exactly the query the route issued inline; the webhook's
+  // characterisation harness records the full chain. Not `getByKey`: that
+  // selects `*` with `.single()` and maps PGRST116 to null.
+  //
+  // Errors: supabase-js's own `{ data, error }`, with no try/catch and no
+  // logging, unlike the methods above. A catch would turn a thrown query into a
+  // quiet default where the route used to fail with 500 and let Stripe retry.
+
+  /**
+   * ⟨unscoped-by-design⟩ The raw `value` of one platform setting, or `null`
+   * when the key has no row.
+   *
+   * Owner check relied on: none is needed. `system_settings_config` is
+   * platform-wide configuration with no owner column (`tenant-isolation-guard`
+   * Step 5, global catalog), and the key is a fixed name from a closed set,
+   * never a caller value.
+   */
+  async findRawValue(key: LegacyWebhookConfigKey): Promise<LegacyWebhookConfigResult> {
+    const { data, error } = await this.supabase
+      .from('system_settings_config')
+      .select('value')
+      .eq('key', key)
+      .maybeSingle<{ value: unknown }>();
+    return { data, error };
+  }
+}
+
+/** The settings keys the webhook reads (closed set, CF-5 PR 5). */
+export type LegacyWebhookConfigKey = 'payment_grace_period_days';
+
+/** supabase-js's own result for `findRawValue`, error object kept. */
+export interface LegacyWebhookConfigResult {
+  data: { value: unknown } | null;
+  error: PostgrestError | null;
 }
 
 // Export singleton instance for convenience

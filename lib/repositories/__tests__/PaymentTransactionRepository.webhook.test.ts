@@ -416,13 +416,21 @@ describe('PaymentTransactionRepository: Stripe webhook methods (CF-5 PR 3)', () 
       'insertFromWebhookReturningId',
     ];
 
-    it('one section per touched class: once here, once in the invoice class, nowhere else', () => {
+    it('one section per touched class: once here, once in the invoice class, once in the Connect class (CF-5 PR 5), nowhere else', () => {
       expect(classStart).toBeGreaterThan(-1);
       expect(classEnd).toBeGreaterThan(classStart);
       expect(sectionStart).toBeGreaterThan(classStart);
       expect(sectionStart).toBeLessThan(classEnd);
       expect(source.slice(classStart, classEnd).split(header)).toHaveLength(2);
-      expect(source.split(header)).toHaveLength(3);
+      // Each touched class holds exactly one section, and those are all of them.
+      const TOUCHED = ['PaymentTransactionRepository', 'PaymentInvoiceRepository', 'StripeConnectRepository'];
+      for (const name of TOUCHED) {
+        const start = source.indexOf(`export class ${name}`);
+        expect({ name, start: start > -1 }).toEqual({ name, start: true });
+        const inClass = source.slice(start, source.indexOf('\n}', start)).split(header).length - 1;
+        expect({ name, sections: inClass }).toEqual({ name, sections: 1 });
+      }
+      expect(source.split(header)).toHaveLength(TOUCHED.length + 1);
     });
 
     it('every new method sits in the section, its doc carrying the marker', () => {

@@ -1,7 +1,7 @@
 // lib/repositories/PluginConnectionRepository.ts
 // Repository for managing plugin connection persistence
 
-import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { UserConnection } from '@/lib/types/plugin-types';
@@ -320,6 +320,55 @@ export class PluginConnectionRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  // Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)
+  //
+  // Moved out of `lib/payments/stripeAccountContext.ts` (`resolveAccountOwner`)
+  // with no behaviour change (CF-5 PR 5, FU-5 SA rule-1 ruling). It issues
+  // exactly the read the resolver issued inline, on the client the resolver was
+  // handed. Not `findActiveByProfileData`: that filters `status = 'active'`,
+  // which would change which connected accounts map to a business.
+  //
+  // Errors: supabase-js's own `{ data, error }`, with no try/catch and no
+  // logging, unlike the methods above. The resolver turns a returned error into
+  // its own throw (FU-5), and a rejected query must still reach the webhook,
+  // which answers 500 so Stripe retries.
+
+  /**
+   * ⟨unscoped-by-design⟩ Every connection of one plugin, ANY status, across all
+   * businesses: `user_id, profile_data, status` only, never the token columns.
+   *
+   * Owner check relied on: none can apply, because the owner is the OUTPUT. The
+   * OAuth path keeps the Stripe account id inside `profile_data`, which cannot
+   * be filtered as a column, so `resolveAccountOwner` reads these rows and
+   * matches the `event.account` of a signature-verified Connect event in
+   * memory, returning one `user_id`. The rows never leave the server. Some
+   * providers keep a token inside `profile_data`: do not return these rows to a
+   * client or log them. The plugin key is a closed set.
+   */
+  async listByPluginKey(pluginKey: OwnerLookupPluginKey): Promise<PluginConnectionOwnerRowsResult> {
+    const { data, error } = await this.supabase
+      .from('plugin_connections')
+      .select('user_id, profile_data, status')
+      .eq('plugin_key', pluginKey);
+    return { data: data as PluginConnectionOwnerRow[] | null, error };
+  }
+}
+
+/** The plugin keys `listByPluginKey` may read (closed set, CF-5 PR 5). */
+export type OwnerLookupPluginKey = 'stripe';
+
+/** One row of `listByPluginKey`. `profile_data` is raw provider JSON. */
+export interface PluginConnectionOwnerRow {
+  user_id: string;
+  profile_data: unknown;
+  status: string | null;
+}
+
+/** supabase-js's own result for `listByPluginKey`, error object kept. */
+export interface PluginConnectionOwnerRowsResult {
+  data: PluginConnectionOwnerRow[] | null;
+  error: PostgrestError | null;
 }
 
 export const pluginConnectionRepository = new PluginConnectionRepository();
