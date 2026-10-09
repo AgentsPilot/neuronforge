@@ -54,6 +54,14 @@
 // `BUSINESS_AI_ACTION_*` event whatever its type (Layer 3 D-6). The owner RLS
 // policy (migration 20261018, then 20261035) mirrors the same list.
 // Only the admin exceptions above read AI entries.
+//
+// THE SERVER-SIDE EXISTENCE CHECK (credits boost slice 4b.2, SA CR-1):
+// `hasFindingEntry` answers one yes / no: does this account already hold a
+// `BOS_BOOST_FLAGGED` entry with this reason on this purchase? It is scoped
+// `.eq('user_id', accountId)` (the purchase row's own account, never a request
+// value), returns no row and no `details` (`count: 'exact', head: true`), and
+// its only caller is `lib/business-os/boost/boostReconcileDeps.ts` (pinned by
+// test), so the nightly reconcile pass records a repeating finding once.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -587,6 +595,36 @@ export class AuditTrailRepository {
         { err: error, correlationId: context?.correlationId, method: 'listAiActionEntriesAllAccountsByGroupIds' },
         'Admin AI action entries read failed'
       );
+      return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+
+  /**
+   * SERVER-SIDE EXISTENCE CHECK — see the header. True when the account already
+   * holds a `BOS_BOOST_FLAGGED` entry with this `details.reason` on this boost
+   * purchase. A head count on the indexed entity id: no row, no details.
+   */
+  async hasFindingEntry(input: { accountId: string; purchaseId: string; reason: string }): Promise<RepositoryResult<boolean>> {
+    try {
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuid.test(input?.accountId ?? '') || !uuid.test(input?.purchaseId ?? '')) {
+        throw new Error('An account id and a purchase id (UUIDs) are required');
+      }
+      if (typeof input.reason !== 'string' || input.reason.length < 1 || input.reason.length > 200) {
+        throw new Error('A finding reason is required');
+      }
+      const { count, error } = await this.supabase
+        .from('audit_trail')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', input.accountId)
+        .eq('entity_type', 'business_os_boost_purchase')
+        .eq('entity_id', input.purchaseId)
+        .eq('action', AUDIT_EVENTS.BOS_BOOST_FLAGGED)
+        .eq('details->>reason', input.reason);
+      if (error) throw error;
+      return { data: (count ?? 0) > 0, error: null };
+    } catch (error) {
+      this.logger.warn({ err: error, method: 'hasFindingEntry', purchaseId: input?.purchaseId }, 'Boost finding entry check failed');
       return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
     }
   }

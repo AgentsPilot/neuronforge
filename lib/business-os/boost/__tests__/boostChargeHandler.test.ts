@@ -214,7 +214,15 @@ describe('disputes', () => {
     expect(h.alerted('bos_boost_payment_reversed')).toBe(true);
   });
 
-  it.each(['warning_closed', 'needs_response', 'under_review'])('closed with status %s → ignored (info), no call', async (status) => {
+  it('SA CR-2 (QA R-2): closed warning_closed (an inquiry, no funds taken) → dispute_won → back to paid; alert + REVERSED audit', async () => {
+    const h = harness(paidRow({ status: 'disputed', stripeDisputeId: DISPUTE }));
+    await h.run(dispute('charge.dispute.closed', 'warning_closed'));
+    expect(h.calls).toEqual([{ purchaseId: PURCHASE, toStatus: 'dispute_won', paymentIntentId: PI, disputeId: DISPUTE }]);
+    expect(h.state.row?.status).toBe('paid');
+    expect(h.reasons()).toEqual(['BOS_BOOST_PAYMENT_REVERSED']);
+  });
+
+  it.each(['needs_response', 'under_review', 'prevented'])('closed with status %s → ignored (info), no call', async (status) => {
     const h = harness(paidRow({ status: 'disputed', stripeDisputeId: DISPUTE }));
     await h.run(dispute('charge.dispute.closed', status));
     expect(h.calls).toEqual([]);
@@ -421,7 +429,8 @@ describe('QA R-3: the full event × row-state matrix on the 20261031 fake (132 c
     'created':          [B, B, B, T, T, T, A, N, R, N, N],
     'closed won':       [B, B, B, N, N, N, T, N, N, N, N],
     'closed lost':      [B, B, B, N, N, N, T, A, N, N, N],
-    'closed warning_closed': [I, I, I, I, I, I, I, I, I, I, I],
+    // SA CR-2: concludes like a win.
+    'closed warning_closed': [B, B, B, N, N, N, T, N, N, N, N],
     'funds_reinstated': [B, B, B, N, N, N, T, N, N, N, N],
     'created other id': [B, B, B, T, T, T, N, N, R, N, N],
   };
