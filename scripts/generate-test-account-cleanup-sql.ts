@@ -112,10 +112,13 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * NOT NULL with ON DELETE SET NULL, so the old order failed with 23502 on prod,
  * 2026-10-08), and G-19 refuses any plan that deletes a parent before such a
  * child. 20261044 is the unrelated SECURITY DEFINER lockdown, slice 1.
+ * 20261047: the audit row names the admin as user_id as well as actor_id (the
+ * AD-2 convention), so /admin/audit-trail shows who removed the account. The
+ * pasted operator_sql path has no signed-in admin and still writes NULL.
  */
-export const FUNCTION_MIGRATION = '20261046_operator_test_account_cleanup_notnull_order';
+export const FUNCTION_MIGRATION = '20261047_operator_test_account_cleanup_audit_actor';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261043_operator_test_account_cleanup_insight_links';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261046_operator_test_account_cleanup_notnull_order';
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
 export const PREVIOUS_MIGRATION_FILE = `supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql`;
@@ -252,7 +255,7 @@ export const KEPT_RESIDUE: ReadonlyArray<{ item: string; reason: string }> = [
     item: 'business_os_invites redeemed or claimed by the account',
     reason: 'BQ-3: the invitation that brought it in stays as the record of what the inviter did. It holds only the pseudonymous id.',
   },
-  { item: 'one audit_trail row', reason: 'The record of this cleanup, written with no user id.' },
+  { item: 'one audit_trail row', reason: 'The record of this cleanup, naming the admin who ran it (no user id when pasted).' },
 ];
 
 /**
@@ -1048,9 +1051,10 @@ ${buildDeleteReportQuery()};
 /**
  * The all-or-nothing DO block alone. Reads `cleanup.target_email`,
  * `cleanup.test_tag`, `cleanup.confirm_email` and, for the audit row only,
- * `cleanup.actor_id` and `cleanup.source` (SA-5). Unset, those two give
- * `actor_id = NULL` and `source = 'operator_sql'`, exactly as the pasted file
- * always wrote.
+ * `cleanup.actor_id` and `cleanup.source` (SA-5). The admin page sets both:
+ * the admin is then `user_id` AND `actor_id` (AD-2 convention), because
+ * /admin/audit-trail names a row only from `user_id`. Unset, as in the pasted
+ * file, they give `user_id = actor_id = NULL` and `source = 'operator_sql'`.
  */
 export function buildDeleteBlock(): string {
   const auditColumns = 'action, entity_type, entity_id, resource_name, user_id, actor_id, details, severity, compliance_flags, created_at';
@@ -1150,7 +1154,8 @@ ${planValues('        ')}
 
   INSERT INTO public.audit_trail (${auditColumns})
   VALUES (
-    ${lit(AUDIT_ACTION)}, 'user', v_user_id::text, NULL, NULL, NULLIF(current_setting('cleanup.actor_id', true), '')::uuid,
+    ${lit(AUDIT_ACTION)}, 'user', v_user_id::text, NULL,
+    NULLIF(current_setting('cleanup.actor_id', true), '')::uuid, NULLIF(current_setting('cleanup.actor_id', true), '')::uuid,
     jsonb_build_object('source', coalesce(NULLIF(current_setting('cleanup.source', true), ''), 'operator_sql'), 'script', ${lit(DELETE_FILE)}, 'tables', v_tables, 'rows', v_total, 'counts', v_counts),
     ${lit(AUDIT_SEVERITY)}, ARRAY[${litList(AUDIT_COMPLIANCE_FLAGS)}]::text[], now()
   );
