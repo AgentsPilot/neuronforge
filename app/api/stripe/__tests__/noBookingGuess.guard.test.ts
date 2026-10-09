@@ -103,6 +103,35 @@ const PAID_HANDLER_TRANSACTION_METHODS = [
   'insertFromWebhook',
 ];
 
+/** The only booking-repository method the paid handler may call (CF-5 PR 4). */
+const PAID_HANDLER_BOOKING_METHODS = ['markPaidUnscoped'];
+
+// The booking repository (CF-5 PR 4), parsed once, for the booking arm below.
+const SCHEDULING_FILE = path.join(process.cwd(), 'lib/repositories/SchedulingRepository.ts');
+const schedulingSf = ts.createSourceFile(
+  SCHEDULING_FILE,
+  fs.readFileSync(SCHEDULING_FILE, 'utf8'),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS
+);
+
+/** A `SchedulingBookingRepository` method's code, without comments. */
+function bookingMethodCode(name: string): string {
+  let found: ts.MethodDeclaration | undefined;
+  const visit = (node: ts.Node) => {
+    if (ts.isClassDeclaration(node) && node.name?.text === 'SchedulingBookingRepository') {
+      for (const member of node.members) {
+        if (ts.isMethodDeclaration(member) && member.body && member.name.getText(schedulingSf) === name) found = member;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(schedulingSf);
+  expect(found).toBeDefined();
+  return ts.createPrinter({ removeComments: true }).printNode(ts.EmitHint.Unspecified, found!, schedulingSf);
+}
+
 /** The `invoice.paid` handler, where the guess used to live. */
 function connectInvoicePaidHandler(): string {
   const start = webhook.indexOf('async function handleConnectInvoicePaid');
@@ -224,7 +253,44 @@ describe('paying an invoice never invents a booking link', () => {
     const handler = connectInvoicePaidHandler();
 
     expect(handler).toMatch(/if \(platformInvoice\.booking_id\)/);
-    expect(handler).toMatch(/payment_status: 'paid'/);
+    // CF-5 PR 4 moved the write into the booking repository (workplan §8):
+    // the handler makes it inside that `if`, by the invoice's own booking id,
+    // and the method is what sets the payment status.
+    expect(handler).toMatch(
+      /if \(platformInvoice\.booking_id\) \{[\s\S]{0,300}schedulingBookingRepository\.markPaidUnscoped\(platformInvoice\.booking_id\)/
+    );
+    expect(bookingMethodCode('markPaidUnscoped')).toMatch(/payment_status: 'paid'/);
+  });
+
+  /*
+   * CF-5 PR 4: with the booking write moved out of the handler, the handler-side
+   * `servicePrice` / `scheduling_services(price)` checks would not see a booking
+   * search hidden in a booking-repository method. So the handler may reach
+   * `scheduling_bookings` through one allow-listed method only, and that method
+   * writes one booking by its id and looks nothing up.
+   */
+  it('reaches scheduling_bookings only through one allow-listed method, which searches for nothing (CF-5 PR 4)', () => {
+    const handler = connectInvoicePaidHandler();
+
+    expect(handler).not.toMatch(/from\(\s*['"`]scheduling_\w+['"`]\s*\)/);
+    expect(handler).not.toMatch(/\bSchedulingBookingRepository\b/);
+
+    const mentions = handler.match(/\bschedulingBookingRepository\b/g) ?? [];
+    const calls = [...handler.matchAll(/\bschedulingBookingRepository\.(\w+)\(/g)].map((m) => m[1]);
+    expect(calls).toEqual(PAID_HANDLER_BOOKING_METHODS);
+    expect(calls).toHaveLength(mentions.length);
+
+    const code = bookingMethodCode('markPaidUnscoped');
+    expect(code).toMatch(/from\('scheduling_bookings'\)/);
+    expect(code).toMatch(/\.update\(/);
+    expect(code).not.toMatch(/\.select\(/);
+    expect(code).not.toMatch(/servicePrice/);
+    expect(code).not.toMatch(/scheduling_services/);
+    expect(code).not.toContain('booking_id');
+    // One booking, by its id: the only filter.
+    expect([...code.matchAll(/\.(eq|in|neq|is|not|or|match|filter)\(([^)]*)\)/g)].map((m) => `${m[1]}(${m[2]})`)).toEqual([
+      "eq('id', id)",
+    ]);
   });
 
   it('says in the log that an unlinked invoice was left unlinked', () => {
