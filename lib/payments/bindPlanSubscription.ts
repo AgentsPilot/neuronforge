@@ -42,9 +42,8 @@
 
 import type Stripe from 'stripe';
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
 import { PaymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
-import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
+import { paymentPlanRepository, type NewProjectedPeriodRow } from '@/lib/repositories/PaymentPlanRepository';
 import {
   schedulingBookingRepository,
   schedulingServiceRepository,
@@ -140,10 +139,7 @@ export async function bindPlanSubscription({
      * So the guard is "already bound AND already projected", and a half-written
      * plan is finished on the next delivery rather than frozen.
      */
-    const { count } = await supabaseServer
-      .from('payment_plan_installments')
-      .select('id', { count: 'exact', head: true })
-      .eq('subscription_id', existing.data.id);
+    const { count } = await paymentPlanRepository.countProjectedPeriods(existing.data.id);
 
     if ((count ?? 0) > 0) {
       logger.info({ subscriptionId, planId: existing.data.id }, 'Plan already bound — nothing to do');
@@ -412,8 +408,8 @@ async function projectPeriods({
 
   const projected = planSchedule(planTotal, currency, planFrequency, planCount, new Date());
 
-  const { error } = await supabaseServer.from('payment_plan_installments').insert(
-    projected.installments.map(period => ({
+  const { error } = await paymentPlanRepository.insertProjectedPeriods(
+    projected.installments.map((period): NewProjectedPeriodRow => ({
       user_id: ownerId,
       payment_plan_id: planRowId,
       subscription_id: planId,
@@ -444,11 +440,7 @@ async function projectPeriods({
    * must never undo that.
    */
   if (bookingId) {
-    const { error: linkError } = await supabaseServer
-      .from('scheduling_bookings')
-      .update({ payment_plan_id: planRowId, updated_at: new Date().toISOString() })
-      .eq('id', bookingId)
-      .eq('user_id', ownerId);
+    const { error: linkError } = await schedulingBookingRepository.linkPaymentPlan(bookingId, ownerId, planRowId);
 
     if (linkError) {
       logger.error(
@@ -472,12 +464,7 @@ async function resolveContactId(
 ): Promise<string | null> {
   if (!bookingId) return null;
 
-  const { data, error } = await supabaseServer
-    .from('scheduling_bookings')
-    .select('contact_id')
-    .eq('id', bookingId)
-    .eq('user_id', ownerId)
-    .maybeSingle();
+  const { data, error } = await schedulingBookingRepository.findContactIdForOwner(bookingId, ownerId);
 
   if (error) {
     logger.warn({ err: error, bookingId }, 'Could not resolve the contact for this plan');
@@ -505,15 +492,7 @@ async function resolvePlanRowId(
   if (paymentPlanId) return paymentPlanId;
   if (!serviceId) return null;
 
-  const { data } = await supabaseServer
-    .from('payment_plans')
-    .select('id')
-    .eq('user_id', ownerId)
-    .eq('service_id', serviceId)
-    .eq('is_active', true)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const { data } = await paymentPlanRepository.findOldestActivePlanIdForService(ownerId, serviceId);
 
   return data?.id ?? null;
 }

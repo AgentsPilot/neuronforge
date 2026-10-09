@@ -299,3 +299,47 @@ describe('the Delete… dialog: preview, then a typed confirmation only with a t
     expect(dialog).toMatch(/onDeleted=\{\(\) => \{\s*void fetchUsers\(\);\s*\}\}/);
   });
 });
+
+describe('the account hard delete in the danger area (AU-1 / AU-2; SA AU-C2 … AU-C5)', () => {
+  const PANEL_FILE = 'components/business-os/purge/TestAccountCleanupPanel.tsx';
+  const PANEL_IMPORT = "import { TestAccountCleanupPanel } from '@/components/business-os/purge/TestAccountCleanupPanel';";
+
+  it('AU-C5: the AD-1 Delete… entry is hidden by a constant that is false, gating both the button and the dialog', () => {
+    const page = codeOf(read(`${ROOT}/page.tsx`));
+    expect(page.match(/const SHOW_AD1_DELETE_ENTRY = (\w+);/g)).toEqual(['const SHOW_AD1_DELETE_ENTRY = false;']);
+    const gate = page.indexOf('{SHOW_AD1_DELETE_ENTRY && (');
+    expect(gate).toBeGreaterThan(page.indexOf('data-testid="danger-area"'));
+    expect(page.indexOf('data-testid="delete-business-open"')).toBeGreaterThan(gate);
+    expect(page.indexOf('<DeleteBusinessDialog')).toBeGreaterThan(gate);
+    // Both sit before the gate closes, i.e. before the panel that follows it.
+    expect(page.indexOf('<DeleteBusinessDialog')).toBeLessThan(page.indexOf('<TestAccountCleanupPanel'));
+  });
+
+  it('AU-C2 / AU-C3: the page imports the panel only and mounts it once, after danger-area, keyed by the row, only with an email', () => {
+    const page = codeOf(read(`${ROOT}/page.tsx`));
+    expect(page).toContain(PANEL_IMPORT);
+    expect(page).not.toMatch(/cleanupApiTypes/);
+    expect(page.match(/<TestAccountCleanupPanel\b/g)).toHaveLength(1);
+    const expanded = page.indexOf('{isExpanded && (');
+    const dangerArea = page.indexOf('data-testid="danger-area"');
+    expect(dangerArea).toBeGreaterThan(expanded);
+    const at = page.indexOf('<TestAccountCleanupPanel');
+    expect(at).toBeGreaterThan(dangerArea);
+    const panel = page.slice(at, page.indexOf('/>', at));
+    expect(panel).toMatch(/key=\{user\.id\}/);
+    expect(panel).toMatch(/lockedEmail=\{user\.email\}/);
+    expect(panel).toMatch(/onRemoved=\{\(\) => \{\s*void fetchUsers\(\);\s*\}\}/);
+    expect(page.slice(dangerArea, at)).toMatch(/\{user\.email \? \(\s*$/);
+  });
+
+  it('AU-C4: neither the page nor the panel names the database function, comments included', () => {
+    for (const file of [`${ROOT}/page.tsx`, PANEL_FILE]) {
+      // Split so this guard does not itself name the function (R-7: only the repository may).
+      expect({ file, hit: read(file).includes('operator_test_' + 'account_cleanup') }).toEqual({ file, hit: false });
+    }
+  });
+
+  it('AU-C7: the panel has no console.*', () => {
+    expect(codeOf(read(PANEL_FILE))).not.toMatch(/console\./);
+  });
+});
