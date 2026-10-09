@@ -27,6 +27,11 @@ interface QaScenario {
   /** FU-5: what `findBySubscriptionId` answers. Default: no plan. */
   planBySubscription?: Answer;
   db?: Record<string, Answer | Answer[]>;
+  /**
+   * CF-5 PR 4: `bindPlanSubscription` rejects with this message. Unset → it
+   * resolves, as it always did, so no earlier test sees a difference.
+   */
+  bindError?: string;
 }
 
 const mockEffects: Effect[] = [];
@@ -118,6 +123,7 @@ jest.mock('@/lib/payments/invoicePaymentIntent', () => ({
 jest.mock('@/lib/payments/bindPlanSubscription', () => ({
   bindPlanSubscription: (...args: unknown[]) => {
     mockEffects.push({ type: 'bindPlanSubscription', args });
+    if (mockScenario.bindError) return Promise.reject(new Error(mockScenario.bindError));
     return Promise.resolve({ scheduleId: 'sub_sched_1' });
   },
 }));
@@ -758,7 +764,7 @@ describe('FU-5 QA: an owner lookup error releases the claim on every owner-check
       control: { owners: OWNED_BY_OTHER, msg: INVOICE_PAID_REFUSAL },
     },
     {
-      line: ':1669 plan checkout (inside the rethrowing try)',
+      line: ':1669 plan checkout (above the rethrowing try since CF-5 PR 4)',
       event: () => fixture('checkout-completed-plan-foreign-links.json'),
       scenario: {},
       control: { owners: OWNED_BY_OTHER, msg: 'Plan checkout names an owner this account does not own - refusing' },
@@ -830,10 +836,17 @@ describe('FU-5 QA: an owner lookup error releases the claim on every owner-check
     expect(r.effects.filter((e) => e.type === 'bindPlanSubscription' || e.type === 'crmActivity.create')).toEqual([]);
   });
 
-  it('FU5-E :1669: the error goes through the plan-checkout catch, which rethrows (its log line is left as is, SA Q-3)', async () => {
+  /*
+   * CF-5 PR 4 moved this owner check above the plan-checkout `try` (FU-5 SA Q-3).
+   * The outcome is unchanged (500, claim released, Stripe retries); the error no
+   * longer passes through the catch, so it is no longer mislogged as an unbounded
+   * plan. Before PR 4 this asserted that line once. A bind that throws still
+   * gets it: Q3-1 at the end of this file.
+   */
+  it('FU5-E :1669: the error is thrown above the plan-checkout catch, so it is not logged as an unbounded plan (SA Q-3, CF-5 PR 4)', async () => {
     const r = await run(fixture('checkout-completed-plan-foreign-links.json'), { owners: OWNER_A, ownerErrors: ['acct_owner_a'] });
     expect(r.status).toBe(500);
-    expect(errorsLogged('Could not bound a payment plan - subscription may bill indefinitely')).toHaveLength(1);
+    expect(errorsLogged('Could not bound a payment plan - subscription may bill indefinitely')).toEqual([]);
   });
 });
 
@@ -884,5 +897,38 @@ describe('FU-5 QA: recovery, true unmapped, and the per-request cache', () => {
     expect(r.effects.filter((e) => e.type === 'bindPlanSubscription')).toHaveLength(1);
     expect(mockLogLines.some((l) => l.msg === 'Plan period from an account that does not own the plan - refusing')).toBe(false);
     expect(ownerLookups(r)).toEqual([{ type: 'resolveAccountOwner', accountId: 'acct_owner_a' }]);
+  });
+});
+
+// ─── CF-5 PR 4: the plan-checkout catch ──────────────────────────────────────
+
+/*
+ * CF-5 PR 4 moves the plan-checkout owner check above its `try` (FU-5 SA Q-3),
+ * so an owner-lookup failure is no longer logged as an unbounded plan (the
+ * FU5-E `:1669` test above). This pins the other half: a bind that throws still
+ * goes through that catch exactly as before. Written against the untouched
+ * route first (workplan §7.3.5).
+ */
+describe('CF-5 PR 4: a failed bind still goes through the plan-checkout catch (FU-5 SA Q-3)', () => {
+  it('Q3-1. bindPlanSubscription throws: 500, claim failed with its message, logged once as a possibly unbounded plan', async () => {
+    const r = await run(fixture('checkout-completed-plan-foreign-links.json'), {
+      owners: OWNER_A,
+      bindError: 'Stripe refused the schedule',
+    });
+
+    expect(r.status).toBe(500);
+    expect(claimStatus(r)).toBe('failed');
+    const releases = writes(r, ['processed_webhook_events']).filter((e) => e.operation === 'update');
+    expect((releases[releases.length - 1].chain[0][1] as { failure_message?: unknown }).failure_message).toBe(
+      'Stripe refused the schedule'
+    );
+    expect(errorsLogged('Could not bound a payment plan - subscription may bill indefinitely')).toHaveLength(1);
+    expect(errorsLogged('Plan checkout names an owner this account does not own - refusing')).toEqual([]);
+    // Same order as before the hoist: the Stripe client, the owner lookup, then the bind.
+    expect(
+      r.effects
+        .filter((e) => ['stripe.client', 'resolveAccountOwner', 'bindPlanSubscription'].includes(e.type))
+        .map((e) => e.type)
+    ).toEqual(['stripe.client', 'resolveAccountOwner', 'bindPlanSubscription']);
   });
 });
