@@ -429,6 +429,138 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     }
   });
 
+  // CF-5 PR 4 (workplan §7.3.5): the plan and booking sites (4 instalment, 2 plan
+  // subscription, 4 booking). Every call of these three singletons in the route,
+  // per function, including the ones that were already repository calls.
+  const PLAN_BOOKING_CALLS: Record<string, Record<string, Record<string, number>>> = {
+    paymentPlanRepository: {
+      recordPlanPeriodPaid: { findInstallmentIdByStripeInvoiceId: 1, markPeriodPaidFromStripe: 1, findNextPendingPeriod: 1 },
+      handlePlanSubscriptionEnded: { cancelOpenPeriodsForEndedPlan: 1 },
+    },
+    paymentPlanSubscriptionRepository: {
+      recordPlanPeriodPaid: { findBySubscriptionId: 1, recordPeriodPaid: 1, close: 1 },
+      handleConnectInvoicePaymentFailed: { findBySubscriptionId: 1, recordFailure: 1 },
+      handlePlanSubscriptionEnded: { findEndStateBySubscriptionId: 1, endFromStripe: 1 },
+    },
+    schedulingBookingRepository: {
+      handleConnectPaymentIntentSucceeded: { findOwnedId: 1 },
+      recordPlanPeriodPaid: { markPaidForOwner: 1 },
+      handleConnectInvoicePaid: { markPaidUnscoped: 1 },
+      handleConnectCheckoutCompleted: { markPaidAndConfirmIfPending: 1, markPaidForOwnerCounted: 1 },
+    },
+  };
+
+  it('the plan and booking tables are reached only through their repositories (CF-5 PR 4)', () => {
+    const code = codeOf(sf);
+    for (const table of ['payment_plan_installments', 'payment_plan_subscriptions', 'scheduling_bookings', 'payment_plans']) {
+      expect({ table, inline: new RegExp(`from\\(\\s*['"\`]${table}['"\`]\\s*\\)`).test(code) }).toEqual({ table, inline: false });
+    }
+
+    // Only the singletons, never the classes (no instance built around the checks).
+    const classMentions: string[] = [];
+    walk(sf, (n) => {
+      if (
+        ts.isIdentifier(n) &&
+        ['PaymentPlanRepository', 'PaymentPlanSubscriptionRepository', 'SchedulingBookingRepository'].includes(n.text)
+      ) {
+        classMentions.push(n.text);
+      }
+    });
+    expect(classMentions).toEqual([]);
+
+    // Each function makes exactly its expected calls, and no other function makes any.
+    for (const [receiver, perFunction] of Object.entries(PLAN_BOOKING_CALLS)) {
+      let expectedTotal = 0;
+      for (const [fn, expected] of Object.entries(perFunction)) {
+        const node = topLevelFunction(fn);
+        expect(node).toBeDefined();
+        const actual: Record<string, number> = {};
+        for (const call of receiverCalls(node!, receiver)) {
+          const name = (call.expression as ts.PropertyAccessExpression).name.text;
+          actual[name] = (actual[name] ?? 0) + 1;
+        }
+        expect({ receiver, fn, calls: actual }).toEqual({ receiver, fn, calls: expected });
+        expectedTotal += Object.values(expected).reduce((a, b) => a + b, 0);
+      }
+      expect({ receiver, total: receiverCalls(sf, receiver).length }).toEqual({ receiver, total: expectedTotal });
+    }
+  });
+
+  it('every plan and booking write keeps the key and the owner it had (CF-5 PR 4)', () => {
+    /*
+     * For each write: the arguments it is called with, and the owner tested by
+     * the nearest `accountOwns(…)` before it (positional, as PR2-Q2 / PR3-Q1).
+     * `null` means the write follows no `accountOwns` of its own: the checkout
+     * booking is scoped by `accountOwner` (Fix-1, F-2), asserted separately below.
+     *
+     * The `subscription.id` argument of `cancelOpenPeriodsForEndedPlan` is F-3
+     * (Stripe's id against a column holding our plan row's id), pinned as it is
+     * on purpose (SA C-9). Fix-2 changes it, and this line with it.
+     */
+    const EXPECTED: Array<{ fn: string; receiver: string; method: string; args: string[]; check: string | null }> = [
+      { fn: 'recordPlanPeriodPaid', receiver: 'paymentPlanRepository', method: 'markPeriodPaidFromStripe', args: ['plan.data.id', 'periodsPaid', expect.any(String) as unknown as string], check: 'plan.data.user_id' },
+      { fn: 'recordPlanPeriodPaid', receiver: 'schedulingBookingRepository', method: 'markPaidForOwner', args: ['plan.data.booking_id', 'plan.data.user_id'], check: 'plan.data.user_id' },
+      { fn: 'handleConnectInvoicePaid', receiver: 'schedulingBookingRepository', method: 'markPaidUnscoped', args: ['platformInvoice.booking_id'], check: 'platformInvoice.user_id' },
+      { fn: 'handleConnectCheckoutCompleted', receiver: 'schedulingBookingRepository', method: 'markPaidAndConfirmIfPending', args: ['platformInvoice.booking_id'], check: 'platformInvoice.user_id' },
+      { fn: 'handleConnectCheckoutCompleted', receiver: 'schedulingBookingRepository', method: 'markPaidForOwnerCounted', args: ['bookingId', 'owner'], check: null },
+      { fn: 'handlePlanSubscriptionEnded', receiver: 'paymentPlanSubscriptionRepository', method: 'endFromStripe', args: ['plan.id', "completed ? 'completed' : 'cancelled'"], check: 'plan.user_id' },
+      { fn: 'handlePlanSubscriptionEnded', receiver: 'paymentPlanRepository', method: 'cancelOpenPeriodsForEndedPlan', args: ['plan.user_id', 'subscription.id'], check: 'plan.user_id' },
+    ];
+
+    for (const { fn, receiver, method, args, check } of EXPECTED) {
+      const node = topLevelFunction(fn)!;
+      const writes = methodCallsTo(node, receiver, method);
+      expect({ fn, method, count: writes.length }).toEqual({ fn, method, count: 1 });
+      const write = writes[0];
+      const checks = callsTo(node, 'accountOwns').filter((c) => c.end <= write.getStart(sf));
+      const nearest = checks[checks.length - 1];
+      expect({
+        fn,
+        method,
+        args: write.arguments.map((a) => a.getText(sf)),
+        check: check === null ? null : nearest?.arguments[1]?.getText(sf),
+      }).toEqual({ fn, method, args, check });
+    }
+
+    // The checkout booking write (F-2): `owner` is the business that owns the
+    // SENDING account, and a missing owner returns before the write.
+    const checkout = topLevelFunction('handleConnectCheckoutCompleted')!;
+    const ownerDecls: string[] = [];
+    walk(checkout, (n) => {
+      if (ts.isVariableDeclaration(n) && n.name.getText(sf) === 'owner') ownerDecls.push(n.initializer?.getText(sf) ?? '');
+    });
+    expect(ownerDecls).toEqual(['await accountOwner(connectAccountId, log)']);
+    const counted = methodCallsTo(checkout, 'schedulingBookingRepository', 'markPaidForOwnerCounted')[0];
+    const ownerGuard = codeOf(checkout).indexOf('if (!owner)');
+    expect(ownerGuard).toBeGreaterThan(-1);
+    expect(ownerGuard).toBeLessThan(codeOf(checkout).indexOf('markPaidForOwnerCounted('));
+    expect(counted.arguments[1].getText(sf)).toBe('owner');
+  });
+
+  it('the plan-checkout owner check sits above the try whose catch reports an unbounded plan (FU-5 SA Q-3, CF-5 PR 4)', () => {
+    const checkout = topLevelFunction('handleConnectCheckoutCompleted')!;
+    const insideTry = (n: ts.Node): ts.TryStatement | undefined => {
+      for (let p: ts.Node | undefined = n.parent; p && p !== checkout; p = p.parent) {
+        if (ts.isTryStatement(p) && n.pos >= p.tryBlock.pos && n.end <= p.tryBlock.end) return p;
+      }
+      return undefined;
+    };
+
+    const planCheck = callsTo(checkout, 'accountOwns').filter((c) => c.arguments[1]?.getText(sf) === 'ownerId');
+    expect(planCheck).toHaveLength(1);
+    expect(insideTry(planCheck[0])).toBeUndefined();
+
+    // The bind is still inside the try, and that catch still reports it and rethrows.
+    const binds = callsTo(checkout, 'bindPlanSubscription');
+    expect(binds).toHaveLength(1);
+    const tryStatement = insideTry(binds[0]);
+    expect(tryStatement).toBeDefined();
+    const catchCode = codeOf(tryStatement!.catchClause!);
+    expect(catchCode).toContain('Could not bound a payment plan - subscription may bill indefinitely');
+    expect(catchCode).toMatch(/throw scheduleError/);
+    expect(planCheck[0].end).toBeLessThan(tryStatement!.getStart(sf));
+  });
+
   it('handleInvoicePaid and the customer-subscription fallback are gone', () => {
     expect(topLevelFunction('handleInvoicePaid')).toBeUndefined();
     const code = codeOf(sf);
