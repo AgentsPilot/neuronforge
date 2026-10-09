@@ -1,13 +1,13 @@
 # Workplan: SECURITY DEFINER Lockdown, Slice 6 (CI ratchet guard)
 
-> **Last Updated**: 2026-10-08
+> **Last Updated**: 2026-10-09
 
 **Developer:** Dev
 **Requirement:** [SECURITY_DEFINER_FUNCTIONS_LOCKDOWN_REQUIREMENT.md](/docs/requirements/SECURITY_DEFINER_FUNCTIONS_LOCKDOWN_REQUIREMENT.md) (FR-6, §5 CI cost, §6 S6, SA C-5, SQ-2, SQ-5, SQ-6)
 **Evidence:** [SECURITY_DEFINER_FUNCTIONS_INVENTORY.md](/docs/investigations/SECURITY_DEFINER_FUNCTIONS_INVENTORY.md); slice 1: [SECDEF_LOCKDOWN_SLICE1_WORKPLAN.md](/docs/workplans/SECDEF_LOCKDOWN_SLICE1_WORKPLAN.md)
 **Branch:** `feature/secdef-guard-slice-6` (worktree `neuronforge-secdef-s6`, off `origin/main` `06b77d1b`)
 **Date:** 2026-10-08
-**Status:** In Progress. SA code review fixes C-1 to C-3 and lows 4 to 7 done; SA re-check APPROVED WITH NITS; QA re-run PASS (2026-10-08). Awaiting user diff review, then RM. Left uncommitted
+**Status:** ✅ Complete. PR #271 merged 2026-10-08 (`f885570d`); block proof done 2026-10-09 by TL (PR #274, merge BLOCKED, §6 step 3)
 
 ## Overview
 
@@ -299,7 +299,7 @@ No SQL file, migration, rollback, checker or application file changes.
     | C-1 `DO '...'` | F-2 |
     | C-2a ROUTINE, C-2b `"public"`, C-2c schema list, C-2d GRANTED BY | R-d each |
     | C-2 `GRANT USAGE, EXECUTE` | F-1 |
-- ⬜ T-10: Hand to SA for code review (re-check of C-1 to C-3 pending), then the user's diff (uncommitted). After merge: requirement §4.3 and inventory §6 updated; throwaway-PR block proof recorded (§6)
+- ✅ T-10: SA code review approved, user diff, PR #271 merged 2026-10-08 (`f885570d`). Block proof done 2026-10-09 by TL (§6 step 3 result); requirement §4.3 S6 row and inventory §6 row 6 updated
 
 ---
 
@@ -328,6 +328,8 @@ Jest cannot show that the required check blocks a merge. That is §6 step 3, don
    3. Open a PR to `main`. Wait for `Admin authz surface guard` to finish red, with the failure naming `throwaway_secdef_probe` and R-a and R-c.
    4. Record the merge box text. Pass = it says merging is blocked because a required status check failed, and **no** merge button is enabled. `enforce_admins` is on (§1.1), so the owner should not be offered a bypass either. If a bypass is offered, record it: the protection is weaker than measured.
    5. Close the PR without merging and delete the branch. Record the PR number, the failing test name and the merge-box text in the QA section and in requirement §4.3.
+
+   **Result (2026-10-09, TL): ✅ blocked.** throwaway PR #274 (branch `chore/secdef-guard-block-proof`) added `supabase/held/29991231_throwaway_secdef_probe.sql`; `Admin authz surface guard` FAILED naming R-a and R-c with their lines, and `Gate tests (jest)` FAILED on the same test; `mergeStateStatus` BLOCKED; branch protection `enforce_admins` true, `strict` true, both checks required; PR closed unmerged, branch deleted.
 4. Requirement §4.3 (S6 row) and inventory §6 row 6 updated with PR, merge and block proof (user rule: every slice stage goes into the main requirement).
 
 **W-6 finding (Dev, 2026-10-08): no auto-apply path in the repo, but the repo cannot prove the dashboard side, so the probe goes in `supabase/held/`.**
@@ -564,6 +566,10 @@ Edge cases from the first pass: EC-1 and EC-2 are fixed (rows above). No new bug
 
 **Verdict: PASS.**
 
+### Block proof (TL, 2026-10-09)
+
+✅ Merge **blocked**: throwaway PR #274 (branch `chore/secdef-guard-block-proof`) added `supabase/held/29991231_throwaway_secdef_probe.sql`; `Admin authz surface guard` FAILED naming R-a and R-c with their lines, and `Gate tests (jest)` FAILED on the same test; `mergeStateStatus` BLOCKED; branch protection `enforce_admins` true, `strict` true, both checks required; PR closed unmerged, branch deleted. Acceptance §6 step 3 met; slice 6 complete.
+
 ---
 
 ## Appendix A: measured baseline
@@ -625,3 +631,4 @@ Measured 2026-10-08 on `06b77d1b` by the prototype parser. 37 files, 70 (file, f
 | 2026-10-08 | SA code-review fixes (Dev) | C-1 single-quoted SECURITY DEFINER is F-2 (COMMENT ON exempt; read-only scripts exempt in the tripwire only); C-2 ROUTINE/PROCEDURE, quoted "public", schema lists, GRANTED BY, F-1 backstop; C-3 exact-count finding allowances; lows 4 to 7; QA quoting and R-d wording; tripwire widened to every .sql outside the three directories. 84 tests in the new file, 203/203 in test:authz-guard; eslint and tsc clean. QA report kept as written. Awaiting SA re-check |
 | 2026-10-08 | SA code re-check (T-9b) | APPROVED WITH NITS: C-1 to C-3, lows 4 to 7, QA quoteIdent / R-d text and the git ls-files tripwire verified by probe; read-only-script exemption ruled acceptable (tripwire only, string F-2 only; a later SECDEF CREATE is still a pair). 84/84, 203/203, eslint and tsc clean. Nits: workflow comment line 53; void the exemption on a later read-write toggle |
 | 2026-10-08 | QA re-run after C-1 to C-3 | PASS. test:authz-guard 203/203; 19 earlier mutation cases unchanged; 11 new as expected (single-quoted DO/AS F-2, COMMENT ON green, ROUTINE / "public" / schema-list R-d, "PUBLIC" green, USAGE+EXECUTE F-1, RESET search_path R-c, quoted paste line, R-d remove-the-GRANT text). Green with main's newer .sql files (#268 20261045, #269 20261046 pair). Ready for commit: yes |
+| 2026-10-09 | Block proof; slice 6 complete (Dev, recording TL's run) | Throwaway PR #274 (branch `chore/secdef-guard-block-proof`) added `supabase/held/29991231_throwaway_secdef_probe.sql`; `Admin authz surface guard` FAILED naming R-a and R-c with their lines, and `Gate tests (jest)` FAILED on the same test; `mergeStateStatus` BLOCKED; branch protection `enforce_admins` true, `strict` true, both checks required; PR closed unmerged, branch deleted. Status set to Complete; T-10 closed (inventory §6 row 6 updated in the slice 2 PR) |
