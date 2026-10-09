@@ -251,6 +251,13 @@ export const AUDIT_EVENTS = {
   // and no details, SA Q-4). Details: kind (refund | dispute), the event, the
   // target and previous status, the cumulative refunded amount for a refund.
   BOS_BOOST_PAYMENT_REVERSED: 'BOS_BOOST_PAYMENT_REVERSED',
+  // Credits boost slice 4b.2: an admin ran the boost reconcile pass now
+  // (POST /api/admin/business-os/credits/boost/reconcile). One write-ahead row
+  // per press, flushed before the pass runs. SA C-7: written against an admin /
+  // system entity ('system', id = the run id the route generates, the admin as
+  // user and actor), NEVER against a purchase, so it reaches no owner's audit.
+  // Details: the run id and the correlation id; never an account or a payment.
+  BOS_BOOST_RECONCILE_TRIGGERED: 'BOS_BOOST_RECONCILE_TRIGGERED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -915,6 +922,14 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_BOOST_FLAGGED]: {
     severity: 'warning',
     description: 'A Business OS credits boost payment was flagged for review (reason code recorded)',
+  },
+  // Credits boost slice 4b.2: 'warning' + SOC2, like BOS_QUEUE_DRAIN_STARTED —
+  // an admin made the platform credit, expire or fail purchases across every
+  // account, outside the schedule.
+  [AUDIT_EVENTS.BOS_BOOST_RECONCILE_TRIGGERED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin ran the Business OS credits boost reconcile pass now',
   },
   // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
   // (and possibly send) queued items across every account, outside the schedule.
