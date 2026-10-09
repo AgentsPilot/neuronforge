@@ -230,3 +230,15 @@ describe('QA R-3: when the notice reads, and how many times', () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 });
+
+describe('BQ-1: a reversed purchase is not a return-notice answer', () => {
+  it('status reversed → the notice disappears, no further read', async () => {
+    replies = [purchase('reversed')];
+    visit(`?boost=return&session_id=${SESSION}`);
+    render(<BoostReturnNotice />);
+    await tick(BOOST_RETURN_POLL_DELAYS_MS[0]);
+    expect(screen.queryByTestId('boost-return-notice')).not.toBeInTheDocument();
+    await tick(100000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
