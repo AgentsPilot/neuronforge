@@ -9,7 +9,7 @@
 **Branch:** `fix/secdef-lockdown-slice-2` (worktree `neuronforge-secdef-s2`, off `origin/main` `88b1938f`)
 **Migration number:** `20261048`. Re-checked 2026-10-09 at code complete: `origin/main` (`c0ae58bd`) tops at `20261047` (PR #273 merged 2026-10-09, `de3ed839`), and no open PR touches `supabase/migrations/`, `supabase/SQL Scripts/` or `supabase/held/`. Re-check again at PR time (T-10 rule)
 **Date:** 2026-10-09
-**Status:** Code Complete (uncommitted). Workplan SA-approved 2026-10-09 with S2-1 to S2-4 (folded in); five files written, static test green. Awaiting SA code review
+**Status:** ✅ Applied on prod 2026-10-09 15:48 UTC and accepted (PR #277). SA code review approved with nits (N-1 applied); QA PASS; user acceptance: checker 78/0, both negative calls 42501, smoke OK. Remaining: Postgres-log check to T+24h and Vercel at T+60 min (rollback only on a caller identified as ours).
 
 ## Overview
 
@@ -457,6 +457,10 @@ Roles `anon`, `authenticated`, `service_role`, `supabase_admin`, `other_owner` a
 
 - [x] Every locally testable criterion passes. **QA verdict: PASS. Ready for commit** after the user's diff review and approval. Prod acceptance (§5.3) follows the apply.
 
+### Prod apply and acceptance (user, 2026-10-09)
+
+Pre-check CLEAN at 15:47 UTC (Q5 match and owner granted all x13, Q11 0 dependents; one Q6 caller, has_sufficient_credits calling get_user_credit_balance, both SECDEF owned by postgres, ok); migration applied 15:48 UTC; checker VERDICT PASS 78 pass 0 fail; negative calls 42501 for get_user_credit_balance (anon) and get_user_subscription_info (authenticated); signed-in smoke: no impact. T = 15:48 UTC. Post-merge: Postgres logs T to T+24h and Vercel at T+60 min for permission denied for function; rollback only on a caller identified as ours (S2-3).
+
 ### Negative call check (written by Dev per SA S2-2, run by the user)
 
 Paste each block in its own **new** SQL-editor tab, after the migration and the checker. They contain no string literal, no comment and no "into", and the static test pins them. The privilege check happens before the function body runs, so no body executes; `ROLLBACK` reverts the role.
@@ -483,8 +487,8 @@ If either block fails with `permission denied to set role`, that is the editor r
 
 | Check | SQLSTATE | Function named | Result |
 |---|---|---|---|
-| Block 1 (anon) | local PGlite `42501` | local `get_user_credit_balance` | ⬜ prod owed after apply (local PGlite ✅) |
-| Block 2 (authenticated) | local PGlite `42501` | local `get_user_subscription_info` | ⬜ prod owed after apply (local PGlite ✅) |
+| Block 1 (anon) | local PGlite `42501` | local `get_user_credit_balance` | ✅ prod 2026-10-09: 42501 (local PGlite ✅) |
+| Block 2 (authenticated) | local PGlite `42501` | local `get_user_subscription_info` | ✅ prod 2026-10-09: 42501 (local PGlite ✅) |
 
 ---
 
@@ -497,3 +501,4 @@ If either block fails with `permission denied to set role`, that is the editor r
 | 2026-10-09 | SA conditions folded in; implementation T-5 to T-10 (Dev) | S2-1 Q11 `pg_depend` dependents (catalog, deptype, describe; any row stops); S2-2 the two negative-call blocks verbatim in the QA section, pinned by the static test; S2-3 rollback only on a caller identified as ours, unattributed hits counted as probes (§5.3 3(a), §6); S2-4 in the requirement. Five files written under `20261048`; all suites green except two Windows-only gate failures unrelated to the slice. `20261047` merged on main (#273), `20261048` still free. Guard analyser not imported (it lives in a `.test.ts`). Left uncommitted for SA code review |
 | 2026-10-09 | SA code review | APPROVED WITH NITS. S2-1 to S2-4 verified in code. SQL desk-checked: Q11 `pg_depend` shape, `COLLATE "C"` on all 4 `string_agg`, DO blocks with direct booleans, TSV-derived `to_regprocedure` literals. PR #274 block proof re-read with `gh`. The two Windows gate failures are pre-existing (CRLF via autocrlf, backslash paths), and `Tests` is green on main `88b1938f`/`c0ae58bd`. Slice test 74/74, `test:authz-guard` 203/203. N-1: update inventory §6 row 6 (slice 6 done) in this PR |
 | 2026-10-09 | QA (local PGlite) | PASS. Static test 74/74, authz guard 203/203. Pre-check CLEAN with Q5 `match` x13, also on an ICU `und` database (the mutation without `COLLATE "C"` reproduces `DIFFERS` x13). Checker 39/39, then 78/0; idempotent; both negative blocks give `42501` naming the function; rollback restores the pre-state row for row. Negatives fail safe: a missing function, a foreign grantor, a foreign owner. Q11 flags a column default (required by S2-1), a CHECK constraint, a view and a `BEGIN ATOMIC` caller; Q6 flags an INVOKER SQL caller. Prod steps still owed |
+| 2026-10-09 | Prod apply and acceptance (user, recorded by TL) | pre-check CLEAN at 15:47 UTC (Q5 match and owner granted all x13, Q11 0 dependents; one Q6 caller, has_sufficient_credits calling get_user_credit_balance, both SECDEF owned by postgres, ok); migration applied 15:48 UTC; checker VERDICT PASS 78 pass 0 fail; negative calls 42501 for get_user_credit_balance (anon) and get_user_subscription_info (authenticated); signed-in smoke: no impact. Status set to applied and accepted |
