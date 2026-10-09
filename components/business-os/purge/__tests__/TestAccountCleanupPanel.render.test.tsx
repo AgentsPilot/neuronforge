@@ -389,6 +389,104 @@ describe('confirm and delete', () => {
   });
 });
 
+function mockClipboard(writeText: jest.Mock | undefined) {
+  // After userEvent.setup(), which installs its own clipboard stub.
+  Object.defineProperty(window.navigator, 'clipboard', {
+    value: writeText ? { writeText } : undefined,
+    configurable: true,
+  });
+}
+
+describe('copy buttons', () => {
+  it('"not present" for a table absent on this database; "unknown" only for a failed count', async () => {
+    const base = checkData();
+    replies.check = {
+      status: 200,
+      body: {
+        success: true,
+        data: { ...base, rows: [...base.rows, { section: 'remove', status: 'absent', item: 'B3 subscriptions', found: null, detail: '' }] },
+      },
+    };
+    await checked();
+    const rows = screen.getByTestId('cleanup-remove-rows');
+    expect(rows).toHaveTextContent('B3 subscriptionsnot present');
+    expect(rows).toHaveTextContent('B2 business_os_notesunknown');
+  });
+
+  it('copies the check result as plain text, never the typed confirm email', async () => {
+    replies.check = {
+      status: 200,
+      body: {
+        success: true,
+        data: checkData({
+          verdict: 'BLOCKED',
+          blockers: [{ guard: 'G-2', item: 'the email contains the test tag', found: 0, clears: 'Use a test address.' }],
+        }),
+      },
+    };
+    const user = await checked();
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    mockClipboard(writeText);
+    await user.click(screen.getByRole('button', { name: 'Copy check result' }));
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0][0]).toBe(
+      [
+        `BLOCKED · login ${LOGIN}`,
+        'Server time: 812 ms',
+        'G-2 the email contains the test tag (0) — to clear: Use a test address.',
+        'Rows to remove',
+        'B1 business_os_contacts\t4',
+        'B2 business_os_notes\tunknown',
+        'Triggers that fire on the login',
+        'auth.users.on_auth_user_created — Fires when the login is deleted.',
+        'Kept',
+        'business_os_invites redeemed or claimed by it (1) — The invite history stays.',
+      ].join('\n')
+    );
+    expect(writeText.mock.calls[0][0]).not.toContain(EMAIL);
+    expect(await screen.findByRole('button', { name: 'Copy check result' })).toHaveTextContent('Copied');
+  });
+
+  it('copies the delete report with the TOTAL line, never the confirm email', async () => {
+    const user = await checked();
+    await user.type(screen.getByLabelText(/Type the email again/), EMAIL);
+    await user.click(screen.getByRole('button', { name: 'Delete this test account' }));
+    await screen.findByTestId('cleanup-report');
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    mockClipboard(writeText);
+    await user.click(screen.getByRole('button', { name: 'Copy delete report' }));
+    const text = writeText.mock.calls[0][0] as string;
+    expect(text).toBe(
+      [
+        'Test account removed.',
+        'Table\tRows',
+        'business_os_contacts\t4',
+        'auth.users\t1',
+        'TOTAL · CLEAN\t5 rows in 2 tables',
+        `Files removed: 2 · login ${LOGIN} · at 2026-10-07T10:00:00Z`,
+        'Server time: check 812 ms · delete 2140 ms',
+      ].join('\n')
+    );
+    expect(text).not.toContain(EMAIL);
+    expect(await screen.findByRole('button', { name: 'Copy delete report' })).toHaveTextContent('Copied');
+  });
+
+  it('says to select the text when the clipboard refuses', async () => {
+    const user = await checked();
+    mockClipboard(jest.fn().mockRejectedValue(new Error('denied')));
+    await user.click(screen.getByRole('button', { name: 'Copy check result' }));
+    expect(await screen.findByTestId('cleanup-copy-check-failed')).toHaveTextContent('Could not copy — select the text instead');
+    expect(screen.getByRole('button', { name: 'Copy check result' })).toHaveTextContent('Copy');
+  });
+
+  it('says to select the text when there is no clipboard at all', async () => {
+    const user = await checked();
+    mockClipboard(undefined);
+    await user.click(screen.getByRole('button', { name: 'Copy check result' }));
+    expect(await screen.findByTestId('cleanup-copy-check-failed')).toHaveTextContent('Could not copy — select the text instead');
+  });
+});
+
 describe('source guard', () => {
   const src = readFileSync(join(__dirname, '..', 'TestAccountCleanupPanel.tsx'), 'utf-8');
   const types = readFileSync(join(__dirname, '..', '..', '..', '..', 'lib', 'business-os', 'test-account-cleanup', 'cleanupApiTypes.ts'), 'utf-8');
