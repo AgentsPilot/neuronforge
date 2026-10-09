@@ -36,6 +36,11 @@ import {
 } from '@/lib/repositories/PaymentRepository';
 import { paymentRefundRepository } from '@/lib/repositories/PaymentRefundRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { userSubscriptionRepository } from '@/lib/repositories/UserSubscriptionRepository';
+import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
+import { creditTransactionRepository } from '@/lib/repositories/CreditTransactionRepository';
+import { billingEventRepository } from '@/lib/repositories/BillingEventRepository';
+import { legacyBoostPackPurchaseRepository } from '@/lib/repositories/LegacyBoostPackPurchaseRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
 import { createLogger, type Logger } from '@/lib/logger';
 import {
@@ -60,12 +65,11 @@ const logger = createLogger({ module: 'stripe-webhook', route: '/api/stripe/webh
 // row already proved to belong to the sending account (`accountOwns`); see the
 // tenant-isolation notes in docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md §5.
 //
-// CF-5 PR 1 replaced this route's private service-role client with the shared
-// `supabaseServer` (the same URL and key; the dropped auth options only matter
-// for a signed-in session, which a service-role client never has, workplan §4).
-// The alias keeps the remaining direct queries compiling while later PRs move
-// them behind repositories; PR 5 removes it.
-const supabaseAdmin = supabaseServer;
+// This route issues no query of its own (CLAUDE.md rule 1; CF-5 PR 5 moved the
+// last ones behind repositories, which default to `supabaseServer`). It imports
+// `supabaseServer` only to hand it to three helpers that take a client:
+// `pilotCreditsToTokens`, `QuotaAllocationService` and `resolveAccountOwner`
+// (workplan SA Q-2). `routerPlacement.guard` pins that.
 
 // Plan payments P-1 removed `handleInvoicePaid`, the agent-platform conversion
 // of a platform `invoice.paid` into Pilot Credits. It took the account from
@@ -93,11 +97,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice, log: Logger) 
   }
 
   // Get user subscription
-  const { data: userSub } = await supabaseAdmin
-    .from('user_subscriptions')
-    .select('payment_retry_count, grace_period_days, current_period_end')
-    .eq('user_id', userId)
-    .single();
+  const { data: userSub } = await userSubscriptionRepository.findDunningState(userId);
 
   const retryCount = (userSub?.payment_retry_count || 0) + 1;
 
@@ -106,11 +106,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice, log: Logger) 
 
   if (!gracePeriodDays) {
     // Fetch default from system_settings_config
-    const { data: configData } = await supabaseAdmin
-      .from('system_settings_config')
-      .select('value')
-      .eq('key', 'payment_grace_period_days')
-      .maybeSingle();
+    const { data: configData } = await systemConfigRepository.findRawValue('payment_grace_period_days');
 
     gracePeriodDays = configData ? parseInt(configData.value as string) : 3;
   }
@@ -121,29 +117,24 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice, log: Logger) 
   const shouldPauseAgents = daysSincePeriodEnd > gracePeriodDays;
 
   // Update user subscription
-  await supabaseAdmin
-    .from('user_subscriptions')
-    .update({
-      payment_retry_count: retryCount,
-      last_payment_attempt: new Date().toISOString(),
-      status: shouldPauseAgents ? 'past_due' : 'active',
-      agents_paused: shouldPauseAgents
-    })
-    .eq('user_id', userId);
+  await userSubscriptionRepository.recordPaymentFailure(userId, {
+    retryCount,
+    status: shouldPauseAgents ? 'past_due' : 'active',
+    agentsPaused: shouldPauseAgents
+  });
 
-  // Log billing event
-  await supabaseAdmin
-    .from('billing_events')
-    .insert({
-      user_id: userId,
-      event_type: 'renewal_failed',
-      credits_delta: 0,
-      description: `Payment failed (attempt ${retryCount}). ${shouldPauseAgents ? 'Agents paused due to grace period exceeded.' : `Grace period active (${gracePeriodDays} days).`}`,
-      stripe_event_id: invoice.id,
-      stripe_invoice_id: invoice.id,
-      amount_cents: invoice.amount_due,
-      currency: invoice.currency
-    });
+  // Log billing event. The row is kept exactly as it was written inline,
+  // `stripe_event_id: invoice.id` included (legacy, FU-1).
+  await billingEventRepository.insert({
+    user_id: userId,
+    event_type: 'renewal_failed',
+    credits_delta: 0,
+    description: `Payment failed (attempt ${retryCount}). ${shouldPauseAgents ? 'Agents paused due to grace period exceeded.' : `Grace period active (${gracePeriodDays} days).`}`,
+    stripe_event_id: invoice.id,
+    stripe_invoice_id: invoice.id,
+    amount_cents: invoice.amount_due,
+    currency: invoice.currency
+  });
 
   // AUDIT TRAIL: Log payment failure
   try {
@@ -216,16 +207,12 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
     log.info({ pilotCredits, boostPackId }, 'Boost pack details');
 
     // Convert Pilot Credits to tokens for storage (fetched from database)
-    const credits = await pilotCreditsToTokens(pilotCredits, supabaseAdmin);
+    const credits = await pilotCreditsToTokens(pilotCredits, supabaseServer);
 
     log.info({ pilotCredits, tokens: credits }, 'Converting Pilot Credits to tokens');
 
     // Get current balance
-    const { data: userSub } = await supabaseAdmin
-      .from('user_subscriptions')
-      .select('balance, total_earned')
-      .eq('user_id', userId)
-      .single();
+    const { data: userSub } = await userSubscriptionRepository.findBalance(userId);
 
     const currentBalance = userSub?.balance || 0;
     const currentTotalEarned = userSub?.total_earned || 0;
@@ -234,38 +221,29 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
     const newBalance = currentBalance + credits;
     const newTotalEarned = currentTotalEarned + credits;
 
-    // Update balance
-    await supabaseAdmin
-      .from('user_subscriptions')
-      .update({
-        balance: newBalance,
-        total_earned: newTotalEarned,
-        // Clear free tier expiration on purchase (user is now a paying customer)
-        free_tier_expires_at: null,
-        account_frozen: false
-      })
-      .eq('user_id', userId);
+    // Update balance. The repository also clears the free tier expiration
+    // (user is now a paying customer) and unfreezes the account, as before.
+    await userSubscriptionRepository.applyBoostPackBalance(userId, {
+      balance: newBalance,
+      totalEarned: newTotalEarned
+    });
 
     // Create credit transaction and capture the ID
-    const { data: creditTransaction, error: creditTxError } = await supabaseAdmin
-      .from('credit_transactions')
-      .insert({
-        user_id: userId,
-        credits_delta: credits,
-        balance_before: currentBalance,
-        balance_after: newBalance,
-        transaction_type: 'allocation',
-        activity_type: 'boost_pack_purchase',
-        description: `Boost pack purchase: ${credits.toLocaleString()} credits`,
-        metadata: {
-          stripe_session_id: session.id,
-          stripe_payment_intent_id: session.payment_intent,
-          boost_pack_id: boostPackId,
-          amount_paid_cents: session.amount_total
-        }
-      })
-      .select('id')
-      .single();
+    const { data: creditTransaction, error: creditTxError } = await creditTransactionRepository.insertReturningId({
+      user_id: userId,
+      credits_delta: credits,
+      balance_before: currentBalance,
+      balance_after: newBalance,
+      transaction_type: 'allocation',
+      activity_type: 'boost_pack_purchase',
+      description: `Boost pack purchase: ${credits.toLocaleString()} credits`,
+      metadata: {
+        stripe_session_id: session.id,
+        stripe_payment_intent_id: session.payment_intent,
+        boost_pack_id: boostPackId,
+        amount_paid_cents: session.amount_total
+      }
+    });
 
     if (creditTxError) {
       log.error({ err: creditTxError, userId }, 'Failed to create credit transaction for boost pack');
@@ -275,23 +253,21 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
 
     // Record boost pack purchase with proper schema
     if (boostPackId) {
-      const { error: boostPackError } = await supabaseAdmin
-        .from('boost_pack_purchases')
-        .insert({
-          user_id: userId,
+      const { error: boostPackError } = await legacyBoostPackPurchaseRepository.insert({
+        user_id: userId,
+        boost_pack_id: boostPackId,
+        transaction_id: creditTransaction?.id || null,
+        credits_purchased: credits,
+        bonus_credits: 0, // Bonus already included in credits
+        price_paid_usd: (session.amount_total || 0) / 100, // Numeric, not string
+        stripe_payment_intent_id: session.payment_intent as string,
+        payment_status: 'succeeded',
+        metadata: {
+          stripe_session_id: session.id,
           boost_pack_id: boostPackId,
-          transaction_id: creditTransaction?.id || null,
-          credits_purchased: credits,
-          bonus_credits: 0, // Bonus already included in credits
-          price_paid_usd: (session.amount_total || 0) / 100, // Numeric, not string
-          stripe_payment_intent_id: session.payment_intent as string,
-          payment_status: 'succeeded',
-          metadata: {
-            stripe_session_id: session.id,
-            boost_pack_id: boostPackId,
-            amount_total: session.amount_total
-          }
-        });
+          amount_total: session.amount_total
+        }
+      });
 
       if (boostPackError) {
         log.error({ err: boostPackError, userId, boostPackId }, 'Failed to insert into boost_pack_purchases');
@@ -310,7 +286,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
 
     // Allocate storage and execution quotas based on new balance
     try {
-      const quotaService = new QuotaAllocationService(supabaseAdmin);
+      const quotaService = new QuotaAllocationService(supabaseServer);
       const quotaResult = await quotaService.allocateQuotasForUser(userId);
 
       if (quotaResult.success) {
@@ -372,14 +348,11 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription, log:
   }
 
   // Lifecycle mirror only: cancellation state and status.
-  await supabaseAdmin
-    .from('user_subscriptions')
-    .update({
-      cancel_at_period_end: subscription.cancel_at_period_end || false,
-      canceled_at: subscription.canceled_at ? new Date(subscription.canceled_at * 1000).toISOString() : null,
-      status: subscription.status
-    })
-    .eq('user_id', userId);
+  await userSubscriptionRepository.mirrorStripeStatus(userId, {
+    cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
+    canceledAt: subscription.canceled_at ? new Date(subscription.canceled_at * 1000).toISOString() : null,
+    status: subscription.status
+  });
 
   log.info({ userId, status: subscription.status }, 'Subscription status mirrored');
 }
@@ -1129,7 +1102,7 @@ async function accountOwner(connectAccountId: string, log: Logger): Promise<stri
   let owner = accountOwnerCache.get(connectAccountId) ?? null;
 
   if (!owner) {
-    owner = await resolveAccountOwner(supabaseAdmin, connectAccountId);
+    owner = await resolveAccountOwner(supabaseServer, connectAccountId);
     if (owner) accountOwnerCache.set(connectAccountId, owner);
   }
 
@@ -2157,24 +2130,15 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription, log:
     return;
   }
 
-  await supabaseAdmin
-    .from('user_subscriptions')
-    .update({
-      status: 'canceled',
-      canceled_at: new Date().toISOString(),
-      cancel_at_period_end: false
-    })
-    .eq('user_id', userId);
+  await userSubscriptionRepository.markCanceled(userId);
 
   // Log billing event
-  await supabaseAdmin
-    .from('billing_events')
-    .insert({
-      user_id: userId,
-      event_type: 'subscription_canceled',
-      credits_delta: 0,
-      description: 'Subscription canceled'
-    });
+  await billingEventRepository.insert({
+    user_id: userId,
+    event_type: 'subscription_canceled',
+    credits_delta: 0,
+    description: 'Subscription canceled'
+  });
 
   log.info({ userId, subscriptionId: subscription.id }, 'Subscription canceled');
 }
