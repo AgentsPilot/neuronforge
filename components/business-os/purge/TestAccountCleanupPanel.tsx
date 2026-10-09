@@ -20,7 +20,15 @@
  *   - The Copy buttons build their text from the server view alone, so the
  *     typed email and confirmation can never end up on the clipboard.
  *
+ * Locked mode (AU-1, /admin/users): with `lockedEmail` the same panel runs the
+ * same check and delete for the account an admin picked on its row. The email
+ * and the tag are read-only and both equal that email, so the tag rule always
+ * passes and every other guard is the only safety, exactly as before. The
+ * typed confirmation stays. Without the prop the Danger Zone render is
+ * unchanged (AU-C1).
+ *
  * Requirement: docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md
+ * Amendment: docs/requirements/TEST_ACCOUNT_CLEANUP_ADMIN_USERS_AMENDMENT.md
  * Runbook: docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md §6
  */
 
@@ -195,11 +203,18 @@ export function formatCheckResultText(view: CleanupCheckView): string {
   return lines.join('\n');
 }
 
+/** Report heading in the Danger Zone; locked mode uses LOCKED_REMOVED_TITLE. */
+const REMOVED_TITLE = 'Test account removed.';
+const LOCKED_REMOVED_TITLE = 'Account removed.';
+
+/** The fixed warning line of locked mode (user-accepted copy, SA SQ-3). */
+export const LOCKED_WARNING = 'Permanently removes a real account, its login and money history.';
+
 /** The delete report block as plain text, from the same view the panel renders. */
-export function formatDeleteReportText(removed: CleanupDeleteView): string {
+export function formatDeleteReportText(removed: CleanupDeleteView, title: string = REMOVED_TITLE): string {
   const { tables, total } = removed.report;
   const lines: string[] = [
-    'Test account removed.',
+    title,
     'Table\tRows',
     ...tables.map((row) => `${row.table}\t${row.rowsRemoved}`),
     `TOTAL · ${total.result}\t${total.rowsRemoved} rows in ${total.tablesRemoved} tables`,
@@ -289,14 +304,27 @@ function BlockerList({ blockers }: { blockers: CleanupBlockerView[] }) {
 export interface TestAccountCleanupPanelProps {
   /** The page's shared debug console. Codes and counts only, never an email. */
   onLog?: (type: 'info' | 'success' | 'error', message: string) => void;
+  /**
+   * Locked mode (AU-1): the account picked on an /admin/users row. Email and
+   * tag are pre-filled with it and read-only; the typed confirmation stays.
+   */
+  lockedEmail?: string;
+  /**
+   * Called once after a delete whose report result is CLEAN, never otherwise.
+   * Locked mode: when the admin clicks Done under the report, or on unmount.
+   */
+  onRemoved?: () => void;
 }
 
 type Probe = 'loading' | 'configured' | 'not_configured' | 'hidden' | 'unknown';
 
-export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps = {}) {
+export function TestAccountCleanupPanel({ onLog, lockedEmail, onRemoved }: TestAccountCleanupPanelProps = {}) {
+  const isLocked = typeof lockedEmail === 'string' && lockedEmail.trim() !== '';
   const [probe, setProbe] = useState<Probe>('loading');
-  const [email, setEmail] = useState('');
-  const [tag, setTag] = useState(DEFAULT_TEST_TAG);
+  // Locked: tag = email, so G-2 (email contains tag) always passes; the
+  // server trims and lower-cases both, so case in the row email cannot fail it.
+  const [email, setEmail] = useState(isLocked ? (lockedEmail as string) : '');
+  const [tag, setTag] = useState(isLocked ? (lockedEmail as string) : DEFAULT_TEST_TAG);
 
   const [checking, setChecking] = useState(false);
   const [check, setCheck] = useState<{ email: string; tag: string; view: CleanupCheckView } | null>(null);
@@ -309,6 +337,27 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
 
   // A ref, not only state: a second click in the same tick must not post twice.
   const inFlight = useRef(false);
+
+  // Locked mode: a CLEAN result waits here until Done. If the panel unmounts
+  // first (row collapsed, page left), the cleanup still reports it, so the
+  // list never keeps showing a deleted account. Fires at most once.
+  const cleanPending = useRef(false);
+  const onRemovedRef = useRef(onRemoved);
+  onRemovedRef.current = onRemoved;
+  const fireRemoved = () => {
+    if (!cleanPending.current) return;
+    cleanPending.current = false;
+    onRemovedRef.current?.();
+  };
+  useEffect(
+    () => () => {
+      if (cleanPending.current) {
+        cleanPending.current = false;
+        onRemovedRef.current?.();
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -391,7 +440,12 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
       onLog?.('success', `Test account removed · ${json.data.report.total.rowsRemoved} rows · ${json.data.filesRemoved} file(s)`);
       // The check now describes an account that no longer exists.
       resetFlow();
-      setEmail('');
+      if (!isLocked) setEmail('');
+      if (json.data.report.total.result === 'CLEAN') {
+        // Locked: the report stays until Done (or unmount), so the admin can read and copy it.
+        if (isLocked) cleanPending.current = true;
+        else onRemoved?.();
+      }
     } catch {
       setDeleteError({
         sentence: 'The request did not complete. Run the check again to see what is left.',
@@ -422,12 +476,27 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
       style={{ ...box, borderColor: '#dc3545', borderWidth: 2, marginTop: 24 }}
     >
       <h3 id="test-account-cleanup-title" style={{ margin: '0 0 6px' }}>
-        Remove a test account
+        {isLocked ? 'Remove this account permanently' : 'Remove a test account'}
       </h3>
-      <p style={{ margin: '0 0 8px', fontSize: 14 }}>
-        Removes one <strong>test</strong> account completely, login included, so the email can sign up again. The
-        email must contain the tag. Run the check first. <strong>There is no undo.</strong>
-      </p>
+      {isLocked ? (
+        <>
+          <p
+            data-testid="cleanup-locked-warning"
+            style={{ margin: '0 0 6px', fontSize: 14, fontWeight: 700, color: '#b02a37' }}
+          >
+            {LOCKED_WARNING}
+          </p>
+          <p style={{ margin: '0 0 8px', fontSize: 14 }}>
+            Removes this account completely, login included, so the email can sign up again. Run the check first.{' '}
+            <strong>There is no undo.</strong>
+          </p>
+        </>
+      ) : (
+        <p style={{ margin: '0 0 8px', fontSize: 14 }}>
+          Removes one <strong>test</strong> account completely, login included, so the email can sign up again. The
+          email must contain the tag. Run the check first. <strong>There is no undo.</strong>
+        </p>
+      )}
 
       {probe === 'loading' && <p style={{ color: '#666', fontSize: 13 }}>Checking whether this is set up…</p>}
       {probe === 'not_configured' && (
@@ -444,13 +513,15 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
 
       <div style={{ display: 'grid', gap: 8, marginBottom: 8 }}>
         <label style={{ fontSize: 13 }}>
-          Email of the test account
+          {isLocked ? 'Email' : 'Email of the test account'}
           <br />
           <input
             type="email"
             value={email}
+            readOnly={isLocked}
             disabled={disabled || deleting}
             onChange={(e) => {
+              if (isLocked) return;
               setEmail(e.target.value);
               resetFlow();
             }}
@@ -459,13 +530,15 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
           />
         </label>
         <label style={{ fontSize: 13 }}>
-          Test tag (the email must contain it)
+          {isLocked ? 'Tag (the same email)' : 'Test tag (the email must contain it)'}
           <br />
           <input
             type="text"
             value={tag}
+            readOnly={isLocked}
             disabled={disabled || deleting}
             onChange={(e) => {
+              if (isLocked) return;
               setTag(e.target.value);
               resetFlow();
             }}
@@ -476,7 +549,7 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
         </label>
         {/* Check is disabled on an empty tag on purpose (it would match every
             account); say so, or the button just looks broken. */}
-        {!tag.trim() && !disabled && (
+        {!isLocked && !tag.trim() && !disabled && (
           <p
             id="cleanup-empty-tag-hint"
             data-testid="cleanup-empty-tag-hint"
@@ -622,7 +695,7 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
                   disabled={!confirmMatches || deleting || disabled}
                   style={actionButtonStyle('#dc3545', !confirmMatches || deleting || disabled)}
                 >
-                  {deleting ? 'Deleting…' : 'Delete this test account'}
+                  {deleting ? 'Deleting…' : isLocked ? 'Delete this account' : 'Delete this test account'}
                 </button>
               </div>
             </div>
@@ -640,8 +713,12 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
       {removed && (
         <div role="status" data-testid="cleanup-report" style={{ ...box, marginTop: 12, borderColor: '#198754', background: '#f0fff4' }}>
           <div style={blockHeader}>
-            <strong>Test account removed.</strong>
-            <CopyButton label="Copy delete report" testId="cleanup-copy-report" text={() => formatDeleteReportText(removed)} />
+            <strong>{isLocked ? LOCKED_REMOVED_TITLE : REMOVED_TITLE}</strong>
+            <CopyButton
+              label="Copy delete report"
+              testId="cleanup-copy-report"
+              text={() => formatDeleteReportText(removed, isLocked ? LOCKED_REMOVED_TITLE : REMOVED_TITLE)}
+            />
           </div>
           <table style={{ fontSize: 12, borderCollapse: 'collapse', marginTop: 6 }}>
             <thead>
@@ -674,6 +751,18 @@ export function TestAccountCleanupPanel({ onLog }: TestAccountCleanupPanelProps 
             <p data-testid="cleanup-delete-server-time" style={{ margin: '4px 0 0', fontSize: 12, color: '#6c757d' }}>
               Server time: check {removed.serverMs.check ?? '?'} ms · delete {removed.serverMs.delete ?? '?'} ms
             </p>
+          )}
+          {isLocked && removed.report.total.result === 'CLEAN' && (
+            <div style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                data-testid="cleanup-done"
+                onClick={fireRemoved}
+                style={actionButtonStyle('#6c757d', false)}
+              >
+                Done
+              </button>
+            </div>
           )}
         </div>
       )}
