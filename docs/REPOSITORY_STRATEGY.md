@@ -122,9 +122,11 @@ lib/repositories/
 ├── AgentMetricsRepository.ts      # Agent performance metrics
 ├── AgentStatsRepository.ts        # Agent run statistics and costs
 ├── ArchiveRepository.ts           # Admin archiving: all-accounts counts, the run log, the run lifecycle, and per-user erasure/export (slice 3)
+├── BillingEventRepository.ts      # Agent-platform billing history (billing_events): the Stripe webhook's two legacy inserts; not business_os_billing_events
 ├── ConfigRepository.ts            # System and reward configuration
 ├── ExecutionRepository.ts         # Agent execution records and token usage
 ├── ExecutionLogRepository.ts      # Step-by-step execution logs (legacy path)
+├── LegacyBoostPackPurchaseRepository.ts # Agent-platform boost purchases (boost_pack_purchases): the Stripe webhook's legacy insert (FU-2)
 ├── MemoryRepository.ts            # Agent run memories
 ├── PaymentRefundRepository.ts     # Refund ledger (payment_refunds): the Stripe webhook's upsert; unscoped by design
 ├── PluginConnectionRepository.ts  # Plugin connection persistence (OAuth tokens, status)
@@ -448,6 +450,15 @@ Every insert (the plan-period one included) and the attach run after `accountOwn
 - `SchedulingBookingRepository`, unscoped: `markPaidUnscoped` and `markPaidAndConfirmIfPending` (the booking id comes from an invoice proved owned; the booking's own owner is not re-checked, FU-4). Owner-scoped: `markPaidForOwner` (plan period), `markPaidForOwnerCounted` (Connect checkout for a booking, Fix-1 F-2; `{ count: 'exact' }`, so `0` means a foreign id), and the binder's `linkPaymentPlan` and `findContactIdForOwner`. These set `payment_status` and never filter on it.
 
 Same error handling as above: no try/catch, no logging. These are not in the `index.ts` barrel, as the three repositories were not before.
+
+**Agent-platform legacy tables and the account-owner lookup (CF-5 PR 5).** The webhook's last 11 queries, and `resolveAccountOwner`'s two, moved behind repositories. After PR 5 `app/api/stripe/webhook/route.ts` issues no query of its own and builds no repository; it imports `supabaseServer` only to hand it to `pilotCreditsToTokens`, `QuotaAllocationService` and `resolveAccountOwner` (SA Q-2). `routerPlacement.guard` pins that: no `.from`/`.rpc` call (`Array.from`/`Buffer.from` only while those names are the globals); from `@/lib/supabaseServer` only the plain, unrenamed `supabaseServer`, used only as those three helpers' argument; no other client; no repository class named; repository modules imported only by plain named static imports (no namespace, default or `as`-renamed import, by the `@/lib/repositories` alias or a relative path, and no `import()`/`require()` of a repository or supabase module); and every repository singleton used only as the receiver of a direct method call (no alias).
+- `UserSubscriptionRepository`, owner-scoped (`// Stripe webhook, agent-platform legacy: owner-scoped (CF-5 PR 5)`): `findDunningState`, `recordPaymentFailure`, `findBalance`, `applyBoostPackBalance`, `mirrorStripeStatus`, `markCanceled`. Each keeps `.eq('user_id', userId)`; the id is `metadata.user_id` on a platform Stripe object our own agent-platform checkout created, never a connected account's metadata.
+- `SystemConfigRepository.findRawValue(key)`: `select('value')·eq('key')·maybeSingle`, the key a closed set. A platform-wide table with no owner column (`tenant-isolation-guard` Step 5).
+- `CreditTransactionRepository.insertReturningId(row)`: the boost-pack ledger row, the repository's only write (typed `NewLegacyBoostCreditRow`).
+- New `BillingEventRepository.insert(row)` (agent-platform `billing_events`, the dunning and cancellation rows kept exactly as written inline) and `LegacyBoostPackPurchaseRepository.insert(row)` (`boost_pack_purchases`). Both default to `supabaseServer` and are in the barrel.
+- `StripeConnectRepository.findOwnerIdByStripeAccountId` and `PluginConnectionRepository.listByPluginKey('stripe')` (`user_id, profile_data, status`, any status: not `findActiveByProfileData`). Unscoped because the owner is their output; the resolver builds both on the client it is handed, and turns a returned error into FU-5's throw.
+
+These paths are agent-platform code kept as they are (FU-1 dead dunning, FU-2 boost checkout, FU-6 status mirror); do not extend them. Same error handling: no try/catch, no logging.
 
 ## Type Definitions
 
@@ -827,3 +838,4 @@ When creating a new repository:
 | 2026-10-08 | `PaymentInvoiceRepository`: Stripe webhook section | CF-5 PR 2: the webhook's 14 `payment_invoices` queries moved behind seven new purpose methods and the reused `findByStripeInvoiceId` (now quiet on `PGRST116`, SA C-5); the `business_profiles` language read reuses `BusinessProfileRepository.findLanguage`. "Errors passed through" reworded (SA CR-P1-1) |
 | 2026-10-08 | `PaymentTransactionRepository`: Stripe webhook section; added `PaymentRefundRepository` | CF-5 PR 3: the webhook's 11 `payment_transactions` queries and its `payment_refunds` upsert moved behind seven purpose methods and `upsertFromStripe`, with exact chains and typed insert rows. Added to the structure tree; recorded that the dispute and refund paths have no `accountOwns` (FU-3) |
 | 2026-10-08 | Plans and bookings: `PaymentPlanRepository`, `PaymentPlanSubscriptionRepository`, `SchedulingBookingRepository` | CF-5 PR 4: the webhook's 4 `payment_plan_installments`, 2 `payment_plan_subscriptions` and 4 `scheduling_bookings` queries, and `bindPlanSubscription`'s 5 direct `supabaseServer` queries, moved behind 15 purpose methods with exact chains. Queries that had a `user_id` filter keep it, in an owner-scoped section; F-3 and the Fix-1 / Fix-1b scoping are unchanged |
+| 2026-10-09 | Legacy tables and the owner lookup; added `BillingEventRepository`, `LegacyBoostPackPurchaseRepository` | CF-5 PR 5: the webhook's 11 agent-platform queries (`user_subscriptions` 6, `billing_events` 2, `credit_transactions`, `boost_pack_purchases`, `system_settings_config`) and `resolveAccountOwner`'s 2 reads moved behind 12 purpose methods with exact chains (10 for the route, `BillingEventRepository.insert` serving both its inserts; 2 for the resolver). The webhook route now issues no query of its own. `CreditTransactionRepository` gains its one write. Added to the structure tree |

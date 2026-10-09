@@ -2101,6 +2101,44 @@ export class StripeConnectRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  // Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)
+  //
+  // Moved out of `lib/payments/stripeAccountContext.ts` (`resolveAccountOwner`)
+  // with no behaviour change (CF-5 PR 5, FU-5 SA rule-1 ruling). It issues
+  // exactly the read the resolver issued inline, on the client the resolver was
+  // handed.
+  //
+  // Errors: supabase-js's own `{ data, error }`, with no try/catch and no
+  // logging, unlike the methods above. The resolver turns a returned error into
+  // its own throw (FU-5: a failed read must never read as "no business"), and a
+  // rejected query must still reach the webhook, which answers 500 so Stripe
+  // retries.
+
+  /**
+   * ⟨unscoped-by-design⟩ The business that owns a connected account, by its
+   * Stripe account id, or `null` when no Express row names it.
+   *
+   * Owner check relied on: none can apply, because the owner is the OUTPUT.
+   * This is the inverse lookup `accountOwns` is built on: the id is the
+   * `event.account` of a signature-verified Connect event, which a business
+   * cannot choose, and only `user_id` is returned. Do not reuse it for a
+   * caller-supplied account id.
+   */
+  async findOwnerIdByStripeAccountId(stripeAccountId: string): Promise<StripeConnectOwnerResult> {
+    const { data, error } = await this.supabase
+      .from('stripe_connect_accounts')
+      .select('user_id')
+      .eq('stripe_account_id', stripeAccountId)
+      .maybeSingle<{ user_id: string }>();
+    return { data, error };
+  }
+}
+
+/** supabase-js's own result for `findOwnerIdByStripeAccountId`, error object kept. */
+export interface StripeConnectOwnerResult {
+  data: { user_id: string } | null;
+  error: PostgrestError | null;
 }
 
 // Singleton exports
