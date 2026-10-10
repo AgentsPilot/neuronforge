@@ -30,6 +30,7 @@ let mockDb: Record<string, Answer> = {};
 const mockBoost = {
   bySession: null as unknown,
   byId: null as unknown,
+  byIntent: null as unknown,
   lookupError: null as unknown,
   credit: null as unknown,
   transition: null as unknown,
@@ -98,6 +99,10 @@ jest.mock('@/lib/repositories/BusinessOsBoostPurchaseRepository', () => {
         mockBoost.calls.push(['findBySessionIdForWebhook', id]);
         if (mockBoost.lookupError) return { data: null, error: mockBoost.lookupError };
         return { data: mockBoost.bySession, error: null };
+      },
+      findByPaymentIntentIdForWebhook: async (pi: string) => {
+        mockBoost.calls.push(['findByPaymentIntentIdForWebhook', pi]);
+        return { data: mockBoost.byIntent, error: null };
       },
       findByIdForWebhook: async (id: string) => {
         mockBoost.calls.push(['findByIdForWebhook', id]);
@@ -206,6 +211,7 @@ afterAll(() => jest.restoreAllMocks());
 beforeEach(() => {
   mockBoost.bySession = purchaseRow();
   mockBoost.byId = null;
+  mockBoost.byIntent = null;
   mockBoost.lookupError = null;
   mockBoost.credit = null;
   mockBoost.transition = null;
@@ -330,5 +336,68 @@ describe('boost 4a through POST /api/stripe/webhook', () => {
     });
     expect(result.body).toEqual({ received: true, duplicate: true });
     expect(mockBoost.calls).toEqual([]);
+  });
+});
+
+describe('boost 4b.1 through POST /api/stripe/webhook: refunds and disputes', () => {
+  const PAID = () => purchaseRow({ status: 'paid', stripePaymentIntentId: INTENT, amountTotalMinor: 2500, currency: 'USD' });
+  const refundEvent = (over: Record<string, unknown> = {}, eventOver: Record<string, unknown> = {}) => ({
+    id: 'evt_refund_1',
+    type: 'charge.refunded',
+    livemode: false,
+    data: { object: { id: 'ch_test_1', object: 'charge', payment_intent: INTENT, amount_refunded: 1000, currency: 'usd', refunded: false, ...over } },
+    ...eventOver,
+  });
+  const legacyRefundRead = () => mockEffects.some((e) => e.type === 'db' && e.table === 'payment_transactions');
+
+  it('a refund on a credited boost → transition with the cumulative amount, REVERSED audit, claim completed, 200; the legacy refund handler never runs', async () => {
+    mockBoost.byIntent = PAID();
+    mockBoost.transition = { data: { status: 'transitioned', accountId: ACCOUNT, fromStatus: 'paid' }, error: null };
+    const result = await run(refundEvent());
+    expect(result).toEqual({ status: 200, body: { received: true } });
+    expect(boostCalls('transition')).toEqual([['transition', { purchaseId: PURCHASE, toStatus: 'partially_refunded', paymentIntentId: INTENT, amountRefundedMinor: 1000 }]]);
+    expect(mockAudits.map((a) => a.action)).toEqual(['BOS_BOOST_PAYMENT_REVERSED']);
+    expect(mockAudits[0].userId).toBe(ACCOUNT);
+    expect(claimStatus()).toBe('completed');
+    expect(legacyRefundRead()).toBe(false);
+    expect(boostCalls('credit')).toEqual([]);
+  });
+
+  it('a dispute created on a credited boost → disputed with the dispute id', async () => {
+    mockBoost.byIntent = PAID();
+    mockBoost.transition = { data: { status: 'transitioned', accountId: ACCOUNT, fromStatus: 'paid' }, error: null };
+    await run({ id: 'evt_dispute_1', type: 'charge.dispute.created', livemode: false, data: { object: { id: 'dp_test_1', object: 'dispute', payment_intent: INTENT, status: 'needs_response', currency: 'usd' } } });
+    expect(boostCalls('transition')).toEqual([['transition', { purchaseId: PURCHASE, toStatus: 'disputed', paymentIntentId: INTENT, disputeId: 'dp_test_1' }]]);
+    expect(claimStatus()).toBe('completed');
+  });
+
+  it('a transient failure recording the refund → 500 and the claim released', async () => {
+    const { BoostRepositoryFailure } = jest.requireActual('@/lib/repositories/BusinessOsBoostPurchaseRepository');
+    mockBoost.byIntent = PAID();
+    mockBoost.transition = new BoostRepositoryFailure('connection reset', '08006', false);
+    const result = await run(refundEvent());
+    expect(result.status).toBe(500);
+    expect(claimStatus()).toBe('failed');
+  });
+
+  it('a refund whose payment intent is not a boost purchase → the legacy refund handler, exactly as before', async () => {
+    mockBoost.byIntent = null;
+    await run(refundEvent({ payment_intent: 'pi_test_someone_else' }));
+    expect(mockBoost.calls).toEqual([['findByPaymentIntentIdForWebhook', 'pi_test_someone_else']]);
+    expect(boostCalls('transition')).toEqual([]);
+    expect(legacyRefundRead()).toBe(true);
+  });
+
+  it('SA Q-2: a refund with no payment intent → the legacy path, with no boost read', async () => {
+    await run(refundEvent({ payment_intent: null }));
+    expect(mockBoost.calls).toEqual([]);
+    expect(legacyRefundRead()).toBe(true);
+  });
+
+  it('HP-4: a Connect refund never reaches the boost resolver', async () => {
+    mockBoost.byIntent = PAID();
+    await run(refundEvent({}, { account: 'acct_connect_1' }));
+    expect(mockBoost.calls).toEqual([]);
+    expect(mockAudits).toEqual([]);
   });
 });

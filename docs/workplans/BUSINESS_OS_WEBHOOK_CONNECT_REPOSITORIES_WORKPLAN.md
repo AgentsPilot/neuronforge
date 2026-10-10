@@ -1,6 +1,6 @@
 # Workplan: Stripe webhook onto repositories (CLAUDE.md rule 1), no behaviour change
 
-> **Last Updated**: 2026-10-08
+> **Last Updated**: 2026-10-09
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): SR-16 (every route on repositories), §9.4, the tenant-isolation ruling and "Standards for every workplan" (SA-3). Tracked follow-up from [P-0](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md) SA review ("Rule 1 / direct Supabase … record it as a tracked follow-up") and [P-1](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P1_WORKPLAN.md) condition P1-C6.
@@ -11,7 +11,9 @@
 **PR 1 branch:** `feature/webhook-repos-pr1-claim-client`, off `origin/main` `90da8301` (PR 0 merged as #254), same worktree.
 **PR 2 branch:** `feature/webhook-repos-pr2-invoices`, off `origin/main` `933d661c` (PR 1 merged as #258), same worktree.
 **PR 3 branch:** `feature/webhook-repos-pr3-money-rows`, off `origin/main` `06b77d1b` (PR 2 merged as #266), same worktree.
-**Status:** SA approved (C-1 to C-9). Fix-1, Fix-1b and FU-5 merged. PR 0 merged (#254). PR 1 merged (#258). PR 2 merged (#266). **PR 3 code complete 2026-10-08**, uncommitted; waiting for SA code review. Refresh and evidence in §7.3.4.
+**PR 4 branch:** `feature/webhook-repos-pr4-plans-bookings`, off `origin/main` `a689de3f` (PR 3 merged as #270), same worktree.
+**PR 5 branch:** `feature/webhook-repos-pr5-legacy-guard`, off `origin/main` `88f97171` (PR 4 merged as #275), same worktree.
+**Status:** SA approved (C-1 to C-9). Fix-1, Fix-1b and FU-5 merged. PR 0 merged (#254). PR 1 merged (#258). PR 2 merged (#266). PR 3 merged (#270). PR 4 merged (#275). **PR 5 (the last) code complete 2026-10-09**, uncommitted; waiting for SA code review. Refresh and evidence in §7.3.6.
 
 ## Overview
 
@@ -933,6 +935,338 @@ Tree: worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr3-mo
 | PR3-D6 | **Typing only.** The rows the route reads were `any`; they are now typed by the column constants. D1's `status` is `string` (a disputed row reads `disputed`, which `PaymentTransaction['status']` does not list). `NewWebhookTransactionRow.account_resolution` is `string` rather than importing `ChargeAccountColumns` from `lib/payments`, so the repository does not depend on a payments module. No runtime change; scoped `tsc` clean | Accept |
 | PR3-Q1 | The F2, G2, H5, attach and I2 ordering check in `routerPlacement` is **positional**, like PR2-Q2. Mutant M9 (F2's `accountOwns` neutralised by a dead `&&`) is caught by the harness (11 entries), not by the guard | Accept as a guard; the harness and `fix1Ownership.qa` are the behavioural proof |
 
+### 7.3.5 PR 4 refresh (2026-10-08, against `a689de3f`)
+
+Branch `feature/webhook-repos-pr4-plans-bookings`, off `origin/main` `a689de3f` (PR 3 merged as #270). `route.ts` is blob `3683e535…`, 2,648 lines, **21** `.from(`, 20 top-level functions. Snapshot blob `4194ff19…` (103 entries). `bindPlanSubscription.ts` is blob `23a38fdd…` with **5** direct `supabaseServer` queries; its test file is blob `2e7b9731…` (34 tests).
+
+**What changed since §2.4.** Fix-1 (#242) scoped I5 to the sending account's owner with `{ count: 'exact' }` (F-2), so I5 is no longer "unscoped" and is not the same chain as H7: §3's shared `markPaidUnscoped` for H7 and I5 splits into `markPaidUnscoped` (H7) and the owner-scoped `markPaidForOwnerCounted` (I5). The bind queries joined PR 4 (Fix-1b SA C-4), and FU-5 SA Q-3 added the plan-checkout hoist.
+
+**Sites, exact lines at `a689de3f`** (the `.from(` line in brackets):
+
+| Site | Lines | Chain today | After PR 4 |
+|---|---|---|---|
+| G1 | `:838–842` (839) | `payment_plan_installments` select `'id'` · eq `stripe_invoice_id` · `maybeSingle` | `paymentPlanRepository.findInstallmentIdByStripeInvoiceId(invoice.id)` |
+| G3 | `:953–966` (954) | update `{status:'paid', paid_at, stripe_invoice_id, payment_method:'card', processor_type:'stripe', transaction_id, next_retry_at:null, updated_at}` · eq `subscription_id` · eq `installment_number` · await | `paymentPlanRepository.markPeriodPaidFromStripe(plan.data.id, periodsPaid, { stripeInvoiceId: invoice.id, transactionId: periodTransaction?.id ?? null })` |
+| G4 | `:978–985` (979) | select `'due_date, amount'` · eq `subscription_id` · eq `status` `'pending'` · `order('installment_number')` · `limit(1)` · `maybeSingle` | `paymentPlanRepository.findNextPendingPeriod(plan.data.id)` |
+| G5 | `:1010–1014` (1011) | `scheduling_bookings` update `{payment_status:'paid', updated_at}` · eq `id` · eq `user_id` · await | `schedulingBookingRepository.markPaidForOwner(plan.data.booking_id, plan.data.user_id)` |
+| H7 | `:1524–1530` (1525) | update `{payment_status:'paid', updated_at}` · eq `id` · await | `schedulingBookingRepository.markPaidUnscoped(platformInvoice.booking_id)` |
+| I4 | `:1841–1860` (1842) | update `{payment_status:'paid', status:'confirmed', updated_at}` · eq `id` · eq `status` `'pending'` · await | `schedulingBookingRepository.markPaidAndConfirmIfPending(platformInvoice.booking_id)` |
+| I5 | `:1890–1900` (1891) | update `({payment_status:'paid', updated_at}, { count: 'exact' })` · eq `id` · eq `user_id` (`owner` from `accountOwner`, Fix-1) · await | `schedulingBookingRepository.markPaidForOwnerCounted(bookingId, owner)` |
+| M1 | `:2141–2145` (2142) | `payment_plan_subscriptions` select `'id, user_id, status, installment_count, periods_paid'` · eq `stripe_subscription_id` · `maybeSingle` | `paymentPlanSubscriptionRepository.findEndStateBySubscriptionId(subscription.id)` |
+| M2 | `:2163–2170` (2164) | update `{status, [completed_at\|cancelled_at], updated_at}` · eq `id` · await | `paymentPlanSubscriptionRepository.endFromStripe(plan.id, completed ? 'completed' : 'cancelled')` |
+| M3 | `:2175–2187` (2176) | `payment_plan_installments` update `{status:'cancelled', next_retry_at:null, updated_at}` · eq `user_id` · eq `subscription_id` **= `subscription.id`** (F-3) · not `status` in `(paid,cancelled)` · await | `paymentPlanRepository.cancelOpenPeriodsForEndedPlan(plan.user_id, subscription.id)`, F-3 kept |
+| bind count | `:143–146` | `payment_plan_installments` select `('id', {count:'exact', head:true})` · eq `subscription_id` · await → `{ count }` | `paymentPlanRepository.countProjectedPeriods(existing.data.id)` |
+| bind insert | `:415–428` | `payment_plan_installments` insert `[rows]` · await | `paymentPlanRepository.insertProjectedPeriods(rows)`; the map's callback is annotated `(period): NewProjectedPeriodRow =>`, so an extra key fails `tsc` |
+| bind link | `:447–451` | `scheduling_bookings` update `{payment_plan_id, updated_at}` · eq `id` · eq `user_id` · await | `schedulingBookingRepository.linkPaymentPlan(bookingId, ownerId, planRowId)` |
+| bind contact | `:475–480` | select `'contact_id'` · eq `id` · eq `user_id` · `maybeSingle` | `schedulingBookingRepository.findContactIdForOwner(bookingId, ownerId)` |
+| bind fallback | `:508–516` | `payment_plans` select `'id'` · eq `user_id` · eq `service_id` · eq `is_active` true · `order('created_at', {ascending:true})` · `limit(1)` · `maybeSingle` | `paymentPlanRepository.findOldestActivePlanIdForService(ownerId, serviceId)` |
+| Q-3 hoist | `:1699–1704` | `try { const stripeClient = new Stripe(…); if (ownerId && (await accountOwns(…))) { bind } else { refuse } } catch { log 'Could not bound…'; throw }` | `const stripeClient = new Stripe(…); const ownsPlan = ownerId ? await accountOwns(…) : false; try { if (ownerId && ownsPlan) { bind } else { refuse } } catch { unchanged }` |
+
+10 route sites, so `.from(` goes **21 → 11** (the 11 left are PR 5's legacy tables). Bind: **5 → 0** direct queries, and its `supabaseServer` import goes. Converted functions: `recordPlanPeriodPaid`, `handleConnectInvoicePaid`, `handleConnectCheckoutCompleted`, `handlePlanSubscriptionEnded`. The other **16** must be `--exact` identical. Inside the converted functions, the other PRs' code (PR 2's invoice calls, PR 3's money-row calls, the F-4 vetting, the Fix-1 refusals) is outside every hunk.
+
+**Method homes and names (15 new methods, 0 reused).** No existing method has the exact chain: `markInstallmentPaid` keys on the instalment id plus `user_id` and ends in `.select().single()`; `createInstallments` ends in `.select()` and catches; `cancelInstallments` keys on `payment_plan_id` + `contact_id`; `findByServiceId` selects `'*'` ordered descending; `update()` on bookings is user-scoped, pre-reads the status and returns a joined row; `close()` writes the cancel-reason columns and reads the row back; `findBySubscriptionId` selects `'*'`. Bind's five go to `PaymentPlanRepository` and `SchedulingBookingRepository`, which `bindPlanSubscription.test.ts` does not mock, so **that file needs no edit** (no delegation added).
+
+| Class | Section | Methods |
+|---|---|---|
+| `PaymentPlanSubscriptionRepository` | ⟨unscoped-by-design⟩ | `findEndStateBySubscriptionId(stripeSubscriptionId)`, `endFromStripe(id, 'completed' \| 'cancelled')`: **the two names the harness and `fix1Ownership.qa` delegate to (SA O-2), kept exactly** |
+| `PaymentPlanRepository` | ⟨unscoped-by-design⟩ | `findInstallmentIdByStripeInvoiceId`, `markPeriodPaidFromStripe(planSubscriptionId, installmentNumber, { stripeInvoiceId, transactionId })`, `findNextPendingPeriod`, `countProjectedPeriods` (bind), `insertProjectedPeriods(rows: NewProjectedPeriodRow[])` (bind) |
+| `PaymentPlanRepository` | owner-scoped | `cancelOpenPeriodsForEndedPlan(userId, subscriptionId)` (M3, F-3 kept: the parameter is compared as given), `findOldestActivePlanIdForService(userId, serviceId)` (bind) |
+| `SchedulingBookingRepository` | ⟨unscoped-by-design⟩ | `markPaidUnscoped(id)` (H7), `markPaidAndConfirmIfPending(id)` (I4) |
+| `SchedulingBookingRepository` | owner-scoped | `markPaidForOwner(id, userId)` (G5), `markPaidForOwnerCounted(id, userId)` (I5, returns `count`), `linkPaymentPlan(id, userId, paymentPlanId)` (bind), `findContactIdForOwner(id, userId)` (bind) |
+
+**Controls (C-3, CR-P2-1).** Every unscoped method carries the marker and names its proof (table below). The owner-scoped methods keep the `user_id` filter in the same place the inline query had it, sit in a second labelled section per class (`// Stripe webhook and plan binding: owner-scoped (CF-5 PR 4)`) and carry no marker (PR4-Q1). No method takes a column argument; each column list is fixed in its method. The one insert takes a typed row. No generic update: each update fixes its key set. No try/catch, no logger call, supabase-js's own error object (and `count`) returned. `new Date().toISOString()` runs as many times as before (twice in G3 and M2, once in G5, H7, I4, I5, M3, bind link).
+
+| Unscoped method | Owner check it relies on |
+|---|---|
+| `findEndStateBySubscriptionId` | Stripe subscription id of a signed event; the route calls `accountOwns` on the returned `user_id` before any write |
+| `endFromStripe` | The row from `findEndStateBySubscriptionId`, proved owned (`:2110` in the new route, an unconditional early return) |
+| `findInstallmentIdByStripeInvoiceId`, `markPeriodPaidFromStripe`, `findNextPendingPeriod` | The plan, proved owned at the top of `recordPlanPeriodPaid` (unconditional early return before G1) |
+| `countProjectedPeriods` | Our own plan row id, found by the Stripe subscription id bind's caller handed it; a number only |
+| `insertProjectedPeriods` | Every row carries `user_id: ownerId`, which bind's caller proved; its link ids were vetted first (Fix-1b) |
+| `markPaidUnscoped`, `markPaidAndConfirmIfPending` | The `booking_id` of an invoice proved owned; the booking's own owner is not re-checked (FU-4, pre-existing) |
+
+**Coverage check (before refactoring).** A coverage run of the harness on the untouched `a689de3f` route (statements 91.65 %, branches 75.67 %) executes every PR 4 site and every arm that reads a result: G1 hit and miss, G4 data and null, G5 present, absent and error, H7 success and error, I4 success and error, I5 success, error and `0`, M1 miss and hit, the refusals and early returns before M2, M2 both outcomes, M3. The only cold arms in the PR 4 ranges are value fallbacks (`?? 0`, `?.id ?? null`, `metadata?.…`), the "no invoice and no booking" log, and the plan-checkout `catch` (`:1728`, `:1732`): bind is mocked in the harness and always resolves. That catch is the one the Q-3 hoist touches, so its bind-throws arm got a test first (below). Bind's five queries are not harness-observable; `bindPlanSubscription.test.ts` covers bind at 100 % of lines (the CR-1 and QA-note tests from PR 0), and `planOwnership.qa` runs the real bind against an in-memory PostgREST. **No harness entry was added.**
+
+**Added first, against the untouched route (`fix1Ownership.qa.test.ts`, its own `describe`).** A default-off knob `bindError` on that file's bind mock (unset, it resolves as before) and one test, **Q3-1**: bind throws in the plan checkout → 500, claim `failed` with bind's message, "Could not bound a payment plan…" logged once, the refusal not logged, effect order `stripe.client` → `resolveAccountOwner` → `bindPlanSubscription`. Run with `-t "CF-5 PR 4"` on the untouched route: **1 passed**.
+
+**Guard audit (C-2): every check that names these tables or these queries, and where it bites after PR 4.**
+
+| Guard | Check today | After PR 4 |
+|---|---|---|
+| `planSurfaces.guard:108–111` | `recordPlanPeriodPaid` sliced **to end of file**; matches `from('payment_plan_installments')…status: 'paid'` and `.eq('installment_number', periodsPaid)` | **Bounded and moved (C-2).** The slice is the function's own AST text. The route calls `paymentPlanRepository.markPeriodPaidFromStripe(plan.data.id, periodsPaid,` and has no inline `payment_plan_installments` query. The method's code (AST, comments removed) holds `from('payment_plan_installments')…status: 'paid'`, `.eq('subscription_id', planSubscriptionId)` and `.eq('installment_number', installmentNumber)` |
+| `planSurfaces.guard:50–53` | The binder matches `from('payment_plan_installments').insert(` and `if (!planRowId)` | **Moved.** `projectPeriods` (its AST text) calls `paymentPlanRepository.insertProjectedPeriods(`, the only call in the binder, after `if (!planRowId)`; the method holds `from('payment_plan_installments').insert(rows)`. **New `it`:** the binder has no `.from(`, no `supabaseServer`, no `.rpc(` (bind's rule-1 completeness check) |
+| `planSurfaces.guard:32` | `PaymentsSection.tsx`, not the route | Unaffected |
+| `deferredFirstPayment.guard` "the webhook flips it to paid" | `recordPlanPeriodPaid` sliced to end of file; `from('scheduling_bookings')…payment_status: 'paid'` and `.eq('user_id', plan.data.user_id)` | **Bounded and moved.** The function's AST text has `if (plan.data.booking_id) { const { error: bookingError } = await schedulingBookingRepository.markPaidForOwner(plan.data.booking_id, plan.data.user_id)` and no inline `scheduling_bookings` query; `markPaidForOwner`'s code holds `from('scheduling_bookings')…payment_status: 'paid'`, `.eq('id', id)` and `.eq('user_id', userId)` |
+| `deferredFirstPayment.guard` "does not fail the webhook if only the booking update fails" | 400 characters after `if (bookingError)` in an end-of-file slice have no `throw` | **Bounded** to the function, and asserts the `if (bookingError)` exists (so it cannot pass on a missing branch) |
+| `deferredFirstPayment.guard`, `handleConnectPlanSubscriptionCreated` checks | Length-limited slices of an untouched function | Unaffected (the function is `--exact` identical) |
+| `noBookingGuess.guard:227` | Paid handler matches `payment_status: 'paid'` | **Moved (§8 plan).** The handler calls `schedulingBookingRepository.markPaidUnscoped(platformInvoice.booking_id)` inside `if (platformInvoice.booking_id) {`; the method's code sets `payment_status: 'paid'`. **New `it`:** the handler has no inline `scheduling_*` query in any quote style, never names `SchedulingBookingRepository`, every mention of the singleton is a direct call, the calls are exactly `['markPaidUnscoped']`, and that method writes by `.eq('id', id)` only, selects nothing, and contains no `servicePrice`, `scheduling_services` or `booking_id`. Otherwise a booking search could hide in a booking method |
+| `noBookingGuess.guard`, PR 2 / PR 3 arms | Invoice and transaction methods the handler calls | Unchanged and green |
+| `bookingPaymentStatusReaders.guard` | No `payment_status` filter on `scheduling_bookings` without a status filter, across `lib/`, `app/`, `components/` | Still bites, now also on `SchedulingRepository.ts`: the new methods set `payment_status` and never filter on it (also asserted in their source-shape test) |
+| `routerPlacement.guard` | (no plan or booking check) | **New `it`:** no `from(` on `payment_plan_installments`, `payment_plan_subscriptions`, `scheduling_bookings` or `payment_plans` in any quote style; no `PaymentPlanRepository`, `PaymentPlanSubscriptionRepository` or `SchedulingBookingRepository` identifier; exact per-function call counts for the three singletons (pre-existing calls included), route totals equal to the sums. PR 4's "every site converted" check. **New `it`:** each of the seven writes is called with exactly its old key and owner (`plan.data.id`, `plan.data.booking_id` + `plan.data.user_id`, `platformInvoice.booking_id`, `bookingId` + `owner`, `plan.id`, `plan.user_id` + **`subscription.id`**, which pins F-3 as it is) and its nearest preceding `accountOwns` tests the expected owner; `owner` is `await accountOwner(connectAccountId, log)` with `if (!owner)` before the write. **New `it` (Q-3):** the plan-checkout `accountOwns(…, ownerId, …)` sits in no `try` block and ends before the `try`; `bindPlanSubscription` is inside that `try`, whose catch still logs "Could not bound a payment plan…" and `throw scheduleError` |
+| `fix1Ownership.qa` FU5-E `:1669` | An owner-lookup error at the plan checkout is logged "Could not bound…" once | **Changed on purpose** (the Q-3 deviation, PR4-D1): now asserts it is not logged; still 500. Q3-1 pins the catch for a real bind failure |
+| `pinoLogging.guard` (≥ 133), `emptyBody`, `receiptOnPaid`, `invoiceIntentsStayUnowned`, `stripeAuditEntries` | Log calls, strings, other functions | Unaffected: no log line added, moved or removed in the route (the "Could not bound" call still exists once) |
+| `recordEvent.test` "SchedulingRepository owns the three booking end-states", `publicBookingIdentity.guard` (`listBookable`) | `SchedulingRepository.ts` text | Unaffected: no end-state is written by the new methods (`confirmed` is the trigger-owned status), and `listBookable` is untouched |
+| `userSubscriptionsWriteLockdown.qa` | `user_subscriptions` writers | Unaffected (PR 5) |
+
+**Guardrails held:** the legacy tables (PR 5), `resolveAccountOwner`, `BUSINESS_OS_FLOW_HANDLERS` and the dispatcher call are not in the diff; F-3 kept (M3 still passes `subscription.id`, scenario 8's `sub_plan_1` unchanged); Fix-1 (I5 scoped by `owner`, `{ count: 'exact' }`, the `bookingsUpdated === 0` refusal) and Fix-1b (bind's `vetLinkId` / `findOwnedId`, `vettedOrNull`) outside every hunk.
+
+#### PR 4 evidence (2026-10-08)
+
+Tree: worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr4-plans-bookings`, `HEAD` `a689de3f`, uncommitted, Node 22.19.0. Every Jest run used `node node_modules/jest/bin/jest.js --ci --runTestsByPath`. **No run wrote a snapshot; none used `-u`.** TL's edit to `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` is in the tree and was not touched.
+
+**Before (untouched production code, `a689de3f`):**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, **105 tests, 103 snapshots**, all passed; coverage run (statements 91.65 %, branches 75.67 %) |
+| Snapshot blob | **`4194ff190e1da888a16e3426b2df6a0b7cafa3fb`** (= `HEAD`); per-entry sha256 of all 103 `exports[…]` values from `git show HEAD:<snap>` (`vm` evaluation), the working copy matched 103/103; hash file sha256 `497837c1…` |
+| `route.ts` | blob `3683e53564a0adcdbc447a6998556d3fcf714f1c`, 2,648 lines, **21** `.from(`, 20 top-level functions |
+| `bindPlanSubscription.ts` | blob `23a38fdd…`, **5** direct `supabaseServer` queries |
+| `check-logging-only-diff --exact`, all 20 functions | 20 × identical (sanity) |
+| Frozen test files | harness `b6f615ba…`, `bindPlanSubscription.test` `2e7b9731…` (34 tests, passing) |
+| Q3-1 (the only test added before refactoring) | `fix1Ownership.qa` `-t "CF-5 PR 4"`: 1 passed on the untouched route; the file then has 48 tests, all passing (blob `61e2c498…`, was `f509e75e…`; after PR4-D1's flip, `cb63fc56…`) |
+| Regression set (162 files: every `app/api/stripe/webhook/__tests__`, `app/api/stripe/__tests__`, `lib/payments/__tests__` and `lib/repositories/__tests__` test file, `check-logging-only-diff`, `noPilotCreditTableReads.guard`, `recordEvent`, `publicBookingIdentity.guard`, and every other test file naming `SchedulingRepository`, `PaymentPlanRepository`, `PaymentPlanSubscriptionRepository` or `bindPlanSubscription`) | **162 suites, 3,463 tests, 122 snapshots, all passed** |
+
+**After:**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, **105 tests, 103 snapshots**, all passed |
+| Snapshot blob | **`4194ff19…`, unchanged** after every run, mutant runs included. `git diff --exit-code` on `__snapshots__/` and on the harness: exit 0 |
+| Entry by entry | **103 identical, 0 changed, 0 missing, 0 added**; the after-hash file has the same sha256 `497837c1…` |
+| Bind tests | **34/34 passed, file unedited** (blob `2e7b9731…`; no delegation was needed) |
+| `check-logging-only-diff --exact`, base `a689de3f` | the 16 untouched functions: **16 × identical, exit 0**. The four converted functions differ |
+| Module-level diff | One import line: `paymentPlanRepository` from `@/lib/repositories/PaymentPlanRepository` (`schedulingBookingRepository` was already imported). `BUSINESS_OS_FLOW_HANDLERS` and the dispatcher call are not in the diff |
+| Inside the converted functions | Only the 10 sites, the Q-3 hoist (3 statements reordered, one `const`), and the comments that sat inside two moved chains (I4's "And confirm it" and M3's "Everything unsettled" now sit above the call; F-3 named in M3's) |
+| `grep -c "\.from("` on `route.ts` | **21 → 11** (all PR 5's: `user_subscriptions` 6, `billing_events` 2, `system_settings_config`, `credit_transactions`, `boost_pack_purchases`) |
+| Direct queries in `bindPlanSubscription.ts` | **5 → 0**; no `supabaseServer`, `.from(` or `.rpc(` left (pinned by the new `planSurfaces` `it`) |
+| Coverage, harness | Every new route call site executes: G1 `:839` 5, G3 `:950` 3, G4 `:965` 3, G5 `:990` 2, H7 `:1500` 5, I4 `:1828` 2, I5 `:1860` 6, M1 `:2104` 5, M2 `:2122` 2, M3 `:2136` 1, the hoisted check `:1677` 2. Repository methods reached through the harness: `findInstallmentIdByStripeInvoiceId` 5, `markPeriodPaidFromStripe` 3, `findNextPendingPeriod` 3, `cancelOpenPeriodsForEndedPlan` 1, `findEndStateBySubscriptionId` 5, `endFromStripe` 2 (through the harness's named delegations), `markPaidUnscoped` 5, `markPaidAndConfirmIfPending` 2, `markPaidForOwner` 2, `markPaidForOwnerCounted` 6. Route statements 91.68 %, branches 75.53 % |
+| Coverage, bind | `bindPlanSubscription.test.ts` alone: `bindPlanSubscription.ts` lines **100 %**, statements 100 %, functions 100 %, branches 85.89 % (the same as after PR 0) |
+| Repository unit tests (new) | `PaymentPlanRepository.webhook.test.ts` **27**, `SchedulingBookingRepository.webhook.test.ts` **23**, `PaymentPlanSubscriptionRepository.webhook.test.ts` **10**: exact chain of every method (table, operation, columns, filters in order, `order` arguments, update options, payload and key order, terminal or `await`); same error object (identity), and `count` kept (`0` stays `0`, `null` stays `null`); no `user_id` in the unscoped methods, exactly one `user_id` filter in each scoped one; F-3's argument passed as given; the insert's rows passed by identity and not mutated; a rejected query rejects in all 15 methods and nothing is logged; closed types (`@ts-expect-error` on an extra row key and on a third plan outcome, consumed in the scoped `tsc`); default client `supabaseServer`; source shape per class (one unscoped section with the marker on every method doc, one owner-scoped section without it, no generic update, spread, delete/upsert/rpc, try, logger, business event or `payment_status` filter) |
+| Guards | `planSurfaces.guard` 12 (was 11), `deferredFirstPayment.guard` 42 (two rewritten), `noBookingGuess.guard` 9 (was 8), `routerPlacement.guard` 20 (was 17), `fix1Ownership.qa` 48 (FU5-E `:1669` changed, PR4-D1). Before the guard edits, exactly the four checks the audit predicted went red on the refactored code, and nothing else |
+| Old vs new trace at the hoisted site | See PR4-D1: 5 cases, identical status, body, claim and effects; the only difference is one log line in one case |
+| Regression set (the same 162 files + the three new unit test files) | **165 suites, 3,528 tests, 122 snapshots, all passed** (3,463 + 60 unit + 5 new guard tests). Snapshot blob still `4194ff19…` |
+| Scoped `tsc` (scratch tsconfig, `files` = the 5 production files, the 3 new tests, the 5 changed test files, the harness and the bind test; 8 GB heap) | **0 errors in those files.** 58 errors in transitively imported files. Run again with only the 5 production files, once with their `a689de3f` versions put in place (copies saved, restored, blobs checked) and once with the new ones: **the same 58 lines, file and position** |
+| ESLint on the 13 changed `.ts` files | **0 errors.** 9 warnings, all on lines this PR does not touch (`route.ts` unused `planSchedule` imports, two `any`, H1's unused `lookupError`; `SchedulingRepository.ts` three `any` in old types) |
+| `console.*` | 0 in `route.ts`, `bindPlanSubscription.ts` and the three repositories |
+| `REPOSITORY_STRATEGY.md` | The PR 4 paragraph (three classes, scoped and unscoped, F-3, FU-4, fixed names) and a Change History row, as PR 1–3 kept it current (CR-P3-1) |
+| Blobs after | `route.ts` `f8367e01…` (2,597 lines), `bindPlanSubscription.ts` `75e27c28…`, `PaymentPlanRepository.ts` `3b2e9483…`, `SchedulingRepository.ts` `cff5aa73…`, `PaymentPlanSubscriptionRepository.ts` `47ddaab9…`; unchanged: snapshot `4194ff19…`, harness `b6f615ba…`, bind test `2e7b9731…` |
+| `git diff --numstat` (no deletion-only file) | `route.ts` 50 / 101, `bindPlanSubscription.ts` 7 / 28, `PaymentPlanRepository.ts` 213 / 1, `SchedulingRepository.ts` 145 / 1, `PaymentPlanSubscriptionRepository.ts` 82 / 0, `routerPlacement.guard` 132 / 0, `noBookingGuess.guard` 67 / 1, `planSurfaces.guard` 74 / 8, `deferredFirstPayment.guard` 46 / 6, `fix1Ownership.qa` 49 / 3, `REPOSITORY_STRATEGY.md` 9 / 1; new: the three unit files (402, 315, 181 lines). TL's requirement edit (2 / 1) is untouched |
+
+**The moved guards, the harness and the unit tests bite on the new code (mutants).** A scratch runner applied each mutation to the real file, ran the ten suites below with `--ci`, wrote the original back, and stopped unless the file's hash and the snapshot's matched their starting values. Blobs after all twelve: `route.ts`, the three repositories and the snapshot (`4194ff19…`) unchanged. Columns are red tests: H = harness, GR = `routerPlacement.guard`, GB = `noBookingGuess.guard`, GD = `deferredFirstPayment.guard`, QF = `fix1Ownership.qa`, B = `bindPlanSubscription.test`, UP / US / UPS = the three new unit files (`planSurfaces.guard` had 0 in every row and is left out).
+
+| # | Mutation | H | GR | GB | GD | QF | B | UP | US | UPS |
+|---|---|---|---|---|---|---|---|---|---|---|
+| M1 | `findNextPendingPeriod` orders with `{ ascending: true }` | 3 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| M2 | `markPaidForOwner` drops its `user_id` filter | 2 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 0 |
+| M3 | Route fixes F-3 by accident (`cancelOpenPeriodsForEndedPlan(plan.user_id, plan.id)`) | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| M4 | `markPaidForOwnerCounted` drops `{ count: 'exact' }` | 4 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 |
+| M5 | Plan-checkout owner check moved back inside the `try` | 0 | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
+| M6 | `endFromStripe` also writes `cancel_reason: null` (the `close()` shape) | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| M7 | `findContactIdForOwner` drops its `user_id` filter (bind's tenant filter) | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
+| M8 | `countProjectedPeriods` drops `head: true` | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 0 |
+| M9 | Paid handler calls `markPaidAndConfirmIfPending` instead of `markPaidUnscoped` | 5 | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 |
+| M10 | `markPaidUnscoped` swallows a rejected query (the pre-CR-P2-1 shape) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| M11 | `markPeriodPaidFromStripe` writes `paid_at` before `status` (key order) | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| M12 | `cancelOpenPeriodsForEndedPlan` also cancels `paid` periods | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+
+12 of 12 killed. M5 is invisible to the harness by design (status, body and effects are identical; only a log line moves) and is killed by the new `routerPlacement` Q-3 check and by FU5-E `:1669`. M7 and M8 are bind's: the harness mocks bind, so the bind tests (PR 0's read-chain tests, unedited) and the unit tests kill them. M10 (a catch) and M11 (key order; the snapshot sorts keys) are killed only by the unit tests.
+
+#### PR 4: deviations and questions for SA
+
+| # | Item | Dev's position |
+|---|---|---|
+| PR4-D1 | **FU-5 SA Q-3 hoist: a log-only change, deliberate.** The plan-checkout `accountOwns` moved above its `try`. To keep the effect order (`stripe.client` is a recorded effect), the Stripe client's construction moved above the `try` with it; `ownerId && (await accountOwns(…))` became `ownerId ? await accountOwns(…) : false` (the same short-circuit: no lookup without an owner id). **Old vs new trace** (the `a689de3f` route and the new route, each in a temporary sibling copy run under `fix1Ownership.qa`'s mocks, then deleted; status, body, every effect, every log line): owned + bind ok, owned by another business, no `owner_id`, bind throws → **identical**. Owner lookup throws → identical status (500), body, claim (`failed`, the lookup's message) and effects; **one log line fewer**: "Could not bound a payment plan - subscription may bill indefinitely" is gone, "Webhook processing failed" stays. **Second case (SA CR-P4-1): a throwing `new Stripe()` is real, not hypothetical.** With `STRIPE_SECRET_KEY` unset, stripe-node 19.2.1's constructor throws "Neither apiKey nor config.authenticator provided". Before PR 4 that throw was inside the `try`, so it was caught and logged "Could not bound a payment plan - subscription may bill indefinitely", which was accurate then: the plan could not be bounded. Now the constructor runs above the `try`, so only "Webhook processing failed" is logged. Status (500), the claim (`failed`, released) and Stripe's retry are unchanged. In both cases the change affects log lines only. Two `fix1Ownership.qa` edits follow from it: the FU5-E `:1669` assertion flips from "logged once" to "not logged" (with a comment, and its site label says "above the rethrowing try since CF-5 PR 4"), and Q3-1 (added first, against the untouched route) pins that a real bind failure still gets the line | Accept: the change TL and FU-5 SA Q-3 asked for |
+| PR4-D2 | **`fix1Ownership.qa.test.ts` edited** (frozen since PR 0, blob `f509e75e…` → `cb63fc56…`; `git diff --numstat` in the evidence): the default-off `bindError` knob, Q3-1 in its own `describe`, and PR4-D1's flip. The harness, its snapshot and the bind test file are untouched | Accept |
+| PR4-D3 | **§3's `markPaidUnscoped` for H7 *and* I5 split in two.** Fix-1 made I5 owner-scoped with `{ count: 'exact' }`, so its chain is no longer H7's. I5 → `markPaidForOwnerCounted`; G5 (no `count`) → `markPaidForOwner`. Merging them with a `count` flag would put a caller-chosen option on an update; two named methods keep both chains fixed | Accept |
+| PR4-D4 | **Order of evaluation**, as PR1-D4 / PR3-D5: G3's `periodTransaction?.id ?? null` and bind's mapped rows are evaluated before `.from()` is called, not after. Pure expressions; the recorded chains and the bind tests are identical | Accept |
+| PR4-D5 | **Typing only.** Rows the route read as `any` are now typed (`WebhookPlanEndState`, `WebhookNextPeriod`); the bind map callback is annotated `NewProjectedPeriodRow` so the excess-property check applies inside `.map` (a contextually typed generic `map` does not check it otherwise). No runtime change; scoped `tsc` clean | Accept |
+| PR4-D6 | **Comments moved with two chains.** I4's explanation of `status: 'confirmed'` and M3's "Everything unsettled" sat inside the inline chains; they now sit above the calls, reworded only to point at the method. M3's comment now names F-3 so nobody "fixes" it inside a refactor | Accept |
+| PR4-Q1 | **Owner-scoped methods sit in a second labelled section** (`// Stripe webhook and plan binding: owner-scoped (CF-5 PR 4)`) next to the C-3 unscoped section, without the marker. C-3 speaks of one section per class for the unscoped methods; putting scoped methods under that header would label them unscoped. The unit tests pin both sections and that each scoped method filters `user_id` exactly once | SA to confirm the layout |
+| PR4-Q2 | **The new ordering checks are positional**, like PR2-Q2 / PR3-Q1. Dominance by hand (new route): G1, G3, G4, G5 follow `recordPlanPeriodPaid`'s unconditional `!owns → return true` (`:805`); H7 follows the paid handler's `platformInvoice && !owns → return` (`:1298`) and `!platformInvoice → return` (`:1315`), both top level; I4 follows the checkout's `lookupError \|\| !platformInvoice → return` (`:1719`) and `!owns → return` (`:1724`) in the same `if (invoiceId)` block; I5 follows `if (!owner) … return` (`:1850`); M2 and M3 follow `handlePlanSubscriptionEnded`'s `!owns → return` (`:2110`) and the `cancelled`/`completed` return (`:2118`). The harness (Fix-1 refusal entries, X35, X40, X41) is the behavioural proof | Accept as a guard |
+| PR4-Q3 | **The guard pins F-3** (`cancelOpenPeriodsForEndedPlan(plan.user_id, subscription.id)`) as well as the snapshot. Fix-2 will have to change both, on purpose | Accept; it is what C-9 asks |
+
+### 7.3.6 PR 5 refresh (2026-10-09, against `88f97171`)
+
+Branch `feature/webhook-repos-pr5-legacy-guard`, off `origin/main` `88f97171` (PR 4 merged as #275). `route.ts` is blob `c5ff264d…`, 2,598 lines, **11** `.from(` (`user_subscriptions` 6, `billing_events` 2, `credit_transactions`, `boost_pack_purchases`, `system_settings_config`), 20 top-level functions, plus the `supabaseAdmin` alias (`:68`). `lib/payments/stripeAccountContext.ts` is blob `6a397dd8…` with **2** direct reads in `resolveAccountOwner`. Snapshot blob `4194ff19…` (103 entries), harness blob `b6f615ba…`.
+
+**Sites, exact lines at `88f97171`** (the `.from(` line in brackets):
+
+| Site | Lines | Chain today | After PR 5 |
+|---|---|---|---|
+| A1 | `:96–100` (97) | `user_subscriptions` select `'payment_retry_count, grace_period_days, current_period_end'` · eq `user_id` · `single` | `userSubscriptionRepository.findDunningState(userId)` |
+| A2 | `:109–113` (110) | `system_settings_config` select `'value'` · eq `key` · `maybeSingle` | `systemConfigRepository.findRawValue('payment_grace_period_days')` |
+| A3 | `:124–132` (125) | update `{payment_retry_count, last_payment_attempt, status, agents_paused}` · eq `user_id` · await | `userSubscriptionRepository.recordPaymentFailure(userId, { retryCount, status, agentsPaused })` |
+| A4 | `:135–146` (136) | `billing_events` insert `{8 keys}` · await | `billingEventRepository.insert({ …the same literal… })` |
+| B2 | `:224–228` (225) | select `'balance, total_earned'` · eq `user_id` · `single` | `userSubscriptionRepository.findBalance(userId)` |
+| B3 | `:238–247` (239) | update `{balance, total_earned, free_tier_expires_at: null, account_frozen: false}` · eq `user_id` · await | `userSubscriptionRepository.applyBoostPackBalance(userId, { balance, totalEarned })` |
+| B4 | `:250–268` (251) | `credit_transactions` insert `{…}` · `select('id')` · `single` | `creditTransactionRepository.insertReturningId({ …the same literal… })` |
+| B5 | `:278–294` (279) | `boost_pack_purchases` insert `{…}` · await | `legacyBoostPackPurchaseRepository.insert({ …the same literal… })` |
+| C1 | `:375–382` (376) | update `{cancel_at_period_end, canceled_at, status}` · eq `user_id` · await | `userSubscriptionRepository.mirrorStripeStatus(userId, { cancelAtPeriodEnd, canceledAt, status })` |
+| N1 | `:2160–2167` (2161) | update `{status: 'canceled', canceled_at, cancel_at_period_end: false}` · eq `user_id` · await | `userSubscriptionRepository.markCanceled(userId)` |
+| N2 | `:2170–2177` (2171) | `billing_events` insert `{4 keys}` · await | `billingEventRepository.insert({ …the same literal… })` |
+| helpers | `:219`, `:313`, `:1132` | `pilotCreditsToTokens(…, supabaseAdmin)`, `new QuotaAllocationService(supabaseAdmin)`, `resolveAccountOwner(supabaseAdmin, …)` | the same calls with `supabaseServer` |
+| alias | `:58–68` | `const supabaseAdmin = supabaseServer;` | removed; the RLS-bypass comment stays and now says the route issues no query and holds `supabaseServer` only for the three helpers |
+| resolver express | `stripeAccountContext.ts:440–444` | `stripe_connect_accounts` select `'user_id'` · eq `stripe_account_id` · `maybeSingle` | `new StripeConnectRepository(db).findOwnerIdByStripeAccountId(id)` |
+| resolver OAuth | `stripeAccountContext.ts:452–455` | `plugin_connections` select `'user_id, profile_data, status'` · eq `plugin_key` `'stripe'` · await | `new PluginConnectionRepository(db).listByPluginKey('stripe')` |
+
+11 route sites (`.from(` **11 → 0**) and 2 resolver reads (**2 → 0**). Converted route functions: `handleInvoicePaymentFailed`, `handleCheckoutCompleted`, `handleSubscriptionUpdated`, `accountOwner` (the argument only), `handleSubscriptionDeleted`. The other **15** must be `--exact` identical. The FU-1 / FU-2 / FU-6 code is moved, never deleted or fixed: the `billing_events` rows keep every key, `stripe_event_id: invoice.id` included.
+
+**Methods (12 new, 0 reused).** No existing method has the exact chain: `UserSubscriptionRepository`'s methods serve the free-tier grant, export and billing summary, with other columns, `maybeSingle` and try/catch; `SystemConfigRepository.getByKey` selects `*` with `.single()` and maps `PGRST116` to null; `CreditTransactionRepository` was read-only; `billing_events` and `boost_pack_purchases` had no repository (`BoostPackRepository` is the `boost_packs` catalog); `findActiveByProfileData` filters `active` (SA FU-5: do not reuse).
+
+| Class | Section | Methods |
+|---|---|---|
+| `UserSubscriptionRepository` | owner-scoped, `// Stripe webhook, agent-platform legacy: owner-scoped (CF-5 PR 5)` (PR4-Q1 layout, no marker) | `findDunningState`, `recordPaymentFailure`, `findBalance`, `applyBoostPackBalance`, `mirrorStripeStatus`, `markCanceled`. Each keeps one `.eq('user_id', userId)` |
+| `SystemConfigRepository` | ⟨unscoped-by-design⟩ | `findRawValue(key: 'payment_grace_period_days')`: a platform-wide table with no owner column (`tenant-isolation-guard` Step 5); the key is a closed set |
+| `CreditTransactionRepository` | ⟨unscoped-by-design⟩ | `insertReturningId(row: NewLegacyBoostCreditRow)`: the repository's first and only write; its "read-only" header is updated (PR5-Q2) |
+| **New** `BillingEventRepository` | ⟨unscoped-by-design⟩ | `insert(row: NewLegacyBillingEventRow)`: `event_type` is `'renewal_failed' \| 'subscription_canceled'`; the four Stripe keys are optional (dunning row only) |
+| **New** `LegacyBoostPackPurchaseRepository` | ⟨unscoped-by-design⟩ | `insert(row: NewLegacyBoostPackPurchaseRow)` |
+| `StripeConnectRepository` (`PaymentRepository.ts`) | ⟨unscoped-by-design⟩ | `findOwnerIdByStripeAccountId(id)` |
+| `PluginConnectionRepository` | ⟨unscoped-by-design⟩ | `listByPluginKey(pluginKey: 'stripe')`, returning `user_id, profile_data, status`, any status |
+
+Controls (C-3, CR-P2-1): no try/catch, no logger call, supabase-js's own `{ data, error }` in every new method; each update fixes its key set and key order; each insert takes a typed row the route passes as an object literal; no method takes a column argument. `new Date().toISOString()` runs as many times as before (once in A3 and N1, inside the method; C1's `canceled_at` is still computed in the route). The legacy inserts' owner is `metadata.user_id` on a platform Stripe object our own agent-platform checkout created (§5.1), which each doc says.
+
+**Resolver.** Signature unchanged, `resolveAccountOwner(db, stripeAccountId)`; it builds both repositories on the injected `db`, the plugin one only after an express miss, as before. A returned `error` still reaches `ownerLookupError(table, error)`, so FU-5's message is unchanged; a rejected read still rejects (neither method catches). `resolveUserConnectAccounts` and `resolvePaymentCollectionCapability` are not touched (T29). `lib/business-os/billing/**` is not touched.
+
+**Coverage check (before refactoring).** A coverage run of the harness on the untouched route executes every PR 5 site (A1 3, A2 2, A3 3, A4 3, B2–B4 4, B5 3, C1 1, N1 1, N2 1, the three helper calls) and every arm that reads a result: A1 hit and miss, A2 hit and miss, B2 hit and miss, B4 error and data, B5 error and success, the no-`user_id` returns (X42, X43, X44, X47). Cold in the PR 5 ranges: value fallbacks only (C1's `cancel_at_period_end || false` false arm and `canceled_at` null arm), which stay in the route unchanged, and the audit and quota catches (no DB site). **No harness entry was added.** `resolveAccountOwner` is mocked in the harness; its proof is `stripeAccountContext.test.ts` (unchanged tests, plus two "a rejected read rejects" tests proven first on the untouched resolver) and `ownerCacheRetry.qa`, which runs the real resolver.
+
+**Guard audit (C-2): every check on `route.ts` text that names these tables, the client or the helpers, and where it bites after PR 5.**
+
+| Guard | Check today | After PR 5 |
+|---|---|---|
+| `userSubscriptionsWriteLockdown.qa` writer list | `app/api/stripe/webhook/route.ts // supabaseAdmin` is a `user_subscriptions` writer | **Entry removed** (§8): the route no longer names the table; the writes are in `UserSubscriptionRepository`, already listed (its comment now says so). The list stays an exact equality, so an inline write coming back fails it. **Added** in the same file: the repository's PR 5 section has six `from('user_subscriptions')`, six `.eq('user_id', userId)` in code (comments stripped) and no insert/upsert/delete/rpc |
+| `userSubscriptionsWriteLockdown.qa` construction sites | `…route.ts::QuotaAllocationService(supabaseAdmin)` | `…route.ts::QuotaAllocationService(supabaseServer)` (§8) |
+| `routerPlacement.guard` "handleCheckoutCompleted keeps only the boost-pack conversion" | `activity_type: 'boost_pack_purchase'` and one `new QuotaAllocationService(` in the function | Unchanged and green: both stay in the route |
+| `routerPlacement.guard` RD-16 | `handleInvoicePaymentFailed` exists | Unchanged and green |
+| `routerPlacement.guard` PR 1–4 checks (claim, invoices, money rows, plans and bookings) | class names, inline `from(`, per-function call counts | Unchanged and green; the new rule-1 check generalises their "no class named" arm to every `…Repository` class |
+| **New** `it` (`routerPlacement.guard`, same parsed route, C-7) | — | Per-function call counts for the five legacy singletons (route totals equal the sums); each `user_subscriptions` call takes `userId` first, each insert row has `user_id: userId`, and each function's `userId` is its own `<object>.metadata?.user_id` |
+| **New** `it`: the rule-1 check (SA C-7) | — | See the guard design below |
+| **New** `it`: negative control | — | 1 allowed snippet (the three helper uses, a singleton call, `Array.from`, a comment, the flow-handler map with `plan: handlePlanBillingEvent`) gives no offence; 13 forbidden snippets are each caught |
+| `PaymentTransactionRepository.webhook.test` C-3 source shape | the header appears 3 times in `PaymentRepository.ts` (2 sections) | **Per class** (PR5-D2): exactly one section in each of `PaymentTransactionRepository`, `PaymentInvoiceRepository` and `StripeConnectRepository`, and no other. Stricter than the old file-wide count |
+| `BusinessOsBillingEventRepository.test` "only the listed files name the repository" | no other file names `BusinessOsBillingEventRepository` | Unchanged. My first draft of `BillingEventRepository.ts` named that class in a comment and went red; the comment was reworded, the guard was not touched (another session's area) |
+| `pinoLogging.guard` (≥ 133), `emptyBody`, `receiptOnPaid`, `invoiceIntentsStayUnowned`, `noBookingGuess`, `deferredFirstPayment`, `planSurfaces`, `stripeAuditEntries` | log calls, strings, other functions | Unaffected: no log line added, moved or removed; all green |
+| `accountFrozenWriters.guard` | nothing sets `account_frozen` to true | Unaffected: B3 writes `false`, now in the repository |
+| `noPilotCreditTableReads.guard` | Business OS trees never read Pilot-Credit tables or name `UserSubscriptionRepository` | Unaffected: the new code is in `lib/repositories/` and the route |
+
+**Guard design (the rule-1 check, SA C-7).** One helper, `ruleOneOffences(file)`, walks the already-parsed route (`sf`, not parsed again) and returns every offence:
+
+- **No query.** Any call whose callee is `.from` or `.rpc`, by dot or by `['from']` / `["rpc"]` / backtick element access. `Array.from` and `Buffer.from` are allowed only while the file binds no local `Array` / `Buffer` (import, variable, parameter, function or class; QA PR 5 B01, B07). AST, so comments do not count.
+- **No dynamic module load of a repository or a client (QA PR 5).** An `import()` or `require()` whose argument is a repository module (the file's `isRepositorySpecifier`, or any `/repositories/` path) or names supabase is an offence, and so is one with a computed argument. Other dynamic imports stay allowed: the route's `await import('@/lib/services/AuditTrailService')` and `BookingEmailService`.
+- **No client but the helpers' argument.** No `supabaseAdmin` or `createClient` identifier at all; no import whose specifier mentions supabase other than `@/lib/supabaseServer`, and from that module only the plain, unrenamed named import `supabaseServer` (a default, namespace, renamed or other named import is an offence: QA PR 5 B01–B03); every `supabaseServer` identifier other than the import is exactly one of three allowed uses: argument 1 of `pilotCreditsToTokens` in `handleCheckoutCompleted`, argument 0 of `new QuotaAllocationService` in `handleCheckoutCompleted`, argument 0 of `resolveAccountOwner` in `accountOwner`. A second test asserts each of the three exists exactly once (non-vacuity).
+- **No repository built.** Any identifier matching `^[A-Z]\w*Repository$` (a class named anywhere, so none can be constructed).
+- **Repository imports (SA CR-P5-1).** An import is a repository import when its specifier starts with `@/lib/repositories` or contains `/repositories/` (relative paths). From one, only plain named imports are allowed: a namespace import, a default import or an `as` rename is an offence. The singleton set is built from the exported name (`/^[a-z]\w*Repository$/`), so the `WEBHOOK_*_COLUMNS` constants stay allowed.
+- **No alias (QA PR 1 edge case 2, closed).** Every repository singleton imported that way may appear only as the receiver of a direct method call (`repo.method(…)`). So `const r = repo; r.complete()`, `const { complete } = repo`, `repo.complete.call(…)` and passing `repo` as an argument are each an offence. All 15 singletons the route imports are used that way today, so this costs nothing.
+- **Flow-handler map.** It is ordinary code to the check and contains none of these shapes; the negative control includes `plan: handlePlanBillingEvent`, so another slice adding that entry does not trip it.
+
+#### PR 5 evidence (2026-10-09)
+
+Tree: worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr5-legacy-guard`, `HEAD` `88f97171`, uncommitted, Node 22.19.0. Every Jest run used `node node_modules/jest/bin/jest.js --ci --runTestsByPath`. **No run wrote a snapshot; none used `-u`.** TL's edit to `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` is in the tree and was not touched.
+
+**Before (untouched production code, `88f97171`):**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, **105 tests, 103 snapshots**, all passed; coverage run (statements 91.68 %, branches 75.53 %) |
+| Snapshot blob | **`4194ff190e1da888a16e3426b2df6a0b7cafa3fb`** (= `HEAD`); per-entry sha256 of all 103 `exports[…]` values from `git show HEAD:<snap>` (`vm` evaluation), the working copy matched 103/103; hash file sha256 `497837c1…` (the PR 3 / PR 4 value) |
+| `route.ts` | blob `c5ff264d…`, 2,598 lines, **11** `.from(`, 0 `.rpc(`, the `supabaseAdmin` alias, 20 top-level functions |
+| `resolveAccountOwner` | blob `6a397dd8…`, **2** direct reads |
+| `check-logging-only-diff --exact`, all 20 functions | 20 × identical (sanity) |
+| Added before refactoring | Two tests in `stripeAccountContext.test.ts` ("a rejected `stripe_connect_accounts` / `plugin_connections` read rejects with that same error"), run with `-t "CF-5 PR 5"` against the untouched resolver (base content copied into place, then the new file copied back, blob checked): **2 passed**; the whole file 43/43 |
+| Regression set on the base code (172 files: every test file in `app/api/stripe/webhook/__tests__`, `app/api/stripe/__tests__`, `lib/payments/__tests__` and `lib/repositories/__tests__`, the guards listed in the audit, `check-logging-only-diff`, and every other test naming a touched module; run by copying the base versions of the 12 changed existing files into place, then copying the new ones back and checking each blob) | **172 suites, 3,798 tests, 126 snapshots, all passed**. (The base list also left out `BusinessOsBillingEventRepository.test` through an over-broad filter of mine; it is in the after run) |
+| Scoped `tsc`, base files in place (same method) | 60 errors, all in transitively imported files |
+
+**After:**
+
+| Evidence | Value |
+|---|---|
+| Harness | 1 suite, **105 tests, 103 snapshots**, all passed |
+| Snapshot blob | **`4194ff19…`, unchanged** after every run, mutant runs included. `git diff --exit-code` on `__snapshots__/` and on the harness (`b6f615ba…`): exit 0 |
+| Entry by entry | **103 identical, 0 changed, 0 missing, 0 added**; the after-hash file has the same sha256 `497837c1…` |
+| `check-logging-only-diff --exact`, base `88f97171` | the 15 untouched functions: **15 × identical, exit 0**. The five converted functions differ (`handleInvoicePaymentFailed`, `handleCheckoutCompleted`, `handleSubscriptionUpdated`, `accountOwner`, `handleSubscriptionDeleted`) |
+| Module-level diff | Five import lines (`userSubscriptionRepository`, `systemConfigRepository`, `creditTransactionRepository`, `billingEventRepository`, `legacyBoostPackPurchaseRepository`); the alias line removed and its comment rewritten. `BUSINESS_OS_FLOW_HANDLERS` and the dispatcher call are not in the diff |
+| Inside the converted functions | Only the 11 sites and the three helper arguments, plus two comments: B3's "Clear free tier expiration" comment sat inside the chain and now sits above the call (as PR4-D6), and A4's comment notes the `stripe_event_id` key is kept as written |
+| Counts | `route.ts` `.from(` **11 → 0**, `.rpc(` 0, `supabaseAdmin` **0**, `createClient` 0; 2,562 lines. `resolveAccountOwner` direct reads **2 → 0** |
+| Coverage, harness | Every new route call site executes: A1 `:100` 3, A2 `:109` 2, A3 `:120` 3, A4 `:128` 3, B2 `:215` 4, B3 `:226` 4, B4 `:232` 4, B5 `:256` 3, C1 `:351` 1, N1 `:2133` 1, N2 `:2136` 1, the helpers `:210` 4, `:289` 4, `:1105` 69. Methods reached through the harness: `findDunningState` 3, `recordPaymentFailure` 3, `findBalance` 4, `applyBoostPackBalance` 4, `mirrorStripeStatus` 1, `markCanceled` 1, `findRawValue` 2, `insertReturningId` 4, `BillingEventRepository.insert` 4, `LegacyBoostPackPurchaseRepository.insert` 3. Route statements 91.73 %, branches 75.53 % |
+| Repository unit tests (new) | **66 tests**: `UserSubscriptionRepository.webhook` 24, `SystemConfigRepository.webhook` 7, `CreditTransactionRepository.webhook` 6, `BillingEventRepository` 8, `LegacyBoostPackPurchaseRepository` 8, `StripeConnectRepository.ownerLookup` 6, `PluginConnectionRepository.ownerLookup` 7. They cover the exact chain of every method (table, operation, columns, filters, payload and key order, terminal or `await`); data, miss, error (same object, identity) and reject for each, nothing logged; exactly one `user_id` filter in each owner-scoped method, none in the unscoped ones; rows passed by identity and not mutated; closed types (`@ts-expect-error` on an extra row key, another event type, activity, payment status, dunning status, config key and plugin key, all consumed in the scoped `tsc`); default client `supabaseServer`, singleton and barrel for the two new repositories; source shape per class (section header once, marker on every unscoped method, no try, logger, spread, generic update or extra write) |
+| Guards | `routerPlacement.guard` **23** (was 20); `userSubscriptionsWriteLockdown.qa` 11 (was 10); `stripeAccountContext.test` 43 (was 41); `PaymentTransactionRepository.webhook.test` 34 (one test rewritten, PR5-D2) |
+| Regression set (the same files + the 7 new unit files + `BusinessOsBillingEventRepository.test`, 180 files) | **180 suites, 3,928 tests, 126 snapshots, all passed** (41 s). Snapshot blob still `4194ff19…` |
+| Boost suites (the new legacy file names the boost repositories in a comment) | `admin/boost-packs` route, `credits/boost/purchases` route and the five `lib/business-os/boost` suites: 7 suites, 445 tests, passed |
+| Scoped `tsc` (scratch tsconfig, `files` = the 10 production files, the 7 new tests and the 4 changed test files; 8 GB heap) | **0 errors in those files**, so every `@ts-expect-error` is consumed. 60 errors in transitively imported files: **the same 60** as with the base files in place (`diff` differs only by two lines in `stripeAccountContext.test.ts` shifted by my 34 inserted lines, and one union printed in another order) |
+| ESLint on the 20 changed or new `.ts` files | **0 errors.** 16 warnings, all on lines this PR does not touch (the route's unused `planSchedule` imports, two `any`, H1's unused `lookupError`; old `any`s in `PaymentRepository.ts` and `SystemConfigRepository.ts`; the resolver's existing `AccountLookupDb` directive) |
+| `console.*` | 0 in every changed or new file |
+| `npm run test:bos-entitlements` | Not run: nothing in this PR imports `lib/business-os/entitlements/` (barrel additions are two new repositories and type re-exports), and that script runs Jest by directory pattern, which this task's rules exclude. Its `lib/repositories/__tests__` share is in the regression set above |
+| `REPOSITORY_STRATEGY.md` | Tree entries for the two new repositories, a PR 5 paragraph, and a Change History row (as PRs 1–4 kept it current, CR-P3-1) |
+| Blobs after | `route.ts` `cc10d119…`, `stripeAccountContext.ts` `effc0f57…`, `UserSubscriptionRepository.ts` `a22aff27…`, `SystemConfigRepository.ts` `1fd68347…`, `CreditTransactionRepository.ts` `cf7b255f…`, `PaymentRepository.ts` `ba910ab6…`, `PluginConnectionRepository.ts` `42ac4c53…`, `index.ts` `57449dda…`, `BillingEventRepository.ts` `353416d6…`, `LegacyBoostPackPurchaseRepository.ts` `48724ce5…`; unchanged: snapshot `4194ff19…`, harness `b6f615ba…` |
+| `git diff --numstat` (no deletion-only file) | `route.ts` 80 / 116, `stripeAccountContext.ts` 9 / 10, `UserSubscriptionRepository.ts` 132 / 2, `SystemConfigRepository.ts` 40 / 1, `CreditTransactionRepository.ts` 67 / 9, `PaymentRepository.ts` 38 / 0, `PluginConnectionRepository.ts` 50 / 1, `index.ts` 20 / 0, `routerPlacement.guard` 209 / 0, `userSubscriptionsWriteLockdown.qa` 28 / 3, `stripeAccountContext.test` 34 / 0, `PaymentTransactionRepository.webhook.test` 10 / 2, `REPOSITORY_STRATEGY.md` (docs); new: the two repositories (91, 93 lines) and the seven unit files (281, 131, 135, 143, 138, 120, 142 lines). TL's requirement edit (2 / 1) is untouched |
+
+**The guard, the harness and the unit tests bite on the new code (mutants).** A scratch runner applied each mutation to the real file, ran the twelve suites below with `--ci`, wrote the original back, and stopped unless the file's hash and the snapshot's matched their starting values. Blobs after all twelve: every changed file and the snapshot (`4194ff19…`) unchanged. Columns are red tests: H = harness, GR = `routerPlacement.guard`, GL = `userSubscriptionsWriteLockdown.qa`, US / SC / CT / PO = the `UserSubscription`, `SystemConfig`, `CreditTransaction`, `PluginConnection` unit files, R = `stripeAccountContext.test`, QO = `ownerCacheRetry.qa` (`BillingEvent`, `LegacyBoostPackPurchase` and `StripeConnect` unit files had 0 in every row and are left out).
+
+| # | Mutation | H | GR | GL | US | SC | CT | PO | R | QO |
+|---|---|---|---|---|---|---|---|---|---|---|
+| M1 | Route reads the dunning row inline again, same chain | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| M2 | `applyBoostPackBalance` stops writing `account_frozen: false` | 4 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| M3 | `markCanceled` drops its `user_id` filter | 1 | 0 | 1 | 2 | 0 | 0 | 0 | 0 | 0 |
+| M4 | Route reaches the repository through an alias (`const subs = …; subs.markCanceled`) | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| M5 | `listByPluginKey` filters `status = 'active'` (the `findActiveByProfileData` shape) | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 0 |
+| M6 | `insertReturningId` swallows a rejected query (pre-CR-P2-1 shape) | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
+| M7 | Route keeps a `supabaseServer` handle for itself | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| M8 | `findDunningState` ends in `maybeSingle` | 3 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| M9 | Route "fixes" the dunning row's `stripe_event_id` (drops it) | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| M10 | `findRawValue` selects `*` | 2 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
+| M11 | Resolver turns a plugin read error into "no business" (pre-FU-5 shape) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 |
+| M12 | Route builds its own `new UserSubscriptionRepository()` | 1 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+12 of 12 killed. M1, M4 and M7 (an inline query with the same chain, an alias, a held client) are invisible to the harness by design and are killed by the new rule-1 check. M6 (a catch) is killed only by the unit tests. M5 is killed by the unit test and by the resolver's existing fake; M11 by the resolver tests and `ownerCacheRetry.qa`, which runs the real resolver. (A first M5 run matched an earlier method with the same text and survived; the pattern was made specific and re-run.)
+
+#### PR 5: after the SA code review (CR-P5-1 to CR-P5-3), 2026-10-09
+
+SA approved the production code; D1–D8 and Q1–Q3 accepted. CR-P5-1 was a guard hole, test only.
+
+| Item | Change |
+|---|---|
+| **CR-P5-1** | `ruleOneOffences`'s import loop (`routerPlacement.guard`): a repository import is any specifier starting `@/lib/repositories` or containing `/repositories/`; a namespace import, a default import or an `as` rename from one is an offence; the singleton set is keyed by the exported name. Four new controls, one test each: (a) `import { userSubscriptionRepository as subs }` then an alias, (b) `import * as R` then `new R.UserSubscriptionRepository()`, (c) a relative `../../../../lib/repositories/…` singleton import then an alias, (d) a default import. One new allowed case: a column constant imported beside a singleton, and the flow-handler map with `plan: handlePlanBillingEvent` and its import |
+| **CR-P5-2** | The §9.4 draft's "still open" list now reads "FU-1/FU-2/FU-6 retirements (FU-7 goes with FU-2), FU-3, FU-4, FU-8, FU-9". The guard parenthesis is kept, true now |
+| **CR-P5-3** | `REPOSITORY_STRATEGY.md`: the "no alias" sentence now also names the import rule, so it matches the guard |
+
+**Proof.** The controls were added first, with the old import loop in place: **4 failed, each with 0 offences** (24 passed, the allowed case among them). With the fix: `routerPlacement.guard` **28 / 28 passed** (was 23): the real route gives `[]`, the old 13 forbidden snippets and the old allowed snippet unchanged, the new allowed case `[]`, the four new controls caught. ESLint on the guard: 0 problems; scoped `tsc` on it: 0 errors. `git diff --numstat` of the guard: 259 / 0. `route.ts` blob `cc10d119` and snapshot blob `4194ff19` unchanged; no production file touched.
+
+#### PR 5: after QA (bypasses B01–B07 closed), 2026-10-09
+
+QA passed PR 5 with notes: the production code is equivalent, but six shapes passed the rule-1 check. All are closed in `ruleOneOffences` (`routerPlacement.guard`, test file only):
+
+| QA id | Shape | Closed by |
+|---|---|---|
+| B01b / B01c | `import { supabaseServer as Array }` (or `as Buffer`), then `Array.from('billing_events')` | Only the plain, unrenamed `supabaseServer` may be imported from `@/lib/supabaseServer`; `Array`/`Buffer` are exempt from the `.from` rule only when the file binds no local name `Array`/`Buffer` |
+| B07 | `const Buffer = (await import('@/lib/supabaseServer')).supabaseServer; Buffer.from(…)` | `import()`/`require()` of a supabase or repository module is an offence; and the local `Buffer` loses the exemption |
+| B02 | `import { supabaseServer as db }`, then `db.auth…` | The no-rename rule |
+| B03 | `import { createServerSupabaseClient } from '@/lib/supabaseServer'` | Only `supabaseServer` from that module |
+| B04 | `require('@/lib/repositories/X')` | `import()`/`require()` of a repository module (`isRepositorySpecifier`, or any `/repositories/` path), or with a computed argument |
+| B06 | `await import('@/lib/repositories/X')`, then `new M.XRepository(…)` | Same |
+
+The route's own `await import('@/lib/services/AuditTrailService')` (twice) and `BookingEmailService` stay allowed: neither names a repository or supabase.
+
+**Proof.** Seven controls (B01b and B01c separately), one test each, plus one new allowed case (`Array.from` and `Buffer.from` with no local binding, two service `import()`s). The controls were added first, with the previous check in place: **7 failed, each with `found: []`**; the allowed case passed. With the fix: `routerPlacement.guard` **36 / 36 passed** (was 28): the real route gives `[]`, the earlier allowed snippets (incl. `plan: handlePlanBillingEvent` and its import) give `[]`, all 28 earlier tests unchanged and green. ESLint on the guard: 0 problems; scoped `tsc`: 0 errors. Guard `git diff --numstat`: 365 / 0. `route.ts` blob `cc10d119` and snapshot blob `4194ff19` unchanged. Docs: the §7.3.6 guard design describes the final rule (and the regex nit is fixed: `/^[a-z]w*Repository$/`); the §9.4 draft's guard sentence and the `REPOSITORY_STRATEGY.md` sentence describe it too. QA's two new files (`legacyRepository.qa.test.ts`, `stripeAccountContext.repos.qa.test.ts`) were read, not edited.
+
+#### PR 5: deviations and questions for SA
+
+| # | Item | Dev's position |
+|---|---|---|
+| PR5-D1 | **Seven unit files, not one per touched repository in name only.** `UserSubscriptionRepository`, `SystemConfigRepository` and `CreditTransactionRepository` already had test files for other features; the webhook methods got their own `*.webhook.test.ts` (as PR 2–4 did). The two resolver methods got `*.ownerLookup.test.ts` | Accept |
+| PR5-D2 | **`PaymentTransactionRepository.webhook.test.ts` edited** (a PR 3 file). Its C-3 test counted the section header file-wide (3 splits = 2 sections); PR 5 adds the section in `StripeConnectRepository`. It now asserts one section in each of the three touched classes and none elsewhere. Every assertion is kept; the count per class is stricter than the total | Accept |
+| PR5-D3 | **Two "a rejected read rejects" tests added to `stripeAccountContext.test.ts`**, run first against the untouched resolver (2 passed), then against the new one. The resolver's existing 41 tests are unedited and pass on the same fake | Accept |
+| PR5-D4 | **The singleton-only rule also covers the 10 singletons that PR 1–4 already used.** It closes QA PR 1 edge case 2 (the alias bypass) for every repository at once, at no cost (all uses are direct calls today). A future handler that wants to pass a repository as an argument would have to change the guard on purpose | Accept |
+| PR5-D5 | **`listByPluginKey` and `findRawValue` take a closed key type** (`'stripe'`, `'payment_grace_period_days'`), not `string`. `listByPluginKey` returns every tenant's `profile_data`, which can hold a provider token, so a free plugin key would offer a cross-tenant read of other plugins' profiles. A later caller widens the type on purpose | Accept, or SA prefers `string` as the plan named it |
+| PR5-D6 | **The resolver now constructs repositories** (`new StripeConnectRepository(db)`, `new PluginConnectionRepository(db)`) because its client is injected, per the FU-5 ruling. One small difference: with `db` undefined the old code threw a `TypeError` on `db.from`; the repositories fall back to `supabaseServer`. The only caller always passes `supabaseServer`, so nothing observable changes | Accept |
+| PR5-D7 | **Order of evaluation**, as PR1-D4 / PR3-D5 / PR4-D4: the row literals (A4, B4, B5, N2) and C1's values are built before `.from()` is called, not after. Pure expressions; `new Date()` runs the same number of times | Accept |
+| PR5-D8 | **Typing only.** Rows the route read as `any` are now typed (`LegacyDunningState`, `LegacyBalance`, `{ value: unknown }`, `{ id: string }`). `NewLegacyBoostCreditRow.metadata.stripe_payment_intent_id` is `unknown` because Stripe's `session.payment_intent` may be an id, an object or null and is stored as it arrives. No runtime change; scoped `tsc` clean | Accept |
+| PR5-Q1 | **The C-3 header on non-Connect methods.** C-3 fixes the header text "keyed by Stripe ids or rows the route has already proved owned". For `findRawValue` (a platform setting), the legacy inserts (owner from platform metadata) and the two owner-lookup methods (the owner is the output), the header's wording does not describe the actual basis; each method's doc names the real one. I kept the header verbatim so the pinned text stays one string across the codebase | SA: keep verbatim, or allow a per-section variant |
+| PR5-Q2 | **`CreditTransactionRepository` gains its first write.** Its header said "READ-ONLY, by design … adding any write method here needs SA review". §3 (SA-approved) named `insertReturningId` there, so I added it and rewrote the header ("read-only, with ONE write … adding any other write method needs SA review"). Alternative: a `LegacyCreditTransactionRepository` like the boost-purchase one, keeping the original file read-only | SA to confirm the placement |
+| PR5-Q3 | **The legacy owner-scoped methods sit under a PR 5 owner-scoped header**, following the PR4-Q1 layout; the inserts sit under the unscoped header with the marker, as PR 3 and PR 4's inserts did. Their `user_id` comes from platform metadata, not from `accountOwns` (§5.1) | SA to confirm |
+
+**Draft for TL (not applied): the §9.4 CF-5 row of `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` at merge.** Replace the status sentence at the end of the CF-5 cell with:
+
+> **Status: done.** Fix-1 (#242), Fix-1b (#246), FU-5 (#250) merged; refactor PR 0 (#254), PR 1 (#258), PR 2 (#266), PR 3 (#270), PR 4 (#275) and PR 5 (#279) merged. `app/api/stripe/webhook/route.ts` issues no query of its own: 51 → 0 `.from(`, its private `createClient` and the `supabaseAdmin` alias are gone, and `supabaseServer` is held only to hand to `pilotCreditsToTokens`, `QuotaAllocationService` and `resolveAccountOwner` (SA Q-2). `bindPlanSubscription.ts` (5) and `resolveAccountOwner` (2) moved behind repositories too. Proven byte-identical by the P-0 harness at every step (snapshot 103 entries, blob `4194ff19`), and held by a rule-1 source guard in `routerPlacement.guard` (no `.from`/`.rpc`; from `@/lib/supabaseServer` only the plain `supabaseServer`, and only as the three helpers' argument; no other client; no repository class named, so none built; repositories imported only by plain named static imports, never by `import()`/`require()`; singletons only as direct call receivers). Still open, separate from CF-5: F-3 (Fix-2, Offir's decision), the `propagate_refund_to_booking` trigger scope (migration follow-up), FU-1/FU-2/FU-6 retirements (FU-7 goes with FU-2), FU-3, FU-4, FU-8, FU-9, and T29 (`resolveUserConnectAccounts`, `resolvePaymentCollectionCapability`).
+
 ### 7.4 What `check-logging-only-diff.ts` can and cannot prove here
 
 - **Can:** with `--functions <list> --exact`, prove that every top-level function a PR is **not** meant to touch is textually identical to `origin/main`. Each PR names its untouched set (§9) and records 18 verdicts.
@@ -1072,7 +1406,15 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
   - [x] ✅ After recorded: 103/103 entries identical, blob unchanged, 14 × identical, regression 142 suites / 3,099 tests, scoped `tsc` (0 in changed files, same 58 elsewhere) and ESLint clean, mutants M1–M11 red.
   - [ ] SA code review (PR3-D1 to D6, PR3-Q1); QA; user sees the diff; RM commits.
 - [ ] PR 4: plans and bookings; two guards moved; plus bind's five inline queries (scope addition, Fix-1b C-4). Also (FU-5 SA Q-3): move the owner check at the plan checkout site (route.ts ~1669) above its `try`, so a lookup failure is no longer logged as "Could not bound a payment plan" before it is rethrown.
-  - *PR 0 CR-1 contract:* PR 4 must pass the three CR-1 tests in `bindPlanSubscription.test.ts` **unedited** (and the three read-chain tests from the QA note; blob `2e7b9731…`, §7.3.1). That file also mocks `PaymentPlanSubscriptionRepository` (only `create`, `attachStripe`, `findBySubscriptionId`). If PR 4 moves a bind query behind a `PaymentPlanSubscriptionRepository` method that mock does not list, it needs an explicit delegation there in the shape PR 0 used, and must bring that edit to SA before making it. The method names for bind's five queries are not fixed in §3 yet, so PR 0 does not plan it. Queries moved into `PaymentPlanRepository` / `SchedulingRepository` need no mock change, since that file does not mock them.
+  - *PR 0 CR-1 contract:* PR 4 must pass the three CR-1 tests in `bindPlanSubscription.test.ts` **unedited** (and the three read-chain tests from the QA note; blob `2e7b9731…`, §7.3.1). That file also mocks `PaymentPlanSubscriptionRepository` (only `create`, `attachStripe`, `findBySubscriptionId`). If PR 4 moves a bind query behind a `PaymentPlanSubscriptionRepository` method that mock does not list, it needs an explicit delegation there in the shape PR 0 used, and must bring that edit to SA before making it. The method names for bind's five queries are not fixed in §3 yet, so PR 0 does not plan it. Queries moved into `PaymentPlanRepository` / `SchedulingRepository` need no mock change, since that file does not mock them. ✅ Met: bind's five went to `PaymentPlanRepository` and `SchedulingBookingRepository`; the file is unedited and passes 34/34.
+  - **Code complete 2026-10-08, uncommitted**, on `feature/webhook-repos-pr4-plans-bookings` off `a689de3f`. Refresh and evidence: §7.3.5.
+  - [x] ✅ Plan refreshed against `a689de3f` (§7.3.5): 10 route sites + bind's 5 + the Q-3 hoist, method homes and names (the two harness-delegated names kept), coverage check, C-2 guard audit.
+  - [x] ✅ The plan-checkout catch's bind-throws arm covered first: Q3-1 in `fix1Ownership.qa` against the untouched route (no harness entry needed). Before recorded: 103 entry hashes, blob `4194ff19`, 21 `.from(`, bind 5 direct queries, 20 × identical, regression 162 suites / 3,463 tests.
+  - [x] ✅ `PaymentPlanSubscriptionRepository` (2), `PaymentPlanRepository` (5 unscoped + 2 owner-scoped), `SchedulingBookingRepository` (2 unscoped + 4 owner-scoped); 27 + 23 + 10 unit tests.
+  - [x] ✅ `route.ts`: the 10 sites through the repositories, 21 → 11 `.from(`; Q-3 hoist (PR4-D1). `bindPlanSubscription.ts`: 5 → 0 direct queries.
+  - [x] ✅ Guards: `planSurfaces` (slice bounded to the function, moved, bind rule-1 `it`), `deferredFirstPayment` (bounded, moved), `noBookingGuess` (`:227` moved, booking arm), `routerPlacement` (three new `it`s); `fix1Ownership.qa` FU5-E `:1669` flipped (PR4-D1).
+  - [x] ✅ After recorded: 103/103 entries identical, blob unchanged, bind tests unedited 34/34, 16 × identical, regression 165 suites / 3,528 tests, scoped `tsc` (0 in changed files, same 58 elsewhere) and ESLint clean, mutants (§7.3.5).
+  - [ ] SA code review (PR4-D1 to D6, PR4-Q1 to Q3); QA; user sees the diff; RM commits.
 - [ ] PR 5: legacy tables, alias removed, rule-1 guard added, lockdown test updated.
   - *Scope addition (FU-5 SA review, rule 1; supersedes Q-2's "tracked follow-up"):* `resolveAccountOwner`'s two direct reads (`lib/payments/stripeAccountContext.ts`) move behind the **existing** repositories. No new repository:
     - `StripeConnectRepository.findOwnerIdByStripeAccountId(stripeAccountId)` (`lib/repositories/PaymentRepository.ts:1498`): `select('user_id').eq('stripe_account_id', …).maybeSingle()`;
@@ -1084,6 +1426,14 @@ Re-cut if SA prefers fewer PRs: 0+1 together (1.25 d) and 2+3 together (2 d) sti
     - Add unit tests for each new method (data, miss, error). The resolver's existing unit tests keep passing on the same fake.
     - Estimate +0.25 d.
     - Out of scope: `resolveUserConnectAccounts` and `resolvePaymentCollectionCapability` stay with the purge workplan's T29 item (3).
+  - **Code complete 2026-10-09, uncommitted**, on `feature/webhook-repos-pr5-legacy-guard` off `88f97171`. Refresh and evidence: §7.3.6.
+  - [x] ✅ Plan refreshed against `88f97171` (§7.3.6): 11 route sites, 3 helpers, the alias, the resolver's 2 reads; method homes and names; coverage check; C-2 guard audit; guard design.
+  - [x] ✅ Coverage check on the untouched route: every PR 5 site and result arm executes, so no harness entry was added. Two "a rejected read rejects" resolver tests added first and passed on the untouched resolver. Before recorded: 103 entry hashes, blob `4194ff19`, 11 `.from(`, resolver 2 reads, 20 × identical, regression 172 suites / 3,798 tests.
+  - [x] ✅ `UserSubscriptionRepository` (6, owner-scoped), `SystemConfigRepository.findRawValue`, `CreditTransactionRepository.insertReturningId`, new `BillingEventRepository` and `LegacyBoostPackPurchaseRepository`, `StripeConnectRepository.findOwnerIdByStripeAccountId`, `PluginConnectionRepository.listByPluginKey`; 66 unit tests.
+  - [x] ✅ `route.ts`: 11 sites through the repositories (11 → 0 `.from(`), the three helpers take `supabaseServer`, alias removed. `resolveAccountOwner`: 2 → 0 direct reads, signature and FU-5 message unchanged.
+  - [x] ✅ Guards: `routerPlacement` (legacy call counts and user scope; the rule-1 check with alias closure; its negative control), `userSubscriptionsWriteLockdown.qa` (writer entry removed, construction site renamed, section scope check added), `PaymentTransactionRepository.webhook` C-3 count per class (PR5-D2).
+  - [x] ✅ After recorded: 103/103 entries identical, blob unchanged, 15 × identical, regression 180 suites / 3,928 tests, scoped `tsc` (0 in changed files, same 60 elsewhere) and ESLint clean, mutants M1–M12 red. `REPOSITORY_STRATEGY.md` PR 5 paragraph. §9.4 "done" wording drafted for TL (§7.3.6, not applied).
+  - [ ] SA code review (PR5-D1 to D8, PR5-Q1 to Q3); QA; user sees the diff; RM commits; TL applies the §9.4 wording at merge.
 - [ ] Follow-ups handed to TL: F-1, F-2 (HIGH), F-3, F-4, FU-1 to FU-9.
 
 ---
@@ -1581,6 +1931,266 @@ One pre-existing observation, not a PR 3 finding: the #257 attach writes an owne
 QA may start now; nothing QA tests depends on CR-P3-1. RM must not commit until SA has read the `REPOSITORY_STRATEGY.md` diff.
 
 **CR-P3-1 re-check (SA, 2026-10-08): ✅ met. APPROVED_CODE_REVIEW stands, and nothing blocks commit from SA's side.** SA read `git diff -- docs/REPOSITORY_STRATEGY.md lib/repositories/index.ts` (+14 / +13, insertions only). The doc has the tree entry for `PaymentRefundRepository.ts`. Its PR 3 paragraph lists the seven methods and `upsertFromStripe` with the chains and typed rows as built, including the PR3-D4 ruling and the `invoice_id`-only attach. It says every insert and the attach follow `accountOwns` on the owner they write, which SA's dominance table confirms. It also says the dispute and refund paths have no `accountOwns` (FU-3, safe while Stripe ids are unforgeable). The Change History row's "11 queries + the upsert" matches the 12 sites. CR-P3-2 was also taken: the seven transaction-section types are re-exported from `index.ts` with `export type` only, so the barrel gains no runtime code and no entitlements path.
+
+### PR 4 code review
+
+**Code Review by SA — 2026-10-08**
+**Status:** ✅ Code Approved (APPROVED_CODE_REVIEW). One condition, CR-P4-1, is docs only (a correction to PR4-D1's wording) and must be met before commit. No code change is required.
+
+Scope reviewed: the uncommitted diff on `feature/webhook-repos-pr4-plans-bookings` against `a689de3f`: `route.ts`, `bindPlanSubscription.ts`, `PaymentPlanRepository.ts`, `PaymentPlanSubscriptionRepository.ts`, `SchedulingRepository.ts`, the three new `*.webhook.test.ts` files, `routerPlacement.guard`, `fix1Ownership.qa`, `noBookingGuess.guard`, `planSurfaces.guard`, `deferredFirstPayment.guard` and `REPOSITORY_STRATEGY.md`. The `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` edit is TL's and is out of scope.
+
+#### What SA checked itself (not taken from §7.3.5)
+
+| # | Check | SA's evidence | Verdict |
+|---|---|---|---|
+| 1a | Snapshot entries | SA's own method: `git show HEAD:<snap>` to the scratchpad, both files evaluated in a `vm` context, sha1 per `exports[…]` value. **base 103, work 103, identical 103, changed 0, missing 0, added 0.** `git hash-object` gives `4194ff19…` for the working copy and for `HEAD:`, before and after every SA run, mutants included. The harness is `b6f615ba…`, unchanged | ✅ |
+| 1b | Bind test unedited | `git hash-object lib/payments/__tests__/bindPlanSubscription.test.ts` = `HEAD:` = `2e7b9731…`. Not in `git status`. It passes in SA's run | ✅ |
+| 1c | `check-logging-only-diff --exact`, base `a689de3f` | Run by SA (`tsx`) on the 16 untouched functions, named one by one: `handleInvoicePaymentFailed`, `handleCheckoutCompleted`, `handleSubscriptionUpdated`, `handleDispute`, `handleChargeRefunded`, `ownedOrNull`, `handleConnectPaymentIntentSucceeded`, `handleConnectPlanSubscriptionCreated`, `accountOwns`, `accountOwner`, `handleConnectInvoicePaymentFailed`, `handleConnectInvoiceFinalized`, `handleConnectInvoiceUncollectible`, `handleSubscriptionDeleted`, `completeClaim`, `POST`. **16 × identical, exit 0.** Control: `handlePlanSubscriptionEnded` alone gives exit 1. The AST lists 20 top-level functions, which are those 16 plus the four converted ones. The module-level diff is one import line (`paymentPlanRepository`). The route's `supabaseAdmin` is `supabaseServer` (`:68`), and both singletons are built on `supabaseServer`, so the client is the same object | ✅ |
+| 1d | The 10 route sites against their old chains | Read side by side, `-` lines against the method bodies. **G1**: `select('id')·eq(stripe_invoice_id)·maybeSingle`, `data` read. **G3**: update with the same eight keys in the same order (`status, paid_at, stripe_invoice_id, payment_method, processor_type, transaction_id, next_retry_at, updated_at`), `new Date()` twice, `·eq(subscription_id)·eq(installment_number)`, awaited, result discarded as before. **G4**: `select('due_date, amount')·eq(subscription_id)·eq(status,'pending')·order('installment_number')` (no options)`·limit(1)·maybeSingle`. **G5**: `{payment_status, updated_at}·eq(id)·eq(user_id)`, so `bookingError` still reaches the non-fatal log. **H7**: `{payment_status, updated_at}·eq(id)`, nothing else, and the error reaches the same log. **I4**: `{payment_status, status:'confirmed', updated_at}·eq(id)·eq(status,'pending')`. **I5**: `update({payment_status, updated_at}, { count: 'exact' })·eq(id)·eq(user_id, owner)`, with `count` passed through as given, so `bookingsUpdated === 0` still means a foreign id, and `null` is not read as `0`. **M1**: `select('id, user_id, status, installment_count, periods_paid')·eq(stripe_subscription_id)·maybeSingle`. **M2**: `{status, [completed_at\|cancelled_at], updated_at}·eq(id)`. The computed key is still chosen by the same predicate (now `outcome === 'completed'`, where `outcome` is `completed ? 'completed' : 'cancelled'`). **M3**: `{status:'cancelled', next_retry_at:null, updated_at}·eq(user_id, plan.user_id)·eq(subscription_id, subscription.id)·not(status,in,(paid,cancelled))`. **F-3 is preserved exactly**: the route still passes Stripe's `subscription.id`, and the method compares the parameter as given | ✅ |
+| 1e | Bind's 5 against their old chains | **count**: `select('id', {count:'exact', head:true})·eq(subscription_id)`, `{ count }` read. **insert**: `insert(rows)`, the same mapped array with ten keys in the same order (the callback is only annotated), and the error reaches the same log. **link**: `{payment_plan_id, updated_at}·eq(id)·eq(user_id)`. **contact**: `select('contact_id')·eq(id)·eq(user_id)·maybeSingle`, `{data, error}` read as before. **fallback**: `payment_plans select('id')·eq(user_id)·eq(service_id)·eq(is_active,true)·order('created_at',{ascending:true})·limit(1)·maybeSingle`. `bindPlanSubscription.ts` no longer imports `supabaseServer`. Bind has three callers (`:1064`, `:1195`, `:1681`), all in the route, and none was touched apart from the Q-3 hoist | ✅ |
+| 1f | SA's own mutants (outside Dev's 12) | **(i)** `linkPaymentPlan` with its two `.eq` swapped (filter order): 1 red across `bindPlanSubscription.test` and `SchedulingBookingRepository.webhook.test`. **(ii)** The route's G5 called as `markPaidForOwner(plan.data.user_id, plan.data.booking_id)`: 2 snapshots red in the harness, and red in `routerPlacement.guard` and `deferredFirstPayment.guard` (4 tests). Each file was written back from a scratchpad copy and its blob re-checked. The snapshot was `4194ff19…` after both | ✅ |
+| 2 | D1, the Q-3 hoist | See the D1 analysis below | ✅ with CR-P4-1 |
+| 3 | D2, the `fix1Ownership.qa` edit | SA built two temporary sibling directories under `app/api/stripe/`. **(a)** The `a689de3f` route (blob `3683e535…` confirmed) with the NEW test file: **47 passed, 1 failed**. Q3-1 passes, which proves it on the untouched route. The only failure is the flipped FU5-E `:1669`. **(b)** The NEW route with the OLD test file (`f509e75e…`): **46 passed, 1 failed**, and that failure is FU5-E `:1669`'s `toHaveLength(1)` on "Could not bound…", with its `status 500` line passing. So the old and new test files disagree on exactly one assertion, and it is D1's. Both directories were deleted, and `git status` shows no trace of them. Read in the diff, the other changes are the default-off `bindError` knob (unset, the mock resolves as before), a site label, and the appended Q3-1 `describe`. No existing assertion is removed or loosened | ✅ |
+| 4 | Tenant isolation | See the table below | ✅ |
+| 5 | Controls | **CR-P2-1**: no `try`, `catch` or `logger` in any of the 15 methods (read, and pinned by the three source-shape tests and the `rejectingClient` cases). The diff adds no `.catch` and no `try` at a call site, apart from the Q-3 `try`, which is the same `try` with fewer statements inside it. A rejected query therefore still reaches `POST`'s outer catch (500, claim released). **Closed shapes**: no method takes a column argument. The one insert takes `NewProjectedPeriodRow[]`, and the map callback is annotated, so an excess key fails `tsc` (the `@ts-expect-error` cases are consumed: see row 7). Each update fixes its key set. There is no generic update, no spread payload and no `upsert`/`delete`/`rpc` | ✅ |
+| 6 | C-2 guard moves | See below | ✅ not weaker |
+| 7 | Rules 1, 3, 4, 6; console; entitlements | **Rule 1**: `route.ts` `.from(` 21 → 11 (all PR 5's tables). `bindPlanSubscription.ts` has no `.from(`, `.rpc(` or `supabaseServer`, pinned by the new `planSurfaces` `it`. **Rule 3**: 0 `console.` in the five production files, and no log call added, moved or removed except as D1 describes. **Rule 4**: the exceptions are documented in each section header, in each method doc (with its proof) and in `REPOSITORY_STRATEGY.md`. **Rule 6**: no `any` added (the `^+` lines grepped). The route's `plan` and `nextPeriod` rows went from `any` to typed. **Entitlements**: no import of `lib/business-os/entitlements/` in the diff. `businessOsEntitlements.imports.guard` is green. **Scoped `tsc`** (SA's own scratch tsconfig over the five production files, the three unit tests and the five changed test files, 8 GB; the config file was deleted afterwards): **0 errors in those files**, so every `@ts-expect-error` is consumed. 58 errors elsewhere, the same count Dev recorded. **ESLint** on the 13 changed `.ts` files: 0 errors, 9 warnings, all on lines outside the diff | ✅ |
+| 8 | Runs (`node node_modules/jest/bin/jest.js --ci --runTestsByPath`, no `-u`) | Every `app/api/stripe/webhook/__tests__/*.test.ts`, every `lib/payments/__tests__/*.test.ts` and every `app/api/stripe/__tests__/*.test.ts`. Also the three new `*.webhook.test.ts`, every `SchedulingRepository.*` and `PaymentPlan*` test, `bookingPaymentStatusReaders.guard`, `businessOsEntitlements.imports.guard`, `mutationOrSelect.guard`, `userSubscriptionsWriteLockdown.qa` + `…Migration`, `recordEvent`, `noPilotCreditTableReads.guard`, `publicBookingIdentity.guard`, `paymentPlanCancelledSeverity.guard` and `check-logging-only-diff`. Result: **73 suites, 1,301 tests, 103 snapshots, all passed**, with none written and none obsolete. The snapshot blob was `4194ff19…` before and after | ✅ |
+
+#### D1: the Q-3 hoist, path by path
+
+The old code was `try { new Stripe(); if (ownerId && await accountOwns(…)) bind else refuse } catch { log "Could not bound…"; throw }`. The new code is `new Stripe(); ownsPlan = ownerId ? await accountOwns(…) : false; try { if (ownerId && ownsPlan) bind else refuse } catch { unchanged }`.
+
+| Path | Old | New | Same? |
+|---|---|---|---|
+| `ownerId` absent or `''` | `'' && …` is falsy, so no lookup, then refuse | `ownsPlan = false` with no lookup, and `'' && false` is falsy, so refuse | ✅ identical (no lookup in either) |
+| Owned, bind resolves | client, lookup, bind | client, lookup, bind | ✅ |
+| Owned by another business | client, lookup, refuse log | client, lookup, refuse log | ✅ |
+| Bind throws | caught: "Could not bound…", rethrow, 500, claim failed | the same (Q3-1, proven on both routes) | ✅ |
+| Owner lookup throws (`accountOwner`'s error) | caught: "Could not bound…" (misleading), rethrow of the same object | not caught here, and the same object propagates to `POST` | Status, body, claim message and effects are the same. **One log line fewer**: the requested change |
+| `new Stripe()` throws | caught: "Could not bound…", rethrow | not caught here, and the same error propagates | Status and claim are the same. **One log line fewer** (see CR-P4-1) |
+
+`accountOwns` returns `Promise<boolean>` and itself returns `false` for a falsy `ownerId`, so `ownerId ? await accountOwns(…) : false` is the old short-circuit with a boolean result. `ownerId && ownsPlan` keeps the narrowing to `string` that `bindPlanSubscription({ ownerId })` needs. **The constructor hoist has no new side effect.** In every path, old and new, `new Stripe()` ran exactly once, before the lookup. stripe-node 19.2.1's constructor does no I/O. It builds an HTTP client object and sets the process-wide `Stripe.USER_AGENT.typescript` flag, as it did before. Effect order (`stripe.client` → `resolveAccountOwner` → `bindPlanSubscription`) is pinned by Q3-1 and by the harness.
+
+#### Tenant isolation (item 4): scoped methods and the proof behind each unscoped one, checked as dominance
+
+| Method / call site | Scope or named proof | Where the proof is on every path |
+|---|---|---|
+| G5 `markPaidForOwner`, I5 `markPaidForOwnerCounted`, bind `findContactIdForOwner`, `findOldestActivePlanIdForService`, `linkPaymentPlan`, M3 `cancelOpenPeriodsForEndedPlan` | **Owner-scoped.** `.eq('user_id', …)` sits at the same position in the chain as the old inline query, and receives the same value (`plan.data.user_id`, `owner`, `ownerId`, `ownerId`, `ownerId`, `plan.user_id`). The unit tests assert exactly one `user_id` filter per scoped method, and SA's mutant (i) shows the order is pinned | n/a (the filter is the scope). I5's `owner` comes from `await accountOwner(connectAccountId, log)`, and `if (!owner) return` (`:1850`) precedes it |
+| G1, G3, G4 (`findInstallmentIdByStripeInvoiceId`, `markPeriodPaidFromStripe`, `findNextPendingPeriod`) | Plan proved owned | `recordPlanPeriodPaid` `:800` (`!plan.data → return false`) and `:805` (`!accountOwns(plan.data.user_id) → return true`) are unconditional and top level, ahead of G1. Every path to G3 and G4 passes them |
+| H7 `markPaidUnscoped` | Invoice proved owned. The booking's own owner is not re-checked (**FU-4, pre-existing, unchanged**) | `handleConnectInvoicePaid` `:1298` (`platformInvoice && !owns → return`) and `:1315` (`!platformInvoice → return`), both top level. The metadata-path check at `:1282` is an extra one on the earlier write. The method doc and `REPOSITORY_STRATEGY.md` both name FU-4. The chain is byte-for-byte H7's old one |
+| I4 `markPaidAndConfirmIfPending` | Invoice proved owned (FU-4) | Inside `if (invoiceId)`, after the lookup/`!platformInvoice → return` and `!accountOwns(platformInvoice.user_id) → return`, in the same block. The plan-branch check above does not dominate I4 and does not need to |
+| M1 `findEndStateBySubscriptionId` | A read by the Stripe id of a signed event. Nothing is written before the proof | n/a (a read). The `user_id` it returns is what is proved next |
+| M2 `endFromStripe` | The row from M1, proved owned | `handlePlanSubscriptionEnded` `!plan → return`, `!accountOwns(plan.user_id) → return`, then the `cancelled`/`completed` return. All are unconditional and top level |
+| bind `countProjectedPeriods` | Our own plan row id, found by the Stripe subscription id. Only a number is returned | All three callers call bind only after their owner proof (two are in functions `--exact` identical to base, and the third is the Q-3 site, `if (ownerId && ownsPlan)`) |
+| bind `insertProjectedPeriods` | Every row carries `user_id: ownerId` (typed), and its link ids were vetted against `ownerId` first (Fix-1b, outside every hunk) | As above |
+
+Step 4 (scope-defeating three): no injected field, no upsert, and no caller-supplied tenant id that was not there before. The only caller-built payload is bind's typed rows, which are unchanged.
+
+#### C-2: every old guard assertion still bites
+
+| Old assertion | Where it bites now |
+|---|---|
+| `planSurfaces` "the webhook closes the instalment by subscription and period number": `recordPlanPeriodPaid` sliced **to end of file**, `from('payment_plan_installments')…status: 'paid'`, `.eq('installment_number', periodsPaid)` | **Stricter.** The slice is now the function's AST text, so a later function cannot satisfy it (C-2 met). The route must call `markPeriodPaidFromStripe(plan.data.id, periodsPaid,`, which pins both the key and the period, and must not query the table inline. The method's comment-free code must hold the update and both `.eq`s |
+| `planSurfaces` "projectPeriods is the only writer": the binder matches `from('payment_plan_installments').insert(` and `if (!planRowId)` | **Stricter.** `projectPeriods` must call `insertProjectedPeriods(` exactly once in the binder, after `if (!planRowId)` (which was never ordered before), and the method must be `.insert(rows)`. The new `it` adds no `.from(`, no `supabaseServer` and no `.rpc(` in the binder |
+| `deferredFirstPayment` "flips it to paid": an end-of-file slice, `from('scheduling_bookings')…payment_status: 'paid'`, `.eq('user_id', plan.data.user_id)` | **Stricter.** The slice is bounded. The route must make the call inside `if (plan.data.booking_id) {` with **both** arguments in order (mutant (ii) is red here), and with no inline booking query. The method must hold the update and both `.eq`s |
+| `deferredFirstPayment` "does not fail the webhook": 400 characters after `if (bookingError)` have no `throw` | **Stricter.** The slice is bounded, and `indexOf('if (bookingError)') > -1` is now asserted, so the check cannot pass vacuously on a missing branch (before, `indexOf` of −1 sliced the last character) |
+| `noBookingGuess:227`: the paid handler matches `payment_status: 'paid'` | **Moved and stricter.** The call must sit inside `if (platformInvoice.booking_id) {` with the invoice's own `booking_id`. The method sets `payment_status: 'paid'`. The new `it` closes the hole the move opened: the calls must be exactly `['markPaidUnscoped']`, there must be no bare mention of the singleton, and the method must filter on `eq('id', id)` only, with no `select`, no `servicePrice`, no `scheduling_services` and no `booking_id` |
+| `bookingPaymentStatusReaders` | Unchanged, and still scanning `SchedulingRepository.ts`. The new methods set `payment_status` and never filter on it. Green |
+| `routerPlacement` | No old assertion touched. **New**: no inline `from(` on the four tables in any quote style, no class identifiers, and exact per-function call counts with route totals; keys and owners of the seven writes, with F-3 pinned; the Q-3 placement (the plan check outside any `try` and before it, and bind inside a `try` whose catch logs and rethrows) |
+| `fix1Ownership.qa` FU5-E `:1669` | Changed on purpose and only there (row 3). Q3-1 replaces the coverage the old assertion gave to the catch, for the failure that should hit it |
+
+#### Rulings on PR4-D1 to D6 and PR4-Q1 to Q3
+
+| # | Ruling |
+|---|---|
+| **PR4-D1** Q-3 hoist | **Accepted**, with the wording corrected by CR-P4-1. This is the change FU-5 SA Q-3 asked for. Status, body, claim and effect order are identical in every path (table above). The constructor hoist is how the recorded effect order is kept, and it has no new side effect |
+| **PR4-D2** `fix1Ownership.qa` edited | **Accepted.** As with PR3-D1, the new test was proven on the base route (row 3a), and the cross-run (3b) proves that exactly one assertion differs, and that it is D1's. The harness, its snapshot and the bind test are untouched |
+| **PR4-D3** H7 / I5 split | **Accepted.** Since Fix-1, I5 is owner-scoped and counted, so it is not H7's chain. A `count` or scope flag on one method would be a caller-chosen option on a write, which C-3 rules out. G5 and I5 differ by `{ count: 'exact' }` alone, so two methods is the right shape |
+| **PR4-D4** order of evaluation | **Accepted**, as PR1-D4 and PR3-D5. The argument expressions are pure. `new Date()` runs the same number of times, inside the same statement |
+| **PR4-D5** typing | **Accepted.** Type-only. The `NewProjectedPeriodRow` annotation on the `.map` callback is needed: without it, a contextually typed callback would not get the excess-property check. Scoped `tsc` is clean |
+| **PR4-D6** comments moved | **Accepted.** Naming F-3 at the call site is a good guard against a quiet "fix" (see the wording nit under Optimisation Suggestions) |
+| **PR4-Q1** second, owner-scoped section | **Confirmed.** C-3's marker means "no `user_id` filter, proof named instead", so a scoped method under that header would carry a false label. One unscoped section and one owner-scoped section per class, each pinned by the source-shape tests (each header exactly once inside its class, and one `user_id` filter per scoped method), is the layout to keep for PR 5 |
+| **PR4-Q2** positional ordering checks | **Accepted as a guard**, as PR2-Q2 and PR3-Q1. SA checked dominance by hand (the tenant table above): every proof is an unconditional early return at the level that encloses its write. The behavioural proof is the harness's refusal entries and `fix1Ownership.qa` |
+| **PR4-Q3** the guard pins F-3 | **Accepted. This is what C-9 asks for.** Fix-2 must change, on purpose and together: the route argument, the `routerPlacement` `EXPECTED` row, the harness entry for scenario 8 (a reviewed snapshot change), `cancelOpenPeriodsForEndedPlan`'s doc and the M3 call-site comment, and the F-3 sentence in `REPOSITORY_STRATEGY.md`. If any one of them stays, it fails loudly, which is the intent |
+| **Barrel** (`index.ts`) | **Not required.** None of the three classes or singletons was ever in the barrel. The route and bind import the files directly, and `REPOSITORY_STRATEGY.md` says so. Adding the classes would pull runtime modules into the barrel for no consumer. CR-P1-2 and CR-P3-2 were optional, type-only parity items. A type-only re-export of the new types is allowed here on the same terms (CR-P4-2), but it is not a condition |
+
+#### Code Review Comments
+
+1. **CR-P4-1 (condition before commit, docs only)** PR4-D1 says the `new Stripe()` throw case is hypothetical ("the constructor does not throw on a string key"). It is not. With `STRIPE_SECRET_KEY` unset, stripe-node 19.2.1's constructor throws `Neither apiKey nor config.authenticator provided` (`_setAuthenticator`). Before PR 4, that throw sat inside the `try` and was logged "Could not bound a payment plan - subscription may bill indefinitely". In that case the line was actually true, because nothing was bound. Now only "Webhook processing failed" is logged, still with the error, a 500, the claim failed and Stripe retrying. SA accepts it as log-only: a missing secret key breaks every Stripe call in this route, and the line that remains carries the error. Amend PR4-D1 (and the §11 or evidence wording if it repeats the claim) to say exactly that: the constructor throws when the key is unset, in which case the "Could not bound" line is no longer emitted, and nothing else differs. SA re-check is a read of that diff only. — Priority: Medium (the record of the only allowed behaviour change must be accurate), effort small
+2. **CR-P4-2 (optional)** Type-only re-exports from `index.ts` for the new types (`NewProjectedPeriodRow`, `WebhookPeriodPayment`, `WebhookNextPeriod`, `WebhookInstallmentResult`, `ProjectedPeriodCountResult`, `WebhookPlanEndState`, `WebhookPlanOutcome`, `WebhookPlanSubscriptionResult`, `WebhookBookingResult`), with `export type` only, as CR-P3-2 did. This is Dev's choice. If it is taken, update the "not in the barrel" sentence in `REPOSITORY_STRATEGY.md`. — Priority: Low
+
+#### Optimisation Suggestions
+
+- `route.ts` M3 comment: "Everything unsettled, not only `pending` (the method's filter)" can be read as "`pending` is the method's filter", which is the opposite of what is meant. Suggested wording: "Everything unsettled (the method filters out only `paid` and `cancelled`), not only `pending`". This is style only and does not block.
+- `WebhookBookingResult.count` is optional on every booking method, but only `markPaidForOwnerCounted` sets it. A dedicated result type for the counted method would let `tsc` reject a caller that reads `count` from the others. Low, and not needed for this PR.
+
+#### Code Approved for QA: Yes, once CR-P4-1 is in
+
+QA may start now, because CR-P4-1 changes no code. RM must not commit until SA has read the corrected PR4-D1.
+
+**CR-P4-1 re-check (SA, 2026-10-08): ✅ met. APPROVED_CODE_REVIEW stands, and nothing blocks commit from SA's side.** PR4-D1 now states that the throw is real: with `STRIPE_SECRET_KEY` unset, stripe-node 19.2.1's constructor throws, the line logged before PR 4 ("Could not bound…") is gone, and "Webhook processing failed" remains, with status, claim and retry unchanged, so only log lines differ. The old "does not throw on a string key" wording is gone from §7.3.5. SA also read the `route.ts` change (blob `c5ff264d`): it is comment text only, in the M3 block of `handlePlanSubscriptionEnded`, and the call `cancelOpenPeriodsForEndedPlan(plan.user_id, subscription.id)` is unchanged (F-3 kept). The snapshot blob is still `4194ff19`.
+
+### PR 5 code review
+
+**Code Review by SA, 2026-10-09**
+**Status:** 🔄 Fix Required. The fix is in the guard test only (CR-P5-1). SA approves all the production code as it stands.
+
+Tree: worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr5-legacy-guard`, `HEAD` `88f97171`, uncommitted. SA wrote nothing to the tree except this section and its Change History row. Probes ran in a scratch directory outside the repo, on in-memory copies of `route.ts`. `lib/business-os/billing/**` is untouched (`git status`).
+
+#### SA's own evidence
+
+| Check | Result |
+|---|---|
+| Snapshot | Working copy `git hash-object` = `HEAD:` blob = **`4194ff19`**. A per-entry comparison, using a different method from Dev's (each file evaluated with `new Function('exports', …)`, sha1 per value, `HEAD` vs working copy), gives **103 base, 103 working, 103 identical, 0 changed or missing, 0 added**. Blob unchanged after SA's runs |
+| `check-logging-only-diff --exact --base 88f97171` on the 15 functions outside scope (`handleDispute`, `handleChargeRefunded`, `ownedOrNull`, `handleConnectPaymentIntentSucceeded`, `recordPlanPeriodPaid`, `handleConnectPlanSubscriptionCreated`, `accountOwns`, `handleConnectInvoicePaid`, `handleConnectCheckoutCompleted`, `handleConnectInvoicePaymentFailed`, `handleConnectInvoiceFinalized`, `handleConnectInvoiceUncollectible`, `handlePlanSubscriptionEnded`, `completeClaim`, `POST`) | **15 × identical, exit 0**. Module-level diff read by hand: the five import lines, and the alias removed with its comment rewritten. Nothing else changed: `BUSINESS_OS_FLOW_HANDLERS`, the cache and the dispatcher are not in the diff |
+| Regression (`--ci --runTestsByPath`): the webhook `__tests__` dir, `app/api/stripe/__tests__`, `lib/payments/__tests__`, the 7 new repository tests, the existing tests of the touched repositories (`UserSubscriptionRepository`, `SystemConfigRepository` ×2, `CreditTransactionRepository`, `PaymentTransactionRepository.webhook`, `PaymentInvoiceRepository.webhook`, `PaymentRepository.getOverdueInvoices`, `userDataExportReads`), `BusinessOsBillingEventRepository.test`, `userSubscriptionsWriteLockdown{,Migration}`, `accountFrozenWriters`, `noPilotCreditTableReads`, `check-logging-only-diff` | **79 suites, 1,441 tests, 103 snapshots, all passed** (18 s) |
+| `routerPlacement.guard` | 23/23. The three PR 5 tests take 57 + 90 + 20 ms and reuse the parsed `sf`. **CI cost is negligible** (about 0.17 s, inside the existing Jest shard) |
+| `console.*` / entitlements | 0 `console.*` added in the diff. Neither the new files nor the barrel import `lib/business-os/entitlements/` (the barrel's only "entitlements" hit is a comment above the pre-existing, registered `BusinessOsAccountPlanRepository` exports). No new entitlements importer |
+
+#### 1. No behaviour change (verified)
+
+- **The 11 route sites, read against `88f97171`:**
+  - **A1:** `select('payment_retry_count, grace_period_days, current_period_end')·eq user_id·single`.
+  - **A2:** `select('value')·eq key·maybeSingle`, the `parseInt(… as string) : 3` fallback kept in the route.
+  - **A3:** key order `payment_retry_count, last_payment_attempt, status, agents_paused`, with `new Date()` once.
+  - **A4:** all 8 keys in order, **`stripe_event_id: invoice.id` kept** (FU-1), result still discarded (FU-9).
+  - **B2:** `select('balance, total_earned')·single`.
+  - **B3:** `balance, total_earned, free_tier_expires_at: null, account_frozen: false`, in that order.
+  - **B4:** insert, then `select('id')·single`, literal identical, `creditTxError` arm unchanged.
+  - **B5:** literal identical, inside `if (boostPackId)`, `transaction_id: creditTransaction?.id || null`.
+  - **C1:** key order `cancel_at_period_end, canceled_at, status`, `canceled_at` still computed in the route.
+  - **N1:** `status, canceled_at, cancel_at_period_end`.
+  - **N2:** 4 keys.
+  - The B2 → B3 read-then-write (FU-7) is moved unchanged.
+  - The FU-1 / FU-2 / FU-6 code is moved, not fixed or deleted.
+  - No method catches, logs or spreads.
+- **Helpers:** `pilotCreditsToTokens(…, supabaseServer)`, `new QuotaAllocationService(supabaseServer)` and `resolveAccountOwner(supabaseServer, …)`. The alias was `const supabaseAdmin = supabaseServer`, so each helper gets **the same module-level object**. The five singletons (`new X()` with no argument) also default to that same `supabaseServer`.
+- **PR5-D7 (evaluation order) and PR5-D8 (typing only): accepted.** The literals are pure, and `new Date()` runs the same number of times.
+
+#### 2. `resolveAccountOwner` (verified)
+
+- **`findOwnerIdByStripeAccountId`** = `stripe_connect_accounts·select('user_id')·eq stripe_account_id·maybeSingle`.
+- **`listByPluginKey('stripe')`** = `plugin_connections·select('user_id, profile_data, status')·eq plugin_key`, awaited, **with no status filter**. `findActiveByProfileData` is not reused. The token columns are not selected.
+- The plugin repository is constructed only after the Express miss (`return` at `:448` comes first).
+- A returned error still goes to `ownerLookupError(table, error)`, whose message is unchanged. A rejected read still rejects: the two new D3 tests pass, and `ownerCacheRetry.qa` (which runs the real resolver) is green. The matching loop is unchanged.
+- **Import cycle checked:** `PaymentRepository.ts` and `PluginConnectionRepository.ts` name `stripeAccountContext` only in comments, so the cycle is not real. `BusinessPurgeRepository` → `stripeAccountContext` → the two repositories is acyclic.
+- **Importers checked:** no `'use client'` file imports `stripeAccountContext` (directly or through the services that do; the two client hits are comments). `app/invoice/[id]/page.tsx` is a server component. The new transitive `supabaseServer` import is therefore server-only. Jest stubs the Supabase env in `setupFiles`.
+- **PR5-D6: accepted.** With `db === undefined`, the old code threw a `TypeError`, and the new code falls back to `supabaseServer`. That is the service-role client the only caller passes anyway, and the resolver is not a tenant boundary. With `db === null`, `StripeConnectRepository`'s default parameter does not apply, so it still throws as before. Keeping the TypeError would mean adding a guard that is not in the old code, which is worse for "no behaviour change".
+- **PR5-D5: accepted, and preferred.** Closed key types fit what `listByPluginKey` returns: every tenant's `profile_data`. Widening the type must be a deliberate, reviewed act.
+
+#### 3. Tenant isolation (`tenant-isolation-guard`)
+
+- **Owner-scoped methods.** All six `UserSubscriptionRepository` legacy methods keep exactly one `.eq('user_id', userId)`. The new `userSubscriptionsWriteLockdown.qa` section check pins this (6 `from`, 6 `eq`, no insert/upsert/delete/rpc).
+  - `userId` still comes from the same source in every function: `invoice.metadata?.user_id`, `session.metadata?.user_id` or `subscription.metadata?.user_id`. The new `routerPlacement` test pins that each function's `userId` comes from its own `<object>.metadata?.user_id`.
+  - This is legacy agent-platform behaviour (§5.1), unchanged and not widened.
+- **Unscoped methods.** The unscoped inserts (`BillingEventRepository.insert`, `LegacyBoostPackPurchaseRepository.insert`, `insertReturningId`), the config read and the two owner-lookup reads each carry the ⟨unscoped-by-design⟩ marker. Each doc says where the owner comes from, or that the owner is the output.
+- **`listByPluginKey`.** Its only caller is `resolveAccountOwner` (`git grep` outside tests). Three things make misuse unlikely:
+  - the closed `'stripe'` key;
+  - a doc that says the rows never leave the server and must not be returned or logged;
+  - the plain fact that it does not select any token column.
+
+  It is not in the barrel. Accepted.
+
+#### 4. The final guard (C-7)
+
+**What it gets right:**
+
+- It reuses `sf`; there is no new suite.
+- In SA's probes, it catches:
+  - `.from(` / `.rpc(` by dot, by `?.`, by `['from']` / `["from"]` / backtick;
+  - `supabaseServer.storage…`;
+  - a dynamic `import('@/lib/supabaseServer')`;
+  - `const r = repo`, `const { m } = repo`, `repo.m.call(…)` and `.bind(…)`;
+  - passing a repository as an argument, spreading it, or returning it;
+  - a type-only import of a repository class (strict on purpose);
+  - an inline `supabaseServer.from('user_subscriptions')` put into a copy of the real route (two offences).
+- **It does not trip** on `Array.from` / `Buffer.from`, on comments, or on `plan: handlePlanBillingEvent` together with `import { handlePlanBillingEvent } from '@/lib/business-os/billing/planBillingHandler'`. SA added that pair to a copy of the real route, in the shape the other session's `neuronforge-invite-s1` tree uses: 0 offences.
+- Dev's 13 negative controls all pass.
+
+**What it misses (CR-P5-1).** Run against copies of the real route, these give **0 offences**:
+
+| Probe | Shape | Effect |
+|---|---|---|
+| (a) | `import { userSubscriptionRepository as subs } …; const r = subs; r.markCanceled(…)` | The singleton set is built from the *local* name and kept only if it ends in `Repository`, so a renamed import is never tracked |
+| (b) | `import * as R from '@/lib/repositories/UserSubscriptionRepository'; new R.UserSubscriptionRepository()` | A namespace import is skipped, and the class name is a property name, which the check also skips. A repository **is constructed**, with any client |
+| (c) | A relative `'../../../../lib/repositories/…'` import | Not tracked as a repository import |
+
+Today these shapes only escape the rule-1 check. If an existing call is *replaced*, the per-function call counts (PR 1–5) go red. But an **added** call through any of these shapes passes every guard. That is exactly the bypass C-7 and QA PR 1 edge case 2 were meant to close. The test's own comment and the new `REPOSITORY_STRATEGY.md` paragraph both claim "no alias" without this caveat.
+
+#### Code Review Comments
+
+1. **CR-P5-1. `routerPlacement.guard.test.ts`, `ruleOneOffences`, the import loop. Priority: High (blocking, test only).** Close the three holes:
+   - Treat as a repository import every import whose specifier starts with `@/lib/repositories` **or** contains `/repositories/` (relative paths).
+   - On such an import, report as an offence:
+     - a namespace import;
+     - a default import;
+     - any `ImportSpecifier` with a `propertyName` (an `as` rename).
+   - Build the singleton set from `(propertyName ?? name).text` matching `/^[a-z]\w*Repository$/`, so the `WEBHOOK_*_COLUMNS` constants stay allowed.
+   - Add three forbidden snippets (a), (b) and (c) to the negative control.
+
+   Expected cost: about 10 lines, no new suite, nothing in `route.ts` changes. After the fix, the allowed snippet and the real route must still give `[]`.
+2. **CR-P5-2. §7.3.6 "Draft for TL" (§9.4 wording). Priority: Low (docs).**
+   - The draft is accurate on every count SA checked: 51 → 0; `bindPlanSubscription` 5 → 0 at base (0 `.from(` now); `resolveAccountOwner` 2 → 0; the alias and the private client gone; the three helpers; blob `4194ff19`.
+   - Two edits:
+     - (i) the "Still open" list leaves out FU-7 (moot with FU-2) and FU-8 (cosmetic). Write "FU-1/FU-2/FU-6 retirements (FU-7 goes with FU-2), FU-3, FU-4, FU-8, FU-9".
+     - (ii) The parenthesis on the guard is true only once CR-P5-1 is in. Keep it as written after the fix.
+   - Not to be applied before merge (TL's file).
+3. **CR-P5-3. `docs/REPOSITORY_STRATEGY.md` PR 5 paragraph. Priority: Low.** "including that every repository singleton is used only as the receiver of a direct method call (no alias)" becomes accurate with CR-P5-1. No change is needed if CR-P5-1 lands. Otherwise reword it.
+
+#### Rulings
+
+| Item | Ruling |
+|---|---|
+| PR5-D1 to D4, D7, D8 | Accepted. **D2 is stricter**: one section in each of the three classes, plus the file total. **D4 accepted**: singletons only as direct receivers, applied to all 15, at no cost today |
+| PR5-D5 | **Accepted** (closed keys, preferred over `string`) |
+| PR5-D6 | **Accepted** (the fallback to `supabaseServer` gives the same client the only caller passes; `null` still throws; do not add a TypeError guard) |
+| PR5-Q1 | **Keep the C-3 header verbatim.** It is a section locator, and the per-class and marker tests pin it as one string. Each method's doc is the authority on the actual basis, and each one states it. No per-section variant |
+| PR5-Q2 | **Keep `insertReturningId` in `CreditTransactionRepository`** (one table, one repository; §3 named it; a second repository for the same table invites drift). The rewritten header, "one write … any other write method needs SA review", together with the source-shape test (no extra write), is the right control. `noPilotCreditTableReads.guard` still keeps Business OS out |
+| PR5-Q3 | **Layout confirmed**, as PR4-Q1: the six owner-scoped methods under their own header with no marker; the inserts under the unscoped header with the marker. The doc for their `user_id` says it comes from platform metadata, not from `accountOwns` |
+
+#### C-2 guard moves (none weaker)
+
+- **`userSubscriptionsWriteLockdown.qa`:**
+  - The route's writer entry is removed. That is correct, because the list is an exact equality, so an inline write coming back goes red.
+  - The construction-site entry now says `supabaseServer`.
+  - It gains the section scope check.
+- **`PaymentTransactionRepository.webhook` C-3:** now counted per class plus the file total. Stricter.
+- **`BusinessOsBillingEventRepository.test`:** not edited (`git status`), and green.
+
+#### Optimisation Suggestions
+
+- `resolveAccountOwner` now builds a `PluginConnectionRepository`, which calls `createLogger`, on each Express miss. That happens once per uncached account, so it does not matter. Not blocking.
+- The `AccountLookupDb` comment ("this helper only ever reads two columns") is still true but now passes `db` to two repositories. A wording touch is optional.
+- The closed-type `@ts-expect-error` checks in the new unit tests bite only under `tsc`. CI's type-check is scoped to `bos-llm`, and ts-jest does not type-check here. So a later widening of the key types would be caught in review, not in CI. This was the same in PRs 3 and 4. Informational.
+- Residual gaps SA accepts, with no change asked:
+  - a computed non-literal key (`db[m](…)`);
+  - `require('@supabase/supabase-js').createClient(…)`.
+
+  Either one still needs a `.from(` / `.rpc(` through a literal name to query. These are contrived, and the route is reviewed.
+
+#### Code Approved for QA: No, not until CR-P5-1 is in
+
+QA may prepare against the production code now, because CR-P5-1 changes no production code. Re-review is limited to the `routerPlacement.guard` diff: the three new negative-control snippets red on the old check and green on the new one, the real route `[]`, and the snapshot still `4194ff19`.
+
+**CR-P5-1 to CR-P5-3 re-check (SA, 2026-10-09): ✅ met. APPROVED_CODE_REVIEW. Code Approved for QA: Yes.**
+
+- **CR-P5-1, the guard.** SA extracted `ruleOneOffences` from the edited test and ran it in scratch, next to the old one.
+  - **On copies of the real `route.ts`:**
+    - the `as` rename: old `[]`, new 2 offences ("renamed … as subs", "subs not a direct method call");
+    - the namespace import with `new R.UserSubscriptionRepository()`: old `[]`, new "repository namespace import";
+    - the inline `.from(`: still caught;
+    - `plan: handlePlanBillingEvent` with its billing import: `[]` on both.
+  - **On snippets:**
+    - the relative `../../../../lib/repositories/…` import with an alias: old `[]`, new caught;
+    - the default import: new caught;
+    - a column constant imported next to a singleton: `[]`.
+  - **The real route gives `[]`.**
+  - The singleton set is keyed by the exported name, and the local name is what gets tracked.
+  - Jest (`--ci --runTestsByPath`): `routerPlacement.guard` plus the harness, **2 suites, 133 tests, 103 snapshots, passed**. `route.ts` is still `cc10d119`, and the snapshot is still **`4194ff19`**.
+- **CR-P5-2, the §9.4 draft.** The "Still open" list now has "(FU-7 goes with FU-2) … FU-8". The guard parenthesis is now accurate. TL applies it at merge.
+- **CR-P5-3, `REPOSITORY_STRATEGY.md`.** The sentence now names the import rule (no namespace, default or `as`-renamed import, by alias or relative path), so it matches the guard.
+- **Nit, optional.** In the §7.3.6 guard design line, the regex is written `/^[a-z]w*Repository$/`, missing the backslash before `w`. Docs only, and it does not block.
 
 ---
 
@@ -2218,6 +2828,369 @@ None. Each converted call adds one async hop before the same query; the order of
 - [x] All acceptance criteria pass. PR 3 preserves behaviour in all 88 scenarios across the 12 sites, byte-identical (status, body, DB ops with payloads, key order and terminals, logs, side calls), including a rejected and a thrown query at every new call site (500, claim `failed`, as before) and G2 rethrowing the raw error. Every owner-checked money write is refused for a foreign or unmapped owner, and each insert carries the proved owner. 41 of 41 mutants are killed. Regression 133 suites / 2,718 tests / 103 snapshots. Snapshot `4194ff19` and all of Dev's files are unchanged, and the temp files are deleted.
 - [ ] Dev must review the new QA file `moneyRowsRepository.qa.test.ts`, which goes into PR 3. RM must still wait for SA's read of the CR-P3-1 diff (`REPOSITORY_STRATEGY.md`) before committing.
 
+### PR 4: Plans and bookings
+
+**QA — 2026-10-08**
+**Test mode:** full
+**Strategy used:** A (Jest), plus a direct old-vs-new equivalence run and mutation testing, the same method as PR 1 to PR 3. PR 4 must not change behaviour except the documented PR4-D1 log line, so the main test runs the same scenarios through the `a689de3f` route and bind and through the new ones, and compares normalised traces byte for byte. Mutants were temporary copies of `route.ts`, `bindPlanSubscription.ts` or one of the three repositories. A scratch Jest config pointed the module at the copy (`moduleNameMapper`). A setup file redirected `fs.readFileSync` of the real path to the copy, so the guards and the source-shape tests read the mutant too. Every test file ran unedited and in place, the harness and its snapshot included.
+**Focus:** api (the four converted handlers and bind), security (owner scoping, foreign and unmapped owners), schema (each method's query chain)
+**Skipped:** e2e (no UI). `npm run test:bos-entitlements` is not needed: the diff imports nothing from `lib/business-os/entitlements/`. `businessOsEntitlements.imports.guard` ran anyway (regression).
+**Input source:** prompt from TL, plus §7.3.5 and the PR 4 code review.
+
+**Tree:** worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr4-plans-bookings`, base `a689de3f`, uncommitted, Node 22.19.0. Every Jest run used `--ci` and `--runTestsByPath`. None used `-u`.
+
+#### Invariants (checked before, during and after)
+
+| Check | Result |
+|---|---|
+| Snapshot blob | `4194ff190e1da888a16e3426b2df6a0b7cafa3fb` before, after every mutant (the runner hashed it after each run and would have stopped), after the regression run, and at the end. No run wrote or updated a snapshot ✅ |
+| Bind test blob | `2e7b97317b6ca22c1c3b0f64347317c7f6b59fc6` before and after ✅ |
+| Dev's files, never edited by QA | `route.ts` `c5ff264d` (Dev's evidence table records `f8367e01`; the tree had moved on before QA started, and the M3 comment now reads as SA's wording nit suggested), `bindPlanSubscription.ts` `75e27c28`, `PaymentPlanRepository.ts` `3b2e9483`, `SchedulingRepository.ts` `cff5aa73`, `PaymentPlanSubscriptionRepository.ts` `47ddaab9`, harness `b6f615ba`, `routerPlacement.guard` `06f9d67d`, `fix1Ownership.qa` `cb63fc56`, `noBookingGuess.guard` `6a0248f9`, `deferredFirstPayment.guard` `c1990dae`, `planSurfaces.guard` `d5991372`, the three `*.webhook.test.ts` (`1af04019`, `81082fc0`, `4f649535`), `REPOSITORY_STRATEGY.md` `c370539e`. All the same at the start and the end ✅ |
+| Old code used for the comparison | `git show a689de3f:` into a temp folder: route blob `3683e535` and bind blob `23a38fdd`, both the base. The bind copy had its three `./` imports rewritten to `@/lib/payments/…`, and nothing else ✅ |
+| Temp files | The temp folder (old route and bind, two equivalence tests, mutant copies, runner, scratch configs, scratch tsconfig) was at the repo root, outside the `app/` and `lib/` trees the guards scan. It is deleted. The only new files are the two QA tests below ✅ |
+
+#### Test coverage
+
+| Acceptance criterion (PR 4, §7.3.5) | Tested? | Result | Notes |
+|---|---|---|---|
+| 1. Same behaviour at the 10 route sites, old vs new | ✅ | Pass | **73 scenarios: 70 byte-identical, and 3 differ by exactly the PR4-D1 line** (below). The comparison covers status, body, every DB op with its full chain, payload, key order and terminal, every log line (level, merged bindings, arguments), the Stripe constructor and every side call, all in order |
+| 1a. Bind's 5 queries, old vs new | ✅ | Pass | **33 scenarios, 33 byte-identical**, with the real repositories over a recording client (return value or rejection, every query, every Stripe call, every log line) |
+| 1b. A rejected or thrown query at every new call site → same status as old | ✅ | Pass | Route: 22 scenarios (G1, G3, G4, G5, H7, I4, I5, M1, M2, M3, each rejected and thrown synchronously) are identical to the old route: 500, generic body, claim released `failed` with the same message. Bind: 14 scenarios (count, contact, fallback, insert, link, and the repair-path insert and contact) reject bind with the same error, as before. Pinned in the two new QA files |
+| 1c. PR4-D1 is exactly the documented log line | ✅ | Pass | Owner lookup throws, and `STRIPE_SECRET_KEY` unset (with and without an `owner_id`): old trace minus its single "Could not bound a payment plan - subscription may bill indefinitely" line equals the new trace, byte for byte. Status 500, body, claim message, effects and their order are the same. Every other plan-checkout path is identical, including a bind that throws (still logged once). The real stripe-node constructor throws "Neither apiKey nor config.authenticator provided" with no key (checked directly); the equivalence run used the real constructor behind a recording wrapper |
+| 1d. F-3 unchanged | ✅ | Pass | M3 filters `subscription_id` by `sub_plan_1` (Stripe's id) in both routes; the returned error is discarded in both (scenario M-M3-error-F3). The "fixed by accident" mutant T11 is killed (below) |
+| 2. Tenant isolation | ✅ | Pass | Equivalence scenarios for foreign and unmapped owners on G, H7, I4, I5 and M, plus 9 refusal cases and 4 scoping cases in the new QA file (below) |
+| 3. Mutants caught | ✅ | Pass | **54 of 54 killed** by the permanent suites. Without the two new QA files, 15 survive (all PR 4, below) |
+| 4. Regression | ✅ | Pass | 140 suites, 2,928 tests, 103 snapshots, all passed. Jest 29.8 s, wall 32 s |
+| Scoped type-check and lint of the QA files | ✅ | Pass | `tsc` (scratch tsconfig, the two QA files, 8 GB): exit 0, 0 errors. ESLint: 0 errors, 0 warnings |
+
+#### 1. Equivalence, old vs new
+
+Old and new ran in the same Jest process, under the same mocks, with a fresh module per run. Only `Date` was faked (frozen at `2026-10-08T09:00:00.000Z`), and the correlation id was fixed. Errors were written with name, message and own fields, and `undefined` was kept visible. The mock could answer a query with data, a returned error, a `count`, a rejection, or a synchronous throw at the terminal.
+
+| Group | Scenarios | Result |
+|---|---|---|
+| **G `recordPlanPeriodPaid`** (G1, G3, G4, G5) (22) | First, middle and last period (`close('completed')`, no next period); already recorded (G1 hit); no booking; booking-update error; installment-update error; next-period read error; G1 read error; no transaction id and no intent; zero collected; foreign plan; unmapped account; not a plan; **G1, G3, G4, G5 each rejected and thrown synchronously** | 22 identical |
+| **H7 `invoice.paid` booking mark** (7) | Marked; no booking; update error; **rejected; thrown**; foreign invoice; unmapped account | 7 identical |
+| **I4 checkout, invoice booking** (8) | Pending → confirmed; no booking; update error; **rejected; thrown**; foreign invoice; already paid; unmapped account | 8 identical |
+| **I5 checkout, booking** (9) | `count` 1, 0, absent and `null`; update error; **rejected; thrown**; unmapped account; event from another account (scoped to that account's owner) | 9 identical |
+| **M `handlePlanSubscriptionEnded`** (M1, M2, M3) (17) | Cancelled (M2 + M3); completed (no M3); `null` counts; not ours; foreign; unmapped; already cancelled; already completed; M1 read error; end-write error; M3 error (F-3's PostgREST answer); **M1, M2, M3 each rejected and thrown** | 17 identical |
+| **Plan checkout, the Q-3 hoist** (10) | Owned and bound; not owned; no `owner_id`; empty `owner_id`; unmapped; bind throws; plan and invoice in one session; **owner lookup throws; key unset; key unset with no `owner_id`** | 7 identical, **3 D1-only** |
+| **bind** (33) | First bind (service fallback; owned `payment_plan_id`; an existing Stripe schedule); repair with `count` 0 and `null`; redelivery with `count` 3; count read error; insert error; link error; contact read error; contact `null`; fallback none; fallback error; no service and no plan; no booking; foreign links dropped; malformed links dropped; create fails; repair with foreign links; **count, insert, link, contact, fallback, repair insert, repair contact each rejected and thrown** | 33 identical |
+
+The mutation results below show that the comparison sees a difference when there is one (EQ and EB columns, for example R01: 13 route scenarios differ, B07: 21 bind scenarios).
+
+#### 2. Tenant isolation
+
+- **In the equivalence run**, every foreign and unmapped scenario (G, H7, I4, I5, M, plan checkout) writes the same as before on the new route: no plan, period or booking row, 200, claim `completed`. I5 from `acct_foreign` is scoped to `owner-b`, the sending account's owner, even when the session says `owner-a`.
+- **In the new QA file**, 9 refusal cases (G foreign and unmapped, H7 foreign and unmapped, I4 foreign and unmapped, I5 unmapped, M foreign and unmapped) assert no write to `payment_plan_installments`, `payment_plan_subscriptions` or `scheduling_bookings`. 4 scoping cases pin the exact filters: G5 `id` + `user_id` = the plan owner; I5 `id` + `user_id` = the sending account's owner; M3 `user_id` + Stripe's subscription id + `not in (paid,cancelled)`; **H7 by `id` only (FU-4, pre-existing and documented)**.
+- **In the bind QA file**, the contact read, the plan fallback and the booking link are scoped to the owner, every projected row carries the owner, and foreign links are dropped before any contact read, fallback or link.
+- **By mutation:** S09 (G5 loses `user_id`), S05, S06, R06, R07 (each scoped method loses `user_id`), S08 and T12 (arguments swapped), T13 (I5 scoped by the session's `owner_id`) and T18 (H7 "fixed" to owner-scoped, which must stay a decision of its own) are all killed.
+
+#### 3. Mutation results
+
+Columns are red tests per suite. H = harness, QF = `fix1Ownership.qa`, PO = `planOwnership.qa`, GR = `routerPlacement.guard`, GB = `noBookingGuess.guard`, GD = `deferredFirstPayment.guard`, GS = `planSurfaces.guard`, B = `bindPlanSubscription.test`, UP / US / UPS = the three `*.webhook.test.ts`, QR / QB = the two new QA files, EQ / EB = the temporary route and bind equivalence runs (73 and 33 scenarios). `bookingPaymentStatusReaders.guard` also ran and killed nothing, so it is left out. Five baseline runs (one per mutated file, an unmodified copy behind the same mapper and redirect) were all green: 16 suites, 551 tests, about 66 s each.
+
+| # | Target | Mutation | H | QF | PO | GR | GB | GD | GS | B | UP | US | UPS | QR | QB | EQ | EB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| R01 | PP | `findNextPendingPeriod` orders descending | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 13 | 0 |
+| R02 | PP | `findNextPendingPeriod` drops `limit(1)` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 13 | 0 |
+| R03 | PP | pending filter → `neq('status','paid')` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 13 | 0 |
+| R04 | PP | plan fallback drops `is_active` | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 21 |
+| R05 | PP | plan fallback newest first | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 21 |
+| R06 | PP | plan fallback drops `user_id` | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 1 | 0 | 21 |
+| R07 | PP | M3 drops `user_id` | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 0 | 5 | 0 |
+| R08 | PP | M3 also cancels `paid` periods | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 5 | 0 |
+| R09 | PP | count drops `count: 'exact'` | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 11 |
+| R10 | PP | G3 keys swapped (plan id ↔ period number) | 3 | 0 | 1 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 0 | 1 | 0 | 15 | 0 |
+| R11 | PP | G3 drops `transaction_id` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 0 | 15 | 0 |
+| R12 | PP | `insertProjectedPeriods` catches a rejection | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 4 | 0 | 4 |
+| R13 | PP | G1 method catches a rejection | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 1 | 0 |
+| S01 | SB | I5 drops `{ count: 'exact' }` | 4 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 0 | 12 | 0 |
+| S02 | SB | I5 reads a `null` count as 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 6 | 0 |
+| S03 | SB | I4 drops the `pending` filter | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 5 | 0 |
+| S04 | SB | H7 also confirms the booking | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 4 | 0 |
+| S05 | SB | bind link drops `user_id` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 0 | 1 | 0 | 12 |
+| S06 | SB | bind contact read drops `user_id` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 0 | 1 | 0 | 26 |
+| S07 | SB | G5 method swallows a rejection | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 2 | 0 |
+| S08 | SB | bind link `id` ↔ `user_id` swapped | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 0 | 1 | 0 | 12 |
+| S09 | SB | G5 drops `user_id` | 2 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 10 | 0 |
+| P01 | PS | M2 drops `completed_at` (always `cancelled_at`) | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 2 | 0 |
+| P02 | PS | M1 drops `periods_paid` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 17 | 0 |
+| P03 | PS | M2 keys on `stripe_subscription_id` | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 0 | 9 | 0 |
+| T01–T10 | route | `.catch` at the G1, G3, G4, G5, H7, I4, I5, M1, M2, M3 call site (one mutant each) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **2 each** | 0 | 2 each | 0 |
+| T11 | route | **F-3 "fixed" by accident: M3 by plan UUID** | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 0 |
+| T12 | route | G5 arguments swapped | 2 | 0 | 1 | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 10 | 0 |
+| T13 | route | I5 scoped by the session's `owner_id` | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
+| T14 | route | Q-3 hoist reverted (owner check back inside the `try`) | 0 | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| T15 | route | M2 outcome always `cancelled` | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
+| T16 | route | G3 closes the wrong period (`periods_paid`, not +1) | 3 | 0 | 1 | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 15 | 0 |
+| T17 | route | M3 runs on completed plans too | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
+| T18 | route | H7 "fixed" to owner-scoped (FU-4 must stay as is) | 5 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 0 |
+| T19 | route | I4 calls the unscoped mark (no confirm) | 2 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 0 |
+| B01–B05 | bind | `.catch` at the count, insert, link, contact, fallback call site (one mutant each) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **3, 4, 2, 2, 2** | 0 | 2, 4, 2, 4, 2 |
+| B06 | bind | link arguments swapped | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 12 |
+| B07 | bind | plan fallback arguments swapped | 0 | 0 | 10 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 1 | 0 | 21 |
+| B08 | bind | count by the Stripe subscription id | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 11 |
+| B09 | bind | projected rows drop the contact | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 14 |
+| B10 | bind | link uses our plan subscription id instead of the `payment_plans` row | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 1 | 0 | 12 |
+
+**54 of 54 killed** by the permanent suites (13 `PaymentPlanRepository`, 9 `SchedulingBookingRepository`, 3 `PaymentPlanSubscriptionRepository`, 19 route, 10 bind). Bold = the only permanent suite that kills it.
+
+- **F-3 (T11) is caught three ways:** the harness (scenario 8's M3 chain), `routerPlacement.guard` (the pinned `subscription.id` argument) and the new QA file. Fix-2 must change all three on purpose, as PR4-Q3 says.
+- **Without the two new QA files, 15 survive, all in PR 4:** T01–T10 (a `.catch` at any of the 10 route call sites, which turns a rejected query into a quiet 200 or a skipped write) and B01–B05 (the same at bind's 5 call sites, which makes bind resolve instead of rejecting, so its caller completes the claim and Stripe never retries). The harness answers every query with `{ data, error }`, the guards read structure, and Dev's unit tests do not see the call sites. The method-level catches (R12, R13, S07) are killed by Dev's unit tests, as reported.
+- **T14 (the hoist reverted) is log-only**, so the equivalence run shows 0 differences there by design (the comparator does not apply the D1 rule to mutants); it is killed by `routerPlacement.guard`, FU5-E in `fix1Ownership.qa` and the new QA file.
+- No equivalent mutant; no survivor. Every snapshot write or update count was 0 on every run, and the runner checked the snapshot, the harness, the bind test and the five production files after each mutant.
+
+#### 4. Regression
+
+| Run | Suites | Tests | Snapshots | Time |
+|---|---|---|---|---|
+| `app/api/stripe/webhook/__tests__/*.test.ts` (14, including the new route QA file, the harness, `routerPlacement.guard`, `pinoLogging.guard`), `lib/payments/__tests__/*.test.ts` (41, including `bindPlanSubscription.test` and the new bind QA file), `lib/repositories/__tests__/*.test.ts` (including the three `*.webhook.test.ts`, `businessOsEntitlements.imports.guard`, `bookingPaymentStatusReaders.guard`, `mutationOrSelect.guard`, `userSubscriptionsWriteLockdown.qa` + `…Migration`), `app/api/stripe/__tests__/*.test.ts` (`noBookingGuess`, `invoiceIntentsStayUnowned`, `stripeAuditEntries`, …), `paymentPlanCancelledSeverity.guard`, `noPilotCreditTableReads.guard`, `publicBookingIdentity.guard`, `recordEvent`, `check-logging-only-diff` | **140 passed** | **2,928 passed** | 103 passed | Jest 29.8 s, wall 32 s |
+| The two new QA files, 3 runs in a row | 2 | 79/79 each time | — | 6.7–6.8 s each (stable) |
+| The two new QA files against the **base** code (`a689de3f` route and bind, via the scratch mapper; a coverage run confirmed the old bind was the one loaded) | 2 | 76/79 | — | The 3 failures are exactly the three PR4-D1 tests (they assert the "Could not bound" line is gone, which the base logs). Everything else pins behaviour the base already had |
+
+Snapshot blob after all runs: `4194ff19…`.
+
+**New files (QA):**
+
+- `app/api/stripe/webhook/__tests__/plansBookingsRepository.qa.test.ts`, 55 tests, no snapshots. A rejected and a synchronously thrown query at each of the 10 route sites (500, generic body, claim `failed` with that message, the failed query is the last thing the handler did; 20 tests). Returned errors and values: G3's error ignored, G4's error gives a `null` next charge, G1's hit writes nothing, G3's keys, G5's error logged with the period kept, H7 and I4 errors logged, I4's `pending` filter and key set, I5's five `count` readings, M2/M3 errors ignored, M2's timestamp per outcome. Tenant isolation: the 9 refusals and 4 scoping cases above, F-3 pinned. PR4-D1: owner lookup throws, key unset (with and without an owner id), bind throws still logged once, and the three refusals. It kills T01–T10. Same mock style as `moneyRowsRepository.qa.test.ts`; about 4 s.
+- `lib/payments/__tests__/bindPlanSubscription.repos.qa.test.ts`, 24 tests, no snapshots. Bind runs through the **real** repositories over a recording client (the frozen `bindPlanSubscription.test.ts` stubs the client's answers). A rejected and a thrown query at each call site rejects bind, nothing runs after it, and nothing is logged as an error (13 tests). It also covers redelivery, repair with `count` 0 or `null`, a count error read as 0, the insert, link and contact errors, no active plan, and the owner scoping and row shape. It kills B01–B05. About 3 s.
+
+### Issues found (PR 4)
+
+#### Bugs (must fix before commit)
+
+None.
+
+#### Performance issues
+
+None. Each converted call adds one async hop before the same query; the order of every recorded trace is unchanged.
+
+#### Edge cases (nice to fix, Low)
+
+1. **Dev's evidence table records `route.ts` blob `f8367e01`; the tree QA tested is `c5ff264d`.** The difference is in comments only, as far as QA can see (the M3 comment now uses SA's suggested wording), but the evidence table should carry the final blob before commit. Docs only.
+2. **`new Date()` call counts are not observable with a frozen clock.** PR4-D4 says the count is unchanged; the equivalence run cannot prove that (both runs see the same instant). Dev's unit tests and SA's read cover it. Recorded, no action.
+3. **Pre-existing, unchanged:** H7 marks a booking paid by id only (FU-4), and F-3 makes M3 a no-op today. Both are pinned as they are, so a fix will fail loudly and on purpose.
+
+### Final status (PR 4)
+
+**Verdict: PASS.**
+
+- [x] All acceptance criteria pass. PR 4 preserves behaviour at all 10 route sites and bind's 5 queries: 70 of 73 route scenarios and 33 of 33 bind scenarios are byte-identical, including a rejected and a thrown query at every new call site (500, claim `failed`, as before). The 3 other route scenarios differ by exactly the PR4-D1 line, in the two documented cases (owner lookup throws; `STRIPE_SECRET_KEY` unset), and by nothing else. F-3 is unchanged and its accidental fix is caught. A foreign or unmapped owner writes no plan, period or booking row, and every owner-scoped method keeps its `user_id`. 54 of 54 mutants are killed. Regression 140 suites / 2,928 tests / 103 snapshots. Snapshot `4194ff19`, bind test `2e7b9731` and all of Dev's files are unchanged, and the temp files are deleted.
+- [ ] Dev must review the two new QA files (`plansBookingsRepository.qa.test.ts`, `bindPlanSubscription.repos.qa.test.ts`), which go into PR 4. RM must still wait for SA's read of the CR-P4-1 diff before committing.
+
+### PR 5: Legacy tables, owner lookup, alias removed, rule-1 guard
+
+**QA — 2026-10-09**
+**Test mode:** full
+**Strategy used:** A (Jest), plus a direct old-vs-new equivalence run, guard probes and mutation testing, the same method as PR 1 to PR 4. PR 5 must not change behaviour, so the main test runs the same scenarios through the `88f97171` route and resolver and through the new ones, and compares normalised traces byte for byte. Probes and mutants were temporary copies of `route.ts`, `stripeAccountContext.ts` or one of the seven repository files. A scratch Jest config pointed the module at the copy (`moduleNameMapper`). A setup file redirected `fs.readFileSync` of the real path to the copy, so the guards and the source-shape tests read the probe or mutant too. Every test file ran unedited and in place, the harness and its snapshot included.
+**Focus:** api (the five converted handlers and the resolver), security (owner scoping, the rule-1 guard), schema (each method's query chain)
+**Skipped:** e2e (no UI). `npm run test:bos-entitlements` is not needed: the diff imports nothing from `lib/business-os/entitlements/`. `businessOsEntitlements.imports.guard` ran anyway (regression).
+**Input source:** prompt from TL, plus §7.3.6 and the PR 5 code review with its re-check.
+
+**Tree:** worktree `neuronforge-webhook-repos`, branch `feature/webhook-repos-pr5-legacy-guard`, base `88f97171`, uncommitted, Node 22.19.0. Every Jest run used `--ci` and `--runTestsByPath`. None used `-u`.
+
+#### Invariants (checked before, during and after)
+
+| Check | Result |
+|---|---|
+| Snapshot blob | `4194ff190e1da888a16e3426b2df6a0b7cafa3fb` before, after every probe and mutant (both runners hashed it after each run and would have stopped), after the regression run, and at the end. No run wrote or updated a snapshot (`added/updated` 0/0 on every mutant run) ✅ |
+| Harness blob | `b6f615ba` before and after ✅ |
+| Dev's files, never edited by QA | `route.ts` `cc10d119`, `stripeAccountContext.ts` `effc0f57`, `UserSubscriptionRepository.ts` `a22aff27`, `SystemConfigRepository.ts` `1fd68347`, `CreditTransactionRepository.ts` `cf7b255f`, `PaymentRepository.ts` `ba910ab6`, `PluginConnectionRepository.ts` `42ac4c53`, `index.ts` `57449dda`, `BillingEventRepository.ts` `353416d6`, `LegacyBoostPackPurchaseRepository.ts` `48724ce5`, `routerPlacement.guard` `1d2e1ab8`. They match Dev's evidence table and were the same at the start and the end ✅ |
+| Old code used for the comparison | `git show 88f97171:` into a temp folder. The resolver copy is the base blob `6a397dd8`. The route copy had its two `@/lib/payments/stripeAccountContext` imports pointed at that copy, so the old route ran with the old resolver. Nothing else changed ✅ |
+| `lib/business-os/billing/**`, `node_modules` | Not touched ✅ |
+| Temp files | The temp folder (old route and resolver, the equivalence test, probe and mutant copies, both runners, scratch configs, scratch tsconfig) was at the repo root, outside the `app/` and `lib/` trees the guards scan. It was deleted before the regression run. The only new files are the two QA tests below ✅ |
+
+#### Test coverage
+
+| Acceptance criterion (PR 5, §7.3.6) | Tested? | Result | Notes |
+|---|---|---|---|
+| 1. Same behaviour at the 11 route sites and the three helper calls, old vs new | ✅ | Pass | **68 route scenarios, 68 byte-identical.** The comparison covers status, body, every DB op with its full chain, payload, key order and terminal, every log line (level, merged bindings, arguments), every side call with the client it was handed, all in order |
+| 1a. `resolveAccountOwner`, old vs new | ✅ | Pass | **12 route scenarios** (the real old and new resolver behind the route) and **12 direct calls**, all byte-identical. Plus: the plugin read happens only after an Express miss, and both reads use the injected client |
+| 1b. A rejected or thrown query at every new call site → same status as old | ✅ | Pass | 22 route scenarios (A1–A4, B2–B5, C1, N1, N2, each rejected and thrown synchronously) and 4 resolver scenarios (each read rejected and thrown): 500, generic body, claim released `failed`, as before. Pinned in the two new QA files |
+| 2. Tenant isolation | ✅ | Pass | Every `user_subscriptions` query has exactly one filter, `user_id` = the event's own `metadata.user_id`; every insert carries it; no `user_id` → no legacy table touched. `listByPluginKey` and `findOwnerIdByStripeAccountId` have one caller, the resolver |
+| 3. Guard probes | ✅ | Pass, with gaps | **35 of 35 must-catch probes caught; 4 of 5 must-not-flag probes clean** (the fifth is a pre-existing text guard tripping on a comment). **6 bypasses found** (below): an inline `.from(` through a renamed client import, a second client, and a repository built or called through `import()` / `require()` |
+| 4. Behaviour mutants | ✅ | Pass | **49 of 49 killed** by the permanent suites. Without the two new QA files, 11 survive: a `.catch` at any of the 11 route call sites |
+| 5. Regression | ✅ | Pass | 150 suites, 3,040 tests, 103 snapshots, all passed. Jest 32.1 s, wall 35 s |
+| Scoped type-check and lint of the QA files | ✅ | Pass | `tsc` (scratch tsconfig, the two QA files, 8 GB): 0 errors. ESLint: 0 errors, 0 warnings |
+
+#### 1. Equivalence, old vs new
+
+Old and new ran in the same Jest process, under the same mocks, with a fresh module registry per run. Only `Date` was faked (frozen at `2026-10-09T09:00:00.000Z`), and the correlation id was fixed. Errors were written with name, message and own fields, and `undefined` was kept visible. The mock could answer a query with data, a returned error, a rejection, or a synchronous throw at the terminal. Every helper argument that was a client was written as "the current `supabaseServer`" or "another client".
+
+| Group | Scenarios | Result |
+|---|---|---|
+| **Dunning (A1–A4)**, via the router override (22) | Grace from the user row (paused and not); from config `'7'`; a row grace of `0` falling to config; config `'abc'` (NaN) and a number; **the default 3** with no rows, paused at 5 days, and at the 3-day boundary; no `user_id`; user-row read error; config read error; update error; billing insert error; **A1–A4 each rejected and thrown** | 22 identical |
+| **Legacy boost checkout (B2–B5)** (20) | No user row; existing balance; `null` balance fields; credit transaction error; credit transaction with no data and no error; purchase insert error; both inserts error; no `boost_pack_id`; no `user_id`; balance read error; balance update error; `payment_intent` and `amount_total` null; **B2–B5 each rejected and thrown** | 20 identical |
+| **`customer.subscription.updated` (C1)** (6) | With `user_id` and cancellation set; with the cancellation fields absent; no `user_id`; write error; **rejected; thrown** | 6 identical |
+| **`customer.subscription.deleted` (N1, N2)** (8) | With `user_id`; no `user_id`; `markCanceled` error; billing insert error; **N1 and N2 each rejected and thrown** | 8 identical |
+| **Resolver behind the route** (12) | Express hit; plugin hit by `stripe_account_id` (a non-`active` row) and by `id` (status `null`); both miss; plugin data `null`; Express error with and without a code; plugin error; **each read rejected and thrown** (500, as before) | 12 identical |
+| **Resolver, direct** (12) | Express hit; Express row with an empty `user_id` (falls to the plugin read); `stripe_account_id` taking precedence over `id`; both miss; plugin data `null`; Express error; plugin error with an empty code; Express error together with data; **each read rejected and thrown synchronously** | 12 identical |
+
+Two more direct checks: the plugin read is issued only after an Express miss (an Express hit or an Express error ends after one read), and both reads go through the client passed in, not `supabaseServer`. A negative control (two different scenarios) shows the comparison sees a difference. The mutation results below show the same (EQ column, for example X01: 26 scenarios differ).
+
+#### 2. Tenant isolation
+
+- **Owner-scoped legacy methods.** In the new route QA file, for each of the four flows, every `user_subscriptions` query has exactly one filter, `['eq', 'user_id', <metadata user>]`, and every legacy insert row has that `user_id`. An event with no `metadata.user_id` touches no legacy table in any flow. The config read is by its fixed key only.
+- **By mutation:** R02 (`findDunningState` loses `user_id`) and R08 (`mirrorStripeStatus` filters by `id`) are killed by the harness, `userSubscriptionsWriteLockdown.qa`, Dev's unit tests and the new QA file. T18 (C1 scoped by the Stripe subscription id) is killed by the harness, `routerPlacement.guard` and the new QA file.
+- **`listByPluginKey` reachable only from the resolver.** A one-pass scan of `app/`, `lib/`, `components/` and `hooks/` (tests excluded) finds `.listByPluginKey(` and `.findOwnerIdByStripeAccountId(` only in `lib/payments/stripeAccountContext.ts` (new resolver QA file). R20 (a status filter added) and R21 (a token column selected) are killed by Dev's unit test, the new resolver QA file and the equivalence run.
+
+#### 3. Guard probes (rule-1 check, SA C-7 and CR-P5-1)
+
+Each probe was a copy of the real `route.ts` with a few lines added: an import after `import Stripe from 'stripe';`, a body line after N1's call in `handleSubscriptionDeleted`, or the `plan:` entry in `BUSINESS_OS_FLOW_HANDLERS`. All 10 suites that read `route.ts` ran against it (`routerPlacement.guard`, `pinoLogging.guard`, `emptyBody.guard`, `receiptOnPaid.guard`, `invoiceIntentsStayUnowned.guard`, `noBookingGuess.guard`, `webhookDispatcher.test`, `deferredFirstPayment.guard`, `planSurfaces.guard`, `userSubscriptionsWriteLockdown.qa`: 151 tests). "Caught" means at least one test went red.
+
+**Must catch: 35 of 35 caught.**
+
+| Probes | Shape | Caught by |
+|---|---|---|
+| C01–C08 | `supabaseServer.from(`, `?.from(`, `['from']`, `["from"]`, `` [`from`] ``, `.rpc(`, `['rpc']`, `.from(` on a local client | rule-1 check (C01 also `userSubscriptionsWriteLockdown.qa`) |
+| C09–C14 | `createClient` import, `@/lib/supabaseServerAuth` import, `supabaseServer` held in a variable, `.storage`, `.auth`, passed to another helper | rule-1 check |
+| C15, C16, C35 | `new BillingEventRepository(supabaseServer)`, `new UserSubscriptionRepository()`, a `get…Repository()` factory | rule-1 check |
+| C17–C21, C29, C30 | Alias, destructure, `.call`, `.bind`, `['markCanceled'](`, singleton as an argument, shorthand property | rule-1 check |
+| C22–C28, C31, C32 | `as` rename, namespace import (also `new USR.UserSubscriptionRepository()`), relative import with rename, alias or argument, default import, barrel rename, barrel namespace | rule-1 check |
+| C33, C34 | One more direct `markCanceled` call; one more `billingEventRepository.insert` for another user | the legacy per-function count test |
+
+**Must not flag: Array.from, Buffer.from, a string literal containing `supabaseServer.from(`, and the `plan: handlePlanBillingEvent` entry with its `@/lib/business-os/billing/planBillingHandler` import: 0 failures out of 151.** Comments (`// await supabaseServer.from('user_subscriptions').update({}); new UserSubscriptionRepository()` and `/* supabaseServer.rpc('x') */`) give no rule-1 offence. They do trip `userSubscriptionsWriteLockdown.qa`'s writer list, which is a text scan that does not strip comments. That guard predates PR 5 and errs on the safe side (edge case 3).
+
+**Bypasses: each passes all 151 tests.**
+
+| # | Probe | What gets through |
+|---|---|---|
+| B01b | `import { supabaseServer as Array } from '@/lib/supabaseServer';` then `await Array.from('billing_events').insert({ user_id: 'someone-else' })` | **An inline write.** A renamed `supabaseServer` import is not checked, and the `Array` / `Buffer` exemption goes by the local name. (The same with `user_subscriptions` is caught, but only by the lockdown guard's text scan.) |
+| B01c | The same with `as Buffer` and `Buffer.from('credit_transactions').delete().eq('user_id', userId)` | **An inline delete** |
+| B07 | `const Buffer = (await import('@/lib/supabaseServer')).supabaseServer; await Buffer.from('billing_events').insert({})` | **An inline write** through a dynamic import |
+| B02 | `import { supabaseServer as db } …; await db.auth.admin.deleteUser(userId)` | The client held under another name |
+| B03 | `import { createServerSupabaseClient } from '@/lib/supabaseServer'; await createServerSupabaseClient().auth.admin.deleteUser(userId)` | A second service-role client. The specifier is the allowed one, and the factory's name is not checked |
+| B04 | `await require('@/lib/repositories/UserSubscriptionRepository').userSubscriptionRepository.markCanceled(userId)` | **An added repository call** that neither the rule-1 check nor the per-function counts see |
+| B06 | `const M = await import('@/lib/repositories/UserSubscriptionRepository'); await new M.UserSubscriptionRepository(otherClient).markCanceled(userId)` | **A repository built on any client.** The route already uses `await import()` (for `AuditTrailService`), so this is an idiom the file has |
+| B08 | `(otherClient as any)['fr' + 'om']('billing_events')` | Computed key: residual SA already accepted |
+
+B05 (`const { userSubscriptionRepository: subs } = await import(…)`) was caught, but only because the route already imports that singleton statically. The same shape for a repository the route does not import is B04/B06.
+
+#### 4. Mutation results
+
+Columns are red tests per suite. H = harness, GR = `routerPlacement.guard`, GL = `userSubscriptionsWriteLockdown.qa`, QO = `ownerCacheRetry.qa`, R = `stripeAccountContext.test`, USw / SCw / CTw / BE / LB / SCo / PCo = Dev's seven new unit files, QL / QR = the two new QA files, EQ = the temporary equivalence run (68 + 15 tests). `boostRouting.integration`, `PaymentTransactionRepository.webhook`, `UserSubscriptionRepository.test` and `CreditTransactionRepository.test` also ran in every row and killed nothing, so they are left out. Nine baseline runs (one per mutated file, an unmodified copy behind the same mapper and redirect) were all green: 19 suites, 490 tests, about 24 s each.
+
+| # | Target | Mutation | H | GR | GL | QO | R | USw | SCw | CTw | BE | LB | SCo | PCo | QL | QR | EQ |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| R01 | US | `findDunningState` ends in `maybeSingle` | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 21 |
+| R02 | US | `findDunningState` drops `user_id` | 3 | 0 | 1 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 21 |
+| R03 | US | `recordPaymentFailure` never pauses agents | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 |
+| R04 | US | `applyBoostPackBalance` stops clearing `free_tier_expires_at` | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 17 |
+| R05 | US | `mirrorStripeStatus` key order changed | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
+| R06 | US | `markCanceled` writes `'cancelled'` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
+| R07 | US | `findBalance` drops `total_earned` | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 19 |
+| R08 | US | `mirrorStripeStatus` filters `id`, not `user_id` | 1 | 0 | 1 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 5 |
+| R09 | US | `markCanceled` catches a rejection | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 2 |
+| R10 | SC | `findRawValue` ends in `single` | 2 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 17 |
+| R11 | SC | `findRawValue` filters `name` | 2 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 17 |
+| R12 | CT | `insertReturningId` drops `select('id')` | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 15 |
+| R13 | CT | `insertReturningId` catches a rejection | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
+| R14 | BE | `billing_events` row gains a key | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 2 | 0 | 20 |
+| R15 | BE | `insert` catches a rejection | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 4 | 0 | 4 |
+| R16 | LB | `insert` catches a rejection | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 2 | 0 | 2 |
+| R17 | LB | wrong table | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 5 | 0 | 12 |
+| R18 | SCo | `findOwnerIdByStripeAccountId` ends in `single` | 0 | 0 | 0 | 7 | 12 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 5 | 24 |
+| R19 | SCo | … filters `id`, not `stripe_account_id` | 0 | 0 | 0 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 5 | 24 |
+| R20 | PCo | `listByPluginKey` adds `status = 'active'` | 0 | 0 | 0 | 0 | suite error | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 14 |
+| R21 | PCo | `listByPluginKey` also selects `access_token` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 14 |
+| R22 | PCo | `listByPluginKey` catches a rejection | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 4 |
+| X01 | resolver | plugin read issued before the Express read | 0 | 0 | 0 | 17 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 26 |
+| X02 | resolver | plugin read error read as "no business" (pre-FU-5) | 0 | 0 | 0 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 |
+| X03 | resolver | `.catch` at the Express read | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 4 |
+| X04 | resolver | Express read on the default client, not the injected one | 0 | 0 | 0 | 0 | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 1 |
+| X05 | resolver | plugin read on the default client | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 |
+| X06 | resolver | `.catch` at the plugin read | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 4 |
+| X07 | resolver | FU-5 message changed | 0 | 0 | 0 | 8 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 4 |
+| T01–T11 | route | `.catch` at A1, A2, A3, A4, B2, B3, B4, B5, C1, N1, N2 (one mutant each) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **2 each** | 0 | 2 each |
+| T12 | route | default grace 3 → 5 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 9 |
+| T13 | route | dunning row drops `stripe_event_id` (FU-1 "fixed" by accident) | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 15 |
+| T14 | route | purchase row loses the ledger id | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 7 |
+| T15 | route | `total_earned` written from the balance | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| T16 | route | `pilotCreditsToTokens` gets no client | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 19 |
+| T17 | route | resolver handed `undefined` (equivalent at runtime: the repositories fall back to `supabaseServer`, PR5-D6) | 65 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| T18 | route | C1 scoped by the Stripe subscription id | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 5 |
+| T19 | route | the config grace is ignored | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 4 |
+| T20 | route | `QuotaAllocationService` gets another client | 0 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 11 |
+
+**49 of 49 killed** by the permanent suites (22 repository, 7 resolver, 20 route). Bold = the only permanent suite that kills it.
+
+- **Without the two new QA files, 11 survive: T01–T11.** A `.catch` at any of the 11 route call sites turns a rejected query into a quiet 200 (claim `completed`, Stripe never retries). The harness answers every query with `{ data, error }`, the guards read structure, and Dev's unit tests do not see the call sites. This is the same gap PR 3 and PR 4 had. The method-level catches (R09, R13, R15, R16, R22) are killed by Dev's unit tests, as reported.
+- **T17 is runtime-equivalent** (PR5-D6: an `undefined` client falls back to `supabaseServer`), so the equivalence run shows 0 differences by design. It is still killed by the harness (which records the resolver's arguments), the rule-1 check and the new QA file.
+- R20 crashed `stripeAccountContext.test` as a suite (its hand fake returns a promise from `eq`, so a second `.eq` throws), rather than failing a named test. It is killed cleanly by `PluginConnectionRepository.ownerLookup`, the resolver QA file and the equivalence run.
+- No equivalent mutant except T17; no survivor. Each runner checked the snapshot, the harness and all nine target files after every run.
+
+#### 5. Regression
+
+| Run | Suites | Tests | Snapshots | Time |
+|---|---|---|---|---|
+| `app/api/stripe/webhook/__tests__/*.test.ts` (18, including the new route QA file, the harness, `routerPlacement.guard`, `pinoLogging.guard`), `app/api/stripe/__tests__/*.test.ts`, `lib/payments/__tests__/*.test.ts` (including the new resolver QA file and `stripeAccountContext.test`), `lib/repositories/__tests__/*.test.ts` (including Dev's seven new unit files, `BusinessOsBillingEventRepository.test`, `businessOsEntitlements.imports.guard`, `mutationOrSelect.guard`, `userSubscriptionsWriteLockdown.qa` + `…Migration`), `accountFrozenWriters.guard`, `noPilotCreditTableReads.guard`, `publicBookingIdentity.guard`, `paymentPlanCancelledSeverity.guard`, `webhookDispatcher.test`, `check-logging-only-diff` | **150 passed** | **3,040 passed** | 103 passed | Jest 32.1 s, wall 35 s |
+| The two new QA files, 3 runs in a row | 2 | 57/57 each time | — | 6.8–7.0 s each (stable) |
+| The two new QA files against the **base** code (`88f97171` route and resolver, via the scratch mapper and redirect; a coverage run confirmed the base copies were the ones loaded) | 2 | 55/57 | — | The 2 failures are the two caller-scan tests: through the redirect they read the base resolver, which has no repository call yet. Everything else pins behaviour the base already had |
+
+Snapshot blob after all runs: `4194ff19…`.
+
+**New files (QA):**
+
+- `app/api/stripe/webhook/__tests__/legacyRepository.qa.test.ts`, 46 tests, no snapshots, about 4 s.
+  - A rejected and a synchronously thrown query at each of the 11 sites (22 tests). Each gives 500, the generic body and a claim marked `failed` with that message, and the failed query is the last thing the handler did.
+  - Returned errors and defaults: an A1 error is read as no row; an A2 error falls back to 3 days; a config value or a per-user grace is used; past the 3-day default the account is `past_due`; A3/A4 errors are ignored.
+  - Row shapes: the dunning row keeps all 8 keys in order, `stripe_event_id: invoice.id` included (FU-1). The N2 row has its 4 keys only.
+  - Boost: B2/B3 errors are ignored; a B4 error is logged and gives `transaction_id: null`; a B4 hit carries its id through and keeps `insert → select('id') → single`; a B5 error is logged; with no `boost_pack_id` there is no purchase row. C1/N1/N2 errors are ignored.
+  - Owner scoping, and the three helpers getting the very `supabaseServer` object (above).
+  - It kills T01–T11.
+- `lib/payments/__tests__/stripeAccountContext.repos.qa.test.ts`, 11 tests, no snapshots.
+  - The resolver runs through the **real** repositories over a recording client, with `supabaseServer` mocked to throw if it is ever used.
+  - It pins the exact Express and plugin chains: no status filter, no token column, the plugin read only after a miss, and any status matched.
+  - FU-5: a returned error throws the table-and-code message with nothing read after it, and a rejected or thrown read rejects with the same error object.
+  - The one-caller scan described above.
+  - It adds a second killer for R18–R22 and X01–X07. Its scan walks four source trees once, in `beforeAll`.
+
+### Issues found (PR 5)
+
+#### Bugs (must fix before commit)
+
+None in the production code.
+
+#### Guard gaps (test-only, Medium; recommended in this PR, SA to rule)
+
+1. **The rule-1 check can still be bypassed in six ways (B01b, B01c, B07, B02, B03, B04, B06 above).** File: `app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts`, `ruleOneOffences`.
+   - **Why it matters.** SA ruled the sibling holes (CR-P5-1) High and blocking, because an *added* call through them passes every guard. The same is true here. Three probes (B01b, B01c, B07) put a real inline `.from(` into the route. That contradicts the reasoning SA used to accept the residual gaps ("either one still needs a `.from` / `.rpc` through a literal name"). They also make two claims overstated: the §9.4 draft's "no `.from`/`.rpc`, no other client use, no repository built", and the `REPOSITORY_STRATEGY.md` sentence.
+   - **Production impact.** None today: `route.ts` contains none of these shapes, and each needs deliberate evasion in a reviewed file.
+   - **Suggested fix** (about 10 lines, no new suite):
+     - (a) From `@/lib/supabaseServer`, allow only the plain named import `supabaseServer`. Flag any `as` rename and any other name, such as `createServerSupabaseClient`.
+     - (b) Apply the `Array` / `Buffer` exemption only when the file has no binding of that name, or flag any import or declaration named `Array` / `Buffer`.
+     - (c) Flag any `import()` or `require()` whose specifier is a repository module or mentions supabase. The file already has `isRepositorySpecifier` / `repositoryImportsOf`, which handle both forms, so the existing `await import('@/lib/services/AuditTrailService')` stays allowed.
+     - Add B01b, B02, B03, B04, B06 and B07 to the negative control.
+   - **Steps to reproduce:** add one probe line to a copy of `route.ts` and run the guard against the copy.
+   - **Expected:** at least one offence.
+   - **Actual:** `ruleOneOffences(copy)` is `[]`, and all 151 tests in the 10 route-reading suites pass.
+
+#### Performance issues
+
+None. Each converted call adds one async hop before the same query, and the order of every recorded trace is unchanged. `resolveAccountOwner` builds two small repository objects per uncached account (SA's note), which is not measurable here.
+
+#### Edge cases (nice to fix, Low)
+
+1. **`new Date()` call counts are not observable with a frozen clock.** Same as PR 4. PR5-D7 says the count is unchanged. Dev's unit tests and SA's read cover it. Recorded, no action.
+2. **R20 surfaces in `stripeAccountContext.test` as a suite crash, not a named failure.** That file's hand fake cannot chain a second `.eq`. Other suites kill the mutant cleanly. No action.
+3. **`userSubscriptionsWriteLockdown.qa`'s writer list does not strip comments.** This is pre-existing. A comment quoting `from('user_subscriptions').update(` in any scanned file makes it red. It errs on the safe side; noted so nobody is surprised.
+4. **Pre-existing, unchanged:** FU-1 (the dunning row's `stripe_event_id` is the invoice id), FU-2 (the legacy boost path), FU-6 (the status mirror) and FU-7 (the non-atomic read-then-write). Each is pinned as it is, so a fix will fail loudly and on purpose (T13 shows it for FU-1).
+
+### Final status (PR 5)
+
+**Verdict: PASS WITH NOTES.**
+
+- [x] All acceptance criteria pass for the production code.
+  - **Equivalence.** PR 5 preserves behaviour at all 11 route sites, the three helper calls and both resolver reads. 68 of 68 route scenarios and 12 of 12 direct resolver calls are byte-identical, including a rejected and a thrown query at every new call site (500, claim `failed`, as before).
+  - **Defaults and rows.** The grace-period default of 3, the `billing_events` rows (byte for byte, FU-1 included) and the plugin-after-Express order are unchanged.
+  - **Tenant isolation.** Every owner-scoped method keeps exactly one `user_id` filter, an event with no `user_id` touches nothing, and `listByPluginKey` has one caller.
+  - **Mutants and probes.** 49 of 49 mutants are killed, and 35 of 35 must-catch guard probes are caught.
+  - **Regression.** 150 suites / 3,040 tests / 103 snapshots.
+  - **Files.** Snapshot `4194ff19`, the harness and all of Dev's files are unchanged, and the temp files are deleted.
+- [ ] **Guard gap 1 (Medium, test-only):** six probe shapes still pass the rule-1 check. Recommended to close in this PR, as CR-P5-1 was, before the §9.4 "done" wording claims it. SA to rule whether it blocks.
+- [ ] Dev must review the two new QA files (`legacyRepository.qa.test.ts`, `stripeAccountContext.repos.qa.test.ts`), which go into PR 5.
+
 ---
 
 ## Commit Info
@@ -2254,3 +3227,11 @@ None. Each converted call adds one async hop before the same query; the order of
 | 2026-10-08 | PR 3 implemented (Dev): money rows | §7.3.4 added: refresh against `06b77d1b` (#257 added a lookup by intent and an attach, so 12 sites, not 10), coverage check, C-2 guard audit and evidence. #257's cold arms (lookup hit, attach, attach error, already attached) were covered first by X56–X58, written against the untouched route by an anchored `-t` (3 written, 0 updated, the 100 earlier entries identical); snapshot blob `675fe244` → `4194ff19`. `PaymentTransactionRepository` gains seven ⟨unscoped-by-design⟩ purpose methods (`findFirstByStripeReference`, `recordDisputeState`, `findByPaymentIntentId`, `attachToInvoice`, `findSettledIdForInvoice`, `insertFromWebhook`, `insertFromWebhookReturningId`) with closed column constants and a typed row. New `PaymentRefundRepository.upsertFromStripe` (`onConflict: processor_refund_id`). No try/catch and no logger (CR-P2-1). 12 sites moved, `.from(` 33 → 21. After the refactor, 103/103 entries identical by hash, and the 14 untouched functions `--exact` identical. `invoiceIntentsStayUnowned` moved and tightened. `noBookingGuess` and `routerPlacement` extended: every site converted, and each owner-checked write comes after its check and carries the proved owner. PR 2's C-3 source test scoped to its class. 34 + 9 unit tests. Regression 142 suites / 3,099 tests / 103 snapshots. Scoped `tsc`: 0 errors in changed files, the same 58 elsewhere. ESLint 0 errors. Mutants M1–M11 all red. Deviations PR3-D1 to D6 and question PR3-Q1 for SA |
 | 2026-10-08 | SA code review of PR 3 | **APPROVED_CODE_REVIEW, with one docs-only condition before commit (CR-P3-1: `REPOSITORY_STRATEGY.md` tree entry, money-row paragraph incl. FU-3, Change History row).** SA re-verified on its own. X56–X58 pass on the base route `06b77d1b` (temp sibling copy, 105 tests / 103 snapshots, deleted afterwards), and two base-route mutants turn them red. 100/100 old entries are identical by SA's own md5 (3 added, 0 changed). Snapshot `4194ff19` before and after. `--exact` gives 14 × identical including `ownedOrNull`. All 12 sites match their old chains, and the #257 attach writes `invoice_id` only. There is no catch in any new method or at any call site. Every owner proof dominates its write by control flow, and the FU-3 paths are unchanged and documented. The excess-property check survives the `Record` spread (SA scratch `tsc`). Guards are stricter, and PR3-D2 keeps every assertion. Scoped `tsc` 0 errors in the changed files; ESLint 0 errors. 66 suites / 1,133 tests / 103 snapshots passed. PR3-D1..D6 and PR3-Q1 accepted; PR3-D4: the dispute metadata stays in the route. CR-P3-2 optional |
 | 2026-10-08 | QA of PR 3 | **PASS.** The `06b77d1b` route and the new route were run side by side under the same mocks with a frozen clock across all 12 money-row sites: **88 scenarios, 88 byte-identical** (status, body, DB ops with payloads, key order and terminals, logs, side calls). They include #257 hit / attach / attach error / already attached, disputes by intent, by charge and by neither, refunds by intent and by charge, and a rejected and a synchronously thrown query at every new call site: 500 and the claim released `failed` with the same message, as before. G2 still rethrows the raw error. A foreign or unmapped owner on F2, G2, H4/#257/H5 and I2 writes no money row, and each insert carries the proved owner. **41 of 41 mutants killed** (15 repository, 4 refund repository, 22 route). Without the new `moneyRowsRepository.qa.test.ts` (56 tests), 13 survive: a `.catch` at any of the 12 call sites, and a `/ 100` refund amount. Regression 133 suites / 2,718 tests / 103 snapshots (65 s wall). Snapshot `4194ff19` and all of Dev's files unchanged; temp files deleted. Edge cases (Low): the positional ordering guard (PR3-Q1), and a pre-existing overwrite of `status_before_dispute` by a second `opened` dispute event |
+| 2026-10-08 | PR 4 implemented (Dev): plans and bookings | §7.3.5 added: refresh against `a689de3f` (Fix-1 made I5 owner-scoped with `count`, so §3's shared `markPaidUnscoped` splits), coverage check, C-2 guard audit and evidence. The plan-checkout catch's bind-throws arm was pinned first (Q3-1 in `fix1Ownership.qa`, against the untouched route; no harness entry needed). 15 purpose methods: `PaymentPlanSubscriptionRepository.findEndStateBySubscriptionId` / `endFromStripe` (the harness-delegated names, kept), `PaymentPlanRepository` (5 unscoped incl. bind's count and typed insert; 2 owner-scoped incl. M3 with F-3 kept and bind's plan fallback), `SchedulingBookingRepository` (2 unscoped; 4 owner-scoped incl. I5 with `{ count: 'exact' }` and bind's link and contact read). No try/catch, no logger. `route.ts` `.from(` 21 → 11; bind's direct queries 5 → 0, its test file unedited (34/34). FU-5 SA Q-3 hoist done: the only observable difference is one log line when the owner lookup throws (PR4-D1, old-vs-new trace). 103/103 snapshot entries identical, blob `4194ff19` unchanged; 16 untouched functions `--exact` identical. Guards moved, never weakened: `planSurfaces` (slice bounded to the function, C-2), `deferredFirstPayment`, `noBookingGuess:227`, three new `routerPlacement` checks. 60 unit tests; regression 165 suites / 3,528 tests / 122 snapshots; scoped `tsc` 0 errors in changed files (same 58 elsewhere, compared against the base files); ESLint 0 errors. `REPOSITORY_STRATEGY.md` PR 4 paragraph. Deviations PR4-D1 to D6, questions PR4-Q1 to Q3 for SA |
+| 2026-10-08 | SA code review of PR 4 | **APPROVED_CODE_REVIEW, with one docs-only condition before commit (CR-P4-1: PR4-D1 must say that `new Stripe()` throws when `STRIPE_SECRET_KEY` is unset, so that case also loses the "Could not bound" line; accepted as log-only).** SA's own evidence: 103/103 snapshot entries identical by per-entry hash, blob `4194ff19` unchanged; bind test `2e7b9731` unedited and green; `--exact` 16 × identical (control exit 1); 10 route sites + bind's 5 read against their old chains, I5's `{ count: 'exact' }` and F-3 (M3 by `subscription.id`) kept; D1 traced path by path (status, claim, effect order identical; constructor hoist side-effect free); D2 cross-run: base route + new test 47/1 and new route + old test 46/1, the one failure each way being FU5-E `:1669`, so Q3-1 holds on the base route; tenant dominance checked by hand; C-2 guard moves all stricter; 2 SA mutants killed; scoped `tsc` 0 in changed files (58 elsewhere), ESLint 0 errors; 73 suites / 1,301 tests / 103 snapshots green. Rulings: D1–D6 accepted, Q1 layout confirmed, Q2 accepted as a guard, Q3 accepted (Fix-2 changes guard, snapshot, docs together), barrel not required (CR-P4-2 optional type-only) |
+| 2026-10-08 | QA of PR 4 | **PASS.** The `a689de3f` route and bind and the new ones were run side by side under the same mocks with a frozen clock: **route 73 scenarios, 70 byte-identical and 3 differing by exactly the PR4-D1 "Could not bound a payment plan" line** (owner lookup throws; `STRIPE_SECRET_KEY` unset, with and without an owner id; the real stripe-node constructor throws without a key), with status, body, claim and effect order identical; **bind 33 scenarios, 33 byte-identical** through the real repositories. They cover G first/middle/last/already recorded/no booking/booking and period update errors, H7, I4 (pending → confirmed), I5 (`count` 1/0/absent/`null`), M (ours, not ours, already ended, end-write error, F-3), bind (first bind, repair, redelivery, insert error, contact error, plan fallback, foreign links), and a rejected and a thrown query at every new call site: 500 and claim `failed` as before (bind rejects as before). F-3 unchanged. Foreign and unmapped owners write no plan, period or booking row; H7 stays by id only (FU-4). **54 of 54 mutants killed**, F-3 "fixed by accident" included (harness, `routerPlacement.guard`, QA file). Without the two new QA files (`plansBookingsRepository.qa.test.ts` 55 tests, `bindPlanSubscription.repos.qa.test.ts` 24 tests), 15 survive: a `.catch` at any of the 10 route call sites or bind's 5. Regression 140 suites / 2,928 tests / 103 snapshots (32 s wall). Snapshot `4194ff19`, bind test `2e7b9731` and all of Dev's files unchanged; temp files deleted. Edge case (Low, docs): Dev's evidence records `route.ts` `f8367e01`, the tested tree is `c5ff264d` |
+| 2026-10-09 | PR 5 implemented (Dev): legacy tables, owner lookup, alias removed, rule-1 guard | §7.3.6 added: refresh against `88f97171` (11 route sites, 3 helpers, the alias, `resolveAccountOwner`'s 2 reads), coverage check (every site and result arm already executed, so no harness entry), C-2 guard audit, guard design, evidence. 12 purpose methods: `UserSubscriptionRepository` (6, owner-scoped), `SystemConfigRepository.findRawValue`, `CreditTransactionRepository.insertReturningId` (its one write), new `BillingEventRepository` and `LegacyBoostPackPurchaseRepository`, and for the resolver `StripeConnectRepository.findOwnerIdByStripeAccountId` and `PluginConnectionRepository.listByPluginKey` (any status; FU-5 message unchanged). No try/catch, no logger. FU-1/FU-2/FU-6 code moved unchanged, `billing_events` rows kept byte for byte. `route.ts` `.from(` 11 → 0 (51 → 0 over CF-5), `supabaseAdmin` gone, `supabaseServer` only as the three helpers' argument; resolver direct reads 2 → 0. 103/103 snapshot entries identical, blob `4194ff19` unchanged; the 15 untouched functions `--exact` identical. Rule-1 check in `routerPlacement.guard` (no `.from`/`.rpc`, no other client use, no repository class, singletons only as direct call receivers, which closes QA PR 1 edge case 2) with a negative control; `userSubscriptionsWriteLockdown.qa` updated and given a section scope check; PR 3's C-3 count made per class. 66 unit tests + 2 resolver tests (proven on the untouched resolver first); regression 180 suites / 3,928 tests / 126 snapshots; scoped `tsc` 0 errors in changed files (same 60 elsewhere as the base files give); ESLint 0 errors; mutants M1–M12 killed. `REPOSITORY_STRATEGY.md` PR 5 paragraph. §9.4 "done" wording drafted for TL. Deviations PR5-D1 to D8, questions PR5-Q1 to Q3 for SA |
+| 2026-10-09 | SA code review of PR 5 | **NEEDS REVISION, test-only (CR-P5-1); the production code is approved as it stands.** SA's own evidence: per-entry snapshot comparison (own method) 103/103 identical, blob `4194ff19` unchanged; `--exact` 15 × identical; 11 route sites + 2 resolver reads read against `88f97171` (A4's `stripe_event_id: invoice.id`, the grace read, B4's `select('id')·single`, B2→B3 read-then-write all kept; FU-1/2/6 moved, not fixed); helpers get the same `supabaseServer` object the alias held; no status filter on `listByPluginKey`, plugin read only after an Express miss, FU-5 throw unchanged, `ownerCacheRetry.qa` green; import cycle and client-import exposure checked (none); 79 suites / 1,441 tests / 103 snapshots green; guard cost about 0.17 s. CR-P5-1: the rule-1 check misses an `as`-renamed singleton import, a namespace import (`new R.XRepository()` constructs a repository) and a relative repositories import (0 offences on copies of the real route); close it in the import loop and add 3 negative controls. CR-P5-2/3 Low docs (§9.4 draft: add FU-7/FU-8; guard claim true once CR-P5-1 lands). Rulings: D1–D8 accepted (D5 preferred, D6 accepted, no TypeError guard); Q1 keep the header verbatim; Q2 keep the write in `CreditTransactionRepository`; Q3 layout confirmed |
+| 2026-10-09 | PR 5: SA CR-P5-1 to CR-P5-3 done (Dev) | CR-P5-1: the rule-1 check's import loop now treats `@/lib/repositories…` and any `/repositories/` specifier as a repository import and flags namespace, default and `as`-renamed imports; singletons keyed by exported name. Four controls (rename, namespace, relative, default) failed on the old loop (0 offences each) and pass now; the real route and the `plan: handlePlanBillingEvent` case give no offence. `routerPlacement.guard` 28/28. CR-P5-2: FU-7 and FU-8 added to the §9.4 draft. CR-P5-3: strategy doc sentence names the import rule. Snapshot `4194ff19`, `route.ts` `cc10d119` unchanged |
+| 2026-10-09 | QA of PR 5 | **PASS WITH NOTES.** The `88f97171` route and resolver and the new ones were run side by side under the same mocks with a frozen clock: **68 route scenarios and 12 direct resolver calls, all byte-identical** (status, body, DB ops with payloads, key order and terminals, logs, the client each helper was handed). They cover dunning (grace from the row, from config, the default 3 and its boundary, no `user_id`, every returned error), the legacy boost checkout (ledger id carried through, both insert errors, existing balance, no `boost_pack_id`), `subscription.updated` / `deleted`, and the resolver (Express hit, plugin hit of any status, both miss, each error). A rejected and a thrown query at every new call site still gives 500 and the claim `failed`; the plugin read happens only after an Express miss. Owner scoping: one `user_id` filter on every `user_subscriptions` query, the metadata user on every insert, nothing touched without a `user_id`; `listByPluginKey` has one caller. **49 of 49 mutants killed**; without the two new QA files (`legacyRepository.qa.test.ts` 46 tests, `stripeAccountContext.repos.qa.test.ts` 11 tests), 11 survive: a `.catch` at any of the 11 route call sites. **Guard probes: 35 of 35 must-catch shapes caught; Array.from, comments (rule-1 check), a string literal and the `plan:` entry with its import are not flagged. 6 bypasses found** (Medium, test-only, recommended in this PR, SA to rule): a renamed `supabaseServer` import named `Array`/`Buffer` lets an inline `.from(` write through; a dynamic import of `supabaseServer` does the same; a renamed client or `createServerSupabaseClient` is not flagged; `require()` / `import()` of a repository module adds a call or builds a repository unseen. Regression 150 suites / 3,040 tests / 103 snapshots (35 s wall). Snapshot `4194ff19`, harness `b6f615ba` and all of Dev's files unchanged; temp files deleted |
+| 2026-10-09 | PR 5: QA bypasses B01–B07 closed (Dev) | `ruleOneOffences`: only the plain `supabaseServer` from `@/lib/supabaseServer` (no rename, default, namespace or other export); `Array.from`/`Buffer.from` exempt only with no local binding of that name; `import()`/`require()` of a repository or supabase module (or computed) is an offence, service imports stay allowed. Seven controls failed on the previous check (0 offences each) and pass now; real route `[]`; `routerPlacement.guard` 36/36. §7.3.6 guard design, §9.4 draft and `REPOSITORY_STRATEGY.md` describe the final rule; regex nit fixed. Snapshot `4194ff19`, `route.ts` `cc10d119` unchanged |

@@ -20,7 +20,8 @@ const OWNER_STATUS: Readonly<Record<BusinessOsBoostPurchaseStatus, BoostPurchase
   abandoned: 'expired',
   flagged_mismatch: 'under_review',
   disputed: 'under_review',
-  dispute_lost: 'under_review',
+  // BQ-1 (user, 2026-10-08): a lost chargeback reads "Payment reversed".
+  dispute_lost: 'reversed',
   refunded: 'refunded',
   partially_refunded: 'partially_refunded',
 };

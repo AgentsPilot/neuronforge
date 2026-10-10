@@ -1123,7 +1123,8 @@ guard_rows AS (
 
   INSERT INTO public.audit_trail (action, entity_type, entity_id, resource_name, user_id, actor_id, details, severity, compliance_flags, created_at)
   VALUES (
-    'BUSINESS_TEST_ACCOUNT_REMOVED', 'user', v_user_id::text, NULL, NULL, NULLIF(current_setting('cleanup.actor_id', true), '')::uuid,
+    'BUSINESS_TEST_ACCOUNT_REMOVED', 'user', v_user_id::text, NULL,
+    NULLIF(current_setting('cleanup.actor_id', true), '')::uuid, NULLIF(current_setting('cleanup.actor_id', true), '')::uuid,
     jsonb_build_object('source', coalesce(NULLIF(current_setting('cleanup.source', true), ''), 'operator_sql'), 'script', 'scripts/test-account-cleanup-delete.sql', 'tables', v_tables, 'rows', v_total, 'counts', v_counts),
     'warning', ARRAY['SOC2']::text[], now()
   );

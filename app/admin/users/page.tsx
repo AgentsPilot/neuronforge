@@ -35,10 +35,18 @@ import { BusinessOsPanel } from './components/BusinessOsPanel';
 import { UserNameLine } from './components/UserNameLine';
 import { CreditsLeftCell } from './components/CreditsLeftCell';
 import { DeleteBusinessDialog } from './components/DeleteBusinessDialog';
+import { TestAccountCleanupPanel } from '@/components/business-os/purge/TestAccountCleanupPanel';
 import { countLabels, toStatusFilter, type StatusFilter } from './userName';
 import type { RowBusiness, RowCreditsLeft } from './types';
 
 const logger = createLogger({ module: 'AdminUsersPage' });
+
+/**
+ * AU-2 (user decision 2026-10-08): the AD-1/AD-2 "Delete…" preview entry is
+ * hidden until AD-2 is activated. Button, dialog, route and tests stay;
+ * un-hiding is this one line.
+ */
+const SHOW_AD1_DELETE_ENTRY = false;
 
 interface User {
   id: string;
@@ -1174,28 +1182,45 @@ export default function UsersPage() {
                                     Danger area
                                   </h3>
                                   <p className="text-sm text-slate-400 mb-4">
-                                    Preview what deleting this business would remove and keep, and what refuses it. Deleting needs a typed confirmation in the dialog, and is offered only when nothing refuses it.
+                                    Check what removing this account would delete and what refuses it. Removing is offered only when the check allows it, and needs the email typed again. A refused check changes nothing.
                                   </p>
-                                  <button
-                                    type="button"
-                                    data-testid="delete-business-open"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setDeleteDialogUserId(user.id);
-                                    }}
-                                    className="px-4 py-2 text-sm font-medium rounded-lg border border-rose-500/50 text-rose-200 hover:bg-rose-500/20 transition-colors"
-                                  >
-                                    Delete…
-                                  </button>
-                                  <DeleteBusinessDialog
-                                    open={deleteDialogUserId === user.id}
-                                    onOpenChange={(next) => setDeleteDialogUserId(next ? user.id : null)}
-                                    accountId={user.id}
-                                    onDeleted={() => {
-                                      // FR-A9: after a deletion the row reads "No Business OS business".
-                                      void fetchUsers();
-                                    }}
-                                  />
+                                  {SHOW_AD1_DELETE_ENTRY && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        data-testid="delete-business-open"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setDeleteDialogUserId(user.id);
+                                        }}
+                                        className="px-4 py-2 text-sm font-medium rounded-lg border border-rose-500/50 text-rose-200 hover:bg-rose-500/20 transition-colors"
+                                      >
+                                        Delete…
+                                      </button>
+                                      <DeleteBusinessDialog
+                                        open={deleteDialogUserId === user.id}
+                                        onOpenChange={(next) => setDeleteDialogUserId(next ? user.id : null)}
+                                        accountId={user.id}
+                                        onDeleted={() => {
+                                          // FR-A9: after a deletion the row reads "No Business OS business".
+                                          void fetchUsers();
+                                        }}
+                                      />
+                                    </>
+                                  )}
+                                  {/* AU-1: the Danger Zone's hard delete, locked to this row's email (tag = email). */}
+                                  {user.email ? (
+                                    <TestAccountCleanupPanel
+                                      key={user.id}
+                                      lockedEmail={user.email}
+                                      onRemoved={() => {
+                                        // AU-C2: CLEAN only, once the admin clicks Done (or the panel unmounts); the row leaves the list.
+                                        void fetchUsers();
+                                      }}
+                                    />
+                                  ) : (
+                                    <p className="text-sm text-slate-500">This login has no email, so it cannot be removed here.</p>
+                                  )}
                                 </div>
                               </motion.div>
                             )}

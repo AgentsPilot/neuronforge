@@ -1,6 +1,6 @@
 # Workplan: Business OS Credits Boost — Slice 4a "Crediting from the webhook"
 
-> **Last Updated**: 2026-10-08
+> **Last Updated**: 2026-10-09
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md): FR-13 to FR-19, FR-27; HP-1 to HP-4; T-4, T-6, T-7, T-8; §18.10 R-6, R-8, R-10; F-1, F-8 / DEP-9
@@ -415,6 +415,8 @@ Production Stripe is in **test mode**, so nothing here takes real money. Real-mo
 
    With the list set, only that account can reach the checkout. Remove `BUSINESS_OS_CREDITS_BOOST_ENABLED` to switch it off again.
 5. **What can be tested before 5b:** the picker's Buy is still disabled (5a), so there is no in-product way to pay yet. **The end-to-end paid test (card 4242…, and a delayed method) is the first step of 5b.** Until then, step 4 is optional and harmless: the switch only opens `POST /checkout` to the listed account.
+> **Fallback only, since credits boost slice 4b.2 (2026-10-09).** A purchase a webhook missed is now recovered by the nightly `bos-billing-reconcile` pass (05:41 UTC), or at once by an admin through `POST /api/admin/business-os/credits/boost/reconcile` (the button is slice 6's). Use step 6 below only in an emergency, when neither can run (for example the cron is down and the admin route is unreachable). It stays test mode only, for `pending` / `awaiting_payment` rows only. See the [4b workplan](/docs/workplans/BUSINESS_OS_CREDITS_BOOST_SLICE_4B_WORKPLAN.md) §3.7 and §7.
+
 6. **If a test payment ever does not credit** (a stuck claim, F-1, until 4b or P-8b). **Only** for a **test-mode** event whose purchase row is still `pending` or `awaiting_payment` (SA C-6 b):
    1. Stripe dashboard (test mode) → Developers → Events → the `checkout.session.completed` (or `async_payment_succeeded`) event. Note its id (`evt_…`) and the session id in its data (`cs_test_…`).
    2. Supabase → SQL editor. Paste the statement below. Replace `PASTEEVENT` with everything **after** `evt_` in the event id, and `PASTESESSION` with everything **after** `cs_test_` in the session id. Underscores are written as `chr(95)` and dots as `chr(46)`, so nothing you paste contains either. The statement only matches a claim for a `checkout.session.completed` or `checkout.session.async_payment_succeeded` event (QA I-2); it is pinned by `lib/business-os/boost/__tests__/boostRecoverySql.doc.test.ts`.
@@ -768,3 +770,4 @@ Scoped tsc: 67 errors, 0 in changed files (20 untouched files)
 | 2026-10-08 | Approved and committed, PR #259 open | The user saw the diff and approved the commit (2026-10-08). RM committed on `feature/bos-credits-boost-slice-4a`, merged `origin/main` in, and opened [PR #259](https://github.com/AgentsPilot/neuronforge/pull/259) to `main`. After deploy the user subscribes the Stripe events (§7) |
 | 2026-10-08 | Post-merge characterisation (#254) | After the merge with main, #254's four agent-platform boost-pack entries (X44, X45, X46, X54) gain the same keyed boost read as P6 (accepted per QA I-1 and the SA P6 ruling). Only those four were regenerated: +68 / −0, 17 lines each, no Connect entry touched. 4a bar 47 suites / 1,220 tests / 100 snapshots green. Uncommitted for RM |
 | 2026-10-08 | Merged | PR #259 merged into main (e2813fca); main green. Next: the user subscribes the Stripe events after deploy (§7); the checkout flag stays off until slice 5b |
+| 2026-10-09 | §7 step 6 becomes the fallback (boost 4b.2) | A stuck purchase is recovered by the nightly `bos-billing-reconcile` pass or the admin reconcile route; the SQL-plus-Resend procedure stays documented for an emergency only (test mode, pending / awaiting rows). Its text is unchanged and still pinned by `boostRecoverySql.doc.test.ts` |
