@@ -9,7 +9,7 @@
 **Branch:** `fix/secdef-lockdown-slice-3` (worktree `neuronforge-secdef-s3`, off `origin/main` `4724b727`, the PR #277 merge)
 **Migration number:** `20261049` proposed. Checked 2026-10-09: `origin/main` (`90c33582`, PR #278 merged, which added `20261032`) tops at `20261048`; `gh pr list` shows no open PR touching `supabase/migrations/`, `supabase/SQL Scripts/` or `supabase/held/`. Re-check at PR time (T-10 rule)
 **Date:** 2026-10-09
-**Status:** Code Complete. Workplan SA-approved 2026-10-09 (S3-1 to S3-6 folded in); code SA-approved with nits 2026-10-10 (N-1 to N-3 applied, docs only); QA PASS. Uncommitted; next: the user sees the diff, then prod apply per §6.
+**Status:** ✅ Applied on prod 2026-10-10 18:12 UTC and accepted (PR #282). SA and QA approved; user acceptance passed (see QA section). Remaining: Postgres-log watch to T+24h (rollback only on a caller identified as ours).
 
 ## Overview
 
@@ -564,6 +564,10 @@ COLL (ICU und): precheck CLEAN; mutation without COLLATE C: STOP 17; checker 56/
 - [x] Every criterion that can be tested locally passes. **Ready for commit** once N-1 to N-3 are applied and the user has seen the diff. The user still owes prod acceptance after apply (§5.3, table below)
 - [ ] Issues found — Dev must address before commit
 
+### Prod apply and acceptance (user, 2026-10-10)
+
+Pre-check CLEAN 18:10 UTC (Q0 vector ok; Q5 match and owner granted all x18; Q6: 8 tg_*_events, 2 pipeline triggers, auto_set_agent_org_id and generate_subdomain, all SECDEF owned by postgres, ok; is_platform_admin 3 Q7 policies and 5 Q11 rows, all TO authenticated, ok); migration applied 18:12 UTC (21:12 local); checker VERDICT PASS 108 pass 0 fail; N1-N3 42501, P1/P2a/P2b/P3 as expected (user: all passed); F1 snapshot unchanged 59/17 (semantic L2 cache disabled by setting, so not evidence either way) and a direct service_role call of record_business_chat_plan_outcome and increment_verified_question_uses with NULL arguments ran with no error; F2 profile save with organisation field, F3 subdomain check, F4 booking completed + invoice Mark paid, F5 Network 200 signed out/in, F8 agent insert, and the F4/F8 count queries all passed; CRON: all 5 queue crons succeeded in the 90-minute window (calendar-sync partial, unrelated to this slice); Supabase Postgres logs: only the 3 deliberate N1-N3 refusals (21:28 local); Vercel logs: no access, covered by the Postgres logs.
+
 ### Acceptance blocks (written by Dev per SA S3-3 and S3-4, run by the user)
 
 Paste each block in its own **new** SQL-editor tab, after the migration and the checker. They hold no comment, no "into" and no timestamp literal; only P3 holds string literals (exactly `'request.jwt.claims'` and `'sub'`). The static test pins every block. Role blocks end in `ROLLBACK`, so nothing persists and the role reverts. If a role block fails with `permission denied to set role`, that is the editor role, not the slice: record it; the checker still proves the grants.
@@ -676,18 +680,18 @@ ORDER BY bos_cron_runs.job, bos_cron_runs.outcome;
 
 | Check | Result (user) |
 |---|---|
-| Pre-check status, Q6 caller count for `record_business_event`, Q7 and Q11 rows for `is_platform_admin` | ⬜ |
-| Checker | ⬜ |
-| N1, N2, N3 | ⬜ |
-| P1, P2a, P2b | ⬜ |
-| P3 | ⬜ |
-| F1 before and after, warn counts vs prior 24 h | ⬜ |
-| F2, F3 | ⬜ |
-| F4 writes, F4-events, F4-contacts | ⬜ |
-| F5 Network status signed out and signed in | ⬜ |
-| F8 | ⬜ |
-| CRON | ⬜ |
-| Logs: Vercel T+15 and T+60 min; Postgres to T+24 h | ⬜ |
+| Pre-check status, Q6 caller count for `record_business_event`, Q7 and Q11 rows for `is_platform_admin` | ✅ prod 2026-10-10 |
+| Checker | ✅ prod 2026-10-10 |
+| N1, N2, N3 | ✅ prod 2026-10-10 |
+| P1, P2a, P2b | ✅ prod 2026-10-10 |
+| P3 | ✅ prod 2026-10-10 |
+| F1 before and after, warn counts vs prior 24 h | ✅ prod 2026-10-10 |
+| F2, F3 | ✅ prod 2026-10-10 |
+| F4 writes, F4-events, F4-contacts | ✅ prod 2026-10-10 |
+| F5 Network status signed out and signed in | ✅ prod 2026-10-10 |
+| F8 | ✅ prod 2026-10-10 |
+| CRON | ✅ prod 2026-10-10 |
+| Logs: Vercel T+15 and T+60 min; Postgres to T+24 h | ✅ Postgres: only the 3 deliberate N1–N3 refusals; Vercel: no access (covered by Postgres); 24 h watch continues |
 
 ---
 
@@ -700,3 +704,4 @@ ORDER BY bos_cron_runs.job, bos_cron_runs.outcome;
 | 2026-10-09 | SA conditions folded in; implementation T-5 to T-10 (Dev) | S3-1 (§2.1 Q7 and Q11: `is_platform_admin` policy roles must be a subset of authenticated and service_role), S3-2 (§2.1 Q6: INVOKER trigger caller always stops), S3-3 (§5.3 mandatory set, end-to-end F4, new F8, F2 organisation field, F5 Network status), S3-4 (acceptance blocks verbatim in the QA section, no timestamp literals, P3 mandatory with two literals, inconclusive rule), S3-5 (§1.3 rows 2 and 4 fully silent, C6 as their proof, F1 before/after snapshot, warn counts against the prior 24 h), S3-6 (§1.6). Five files written under `20261049`; static test 100/100; regressions green; number still free. SA part (A) nits applied in the requirement and inventory. Left uncommitted for SA code review |
 | 2026-10-10 | SA code review | APPROVED WITH NITS. S3-1 to S3-6 verified in code. Desk-check: the `is_platform_admin` REVOKE then GRANT leaves authenticated true and anon and public false; the per-shape rollback rebuilds the TSV sets (B x14, C x3, D x1); the Q11 `polroles` subset rule stops PUBLIC `{0}`; the Q6 CASE order is correct; the negative blocks cannot be const-folded; the current `auth.uid()` reads P3's `set_config`; every acceptance table and column exists. Slice test 100/100, `test:authz-guard` 203/203. N-1: add the SQ-3 dead references and inventory §6 row 3 now, in this diff. N-2: P3 pass criterion and inconclusive wording. N-3: F8 `without_org` is not a rollback trigger. N-4: informational |
 | 2026-10-10 | SA code-review nits and QA notes applied (Dev, docs only) | N-1 in the requirement (SQ-3 now lists the five uncalled TS references) and the inventory (§6 row 3: `20261049`, code complete, SA code-approved, QA PASS). N-2: P3 passes on `is_admin` true and `pricing_rows` > 0; false is inconclusive (no bound admin `user_id`, or a prod `auth.uid()` that reads only `request.jwt.claim.sub`). N-3: the F8 rollback signal is a failed agent insert; `without_org` above 0 is investigate-only (§5.3 F8, §6, F8 block lead-in). QA notes: §5.2 anon `42501` under a public policy only without an always-true read policy beside it; §2.1 expected Q11 rows for `is_platform_admin` now 5 (FOR ALL policies record USING and WITH CHECK). No SQL file and no pinned block changed |
+| 2026-10-10 | Prod apply and acceptance (user, recorded by TL) | pre-check CLEAN 18:10 UTC (Q0 vector ok; Q5 match and owner granted all x18; Q6: 8 tg_*_events, 2 pipeline triggers, auto_set_agent_org_id and generate_subdomain, all SECDEF owned by postgres, ok; is_platform_admin 3 Q7 policies and 5 Q11 rows, all TO authenticated, ok); migration applied 18:12 UTC (21:12 local); checker VERDICT PASS 108 pass 0 fail; N1-N3 42501, P1/P2a/P2b/P3 as expected (user: all passed); F1 snapshot unchanged 59/17 (semantic L2 cache disabled by setting, so not evidence either way) and a direct service_role call of record_business_chat_plan_outcome and increment_verified_question_uses with NULL arguments ran with no error; F2 profile save with organisation field, F3 subdomain check, F4 booking completed + invoice Mark paid, F5 Network 200 signed out/in, F8 agent insert, and the F4/F8 count queries all passed; CRON: all 5 queue crons succeeded in the 90-minute window (calendar-sync partial, unrelated to this slice); Supabase Postgres logs: only the 3 deliberate N1-N3 refusals (21:28 local); Vercel logs: no access, covered by the Postgres logs |
