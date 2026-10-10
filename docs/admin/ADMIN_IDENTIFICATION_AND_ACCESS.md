@@ -40,8 +40,8 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-10-09** (credits boost slice 4b.2, on `88b1938f` plus that slice): **99 handlers across 69
-route files = 93 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
+Re-derived **2026-10-09** (credits boost slice 6a, on `90c33582` plus that slice): **100 handlers across 70
+route files = 94 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
 asserted — re-run the census rather than trusting these figures if much time has
 passed.
 
@@ -161,6 +161,15 @@ passed.
 > The headline above, "What is true", the register heading and its summary line were
 > updated to these figures in the same change.
 
+> **99 → 100 (2026-10-09):** `business-os/credits/accounts/[accountId]/boost#GET` (credits
+> boost slice 6a, the read-only "Credit top-ups" block of the Businesses panel), gated from
+> birth with `requireAdmin` as its first statement (row **103**). Re-measured from disk with
+> the scratch script that strips comments and classifies each exported handler as the guard
+> does: 99 / 93 + 6 / 69 files before, **100 / 94 + 6 + 0 open / 70 files** after.
+> `adminGate.writes` unchanged (a GET with its own denial cases in its route test, as row 93
+> does). No cap moved, no exemption added. The headline above, "What is true", the register
+> heading and its summary line were updated in the same change.
+
 ### What is true
 
 | Claim | Status |
@@ -169,7 +178,7 @@ passed.
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| **Every one of the 99 `/api/admin/*` handlers requires an admin.** 93 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-09** (slices 2 + 3 of the unification; re-counted from disk in credits boost slice 4b.2) |
+| **Every one of the 100 `/api/admin/*` handlers requires an admin.** 94 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-09** (slices 2 + 3 of the unification; re-counted from disk in credits boost slice 4b.2) |
 | **All 28 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 7 added since inherited it without an edit: `business-os-tiers`, `business-os-llm`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1), `jobs-queues` (admin reorganisation slice 5, a client page), `business-os-invites` (invite-only signup slice 0) and `agentspilot-billing` (ADMIN_BOS_CLEANUP slice 2, a client page). 21 + 7 = 28. Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/`. Re-counted 2026-10-03 from disk: 27 on `5061489b`, 28 after ADMIN_BOS_CLEANUP slice 2 |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
@@ -189,14 +198,14 @@ the work mostly done, as it was when the work had barely started.
 | ~~"A refused admin access is recorded"~~ | **Only on three surfaces.** Since 2026-10-01 the shared gates write one `audit_trail` row with `action = SECURITY_UNAUTHORIZED_ACCESS` when they answer "no": `requireAdmin` (`lib/admin/requireAdminRoute.ts`), `requireAdminPage` (`lib/admin/requireAdminPage.ts`) and the refused act-as (`lib/server/route-identity.ts`). The **6 hand-rolled handlers above record NOTHING on refusal** — `agents`, `business-os/llm-usage`, `business-os/llm-usage/businesses`, `chat-usage`, `users/[id]/audit-logs`, `users/[id]/login-stats`. So filtering `/admin/audit-trail` by that action shows refusals on the counted surfaces only; an empty result means "nothing was refused on those three", never "nobody probed". Anonymous callers are also not recorded (401, no identity to refuse), and a refusal caused by the admin check **throwing** is deliberately not recorded either. Closing this is part of the **parked slice 4** conversion, which is also the only thing that can shorten the list of six. |
 | ~~"The published counts cannot drift"~~ | The equality caps stop the exemption lists getting **longer**. Nothing forces an entry to be deleted when its handler is gated, so the figures can still drift **conservatively** — understating how much is gated (OI-22). |
 
-### Every admin handler and its state (99)
+### Every admin handler and its state (100)
 
 The unit is the **handler**, not the file: slice 1 gated write verbs and left read
 verbs open in the *same* files, so a file-level table would have been misleading.
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**93 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 and rows 99–102 on 2026-10-09; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **102 rows, 99 live**, equal to the measured handler count.)
+**94 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 and rows 99–103 on 2026-10-09; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **103 rows, 100 live**, equal to the measured handler count.)
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -302,6 +311,7 @@ the right unit for the register.
 | 100 | `test-account-cleanup/check` | `POST` | ✅ gated | `requireAdmin` first statement (OX-1r): the read-only check of one test account through the secret-gated cleanup function in check mode (the function sets its own transaction read-only). Strict Zod `{ email, tag }`; 503 when the second secret is not set. Not audited (BQ-5). Registered 2026-10-09 (doc only) |
 | 101 | `test-account-cleanup/delete` | `POST` | ✅ gated | `requireAdmin` first statement (OX-1r): **DESTRUCTIVE once the second secret is set and the function applied**: removes one TEST account completely, login included, through the secret-gated function (guards G-1…G-19 inside it). Strict Zod `{ email, tag, confirmEmail }`; 503 off switch. Success audited inside the function; refusals write `BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED`. Registered 2026-10-09 (doc only) |
 | 102 | `business-os/credits/boost/reconcile` | `POST` | ✅ gated | `requireAdmin` first statement, new in credits boost slice 4b.2 (SA C-5): runs the boost reconcile pass now, the same pass the nightly `bos-billing-reconcile` cron runs (stuck purchases credited, expired or failed from Stripe's own answer; open disputes re-read; missing receipt links filled), awaited, 45 s deadline, `maxDuration = 60`. A deliberate cross-account action by design: every effect runs through the row-locked, idempotent 2b functions on the purchase's own id and account; lots are never touched. The body must be empty or `{}` (strict Zod), so no account, purchase or mode can be sent; 401/403 before 400 with nothing read, run or audited (route test G-1…G-6, `adminGate.writes`). One write-ahead `BOS_BOOST_RECONCILE_TRIGGERED` row per press, flushed before the pass, on a **system** entity (the run id, the admin as user and actor; SA C-7: never a purchase). Never calls the cron URL, reads `CRON_SECRET` or records a cron run. Counts only in the response and the log. The button is slice 6's |
+| 103 | `business-os/credits/accounts/[accountId]/boost` | `GET` | ✅ gated | `requireAdmin` first statement, new in credits boost slice 6a (the "Credit top-ups" block of the Businesses panel at `/admin/users`, FR-38, R-12). A deliberate cross-account, **read-only** read of ONE admin-selected account: its boost purchases in both Stripe modes (at most 50 each, ids only for Stripe), its spending limit (the configured default, the active admin override) and the last 20 limit changes. The 11c order: `requireAdmin` (401/403) → Zod uuid (400) → lower-case + `resolveAccountId` → platform account 409 → tenant check (500 / 404) → the reads. The account comes only from the path; no body is read and the query string is ignored. Every read goes through the boost repository scoped `.eq('user_id', accountId)`; no `…ForWebhook` finder (a source guard). Pinned payload keys (no email, secret or receipt link). No write and no audit row (a plain read); one `info` log with ids, statuses and counts. Pinned by its route test |
 
 ### CI enforcement
 
@@ -697,3 +707,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-04 | ADMIN_BOS_CLEANUP slice 7c: row 95 text names retry | Row **95** `jobs-queues/items/action#POST` now also takes `action: 'retry'` ("Retry item", one more send attempt for one failed queue item); its text is updated in place. **No handler added by this slice:** `adminGate.writes` is unchanged, no cap moved, no exemption. Row 96 (`business-os/ai-activity/drill-down#GET`) was registered by admin delete AD-1b first, so 7c no longer adds it; the census figures are AD-1b's (94 = 88 + 6 + 0, 65 files) as of the merge of `main` into 7c on 2026-10-06. |
 | 2026-10-06 | Admin delete AD-2a: register row 98, census 95 = 89 + 6 + 0, 66 files | Row **98** `users/[id]/deletion/commit#POST` (the admin business-deletion commit, destructive once active, shipped inactive behind the `ADMIN_BUSINESS_DELETE_ENABLED` off switch and the held RPC), gated from birth with `requireAdmin` as its first statement. Census re-measured from disk on `4c1b630a` plus this slice with the authz guard's own `scanHandlers`: **95 / 89 + 6 + 0 open / 66 files** (was 94 / 88 + 6 / 65). `adminGate.writes` 60 → 61. No cap moved, no exemption |
 | 2026-10-09 | Credits boost slice 4b.2: register rows 99–102, census 99 = 93 + 6 + 0, 69 files | Row **102** `business-os/credits/boost/reconcile#POST` (run the boost reconcile pass now), gated from birth with `requireAdmin` as its first statement. Rows **99–101**, the three test-account cleanup handlers (OX-1r, gated from birth on `main` but unregistered), added doc-only. Census re-measured from disk on `88b1938f` plus this slice: **99 / 93 + 6 + 0 open / 69 files** (was 98 / 92 + 6 / 68 on the base). `adminGate.writes` 64 → 65. No cap moved, no exemption |
+| 2026-10-09 | Credits boost slice 6a: register row 103, census 100 = 94 + 6 + 0, 70 files | Row **103** `business-os/credits/accounts/[accountId]/boost#GET` (the read-only admin "Credit top-ups" view), gated from birth with `requireAdmin` as its first statement. Census re-measured on `90c33582` plus this slice: **100 / 94 + 6 + 0 open / 70 files** (was 99 / 93 + 6 / 69). `adminGate.writes` unchanged. No cap moved, no exemption |
