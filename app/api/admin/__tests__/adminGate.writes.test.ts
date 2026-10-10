@@ -257,6 +257,8 @@ import * as userDeletionCommit from '../users/[id]/deletion/commit/route';
 // Test-account cleanup OX-1r (2026-10-07): probe, check, delete (DESTRUCTIVE; gated from birth).
 import * as testAccountCleanupCheck from '../test-account-cleanup/check/route';
 import * as testAccountCleanupDelete from '../test-account-cleanup/delete/route';
+// Credits boost slice 4b.2 (2026-10-09): run the boost reconcile pass now (gated from birth).
+import * as boostReconcile from '../business-os/credits/boost/reconcile/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -453,6 +455,14 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
         req('/api/admin/test-account-cleanup/delete', 'POST', { email: 'a+test@example.net', tag: '+test', confirmEmail: 'a+test@example.net' })
       ),
   },
+
+  // ── Credits boost slice 4b.2 (2026-10-09) ───────────────────────────────
+  // Runs the boost reconcile pass now: it may credit, expire or fail purchases
+  // across every account. Nothing (the pass's list read, a Stripe read, the
+  // write-ahead audit row) may happen before the gate. The admin case reaches
+  // the handler; with no Stripe key here the pass reports it cannot read
+  // Stripe and the route answers 200, never 401/403.
+  { name: 'POST /api/admin/business-os/credits/boost/reconcile', call: () => boostReconcile.POST(req('/api/admin/business-os/credits/boost/reconcile', 'POST', {})) },
 ];
 
 beforeEach(() => {
@@ -489,10 +499,12 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  = 61
     //  + 3  `test-account-cleanup/check#GET` (probe), `#POST` and
     //       `test-account-cleanup/delete#POST` (OX-1r), gated from birth
-    //  = 64, which is every admin handler now on the canonical gate EXCEPT the
+    //  = 64
+    //  + 1  `business-os/credits/boost/reconcile#POST` (credits boost slice 4b.2), gated from birth
+    //  = 65, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(64);
+    expect(CASES).toHaveLength(65);
   });
 
   describe.each(CASES)('$name', ({ call }) => {
