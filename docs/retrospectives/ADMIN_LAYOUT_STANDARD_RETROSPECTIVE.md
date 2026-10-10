@@ -33,4 +33,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - For admin browser checks, arrange the signed-in browser (in-app pane or Chrome extension) before QA starts.
 - Keep scanning every MD for backslashes before commit.
 
-### Status: APPROVED by user 2026-10-10 — commit + PR pending (RM)
+### Status: COMMITTED — feature/admin-layout-standard — 4655d6c5, PR #285

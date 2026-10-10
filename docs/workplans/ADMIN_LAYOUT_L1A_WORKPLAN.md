@@ -1,12 +1,12 @@
 # Workplan: Admin Layout Standard — Slice L-1a (shared header, states, read helpers, Refresh bar, folder guard → pilot Health)
 
-> **Last Updated**: 2026-10-09
+> **Last Updated**: 2026-10-10
 
 **Developer:** Dev
 **Requirement:** [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md): §5.3, §5.5 (part 6), §5.10, §5.11, §5.12, §6.1 (S-1 to S-10), §6.2 (C-1 to C-5, C-8 Refresh part, C-14), §7.1, §12.2; SA re-check 2026-10-09 ("L-1a scope for the Dev workplan", RC-1 to RC-5)
 **Branch:** `feature/admin-layout-standard`, cut from `origin/main` `88f97171` (worktree `neuronforge-admin-layout`)
 **Date:** 2026-10-09
-**Status:** Code Complete (2026-10-09). SA code review 2026-10-09: APPROVED, ready for QA. SA workplan review 2026-10-09: APPROVED WITH CONDITIONS (W-1 to W-10), applied. Nothing is committed: the user reads the diff first.
+**Status:** PR #285 open — awaiting required checks + user merge (2026-10-10). Committed `4655d6c5` on `feature/admin-layout-standard`, origin/main merged in `a8333bab`. User approved the diff 2026-10-10. QA PASS WITH NOTES 2026-10-09. SA code review 2026-10-09: APPROVED. SA workplan review 2026-10-09: APPROVED WITH CONDITIONS (W-1 to W-10), applied.
 **Path:** full cycle (new shared pattern, CLAUDE.md rule 7).
 
 ## Overview
@@ -610,3 +610,4 @@ At `/admin`, signed in as an admin, in DevTools → Rendering → "Emulate CSS m
 | 2026-10-09 | Dev implementation | T-1 to T-12 done, uncommitted; W-1 to W-10 applied; §5.2 W-10 row; §8 results (V-1 to V-6) |
 | 2026-10-09 | SA code review | APPROVED, code approved for QA. No must-fix; CR-1 (green-constant scope loophole) should-fix carried to L-1b; CR-2 to CR-7 notes. SA re-ran 25 suites / 943 tests green |
 | 2026-10-09 | QA report | PASS WITH NOTES: 954 + 5776 tests green; scoped tsc canary (3 planted errors) then clean (0); 34 QA edge-case tests (deleted afterwards); no bugs; E-1 to E-3 Low; browser checklist for TL |
+| 2026-10-10 | Committed + PR (RM) | User approved the diff. Commit `4655d6c5`; origin/main merged in `a8333bab` (no conflicts). PR #285 open, not merged. Post-merge local run: admin set 953/954 (one load-sensitive pre-existing jobs-queues test, W7A-2, passes alone and is green on main CI; unrelated), entitlements 5996/5996, hooks lint clean |
