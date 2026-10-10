@@ -22,10 +22,6 @@ jest.mock('@/components/UserProvider', () => ({
   useAuth: () => ({ user: sessionUser }),
 }));
 
-jest.mock('next/navigation', () => ({
-  usePathname: () => '/admin',
-}));
-
 jest.mock('@/lib/utils/marketingUrl', () => ({
   marketingLogoutUrl: () => 'https://marketing.example/logout',
 }));
@@ -72,9 +68,16 @@ describe('AdminHeader', () => {
     expect(screen.getByTestId('admin-header-name')).toHaveTextContent('ops@example.com');
   });
 
-  it('keeps the page title', () => {
+  it('renders no heading (each page owns its single h1, Admin Layout Standard C-1)', () => {
     render(<AdminHeader adminName="Dana Levi" onMenuClick={() => undefined} />);
-    expect(screen.getByRole('heading', { name: 'Health' })).toBeInTheDocument();
+    expect(screen.queryAllByRole('heading')).toHaveLength(0);
+  });
+
+  it('the menu button is named Open menu', () => {
+    const onMenuClick = jest.fn();
+    render(<AdminHeader adminName="Dana Levi" onMenuClick={onMenuClick} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+    expect(onMenuClick).toHaveBeenCalledTimes(1);
   });
 
   it('has no search input and no dropdown', () => {
