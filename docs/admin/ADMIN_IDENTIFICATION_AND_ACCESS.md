@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-10-06
+> **Last Updated**: 2026-10-09
 
 ## Overview
 
@@ -40,8 +40,8 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-10-06** (admin delete AD-2a, on `4c1b630a` plus that slice): **95 handlers across 66
-route files = 89 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
+Re-derived **2026-10-09** (credits boost slice 4b.2, on `88b1938f` plus that slice): **99 handlers across 69
+route files = 93 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
 asserted — re-run the census rather than trusting these figures if much time has
 passed.
 
@@ -149,6 +149,18 @@ passed.
 > moved, no exemption added. The headline above, "What is true", the register heading
 > and its summary line were updated to these figures in the same change.
 
+> **95 → 98 → 99 (2026-10-09):** `main` `88b1938f` already held 98 handlers / 92 +
+> 6 / 68 files: the three test-account cleanup handlers (`test-account-cleanup/check#GET`,
+> `#POST` and `test-account-cleanup/delete#POST`, OX-1r, 2026-10-07) were gated from
+> birth but never registered, so they are rows **99–101** (doc only). Credits boost
+> slice 4b.2 adds `business-os/credits/boost/reconcile#POST` (run the boost reconcile
+> pass now), gated from birth with `requireAdmin` as its first statement (row **102**).
+> Re-measured from disk with a scratch script that strips comments and classifies
+> each exported handler as the guard does: **99 / 93 + 6 + 0 open / 69 files**.
+> `adminGate.writes` 64 → 65 (the reconcile POST). No cap moved, no exemption added.
+> The headline above, "What is true", the register heading and its summary line were
+> updated to these figures in the same change.
+
 ### What is true
 
 | Claim | Status |
@@ -157,7 +169,7 @@ passed.
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| **Every one of the 95 `/api/admin/*` handlers requires an admin.** 89 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-06** (slices 2 + 3 of the unification; re-counted from disk in admin delete AD-2a) |
+| **Every one of the 99 `/api/admin/*` handlers requires an admin.** 93 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-09** (slices 2 + 3 of the unification; re-counted from disk in credits boost slice 4b.2) |
 | **All 28 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 7 added since inherited it without an edit: `business-os-tiers`, `business-os-llm`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1), `jobs-queues` (admin reorganisation slice 5, a client page), `business-os-invites` (invite-only signup slice 0) and `agentspilot-billing` (ADMIN_BOS_CLEANUP slice 2, a client page). 21 + 7 = 28. Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/`. Re-counted 2026-10-03 from disk: 27 on `5061489b`, 28 after ADMIN_BOS_CLEANUP slice 2 |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
@@ -177,14 +189,14 @@ the work mostly done, as it was when the work had barely started.
 | ~~"A refused admin access is recorded"~~ | **Only on three surfaces.** Since 2026-10-01 the shared gates write one `audit_trail` row with `action = SECURITY_UNAUTHORIZED_ACCESS` when they answer "no": `requireAdmin` (`lib/admin/requireAdminRoute.ts`), `requireAdminPage` (`lib/admin/requireAdminPage.ts`) and the refused act-as (`lib/server/route-identity.ts`). The **6 hand-rolled handlers above record NOTHING on refusal** — `agents`, `business-os/llm-usage`, `business-os/llm-usage/businesses`, `chat-usage`, `users/[id]/audit-logs`, `users/[id]/login-stats`. So filtering `/admin/audit-trail` by that action shows refusals on the counted surfaces only; an empty result means "nothing was refused on those three", never "nobody probed". Anonymous callers are also not recorded (401, no identity to refuse), and a refusal caused by the admin check **throwing** is deliberately not recorded either. Closing this is part of the **parked slice 4** conversion, which is also the only thing that can shorten the list of six. |
 | ~~"The published counts cannot drift"~~ | The equality caps stop the exemption lists getting **longer**. Nothing forces an entry to be deleted when its handler is gated, so the figures can still drift **conservatively** — understating how much is gated (OI-22). |
 
-### Every admin handler and its state (95)
+### Every admin handler and its state (99)
 
 The unit is the **handler**, not the file: slice 1 gated write verbs and left read
 verbs open in the *same* files, so a file-level table would have been misleading.
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**89 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04 and row 98 on 2026-10-06; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **98 rows, 95 live**, equal to the measured handler count.)
+**93 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 and rows 99–102 on 2026-10-09; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **102 rows, 99 live**, equal to the measured handler count.)
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -286,6 +298,10 @@ the right unit for the register.
 | 96 | `business-os/ai-activity/drill-down` | `GET` | ✅ gated | `requireAdmin` (`drill-down/route.ts`). Gated from birth by Admin AI Activity slice B2a (`5457e520`, the drill-down drawer of the Activity tab): one Business OS AI action's charge, the other charges of its grouping id on its account, their corrections and audit entries. The action id is the only input; account and grouping id are read from the charge row. Read-only, no audit row (one `info` log with ids and counts). Registered 2026-10-04 (doc only) by admin delete AD-1b, so the register matches the measured census |
 | 97 | `users/[id]/deletion/preview` | `POST` | ✅ gated | `requireAdmin` first statement, new in admin delete AD-1b (the read-only deletion preview behind the Businesses page `/admin/users`). A deliberate cross-account **read** of ONE admin-selected account: what deleting its business would remove and keep, and every refusal R-1…R-8, through `lib/business-os/purge/AdminDeletionPreview.ts` (repositories only; service role documented at each). The target comes only from the path (Zod uuid, lower-cased, 400 before any lookup); the body must be empty or `{}` (strict Zod, so a `userId` is a 400); level and options are fixed server-side. 404 for an unknown account, 500 when the identity read fails. **Nothing is deleted**: no destructive call (the only RPC is the existing null-id existence probe, SA D-2). Since AD-2a it may return a signed `commitToken` for row 98 (never logged; the audit row carries `tokenMinted` only). A POST only so the shared gate oracle covers it (`adminGate.writes`, read-only POST). One `BUSINESS_DELETION_PREVIEWED` audit row (`info`) per answered request, admin as user and actor, bounded flush. 401/403 before 400 with nothing read (route test, `adminGate.writes`). Logs carry ids only |
 | 98 | `users/[id]/deletion/commit` | `POST` | ✅ gated | `requireAdmin` first statement, new in admin delete AD-2a: an admin deletes ONE business at the Purge level, through the one purge orchestrator (`runPurgeCommit`, admin arm) via `lib/business-os/purge/AdminDeletionCommit.ts` (repositories only; service role documented at each). **DESTRUCTIVE once active; shipped INACTIVE**: the `ADMIN_BUSINESS_DELETE_ENABLED` off switch (server-only, default off) refuses 409 `admin_delete_disabled` before anything is read, and the held `purge_business_data` makes the orchestrator refuse `rpc_not_applied` before any snapshot. The target comes only from the path (Zod uuid, lower-cased, 400 before any lookup); the body is strict `{ token, confirmText }` (a `userId`, `level` or `options` is a 400); level and options are fixed server-side and bound into the HMAC preview token (actor, target, confirm kind, fingerprint, 10-minute TTL). Fresh admin re-check of the actor and R-1…R-8 twice (before the run and immediately before the RPC). Every refusal writes an admin-owned `BUSINESS_DATA_PURGE_BLOCKED` row (bounded flush); the write-ahead `BUSINESS_DELETION_STARTED` and the outcome `BUSINESS_DATA_PURGED` are confirmed writes (`writeNow`), admin as user and actor. 401/403 before 400 with nothing read (route test, `adminGate.writes`). Logs carry ids and codes only, never the token |
+| 99 | `test-account-cleanup/check` | `GET` | ✅ gated | `requireAdmin` first statement. Gated from birth by the test-account cleanup OX-1r (2026-10-07): the Danger Zone panel's "configured?" probe; answers `{ configured }` only. Registered 2026-10-09 (doc only) by credits boost slice 4b.2, so the register matches the measured census |
+| 100 | `test-account-cleanup/check` | `POST` | ✅ gated | `requireAdmin` first statement (OX-1r): the read-only check of one test account through the secret-gated cleanup function in check mode (the function sets its own transaction read-only). Strict Zod `{ email, tag }`; 503 when the second secret is not set. Not audited (BQ-5). Registered 2026-10-09 (doc only) |
+| 101 | `test-account-cleanup/delete` | `POST` | ✅ gated | `requireAdmin` first statement (OX-1r): **DESTRUCTIVE once the second secret is set and the function applied**: removes one TEST account completely, login included, through the secret-gated function (guards G-1…G-19 inside it). Strict Zod `{ email, tag, confirmEmail }`; 503 off switch. Success audited inside the function; refusals write `BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED`. Registered 2026-10-09 (doc only) |
+| 102 | `business-os/credits/boost/reconcile` | `POST` | ✅ gated | `requireAdmin` first statement, new in credits boost slice 4b.2 (SA C-5): runs the boost reconcile pass now, the same pass the nightly `bos-billing-reconcile` cron runs (stuck purchases credited, expired or failed from Stripe's own answer; open disputes re-read; missing receipt links filled), awaited, 45 s deadline, `maxDuration = 60`. A deliberate cross-account action by design: every effect runs through the row-locked, idempotent 2b functions on the purchase's own id and account; lots are never touched. The body must be empty or `{}` (strict Zod), so no account, purchase or mode can be sent; 401/403 before 400 with nothing read, run or audited (route test G-1…G-6, `adminGate.writes`). One write-ahead `BOS_BOOST_RECONCILE_TRIGGERED` row per press, flushed before the pass, on a **system** entity (the run id, the admin as user and actor; SA C-7: never a purchase). Never calls the cron URL, reads `CRON_SECRET` or records a cron run. Counts only in the response and the log. The button is slice 6's |
 
 ### CI enforcement
 
@@ -680,3 +696,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-04 | Admin delete AD-1b: register rows 96–97, census 94 = 88 + 6 + 0, 65 files | Row **97** `users/[id]/deletion/preview#POST` (the read-only admin deletion preview), gated from birth with `requireAdmin` as its first statement. Row **96** `business-os/ai-activity/drill-down#GET` (Admin AI Activity B2a, gated from birth on `main` but unregistered) added doc-only. Census re-measured from disk on `0db9da62` plus this slice with the authz guard's own `scanHandlers`: **94 / 88 + 6 + 0 open / 65 files** (was 93 / 87 + 6 / 64 on the base). `adminGate.writes` 59 → 60. No cap moved, no exemption |
 | 2026-10-04 | ADMIN_BOS_CLEANUP slice 7c: row 95 text names retry | Row **95** `jobs-queues/items/action#POST` now also takes `action: 'retry'` ("Retry item", one more send attempt for one failed queue item); its text is updated in place. **No handler added by this slice:** `adminGate.writes` is unchanged, no cap moved, no exemption. Row 96 (`business-os/ai-activity/drill-down#GET`) was registered by admin delete AD-1b first, so 7c no longer adds it; the census figures are AD-1b's (94 = 88 + 6 + 0, 65 files) as of the merge of `main` into 7c on 2026-10-06. |
 | 2026-10-06 | Admin delete AD-2a: register row 98, census 95 = 89 + 6 + 0, 66 files | Row **98** `users/[id]/deletion/commit#POST` (the admin business-deletion commit, destructive once active, shipped inactive behind the `ADMIN_BUSINESS_DELETE_ENABLED` off switch and the held RPC), gated from birth with `requireAdmin` as its first statement. Census re-measured from disk on `4c1b630a` plus this slice with the authz guard's own `scanHandlers`: **95 / 89 + 6 + 0 open / 66 files** (was 94 / 88 + 6 / 65). `adminGate.writes` 60 → 61. No cap moved, no exemption |
+| 2026-10-09 | Credits boost slice 4b.2: register rows 99–102, census 99 = 93 + 6 + 0, 69 files | Row **102** `business-os/credits/boost/reconcile#POST` (run the boost reconcile pass now), gated from birth with `requireAdmin` as its first statement. Rows **99–101**, the three test-account cleanup handlers (OX-1r, gated from birth on `main` but unregistered), added doc-only. Census re-measured from disk on `88b1938f` plus this slice: **99 / 93 + 6 + 0 open / 69 files** (was 98 / 92 + 6 / 68 on the base). `adminGate.writes` 64 → 65. No cap moved, no exemption |

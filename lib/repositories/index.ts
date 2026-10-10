@@ -248,6 +248,26 @@ export type {
 // CF-5 PR 3: the refund ledger's Stripe webhook write (payment_refunds).
 export { PaymentRefundRepository, paymentRefundRepository } from './PaymentRefundRepository';
 export type { NewStripeRefundRow, PaymentRefundResult } from './PaymentRefundRepository';
+// CF-5 PR 5: the Stripe webhook's agent-platform legacy writes (billing_events,
+// boost_pack_purchases) and the types of the legacy sections it added to
+// UserSubscriptionRepository and SystemConfigRepository.
+export { BillingEventRepository, billingEventRepository } from './BillingEventRepository';
+export type { BillingEventResult, NewLegacyBillingEventRow } from './BillingEventRepository';
+export {
+  LegacyBoostPackPurchaseRepository,
+  legacyBoostPackPurchaseRepository,
+} from './LegacyBoostPackPurchaseRepository';
+export type {
+  LegacyBoostPackPurchaseResult,
+  NewLegacyBoostPackPurchaseRow,
+} from './LegacyBoostPackPurchaseRepository';
+export type {
+  LegacyBalance,
+  LegacyDunningState,
+  LegacyDunningStatus,
+  LegacyWebhookResult,
+} from './UserSubscriptionRepository';
+export type { LegacyWebhookConfigKey, LegacyWebhookConfigResult } from './SystemConfigRepository';
 // CF-5 PR 3: the types of PaymentTransactionRepository's Stripe webhook section (payment_transactions).
 export type {
   NewWebhookTransactionRow,

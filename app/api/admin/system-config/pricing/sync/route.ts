@@ -3,17 +3,22 @@ import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { logAIPricingSynced } from '@/lib/audit/admin-helpers';
 import { createLogger } from '@/lib/logger';
 import { aiModelPricingRepository } from '@/lib/repositories/AiModelPricingRepository';
+import { AuditTrailService } from '@/lib/services/AuditTrailService';
 
 const logger = createLogger({ module: 'PricingSyncAPI' });
+// The same singleton `logAIPricingSynced` queues into, so `flush()` drains its row.
+const auditTrail = AuditTrailService.getInstance();
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/admin/system-config/pricing/sync
- * Sync latest pricing from external sources (OpenAI, Anthropic, Google, Kimi)
+ * Copies the built-in catalogue below into `ai_model_pricing`: overwrites the
+ * newest row of every listed model and inserts any listed model that is missing.
+ * It contacts NO provider (AI_MODEL_PRICE_REVIEW AB-4).
  *
- * This uses official pricing from provider documentation:
+ * The provider pricing pages, for reference only; this handler never fetches them:
  * - OpenAI: https://openai.com/api/pricing/
  * - Anthropic: https://www.anthropic.com/pricing
  * - Google: https://ai.google.dev/pricing
@@ -33,6 +38,9 @@ export const dynamic = 'force-dynamic';
  * the user-writable profile role field. Before Layer 2 Step 0 this handler was
  * unauthenticated: anyone could overwrite the whole pricing table, which every
  * credit charge is computed from.
+ *
+ * The audit entry is flushed before the response (WC-7, MP-FR-1), as in the
+ * single-row routes.
  */
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -421,6 +429,13 @@ export async function POST(request: NextRequest) {
       models_added: createdModels.length,
       source: 'admin_catalog_sync'
     }).catch((err) => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+
+    // WC-7 / MP-FR-1 (AB-5): flushed BEFORE the response, exactly as the
+    // single-row writes in `../route.ts`. `auditLog` only queues; a serverless
+    // instance frozen after the response would lose the record of a sync that
+    // rewrote the table. Non-blocking: a failed flush never turns a sync that
+    // already happened into a 500.
+    await auditTrail.flush().catch((err) => requestLogger.error({ err }, 'Audit flush failed'));
 
     return NextResponse.json({
       success: true,

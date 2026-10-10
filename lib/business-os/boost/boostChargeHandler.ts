@@ -226,8 +226,11 @@ export function plan(eventType: BoostChargeEventType, charge: BoostChargeEvent, 
   });
   if (eventType === 'charge.dispute.created') return dispute('disputed');
   if (eventType === 'charge.dispute.funds_reinstated') return dispute('dispute_won');
-  if (charge.status === 'won') return dispute('dispute_won');
+  // SA CR-2 (4b.2): `warning_closed` is an inquiry that closed without becoming
+  // a chargeback. No funds were taken: Stripe's final word, so it concludes the
+  // dispute as won (2b restores the pre-dispute status from the refunded amount).
+  if (charge.status === 'won' || charge.status === 'warning_closed') return dispute('dispute_won');
   if (charge.status === 'lost') return dispute('dispute_lost');
-  // e.g. `warning_closed`: an inquiry closed without becoming a chargeback.
+  // Any other closed status is not ours to guess.
   return { kind: 'ignore', reason: `dispute_closed_${charge.status}` };
 }

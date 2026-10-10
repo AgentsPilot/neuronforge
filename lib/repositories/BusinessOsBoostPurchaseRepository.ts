@@ -247,7 +247,19 @@ export const BOOST_CAP_OVERRIDE_COLUMNS = 'id, user_id, cap_minor, currency, rea
 export const BOOST_PURCHASE_READ_LIMITS = {
   /** The most rows `listForAccount` returns; a request above it is clamped. */
   MAX_LIST: 200,
+  /** The most rows one `listForReconcile` read returns (slice 4b.2: the nightly batch). */
+  MAX_RECONCILE_BATCH: 50,
 } as const;
+
+/**
+ * The three reads of the slice 4b.2 reconcile pass (workplan §3.4, SA C-9):
+ *   - `stuck`: `pending` / `awaiting_payment` whose checkout expired before `before`;
+ *   - `receipt_missing`: `paid` with no receipt link, paid before `before`;
+ *   - `disputed`: `disputed`, last moved before `before`.
+ * Each is oldest first. The first two match the partial indexes of migration 20261032.
+ */
+export const BOOST_RECONCILE_LIST_KINDS = ['stuck', 'receipt_missing', 'disputed'] as const;
+export type BoostReconcileListKind = (typeof BOOST_RECONCILE_LIST_KINDS)[number];
 
 const ATTACH_STATUSES: readonly BusinessOsBoostAttachStatus[] = [
   'attached',
@@ -797,6 +809,50 @@ export class BusinessOsBoostPurchaseRepository {
       return { data: ((data ?? []) as unknown as Record<string, unknown>[]).map(mapPurchase), error: null };
     } catch (error) {
       return this.fail(method, error, { accountId });
+    }
+  }
+
+  /**
+   * UNSCOPED BY DESIGN (credits boost slice 4b.2; durable-queue-drain Step 9,
+   * tenant-isolation-guard Step 6). For the reconcile pass only
+   * (`lib/business-os/boost/boostReconcileDeps.ts`, pinned by test): a cron reads
+   * stuck rows across every account. Nothing here comes from a request: the kind,
+   * the mode and the cut-off are the pass's own. Every effect the pass then has
+   * runs through the 2b functions on the row's own id and returns the row's
+   * account (R-6). One Stripe mode per read: a row of the other mode cannot be
+   * read with this server's key.
+   */
+  async listForReconcile(input: {
+    kind: BoostReconcileListKind;
+    livemode: boolean;
+    before: string;
+    limit: number;
+  }): Promise<RepositoryResult<BusinessOsBoostPurchase[]>> {
+    const method = 'listForReconcile';
+    const ids = { kind: input?.kind, livemode: input?.livemode };
+    try {
+      const kind = toOneOf(input.kind, BOOST_RECONCILE_LIST_KINDS);
+      if (typeof input.livemode !== 'boolean') throw new BoostPurchaseRepositoryError('livemode must be a boolean');
+      const before = toTimestamp(input.before);
+      if (!(typeof input.limit === 'number' && Number.isFinite(input.limit))) {
+        throw new BoostPurchaseRepositoryError('A batch size is required');
+      }
+      const limit = Math.min(Math.max(1, Math.floor(input.limit)), BOOST_PURCHASE_READ_LIMITS.MAX_RECONCILE_BATCH);
+
+      // Intentionally no user_id filter: see the JSDoc (a cross-account cron read).
+      const query = this.supabase.from('business_os_boost_purchases').select(BOOST_PURCHASE_COLUMNS).eq('livemode', input.livemode);
+      const filtered =
+        kind === 'stuck'
+          ? query.in('status', ['pending', 'awaiting_payment']).lt('checkout_expires_at', before).order('checkout_expires_at', { ascending: true })
+          : kind === 'receipt_missing'
+            ? query.eq('status', 'paid').is('receipt_url', null).lt('paid_at', before).order('paid_at', { ascending: true })
+            : query.eq('status', 'disputed').lt('status_changed_at', before).order('status_changed_at', { ascending: true });
+      // The id breaks ties, so a batch is the same rows on a re-run.
+      const { data, error } = await filtered.order('id', { ascending: true }).range(0, limit - 1);
+      if (error) throw error;
+      return { data: ((data ?? []) as unknown as Record<string, unknown>[]).map(mapPurchase), error: null };
+    } catch (error) {
+      return this.fail(method, error, ids);
     }
   }
 
