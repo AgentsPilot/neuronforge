@@ -93,10 +93,13 @@ describe('section order', () => {
   });
 
   it('puts the pages the requirement names in the first three sections', () => {
-    // Scheduled jobs & queues is third (slice 5, requirement §4.2); Archiving
-    // sits directly under Audit trail (Admin Archiving, condition C-2).
+    // Scheduled jobs & queues follows AI cost & usage (slice 5, requirement
+    // §4.2); Archiving sits directly under Audit trail (Admin Archiving,
+    // condition C-2); Finance sits directly after Health (finance & business
+    // health slice 1a, requirement §5).
     expect(hrefsOf('Monitor')).toEqual([
       '/admin',
+      '/admin/finance',
       '/admin/analytics',
       '/admin/jobs-queues',
       '/admin/audit-trail',
@@ -137,9 +140,11 @@ describe('every admin page is reachable, exactly once', () => {
     // Archiving slice 1 added /admin/archiving, slice 5 added
     // /admin/jobs-queues, and invite-only signup slice 0 added
     // /admin/business-os-invites. 28 since ADMIN_BOS_CLEANUP slice 2 added
-    // /admin/agentspilot-billing. If this drops, the scan broke rather than
-    // the sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(28);
+    // /admin/agentspilot-billing. 29 since finance & business health slice 1a
+    // added /admin/finance. If this drops, the scan broke rather than the
+    // sidebar.
+    expect(onDisk.length).toBeGreaterThanOrEqual(29);
+    expect(onDisk).toContain('/admin/finance');
     expect(onDisk).toContain('/admin/agentspilot-billing');
     expect(onDisk).toContain('/admin/onboarding');
     expect(onDisk).toContain('/admin/business-os-invites');
@@ -155,8 +160,9 @@ describe('every admin page is reachable, exactly once', () => {
     expect([...allHrefs].sort()).toEqual(expected);
     // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving
     // slice 1) + Scheduled jobs & queues (slice 5) + Invites (invite-only
-    // signup slice 0) + AgentsPilot billing (ADMIN_BOS_CLEANUP slice 2).
-    expect(allHrefs).toHaveLength(27);
+    // signup slice 0) + AgentsPilot billing (ADMIN_BOS_CLEANUP slice 2) +
+    // Finance (finance & business health slice 1a).
+    expect(allHrefs).toHaveLength(28);
   });
 
   it('never lists the same page twice', () => {
