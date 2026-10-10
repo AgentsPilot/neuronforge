@@ -33,6 +33,7 @@ jest.mock('@/lib/logger', () => {
 
 import {
   BOOST_CAP_OVERRIDE_COLUMNS,
+  BOOST_CAP_OVERRIDE_HISTORY_COLUMNS,
   BOOST_PURCHASE_COLUMNS,
   BOOST_PURCHASE_READ_LIMITS,
   BOS_ABANDON_BOOST_PURCHASE_RPC,
@@ -604,7 +605,7 @@ describe('source guards', () => {
   });
 
   it('every column the repository selects exists in the migration', () => {
-    for (const column of [...BOOST_PURCHASE_COLUMNS.split(', '), ...BOOST_CAP_OVERRIDE_COLUMNS.split(', ')]) {
+    for (const column of [...BOOST_PURCHASE_COLUMNS.split(', '), ...BOOST_CAP_OVERRIDE_HISTORY_COLUMNS.split(', ')]) {
       expect(migration).toMatch(new RegExp(`\\n  ${column} `));
     }
   });
@@ -877,5 +878,85 @@ describe('slice 4b.2: listForReconcile (unscoped by design, SA C-9)', () => {
     };
     for (const root of ['app', 'lib', 'components']) walk(root);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('slice 6a: listCapOverrides (2a QA I-2)', () => {
+  const OVERRIDE_ROW = {
+    id: OVERRIDE,
+    user_id: ACCOUNT,
+    cap_minor: 50000,
+    currency: 'USD',
+    reason: 'annual prepay customer',
+    actor_admin_id: ADMIN,
+    created_at: '2026-10-02T09:00:00+00:00',
+    ended_at: '2026-10-03T09:00:00+00:00',
+    ended_by_admin_id: ADMIN,
+    ended_reason: 'replaced',
+  };
+
+  it('scoped by user_id with the history columns, newest first, at most 20', async () => {
+    const { repo, calls } = readClient({ data: [OVERRIDE_ROW], error: null });
+    const result = await repo.listCapOverrides(ACCOUNT);
+    expect(calls).toEqual([
+      ['from', ['business_os_boost_cap_overrides']],
+      ['select', [BOOST_CAP_OVERRIDE_HISTORY_COLUMNS]],
+      ['eq', ['user_id', ACCOUNT]],
+      ['order', ['created_at', { ascending: false }]],
+      ['range', [0, 19]],
+    ]);
+    expect(result.data).toEqual([
+      {
+        id: OVERRIDE,
+        accountId: ACCOUNT,
+        capMinor: 50000,
+        currency: 'USD',
+        reason: 'annual prepay customer',
+        actorAdminId: ADMIN,
+        createdAt: '2026-10-02T09:00:00+00:00',
+        endedAt: '2026-10-03T09:00:00+00:00',
+        endedByAdminId: ADMIN,
+        endedReason: 'replaced',
+      },
+    ]);
+    expect(BOOST_PURCHASE_READ_LIMITS.MAX_CAP_HISTORY).toBe(20);
+  });
+
+  it('I-2: a detached override (user_id NULL, left by a deleted account) can never be returned for an account', async () => {
+    // A fake table holding the detached row and the account's own: the filter the repository applies decides.
+    const detached = { ...OVERRIDE_ROW, id: PREVIOUS, user_id: null, ended_at: null, ended_by_admin_id: null, ended_reason: null };
+    const table = [detached, OVERRIDE_ROW];
+    const filters: Array<[string, unknown]> = [];
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      eq: (column: string, value: unknown) => {
+        filters.push([column, value]);
+        return chain;
+      },
+      is: (column: string, value: unknown) => {
+        filters.push([column, value]);
+        return chain;
+      },
+      order: () => chain,
+      range: () => Promise.resolve({ data: table.filter((row) => filters.every(([c, v]) => (row as Record<string, unknown>)[c] === v)), error: null }),
+      maybeSingle: () => Promise.resolve({ data: table.find((row) => filters.every(([c, v]) => (row as Record<string, unknown>)[c] === v)) ?? null, error: null }),
+    };
+    const client = { from: () => chain, rpc: () => Promise.reject(new Error('no rpc')) };
+    const repo = new BusinessOsBoostPurchaseRepository(client as unknown as SupabaseClient);
+    const history = await repo.listCapOverrides(ACCOUNT);
+    expect(history.data?.map((row) => row.id)).toEqual([OVERRIDE]);
+    filters.length = 0;
+    const active = await repo.findActiveCapOverride(ACCOUNT);
+    // The account's own override is ended; the detached one is "active" but belongs to no account.
+    expect(active.data).toBeNull();
+  });
+
+  it('a malformed account id is refused before any query; a database error is returned, never thrown', async () => {
+    const { repo, calls } = readClient({ data: [], error: null });
+    expect(isDeterministicRepositoryError((await repo.listCapOverrides('nope')).error)).toBe(true);
+    expect(calls).toEqual([]);
+    const failed = await readClient({ data: null, error: { code: '57014', message: 'timeout' } }).repo.listCapOverrides(ACCOUNT);
+    expect(failed.data).toBeNull();
+    expect(isDeterministicRepositoryError(failed.error)).toBe(false);
   });
 });

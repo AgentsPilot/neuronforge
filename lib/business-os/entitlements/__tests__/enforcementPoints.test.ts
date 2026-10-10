@@ -372,6 +372,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['creditAllowanceDecision', 'getEntitlementService', 'isBusinessOsTenant', 'resolveAccountId'],
       why: 'Credit deduction slice 11c: the admin read-only credit view of ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the entitlements and summary routes), resolves the path id through the account seam (`resolveAccountId`, required by `accountSeam.guard` for any file that reaches the service), reads `getSnapshot` for DISPLAY (never `check()` / `decide()`) and turns it into the allowance and its deciding layer with `creditAllowanceDecision`, which keeps the capability id inside the module. It refuses nothing: an account over its allowance is shown, not blocked. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Credits boost slice 6a, 2026-10-09 — the admin "Credit top-ups" block ──
+    {
+      file: 'app/api/admin/business-os/credits/accounts/[accountId]/boost/route.ts',
+      symbols: ['BOOST_PURCHASE_CAP_DEFAULT', 'isBusinessOsTenant', 'resolveAccountId'],
+      why: 'Credits boost slice 6a: the admin read-only view of the credit top-ups and spending limit of ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the 11c credit view), resolves the path id through the account seam (`resolveAccountId`), and shows the default limit from configuration (`BOOST_PURCHASE_CAP_DEFAULT`) beside any admin override. It reads no snapshot and refuses nothing: no `check()` / `decide()`, and nothing is blocked by plan. If this file ever gates a request by plan, it belongs in ENFORCEMENT_POINTS.',
+    },
     // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
     {
       file: 'lib/business-os/credits/adminCreditPercent.ts',
@@ -458,6 +464,27 @@ describe('backward: a gate cannot ship unregistered', () => {
       file: 'components/test-business-os/PlanCheckoutPanel.tsx',
       symbols: ['TIER_ORDER'],
       why: 'Plan payments P-3a (SA Q-10): the internal /test-business-os Billing panel builds its tier select from `TIER_ORDER`, so the component holds no tier name. It is the demo trigger for the checkout route, displays nothing about a plan and refuses nothing.',
+    },
+    // ── Finance & business health slice 1a, 2026-10-09 — the admin finance page ─
+    {
+      file: 'lib/business-os/finance/planGroups.ts',
+      symbols: [
+        'EntitlementConfig',
+        'LifecycleResult',
+        'LifecycleState',
+        'deriveLifecycle',
+        'fromPlanRow',
+        'isDormantChampion',
+        'isOpenEndedCohort',
+        'lifecycleInputs',
+        'stateForCohort',
+      ],
+      why: "Finance & business health slice 1a: classifies each plan row into the admin finance page's six display groups with the lifecycle derivation (`deriveLifecycle(fromPlanRow(row), lifecycleInputs(config), now)`, `stateForCohort`) and the shadow report's own predicates (`isOpenEndedCohort`, `isDormantChampion`), for DISPLAY only. The config arrives as a parameter (SA-WR-4). It never calls check() / decide() and refuses nothing. If it ever does, it is a gate and belongs in ENFORCEMENT_POINTS.",
+    },
+    {
+      file: 'lib/business-os/finance/financeHealthDeps.ts',
+      symbols: ['getEntitlementConfig'],
+      why: 'Finance & business health slice 1a (SA-WR-4): the production wiring of the admin finance page reads the entitlement config once and hands it to the pure classifier as a parameter. It resolves no account, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
   ];
 

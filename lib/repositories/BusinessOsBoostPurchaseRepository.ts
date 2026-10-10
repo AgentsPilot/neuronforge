@@ -243,10 +243,22 @@ export interface BusinessOsBoostTransitionResult {
 export type BusinessOsBoostReceiptStatus = 'recorded' | 'already_recorded' | 'conflict' | 'not_paid' | 'not_found';
 
 export const BOOST_CAP_OVERRIDE_COLUMNS = 'id, user_id, cap_minor, currency, reason, actor_admin_id, created_at';
+/** Slice 6a: the override history adds how each one ended. */
+export const BOOST_CAP_OVERRIDE_HISTORY_COLUMNS = `${BOOST_CAP_OVERRIDE_COLUMNS}, ended_at, ended_by_admin_id, ended_reason`;
+
+/** One cap change of an account, active or ended (slice 6a, the admin history). */
+export interface BusinessOsBoostCapOverrideHistoryRow extends BusinessOsBoostCapOverride {
+  endedAt: string | null;
+  endedByAdminId: string | null;
+  /** The admin's reason, or `replaced` when a newer override closed it. */
+  endedReason: string | null;
+}
 
 export const BOOST_PURCHASE_READ_LIMITS = {
   /** The most rows `listForAccount` returns; a request above it is clamped. */
   MAX_LIST: 200,
+  /** The most cap changes `listCapOverrides` returns (slice 6a: "the last 20 changes"). */
+  MAX_CAP_HISTORY: 20,
   /** The most rows one `listForReconcile` read returns (slice 4b.2: the nightly batch). */
   MAX_RECONCILE_BATCH: 50,
 } as const;
@@ -874,6 +886,42 @@ export class BusinessOsBoostPurchaseRepository {
       return this.fail(method, error, { accountId });
     }
   }
+  /**
+   * The account's cap changes, newest first, at most 20 (credits boost slice 6a,
+   * the admin view). Scoped `.eq('user_id', accountId)`: an override detached by
+   * an account deletion (`user_id` NULL, 2a QA I-2) can never be returned, so it
+   * can never show as anyone's active override.
+   */
+  async listCapOverrides(
+    accountId: string,
+    options: { limit?: number } = {}
+  ): Promise<RepositoryResult<BusinessOsBoostCapOverrideHistoryRow[]>> {
+    const method = 'listCapOverrides';
+    try {
+      this.assertUuid(accountId, 'An account id');
+      const limit = Math.min(Math.max(1, Math.floor(options.limit ?? BOOST_PURCHASE_READ_LIMITS.MAX_CAP_HISTORY)), BOOST_PURCHASE_READ_LIMITS.MAX_CAP_HISTORY);
+      const { data, error } = await this.supabase
+        .from('business_os_boost_cap_overrides')
+        .select(BOOST_CAP_OVERRIDE_HISTORY_COLUMNS)
+        .eq('user_id', accountId)
+        .order('created_at', { ascending: false })
+        .range(0, limit - 1);
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as Record<string, unknown>[];
+      return {
+        data: rows.map((raw) => ({
+          ...mapOverride(raw),
+          endedAt: toNullableTimestamp(raw.ended_at),
+          endedByAdminId: toNullableUuid(raw.ended_by_admin_id),
+          endedReason: toNullableText(raw.ended_reason),
+        })),
+        error: null,
+      };
+    } catch (error) {
+      return this.fail(method, error, { accountId });
+    }
+  }
+
   // ============ Slice 2b: crediting, status and receipt ============
 
   /**

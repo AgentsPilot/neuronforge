@@ -13,8 +13,9 @@
  * clears the table and says so (C2-4): the table shows only what the last
  * read returned, never an empty or stale list posing as current.
  *
- * Sync is parked (UC-5) and frozen byte for byte (C2-1); its one logging line
- * is the only change to it.
+ * Sync is parked (UC-5) and its handler and button are frozen byte for byte
+ * (C2-1). AI_MODEL_PRICE_REVIEW slice 1 (SA 2026-10-08 R-5) rewrote the false
+ * info-box and helper text around it; slice 8 retires Sync.
  */
 
 import { useEffect, useState } from 'react';
@@ -217,13 +218,28 @@ export default function ModelPricingPage() {
     }
   };
 
+  // Per token, exact. The 8-digit minimum keeps today's renderings unchanged
+  // ($0.00000015); the maximum used to be 8 too, which showed $0.075 per 1M as
+  // $0.08 per 1M. 15 = 6 + the 9 decimals per 1M the price review accepts, and
+  // stays clear of float noise (around the 17th significant digit).
   const formatCost = (cost: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
       minimumFractionDigits: 8,
-      maximumFractionDigits: 8
+      maximumFractionDigits: 15
     }).format(cost);
+  };
+
+  // The same price per 1M tokens, the figure providers publish. Display only:
+  // the stored value and the editor stay per token.
+  const formatCostPerMillion = (cost: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 9
+    }).format(cost * 1_000_000);
   };
 
   if (loading) {
@@ -298,7 +314,7 @@ export default function ModelPricingPage() {
                 AI Model Pricing
               </h2>
               <p className="text-sm text-slate-400 mt-1">
-                Token costs for all AI models. Sync to get latest pricing from providers.
+                Cost per token for each AI model. Sync copies a built-in price list; it does not fetch prices from providers.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -343,26 +359,20 @@ export default function ModelPricingPage() {
                 <div className="space-y-3">
                   <p className="text-green-400 font-medium text-sm">About Model Pricing</p>
                   <p className="text-slate-300 text-sm leading-relaxed">
-                    This table defines the cost per token for each AI model's input (prompts) and output (responses). These prices directly impact cost calculations, billing, and intelligent routing decisions. Accurate pricing ensures reliable cost estimates and optimal model selection.
+                    This table defines the cost per token for each AI model's input (prompts) and output (responses). Business OS credit charges for the models listed here are computed from these prices, so a wrong price here is a wrong charge for every customer who uses that model.
                   </p>
                   <div className="space-y-2 text-xs leading-relaxed">
                     <p className="text-slate-300">
-                      <strong className="text-green-300">Input Cost:</strong> Price per 1,000 input tokens (prompts, context, memory). Measured in USD. Example: $0.00015 = 15 cents per 1M tokens.
+                      <strong className="text-green-300">Input Cost:</strong> Price per single input token (prompts, context, memory), in USD. This is the unit stored and the unit the editor takes; the smaller figure under each price is the same price per 1M tokens. Example: $0.00000015 per token = $0.15 per 1M tokens.
                     </p>
                     <p className="text-slate-300">
-                      <strong className="text-green-300">Output Cost:</strong> Price per 1,000 output tokens (AI responses, generated content). Typically 2-3x higher than input. Example: $0.0006 = 60 cents per 1M tokens.
+                      <strong className="text-green-300">Output Cost:</strong> Price per single output token (AI responses, generated content), in USD. Usually higher than input. Example: $0.00000060 per token = $0.60 per 1M tokens.
                     </p>
                     <p className="text-slate-300">
-                      <strong className="text-green-300">Sync Latest Pricing:</strong> Automatically fetches current rates from OpenAI and Anthropic APIs. Keeps system aligned with provider pricing changes. Run monthly or when providers announce updates.
+                      <strong className="text-green-300">Sync Latest Pricing:</strong> Copies a built-in price list, kept in the code, into this table: it overwrites the price of every model on that list, including manual edits, and adds any listed model that is missing. It does not contact OpenAI, Anthropic or any other provider.
                     </p>
                     <p className="text-slate-300">
-                      <strong className="text-green-300">Manual Edits:</strong> Override prices for custom contracts, volume discounts, or testing. Changes affect cost calculations immediately but don't alter provider billing.
-                    </p>
-                  </div>
-                  <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 mt-2">
-                    <p className="text-green-300 text-xs font-medium mb-1">Impact on Intelligent Routing</p>
-                    <p className="text-slate-300 text-xs leading-relaxed">
-                      Lower model costs increase routing priority. If GPT-4o-mini price drops, more agents route there. If Claude Haiku becomes cheaper than GPT-4o-mini, <strong className="text-white">medium complexity agents automatically switch</strong> to maximize savings.
+                      <strong className="text-green-300">Manual Edits:</strong> Override prices for custom contracts, volume discounts, or testing. Each server keeps its own copy of these prices for up to 1 hour, so a change (an edit or a Sync) is in effect on all servers within 1 hour. Changes don't alter provider billing.
                     </p>
                   </div>
                 </div>
@@ -444,7 +454,12 @@ export default function ModelPricingPage() {
                           </div>
                         </div>
                       ) : (
-                        <span className="font-mono">{formatCost(model.input_cost_per_token)}</span>
+                        <>
+                          <span className="font-mono">{formatCost(model.input_cost_per_token)}</span>
+                          <span className="block text-xs text-slate-500 font-mono">
+                            {formatCostPerMillion(model.input_cost_per_token)} per 1M
+                          </span>
+                        </>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300 text-right">
@@ -478,7 +493,12 @@ export default function ModelPricingPage() {
                           </div>
                         </div>
                       ) : (
-                        <span className="font-mono">{formatCost(model.output_cost_per_token)}</span>
+                        <>
+                          <span className="font-mono">{formatCost(model.output_cost_per_token)}</span>
+                          <span className="block text-xs text-slate-500 font-mono">
+                            {formatCostPerMillion(model.output_cost_per_token)} per 1M
+                          </span>
+                        </>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-400 text-right">

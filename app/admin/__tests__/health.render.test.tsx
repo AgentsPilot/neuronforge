@@ -24,6 +24,15 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// HealthGrid logs through `clientLogger.child` (Admin Layout Standard L-1a, F-56).
+// `@/lib/logger/client` re-exports from `@/lib/logger`, whose mock above has no
+// `clientLogger`, so without this the module-scope `child` call throws (RC-1).
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  const child = () => ({ error: noop, warn: noop, info: noop, debug: noop });
+  return { clientLogger: { child } };
+});
+
 import AdminHealthPage from '../page';
 import { STATUS_STYLES } from '../components/health/HealthTile';
 import type { HealthSummary, HealthTile } from '@/lib/admin/health/healthTypes';
@@ -224,11 +233,23 @@ describe('the Health page', () => {
     expect(container.innerHTML).not.toContain('platform-dashboard');
   });
 
+  it('has exactly one h1, "Health", while loading and once loaded', async () => {
+    mockRoute();
+    render(<AdminHealthPage />);
+    const whileLoading = screen.getAllByRole('heading', { level: 1 });
+    expect(whileLoading).toHaveLength(1);
+    expect(whileLoading[0].textContent).toBe('Health');
+    await screen.findByTestId('health-tile-bos_ai_failures');
+    const loaded = screen.getAllByRole('heading', { level: 1 });
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].textContent).toBe('Health');
+  });
+
   it('Refresh refetches and is aria-busy while loading', async () => {
     const fetchMock = mockRoute();
     render(<AdminHealthPage />);
     await screen.findByTestId('health-tile-bos_ai_failures');
-    const button = screen.getByRole('button', { name: /Refresh/ });
+    const button = screen.getByRole('button', { name: 'Refresh the health summary' });
     expect(button.getAttribute('aria-busy')).toBe('false');
     fireEvent.click(button);
     expect(button.getAttribute('aria-busy')).toBe('true');

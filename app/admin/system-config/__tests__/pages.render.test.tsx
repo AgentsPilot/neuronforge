@@ -3,7 +3,7 @@
  *
  * Runtime proof for the Model pricing split (ADMIN_BOS_CLEANUP slice 2;
  * conditions C2-2, C2-3, C2-4, C2-5; SA W2-1, W2-8, O-5). Workplan cases
- * R-1 to R-10.
+ * R-1 to R-10. R-11: AI_MODEL_PRICE_REVIEW slice 1 (exact price display).
  *
  * P = the Model pricing page (`/admin/system-config`).
  * B = the parked AgentsPilot billing page (`/admin/agentspilot-billing`).
@@ -228,6 +228,28 @@ describe('P: Model pricing', () => {
 
     await screen.findByText(READ_FAILED_BANNER);
     expectReadFailed();
+  });
+
+  // AI_MODEL_PRICE_REVIEW slice 1 (MP-FR-1, D-2 option C): the per-token price
+  // is shown exactly, with the same price per 1M under it. Before, 8 fixed
+  // decimals showed $0.075 per 1M as $0.00000008 ($0.08 per 1M).
+  it('R-11: a sub-cent per-1M price is shown exactly, per token and per 1M', async () => {
+    const row = {
+      ...ROWS[0],
+      model_name: 'gemini-1.5-flash',
+      input_cost_per_token: 0.000000075,
+      output_cost_per_token: 0.0000003,
+    };
+    stubFetch({ [PRICING_URL]: () => okRows([row]) });
+
+    render(<ModelPricingPage />);
+    const tr = (await screen.findByText('gemini-1.5-flash')).closest('tr') as HTMLElement;
+
+    expect(within(tr).getByText('$0.000000075')).toBeInTheDocument();
+    expect(within(tr).getByText('$0.075 per 1M')).toBeInTheDocument();
+    expect(within(tr).getByText('$0.00000030')).toBeInTheDocument();
+    expect(within(tr).getByText('$0.30 per 1M')).toBeInTheDocument();
+    expect(within(tr).queryByText('$0.00000008')).not.toBeInTheDocument();
   });
 });
 

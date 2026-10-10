@@ -112,8 +112,12 @@ function later(a: string | null, b: string | null): string | null {
   return new Date(a).getTime() >= new Date(b).getTime() ? a : b;
 }
 
-/** The lifecycle state a cohort id names, when it names one. */
-function stateForCohort(cohortId: string): LifecycleState {
+/**
+ * The lifecycle state a cohort id names, when it names one. Exported (finance &
+ * business health slice 1a, SA-W3) so the admin finance page maps a cohort to
+ * its display group through this one function, never a copied cohort id.
+ */
+export function stateForCohort(cohortId: string): LifecycleState {
   return cohortId === 'trial' || cohortId === 'champion' ? cohortId : 'active';
 }
 
