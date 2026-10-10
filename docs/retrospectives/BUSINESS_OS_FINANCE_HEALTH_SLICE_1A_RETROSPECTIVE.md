@@ -42,7 +42,7 @@ Retrospective for slice 1a of the read-only admin page `/admin/finance`: the men
 | # | Item | Owner | Status |
 |---|---|---|---|
 | FU-1 | Manual QA steps L-1 to L-13 (below), which close AC-3 (manual confirm), AC-9, AC-10, AC-24 (reload) and AC-32 | User | ⬜ Owed |
-| FU-2 | RM: commit, push and open the PR for `feature/bos-finance-health-1a`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ⬜ Next |
+| FU-2 | RM: commit, push and open the PR for `feature/bos-finance-health-1a`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ✅ Done 2026-10-10: commit `946653a1`, PR [#284](https://github.com/AgentsPilot/neuronforge/pull/284); workplan Commit Info left to TL |
 | FU-3 | Slice 1b: Section 4 credits, K-2, K-4, R-b, the SA-Q7 refactor and the G3 / lot caller lists | BA → Dev | ⬜ After 1a merges |
 | FU-4 | Perf note: with `this_month`, Section 3 and K-1 read almost the same ledger range twice. Share one read if the ledger grows (QA) | Dev (later slice) | ⬜ Parked |
 | FU-5 | Record `durationMs` from L-13. If a section's p95 goes above 1 s, split the route (SA-Q8) | User → SA | ⬜ Owed |
@@ -68,7 +68,7 @@ Run `npm run dev` from `neuronforge-finance-health` and sign in as a platform ad
 | L-12 | As a non-admin, or signed out, open `/admin/finance` and `/api/admin/business-os/finance` | The page redirects and shows no figure. The API gives 401 signed out and 403 for a non-admin, both with `Cache-Control: no-store` |
 | L-13 | Read the dev-server log | One `info` line, "Admin read the Business OS finance page", per load, with `correlationId`, `adminId`, filters, statuses, counts and `durationMs`, and no name or figure. Note `durationMs` |
 
-### Status: APPROVED BY USER — PENDING COMMIT — `feature/bos-finance-health-1a` — commit hash to be added after RM commits
+### Status: APPROVED BY USER — COMMITTED, PR OPEN — `feature/bos-finance-health-1a` — commit `946653a1` (merge of `origin/main`: `2cc6814b`), PR [#284](https://github.com/AgentsPilot/neuronforge/pull/284)
 
 ---
 
@@ -77,3 +77,4 @@ Run `npm run dev` from `neuronforge-finance-health` and sign in as a platform ad
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-10 | Created (TL) | Slice 1a retrospective after the user approved the diff. It records the cycle counts, process lessons (including the BA whole-file rewrite risk), follow-ups and the user's owed manual steps L-1 to L-13. Commit pending (RM). |
+| 2026-10-10 | Commit recorded (RM) | Commit `946653a1`, PR [#284](https://github.com/AgentsPilot/neuronforge/pull/284). |
