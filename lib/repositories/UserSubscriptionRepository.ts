@@ -1,6 +1,7 @@
 // lib/repositories/UserSubscriptionRepository.ts
 // Repository for `user_subscriptions` — the once-only free-tier grant, plus two
-// reads (the GDPR export and the Settings billing summary).
+// reads (the GDPR export and the Settings billing summary), plus the Stripe
+// webhook's agent-platform legacy reads and writes (CF-5 PR 5, section below).
 //
 // SERVICE ROLE, ON PURPOSE. This repository defaults to `supabaseServer`, which
 // bypasses RLS. A user must never be able to write their own `balance`, so the
@@ -19,7 +20,7 @@
 //
 // Server-only: never import from a 'use client' file.
 
-import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type {
@@ -265,6 +266,135 @@ export class UserSubscriptionRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  // Stripe webhook, agent-platform legacy: owner-scoped (CF-5 PR 5)
+  //
+  // Moved out of `app/api/stripe/webhook/route.ts` with no behaviour change
+  // (CF-5 PR 5, CLAUDE.md rule 1): the dunning handler, the boost-pack
+  // checkout and the subscription status mirror. Each method issues exactly
+  // the query the route issued inline: same table, operation, columns, filter,
+  // payload and its key order, terminal. The webhook's characterisation
+  // harness records the full chain.
+  //
+  // Each keeps the route's `.eq('user_id', userId)`. The id is `metadata.user_id`
+  // on a PLATFORM Stripe object (invoice, checkout session, subscription) that
+  // our own agent-platform checkout created, never a connected account's
+  // metadata (workplan §5.1). These are agent-platform code paths kept as they
+  // are (FU-1 dead dunning, FU-2 boost checkout, FU-6 status mirror); do not
+  // extend them.
+  //
+  // Errors: supabase-js's own `{ data, error }`, with no try/catch and no
+  // logging, unlike the methods above. A catch would turn a thrown query into
+  // a quiet result where the route used to fail with 500 and let Stripe retry.
+
+  /** The dunning state the payment-failure handler reads. `.single()`, as inline. */
+  async findDunningState(userId: string): Promise<LegacyWebhookResult<LegacyDunningState>> {
+    const { data, error } = await this.supabase
+      .from('user_subscriptions')
+      .select('payment_retry_count, grace_period_days, current_period_end')
+      .eq('user_id', userId)
+      .single<LegacyDunningState>();
+    return { data, error };
+  }
+
+  /** Records a failed renewal attempt (dunning). `last_payment_attempt` is now. */
+  async recordPaymentFailure(
+    userId: string,
+    failure: { retryCount: number; status: LegacyDunningStatus; agentsPaused: boolean }
+  ): Promise<LegacyWebhookResult<null>> {
+    const { error } = await this.supabase
+      .from('user_subscriptions')
+      .update({
+        payment_retry_count: failure.retryCount,
+        last_payment_attempt: new Date().toISOString(),
+        status: failure.status,
+        agents_paused: failure.agentsPaused,
+      })
+      .eq('user_id', userId);
+    return { data: null, error };
+  }
+
+  /** The balance a boost pack is added to. `.single()`, as inline. */
+  async findBalance(userId: string): Promise<LegacyWebhookResult<LegacyBalance>> {
+    const { data, error } = await this.supabase
+      .from('user_subscriptions')
+      .select('balance, total_earned')
+      .eq('user_id', userId)
+      .single<LegacyBalance>();
+    return { data, error };
+  }
+
+  /**
+   * Writes the balance after a boost pack, clears the free-tier expiry and
+   * unfreezes the account (a paying customer). The new values are computed by
+   * the route from `findBalance`; the read-then-write is not atomic (FU-7).
+   */
+  async applyBoostPackBalance(
+    userId: string,
+    balances: { balance: number; totalEarned: number }
+  ): Promise<LegacyWebhookResult<null>> {
+    const { error } = await this.supabase
+      .from('user_subscriptions')
+      .update({
+        balance: balances.balance,
+        total_earned: balances.totalEarned,
+        free_tier_expires_at: null,
+        account_frozen: false,
+      })
+      .eq('user_id', userId);
+    return { data: null, error };
+  }
+
+  /** Mirrors a Stripe subscription's cancellation state and status. */
+  async mirrorStripeStatus(
+    userId: string,
+    mirror: { cancelAtPeriodEnd: boolean; canceledAt: string | null; status: string }
+  ): Promise<LegacyWebhookResult<null>> {
+    const { error } = await this.supabase
+      .from('user_subscriptions')
+      .update({
+        cancel_at_period_end: mirror.cancelAtPeriodEnd,
+        canceled_at: mirror.canceledAt,
+        status: mirror.status,
+      })
+      .eq('user_id', userId);
+    return { data: null, error };
+  }
+
+  /** Marks the subscription canceled now (Stripe deleted it). */
+  async markCanceled(userId: string): Promise<LegacyWebhookResult<null>> {
+    const { error } = await this.supabase
+      .from('user_subscriptions')
+      .update({
+        status: 'canceled',
+        canceled_at: new Date().toISOString(),
+        cancel_at_period_end: false,
+      })
+      .eq('user_id', userId);
+    return { data: null, error };
+  }
+}
+
+/** What the webhook's legacy methods return: supabase-js's own result, error object kept. */
+export interface LegacyWebhookResult<T> {
+  data: T | null;
+  error: PostgrestError | null;
+}
+
+/** The dunning columns `findDunningState` reads. */
+export interface LegacyDunningState {
+  payment_retry_count: number | null;
+  grace_period_days: number | null;
+  current_period_end: string | null;
+}
+
+/** The two statuses the dunning handler writes. */
+export type LegacyDunningStatus = 'past_due' | 'active';
+
+/** The balance columns `findBalance` reads. */
+export interface LegacyBalance {
+  balance: number | null;
+  total_earned: number | null;
 }
 
 // Singleton instance for convenience
