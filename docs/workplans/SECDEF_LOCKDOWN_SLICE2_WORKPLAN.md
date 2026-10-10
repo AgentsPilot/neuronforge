@@ -9,7 +9,7 @@
 **Branch:** `fix/secdef-lockdown-slice-2` (worktree `neuronforge-secdef-s2`, off `origin/main` `88b1938f`)
 **Migration number:** `20261048`. Re-checked 2026-10-09 at code complete: `origin/main` (`c0ae58bd`) tops at `20261047` (PR #273 merged 2026-10-09, `de3ed839`), and no open PR touches `supabase/migrations/`, `supabase/SQL Scripts/` or `supabase/held/`. Re-check again at PR time (T-10 rule)
 **Date:** 2026-10-09
-**Status:** ✅ Applied on prod 2026-10-09 15:48 UTC and accepted (PR #277). SA code review approved with nits (N-1 applied); QA PASS; user acceptance: checker 78/0, both negative calls 42501, smoke OK. Remaining: Postgres-log check to T+24h and Vercel at T+60 min (rollback only on a caller identified as ours).
+**Status:** ✅ Merged 2026-10-09 (PR #277, merge `4724b727`); applied on prod 2026-10-09 15:48 UTC and accepted. SA code review approved with nits (N-1 applied); QA PASS; user acceptance: checker 78/0, both negative calls 42501, smoke OK. **Pending (user):** Vercel logs at T+60 min (~16:48 UTC) and Postgres logs to T+24 h (2026-10-10 15:48 UTC) for `permission denied for function` (rollback only on a caller identified as ours, S2-3).
 
 ## Overview
 
@@ -234,9 +234,9 @@ No TS source, no other migration, no CI workflow change.
 - ✅ T-8: Migration and rollback written
 - ✅ T-9: Checker written (slice 1 checker with the slice 2 VALUES)
 - ✅ T-10: Run the slice 2 test; regressions: slice 1 test, `npm run test:authz-guard` (includes the slice 6 guard), the purge `no-deletion-paths` guard, `npx tsc --noEmit` on the test file, paste greps on all four SQL files. **Re-check the number:** `git fetch origin`, list `origin/main` `supabase/migrations/2026104*` and `supabase/SQL Scripts/2026104*`, and every open PR touching `supabase/migrations/`, `supabase/SQL Scripts/` or `supabase/held/` (`gh pr list` with files). If `20261048` is taken, rename both SQL files, the test constants and every doc mention **Done 2026-10-09:** slice 2 test 74/74 (mutation-checked: dropping one `COLLATE "C"` or the Q11 `stop here` fails it); slice 1 test, `no-deletion-paths`, Tailwind escape and `authAccountRepository` callers guards 169/169 together; `test:authz-guard` 203/203 (slice 6 guard green, 0 new pairs); `tsc --strict` on the test file clean; paste greps clean on all four SQL files (no `--`, `/*`, "into", LIKE, `SECURITY`/`DEFINER`, `business_os_auth_email_has_account`). Full `npm run test:gate` (10 min 47 s, Windows): 1072/1074 suites; the 2 failures are Windows-only and untouched by this slice (`bookingsSearchAndPaging.guard` expects LF source, `oneAddressPolicy.guard` compares backslash paths). Number re-checked: `20261048` free
-- ⬜ T-11: SA code review, then the user sees the diff (left uncommitted)
-- ⬜ T-12: User runs §6 steps 1 to 4 on prod; results recorded under QA Testing Report
-- ⬜ T-13: QA confirms §5.3 acceptance; requirement §4.3 and inventory §6 updated with PR, merge and apply state
+- ✅ T-11: SA code review (approved with nits), then the user saw the diff
+- ✅ T-12: User ran §6 steps 1 to 5 on prod 2026-10-09; results recorded under QA Testing Report. Step 6 (logs) pending: Vercel at T+60 min, Postgres to T+24 h (2026-10-10 15:48 UTC)
+- ✅ T-13: Requirement §4.3 and inventory §6 updated with PR, merge and apply state. PR #277 merged 2026-10-09 (`4724b727`)
 
 ---
 
@@ -502,3 +502,4 @@ If either block fails with `permission denied to set role`, that is the editor r
 | 2026-10-09 | SA code review | APPROVED WITH NITS. S2-1 to S2-4 verified in code. SQL desk-checked: Q11 `pg_depend` shape, `COLLATE "C"` on all 4 `string_agg`, DO blocks with direct booleans, TSV-derived `to_regprocedure` literals. PR #274 block proof re-read with `gh`. The two Windows gate failures are pre-existing (CRLF via autocrlf, backslash paths), and `Tests` is green on main `88b1938f`/`c0ae58bd`. Slice test 74/74, `test:authz-guard` 203/203. N-1: update inventory §6 row 6 (slice 6 done) in this PR |
 | 2026-10-09 | QA (local PGlite) | PASS. Static test 74/74, authz guard 203/203. Pre-check CLEAN with Q5 `match` x13, also on an ICU `und` database (the mutation without `COLLATE "C"` reproduces `DIFFERS` x13). Checker 39/39, then 78/0; idempotent; both negative blocks give `42501` naming the function; rollback restores the pre-state row for row. Negatives fail safe: a missing function, a foreign grantor, a foreign owner. Q11 flags a column default (required by S2-1), a CHECK constraint, a view and a `BEGIN ATOMIC` caller; Q6 flags an INVOKER SQL caller. Prod steps still owed |
 | 2026-10-09 | Prod apply and acceptance (user, recorded by TL) | pre-check CLEAN at 15:47 UTC (Q5 match and owner granted all x13, Q11 0 dependents; one Q6 caller, has_sufficient_credits calling get_user_credit_balance, both SECDEF owned by postgres, ok); migration applied 15:48 UTC; checker VERDICT PASS 78 pass 0 fail; negative calls 42501 for get_user_credit_balance (anon) and get_user_subscription_info (authenticated); signed-in smoke: no impact. Status set to applied and accepted |
+| 2026-10-09 | Merged (Dev) | PR #277 merged 2026-10-09 (merge `4724b727`). T-11 to T-13 closed. Still owed by the user: Vercel logs at T+60 min (~16:48 UTC) and Postgres logs to T+24 h (2026-10-10 15:48 UTC) for `permission denied for function`, probe hits counted not acted on (S2-3) |
