@@ -12,6 +12,8 @@
  *   button are held below as whole literal blocks, so any edit to either one,
  *   formatting included, fails here. The only approved change is the handler's
  *   one logging line, already substituted in the fixture.
+ * - S-1 and S-4 re-pinned to the true text: AI_MODEL_PRICE_REVIEW slice 1,
+ *   approved SA 2026-10-08 R-5.
  *
  * Line endings are normalised first, so a Windows checkout reads the same as CI.
  */
@@ -142,9 +144,11 @@ describe('P: the header says what the page is (C2-2, G-8)', () => {
   });
 });
 
-describe('P: Sync is unchanged (C2-1, G-5)', () => {
+describe('P: Sync is unchanged apart from its true text (C2-1, G-5; R-5)', () => {
   it('S-1: the helper text', () => {
-    expect(P).toContain('Token costs for all AI models. Sync to get latest pricing from providers.');
+    expect(P).toContain(
+      'Cost per token for each AI model. Sync copies a built-in price list; it does not fetch prices from providers.'
+    );
   });
 
   it('S-2, S-3: the labels', () => {
@@ -154,7 +158,7 @@ describe('P: Sync is unchanged (C2-1, G-5)', () => {
 
   it('S-4: the info-box paragraph', () => {
     expect(P).toContain(
-      '<strong className="text-green-300">Sync Latest Pricing:</strong> Automatically fetches current rates from OpenAI and Anthropic APIs. Keeps system aligned with provider pricing changes. Run monthly or when providers announce updates.'
+      '<strong className="text-green-300">Sync Latest Pricing:</strong> Copies a built-in price list, kept in the code, into this table: it overwrites the price of every model on that list, including manual edits, and adds any listed model that is missing. It does not contact OpenAI, Anthropic or any other provider.'
     );
   });
 
@@ -173,6 +177,20 @@ describe('P: Sync is unchanged (C2-1, G-5)', () => {
 
   it('S-10: the whole Sync button, verbatim', () => {
     expect(P).toContain(SYNC_BUTTON);
+  });
+});
+
+describe('P: the info box tells the truth (MP-FR-1)', () => {
+  it('MT-1: none of the false claims is back', () => {
+    expect(P).not.toContain('Automatically fetches');
+    expect(P).not.toContain('Intelligent Routing');
+    expect(P).not.toContain('intelligent routing');
+    expect(P).not.toContain('per 1,000');
+    expect(P).not.toContain('immediately');
+  });
+
+  it('MT-2: it says when a change takes effect', () => {
+    expect(P).toContain('in effect on all servers within 1 hour');
   });
 });
 
