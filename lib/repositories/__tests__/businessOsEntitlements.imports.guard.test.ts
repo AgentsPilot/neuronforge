@@ -171,6 +171,19 @@ const ALLOWED = new Set(
     // validated by runAiAction. Listed in NO_STATE_WRITE_REFERRERS below, and
     // the slice 8b test below pins the one method.
     'lib/business-os/credits/creditLowLineDeps.ts',
+    // ── Finance & business health slice 1a, 2026-10-09 — the admin finance page ─
+    // READ ONLY. The wiring calls `pagePlans` (all businesses) and
+    // `findEntitlementInputs` (one picked business, override rows dropped in
+    // the wiring, SA-WR-1) and nothing else; the FINANCE_WIRING test below
+    // pins the two methods. The builder names the repository only in a
+    // `Pick<...>` type; the classifier only through the `BusinessOsAccountPlan`
+    // type's import path. All three are listed in NO_STATE_WRITE_REFERRERS.
+    'lib/business-os/finance/financeHealthDeps.ts',
+    'lib/business-os/finance/financeHealth.ts',
+    'lib/business-os/finance/planGroups.ts',
+    // Their tests name it to type fixtures and to fake the wiring's read.
+    'lib/business-os/finance/__tests__/planGroups.test.ts',
+    'lib/business-os/finance/__tests__/financeHealth.test.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -187,6 +200,10 @@ const ADMIN_CREDITS_LEFT_METHOD = 'findPeriodAnchorsBatch';
 /** Slice 8b: the low-line check's wiring, and the ONE plan-repository method it may call. */
 const LOW_LINE_WIRING = 'lib/business-os/credits/creditLowLineDeps.ts';
 const LOW_LINE_METHOD = 'findPeriodAnchor';
+
+/** Finance & business health slice 1a: the finance page's wiring, and the TWO plan-repository methods it may call. */
+const FINANCE_WIRING = 'lib/business-os/finance/financeHealthDeps.ts';
+const FINANCE_METHODS = ['findEntitlementInputs', 'pagePlans'];
 
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
 const WRITE_METHODS = [
@@ -238,6 +255,12 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/credits/creditLowLineDeps.ts',
   // Plan payments P-3b.1: the shared pre-write checks — pure, types only, no repository call at all.
   'lib/business-os/entitlements/planWriteChecks.ts',
+  // Finance & business health slice 1a: the wiring — READ ONLY, `pagePlans` and `findEntitlementInputs` and nothing else.
+  'lib/business-os/finance/financeHealthDeps.ts',
+  // Finance 1a: the builder — a `Pick<..., 'pagePlans'>` type, no repository call of its own.
+  'lib/business-os/finance/financeHealth.ts',
+  // Finance 1a: the classifier — the plan row TYPE only, pure.
+  'lib/business-os/finance/planGroups.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -393,6 +416,20 @@ describe('RC-15 — entitlement repository referrers', () => {
     expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
       'findPeriodAnchor',
       'resetPlanState',
+    ]);
+  });
+
+  it('Finance 1a (SA-W1): the finance wiring calls pagePlans and findEntitlementInputs on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...FINANCE_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect([...calls].sort()).toEqual(FINANCE_METHODS);
+    // The rule is not vacuous: it would see a third method.
+    const planted =
+      'businessOsAccountPlanRepository.pagePlans(a); businessOsAccountPlanRepository.findEntitlementInputs(b); businessOsAccountPlanRepository.updatePlan(c)';
+    expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
+      'pagePlans',
+      'findEntitlementInputs',
+      'updatePlan',
     ]);
   });
 

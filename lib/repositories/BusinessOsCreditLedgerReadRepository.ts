@@ -38,6 +38,13 @@
 // figures, which no owner RLS client can, so it is service role too — but its
 // method (`listTotalsForAccountsInRange`) selects no cost column at all.
 //
+// Finance & business health slice 1a adds the admin finance page, wired in
+// `lib/business-os/finance/financeHealthDeps.ts`, reached only from
+// `app/api/admin/business-os/finance` after `requireAdmin`. It reads the
+// all-accounts `listRowsOfAllAccountsCreatedInRange` only when no business is
+// picked; with one picked it reads `listRowsForAccountCreatedInRange` for that
+// account alone, plus `findChargesByActionIds` for adjustments' originals.
+//
 // ── ACCOUNT SCOPE, BY SIGNATURE ──────────────────────────────────────────────
 // Every account method REQUIRES an account id, or a non-empty list of them, and
 // refuses a malformed one before querying (CLAUDE.md rule 4). Every read that
@@ -45,7 +52,9 @@
 // never by leaving an argument out (the TokenUsageRepository convention):
 //   - ALL ACCOUNTS: `listTotalsForPeriodsInRange` (the cost report) and
 //     `listChargesAllAccountsInWindow` (the Activity list; deleted accounts
-//     excluded, they have their own bucket). Both log at info.
+//     excluded, they have their own bucket), and
+//     `listRowsOfAllAccountsCreatedInRange` (the finance page, slice 1a:
+//     charges and adjustments, deleted accounts INCLUDED). All log at info.
 //   - NO ACCOUNT: `listChargesOfDeletedAccountsInWindow`, the charges whose
 //     account was deleted (`user_id` NULL, ON DELETE SET NULL). Logs at info.
 //   - BY UNIQUE ID: `findChargesByActionIds` (an adjustment's original, and
@@ -627,6 +636,66 @@ export class BusinessOsCreditLedgerReadRepository {
 
       const reachedCeiling = rows.length >= opts.ceiling;
       this.logger.debug({ method, rows: rows.length, reachedCeiling }, 'Credit ledger rows of one account read by time');
+      return { data: { rows: rows.slice(0, opts.ceiling), reachedCeiling }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * Every ledger row (charges AND adjustments) of EVERY account whose
+   * `created_at` falls in the HALF-OPEN range `from <= created_at < to`,
+   * newest first, paged, de-duplicated by id, up to `ceiling` rows — the
+   * all-accounts counterpart of `listRowsForAccountCreatedInRange`, and named
+   * so (finance & business health slice 1a, R-a, SA-Q6).
+   *
+   * Deliberately NO account filter: rows of a deleted account (`user_id`
+   * NULL) are included, so the caller can count them in its own bucket. No
+   * filter on `kind` (an adjustment nets its charge) and none on `service`
+   * (N-10). Logged at info: it is a cross-account read.
+   */
+  async listRowsOfAllAccountsCreatedInRange(
+    range: CreditPeriodStartRange,
+    opts: CreditLedgerPageOptions
+  ): Promise<RepositoryResult<CreditLedgerPagedResult<CreditLedgerRow>>> {
+    const method = 'listRowsOfAllAccountsCreatedInRange';
+    const startedAt = Date.now();
+    try {
+      this.assertRange(range);
+      this.assertPaging(opts);
+
+      const rows: CreditLedgerRow[] = [];
+      const seen = new Set<string>();
+
+      for (let from = 0; rows.length < opts.ceiling; from += opts.pageSize) {
+        const size = Math.min(opts.pageSize, opts.ceiling - rows.length);
+        const { data, error } = await this.supabase
+          .from('business_os_credit_charges')
+          .select(CREDIT_LEDGER_ROW_COLUMNS)
+          .gte('created_at', range.from.toISOString())
+          .lt('created_at', range.to.toISOString())
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + size - 1);
+        if (error) throw error;
+
+        const page = (data ?? []) as unknown as CreditLedgerRow[];
+        for (const row of page) {
+          // A row inserted during paging shifts an older one onto the next
+          // page: it is read twice, never skipped. Keep the first copy.
+          const key = String(row.id);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push(row);
+        }
+        if (page.length < size) break;
+      }
+
+      const reachedCeiling = rows.length >= opts.ceiling;
+      this.logger.info(
+        { method, rows: rows.length, reachedCeiling, durationMs: Date.now() - startedAt },
+        'Credit ledger rows of all accounts read by time'
+      );
       return { data: { rows: rows.slice(0, opts.ceiling), reachedCeiling }, error: null };
     } catch (error) {
       return this.fail(method, error);
