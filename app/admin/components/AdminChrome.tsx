@@ -29,7 +29,7 @@ export default function AdminChrome({
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-gray-900 to-slate-800 text-white">
+    <div className="min-h-screen [color-scheme:dark] bg-gradient-to-br from-slate-900 via-gray-900 to-slate-800 text-white">
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-blue-900/20 via-purple-900/10 to-pink-900/20" />

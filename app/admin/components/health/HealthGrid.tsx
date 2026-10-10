@@ -7,24 +7,44 @@
  * Refresh is manual (an automatic refresh would multiply the load of reads that
  * scan the ledger). It uses `cache: 'no-store'` and never a cache-busting query
  * parameter: the route rejects every parameter (F-9).
+ *
+ * Admin Layout Standard L-1a pilot: the header, Refresh bar, loading and error
+ * states, the read helper and the UTC formatter all come from the shared
+ * folder, imported through the alias (§6.1 S-1).
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
 
-import { createLogger } from '@/lib/logger';
+import { clientLogger } from '@/lib/logger/client';
 import type { HealthSummary } from '@/lib/admin/health/healthTypes';
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import { AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';
+import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { HealthTile } from './HealthTile';
 
-const logger = createLogger({ module: 'AdminHealthGrid' });
+const logger = clientLogger.child({ module: 'AdminHealthGrid' });
 
-/** "HH:mm UTC" of an ISO timestamp. The page states UTC, as the windows are UTC. */
-function utcTime(iso: string): string {
-  return `${iso.slice(11, 16)} UTC`;
-}
+const WHAT = 'the health summary';
 
-function utcDateTime(iso: string): string {
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
+const PURPOSE =
+  'Is anything wrong in Business OS? Red needs action, amber needs a look, and the green label Healthy ' +
+  'means checked and clear. Grey means not measured yet, could not check, or for information only.';
+
+/**
+ * The "As of" line through the shared formatter (F-58: converted through Date,
+ * never sliced). "As of" takes the "HH:mm UTC" tail of the full value, as Jobs
+ * does; when the formatter answers with the em dash, the em dash is shown
+ * whole (SA W-4), never an empty "As of .".
+ */
+function asOfLine(summary: HealthSummary): string {
+  const end = formatUtc(summary.windows.end);
+  const endTime = end === '—' ? end : end.slice(11);
+  return (
+    `As of ${endTime}. Last 24 h = ${formatUtc(summary.windows.last24hStart)} to ${end}; ` +
+    `last 7 days from ${formatUtc(summary.windows.last7dStart)}.`
+  );
 }
 
 export function HealthGrid() {
@@ -36,18 +56,24 @@ export function HealthGrid() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/admin/health-summary', { cache: 'no-store' });
-      const body = (await response.json().catch(() => null)) as
-        | { success: true; data: HealthSummary }
-        | { success: false; error?: string }
-        | null;
-      if (!response.ok || !body || !body.success) {
-        throw new Error((body && !body.success && body.error) || 'The health summary could not be loaded');
+      // Only the fetch sits inside this try (SA W-5): a rejection here is a
+      // network failure; anything else must never be labelled as one.
+      let response: Response;
+      try {
+        response = await fetch('/api/admin/health-summary', { cache: 'no-store' });
+      } catch (err) {
+        logger.error({ err }, 'Could not reach the health summary route');
+        setError(ADMIN_NETWORK_ERROR);
+        return;
       }
-      setSummary(body.data);
-    } catch (err) {
-      logger.error({ err }, 'Failed to load the health summary');
-      setError(err instanceof Error ? err.message : 'The health summary could not be loaded');
+      const result = await readAdminResponse<HealthSummary>(response, { what: WHAT });
+      if (!result.ok) {
+        logger.error({ status: result.status }, 'Failed to load the health summary');
+        // On failure the previous summary stays on screen.
+        setError(result.message);
+        return;
+      }
+      setSummary(result.data);
     } finally {
       setLoading(false);
     }
@@ -59,42 +85,16 @@ export function HealthGrid() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-700 pb-4">
-        <div>
-          <h1 className="text-xl font-semibold text-white">Health</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Is anything wrong in Business OS? Red needs action, amber needs a look, and the green label Healthy
-            means checked and clear. Grey means not measured yet, could not check, or for information only.
-          </p>
-          {summary && (
-            <p data-testid="as-of" className="text-xs text-slate-500 mt-1">
-              As of {utcTime(summary.windows.end)}. Last 24 h = {utcDateTime(summary.windows.last24hStart)} to{' '}
-              {utcDateTime(summary.windows.end)} UTC; last 7 days from {utcDateTime(summary.windows.last7dStart)} UTC.
-            </p>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          aria-busy={loading}
-          disabled={loading}
-          className="px-3 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 text-slate-200 disabled:opacity-60"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
-          Refresh
-        </button>
-      </header>
+      <AdminPageHeader title="Health" purpose={PURPOSE} asOf={summary ? asOfLine(summary) : null} />
 
-      {error && (
-        <p role="alert" data-testid="health-error" className="text-sm text-red-300">
-          {error}
-        </p>
-      )}
+      <AdminFilterBar what={WHAT} busy={loading} onRefresh={() => void load()} />
 
-      {!summary && loading && <p className="text-sm text-slate-400">Loading…</p>}
+      {error && <AdminError message={error} testId="health-error" onRetry={() => void load()} />}
+
+      {!summary && loading && <AdminLoading what={WHAT} />}
 
       {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div aria-busy={loading} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {summary.tiles.map((tile) => (
             <HealthTile key={tile.id} tile={tile} />
           ))}
