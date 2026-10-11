@@ -19,17 +19,29 @@
  *
  * Green appears only on a job the computation called Healthy (a recorded
  * Vercel cron run and a good read) or a queue called Clear (a good read), and
- * only through GREEN_STYLE below: the one green in these files (SA SC-7(h),
- * pinned by the source guard). Every status has a text label (C-16).
+ * only through the shared StatusChip's `ok` tone: no Jobs file holds a green
+ * class of its own (pinned by the source guard; the one green constant lives
+ * in the shared layout folder, C-14 S-7). Every status has a text label (C-16).
+ *
+ * Admin Layout Standard L-1b pilot (§7.2): the header, KPI strip, Refresh bar,
+ * loading and error states, read helper, status chip and UTC formatter all
+ * come from the shared folder, imported through the alias (§6.1 S-1). The KPI
+ * tiles are computed from the one read this page already makes (K-9).
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
 
-import { createLogger } from '@/lib/logger';
+import { clientLogger } from '@/lib/logger/client';
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import { AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';
+import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
+import { formatCount, formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { KpiStrip, KpiTile, type KpiTileProps } from '@/app/admin/components/layout/KpiStrip';
+import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
 import { DrainNowDialog, isDrainQueueId } from './DrainNowDialog';
 import { QueueItemsPanel } from './QueueItemsPanel';
-import { ageWords, formatUtc } from './jobsFormat';
+import { ageWords } from './jobsFormat';
 import type {
   JobStatus,
   JobView,
@@ -39,45 +51,43 @@ import type {
   RunView,
 } from '@/lib/admin/jobs/jobsQueuesTypes';
 
-const logger = createLogger({ module: 'AdminJobsQueuesView' });
+const logger = clientLogger.child({ module: 'AdminJobsQueuesView' });
 
-type Tone = 'red' | 'amber' | 'green' | 'grey';
+/** Noun phrase for the shared parts: "Refresh {what}", "Reading {what}…", "Could not read {what}…". */
+const WHAT = 'the jobs and queues';
 
-/** THE ONLY GREEN in the jobs & queues files (SA SC-7(h)). */
-const GREEN_STYLE = 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40';
+// The purpose text, unchanged word for word. Two constants so the pinned
+// action sentence stays one contiguous literal in the source (source guard).
+const PURPOSE_LEGEND =
+  'The Business OS scheduled jobs and the queues they drain. Red needs action, amber needs a look, and the ' +
+  'green label Healthy or Clear means checked and clear. Grey means no run recorded yet or could not check.';
+const PURPOSE_ACTIONS =
+  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; everything else here is read-only.";
+const PURPOSE = `${PURPOSE_LEGEND} ${PURPOSE_ACTIONS}`;
 
-export const TONE_CLASSES: Record<Tone, string> = {
-  red: 'bg-red-500/15 text-red-300 border-red-500/40',
-  amber: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
-  green: GREEN_STYLE,
-  grey: 'bg-slate-700/40 text-slate-300 border-slate-600',
+// §5.9 tones: "not measured / could not check" is `unknown` (dashed, with an
+// icon), so no run recorded yet and could not check use it (SA Q-4).
+export const JOB_TONE: Record<JobStatus, StatusTone> = {
+  stopped: 'danger',
+  keeps_failing: 'danger',
+  late: 'warn',
+  last_run_failed: 'warn',
+  partly_done: 'warn',
+  no_run_yet: 'unknown',
+  could_not_check: 'unknown',
+  healthy: 'ok',
 };
 
-export const JOB_TONE: Record<JobStatus, Tone> = {
-  stopped: 'red',
-  keeps_failing: 'red',
-  late: 'amber',
-  last_run_failed: 'amber',
-  partly_done: 'amber',
-  no_run_yet: 'grey',
-  could_not_check: 'grey',
-  healthy: 'green',
+export const QUEUE_TONE: Record<QueueStatus, StatusTone> = {
+  stuck: 'danger',
+  stopped_draining: 'danger',
+  dead_lettered_24h: 'danger',
+  behind: 'warn',
+  dead_lettered_7d: 'warn',
+  failures_24h: 'warn',
+  could_not_check: 'unknown',
+  clear: 'ok',
 };
-
-export const QUEUE_TONE: Record<QueueStatus, Tone> = {
-  stuck: 'red',
-  stopped_draining: 'red',
-  dead_lettered_24h: 'red',
-  behind: 'amber',
-  dead_lettered_7d: 'amber',
-  failures_24h: 'amber',
-  could_not_check: 'grey',
-  clear: 'green',
-};
-
-// formatUtc and ageWords live in jobsFormat.ts (slice 7a, OP-13), shared with
-// the item list; formatUtc is re-exported for the existing render tests.
-export { formatUtc };
 
 const utc = formatUtc;
 
@@ -86,16 +96,67 @@ function duration(msValue: number | null): string {
   return msValue < 1000 ? `${msValue} ms` : `${(msValue / 1000).toFixed(1)} s`;
 }
 
-function Badge({ tone, children }: { tone: Tone; children: string }) {
-  return (
-    <span
-      data-testid="status-badge"
-      data-tone={tone}
-      className={`inline-block whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium ${TONE_CLASSES[tone]}`}
-    >
-      {children}
-    </span>
-  );
+/** "6 Healthy · 1 Last run failed": a count per each item's own status words, in payload order. */
+function statusSplit(items: ReadonlyArray<{ statusWords: string }>): string | null {
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(item.statusWords, (counts.get(item.statusWords) ?? 0) + 1);
+  if (counts.size === 0) return null;
+  return [...counts].map(([words, count]) => `${formatCount(count)} ${words}`).join(' · ');
+}
+
+type QueueFigures = NonNullable<QueueView['figures']>;
+
+/**
+ * Sum one figure over the queues whose figures were read. When some could not
+ * be read the sum is a lower bound, and the sub-line says so (K-8).
+ */
+function sumOverQueues(queues: readonly QueueView[], pick: (figures: QueueFigures) => number) {
+  const read = queues.flatMap((queue) => (queue.figures ? [queue.figures] : []));
+  const total = read.reduce((sum, figures) => sum + pick(figures), 0);
+  const missing = queues.length - read.length;
+  const sub =
+    missing > 0
+      ? `at least: ${missing} of ${queues.length} queues could not be checked`
+      : `across ${queues.length} ${queues.length === 1 ? 'queue' : 'queues'}`;
+  return { total, sub };
+}
+
+/**
+ * The four §7.2 tiles, from the payload this page already reads (K-9). Jobs and
+ * Queues are always neutral (SA-R-4). Stuck and Dead-lettered are red when the
+ * sum is 1 or more: by the server's queue status rule every such queue is
+ * already red on this page, so the tile repeats a status the payload carries
+ * (K-5 (i)) and adds no threshold.
+ */
+function kpiTiles(view: JobsQueuesViewData): KpiTileProps[] {
+  const stuck = sumOverQueues(view.queues, (figures) => figures.stuck);
+  const deadLettered = sumOverQueues(view.queues, (figures) => figures.deadLettered24h);
+  return [
+    { testId: 'kpi-jobs', label: 'Jobs', value: formatCount(view.jobs.length), sub: statusSplit(view.jobs), href: '#jobs' },
+    {
+      testId: 'kpi-queues',
+      label: 'Queues',
+      value: formatCount(view.queues.length),
+      sub: statusSplit(view.queues),
+      href: '#queues',
+    },
+    {
+      testId: 'kpi-stuck',
+      label: 'Stuck items',
+      value: formatCount(stuck.total),
+      sub: stuck.sub,
+      status: stuck.total >= 1 ? 'red' : null,
+      href: '#queues',
+    },
+    {
+      testId: 'kpi-dead-lettered',
+      label: 'Dead-lettered (24 h)',
+      value: formatCount(deadLettered.total),
+      sub: deadLettered.sub,
+      status: deadLettered.total >= 1 ? 'red' : null,
+      href: '#queues',
+    },
+  ];
 }
 
 function runWords(run: RunView): string {
@@ -117,7 +178,9 @@ function JobRow({ job }: { job: JobView }) {
         {job.timeLimitNote && <div className="text-xs text-slate-500">{job.timeLimitNote}</div>}
       </td>
       <td className="py-2 pr-4">
-        <Badge tone={JOB_TONE[job.status]}>{job.statusWords}</Badge>
+        <StatusChip tone={JOB_TONE[job.status]} testId="status-badge">
+          {job.statusWords}
+        </StatusChip>
       </td>
       <td className="py-2 pr-4 text-xs text-slate-300">
         {job.lastRun ? (
@@ -212,7 +275,9 @@ function QueueCard({ queue, onDrained, refreshKey }: { queue: QueueView; onDrain
           <p className="text-xs text-slate-500">Drained by {queue.drainedByLabel}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge tone={QUEUE_TONE[queue.status]}>{queue.statusWords}</Badge>
+          <StatusChip tone={QUEUE_TONE[queue.status]} testId="status-badge">
+            {queue.statusWords}
+          </StatusChip>
           {/* Shown even when the figures could not be read: recovery is the point. */}
           {isDrainQueueId(queue.id) && (
             <DrainNowDialog
@@ -270,18 +335,26 @@ export function JobsQueuesView() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/admin/jobs-queues', { cache: 'no-store' });
-      const body = (await response.json().catch(() => null)) as
-        | { success: true; data: JobsQueuesViewData }
-        | { success: false; error?: string }
-        | null;
-      if (!response.ok || !body || !body.success) {
-        throw new Error((body && !body.success && body.error) || 'The jobs and queues could not be loaded');
+      // Only the fetch sits inside this try (the HealthGrid shape): a rejection
+      // here is a network failure; anything else must never be labelled as one.
+      let response: Response;
+      try {
+        response = await fetch('/api/admin/jobs-queues', { cache: 'no-store' });
+      } catch (err) {
+        logger.error({ err }, 'Could not reach the jobs and queues route');
+        setError(ADMIN_NETWORK_ERROR);
+        return;
       }
-      setView(body.data);
-    } catch (err) {
-      logger.error({ err }, 'Failed to load the jobs and queues');
-      setError(err instanceof Error ? err.message : 'The jobs and queues could not be loaded');
+      // sessionEndedCopy: a 401 or 403 says the session ended, as the item list
+      // and the dialogs already do (L-1a ruling 3b, SA Q-6).
+      const result = await readAdminResponse<JobsQueuesViewData>(response, { what: WHAT, sessionEndedCopy: true });
+      if (!result.ok) {
+        logger.error({ status: result.status }, 'Failed to load the jobs and queues');
+        // On failure the previous view (and its tiles) stays on screen (SA Q-11).
+        setError(result.message);
+        return;
+      }
+      setView(result.data);
     } finally {
       setLoading(false);
       setRefreshKey((key) => key + 1);
@@ -294,42 +367,28 @@ export function JobsQueuesView() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-700 pb-4">
-        <div>
-          <h1 className="text-xl font-semibold text-white">Scheduled jobs & queues</h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-400">
-            The Business OS scheduled jobs and the queues they drain. Red needs action, amber needs a look, and
-            the green label Healthy or Clear means checked and clear. Grey means no run recorded yet or could not
-            check.{' '}
-            {"Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; everything else here is read-only."}
-          </p>
-          {view && (
-            <p data-testid="as-of" className="mt-1 text-xs text-slate-500">
-              As of {formatUtc(view.now).slice(11)}.
-            </p>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          aria-busy={loading}
-          disabled={loading}
-          className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-60"
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
-          Refresh
-        </button>
-      </header>
+      <AdminPageHeader
+        title="Scheduled jobs & queues"
+        purpose={PURPOSE}
+        asOf={view ? `As of ${formatUtc(view.now)}.` : null}
+      />
 
-      {error && (
-        <p role="alert" data-testid="jobs-error" className="text-sm text-red-300">
-          {error}
-        </p>
+      {/* K-10: placeholders only while the FIRST read is in flight (a Refresh
+          keeps the tiles); no strip when there is nothing to show. */}
+      {(view || loading) && (
+        <KpiStrip loading={loading && !view} placeholderCount={4}>
+          {view && kpiTiles(view).map((tile) => <KpiTile key={tile.label} {...tile} />)}
+        </KpiStrip>
       )}
-      {!view && loading && <p className="text-sm text-slate-400">Loading…</p>}
+
+      <AdminFilterBar what={WHAT} busy={loading} onRefresh={() => void load()} />
+
+      {error && <AdminError message={error} testId="jobs-error" onRetry={() => void load()} />}
+
+      {!view && loading && <AdminLoading what={WHAT} />}
 
       {view && (
-        <>
+        <div aria-busy={loading} className="space-y-6">
           <section id="jobs" aria-labelledby="jobs-title" className="space-y-2">
             <h2 id="jobs-title" className="text-sm font-semibold text-white">
               Scheduled jobs
@@ -379,7 +438,7 @@ export function JobsQueuesView() {
               ))}
             </div>
           </section>
-        </>
+        </div>
       )}
     </div>
   );

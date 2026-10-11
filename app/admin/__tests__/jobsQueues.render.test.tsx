@@ -16,9 +16,17 @@ import { render, screen, waitFor, within, fireEvent } from '@testing-library/rea
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), child: jest.fn().mockReturnThis() }),
 }));
+// RC-1 (Admin Layout Standard L-1b): the Jobs files log through `clientLogger.child`.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
 
 import AdminJobsQueuesPage from '../jobs-queues/page';
-import { JOB_TONE, QUEUE_TONE, TONE_CLASSES, formatUtc } from '../components/jobs/JobsQueuesView';
+// Admin Layout Standard L-1b: tones are the shared StatusChip's, and Jobs prints
+// time through the shared formatter (its own copy is deleted, CR-4).
+import { JOB_TONE, QUEUE_TONE } from '../components/jobs/JobsQueuesView';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { buildJobsQueuesView } from '@/lib/admin/jobs/buildJobsQueuesView';
 import type { CronRunSummaryRow } from '@/lib/admin/jobs/buildJobsQueuesView';
 import type { JobsQueuesView } from '@/lib/admin/jobs/jobsQueuesTypes';
@@ -121,9 +129,12 @@ describe('the Scheduled jobs & queues page', () => {
     for (const badge of screen.getAllByTestId('status-badge')) {
       expect(GREEN.test(badge.className)).toBe(badge.textContent === 'Healthy' || badge.textContent === 'Clear');
     }
-    for (const [status, tone] of Object.entries(JOB_TONE)) expect(tone === 'green').toBe(status === 'healthy');
-    for (const [status, tone] of Object.entries(QUEUE_TONE)) expect(tone === 'green').toBe(status === 'clear');
-    expect(new Set(Object.values(TONE_CLASSES)).size).toBe(4);
+    for (const [status, tone] of Object.entries(JOB_TONE)) expect(tone === 'ok').toBe(status === 'healthy');
+    for (const [status, tone] of Object.entries(QUEUE_TONE)) expect(tone === 'ok').toBe(status === 'clear');
+    // Amended by Admin Layout Standard L-1b: the tones are the shared chip's (§5.9).
+    expect(new Set([...Object.values(JOB_TONE), ...Object.values(QUEUE_TONE)])).toEqual(
+      new Set(['danger', 'warn', 'ok', 'unknown'])
+    );
   });
 
   it('says so when the run record is not installed', async () => {
@@ -149,7 +160,8 @@ describe('the Scheduled jobs & queues page', () => {
     const fetchMock = mockRoute();
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('job-calendar-sync');
-    const button = screen.getByRole('button', { name: /Refresh/ });
+    // Amended by Admin Layout Standard L-1b (D-15): the shared bar names the button.
+    const button = screen.getByRole('button', { name: 'Refresh the jobs and queues' });
     fireEvent.click(button);
     expect(button.getAttribute('aria-busy')).toBe('true');
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
