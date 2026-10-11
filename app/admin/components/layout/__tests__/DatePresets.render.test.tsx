@@ -10,7 +10,7 @@
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 
-import { DatePresets } from '@/app/admin/components/layout/DatePresets';
+import { ADMIN_FIELD_LABEL, AdminFieldSpacer, DatePresets } from '@/app/admin/components/layout/DatePresets';
 import type { AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
 import { resolveAdminWindow } from '@/app/admin/components/adminWindowPresets';
 
@@ -224,5 +224,45 @@ describe('extras and requireBothDates (L-2a)', () => {
     fireEvent.change(screen.getByLabelText('From (UTC)'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('To (UTC)'), { target: { value: '' } });
     expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('alignment on one label row (L-4a, user request 2026-10-11; SA Q-4, Q-6)', () => {
+  it('shows a visible "Window" label that names the group through aria-labelledby', () => {
+    setup(NONE);
+    const group = screen.getByRole('group', { name: 'Window' });
+    const labelId = group.getAttribute('aria-labelledby');
+    expect(labelId).toBeTruthy();
+    expect(group.hasAttribute('aria-label')).toBe(false);
+    const label = document.getElementById(labelId ?? '');
+    expect(label?.textContent).toBe('Window');
+    expect(label?.className).toBe(ADMIN_FIELD_LABEL);
+    // The label sits directly above the group, in the same field column.
+    expect(label?.nextElementSibling).toBe(group);
+  });
+
+  it('the preset buttons are as tall as an input (py-1.5)', () => {
+    setup(NONE);
+    for (const button of within(screen.getByRole('group', { name: 'Window' })).getAllByRole('button')) {
+      expect(button.className).toContain('py-1.5');
+      expect(button.className).not.toMatch(/(?<![\w.-])py-1(?![\w.])/);
+    }
+  });
+
+  it('Apply sits under an aria-hidden label-height spacer', () => {
+    setup(NONE);
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+    const spacer = screen.getByRole('button', { name: 'Apply' }).previousElementSibling;
+    expect(spacer?.getAttribute('aria-hidden')).toBe('true');
+    expect(spacer?.className).toContain(ADMIN_FIELD_LABEL);
+    expect(spacer?.className).toContain('invisible');
+  });
+
+  it('AdminFieldSpacer is an invisible, aria-hidden label row with one non-breaking space', () => {
+    const { container } = render(<AdminFieldSpacer />);
+    const spacer = container.firstElementChild as HTMLElement;
+    expect(spacer.getAttribute('aria-hidden')).toBe('true');
+    expect(spacer.className).toBe(`${ADMIN_FIELD_LABEL} invisible select-none`);
+    expect(spacer.textContent).toBe(String.fromCharCode(160));
   });
 });

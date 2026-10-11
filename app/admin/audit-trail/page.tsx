@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useId, useRef, Suspense } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import {
   Search, Calendar, User, Activity,
@@ -19,6 +19,7 @@ import { clientLogger } from '@/lib/logger/client';
 import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 import {
+  AdminFieldSpacer,
   AdminFilterBar,
   ADMIN_FIELD_CONTROL,
   ADMIN_FIELD_LABEL,
@@ -81,6 +82,15 @@ const OFFERED_ACTIONS: ReadonlySet<string> = new Set(
 
 /** The one-click "BOS AI failures" view (slice 2c). */
 const BOS_AI_FAILED_ACTION = AUDIT_EVENTS.BUSINESS_AI_ACTION_FAILED;
+
+/**
+ * The business picker's standing note, said out loud because the list is
+ * `business_profiles`: an account with no profile row can only be reached by
+ * pasting its id. Shown as the bar's help line, linked to the picker input
+ * (L-4a, user request 2026-10-11).
+ */
+const BUSINESS_HELP =
+  'Only accounts with a business profile can be found by name. Paste a full account id for any other account.';
 const ENTITY_TYPE_FILTER_OPTIONS = buildEntityTypeFilterOptions();
 
 interface AuditLogEntry {
@@ -636,6 +646,8 @@ export default function AuditTrailPage() {
 
 function AuditTrailPageContent() {
   const { user } = useAuth();
+  // The bar's help line describes the business picker (L-4a): one id, owned here.
+  const businessHelpId = useId();
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -897,12 +909,11 @@ function AuditTrailPageContent() {
           onChange: (next) => setFilters({ window: next }),
         }}
         business={
-          // The shared picker (C-6, L-1e), labelled "Business" by default. The
-          // fixed width keeps its standing hint from stretching the row. The
-          // business filter is the only one applied at the DATABASE level to a
-          // single account (route.ts `.eq('user_id', accountId)`). The hint is
-          // said out loud because the list is `business_profiles`: an account
-          // with no profile row can only be reached by pasting its id.
+          // The shared picker (C-6, L-1e), labelled "Business" by default, at a
+          // fixed width so the column does not stretch. The business filter is
+          // the only one applied at the DATABASE level to a single account
+          // (route.ts `.eq('user_id', accountId)`). Its note is the bar's help
+          // line (BUSINESS_HELP).
           <div className="w-full sm:w-72">
             <AdminBusinessPicker
               selectedAccountId={filters.account}
@@ -910,13 +921,14 @@ function AuditTrailPageContent() {
                 setPickedBusiness({ accountId: account, name });
                 setFilters({ account });
               }}
-              hint="Only accounts with a business profile can be found by name. Paste a full account id to filter by any other account."
+              describedBy={businessHelpId}
             />
           </div>
         }
         onClear={clear}
         canClear={!isDefault}
         chips={chips}
+        help={{ id: businessHelpId, text: BUSINESS_HELP, testId: 'business-picker-hint' }}
       >
         {/* Search: applied per keystroke, as before (F-98); held by the hook as
             page-only, so it is never written to the address bar. */}
@@ -1002,20 +1014,24 @@ function AuditTrailPageContent() {
         </div>
 
         {/* One-click view (slice 2c): every failed Business OS AI action. It
-            only sets the action (no toggle-off); the Action select resets it. */}
-        <button
-          type="button"
-          data-testid="preset-bos-ai-failures"
-          aria-pressed={isBosAiFailures}
-          onClick={() => setFilters({ action: BOS_AI_FAILED_ACTION })}
-          className={`px-2.5 py-1.5 text-xs rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${
-            isBosAiFailures
-              ? 'bg-purple-500/20 border-purple-500/50 text-purple-200'
-              : 'border-slate-600 text-slate-300 hover:bg-slate-700'
-          }`}
-        >
-          BOS AI failures
-        </button>
+            only sets the action (no toggle-off); the Action select resets it.
+            It has no label, so it sits under the label-row spacer (L-4a). */}
+        <div>
+          <AdminFieldSpacer />
+          <button
+            type="button"
+            data-testid="preset-bos-ai-failures"
+            aria-pressed={isBosAiFailures}
+            onClick={() => setFilters({ action: BOS_AI_FAILED_ACTION })}
+            className={`px-2.5 py-1.5 text-sm rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${
+              isBosAiFailures
+                ? 'bg-purple-500/20 border-purple-500/50 text-purple-200'
+                : 'border-slate-600 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            BOS AI failures
+          </button>
+        </div>
       </AdminFilterBar>
 
       {error && <AdminError message={error} testId="audit-error" onRetry={() => void fetchLogs()} />}

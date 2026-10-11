@@ -19,6 +19,12 @@
  * Custom with the same pressed and second-click rules, and may require both
  * dates before Apply (`requireBothDates`, for a route that cannot take a
  * one-sided window).
+ *
+ * L-4a (user request 2026-10-11, §5.5 Layout): every bar field is "label row,
+ * then control", top-aligned. The group carries a visible "Window" label
+ * (its accessible name stays exactly "Window", now through aria-labelledby),
+ * the preset buttons are as tall as an input (py-1.5, SA Q-6), and a control
+ * with no label of its own sits under `AdminFieldSpacer` (SA Q-4).
  */
 
 import { useId, useState } from 'react';
@@ -43,6 +49,21 @@ export const ADMIN_FIELD_CONTROL =
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
 
 const RANGE_PROBLEM = 'The start date must not be after the end date';
+
+/**
+ * An invisible label-height row for a bar control that has no label of its own
+ * (Clear, Refresh, Apply, a page's one-click button), so its control lines up
+ * with the labelled ones under `items-start`. It carries `ADMIN_FIELD_LABEL`,
+ * so its height is exactly a label's whatever the font metrics (SA Q-4).
+ * Hidden from assistive technology.
+ */
+export function AdminFieldSpacer() {
+  return (
+    <span aria-hidden="true" className={`${ADMIN_FIELD_LABEL} invisible select-none`}>
+      &nbsp;
+    </span>
+  );
+}
 
 export interface DatePresetsProps {
   value: AdminWindowValue;
@@ -72,6 +93,7 @@ function draftFrom(value: AdminWindowValue): { from: string; to: string } {
 export function DatePresets({ value, defaultValue, onChange, extras = [], requireBothDates = false }: DatePresetsProps) {
   const fromId = useId();
   const toId = useId();
+  const labelId = useId();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() => draftFrom(value));
   const [problem, setProblem] = useState<string | null>(null);
@@ -119,53 +141,58 @@ export function DatePresets({ value, defaultValue, onChange, extras = [], requir
   };
 
   const buttonClass = (pressed: boolean) =>
-    `rounded-md px-2.5 py-1 text-xs transition-colors ${FOCUS_RING} ${
+    `rounded-md px-2.5 py-1.5 text-xs transition-colors ${FOCUS_RING} ${
       pressed ? 'bg-purple-500/20 text-purple-200' : 'text-slate-300 hover:bg-slate-800'
     }`;
 
   return (
-    <div className="flex flex-wrap items-end gap-3">
-      <div role="group" aria-label="Window" className="inline-flex rounded-lg border border-slate-700 bg-slate-900/50 p-0.5">
-        {ADMIN_WINDOW_PRESETS.map((preset) => {
-          const pressed = value.kind === 'preset' && value.preset === preset;
-          return (
-            <button
-              key={preset}
-              type="button"
-              aria-pressed={pressed}
-              onClick={() => pickPreset({ kind: 'preset', preset })}
-              className={buttonClass(pressed)}
-            >
-              {ADMIN_WINDOW_LABELS[preset]}
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          aria-pressed={value.kind === 'custom'}
-          onClick={openCustom}
-          className={buttonClass(value.kind === 'custom')}
-        >
-          {ADMIN_WINDOW_LABELS.custom}
-        </button>
-        {extras.map((extra) => {
-          const pressed = value.kind === 'extra' && value.extra === extra;
-          return (
-            <button
-              key={extra}
-              type="button"
-              aria-pressed={pressed}
-              onClick={() => pickPreset({ kind: 'extra', extra })}
-              className={buttonClass(pressed)}
-            >
-              {ADMIN_WINDOW_EXTRA_LABELS[extra]}
-            </button>
-          );
-        })}
+    <div className="flex flex-wrap items-start gap-3">
+      <div>
+        <span id={labelId} className={ADMIN_FIELD_LABEL}>
+          Window
+        </span>
+        <div role="group" aria-labelledby={labelId} className="inline-flex rounded-lg border border-slate-700 bg-slate-900/50 p-0.5">
+          {ADMIN_WINDOW_PRESETS.map((preset) => {
+            const pressed = value.kind === 'preset' && value.preset === preset;
+            return (
+              <button
+                key={preset}
+                type="button"
+                aria-pressed={pressed}
+                onClick={() => pickPreset({ kind: 'preset', preset })}
+                className={buttonClass(pressed)}
+              >
+                {ADMIN_WINDOW_LABELS[preset]}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            aria-pressed={value.kind === 'custom'}
+            onClick={openCustom}
+            className={buttonClass(value.kind === 'custom')}
+          >
+            {ADMIN_WINDOW_LABELS.custom}
+          </button>
+          {extras.map((extra) => {
+            const pressed = value.kind === 'extra' && value.extra === extra;
+            return (
+              <button
+                key={extra}
+                type="button"
+                aria-pressed={pressed}
+                onClick={() => pickPreset({ kind: 'extra', extra })}
+                className={buttonClass(pressed)}
+              >
+                {ADMIN_WINDOW_EXTRA_LABELS[extra]}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {showRow && (
-        <div className="flex flex-wrap items-end gap-2">
+        <div className="flex flex-wrap items-start gap-2">
           <div>
             <label htmlFor={fromId} className={ADMIN_FIELD_LABEL}>
               From (UTC)
@@ -196,14 +223,17 @@ export function DatePresets({ value, defaultValue, onChange, extras = [], requir
               className={`${ADMIN_FIELD_CONTROL} w-40`}
             />
           </div>
-          <button
-            type="button"
-            onClick={apply}
-            disabled={!canApply}
-            className={`rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-60 ${FOCUS_RING}`}
-          >
-            Apply
-          </button>
+          <div>
+            <AdminFieldSpacer />
+            <button
+              type="button"
+              onClick={apply}
+              disabled={!canApply}
+              className={`rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-60 ${FOCUS_RING}`}
+            >
+              Apply
+            </button>
+          </div>
           {problem && (
             <p role="alert" className="w-full text-xs text-red-300">
               {problem}

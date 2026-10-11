@@ -16,9 +16,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
+import { ADMIN_DIALOG_CLASS, ADMIN_DIALOG_TITLE_CLASS } from '@/app/admin/components/layout/adminDialog';
 import { BOOST_ACTION_COPY, reconcileOutcome } from '../boostCopy';
-
-const DARK_DIALOG = '!border-slate-700 !bg-slate-900 !text-slate-100';
 
 export const RECONCILE_URL = '/api/admin/business-os/credits/boost/reconcile';
 
@@ -73,9 +72,9 @@ export function BoostReconcileDialog({ open, onOpenChange, onFinished }: Props) 
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent data-testid="boost-reconcile-dialog" className={DARK_DIALOG}>
+      <DialogContent data-testid="boost-reconcile-dialog" className={ADMIN_DIALOG_CLASS}>
         <DialogHeader>
-          <DialogTitle className="!text-white">{BOOST_ACTION_COPY.reconcileTitle}</DialogTitle>
+          <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>{BOOST_ACTION_COPY.reconcileTitle}</DialogTitle>
           <DialogDescription data-testid="boost-reconcile-description" className="!text-slate-300">
             {BOOST_ACTION_COPY.reconcileDescription}
           </DialogDescription>

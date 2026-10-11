@@ -89,6 +89,7 @@ beforeEach(() => {
 
 describe('every filter control is reachable by its label', () => {
   it.each([
+    'Window',
     'Business',
     'Search',
     'Action Type',
@@ -98,6 +99,14 @@ describe('every filter control is reachable by its label', () => {
     mockRoute();
     render(<AuditTrailPage />);
     expect(await screen.findByLabelText(label)).toBeTruthy();
+  });
+
+  it('Window has a VISIBLE label that names the group (L-4a; a bare aria-label would also satisfy getByLabelText)', async () => {
+    mockRoute();
+    render(<AuditTrailPage />);
+    const group = await screen.findByRole('group', { name: 'Window' });
+    const label = document.getElementById(group.getAttribute('aria-labelledby') ?? '');
+    expect(label?.textContent).toBe('Window');
   });
 
   it('From (UTC) and To (UTC), once Custom is clicked', async () => {
