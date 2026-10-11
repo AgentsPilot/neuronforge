@@ -227,6 +227,33 @@ describe('BusinessOsPanel', () => {
     expect((await screen.findByTestId('credit-form-dialog')).textContent).toContain('Give credits to Acme Therapy');
   });
 
+  it('renders the Credit top-ups block right after Credits, from its own route (credits boost slice 6a)', async () => {
+    const BOOST = {
+      success: true,
+      data: {
+        accountId: ACCOUNT,
+        isOwnAccount: false,
+        serverMode: 'test',
+        purchases: { status: 'ok', rows: [], truncated: { test: false, live: false } },
+        cap: { status: 'ok', default: { amountMinor: 15000, currency: 'USD', windowDays: 30 }, active: null, history: [] },
+      },
+    };
+    const fetchMock = mockFetch({
+      // The longer key first: the stub takes the first key the URL contains.
+      [`/credits/accounts/${ACCOUNT}/boost`]: { status: 200, body: BOOST },
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+      [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
+    });
+    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+
+    const boost = await screen.findByTestId('boost-block');
+    await within(boost).findByTestId('boost-no-purchases');
+    const credits = screen.getByTestId('credits-block');
+    expect(credits.compareDocumentPosition(boost) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/api/admin/business-os/credits/accounts/${ACCOUNT}/boost`))).toBe(true);
+  });
+
   it('shows no Credits block for a login with no business', async () => {
     mockFetch({
       [`/entitlements/accounts/${NO_BUSINESS}`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },

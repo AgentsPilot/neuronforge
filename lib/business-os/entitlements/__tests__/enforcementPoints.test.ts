@@ -372,6 +372,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['creditAllowanceDecision', 'getEntitlementService', 'isBusinessOsTenant', 'resolveAccountId'],
       why: 'Credit deduction slice 11c: the admin read-only credit view of ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the entitlements and summary routes), resolves the path id through the account seam (`resolveAccountId`, required by `accountSeam.guard` for any file that reaches the service), reads `getSnapshot` for DISPLAY (never `check()` / `decide()`) and turns it into the allowance and its deciding layer with `creditAllowanceDecision`, which keeps the capability id inside the module. It refuses nothing: an account over its allowance is shown, not blocked. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Credits boost slice 6a, 2026-10-09 — the admin "Credit top-ups" block ──
+    {
+      file: 'app/api/admin/business-os/credits/accounts/[accountId]/boost/route.ts',
+      symbols: ['BOOST_PURCHASE_CAP_DEFAULT', 'isBusinessOsTenant', 'resolveAccountId'],
+      why: 'Credits boost slice 6a: the admin read-only view of the credit top-ups and spending limit of ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the 11c credit view), resolves the path id through the account seam (`resolveAccountId`), and shows the default limit from configuration (`BOOST_PURCHASE_CAP_DEFAULT`) beside any admin override. It reads no snapshot and refuses nothing: no `check()` / `decide()`, and nothing is blocked by plan. If this file ever gates a request by plan, it belongs in ENFORCEMENT_POINTS.',
+    },
     // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
     {
       file: 'lib/business-os/credits/adminCreditPercent.ts',
