@@ -1,6 +1,6 @@
 # Retrospective: Admin Layout Standard
 
-> **Last Updated**: 2026-10-10
+> **Last Updated**: 2026-10-11
 
 ## Overview
 
@@ -124,4 +124,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 ### Conclusions & process improvements
 - Fix inherited behaviour bugs in a shared component when it is first extracted; later adopters multiply the cost.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l1e — a58ee4b5, PR #293

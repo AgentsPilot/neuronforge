@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md): §1 (row 4a), §5.5 (parts 3 and 7), §5.10, §5.12 (A-1, A-3, A-9), §6.1 (S-1 to S-10), §6.2 C-6 and C-14, §7.3 (picker parts and test edits), §9 F-28, F-31, F-56 (picker), F-70, §12.2 (L-1e line), §12.3; SA re-check RC-6, RC-7, R-11; L-1c workplan SA review N-3, N-4 ([ADMIN_LAYOUT_L1C_WORKPLAN.md](/docs/workplans/ADMIN_LAYOUT_L1C_WORKPLAN.md)); L-1d workplan §2.2, §12 and SA workplan review Q-1, QA re-check note on the focus fallback ([ADMIN_LAYOUT_L1D_WORKPLAN.md](/docs/workplans/ADMIN_LAYOUT_L1D_WORKPLAN.md))
 **Branch:** `feature/admin-layout-l1e`, cut from `feature/admin-layout-l1d` (`d31abf10`). The PR targets `main`, so its diff includes L-1d (PR #292) until #292 merges; expected. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-11
-**Status:** Code complete — SA approved, QA passed (QA-1/QA-2 fixed) — ready for RM
+**Status:** Committed — a58ee4b5 on `feature/admin-layout-l1e`; PR #293 open (contains #292 until it merges); awaiting checks + user merge
 **Path:** full cycle (it builds the shared export C-6, CLAUDE.md rule 7). Fast-track after SA + QA (user rule for these UI slices)
 
 ## Overview
@@ -617,3 +617,4 @@ Two pickers on one page cannot be seen in a browser yet; id uniqueness is proved
 | 2026-10-11 | SA code review | CODE APPROVED, no must-fix. M-1 to M-4 and S-1 to S-3 verified; 46 suites / 1,111 tests green on spot-run. Low: Enter picks while the list is closed (carried over, follow-up); requirement §12.2 box ticked before QA (RM to confirm) |
 | 2026-10-11 | QA report | PASS WITH NOTES: 67 suites / 1,474 tests; entitlements 233 / 6,382; scoped `tsc` clean (canary proved). QA-1 (Medium, carried over): Enter after Escape picks a hidden business, fix recommended in-slice. QA-2 to QA-6 Low / notes. Browser checks E-B1 to E-B11 owed to TL |
 | 2026-10-11 | QA-1/QA-2 fixed | Dev (TL decision after SA approval and QA pass with notes): Enter selects only while the list is open; `accountFilterName` trims each source; one test each, both mutation-checked; status set ready for RM |
+| 2026-10-11 | Committed + PR | RM (fast-track): commit a58ee4b5, origin/main already up to date, PR #293 against main (contains #292 until it merges). Targeted Jest 67 suites / 1,476 tests, entitlements 233 / 6,382, hooks lint clean |
