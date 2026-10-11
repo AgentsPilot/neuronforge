@@ -76,7 +76,8 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
   // account's queue item, with the internal reason; written against that
   // account like business_os_credit_lot, so the owner must not read it.
   bos_queue_item: 'operator',
-  // BD-26 / KI-25: slice 8b's system-written low-line event.
+  // BD-26 / KI-25: slice 8b's system-written low-line event, and the test
+  // harness's BOS_TEST_CREDITS_TAKEN (slice TC-1), which carries an internal reason.
   business_os_credit_period: 'operator',
   // Plan payments P-3a: the owner's own checkout start, written against their
   // account with no internal reason. The owner may read it; no migration change
