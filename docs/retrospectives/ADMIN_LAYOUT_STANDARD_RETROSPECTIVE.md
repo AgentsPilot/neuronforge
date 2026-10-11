@@ -79,4 +79,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Framework-behaviour claims (here: Next's history handling) must be checked against the installed version's source at workplan review — it saved a slice.
 - Carry QA E-1 (URL not cleaned after an outside change that resolves to current filters) into L-1d.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l1c — 1752d93d, PR #291

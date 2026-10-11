@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md): §1, §3, §5.3, §5.5, §5.6 (U-1 to U-10 and the inbound-link table), §5.10, §5.11, §5.12, §6.1 (S-1 to S-10), §6.2 (C-2, C-3, C-4, C-5, C-6, C-7, C-8, C-14), §7.3, §9 (F-28, F-29, F-30, F-31, F-34, F-35, F-56, F-73), §10 (D-2, D-3, D-6, D-12, D-15), §12.2, §12.3; SA re-check R-3, R-4, R-11, RC-1, RC-6, RC-7, RC-8; SA-R-1, SA-R-8, SA-R-17, SA-R-18; L-1b workplan §4.2 (N-1 to N-4) and SA L-1b workplan review Q-13 lean ([ADMIN_LAYOUT_L1B_WORKPLAN.md](/docs/workplans/ADMIN_LAYOUT_L1B_WORKPLAN.md))
 **Branch:** `feature/admin-layout-l1c`, cut from `origin/main` `6e5c4b7e` (includes L-1a #285, L-1b #287, finance #284, flaky-test fix #286). Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-11
-**Status:** Code Complete 2026-10-11 (uncommitted; M-1 to M-5, S-1, S-2 folded in) — awaiting SA code review. Workplan SA-reviewed 2026-10-11 — APPROVED WITH CONDITIONS
+**Status:** Committed 2026-10-11 (1752d93d) — PR #291 open against main, fast-track (SA code review approved, QA pass with notes); awaiting checks + user merge. Browser checks B-1 to B-14 owed
 **Path:** full cycle (new shared patterns, CLAUDE.md rule 7)
 
 ## Overview
@@ -933,3 +933,4 @@ Use a signed-in admin with DevTools Network filtered to `audit-trail`. Run the c
 | 2026-10-11 | SA workplan review | APPROVED WITH CONDITIONS: Q-1 to Q-16 ruled; must-fix M-1 (`replaceState(null, …)` so Next 14.2 syncs, single last-known string, full re-parse on outside change), M-2 (way back to "every date"), M-3 (notice mounted once), M-4 (parser forms, one-sided `from` row), M-5 (browser B-11 to B-14); S-1, S-2; SA made the requirement corrections (U-2, C-7, S-3, C-6, C-8, F-97, F-98) |
 | 2026-10-11 | SA code review | CODE APPROVED for QA: M-1 to M-5, S-1, S-2 verified in code; D-1 to D-6 accepted; 63 suites / 1,085 tests re-run green; optional comment-only SF-1, SF-2; notes N-1 to N-3 |
 | 2026-10-11 | QA | PASS WITH NOTES: 76 suites / 1,640 tests and entitlements 230 / 6,219 green; scoped tsc canary then 0 errors; 60-case throwaway URL / schema / a11y suite green and deleted; no bugs; edge cases E-1 to E-3 (Low); browser B-1 to B-14 handed to TL |
+| 2026-10-11 | RM commit + PR | Commit 1752d93d on `feature/admin-layout-l1c`; origin/main merged in (5b354100, clean; brought finance 1b, credits boost 6b, SECURITY DEFINER 4a — no `app/admin/components/layout` or `audit-trail` files); post-merge 76 suites / 1,648 tests, entitlements 233 / 6,382, hooks lint clean; PR #291 open, not merged |
