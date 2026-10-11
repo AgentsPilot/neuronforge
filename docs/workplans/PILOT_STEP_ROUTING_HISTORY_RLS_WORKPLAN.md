@@ -20,7 +20,7 @@ No code is written until the user returns the Step 1 precheck. The migration pin
 2. [Implementation Approach](#implementation-approach)
 3. [Files to Create / Modify](#files-to-create--modify)
 4. [Step 1: Precheck (user-run, read-only)](#step-1-precheck-user-run-read-only)
-5. [Step 2: Migration 20261053](#step-2-migration-20261053)
+5. [Step 2: Migration 20261055](#step-2-migration-20261055)
 6. [Rollback (C-7)](#rollback-c-7)
 7. [Post-apply checker and anon probe (C-5)](#post-apply-checker-and-anon-probe-c-5)
 8. [Jest guard (C-8)](#jest-guard-c-8)
@@ -78,8 +78,8 @@ No code is written until the user returns the Step 1 precheck. The migration pin
 | File | Action | Reason |
 |---|---|---|
 | `scripts/precheck-pilot-step-routing-history-rls.sql` | create | FR-1 / C-4. Read-only, one grid. |
-| `supabase/migrations/20261053_pilot_step_routing_history_rls_lockdown.sql` | create | FR-2 to FR-4, C-1 to C-3, C-6 |
-| `supabase/SQL Scripts/20261053_pilot_step_routing_history_rls_lockdown_rollback.sql` | create | FR-7 as scoped down by C-7 |
+| `supabase/migrations/20261055_pilot_step_routing_history_rls_lockdown.sql` | create | FR-2 to FR-4, C-1 to C-3, C-6 |
+| `supabase/SQL Scripts/20261055_pilot_step_routing_history_rls_lockdown_rollback.sql` | create | FR-7 as scoped down by C-7 |
 | `scripts/check-pilot-step-routing-history-rls-migration.sql` | create | FR-6 / C-5. Read-only, one grid, VERDICT row first. |
 | `supabase/migrations/__tests__/pilot-step-routing-history-rls.migration.test.ts` | create | FR-8 / C-8 |
 | `lib/business-os/purge/descriptors.ts` | modify (line 469, string only) | FR-9 / R-4 |
@@ -121,9 +121,9 @@ The script is written in Task T-1 and handed to the user before T-2. The grid fi
 
 ---
 
-## Step 2: Migration 20261053
+## Step 2: Migration 20261055
 
-**File:** `supabase/migrations/20261053_pilot_step_routing_history_rls_lockdown.sql` (`20261053` is free in every worktree, per SA V-7)
+**File:** `supabase/migrations/20261055_pilot_step_routing_history_rls_lockdown.sql` (`20261055` is free in every worktree, per SA V-7)
 
 Exact statement list, in order. `<V>` is each captured C-3 view, one block per view, in Q7 order.
 
@@ -179,7 +179,7 @@ COMMIT;
 
 ## Rollback (C-7)
 
-**File:** `supabase/SQL Scripts/20261053_pilot_step_routing_history_rls_lockdown_rollback.sql`
+**File:** `supabase/SQL Scripts/20261055_pilot_step_routing_history_rls_lockdown_rollback.sql`
 
 It does exactly what C-7 requires. Under W-2 that is two statements, because service_role is never revoked on the views and so nothing on them needs restoring.
 
@@ -285,7 +285,7 @@ The guard is modelled on `purchase-path-tables-client-grants.migration.test.ts`.
 
 Proposed text:
 
-`'Agent platform. The public WITH CHECK (true) policies were removed by migration 20261053 (server-only plus an admin SELECT policy). execution_insights still carries its N17 policy, tracked separately.'`
+`'Agent platform. The public WITH CHECK (true) policies were removed by migration 20261055 (server-only plus an admin SELECT policy). execution_insights still carries its N17 policy, tracked separately.'`
 
 `classification-baseline.json` maps only to `"never"`, and no test pins the note text (SA V-6). Line 473 (`execution_insights`) is left unchanged.
 
@@ -309,7 +309,7 @@ The checker's INFO row reports the slice-2 view state, so the checker reads corr
 2. **Dev:** fill Appendix A. Replace every `PENDING_STEP_1` in the migration, rollback, checker and Jest guard. Make the Jest guard green.
 3. **TL to BA:** record the Step 1 results in the requirement (AC-1), after BA's current amendment lands.
 4. **SA** reviews the code. **QA** tests. **The user sees the diff.** Nothing is committed before that.
-5. **RM** commits and opens the PR. CI goes green, including `Gate tests (jest)`. RM confirms `20261053` is still free.
+5. **RM** commits and opens the PR. CI goes green, including `Gate tests (jest)`. RM confirms `20261055` is still free.
 6. **User (prod, Supabase SQL editor):**
    1. Re-run the precheck if more than a day has passed or anything touched the table. The guard refuses on drift either way.
    2. **Gate (D-3, SA):** do not start until the requirement records the Step 1 grid (AC-1 says "before apply"). Then run the migration in a **new** tab.
@@ -354,7 +354,7 @@ The checker's INFO row reports the slice-2 view state, so the checker reads corr
 | RK-7 | The SQL editor misreads "into", or rejects comments or literal characters | The paste-safety Jest block and T-e |
 | RK-8 | Local Jest cannot run in this worktree (no `node_modules`) | Options A/B. CI is authoritative. No `npm install`. |
 | RK-9 | Concurrent DDL lock on the table during apply | `lock_timeout = '5s'`. On timeout, nothing is applied. Retry. |
-| RK-10 | A migration-number collision at merge | RM confirms `20261053` at commit (V-7) |
+| RK-10 | A migration-number collision at merge | RM confirms `20261055` at commit (V-7) |
 | RK-11 | PG version lacks MAINTAIN | Q10 reports `server_version_num`. Precedent checkers already assert MAINTAIN on this prod. |
 
 ---
@@ -384,7 +384,7 @@ The text below is kept as proposed.
   - Q7 shows a view that is not relkind `v` or `m`, a view not owned by postgres, or a view that is already `security_invoker`;
   - Q7 does not show exactly one depth-1 view with a direct `ai_model_pricing` dependency (RK-3);
   - Q8 shows an anon- or authenticated-callable definer function that names the table.
-- ✅ **T-2** Wrote migration `20261053`: the pre-guard (3 policies pinned by md5, S-1), 3 exact-name drops, the statement list, and the post-assert.
+- ✅ **T-2** Wrote migration `20261055`: the pre-guard (3 policies pinned by md5, S-1), 3 exact-name drops, the statement list, and the post-assert.
 - ✅ **T-3** Wrote the rollback: the W-6 guard, the drop of the admin policy, a service_role `arwdDxtm` re-grant on the table (S-4), and no view statements (W-2).
 - ✅ **T-4** Wrote the checker: C1 to C16 plus INFO rows. The HEAD probe is documented in [Post-apply checker and anon probe](#post-apply-checker-and-anon-probe-c-5).
 - ✅ **T-5** Wrote the Jest guard: `supabase/migrations/__tests__/pilot-step-routing-history-rls.migration.test.ts`, 62 tests, including 7 mutation self-tests.
@@ -678,5 +678,6 @@ mutation harness: baseline exit=0 (62/62); all 25 mutations exit=1
 | 2026-10-11 | SA workplan review | Approved with conditions W-1 to W-6. D-1: exclusion by direct `ai_model_pricing` dependency approved; correct in both orders. D-2 declined. D-3 approved, with an AC-1 gate before the migration apply. |
 | 2026-10-11 | SA rulings on the Step 1 capture | S-1: drop all three policies, including `Users can read their own routing history`; the guard pins all three by md5 (C-2 amended). S-2: no FK and `user_id` is text; SA V-2 corrected, the cleanup function is the only remover, R-2 stands. S-3: anon write is catalog-proven, so BA updates F-4. S-4: the rollback restores service_role `arwdDxtm`. T-2 may proceed. |
 | 2026-10-11 | SA code review | Code approved for QA. No must-fix. SQL checked for PG 17 (`name[]` roles, md5 NULL handling, recursive CTE, MAINTAIN, statement order, admin policy). The rollback cannot reopen anything. SA ran 2 suites, 146 tests, all pass. Pre-apply action P-1: a read-only dry run of the pre-guard on prod. |
-| 2026-10-11 | T-1b to T-7 done | Appendix A filled from the TL grid. Wrote migration 20261053, the rollback, the checker, and the Jest guard (62 tests, 7 mutation self-tests). FR-9 note edited. Local Jest via the main checkout's binary: 47 suites and 1827 tests green. The W-1 self-check passes on all four pasted SQL files. Nothing committed. |
+| 2026-10-11 | T-1b to T-7 done | Appendix A filled from the TL grid. Wrote migration 20261055, the rollback, the checker, and the Jest guard (62 tests, 7 mutation self-tests). FR-9 note edited. Local Jest via the main checkout's binary: 47 suites and 1827 tests green. The W-1 self-check passes on all four pasted SQL files. Nothing committed. |
 | 2026-10-11 | QA report | PASS, no bugs. Guard 62/62 (exit 0). Neighbouring suites 47/1827 (exit 0). All 25 QA mutations fail the guard, as they must. Desk-checked the pre-guard pins against the grid (md5 values recomputed), the post-assert against the checker, and the rollback safety. P-1 dry run and pre-apply checker evidence recorded. AC-1, AC-9 and AC-10 pass. AC-2 to AC-7 and AC-11 await the user's post-apply checks; AC-8 waits for slice 2. 2 low edge cases noted. |
+| 2026-10-11 | Renumbered to 20261055; applied to prod | Merging main brought in PR #304 (price review slice 2), which holds 20261052 and 20261053, and an open branch `fix/exposed-views-slice-1a` claims 20261054, so this migration and its rollback were renamed to 20261055 (all references updated; the content is unchanged). The renamed files were committed to PR #305. The migration was applied to prod by TL on 2026-10-11 with the user's approval, through the Supabase MCP: it committed cleanly, so both guards passed. Catalog after apply: RLS on, one policy (pilot_step_routing_history_admin_select, authenticated, SELECT, is_platform_admin), table ACL postgres=arwdDxtm, authenticated=r, service_role=r. The three views keep only postgres and service_role. The 21 rows are intact. Anon HEAD probes return 401 with no content-range on the table, the three views and pilot_cost_savings_summary (before the fix: 206, 0-0/21). AC-2, AC-3, AC-5, AC-6 and AC-11 are met; AC-8 also holds because slice 2 is already applied. |

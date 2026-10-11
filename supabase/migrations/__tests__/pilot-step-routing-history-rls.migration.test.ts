@@ -1,5 +1,5 @@
 /**
- * Guard over migration 20261053, the pilot_step_routing_history lockdown
+ * Guard over migration 20261055, the pilot_step_routing_history lockdown
  * (requirement docs/requirements/PILOT_STEP_ROUTING_HISTORY_ANON_EXPOSURE_REQUIREMENT.md,
  * workplan docs/workplans/PILOT_STEP_ROUTING_HISTORY_RLS_WORKPLAN.md, SA C-1..C-10,
  * W-1..W-6, S-1..S-5).
@@ -24,8 +24,8 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 const ROOT = process.cwd();
-const MIGRATION = join(ROOT, 'supabase', 'migrations', '20261053_pilot_step_routing_history_rls_lockdown.sql');
-const ROLLBACK = join(ROOT, 'supabase', 'SQL Scripts', '20261053_pilot_step_routing_history_rls_lockdown_rollback.sql');
+const MIGRATION = join(ROOT, 'supabase', 'migrations', '20261055_pilot_step_routing_history_rls_lockdown.sql');
+const ROLLBACK = join(ROOT, 'supabase', 'SQL Scripts', '20261055_pilot_step_routing_history_rls_lockdown_rollback.sql');
 const CHECKER = join(ROOT, 'scripts', 'check-pilot-step-routing-history-rls-migration.sql');
 const PRECHECK = join(ROOT, 'scripts', 'precheck-pilot-step-routing-history-rls.sql');
 
