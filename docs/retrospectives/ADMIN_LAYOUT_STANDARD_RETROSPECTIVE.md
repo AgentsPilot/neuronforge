@@ -215,4 +215,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - User-reported visual glitches on a shared component are cheapest folded into the very next slice that touches the bar.
 - L-4b carries a user request: the per-business audit section starts collapsed.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l4 — 38c35a37, PR #300
