@@ -13,6 +13,12 @@
  *
  * Part (b): the registry of migrated pages. Each entry lists the page's FILES
  * (Health renders through `HealthGrid.tsx`, re-check R-1).
+ *
+ * Amended by L-1b: the green rule is tightened (L-1a code review CR-1, SA
+ * M-3: only an ALL-CAPS constant whose initializer is a plain string or object
+ * literal counts) and asserts EXACTLY one green constant, in `StatusChip.tsx`
+ * (RC-5, SA Q-9); `KpiStrip.tsx`, `StatusChip.tsx` and `adminDialog.ts` join
+ * the expected files; Scheduled jobs & queues joins the registry.
  */
 
 import * as fs from 'fs';
@@ -49,6 +55,9 @@ const EXPECTED_SOURCES = [
   'AdminFilterBar.tsx',
   'AdminPageHeader.tsx',
   'AdminStates.tsx',
+  'KpiStrip.tsx',
+  'StatusChip.tsx',
+  'adminDialog.ts',
   'adminFormat.ts',
   'readAdminResponse.ts',
   'readJsonBody.ts',
@@ -117,28 +126,59 @@ const GREEN_PREFIXES = [
 ];
 const GREEN_CLASS = new RegExp(`(?<![\\w-])(?:${GREEN_PREFIXES.join('|')})-(?:green|emerald)-`, 'g');
 
+/** CR-1: a green constant's name is ALL-CAPS (letters, digits, underscores, starting with a capital). */
+const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/;
+
 /**
- * Every green match must sit inside one `const NAME = …;` declaration. Returns
- * the names of the green-holding constants across ALL given files (SA W-7) and
- * the green matches found outside any constant.
+ * CR-1 / SA M-3: a declaration counts as a green constant only when its
+ * initializer is a plain literal, so the green cannot be built at runtime or
+ * rendered by a component: it starts with a single or double quote (a string)
+ * or `{` (an object literal), never a backtick (a template literal can embed
+ * any expression); and the span to the next `;` holds no `(` (a call, or an
+ * arrow's parameters), no `=>` and no `<` (JSX).
  */
-function greenVerdict(files: Array<{ file: string; code: string }>): { names: Set<string>; outside: string[] } {
+function isLiteralConstant(name: string, initializer: string): boolean {
+  if (!CONSTANT_NAME.test(name)) return false;
+  const first = initializer.trimStart().charAt(0);
+  if (first !== "'" && first !== '"' && first !== '{') return false;
+  return !initializer.includes('(') && !initializer.includes('=>') && !initializer.includes('<');
+}
+
+/**
+ * Every green match must sit inside one `const NAME = <literal>;` declaration
+ * (`isLiteralConstant`). Returns the names of the green-holding constants
+ * across ALL given files (SA W-7), the files that hold them, and the green
+ * matches found anywhere else, each with its file.
+ */
+function greenVerdict(files: Array<{ file: string; code: string }>): {
+  names: Set<string>;
+  files: Set<string>;
+  outside: string[];
+} {
   const names = new Set<string>();
+  const holders = new Set<string>();
   const outside: string[] = [];
   for (const { file, code } of files) {
-    const decls = [...code.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)/g)].map((m) => {
+    const decls = [...code.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*(=?)/g)].map((m) => {
       const start = m.index ?? 0;
       const semicolon = code.indexOf(';', start);
-      return { name: m[1], start, end: semicolon < 0 ? code.length : semicolon };
+      const end = semicolon < 0 ? code.length : semicolon;
+      const hasInitializer = m[2] === '=';
+      const initializer = hasInitializer ? code.slice(start + m[0].length, end) : '';
+      return { name: m[1], start, end, literal: hasInitializer && isLiteralConstant(m[1], initializer) };
     });
     for (const match of code.matchAll(GREEN_CLASS)) {
       const at = match.index ?? 0;
       const owner = decls.filter((d) => d.start <= at && at <= d.end).pop();
-      if (owner) names.add(owner.name);
-      else outside.push(`${file}: ${match[0]}`);
+      if (owner && owner.literal) {
+        names.add(owner.name);
+        holders.add(file);
+      } else {
+        outside.push(`${file}: ${match[0]}`);
+      }
     }
   }
-  return { names, outside };
+  return { names, files: holders, outside };
 }
 
 // ── Part (a) ────────────────────────────────────────────────────────────────
@@ -187,10 +227,12 @@ describe('C-14 part (a): the shared admin layout folder', () => {
     expect(codeOf(read(`${LAYOUT_DIR}/readJsonBody.ts`))).toMatch(JSON_CALL);
   });
 
-  it('holds at most one green constant across the folder, and no green outside it (S-7, RC-5)', () => {
+  it('holds exactly one green constant across the folder, in StatusChip.tsx, and no green outside it (S-7, RC-5)', () => {
     const verdict = greenVerdict(SOURCE_FILES.map((file) => ({ file, code: codeOf(read(file)) })));
     expect(verdict.outside).toEqual([]);
-    expect(verdict.names.size).toBeLessThanOrEqual(1);
+    expect(verdict.names.size).toBe(1);
+    // SA Q-9: pin the file and the count, not the name (Q-3 may reshape the constant).
+    expect([...verdict.files]).toEqual([`${LAYOUT_DIR}/StatusChip.tsx`]);
   });
 
   it.each(SOURCE_FILES)('%s renders no landmark region (S-8)', (file) => {
@@ -272,6 +314,42 @@ describe('C-14 part (a) self-tests (no dead regex)', () => {
     expect(stray.outside).toHaveLength(1);
   });
 
+  it('CR-1 / M-3: green that is not a literal ALL-CAPS constant is reported outside, with its file', () => {
+    const notConstants = [
+      // (a) the arrow component from CR-1
+      'const Badge = () => <span className="bg-green-500" />;',
+      // (b) an ALL-CAPS arrow
+      "const OK = () => 'bg-green-500';",
+      // (c) a camelCase constant
+      "const okStyle = 'bg-green-500';",
+      // (d) an ALL-CAPS constant built by a call
+      "const OK = make('bg-green-500');",
+      // (g) SA M-3: a call inside an object literal
+      "const GREEN = { a: make('bg-green-500') };",
+      // SA M-3: a template literal can embed any expression
+      'const GREEN = `bg-green-500 ${x}`;',
+    ];
+    for (const code of notConstants) {
+      const verdict = greenVerdict([{ file: 'x.tsx', code }]);
+      expect({ code, names: [...verdict.names] }).toEqual({ code, names: [] });
+      expect({ code, outside: verdict.outside }).toEqual({ code, outside: ['x.tsx: bg-green-'] });
+    }
+  });
+
+  it('CR-1: a literal ALL-CAPS string or object constant is counted', () => {
+    // (e)
+    const str = greenVerdict([{ file: 'x.tsx', code: "const OK_TONE = 'border-emerald-500/40';" }]);
+    expect(str.outside).toEqual([]);
+    expect([...str.names]).toEqual(['OK_TONE']);
+    expect([...str.files]).toEqual(['x.tsx']);
+    // (f)
+    const obj = greenVerdict([{ file: 'x.tsx', code: "const GREEN = { card: 'bg-emerald-500/10' };" }]);
+    expect(obj.outside).toEqual([]);
+    expect([...obj.names]).toEqual(['GREEN']);
+    // A double-quoted string counts too.
+    expect([...greenVerdict([{ file: 'x.tsx', code: 'const OK2 = "ring-green-400";' }]).names]).toEqual(['OK2']);
+  });
+
   it('S-7 / RC-5: two green constants in two files count across the folder (SA W-7)', () => {
     const two = greenVerdict([
       { file: 'a.tsx', code: "const GREEN_A = 'bg-green-500';" },
@@ -299,6 +377,18 @@ const MIGRATED_PAGES = [
       'app/admin/page.tsx',
       'app/admin/components/health/HealthGrid.tsx',
       'app/admin/components/health/HealthTile.tsx',
+    ],
+  },
+  {
+    // The Jobs guard's CLIENT_FILES (Admin Layout Standard L-1b).
+    page: '/admin/jobs-queues (Scheduled jobs & queues)',
+    files: [
+      'app/admin/jobs-queues/page.tsx',
+      'app/admin/components/jobs/JobsQueuesView.tsx',
+      'app/admin/components/jobs/QueueItemsPanel.tsx',
+      'app/admin/components/jobs/DrainNowDialog.tsx',
+      'app/admin/components/jobs/CancelQueueItemDialog.tsx',
+      'app/admin/components/jobs/RetryQueueItemDialog.tsx',
     ],
   },
 ] as const;

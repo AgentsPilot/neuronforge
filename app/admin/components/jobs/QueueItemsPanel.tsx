@@ -33,14 +33,16 @@
 
 import { useEffect, useState } from 'react';
 
-import { createLogger } from '@/lib/logger';
-import { ageWords, formatUtc } from './jobsFormat';
+import { clientLogger } from '@/lib/logger/client';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
+import { ageWords } from './jobsFormat';
 import { CancelQueueItemDialog } from './CancelQueueItemDialog';
 import { RetryQueueItemDialog } from './RetryQueueItemDialog';
 import type { BosQueueId } from '@/lib/cron/bosCronJobs';
 import type { QueueItemState, QueueItemView, QueueItemsView } from '@/lib/admin/jobs/jobsQueuesTypes';
 
-const logger = createLogger({ module: 'AdminQueueItemsPanel' });
+const logger = clientLogger.child({ module: 'AdminQueueItemsPanel' });
 
 const TABS: ReadonlyArray<{ state: QueueItemState; label: string }> = [
   { state: 'stuck', label: 'Stuck' },
@@ -162,7 +164,7 @@ export function QueueItemsPanel({
           cache: 'no-store',
           signal: controller.signal,
         });
-        const body = (await response.json().catch(() => null)) as
+        const body = (await readJsonBody(response)) as
           | { success: true; data: QueueItemsView }
           | { success: false }
           | null;
