@@ -22,6 +22,7 @@ import {
   MARKER_LOST,
   MARKER_MAY_BE_ARCHIVED,
   MARKER_NONE,
+  MARKER_NOT_AI,
   MARKER_TOO_RECENT,
 } from '../../activityCopy';
 import type { ActivityEntryState, ActivityRow } from '../../activityTypes';
@@ -64,6 +65,13 @@ export function EntryMarker({ entry, settleMinutes }: { entry: ActivityEntryStat
         <Chip tone="danger" testId="marker-entry-account-mismatch">
           <ShieldAlert className="h-3 w-3" aria-hidden="true" />
           {MARKER_ACCOUNT_MISMATCH}
+        </Chip>
+      );
+    case 'not_applicable':
+      // SA C-1: a non-AI charge has no AI audit entry by design; not a loss.
+      return (
+        <Chip tone="quiet" testId="marker-entry-not-applicable">
+          {MARKER_NOT_AI}
         </Chip>
       );
   }

@@ -45,9 +45,13 @@
  * order must be revisited.
  *
  * NON-AI TRIPWIRE (SA-R5, R-8). The list does not filter on the service (N-10
- * forbids the raw column, and every charge is an AI charge today). A non-AI
- * service writing charge rows would appear here with area NULL: an effective
- * service rule is needed in this view BEFORE any such service ships.
+ * forbids the raw column). A non-AI service's charge rows appear here with area
+ * NULL. The audit join has the effective-service rule (test-harness slice TC-1,
+ * SA C-1): a row whose EFFECTIVE service (`resolveEffectiveFields`) is not
+ * `AI_CHARGE_SERVICE` has no AI audit entry by design, so its entry state is
+ * `not_applicable`, never `lost`, and it is not counted in `noEntry`. Any other
+ * rule this view needs for a non-AI service (a filter, its own area) is still
+ * owed before such a service ships for real.
  *
  * EXACT SUMS. Amounts are netted as integers of the column's own scale, with
  * the cost report's helpers (`toUnits`, `COST_SCALE`, `CREDIT_SCALE`).
@@ -566,6 +570,8 @@ function newestEntry(entries: readonly AdminAiActionEntryRow[]): AdminAiActionEn
  *        count, and is the row's state only when no own entry exists;
  *  (iii) two own entries (impossible by construction) resolve to the newest,
  *        then the higher id, and are logged at warn with ids only.
+ * First: a row whose effective service is not AI -> not_applicable (SA C-1);
+ * it writes no AI audit entry, so it is never matched and never counted.
  * Precedence for a row with no own entry: read failed or cut -> unknown;
  * another account -> account_mismatch; charge time unreadable -> unknown;
  * strictly younger than the settle window -> too_recent; archive cutoff
@@ -606,6 +612,12 @@ export function joinAuditEntries(
   const settleFloorMs = now.getTime() - AI_ACTIVITY_LIMITS.AUDIT_SETTLE_MS;
 
   for (const charge of pageRows) {
+    // SA C-1: the generic effective-service rule, never the raw column
+    // (serviceColumn.guard) and never a named action type.
+    if (resolveEffectiveFields(charge, chargeByActionId).effectiveService !== AI_CHARGE_SERVICE) {
+      entries.set(charge.action_id, { state: 'not_applicable' });
+      continue;
+    }
     if (foreign.has(charge.action_id)) noEntry.accountMismatch += 1;
     const mine = own.get(charge.action_id) ?? [];
     const createdMs = Date.parse(charge.created_at);

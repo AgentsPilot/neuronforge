@@ -1,6 +1,6 @@
 # Business OS Test Page — Scope & Functionality
 
-> **Last Updated**: 2026-10-07
+> **Last Updated**: 2026-10-11
 
 **Location:** `app/test-business-os/page.tsx`
 **Route:** `/test-business-os`
@@ -18,7 +18,7 @@ The Business OS Test Page is a multi-tabbed harness for exercising Business OS A
 
 Because every `/api/business-os/*` (and `/api/onboarding/*`) route authenticates via `getUser()`, this page acts as whoever you are currently authenticated as, and the current-user panel shows exactly which account that is. This removes the "typed userId vs. session user" mismatch that the Form Tester on `/test-plugins-v2` has to manage.
 
-This document describes the page as it exists today: the shared chrome, the Account Setup helper, and five tabs (**Overview**, **Modules**, **Danger Zone**, **LLM Usage**, **Billing**). It grows **one section per feature tab** as tabs are added. The Danger Zone tab is not yet documented here (follow-up F-5).
+This document describes the page as it exists today: the shared chrome, the Account Setup helper, and six tabs (**Overview**, **Modules**, **Danger Zone**, **LLM Usage**, **Billing**, **Test credits**). It grows **one section per feature tab** as tabs are added. The Danger Zone tab is not yet documented here (follow-up F-5).
 
 ## Table of Contents
 
@@ -33,6 +33,7 @@ This document describes the page as it exists today: the shared chrome, the Acco
   - [Tab: Modules](#tab-modules)
   - [Tab: LLM Usage](#tab-llm-usage)
   - [Tab: Billing](#tab-billing)
+  - [Tab: Test credits](#tab-test-credits)
   - [Tab: Danger Zone, Remove a test account](#tab-danger-zone-remove-a-test-account)
 - [Adding a New Tab](#adding-a-new-tab)
 - [Technical Architecture](#technical-architecture)
@@ -101,7 +102,7 @@ A convenience helper to bootstrap the prerequisites most Business OS features ne
 
 Feature tabs are added over time; each will be documented here as its own subsection following the same structure as the Test Plugins V2 doc (**Purpose / Features / API Endpoints Used / Use Cases**).
 
-The tabs today are **Overview**, **Modules**, **Danger Zone**, **LLM Usage** and **Billing**. Danger Zone (business data reset and purge preview) is not yet documented in this file (follow-up F-5).
+The tabs today are **Overview**, **Modules**, **Danger Zone**, **LLM Usage**, **Billing** and **Test credits**. Danger Zone (business data reset and purge preview) is not yet documented in this file (follow-up F-5).
 
 ### Tab: Overview
 
@@ -284,6 +285,35 @@ The tab imports only types from server modules. All labels and statuses are comp
 - Press Start again: `409 checkout_open`.
 - A held friend cannot open this page (the payment-hold gate redirects them); their path is tested from `/invite/awaiting-payment`.
 
+### Tab: Test credits
+
+**Purpose (TEST ONLY):** take **plan** credits from any Business OS account, so a tester can put it into low, zero or over-plan credits and see how the product behaves (slice TC-1, [requirement](/docs/requirements/BUSINESS_OS_TEST_TAKE_CREDITS_REQUIREMENT.md)). Admins only, enforced by the server (`requireAdmin`); like LLM Usage it targets the account you pick, not the session user. **There is no undo.** Remove the tab and its route together.
+
+**Features:**
+- The LLM Usage `BusinessPicker`, reused: search by company name, or paste an account id. The business list doubles as the admin probe (403: "Admins only").
+- An empty `POST` doubles as the switch probe: with `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED` off the tab shows only "Not enabled on this deployment".
+- The account's position before and after (allowance, used, plan left, over plan, extra credits) from the existing read-only credit view.
+- Amount (a whole number up to the grant ceiling) and reason (the lot reason bounds), both sent by the server. **Take credits** opens a confirm step naming the company and the full account id ("This cannot be undone"). A request id is minted per opening, so a double click records once; a replay says "Already recorded".
+- Refusals as one sentence: platform account (409), your own account (403), not a Business OS account (404 `not_a_tenant`), invalid input (400).
+
+**What a take really does:** one test charge on the **live** credit ledger (`service: 'test_harness'`, `action_type: 'test_take_credits'`, trigger `external`, $0). So it:
+- shows in the admin **credit report** under its own service line, `test_harness`;
+- adds to **Finance health** credits and charged actions (the external bucket), **not** to USD;
+- shows in the **owner's credit history** as "Other activity" (automatic), never as `test_take_credits` (that action type is visible in admin views only);
+- shows in the admin **AI Activity** list as "Not an AI action", never as a lost audit entry;
+- lowers the owner card's plan credits left by N and leaves extra credits alone (use Take back on `/admin/users` for those). The low-line event does not fire.
+
+One `BOS_TEST_CREDITS_TAKEN` audit entry (warning, entity `business_os_credit_period`) per recorded take: visible in the admin audit trail, hidden from the owner.
+
+**Prerequisite (developer's `.env.local` only, never Vercel):** `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED=true`.
+
+**API Endpoints Used:** `GET /api/admin/business-os/llm-usage/businesses`, `GET /api/admin/business-os/credits/accounts/[accountId]`, `POST /api/admin/business-os/test/take-credits`.
+
+**Use cases:**
+- Take 50 credits from a test account: plan left falls by exactly 50, extra credits unchanged.
+- Take more than is left: the account shows over plan.
+- Pick your own account: refused; test from a separate test account.
+
 ### Tab: Danger Zone, Remove a test account
 
 **Purpose:** removes one **test** account completely, login included, so the email can sign up again, without pasting SQL (test-account cleanup slice 2, [requirement](/docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md)). Platform admins only: the section renders inside the Danger Zone only after the `admin_users` access check, and renders nothing if its own probe answers 401 / 403. Unlike the rest of the page it targets the account named by the email, not the session user. **There is no undo.**
@@ -403,3 +433,4 @@ Could not run a live session/DB. The following need a manual pass on `/test-busi
 | 2026-10-01 | Payment hold on the harness (invite-only signup Slice 5b, SA R-2) | New server `app/test-business-os/layout.tsx` calls the payment-hold gate first: a friend who signed up from a champion's invite and has not paid is sent to `/invite/awaiting-payment`, because middleware skips this page and its Account Setup and module testers drive the full Business OS API. One note under Account Model. No other behaviour changes; signed out, the page renders as before. |
 | 2026-10-07 | Billing tab (plan payments P-3a) | Added the **Tab: Billing** section: a test-mode plan checkout for the session account through `POST /api/business-os/billing/plan/checkout`, Stripe's embedded checkout mounted on the returned client secret (redacted from the shared viewer), the two server switches it needs in `.env.local` only, and that paying changes no plan until P-3b. New component `components/test-business-os/PlanCheckoutPanel.tsx`. |
 | 2026-10-07 | Danger Zone: Remove a test account (test-account cleanup slice 2) | Added the **Tab: Danger Zone, Remove a test account** section: admin-only, the configured probe and its "not set up" state, check then typed confirmation then delete, the G-12-only exception, the per-table report with TOTAL, refusals as one plain sentence. New component `components/business-os/purge/TestAccountCleanupPanel.tsx`, mounted at the end of `PurgeDangerZone`. |
+| 2026-10-11 | Test credits tab (slice TC-1, TEST ONLY) | Added the **Tab: Test credits** section: admin-only take-plan-credits on any account behind `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED`, the reused business picker, position before/after, the confirm step with company name and account id, and where a test charge shows (credit report `test_harness`, Finance health credits not USD, owner history "Other activity", AI Activity "Not an AI action"). New component `components/test-business-os/TestCreditsPanel.tsx`. |
