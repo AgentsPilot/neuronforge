@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md): §1 (rows 4, 6, 7), §4.3, §5.7, §5.8, §5.9, §5.10, §5.11, §5.12 (A-1 to A-9), §6.1, §6.2 C-3, C-5, C-9, C-12, C-13, C-14, §7.5 (L-2b), §9 F-45 to F-53, §10 D-9 (a), D-10 (a), §12.3; SA rulings Q-15 (constants + `OpenRowButton`), re-check R-6 (no `useDrawerResource` here), R-13; L-1d SA Q-2 (the numeric cell constants wait for the first number column), L-1d SA Q-10 (rows open through the button only); [L-1d workplan](/docs/workplans/ADMIN_LAYOUT_L1D_WORKPLAN.md) (drawer pattern, QA B-1), [L-2a workplan](/docs/workplans/ADMIN_LAYOUT_L2A_WORKPLAN.md) (deferrals, S-5 renames, SA N-2, QA B-1, the 19 type errors)
 **Branch:** `feature/admin-layout-l2b`, cut from `feature/admin-layout-l2a` at `f455bb24` (PR #295, open). The L-2b PR targets `main` and carries L-2a until #295 merges. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-11
-**Status:** Code complete — SA approved, QA passed (QA-B1 fixed) — ready for RM
+**Status:** Committed — 1357ad92, PR #296 open (fast-track); awaiting checks + user merge (contains #295 until it merges)
 **Path:** Full cycle by classification (SA Q-1, M-1: R-7, shared exports no pilot needed: `ADMIN_TH_NUM` / `ADMIN_TD_NUM` and the `isPlainLeftClick` export). Run as workplan review → SA code review → QA (in sequence) → RM under the user's fast-track (RM commits and opens the PR without a user diff review). The call detail still renders from the row already loaded (R-6)
 
 ## Overview
@@ -859,7 +859,13 @@ The workplan §7.1 list B-B1 to B-B11 stands. In addition:
 
 ## Commit Info
 
-_RM populates this section._
+| Field | Value |
+|---|---|
+| Branch | `feature/admin-layout-l2b` |
+| Commit | 1357ad92 — feat(admin): admin layout standard L-2b — AI cost & usage table, call drawer, run card, summary cards |
+| Merge of origin/main | abb05b04 (brought in #294: `app/admin/users/page.tsx`, `TestAccountCleanupPanel`; no conflicts) |
+| PR | #296 — https://github.com/AgentsPilot/neuronforge/pull/296 (base `main`; contains #295 until it merges) |
+| Tests (RM, after merge) | admin Jest set 92 suites / 2,493 tests passed; test:bos-entitlements 233 / 6,382 passed; lint:hooks clean |
 
 ---
 
@@ -873,3 +879,4 @@ _RM populates this section._
 | 2026-10-11 | SA code review | CODE APPROVED, no must-fix. M-1 to M-4 and S-1 to S-7 verified; deviation 1 (the `drawer-mounted` test marker) accepted; SA scoped tsc zero errors (canary proven), 43 suites / 935 tests green; Low C-1 (reuse the totals type), C-2 (name the dropped `capitalize` in the PR) |
 | 2026-10-11 | QA | PASS WITH NOTES. 92 suites / 2,492 tests and entitlements 233 / 6,382 green; scoped tsc 0 errors (canary proven); 34 throwaway probes green (one run under Asia/Jerusalem), deleted. Low QA-B1 (focus to `body` after a drill link), edge cases E-1 to E-5; browser list for TL |
 | 2026-10-11 | QA-B1 + C-1 fixed | Dev (TL decision): focus moves to the content wrapper after a drill (new render test, mutation red then restored); `AnalyticsTotals` aliases `DrillDownResponse['totals']`; Status ready for RM |
+| 2026-10-11 | Committed + PR | RM fast-track: commit 1357ad92, origin/main merged (abb05b04), PR #296; tests green; awaiting checks + user merge |

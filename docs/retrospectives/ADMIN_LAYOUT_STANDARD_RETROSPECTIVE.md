@@ -169,4 +169,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 ### Conclusions & process improvements
 - Making something newly focusable (rows → links) creates a focus-after-action obligation; add "where does focus go after the action" to QA's default probe list.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l2b — 1357ad92, PR #296
