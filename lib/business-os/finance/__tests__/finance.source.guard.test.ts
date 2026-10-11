@@ -10,6 +10,11 @@
  *   - no `console.` (CLAUDE.md rule 3);
  *   - never the capped Activity list reads (SA-F1, SA-Q6);
  *   - only `planGroups.ts` and the wiring reach the entitlements module.
+ *
+ * Slice 1b adds: the wiring's lot calls are exactly the two reads (SA-Q10);
+ * no finance file names a lot writer or a lot RPC; the lots are narrowed
+ * field by field (SA-W14); Section 4 never shows money; and no finance file
+ * names a credit-figure builder or imports the entitlement service (SA-WR-11).
  */
 
 import * as fs from 'fs';
@@ -115,5 +120,64 @@ describe('finance slice 1a source guards', () => {
       .map((s) => s.trim())
       .filter(Boolean);
     expect(imports).toEqual(['getEntitlementConfig']);
+  });
+});
+
+describe('finance slice 1b source guards (Section 4, the lots, SA-Q10, SA-W14, SA-WR-11)', () => {
+  const WIRING = 'lib/business-os/finance/financeHealthDeps.ts';
+  const LOT_CALL = /\b(?:lotReads|businessOsCreditLotRepository)\s*\.\s*(\w+)\s*\(/g;
+
+  it('scans the slice 1b files too (non-vacuity)', () => {
+    expect(FILES).toEqual(
+      expect.arrayContaining(['lib/business-os/finance/creditsSection.ts', 'app/admin/finance/components/CreditsSection.tsx'])
+    );
+  });
+
+  it('the wiring calls exactly the two lot READS, through a Pick of exactly those two', () => {
+    const code = codeOf(WIRING);
+    const calls = [...code.matchAll(LOT_CALL)].map((m) => m[1]);
+    expect([...new Set(calls)].sort()).toEqual(['listLotsWithDraws', 'listLotsWithDrawsAllAccounts']);
+    expect(code).toMatch(/Pick<BusinessOsCreditLotRepository,\s*'listLotsWithDrawsAllAccounts'\s*\|\s*'listLotsWithDraws'>/);
+    // Planted negative control: a writer call would be seen.
+    const planted = 'lotReads.listLotsWithDraws(a); businessOsCreditLotRepository.recordLot(b)';
+    expect([...planted.matchAll(LOT_CALL)].map((m) => m[1])).toEqual(['listLotsWithDraws', 'recordLot']);
+  });
+
+  it.each(FILES)('%s: names no lot writer and no lot RPC', (file) => {
+    expect(codeOf(file)).not.toMatch(/\brecordLot\b|\breverseLot\b|business_os_record_credit_lot|business_os_reverse_credit_lot|BOS_RECORD_CREDIT_LOT_RPC|BOS_REVERSE_CREDIT_LOT_RPC/);
+  });
+
+  it('SA-W14: the wiring maps lots field by field, never with a spread', () => {
+    const code = codeOf(WIRING);
+    const mapper = code.slice(code.indexOf('export function toFinanceLot'), code.indexOf('type LotsResult'));
+    expect(mapper.length).toBeGreaterThan(0);
+    expect(mapper).not.toMatch(/\.\.\./);
+    expect(mapper).not.toMatch(/\breason\b|idempotencyKey|sourceRef|creditValueVersion/);
+  });
+
+  it('only the wiring and the pure section name the lot repository or the balance core (G3 kept narrow)', () => {
+    const LOT_SYMBOLS = /BusinessOsCreditLotRepository|businessOsCreditLotRepository|credits\/creditLots|extraCreditsAt|creditLotRemaining|isCreditLotExpired/;
+    const namers = FILES.filter((file) => LOT_SYMBOLS.test(read(file)));
+    expect(namers.sort()).toEqual(['lib/business-os/finance/creditsSection.ts', 'lib/business-os/finance/financeHealthDeps.ts']);
+  });
+
+  it.each(['lib/business-os/finance/creditsSection.ts', 'app/admin/finance/components/CreditsSection.tsx'])(
+    '%s: credits are units, never money — no USD and no cost',
+    (file) => {
+      expect(read(file)).not.toMatch(/USD|\bcost/i);
+    }
+  );
+
+  it.each(FILES.filter((file) => file.startsWith('lib/business-os/finance/')))(
+    'SA-WR-11: %s names none of the credit-figure builders (comments included) and does not import the entitlement service',
+    (file) => {
+      expect(read(file)).not.toMatch(/creditAllowanceForDisplay|ownerCreditUsage|describePlanOffer|describeInviteOffer|buildCustomerPlanView/);
+      expect(read(file)).not.toMatch(/business-os\/entitlements\/(EntitlementService|index)['"]|\bgetEntitlementService\b/);
+    }
+  );
+
+  it('SA-WR-11 rule bites (planted)', () => {
+    expect(/creditAllowanceForDisplay/.test('// uses creditAllowanceForDisplay')).toBe(true);
+    expect(/business-os\/entitlements\/(EntitlementService|index)['"]/.test(`from '@/lib/business-os/entitlements/EntitlementService';`)).toBe(true);
   });
 });

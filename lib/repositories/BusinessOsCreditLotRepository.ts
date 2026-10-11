@@ -34,12 +34,24 @@
 // on their RLS client, never through this file. Here the account id always
 // comes from the server-side caller (the admin op's URL path, after the tenant
 // check), never from request input (tenant-isolation-guard). Every read adds
-// `.eq('user_id', accountId)` (CLAUDE.md rule 4), and the reversal function
-// re-checks the lot's account under its lock.
+// `.eq('user_id', accountId)` (CLAUDE.md rule 4), with ONE named exception
+// below, and the reversal function re-checks the lot's account under its lock.
+//
+// ── ALL ACCOUNTS (named, SA-Q10) ─────────────────────────────────────────────
+// `listLotsWithDrawsAllAccounts` is the one read without `.eq('user_id')`. It
+// takes no argument, so it cannot be reached by omitting an account by
+// mistake (SEC-3). It exists for an admin platform figure (gifted credits
+// outstanding on the admin finance page), behind `requireAdmin`; no owner RLS
+// client can read other accounts' lots. It is read-only, and it returns lots
+// of deleted accounts (`user_id` NULL) too: the caller decides what to count.
+// Its one caller is `lib/business-os/finance/financeHealthDeps.ts`, reached
+// only from `GET /api/admin/business-os/finance` when no business is picked.
 //
 // CALLERS: the slice 11b admin credit ops (`lib/business-os/credits/creditAdminOps.ts`,
-// through an injected dependency) and the entitlements accounts route that
-// wires this singleton in. A source guard in
+// through an injected dependency), the entitlements accounts route that
+// wires this singleton in, the slice 11c admin credit view's wiring, and the
+// admin finance page's wiring (`lib/business-os/finance/financeHealthDeps.ts`,
+// read only: this read and `listLotsWithDraws`). A source guard in
 // `lib/business-os/credits/__tests__/creditLots.test.ts` holds the exact list
 // of files allowed to name this repository; any other caller fails it.
 //
@@ -456,6 +468,64 @@ export class BusinessOsCreditLotRepository {
       return { data: rawLots.map((raw) => ({ ...mapLot(raw), draws: drawsByLot.get(toUuid(raw.id)) ?? [] })), error: null };
     } catch (error) {
       return this.fail(method, error, { accountId });
+    }
+  }
+
+  /**
+   * EVERY account's lots, oldest first, each with its draws attached (R-b,
+   * SA-Q10). The one named all-accounts read (see the header): no argument,
+   * no `user_id` filter, lots of deleted accounts (`user_id` NULL) and every
+   * source included; the caller filters. Reaching the row ceiling on the lots
+   * or on any draws chunk is an error, never a partial list. Each read is one
+   * request, so the ceiling stays at the default `max-rows` (a larger range
+   * would be cut silently and the check would never fire).
+   */
+  async listLotsWithDrawsAllAccounts(): Promise<RepositoryResult<BusinessOsCreditLotRow[]>> {
+    const method = 'listLotsWithDrawsAllAccounts';
+    const started = Date.now();
+    try {
+      const ceiling = CREDIT_LOT_READ_LIMITS.ROWS_CEILING;
+      const { data: lotData, error: lotError } = await this.supabase
+        .from('business_os_credit_lots')
+        .select(CREDIT_LOT_COLUMNS)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(0, ceiling - 1);
+      if (lotError) throw lotError;
+      const rawLots = (lotData ?? []) as unknown as Record<string, unknown>[];
+      if (rawLots.length >= ceiling) throw new CreditLotRepositoryError('too_many_lots');
+      if (rawLots.length === 0) return { data: [], error: null };
+
+      const lotIds = rawLots.map((raw) => toUuid(raw.id));
+      const drawsByLot = new Map<string, BusinessOsCreditLotDrawRow[]>(lotIds.map((id) => [id, []]));
+      let draws = 0;
+      for (let i = 0; i < lotIds.length; i += CREDIT_LOT_READ_LIMITS.MAX_IDS_PER_REQUEST) {
+        const chunk = lotIds.slice(i, i + CREDIT_LOT_READ_LIMITS.MAX_IDS_PER_REQUEST);
+        // A draw's account always equals its lot's (the reversal function writes it so;
+        // the migration's table comment), so the lot ids already scope the draws.
+        const { data: drawData, error: drawError } = await this.supabase
+          .from('business_os_credit_lot_draws')
+          .select(CREDIT_LOT_DRAW_COLUMNS)
+          .in('lot_id', chunk)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(0, ceiling - 1);
+        if (drawError) throw drawError;
+        const rawDraws = (drawData ?? []) as unknown as Record<string, unknown>[];
+        if (rawDraws.length >= ceiling) throw new CreditLotRepositoryError('too_many_draws');
+        for (const raw of rawDraws) {
+          const draw = mapDraw(raw);
+          drawsByLot.get(draw.lotId)?.push(draw);
+          draws += 1;
+        }
+      }
+
+      const lots = rawLots.map((raw) => ({ ...mapLot(raw), draws: drawsByLot.get(toUuid(raw.id)) ?? [] }));
+      // Cross-account: counts and timing only, never an id, a figure or a reason.
+      this.logger.info({ method, lots: lots.length, draws, durationMs: Date.now() - started }, 'Credit lots of all accounts read');
+      return { data: lots, error: null };
+    } catch (error) {
+      return this.fail(method, error, {});
     }
   }
 
