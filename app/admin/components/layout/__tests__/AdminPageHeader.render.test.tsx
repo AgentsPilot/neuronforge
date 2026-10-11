@@ -36,3 +36,16 @@ describe('AdminPageHeader', () => {
     expect(container.querySelector('section')).toBeNull();
   });
 });
+
+describe('AdminPageHeader actions (L-1c)', () => {
+  it('renders the actions and still exactly one h1', () => {
+    render(<AdminPageHeader title="Audit trail" purpose="p" actions={<button type="button">Export CSV</button>} />);
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeTruthy();
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
+  it('renders no actions without the prop', () => {
+    render(<AdminPageHeader title="Health" purpose="p" />);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+});

@@ -17,6 +17,12 @@
  *      reachable BY ITS LABEL — `getByLabelText` fails if a `htmlFor`/`id` pair
  *      is dropped.
  *
+ * Amended by Admin Layout Standard L-1c: the card became the shared filter
+ * bar. The two minute-precision "From Date" / "To Date" inputs are now the
+ * standard Window control's Custom range ("From (UTC)" / "To (UTC)", shown
+ * after clicking Custom), and "Clear All Filters" is the bar's "Clear", which
+ * follows the page's own filters and precedes Refresh (§5.5 order).
+ *
  * Deliberately no assertion on a Tailwind class: a test that pins `p-4` pins
  * the decision rather than the behaviour, and would have to be edited by the
  * next person to change any of it. Heights are not measurable here anyway —
@@ -43,6 +49,13 @@ jest.mock('@/lib/logger', () => ({
     child: jest.fn().mockReturnThis(),
   }),
 }));
+
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`,
+// and `@/lib/logger/client` re-exports from the mocked `@/lib/logger` above.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
 
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
@@ -76,21 +89,27 @@ beforeEach(() => {
 
 describe('every filter control is reachable by its label', () => {
   it.each([
-    'Account',
+    'Business',
     'Search',
     'Action Type',
     'Severity',
-    'From Date',
-    'To Date',
     'Entity Type',
   ])('%s', async (label) => {
     mockRoute();
     render(<AuditTrailPage />);
     expect(await screen.findByLabelText(label)).toBeTruthy();
   });
+
+  it('From (UTC) and To (UTC), once Custom is clicked', async () => {
+    mockRoute();
+    render(<AuditTrailPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Custom' }));
+    expect(screen.getByLabelText('From (UTC)')).toBeTruthy();
+    expect(screen.getByLabelText('To (UTC)')).toBeTruthy();
+  });
 });
 
-describe('Clear All Filters, now inside the field grid', () => {
+describe('Clear, in the filter bar', () => {
   it('still clears every filter', async () => {
     mockSearch = 'severity=critical&entity_type=agent';
     const fetchMock = mockRoute();
@@ -99,11 +118,7 @@ describe('Clear All Filters, now inside the field grid', () => {
     fireEvent.change(await screen.findByLabelText('Search'), { target: { value: 'acme' } });
     await waitFor(() => expect(auditUrls(fetchMock).some((u) => u.includes('search=acme'))).toBe(true));
 
-    // `findBy`, not `getBy`: with no rows loaded the page swaps the WHOLE
-    // screen — filters included — for a spinner while a refetch is in flight
-    // (`loading && logs.length === 0`), so the card is briefly gone after the
-    // search above. Pre-existing behaviour, untouched by the density pass.
-    fireEvent.click(await screen.findByText('Clear All Filters'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear' }));
 
     await waitFor(() => {
       const last = auditUrls(fetchMock).at(-1) as string;
@@ -113,16 +128,16 @@ describe('Clear All Filters, now inside the field grid', () => {
     });
   });
 
-  it('is still the last control in the card, so the tab order is unchanged', async () => {
+  it('Clear follows the page filters and precedes Refresh', async () => {
     mockRoute();
     render(<AuditTrailPage />);
 
     const entityType = await screen.findByLabelText('Entity Type');
-    const clear = screen.getByText('Clear All Filters');
-    // A bitmask: FOLLOWING is set when `clear` comes after the select in the
+    const clear = screen.getByRole('button', { name: 'Clear' });
+    const refresh = screen.getByRole('button', { name: 'Refresh the audit trail' });
+    // A bitmask: FOLLOWING is set when the argument comes after the node in the
     // document, which is the order the browser tabs them in.
-    const position = entityType.compareDocumentPosition(clear);
-
-    expect(Boolean(position & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(entityType.compareDocumentPosition(clear) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(clear.compareDocumentPosition(refresh) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 });

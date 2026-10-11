@@ -123,3 +123,31 @@ describe('readAdminResponse', () => {
     expect(ADMIN_NETWORK_ERROR).toBe('Could not reach the server. Check your connection and try again.');
   });
 });
+
+describe('readAdminResponse pick (L-1c, SA Q-8)', () => {
+  it('on ok, the pick selects the payload from the body (a route with top-level fields)', async () => {
+    const result = await readAdminResponse(withBody(200, { success: true, logs: [1, 2], pagination: { total: 2 } }), {
+      what: WHAT,
+      pick: (body) => ({ logs: body.logs as number[], total: (body.pagination as { total: number }).total }),
+    });
+    expect(result).toEqual({ ok: true, status: 200, data: { logs: [1, 2], total: 2 } });
+  });
+
+  it('on a failure the pick is never called and the precedence is unchanged', async () => {
+    const pick = jest.fn();
+    expect(await readAdminResponse(withBody(500, { success: false, error: 'Boom' }), { what: WHAT, pick })).toEqual({
+      ok: false,
+      status: 500,
+      message: 'Boom',
+    });
+    expect(await readAdminResponse(withBody(403, { success: false }), { what: WHAT, pick, sessionEndedCopy: true })).toEqual({
+      ok: false,
+      status: 403,
+      message: SESSION,
+    });
+    expect(await readAdminResponse(withHtml(502), { what: WHAT, pick })).toEqual({ ok: false, status: 502, message: FALLBACK });
+    // A non-2xx that says success is still a failure (F-34).
+    expect((await readAdminResponse(withBody(500, { success: true, logs: [] }), { what: WHAT, pick })).ok).toBe(false);
+    expect(pick).not.toHaveBeenCalled();
+  });
+});

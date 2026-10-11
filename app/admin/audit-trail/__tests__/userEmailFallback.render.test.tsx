@@ -5,8 +5,15 @@
 /**
  * Q-SA4-1 (user-approved 2026-10-04): an audit row whose account has no
  * profile name shows the row's sign-in email (`user_email`) instead of the
- * long account id. Order: name → `user_email` → account id, on the row line and
- * in the expanded "User" tile. A system row (no `user_id`) shows no User line.
+ * long account id. Order: name → `user_email` → account id, in the row's User
+ * cell and in the drawer's "User" field. A system row (no `user_id`) has no
+ * User field.
+ *
+ * L-1d (cards → table, inline expand → drawer): the row line is now the
+ * `audit-cell-user` cell; a bare account id there is shortened with the full
+ * id in `title` (§5.7 Ids), and a system row's cell is an em dash (§5.7 "never
+ * blank"). The tile is opened through the row's Open button and read as a
+ * `dt` / `dd` pair.
  *
  * `user_email` is already in every row the route sends (`select('*')`) and is
  * matched by its search, so nothing new leaves the route.
@@ -30,6 +37,13 @@ jest.mock('@/lib/logger', () => ({
     child: jest.fn().mockReturnThis(),
   }),
 }));
+
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`,
+// and `@/lib/logger/client` re-exports from the mocked `@/lib/logger` above.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
 
 import AuditTrailPage from '../page';
 
@@ -79,18 +93,21 @@ function mockRoute(logs: unknown[]): void {
   }));
 }
 
-/** The row card that contains `text`. */
-async function cardContaining(text: string): Promise<HTMLElement> {
+/** The table row that contains `text`. */
+async function rowContaining(text: string): Promise<HTMLElement> {
   const value = await screen.findByText(text);
-  const card = value.closest('div.rounded-xl');
-  if (!card) throw new Error(`No row card for "${text}"`);
-  return card as HTMLElement;
+  const row = value.closest('tr');
+  if (!row) throw new Error(`No table row for "${text}"`);
+  return row as HTMLElement;
 }
 
-/** The expanded "User" tile's value, after expanding the row showing `text`. */
-async function userTileAfterExpanding(text: string): Promise<HTMLElement> {
-  fireEvent.click(await screen.findByText(text));
-  const tileLabel = await screen.findByText('User', { selector: 'div' });
+const userCell = (row: HTMLElement) => within(row).getByTestId('audit-cell-user');
+
+/** The drawer's "User" field (label and value), after opening the row showing `text`. */
+async function userTileAfterOpening(text: string): Promise<HTMLElement> {
+  const row = await rowContaining(text);
+  fireEvent.click(within(row).getByRole('button', { name: /^Open details for/ }));
+  const tileLabel = await screen.findByText('User', { selector: 'dt' });
   return tileLabel.parentElement as HTMLElement;
 }
 
@@ -99,10 +116,10 @@ describe('audit row user label: name → sign-in email → account id', () => {
     mockRoute([NAMED_ROW]);
     render(<AuditTrailPage />);
 
-    const line = within(await cardContaining('Dana Cohen')).getByText(/^User:/);
-    expect(line.textContent).toBe('User: Dana Cohen');
+    const line = userCell(await rowContaining('Dana Cohen'));
+    expect(line.textContent).toBe('Dana Cohen');
 
-    const tile = await userTileAfterExpanding('Dana Cohen');
+    const tile = await userTileAfterOpening('Dana Cohen');
     expect(within(tile).getByText('Dana Cohen')).toBeTruthy();
     expect(tile.textContent).not.toContain('dana@example.test');
   });
@@ -111,32 +128,36 @@ describe('audit row user label: name → sign-in email → account id', () => {
     mockRoute([EMAIL_ROW]);
     render(<AuditTrailPage />);
 
-    const line = within(await cardContaining('noname@example.test')).getByText(/^User:/);
-    expect(line.textContent).toBe('User: noname@example.test');
+    const line = userCell(await rowContaining('noname@example.test'));
+    expect(line.textContent).toBe('noname@example.test');
     expect(line.textContent).not.toContain(EMAIL_ACCOUNT);
 
-    const tile = await userTileAfterExpanding('noname@example.test');
+    const tile = await userTileAfterOpening('noname@example.test');
     expect(within(tile).getByText('noname@example.test')).toBeTruthy();
     expect(tile.textContent).not.toContain(EMAIL_ACCOUNT);
   });
 
-  it('E-3: a row with neither a name nor an email shows the account id', async () => {
+  it('E-3: a row with neither a name nor an email shows the account id, short, whole on hover', async () => {
     mockRoute([BARE_ROW]);
     render(<AuditTrailPage />);
 
-    const line = within(await cardContaining(BARE_ACCOUNT)).getByText(/^User:/);
-    expect(line.textContent).toBe(`User: ${BARE_ACCOUNT}`);
+    const line = userCell(await rowContaining(`${BARE_ACCOUNT.slice(0, 8)}…`));
+    expect(line.textContent).toBe(`${BARE_ACCOUNT.slice(0, 8)}…`);
+    expect(line.querySelector(`[title="${BARE_ACCOUNT}"]`)).toBeTruthy();
+
+    const tile = await userTileAfterOpening('Weekly Digest');
+    expect(within(tile).getByText(BARE_ACCOUNT)).toBeTruthy();
   });
 
-  it('E-4: a system row (no user) is unchanged: no User line and no User tile', async () => {
+  it('E-4: a system row (no user) shows an em dash in the User cell and has no User field', async () => {
     mockRoute([SYSTEM_ROW]);
     render(<AuditTrailPage />);
 
-    const card = await cardContaining('Nightly job');
-    expect(within(card).queryByText(/^User:/)).toBeNull();
+    const row = await rowContaining('Nightly job');
+    expect(userCell(row).textContent).toBe('—');
 
-    fireEvent.click(await screen.findByText('Nightly job'));
+    fireEvent.click(within(row).getByRole('button', { name: /^Open details for/ }));
     await screen.findByText('Event ID');
-    expect(screen.queryByText('User', { selector: 'div' })).toBeNull();
+    expect(screen.queryByText('User', { selector: 'dt' })).toBeNull();
   });
 });

@@ -33,13 +33,22 @@ export interface ReadAdminResponseOptions {
   sessionEndedCopy?: boolean;
 }
 
+/**
+ * L-1c (SA Q-8): for a route whose payload is not under `data` (the audit route
+ * answers `logs` and `pagination` at the top level). Called on the ok branch
+ * only; the failure precedence and the RC-2 read surface are unchanged.
+ */
+export interface ReadAdminResponseOptionsWithPick<T> extends ReadAdminResponseOptions {
+  pick: (body: Readonly<Record<string, unknown>>) => T;
+}
+
 export type AdminReadResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; message: string };
 
 export async function readAdminResponse<T>(
   response: Response,
-  options: ReadAdminResponseOptions,
+  options: ReadAdminResponseOptions | ReadAdminResponseOptionsWithPick<T>,
 ): Promise<AdminReadResult<T>> {
   const { status } = response;
   const body = await readJsonBody(response);
@@ -48,6 +57,9 @@ export async function readAdminResponse<T>(
   if (response.ok && body && body.success === true) {
     // No runtime shape check: the same trust the pages placed in their own cast
     // of the route's body before this helper existed.
+    if ('pick' in options) {
+      return { ok: true, status, data: options.pick(body as Readonly<Record<string, unknown>>) };
+    }
     return { ok: true, status, data: body.data as T };
   }
 

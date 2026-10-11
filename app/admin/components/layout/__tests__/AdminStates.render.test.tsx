@@ -9,7 +9,7 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 
 describe('AdminLoading', () => {
   it('says "Reading {what}…" with a hidden spinner icon, in a status live region', () => {
@@ -46,5 +46,44 @@ describe('AdminError', () => {
     expect(screen.getByTestId('x-error').textContent).toBe('Forbidden');
     fireEvent.click(button);
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AdminEmpty (L-1c)', () => {
+  it('shows the sentence and the hint, with no button without onClear, and no region', () => {
+    render(<AdminEmpty message="No events match." hint="Try fewer filters." testId="x-empty" />);
+    expect(screen.getByTestId('x-empty').textContent).toBe('No events match.Try fewer filters.');
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryAllByRole('region')).toHaveLength(0);
+  });
+
+  it('with onClear, "Clear filters" calls it', () => {
+    const onClear = jest.fn();
+    render(<AdminEmpty message="No events match." onClear={onClear} />);
+    const button = screen.getByRole('button', { name: 'Clear filters' });
+    expect(button.getAttribute('type')).toBe('button');
+    fireEvent.click(button);
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AdminNotice (L-1d)', () => {
+  it('amber, with the testid on the text element and a hidden icon', () => {
+    const { container } = render(<AdminNotice testId="x-notice">Search scans only this page.</AdminNotice>);
+    const text = screen.getByTestId('x-notice');
+    expect(text.textContent).toBe('Search scans only this page.');
+    const box = container.firstElementChild as HTMLElement;
+    for (const cls of ['border-amber-500/40', 'bg-amber-500/10', 'text-amber-200']) expect(box.className).toContain(cls);
+    const icon = box.querySelector('svg');
+    expect(icon?.getAttribute('aria-hidden')).toBe('true');
+    expect(text.contains(icon)).toBe(false);
+  });
+
+  it('carries no role at all (not alert, not status) and is no region', () => {
+    const { container } = render(<AdminNotice>Partial.</AdminNotice>);
+    expect(container.querySelectorAll('[role]')).toHaveLength(0);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryAllByRole('region')).toHaveLength(0);
   });
 });
