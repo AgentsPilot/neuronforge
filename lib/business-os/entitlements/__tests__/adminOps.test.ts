@@ -80,6 +80,9 @@ interface Calls {
   reverseLot: Array<Record<string, unknown>>;
   /** Slice 11b: EVERY repository method called, read or write, in order. */
   all: string[];
+  /** Boost 6b: the cap override writes. */
+  setCapOverride: Array<Record<string, unknown>>;
+  endCapOverride: Array<Record<string, unknown>>;
 }
 
 /** Slice 11b: a lot of the test account, as the lot repository returns it. */
@@ -87,6 +90,8 @@ const LOT_ID = '77777777-7777-4777-8777-777777777777';
 /** An admin id with hex letters, for the upper-case cases (OP-15). */
 const HEX_ADMIN = 'fedcba98-7654-4321-8fed-cba987654321';
 const REQUEST_ID = '88888888-8888-4888-8888-888888888888';
+/** Boost 6b: the account's active cap override. */
+const CAP_OVERRIDE_ID = '56565656-5656-4656-8656-565656565656';
 function creditLot() {
   return {
     id: LOT_ID,
@@ -114,6 +119,8 @@ function context(options: {
   config?: EntitlementConfig;
   /** P-3b.1 (PF-13): the billing reader's answer. `null` = could not tell. Default: no subscription. */
   subscribed?: boolean | null;
+  /** Boost 6b: the account's active cap override, in minor units. Default: none (the default limit). */
+  activeCapMinor?: number | null;
 } = {}): { ctx: AdminOpContext; calls: Calls } {
   const plan = options.plan === undefined ? planRow() : options.plan;
   const calls: Calls = {
@@ -125,6 +132,8 @@ function context(options: {
     recordLot: [],
     reverseLot: [],
     all: [],
+    setCapOverride: [],
+    endCapOverride: [],
   };
   const isTenant = options.isTenant !== false;
 
@@ -213,6 +222,31 @@ function context(options: {
         return options.subscribed === undefined ? false : options.subscribed;
       },
     },
+    // Boost 6b: the cap override functions.
+    boostCap: {
+      repository: {
+        async findActiveCapOverride() {
+          const capMinor = options.activeCapMinor ?? null;
+          return {
+            data:
+              capMinor === null
+                ? null
+                : { id: CAP_OVERRIDE_ID, accountId: ACCOUNT, capMinor, currency: 'USD', reason: 'earlier', actorAdminId: ADMIN, createdAt: '2026-10-01T00:00:00.000Z' },
+            error: null,
+          };
+        },
+        async setCapOverride(input: Record<string, unknown>) {
+          calls.setCapOverride.push(input);
+          return { data: { outcome: 'set', overrideId: '45454545-4545-4545-8545-454545454545', previousOverrideId: null }, error: null };
+        },
+        async endCapOverride(input: Record<string, unknown>) {
+          calls.endCapOverride.push(input);
+          return options.activeCapMinor == null
+            ? { data: { outcome: 'none_active' }, error: null }
+            : { data: { outcome: 'ended', overrideId: CAP_OVERRIDE_ID }, error: null };
+        },
+      } as unknown as AdminOpContext['boostCap']['repository'],
+    },
   };
 
   // Record every repository method called, read or write (slice 11b: the
@@ -235,11 +269,12 @@ function context(options: {
   record(ctx.credit.holdReaders.lineage, 'lineage');
   record(ctx.credit.holdReaders.invites, 'invites');
   record(ctx.billing, 'billing');
+  record(ctx.boostCap.repository, 'boostCap');
 
   return { ctx, calls };
 }
 
-/** Slice 11b: one valid body per op of the union (nine), for the per-op cases. */
+/** Slice 11b: one valid body per op of the union (eleven since boost 6b), for the per-op cases. */
 const ONE_OF_EACH: Array<[string, AdminOp, Parameters<typeof context>[0]]> = [
   ['ensure_plan_row', { op: 'ensure_plan_row', cohort: 'champion', expiresAt: null, reason: 'trigger failed' } as AdminOp, { plan: null }],
   ['set_cohort', { op: 'set_cohort', cohort: 'trial', reason: 'support case' } as AdminOp, {}],
@@ -254,6 +289,9 @@ const ONE_OF_EACH: Array<[string, AdminOp, Parameters<typeof context>[0]]> = [
   ],
   ['grant_credits', { op: 'grant_credits', amount: 50, expiresAt: null, requestId: REQUEST_ID, reason: 'goodwill' } as AdminOp, {}],
   ['reduce_credit_lot', { op: 'reduce_credit_lot', lotId: LOT_ID, amount: 40, requestId: REQUEST_ID, reason: 'mistaken grant' } as AdminOp, {}],
+  // Boost 6b: the account's spending limit.
+  ['set_boost_cap', { op: 'set_boost_cap', amountMinor: 50000, reason: 'annual prepay customer' } as AdminOp, {}],
+  ['end_boost_cap', { op: 'end_boost_cap', reason: 'campaign over' } as AdminOp, { activeCapMinor: 50000 }],
 ];
 
 const parse = (body: unknown, config: EntitlementConfig = fixtureConfig()) => adminOpSchema(config).safeParse(body);
@@ -322,11 +360,14 @@ describe('every audit action the executor can emit is registered (SA C5-2 / QA-2
       // Slice 11b: the two credit ops.
       ['grant_credits', { op: 'grant_credits', amount: 50, expiresAt: null, requestId: REQUEST_ID, reason: 'goodwill' } as AdminOp, {}],
       ['reduce_credit_lot', { op: 'reduce_credit_lot', lotId: LOT_ID, amount: 40, requestId: REQUEST_ID, reason: 'mistaken grant' } as AdminOp, {}],
+      // Boost 6b: the two cap ops.
+      ['set_boost_cap', { op: 'set_boost_cap', amountMinor: 50000, reason: 'annual prepay customer' } as AdminOp, {}],
+      ['end_boost_cap', { op: 'end_boost_cap', reason: 'campaign over' } as AdminOp, { activeCapMinor: 50000 }],
     ];
 
     // Every variant of the union is covered, so a new op cannot be added
     // without either appearing here or failing the count.
-    expect(cases).toHaveLength(9);
+    expect(cases).toHaveLength(11);
     expect(cases).toHaveLength(adminOpSchema(fixtureConfig()).options.length);
 
     for (const [name, op, options] of cases) {
@@ -905,10 +946,10 @@ describe('reset_plan_state (A-3) — the destructive one', () => {
   });
 });
 
-describe('slice 11b — the own-account guard, all nine ops (S11-BQ-1, OP-15)', () => {
-  it('OWN_ACCOUNT_GUARDED_OPS equals the union\'s op literals, so a tenth op cannot be added without deciding', () => {
+describe('slice 11b — the own-account guard, all eleven ops (S11-BQ-1, OP-15; boost 6b)', () => {
+  it('OWN_ACCOUNT_GUARDED_OPS equals the union\'s op literals, so a twelfth op cannot be added without deciding', () => {
     const literals = adminOpSchema(fixtureConfig()).options.map((variant) => variant.shape.op.value);
-    expect(literals).toHaveLength(9);
+    expect(literals).toHaveLength(11);
     expect(new Set(literals)).toEqual(new Set(OWN_ACCOUNT_GUARDED_OPS));
     expect(ONE_OF_EACH.map(([name]) => name).sort()).toEqual([...literals].sort());
   });
@@ -1034,3 +1075,84 @@ describe('slice 11b — the credit ops inside executeAdminOp', () => {
   });
 });
 
+describe('boost slice 6b — the cap ops inside executeAdminOp (SA C-1, C-2)', () => {
+  const setCap = { op: 'set_boost_cap', amountMinor: 50000, reason: 'annual prepay customer' } as AdminOp;
+  const endCap = { op: 'end_boost_cap', reason: 'campaign over' } as AdminOp;
+  const originalSystemId = process.env.SYSTEM_ADMIN_USER_ID;
+
+  afterEach(() => {
+    if (originalSystemId === undefined) delete process.env.SYSTEM_ADMIN_USER_ID;
+    else process.env.SYSTEM_ADMIN_USER_ID = originalSystemId;
+  });
+
+  it('source sweep: every cap action literal in boostCapAdminOps.ts is an AUDIT_EVENTS key', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { readFileSync } = require('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { join } = require('path');
+    const source: string = readFileSync(join(process.cwd(), 'lib', 'business-os', 'boost', 'boostCapAdminOps.ts'), 'utf8');
+    const actions = [...source.matchAll(/'(BOS_BOOST_CAP_OVERRIDE_[A-Z0-9_]+)'/g)].map((match) => match[1]);
+    expect(new Set(actions).size).toBe(2);
+    expect(actions.filter((action) => !(action in AUDIT_EVENTS))).toEqual([]);
+  });
+
+  it.each([
+    ['set_boost_cap', setCap],
+    ['end_boost_cap', endCap],
+  ])('%s: the platform account is 409 platform_account BEFORE the tenant check (C-1)', async (_name, op) => {
+    process.env.SYSTEM_ADMIN_USER_ID = '10101010-1010-4010-8010-101010101010';
+    const { ctx, calls } = context({ activeCapMinor: 50000 });
+    ctx.accountId = '10101010-1010-4010-8010-101010101010';
+    expect(await executeAdminOp(op, ctx)).toEqual({ ok: false, status: 409, error: 'platform_account' });
+    expect(calls.all).toEqual([]);
+  });
+
+  it.each([
+    ['set_boost_cap', setCap],
+    ['end_boost_cap', endCap],
+  ])('%s: a non-tenant is 404 and a missing plan row is 409, nothing written', async (_name, op) => {
+    const notTenant = context({ isTenant: false, plan: null, activeCapMinor: 50000 });
+    expect(await executeAdminOp(op, notTenant.ctx)).toMatchObject({ status: 404, error: 'not_a_business_os_account' });
+    const noRow = context({ plan: null, activeCapMinor: 50000 });
+    expect(await executeAdminOp(op, noRow.ctx)).toMatchObject({ status: 409, error: 'plan_row_missing' });
+    for (const calls of [notTenant.calls, noRow.calls]) {
+      expect(calls.setCapOverride).toEqual([]);
+      expect(calls.endCapOverride).toEqual([]);
+    }
+  });
+
+  it('set: the plan row is untouched, the cache is left alone, the audit names the limit on the account plan', async () => {
+    const { ctx, calls } = context();
+    const result = await executeAdminOp(setCap, ctx);
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'BOS_BOOST_CAP_OVERRIDE_SET',
+      invalidatesEntitlements: false,
+      audit: { entityType: 'business_os_account_plan', entityId: ACCOUNT, changes: { after: { capMinor: 50000, source: 'override' } } },
+    });
+    expect(calls.setCapOverride).toEqual([{ accountId: ACCOUNT, capMinor: 50000, currency: 'USD', reason: 'annual prepay customer', actorAdminId: ADMIN }]);
+    expect(calls.updatePlan).toEqual([]);
+  });
+
+  it('C-2: the same amount already active → ok, unchanged, no audit and no write', async () => {
+    const { ctx, calls } = context({ activeCapMinor: 50000 });
+    const result = await executeAdminOp(setCap, ctx);
+    expect(result).toMatchObject({ ok: true, unchanged: true, data: { unchanged: true } });
+    expect(result).not.toHaveProperty('audit');
+    expect(calls.setCapOverride).toEqual([]);
+  });
+
+  it('end with no active override → 409 no_active_cap_override', async () => {
+    const { ctx } = context({ activeCapMinor: null });
+    expect(await executeAdminOp(endCap, ctx)).toEqual({ ok: false, status: 409, error: 'no_active_cap_override' });
+  });
+
+  it('the schema takes the configured bounds: $1,500 passes, $1,501 and a fraction do not', () => {
+    const config = fixtureConfig();
+    expect(adminOpSchema(config).safeParse({ op: 'set_boost_cap', amountMinor: 150000, reason: 'support case' }).success).toBe(true);
+    expect(adminOpSchema(config).safeParse({ op: 'set_boost_cap', amountMinor: 150100, reason: 'support case' }).success).toBe(false);
+    expect(adminOpSchema(config).safeParse({ op: 'set_boost_cap', amountMinor: 15050, reason: 'support case' }).success).toBe(false);
+    expect(adminOpSchema(config).safeParse({ op: 'set_boost_cap', amountMinor: 0, reason: 'support case' }).success).toBe(false);
+    expect(adminOpSchema(config).safeParse({ op: 'set_boost_cap', amountMinor: 50000 }).success).toBe(false);
+  });
+});

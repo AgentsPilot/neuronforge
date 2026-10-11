@@ -52,6 +52,7 @@ function view(overrides: Partial<AdminBoostView> = {}): AdminBoostView {
     serverMode: 'live',
     purchases: { status: 'ok', rows: [row()], truncated: { test: false, live: false } },
     cap: { status: 'ok', default: DEFAULT_CAP, active: null, history: [] },
+    limits: { minMinor: 100, maxMinor: 150000, stepMinor: 100, currency: 'USD', windowDays: 30, reasonMin: 3, reasonMax: 500 },
     ...overrides,
   };
 }
@@ -293,12 +294,11 @@ describe('the spending limit', () => {
   });
 });
 
-describe('6a is read only', () => {
-  it('offers no action: no button, no form, no limit change, no reconcile, no take back', async () => {
-    await show(view({ purchases: { status: 'ok', rows: [row(), row({ id: 'f', status: 'flagged_mismatch', flagReason: 'no_session' })], truncated: { test: false, live: false } } }));
+describe('the block itself holds no form (the actions open dialogs; 6b)', () => {
+  it('no input or textarea in the block; on the admin\'s own account, no action button at all', async () => {
+    await show(view({ isOwnAccount: true, purchases: { status: 'ok', rows: [row(), row({ id: 'f', status: 'flagged_mismatch', flagReason: 'no_session' })], truncated: { test: false, live: false } } }));
     const block = screen.getByTestId('boost-block');
-    expect(within(block).queryAllByRole('button')).toHaveLength(0);
     expect(block.querySelector('form, input, textarea')).toBeNull();
-    expect(block.textContent).not.toMatch(/reconcile|take back|set limit/i);
+    expect(within(block).queryAllByRole('button')).toHaveLength(0);
   });
 });

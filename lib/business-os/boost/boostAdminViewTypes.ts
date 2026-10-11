@@ -70,4 +70,20 @@ export interface AdminBoostView {
   serverMode: AdminBoostStripeMode | null;
   purchases: AdminBoostPurchasesBlock;
   cap: AdminBoostCapBlock;
+  /**
+   * Slice 6b: what the limit dialog accepts, from configuration (SA C-3): whole
+   * dollars from `minMinor` to `maxMinor` in steps of `stepMinor`, per
+   * `windowDays`, and the reason bounds. The server checks the same again.
+   */
+  limits: AdminBoostLimits;
+}
+
+export interface AdminBoostLimits {
+  minMinor: number;
+  maxMinor: number;
+  stepMinor: number;
+  currency: string;
+  windowDays: number;
+  reasonMin: number;
+  reasonMax: number;
 }
