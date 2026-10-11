@@ -59,7 +59,7 @@ Retrospective for slice 1b of the read-only admin page `/admin/finance`: **Secti
 | # | Item | Owner | Status |
 |---|---|---|---|
 | FU-1b-1 | Manual QA steps L-14 to L-22 (workplan QA report), which close AC-11 and AC-32 (1b), plus the 1a steps L-1 to L-13 | User | ⬜ Owed |
-| FU-1b-2 | RM: commit, push and open the PR for `feature/bos-finance-health-1b`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ⬜ Next |
+| FU-1b-2 | RM: commit, push and open the PR for `feature/bos-finance-health-1b`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ✅ Committed `1f46bcb3b86d752e495faeda94ebe93460656f3b`, PR [#290](https://github.com/AgentsPilot/neuronforge/pull/290) open (workplan Commit Info: TL) |
 | FU-1b-3 | Product call: should a literal zero allowance show "No allowance" instead of "Unknown" (here and in the Businesses list)? | User | ⬜ Surfaced, left as-is |
 | FU-1b-4 | Optional SA note 1: type `metricParams` on the deps as `typeof FINANCE_METRIC_PARAMS \| unknown` with a comment | Dev (later slice) | ⬜ Surfaced, left as-is |
 | FU-1b-5 | QA note 2: `resolveAccountId` runs outside the shared runner's `try` in `adminCreditPercent.ts`. Unreachable today (identity); the finance side is protected by fix round 1 | Dev (if the seam changes) | ⬜ Parked |
@@ -67,7 +67,7 @@ Retrospective for slice 1b of the read-only admin page `/admin/finance`: **Secti
 | FU-1b-7 | Slice 2: business takings and client payment problems, per currency; workplan measures SA-Q9 with the `business-os-schema-check` skill first | BA → SA → Dev | ⬜ After 1b merges |
 | FU-4 | Shared ledger read for Section 3 and K-1 (from 1a) | Dev (later slice) | ⬜ Parked |
 
-### Status: APPROVED BY USER — UNCOMMITTED — `feature/bos-finance-health-1b` — commit pending (RM)
+### Status: APPROVED BY USER — COMMITTED `1f46bcb3` — `feature/bos-finance-health-1b` — PR #290 open
 
 ---
 
@@ -76,3 +76,4 @@ Retrospective for slice 1b of the read-only admin page `/admin/finance`: **Secti
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-11 | Created (TL) | Slice 1b retrospective after the user approved the diff. Records the cycle counts, the comparison with slice 1a's lessons and follow-ups, the two items left to the user, and the owed manual steps L-1 to L-22. Notes that slice 1 (1a + 1b) is complete and that slice 2 depends on data. Commit pending (RM). |
+| 2026-10-11 | Commit recorded (RM) | Slice 1b committed as `1f46bcb3b86d752e495faeda94ebe93460656f3b`; PR [#290](https://github.com/AgentsPilot/neuronforge/pull/290) opened against `main`. |
