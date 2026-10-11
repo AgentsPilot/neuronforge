@@ -1,14 +1,21 @@
 /**
  * The finance KPI rules (slice 1a, §7.1): AC-18, AC-20, SA-W5, C-18 for
  * finance, and that the finance vocabulary is enforced through Health's
- * widened validator (SA-Q1, SA-W4).
+ * widened validator (SA-Q1, SA-W4). Slice 1b: K-2 (AC-19, SA-W10, SA-WR-8)
+ * and K-4 (AC-8).
  */
 
 import {
+  accountsNotReadHeadline,
+  colourFarOverAllowanceTile,
   colourFinanceTile,
+  farOverAllowancePercentOf,
+  FINANCE_GREEN_ELIGIBLE,
   FINANCE_LOWER_BOUND_HEADLINE,
+  FINANCE_METRIC_PARAMS,
   FINANCE_RULES,
   FINANCE_RULES_INVALID_HEADLINE,
+  K4_INFORMATION_HEADLINE,
   NOT_ENOUGH_HISTORY_HEADLINE,
   type FinanceMeasurement,
   type FinanceRule,
@@ -121,5 +128,104 @@ describe('validation (the finance vocabulary, through Health’s widened validat
   it('a K-3 metric on K-1 is refused too (each tile has its own vocabulary)', () => {
     const bad = [{ ...FINANCE_RULES.k3_founding_no_end_date[0] }];
     expect(colourK1(k1(exact(1), exact(1)), bad).status).toBe('unavailable');
+  });
+});
+
+describe('K-2 accounts far over their allowance (slice 1b: AC-19, SA-W10, SA-WR-8)', () => {
+  const k2 = (measured: { farOverAllowance: number; unknownAccounts: number } | null, params: unknown = FINANCE_METRIC_PARAMS, rules: unknown = FINANCE_RULES.k2_far_over_allowance) =>
+    colourFarOverAllowanceTile(rules, measured, params);
+
+  it('AC-19 through the tile: 1 → amber with the rule; 0 with every account read → green', () => {
+    expect(k2({ farOverAllowance: 1, unknownAccounts: 0 })).toEqual({
+      status: 'amber',
+      headline: 'Accounts at or over the far-over-allowance line',
+      ruleId: 'credits.farOver',
+    });
+    expect(k2({ farOverAllowance: 0, unknownAccounts: 0 })).toEqual({ status: 'green', headline: GREEN_HEADLINE, ruleId: null });
+  });
+
+  it('SA-WR-8: one account unknown and none far over → amber with the K-2 headline, never green, never the ledger line', () => {
+    const colour = k2({ farOverAllowance: 0, unknownAccounts: 1 });
+    expect(colour).toEqual({ status: 'amber', headline: '1 account could not be read', ruleId: null });
+    expect(colour.headline).not.toBe(FINANCE_LOWER_BOUND_HEADLINE);
+    expect(k2({ farOverAllowance: 0, unknownAccounts: 3 }).headline).toBe('3 accounts could not be read');
+    expect(accountsNotReadHeadline(2)).toBe('2 accounts could not be read');
+  });
+
+  it('SA-WR-8: one account unknown and one far over → amber from the rule (a lower bound of 1 proves it)', () => {
+    expect(k2({ farOverAllowance: 1, unknownAccounts: 1 })).toEqual({
+      status: 'amber',
+      headline: 'Accounts at or over the far-over-allowance line',
+      ruleId: 'credits.farOver',
+    });
+  });
+
+  it('no figures (section unknown) → unavailable "Unknown"', () => {
+    expect(k2(null)).toEqual({ status: 'unavailable', headline: 'Unknown', ruleId: null });
+  });
+
+  it.each([99, 1001, 1.5, '150', null])('SA-W10: an invalid line (%p) → unavailable with the rules-invalid headline, reported', (value) => {
+    const errors: unknown[] = [];
+    const colour = colourFarOverAllowanceTile(
+      FINANCE_RULES.k2_far_over_allowance,
+      { farOverAllowance: 0, unknownAccounts: 0 },
+      { farOverAllowancePercent: value },
+      { onRuleError: (p) => errors.push(p) }
+    );
+    expect(colour).toEqual({ status: 'unavailable', headline: FINANCE_RULES_INVALID_HEADLINE, ruleId: null });
+    expect(errors).toEqual([{ tile: 'k2_far_over_allowance', ruleId: null, reason: 'farOverAllowancePercent must be an integer from 100 to 1000' }]);
+  });
+
+  it('SA-W10: the line is data — 150 today, valid at the bounds', () => {
+    expect(FINANCE_METRIC_PARAMS.farOverAllowancePercent).toBe(150);
+    expect(farOverAllowancePercentOf(FINANCE_METRIC_PARAMS)).toBe(150);
+    expect(farOverAllowancePercentOf({ farOverAllowancePercent: 100 })).toBe(100);
+    expect(farOverAllowancePercentOf({ farOverAllowancePercent: 1000 })).toBe(1000);
+    expect(farOverAllowancePercentOf(undefined)).toBeNull();
+  });
+
+  it('AC-20 style: the count rule’s value changed to 2 in DATA makes one account green', () => {
+    const edited: FinanceRule[] = FINANCE_RULES.k2_far_over_allowance.map((r) =>
+      r.condition.kind === 'atLeast' ? { ...r, condition: { ...r.condition, value: 2 } } : r
+    );
+    expect(k2({ farOverAllowance: 1, unknownAccounts: 0 }).status).toBe('amber');
+    expect(k2({ farOverAllowance: 1, unknownAccounts: 0 }, FINANCE_METRIC_PARAMS, edited).status).toBe('green');
+  });
+});
+
+describe('K-4 gifted credits outstanding (slice 1b: AC-8, information only)', () => {
+  const k4 = (m: FinanceMeasurement | null) => colourFinanceTile('k4_gifted_outstanding', FINANCE_RULES.k4_gifted_outstanding, m);
+
+  it('a read value, 0 included → neutral (grey) with its information line; never green', () => {
+    expect(k4({ metrics: {}, information: K4_INFORMATION_HEADLINE })).toEqual({ status: 'neutral', headline: K4_INFORMATION_HEADLINE, ruleId: null });
+  });
+
+  it('a failed lots read → unavailable', () => {
+    expect(k4(null)).toEqual({ status: 'unavailable', headline: 'Unknown', ruleId: null });
+  });
+});
+
+describe('slice 1b vocabulary and validation', () => {
+  it('FINANCE_RULES passes validation on K-2 and K-4', () => {
+    const errors: unknown[] = [];
+    for (const id of ['k2_far_over_allowance', 'k4_gifted_outstanding'] as const) {
+      colourFinanceTile(id, FINANCE_RULES[id], { metrics: {} }, { onRuleError: (p) => errors.push(p) });
+    }
+    expect(errors).toEqual([]);
+  });
+
+  it('K-2 refuses another tile’s metric (aiCostMonth), and K-1 refuses K-2’s', () => {
+    const errors: unknown[] = [];
+    const bad = [{ ...FINANCE_RULES.k1_ai_cost[0] }];
+    expect(
+      colourFinanceTile('k2_far_over_allowance', bad, { metrics: { accountsFarOverAllowance: exact(1) } }, { onRuleError: (p) => errors.push(p) }).status
+    ).toBe('unavailable');
+    expect(errors).toEqual([{ tile: 'k2_far_over_allowance', ruleId: 'aiCost.doubled', reason: 'metric not measured for this tile' }]);
+    expect(colourK1(k1(exact(1), exact(1)), [{ ...FINANCE_RULES.k2_far_over_allowance[0] }]).status).toBe('unavailable');
+  });
+
+  it('K-4 may never be green; K-2 may (code, not data)', () => {
+    expect(FINANCE_GREEN_ELIGIBLE.has('k4_gifted_outstanding')).toBe(false);
+    expect(FINANCE_GREEN_ELIGIBLE.has('k2_far_over_allowance')).toBe(true);
   });
 });

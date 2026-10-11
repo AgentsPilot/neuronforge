@@ -6,7 +6,7 @@
  * renders a +02:00 start as UTC", which now runs through this formatter.
  */
 
-import { formatCount, formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { formatCount, formatUtc, formatUtcTime } from '@/app/admin/components/layout/adminFormat';
 
 describe('formatUtc', () => {
   it('prints a Z instant as "YYYY-MM-DD HH:mm UTC"', () => {
@@ -38,5 +38,17 @@ describe('formatCount', () => {
     expect(formatCount(Number.NaN)).toBe('—');
     expect(formatCount(Number.POSITIVE_INFINITY)).toBe('—');
     expect(formatCount(Number.NEGATIVE_INFINITY)).toBe('—');
+  });
+});
+
+describe('formatUtcTime (L-1c, the "Read at" line)', () => {
+  it('prints "HH:mm UTC", converting an offset through Date', () => {
+    expect(formatUtcTime('2026-10-09T14:02:59.000Z')).toBe('14:02 UTC');
+    expect(formatUtcTime('2026-10-10T01:30:00+02:00')).toBe('23:30 UTC');
+  });
+
+  it('shows an em dash for null and an invalid value', () => {
+    expect(formatUtcTime(null)).toBe('—');
+    expect(formatUtcTime('not a date')).toBe('—');
   });
 });

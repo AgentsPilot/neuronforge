@@ -6,7 +6,8 @@
  * all run for real. Mocked: signature verification (the event is handed in),
  * the Supabase client (claims and every other table), the boost purchase
  * repository (its webhook methods), the bounded audit flush and the Business OS
- * Stripe client (the receipt read). No Stripe call and no database.
+ * Stripe client (the receipt read), and the P-3b.2 plan handler (recorded only).
+ * No Stripe call and no database.
  */
 
 import { NextRequest } from 'next/server';
@@ -123,6 +124,15 @@ jest.mock('@/lib/repositories/BusinessOsBoostPurchaseRepository', () => {
     },
   };
 });
+
+// The P-3b.2 plan handler is not this suite's subject (its behaviour is
+// planHandler.route.test.ts): record that the route handed it the event, so
+// the plan-routing scenario pins the dispatch, not the plan handler's internals.
+jest.mock('@/lib/business-os/billing/planBillingHandler', () => ({
+  handlePlanBillingEvent: async (event: { id: string }) => {
+    mockEffects.push({ type: 'plan.handler', eventId: event.id });
+  },
+}));
 
 jest.mock('@/lib/audit/boundedAuditFlush', () => ({
   logAndFlush: async (entry: Record<string, unknown>) => {
@@ -309,7 +319,7 @@ describe('boost 4a through POST /api/stripe/webhook', () => {
     expect(legacyRan()).toBe(true);
   });
 
-  it('a plan invoice.paid is unaffected: the boost resolver reads nothing, the plan flow is recognised (no handler until P-3b.2 → released, as before)', async () => {
+  it('a plan invoice.paid is unaffected: the boost resolver reads nothing, the event goes to the P-3b.2 plan handler, the legacy path never runs', async () => {
     const invoice = {
       id: 'evt_plan',
       type: 'invoice.paid',
@@ -324,10 +334,10 @@ describe('boost 4a through POST /api/stripe/webhook', () => {
         },
       },
     };
-    const result = await run(invoice);
+    await run(invoice);
     expect(mockBoost.calls).toEqual([]);
-    expect(result.status).toBe(500);
-    expect(mockLogLines.some((l) => (l.ctx as { event?: string })?.event === 'bos_billing_plan_unhandled')).toBe(true);
+    expect(mockEffects.filter((e) => e.type === 'plan.handler')).toEqual([{ type: 'plan.handler', eventId: 'evt_plan' }]);
+    expect(legacyRan()).toBe(false);
   });
 
   it('a replayed, already-completed event short-circuits before any boost read', async () => {

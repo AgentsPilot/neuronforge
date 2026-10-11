@@ -19,6 +19,33 @@
  * literal counts) and asserts EXACTLY one green constant, in `StatusChip.tsx`
  * (RC-5, SA Q-9); `KpiStrip.tsx`, `StatusChip.tsx` and `adminDialog.ts` join
  * the expected files; Scheduled jobs & queues joins the registry.
+ *
+ * Amended by L-1c: `DatePresets.tsx`, `adminWindow.ts` and `useAdminFilters.ts`
+ * join the expected files (G-1); the one named S-3 exception,
+ * `@/app/admin/components/adminWindowPresets`, joins the allow-list (G-2, SA
+ * ruling on L-1b Q-13 / L-1c Q-2) with a check that the file it names imports
+ * nothing and is not a client module (G-3) and near-miss self-tests (G-4); S-6
+ * is made non-vacuous: `useAdminFilters.ts` must write history and no file may
+ * call `pushState` (G-5); Audit trail part 1 joins the registry (G-6).
+ *
+ * Amended by L-1d: `AdminDrawer.tsx`, `OpenRowButton.tsx` and `adminTable.ts`
+ * join the expected files (G-1); the Audit trail registry entry drops "part 1"
+ * from its label (its files are unchanged). No rule changes: the drawer's
+ * sections are `div role="group"`, never `<section` (S-8), and the new tones
+ * are sky and amber, never green (S-7).
+ *
+ * Amended by L-1e: `AdminBusinessPicker.tsx` joins the expected files; a new
+ * rule, L-1e F-1 (SA M-3; named apart from the L-1c G-3), allows a `fetch` call
+ * in that one file only, so the shared helpers stay fetch-free and a second
+ * fetching component needs a deliberate edit here; the Audit trail registry
+ * comment notes the original picker left the page.
+ *
+ * Amended by L-2a: AI cost & usage (part a) joins the registry with its five
+ * files. No new shared file, so the expected files and part (a) are unchanged.
+ *
+ * Amended by L-3: Archiving joins the registry; no rule change. Its two shared
+ * exports (the `neutral` StatusChip tone and the `badge` prop of
+ * AdminPageHeader) add no file, no import outside the folder and no green.
  */
 
 import * as fs from 'fs';
@@ -52,15 +79,22 @@ const SOURCE_FILES = ALL_FILES.filter((f) => !isTest(f) && /\.tsx?$/.test(f));
 const TSX_SOURCES = SOURCE_FILES.filter((f) => f.endsWith('.tsx'));
 
 const EXPECTED_SOURCES = [
+  'AdminBusinessPicker.tsx',
+  'AdminDrawer.tsx',
   'AdminFilterBar.tsx',
   'AdminPageHeader.tsx',
   'AdminStates.tsx',
+  'DatePresets.tsx',
   'KpiStrip.tsx',
+  'OpenRowButton.tsx',
   'StatusChip.tsx',
   'adminDialog.ts',
   'adminFormat.ts',
+  'adminTable.ts',
+  'adminWindow.ts',
   'readAdminResponse.ts',
   'readJsonBody.ts',
+  'useAdminFilters.ts',
 ].map((name) => `${LAYOUT_DIR}/${name}`);
 
 // ── Rule helpers (each proved by a self-test below) ─────────────────────────
@@ -89,7 +123,15 @@ const ALLOWED_EXACT = new Set([
   '@/components/ui/sheet',
   '@/components/ui/dialog',
   '@/lib/logger/client',
+  // The one named exception (G-2, SA ruling on L-1b Q-13 / L-1c Q-2): the
+  // shared window presets stay where they are because a `lib/` module and the
+  // finance route import them too, so they cannot move into this folder. Safe
+  // only because the file imports nothing and is not a client module (G-3).
+  '@/app/admin/components/adminWindowPresets',
 ]);
+
+/** The file the G-2 exception names. */
+const PRESETS_FILE = 'app/admin/components/adminWindowPresets.ts';
 function isAllowedImport(spec: string): boolean {
   if (ALLOWED_EXACT.has(spec)) return true;
   if (spec.startsWith('./') && !spec.includes('../')) return true;
@@ -114,6 +156,15 @@ const CONSOLE = /console\./;
 /** S-6. */
 const JSON_CALL = /\.json\(/;
 const HISTORY_WRITE = /history\.(?:pushState|replaceState)/;
+const PUSH_STATE = /history\.pushState/;
+
+/**
+ * L-1e F-1 (SA M-3): a call to `fetch`, bare or as a member (`window.fetch(`),
+ * not part of a longer name (`refetch(`, `prefetch(`). Run on comment-stripped
+ * code. Only `FETCHING_FILE` may match.
+ */
+const FETCH_CALL = /(?<![A-Za-z0-9_$])fetch\s*\(/;
+const FETCHING_FILE = 'AdminBusinessPicker.tsx';
 
 /** S-8. */
 const SECTION = /<section\b/;
@@ -227,6 +278,30 @@ describe('C-14 part (a): the shared admin layout folder', () => {
     expect(codeOf(read(`${LAYOUT_DIR}/readJsonBody.ts`))).toMatch(JSON_CALL);
   });
 
+  it('useAdminFilters.ts writes history, and no file in the folder calls pushState (S-6 is not vacuous, G-5)', () => {
+    expect(codeOf(read(`${LAYOUT_DIR}/useAdminFilters.ts`))).toMatch(HISTORY_WRITE);
+    for (const file of SOURCE_FILES) {
+      expect({ file, push: PUSH_STATE.test(codeOf(read(file))) }).toEqual({ file, push: false });
+    }
+  });
+
+  it.each(SOURCE_FILES)('%s calls fetch only if it is AdminBusinessPicker.tsx (L-1e F-1)', (file) => {
+    if (path.posix.basename(file) !== FETCHING_FILE) expect(codeOf(read(file))).not.toMatch(FETCH_CALL);
+  });
+
+  it('AdminBusinessPicker.tsx is the one file that fetches (L-1e F-1 is not vacuous)', () => {
+    expect(codeOf(read(`${LAYOUT_DIR}/${FETCHING_FILE}`))).toMatch(FETCH_CALL);
+    const fetching = SOURCE_FILES.filter((file) => FETCH_CALL.test(codeOf(read(file))));
+    expect(fetching).toEqual([`${LAYOUT_DIR}/${FETCHING_FILE}`]);
+  });
+
+  it('the one S-3 exception names a file with no imports that is not a client module (G-3)', () => {
+    const source = read(PRESETS_FILE);
+    expect(specifiersOf(codeOf(source))).toEqual([]);
+    expect(source.trimStart().startsWith("'use client'")).toBe(false);
+    expect(source.trimStart().startsWith('"use client"')).toBe(false);
+  });
+
   it('holds exactly one green constant across the folder, in StatusChip.tsx, and no green outside it (S-7, RC-5)', () => {
     const verdict = greenVerdict(SOURCE_FILES.map((file) => ({ file, code: codeOf(read(file)) })));
     expect(verdict.outside).toEqual([]);
@@ -275,6 +350,13 @@ describe('C-14 part (a) self-tests (no dead regex)', () => {
     expect(isAllowedImport('@/lib/logger/client')).toBe(true);
   });
 
+  it('G-4: the presets exception is exact; near misses and other app paths are refused', () => {
+    expect(isAllowedImport('@/app/admin/components/adminWindowPresets')).toBe(true);
+    expect(isAllowedImport('@/app/admin/components/adminWindowPresetsX')).toBe(false);
+    expect(isAllowedImport('@/app/admin/components/adminWindowPresets/x')).toBe(false);
+    expect(isAllowedImport('@/app/admin/components/health/HealthTile')).toBe(false);
+  });
+
   it('S-4 refuses Business OS, repositories, Supabase and server-only', () => {
     expect(isRefusedImport('@/lib/business-os/entitlements/catalog')).toBe(true);
     expect(isRefusedImport('@/lib/repositories/UserRepository')).toBe(true);
@@ -296,6 +378,20 @@ describe('C-14 part (a) self-tests (no dead regex)', () => {
     expect('await response.json()').toMatch(JSON_CALL);
     expect('window.history.replaceState(null, "", url)').toMatch(HISTORY_WRITE);
     expect('window.history.pushState(null, "", url)').toMatch(HISTORY_WRITE);
+    expect('window.history.pushState(null, "", url)').toMatch(PUSH_STATE);
+    expect('window.history.replaceState(null, "", url)').not.toMatch(PUSH_STATE);
+  });
+
+  it('L-1e F-1 catches fetch(, fetch ( and window.fetch(; ignores refetch(, prefetch( and a commented fetch(', () => {
+    expect('const r = await fetch(url);').toMatch(FETCH_CALL);
+    expect('const r = await fetch (url);').toMatch(FETCH_CALL);
+    expect('const r = await window.fetch(url);').toMatch(FETCH_CALL);
+    expect('const r = refetch(url);').not.toMatch(FETCH_CALL);
+    expect('router.prefetch(url);').not.toMatch(FETCH_CALL);
+    const commented = ['// fetch(url)', '/* await fetch(url) */', 'const a = 1;'].join(String.fromCharCode(10));
+    expect(codeOf(commented)).not.toMatch(FETCH_CALL);
+    // The comments themselves would match: the strip is what keeps them out.
+    expect(commented).toMatch(FETCH_CALL);
   });
 
   it('S-8 catches a section and a region role in either quote', () => {
@@ -389,6 +485,41 @@ const MIGRATED_PAGES = [
       'app/admin/components/jobs/DrainNowDialog.tsx',
       'app/admin/components/jobs/CancelQueueItemDialog.tsx',
       'app/admin/components/jobs/RetryQueueItemDialog.tsx',
+    ],
+  },
+  {
+    // G-6. The original `BusinessAccountPicker.tsx` is deliberately not listed:
+    // it is unmigrated (it still calls `.json(`), and since L-1e it is no longer
+    // on this page (the shared `AdminBusinessPicker` replaced it). It stays in
+    // the folder for Activity and Finance until L-8 deletes it (R-11).
+    page: '/admin/audit-trail (Audit trail)',
+    files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
+  },
+  {
+    // L-2a (part a): header, KPI strip, filter bar, states, URL. L-2b (part b):
+    // the table, the call drawer, the run card and the summary cards.
+    page: '/admin/analytics (AI cost & usage)',
+    files: [
+      'app/admin/analytics/page.tsx',
+      'app/admin/analytics/analyticsTypes.ts',
+      'app/admin/analytics/analyticsFilters.ts',
+      'app/admin/analytics/analyticsCall.ts',
+      'app/admin/analytics/components/AnalyticsKpis.tsx',
+      'app/admin/analytics/components/AnalyticsFilterBar.tsx',
+      'app/admin/analytics/components/AnalyticsTable.tsx',
+      'app/admin/analytics/components/AnalyticsCallDetails.tsx',
+      'app/admin/analytics/components/AnalyticsExecutionCard.tsx',
+      'app/admin/analytics/components/AnalyticsSummaryCards.tsx',
+    ],
+  },
+  {
+    // L-3: header with the Runs off badge, KPI strip, Refresh-only bar, states,
+    // the run history table and the confirm dialog class.
+    page: '/admin/archiving (Archiving)',
+    files: [
+      'app/admin/archiving/page.tsx',
+      'app/admin/archiving/components/ArchiveConfirmDialog.tsx',
+      'app/admin/archiving/components/ArchivingKpis.tsx',
     ],
   },
 ] as const;

@@ -12,9 +12,10 @@
  * can be checked in production (SA Q-1). Confirm is then disabled and says why;
  * the server refuses regardless (409 `runs_not_enabled`).
  *
- * The shared Dialog primitive falls back to light colours on the admin shell,
- * which does not load the `--v2-*` tokens; the `!` classes override that
- * without editing the primitive (the page's DARK_SELECT precedent).
+ * The dark palette, the dark colour scheme and a visible corner close come from
+ * the shared admin dialog classes (`app/admin/components/layout/adminDialog.ts`,
+ * Admin Layout Standard C-10, D-8 (a), F-88), which replace this file's own
+ * `!` copy. Confirm keeps its sky fill (Jobs parity) and gains the A-1 ring.
  */
 
 import { useId } from 'react';
@@ -35,10 +36,13 @@ import {
   type RetentionDays,
 } from '@/lib/archiving/config';
 import type { RetentionOptionCount } from '@/lib/archiving/types';
-
-import { formatCount, formatUtc } from '../format';
-
-const DARK_DIALOG = '!border-slate-700 !bg-slate-900 !text-slate-100';
+import {
+  ADMIN_DIALOG_CLASS,
+  ADMIN_DIALOG_DESCRIPTION_CLASS,
+  ADMIN_DIALOG_TITLE_CLASS,
+} from '@/app/admin/components/layout/adminDialog';
+import { formatCount, formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
 
 /**
  * Owners keep this much history at most. Anything shorter shortens it (K-1).
@@ -76,16 +80,16 @@ export function ArchiveConfirmDialog({
         <button
           type="button"
           data-testid="archive-button"
-          className="inline-block rounded border border-slate-600 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50"
+          className={`inline-flex items-center ${ADMIN_BUTTON}`}
         >
-          <Archive className="mr-2 inline h-4 w-4 align-[-2px]" aria-hidden="true" />
+          <Archive className="mr-2 h-4 w-4" aria-hidden="true" />
           Archive
         </button>
       </DialogTrigger>
-      <DialogContent data-testid="archive-dialog" className={DARK_DIALOG}>
+      <DialogContent data-testid="archive-dialog" className={ADMIN_DIALOG_CLASS}>
         <DialogHeader>
-          <DialogTitle className="!text-white">Archive old records?</DialogTitle>
-          <DialogDescription className="!text-slate-400">
+          <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>Archive old records?</DialogTitle>
+          <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>
             {sourceLabel}: records older than the cutoff move out of the live table.
           </DialogDescription>
         </DialogHeader>
@@ -117,7 +121,7 @@ export function ArchiveConfirmDialog({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="rounded border border-slate-600 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50"
+            className={ADMIN_BUTTON}
           >
             Cancel
           </button>
@@ -128,12 +132,12 @@ export function ArchiveConfirmDialog({
               onClick={onConfirm}
               disabled={!runsEnabled || busy || !option}
               aria-describedby={runsEnabled ? undefined : confirmNoteId}
-              className="rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
             >
               {busy ? 'Archiving…' : 'Confirm'}
             </button>
             {!runsEnabled && (
-              <p id={confirmNoteId} className="mt-1 text-xs text-slate-500">
+              <p id={confirmNoteId} className="mt-1 text-xs text-slate-400">
                 Not switched on yet
               </p>
             )}

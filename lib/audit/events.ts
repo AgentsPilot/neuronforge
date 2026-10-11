@@ -217,6 +217,13 @@ export const AUDIT_EVENTS = {
   // (BD-26, lib/audit/ownerVisibility.ts): the reason is internal.
   BOS_CREDIT_LOT_GRANTED: 'BOS_CREDIT_LOT_GRANTED',
   BOS_CREDIT_LOT_REDUCED: 'BOS_CREDIT_LOT_REDUCED',
+  // TEST ONLY (slice TC-1): an admin took N plan credits from an account on the
+  // /test-business-os harness, as one test charge on the credit ledger. Written
+  // only by POST /api/admin/business-os/test/take-credits, after the RPC
+  // answers `recorded: true`, then flushed (WC-7). Entity type
+  // 'business_os_credit_period' (operator-only, BD-26), id = the account. Remove
+  // with the harness tab.
+  BOS_TEST_CREDITS_TAKEN: 'BOS_TEST_CREDITS_TAKEN',
   // Credit deduction slice 8b: a recorded AI charge took the account's shown
   // percentage of PLAN credits left from at or above the low line (10) to
   // below it. Written only by lib/business-os/credits/creditLowLine.ts, with
@@ -258,6 +265,14 @@ export const AUDIT_EVENTS = {
   // user and actor), NEVER against a purchase, so it reaches no owner's audit.
   // Details: the run id and the correlation id; never an account or a payment.
   BOS_BOOST_RECONCILE_TRIGGERED: 'BOS_BOOST_RECONCILE_TRIGGERED',
+  // Credits boost slice 6b: an admin set or ended ONE account's spending limit
+  // for top-ups (FR-22), through the entitlements admin route (set_boost_cap /
+  // end_boost_cap). Entity 'business_os_account_plan' (operator-only, BD-26),
+  // id = the account; the admin as actor. Changes: the limit before and after
+  // (minor units, default or override); details: the reason, the window, the
+  // override ids. Never written for a repeated identical set (SA C-2).
+  BOS_BOOST_CAP_OVERRIDE_SET: 'BOS_BOOST_CAP_OVERRIDE_SET',
+  BOS_BOOST_CAP_OVERRIDE_ENDED: 'BOS_BOOST_CAP_OVERRIDE_ENDED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -893,6 +908,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'An admin took credits back from a Business OS credit lot (credits, lot remaining and reason recorded)',
   },
+  // TEST ONLY (slice TC-1): the same weight as a lot reduction, an admin
+  // changed what an account can spend.
+  [AUDIT_EVENTS.BOS_TEST_CREDITS_TAKEN]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin took plan credits from a Business OS account on the test harness (credits and reason recorded)',
+  },
   // Credit deduction slice 8b (SA SQ-46): 'info', no compliance flags — an
   // observation for admins, not an operator alert. The writer passes NO
   // severity, so this registration is the only source (pinned by test).
@@ -922,6 +944,18 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_BOOST_FLAGGED]: {
     severity: 'warning',
     description: 'A Business OS credits boost payment was flagged for review (reason code recorded)',
+  },
+  // Credits boost slice 6b: 'warning' + SOC2, like the credit grant: an admin
+  // changed how much one business may spend.
+  [AUDIT_EVENTS.BOS_BOOST_CAP_OVERRIDE_SET]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: "An admin set a Business OS account's credit top-up spending limit (amount, window and reason recorded)",
+  },
+  [AUDIT_EVENTS.BOS_BOOST_CAP_OVERRIDE_ENDED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: "An admin returned a Business OS account's credit top-up spending limit to the default (reason recorded)",
   },
   // Credits boost slice 4b.2: 'warning' + SOC2, like BOS_QUEUE_DRAIN_STARTED —
   // an admin made the platform credit, expire or fail purchases across every

@@ -142,6 +142,17 @@ describe('listCustomerSubscriptions (layer 1b, C-2)', () => {
     mockSubscriptionsList.mockResolvedValue({ data: [], has_more: false });
     await expect(service().listCustomerSubscriptions('cus_1')).resolves.toEqual({ subscriptions: [], complete: true });
   });
+
+  it('has_more with an EMPTY page fails closed: complete false, no further call (P-3b.2 QA hardening)', async () => {
+    mockSubscriptionsList
+      .mockResolvedValueOnce({ data: [{ id: 'sub_1', status: 'canceled' }], has_more: true })
+      .mockResolvedValueOnce({ data: [], has_more: true });
+    await expect(service().listCustomerSubscriptions('cus_1')).resolves.toEqual({
+      subscriptions: [{ id: 'sub_1', status: 'canceled' }],
+      complete: false,
+    });
+    expect(mockSubscriptionsList).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('listPricesByLookupKeys and expireCheckoutSession', () => {

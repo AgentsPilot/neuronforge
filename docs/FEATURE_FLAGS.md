@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-10-07
-> **Version**: 1.9.0
+> **Last Updated**: 2026-10-11
+> **Version**: 1.10.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-11 | 1.10.0 | Dev | Added `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED` (test harness slice TC-1, TEST ONLY): server-only, default off. While off `POST /api/admin/business-os/test/take-credits` answers 404 `not_enabled`. Developer `.env.local` only, never Vercel. |
 | 2026-10-07 | 1.9.0 | Dev | Added `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` (plan payments P-3a): server-only, default off. While off `POST /api/business-os/billing/plan/checkout` answers 404 and reads nothing. Turn on only where `BUSINESS_OS_PLAN_PRICES_ENABLED` is on (otherwise the route refuses every checkout, 503 with an alert), and never in production before P-3b. |
 | 2026-10-06 | 1.8.0 | Dev | Added `BUSINESS_OS_CREDITS_BOOST_ENABLED` and `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` (credits boost slice 3): the boost checkout's server-only kill switch, default off, and an optional allow-list of account UUIDs. **Stays unset on Vercel until slice 4a is deployed** (SA C-1). |
 | 2026-10-06 | 1.7.0 | Dev | Added `BUSINESS_OS_PLAN_PRICES_ENABLED` (plan payments P-2b, merge safety): server-only, default off. While off the webhook's plan price catalog looks up no lookup key and calls no Stripe API, exactly P-1's deny-all. Turned on per environment only after `npm run check-bos-plan-prices` passes against that environment's Stripe account. |
@@ -58,6 +59,7 @@ Feature flag functions are defined in:
 | **Business OS: Credits boost checkout** | `BUSINESS_OS_CREDITS_BOOST_ENABLED` (+ optional `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS`) | **Server only** | `false` (unset = off) | `POST /api/business-os/credits/boost/checkout` |
 | **Business OS: plan price recognition** | `BUSINESS_OS_PLAN_PRICES_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/stripe/webhook` (plan price catalog in the Business OS router) |
 | **Business OS: plan checkout** | `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/business-os/billing/plan/checkout` (refuses unless the price switch is also on) |
+| **Business OS: test harness credit tools (TEST ONLY)** | `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/admin/business-os/test/take-credits` ("Test credits" tab on `/test-business-os`) |
 
 ---
 
@@ -342,6 +344,28 @@ the sandbox key; nothing on Vercel changes.
 ```bash
 # .env.local — on only for the local demo, with BUSINESS_OS_PLAN_PRICES_ENABLED=true
 BUSINESS_OS_PLAN_CHECKOUT_ENABLED=false
+```
+
+---
+
+### Business OS: test harness credit tools — `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED`
+
+Test harness slice TC-1 ([requirement](/docs/requirements/BUSINESS_OS_TEST_TAKE_CREDITS_REQUIREMENT.md)). **TEST ONLY. Default: off. Server-only.** Reader:
+`isTestCreditToolsEnabled()` in `lib/business-os/credits/testCreditToolsFlag.ts`
+(`parseBooleanFlag`; imports nothing else), read on every request.
+
+| State | What `POST /api/admin/business-os/test/take-credits` does |
+|---|---|
+| Off (default) | Answers **404** `not_enabled` right after the admin gate; the "Test credits" tab shows "Not enabled on this deployment" |
+| On | An admin may take plan credits from any Business OS account: one test charge (`service: 'test_harness'`) on the **live** credit ledger, with no undo |
+
+Set it **only in a developer's `.env.local`, never on Vercel**. A "not production"
+check is deliberately not used: the developer environment points at the one live
+database.
+
+```bash
+# .env.local — on only while testing low / zero / over-plan credit states
+BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED=false
 ```
 
 ---

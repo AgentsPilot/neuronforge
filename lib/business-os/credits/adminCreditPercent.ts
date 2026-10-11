@@ -1,11 +1,18 @@
 /**
- * Credits left, as a percentage, for every Business OS account on the admin
- * Businesses list (credit deduction slice 8a; FR-48, AC-43; SA SQ-41 to SQ-43).
+ * Each Business OS account's credit position in its current period, for two
+ * admin readers (credit deduction slice 8a; FR-48, AC-43; SA SQ-41 to SQ-43;
+ * finance & business health slice 1b, SA-Q7).
  *
- * ── WHAT IT ANSWERS ──────────────────────────────────────────────────────────
- * For each listed account: the same percentage and band the owner's Credits
- * card shows (`creditBands.ts`), or "no allowance", or "unknown". Never a
- * credit count, a token, a cost or a dollar.
+ * ── WHAT IT ANSWERS: ONE CORE, TWO PROJECTIONS (SA-Q7) ───────────────────────
+ * The pass computes each account's position ONCE (allowance, used, trial), and
+ * each reader projects it:
+ *   - `readAdminCreditsLeft` (the admin Businesses list): the same percentage
+ *     and band the owner's Credits card shows (`creditBands.ts`), or "no
+ *     allowance", or "unknown". Never a credit count, a token, a cost or a
+ *     dollar: `AdminCreditsLeft` has no room for one (AC-43);
+ *   - `readAdminCreditPositions` (the admin finance page's credits section):
+ *     the allowance and the credits used, in credits, for the over-allowance
+ *     counts. Credits are units, never money.
  *
  * ── ONE BATCHED PASS, NO N+1 (SQ-42) ─────────────────────────────────────────
  *   1. allowances: `getEntitlementService().getSnapshots(ids)` — one read per
@@ -33,8 +40,12 @@
  *
  * ── TENANT ISOLATION ─────────────────────────────────────────────────────────
  * Service role (cross-account, admin display), wired in
- * `adminCreditPercentDeps.ts`. The ids come from the admin route's own profile
- * list, behind `requireAdmin` — never from request input.
+ * `adminCreditPercentDeps.ts`. Both callers sit behind `requireAdmin`, and the
+ * ids never come from raw request input:
+ *   - `GET /api/admin/users`: the route's own profile list;
+ *   - `GET /api/admin/business-os/finance`: the route's own plan walk, or the
+ *     one picked business, which the route validated as a UUID and the builder
+ *     checked against the plan table before any read (SEC-3).
  *
  * Scale trigger (SA SQ-42): above 1,000 Business OS accounts, or a pass p95
  * above 1 s in the `info` line, move this to a separate visible-rows route.
@@ -65,6 +76,22 @@ export interface AdminCreditsPass {
   outcome: 'ok' | 'failed' | 'timeout';
   /** Keyed by the LIST's user id. */
   byUserId: Map<string, AdminCreditsLeft>;
+}
+
+/**
+ * One account's credit position in its current period (SA-Q7). Counts, in
+ * credits: the finance route only; the Businesses list never receives one.
+ * `used` is at the ledger's 6 decimal places.
+ */
+export type AdminCreditPosition =
+  | { kind: 'position'; allowance: number; used: number; trial: boolean }
+  | { kind: 'no_allowance' }
+  | { kind: 'unknown' };
+
+export interface AdminCreditPositionsPass {
+  outcome: 'ok' | 'failed' | 'timeout';
+  /** Keyed by the CALLER's id. On 'failed' / 'timeout' every id is `unknown`. */
+  byUserId: Map<string, AdminCreditPosition>;
 }
 
 /** A totals row as the pass reads it (structural: the repository's own type is not imported here). */
@@ -107,6 +134,7 @@ const MONTHLY_LOOKBACK_DAYS = 32;
 const TRIAL_ANCHOR_MAX_AGE_DAYS = 92;
 
 const UNKNOWN: AdminCreditsLeft = { kind: 'unknown' };
+const UNKNOWN_POSITION: AdminCreditPosition = { kind: 'unknown' };
 
 function chunksOf<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -120,13 +148,13 @@ interface Position {
   trial: boolean;
 }
 
-/** The pass itself. Never throws; an `error` makes every account unknown. */
-async function computeByAccount(
+/** The pass itself (the one core, SA-Q7). Never throws; an `error` makes every account unknown. */
+async function computePositions(
   accountIds: readonly string[],
   deps: AdminCreditPercentDeps,
   now: Date
-): Promise<{ byAccount: Map<string, AdminCreditsLeft>; error: Error | null }> {
-  const byAccount = new Map<string, AdminCreditsLeft>();
+): Promise<{ byAccount: Map<string, AdminCreditPosition>; error: Error | null }> {
+  const byAccount = new Map<string, AdminCreditPosition>();
   try {
     const getSnapshots = deps.getSnapshots ?? ((ids) => getEntitlementService().getSnapshots(ids));
 
@@ -152,7 +180,7 @@ async function computeByAccount(
       const snapshot = snapshots.get(accountId);
       // A failed read is not "no allowance" (SA Q-4): that must stay a fact.
       if (!snapshot || snapshot.unavailable) {
-        byAccount.set(accountId, UNKNOWN);
+        byAccount.set(accountId, UNKNOWN_POSITION);
         continue;
       }
       const rule = creditWindowRule({ anchor: anchors[accountId] ?? null, allowance: creditAllowanceForDisplay(snapshot) });
@@ -165,7 +193,7 @@ async function computeByAccount(
       // `isAtOrAfter` is the trial row-selector; reused here only as an exact
       // instant comparison (anchor vs the 92-day cutoff, SA Q-5) — same semantics.
       if (trial && !isAtOrAfter(anchor, trialCutoffIso)) {
-        byAccount.set(accountId, UNKNOWN);
+        byAccount.set(accountId, UNKNOWN_POSITION);
         continue;
       }
       positions.set(accountId, { anchor, allowance: rule.allowance.amount, trial });
@@ -213,20 +241,95 @@ async function computeByAccount(
         }
         used += credits;
       }
-      // No row: nothing charged this period.
-      const percent = readable ? creditPercentLeft(roundToLedger(used), position.allowance) : null;
-      if (percent === null) {
-        byAccount.set(accountId, UNKNOWN);
-      } else if (percent.shown.kind === 'less_than_one') {
-        byAccount.set(accountId, { kind: 'less_than_one', trial: position.trial });
-      } else {
-        byAccount.set(accountId, { kind: 'percent', value: percent.shown.value, trial: position.trial });
-      }
+      // No row: nothing charged this period. Each reader projects the position.
+      byAccount.set(
+        accountId,
+        readable ? { kind: 'position', allowance: position.allowance, used: roundToLedger(used), trial: position.trial } : UNKNOWN_POSITION
+      );
     }
 
     return { byAccount, error: null };
   } catch (error) {
     return { byAccount, error: error instanceof Error ? error : new Error(String(error)) };
+  }
+}
+
+/** Projection 1, the Businesses list: today's kinds, through the card's own percentage (SA-Q7). */
+function toCreditsLeft(position: AdminCreditPosition): AdminCreditsLeft {
+  if (position.kind !== 'position') return position;
+  // `used` is already at 6 dp (`roundToLedger` in the core); the percentage is the one the list always showed.
+  const percent = creditPercentLeft(position.used, position.allowance);
+  if (percent === null) return UNKNOWN;
+  if (percent.shown.kind === 'less_than_one') return { kind: 'less_than_one', trial: position.trial };
+  return { kind: 'percent', value: percent.shown.value, trial: position.trial };
+}
+
+/** Each reader's own log messages. */
+interface PassMessages {
+  timeout: string;
+  failed: string;
+  served: string;
+}
+
+/**
+ * The shared budget runner (SA-Q7): the account seam, ONE clock, the 2 s race
+ * with an unref'd timer, and the timeout / failed / ok branching. Never
+ * throws. Each reader passes its own messages and its projection; the info
+ * line carries counts by kind and timing only, never a figure per account.
+ */
+async function runWithinBudget<T extends { kind: string }>(
+  userIds: readonly string[],
+  deps: AdminCreditPercentDeps,
+  log: AdminCreditPercentLogger,
+  options: { now?: Date; budgetMs?: number },
+  messages: PassMessages,
+  project: (position: AdminCreditPosition) => T,
+  emptyCounts: () => Record<T['kind'], number>
+): Promise<{ outcome: 'ok' | 'failed' | 'timeout'; byUserId: Map<string, T> }> {
+  // ONE clock for the whole pass: the period selector and the range (SA C-W3).
+  const now = options.now ?? new Date();
+  const budgetMs = options.budgetMs ?? ADMIN_CREDITS_BUDGET_MS;
+  const started = Date.now();
+
+  const accountOf = new Map<string, string>();
+  for (const userId of userIds) accountOf.set(userId, resolveAccountId(userId));
+  const accountIds = [...new Set(accountOf.values())];
+
+  const everyone = (value: T) => new Map([...accountOf.keys()].map((userId) => [userId, value]));
+  if (accountIds.length === 0) return { outcome: 'ok', byUserId: new Map() };
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), budgetMs);
+    // Never keeps a serverless instance alive on its own.
+    if (typeof timer === 'object' && timer && 'unref' in timer) timer.unref();
+  });
+
+  try {
+    const outcome = await Promise.race([computePositions(accountIds, deps, now), timeout]);
+    const ms = Date.now() - started;
+
+    if (outcome === 'timeout') {
+      log.warn({ outcome: 'timeout', accounts: accountIds.length, ms }, messages.timeout);
+      return { outcome: 'timeout', byUserId: everyone(project(UNKNOWN_POSITION)) };
+    }
+    if (outcome.error) {
+      log.warn({ outcome: 'failed', accounts: accountIds.length, ms, err: outcome.error }, messages.failed);
+      return { outcome: 'failed', byUserId: everyone(project(UNKNOWN_POSITION)) };
+    }
+
+    const byUserId = new Map<string, T>();
+    const counts = emptyCounts();
+    for (const [userId, accountId] of accountOf) {
+      const value = project(outcome.byAccount.get(accountId) ?? UNKNOWN_POSITION);
+      byUserId.set(userId, value);
+      counts[value.kind as T['kind']] += 1;
+    }
+    // Counts and timing only — never a figure per account.
+    log.info({ outcome: 'ok', accounts: accountIds.length, ms, ...counts }, messages.served);
+    return { outcome: 'ok', byUserId };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -240,52 +343,44 @@ export async function readAdminCreditsLeft(
   log: AdminCreditPercentLogger,
   options: { now?: Date; budgetMs?: number } = {}
 ): Promise<AdminCreditsPass> {
-  // ONE clock for the whole pass: the period selector and the range (SA C-W3).
-  const now = options.now ?? new Date();
-  const budgetMs = options.budgetMs ?? ADMIN_CREDITS_BUDGET_MS;
-  const started = Date.now();
+  return runWithinBudget(
+    userIds,
+    deps,
+    log,
+    options,
+    {
+      timeout: 'Admin credits-left pass timed out; every row shows unknown',
+      failed: 'Admin credits-left pass failed; every row shows unknown',
+      served: 'Admin credits-left pass served',
+    },
+    toCreditsLeft,
+    (): Record<AdminCreditsLeft['kind'], number> => ({ percent: 0, less_than_one: 0, no_allowance: 0, unknown: 0 })
+  );
+}
 
-  const accountOf = new Map<string, string>();
-  for (const userId of userIds) accountOf.set(userId, resolveAccountId(userId));
-  const accountIds = [...new Set(accountOf.values())];
-
-  const everyone = (value: AdminCreditsLeft) => new Map([...accountOf.keys()].map((userId) => [userId, value]));
-  if (accountIds.length === 0) return { outcome: 'ok', byUserId: new Map() };
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => resolve('timeout'), budgetMs);
-    // Never keeps a serverless instance alive on its own.
-    if (typeof timer === 'object' && timer && 'unref' in timer) timer.unref();
-  });
-
-  try {
-    const outcome = await Promise.race([computeByAccount(accountIds, deps, now), timeout]);
-    const ms = Date.now() - started;
-
-    if (outcome === 'timeout') {
-      log.warn({ outcome: 'timeout', accounts: accountIds.length, ms }, 'Admin credits-left pass timed out; every row shows unknown');
-      return { outcome: 'timeout', byUserId: everyone(UNKNOWN) };
-    }
-    if (outcome.error) {
-      log.warn(
-        { outcome: 'failed', accounts: accountIds.length, ms, err: outcome.error },
-        'Admin credits-left pass failed; every row shows unknown'
-      );
-      return { outcome: 'failed', byUserId: everyone(UNKNOWN) };
-    }
-
-    const byUserId = new Map<string, AdminCreditsLeft>();
-    const counts: Record<AdminCreditsLeft['kind'], number> = { percent: 0, less_than_one: 0, no_allowance: 0, unknown: 0 };
-    for (const [userId, accountId] of accountOf) {
-      const value = outcome.byAccount.get(accountId) ?? UNKNOWN;
-      byUserId.set(userId, value);
-      counts[value.kind] += 1;
-    }
-    // Counts and timing only — never a figure per account.
-    log.info({ outcome: 'ok', accounts: accountIds.length, ms, ...counts }, 'Admin credits-left pass served');
-    return { outcome: 'ok', byUserId };
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+/**
+ * Projection 2 (SA-Q7): each account's position, for the admin finance page's
+ * credits section. Never throws. `userIds` are the finance route's own plan
+ * rows, or its one picked business (see TENANT ISOLATION above). The same
+ * reads, budget and failure rules as the list.
+ */
+export async function readAdminCreditPositions(
+  userIds: readonly string[],
+  deps: AdminCreditPercentDeps,
+  log: AdminCreditPercentLogger,
+  options: { now?: Date; budgetMs?: number } = {}
+): Promise<AdminCreditPositionsPass> {
+  return runWithinBudget(
+    userIds,
+    deps,
+    log,
+    options,
+    {
+      timeout: 'Admin credit positions pass timed out; every row shows unknown',
+      failed: 'Admin credit positions pass failed; every row shows unknown',
+      served: 'Admin credit positions pass served',
+    },
+    (position: AdminCreditPosition) => position,
+    (): Record<AdminCreditPosition['kind'], number> => ({ position: 0, no_allowance: 0, unknown: 0 })
+  );
 }

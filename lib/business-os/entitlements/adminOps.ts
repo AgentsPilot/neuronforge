@@ -69,7 +69,18 @@ import {
   type CreditAdminDependencies,
   type CreditLotAudit,
 } from '@/lib/business-os/credits/creditAdminOps';
+import {
+  BOOST_CAP_ADMIN_OP_NAMES,
+  endBoostCapSchema,
+  executeBoostCapAdminOp,
+  isBoostCapAdminOp,
+  refuseBoostCapOpForPlatformAccount,
+  setBoostCapSchema,
+  type BoostCapAdminOpContext,
+  type BoostCapAudit,
+} from '@/lib/business-os/boost/boostCapAdminOps';
 import { resolveAccountId } from './account';
+import { BOOST_PURCHASE_CAP_DEFAULT, BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS } from './config/boostPackages';
 import { currentCreditValue } from './config/creditValue';
 import { championEndDecisionMissing } from './grantRules';
 import { isGrantingValue, valueSchemaFor } from './schema';
@@ -183,6 +194,11 @@ export function adminOpSchema(config: EntitlementConfig) {
     // in them depends on the catalog or the tiers.
     grantCreditsSchema,
     reduceCreditLotSchema,
+    // Credits boost slice 6b (SA Q-1 (a)): one account's spending limit. Defined
+    // in the boost module, which imports nothing from this one; the bounds are
+    // configuration from this module, passed in (SA C-3).
+    setBoostCapSchema(BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS),
+    endBoostCapSchema,
   ]);
 }
 
@@ -203,6 +219,7 @@ export const OWN_ACCOUNT_GUARDED_OPS: ReadonlySet<AdminOp['op']> = new Set<Admin
   'end_override',
   'reset_plan_state',
   ...CREDIT_ADMIN_OP_NAMES,
+  ...BOOST_CAP_ADMIN_OP_NAMES,
 ]);
 
 /** What the executor gives back to the route. */
@@ -220,9 +237,11 @@ export type AdminOpOutcome =
        * Set only by the credit ops; the seven plan ops never set it, so their
        * audit rows are unchanged (S11-C-7).
        */
-      audit?: CreditLotAudit;
+      audit?: CreditLotAudit | BoostCapAudit;
       /** S11-CR-2: an idempotent replay. The route writes no audit entry and logs at info. */
       replayed?: true;
+      /** Boost slice 6b (SA C-2): the same value was already set. Nothing written, no audit entry. */
+      unchanged?: true;
       /** Credit ops change no entitlement input, so the route leaves the cache alone. */
       invalidatesEntitlements?: false;
     }
@@ -249,6 +268,8 @@ export interface AdminOpContext {
   credit: CreditAdminDependencies;
   /** P-3b.1 (PF-13): read only by assign_tier and set_cohort, just before their write. */
   billing: PlanSubscriptionReader;
+  /** Boost slice 6b: the cap override functions (2a), read and written only by the two boost ops. */
+  boostCap: { repository: BoostCapAdminOpContext['repository'] };
 }
 
 /**
@@ -302,9 +323,13 @@ export async function executeAdminOp(op: AdminOp, ctx: AdminOpContext): Promise<
     return { ok: false, status: 403, error: 'own_account' };
   }
 
-  // ── 1b. The platform account: credit ops only (S11-CR-1, OP-21) ──────────
+  // ── 1b. The platform account: credit and boost-cap ops only (S11-CR-1, OP-21; boost 6b C-1) ──
   if (isCreditAdminOp(op)) {
     const refused = refuseCreditOpForPlatformAccount(accountId);
+    if (refused) return refused;
+  }
+  if (isBoostCapAdminOp(op)) {
+    const refused = refuseBoostCapOpForPlatformAccount(accountId);
     if (refused) return refused;
   }
 
@@ -346,6 +371,9 @@ export async function executeAdminOp(op: AdminOp, ctx: AdminOpContext): Promise<
     case 'grant_credits':
     case 'reduce_credit_lot':
       return creditOp(op, ctx, plan as BusinessOsAccountPlan);
+    case 'set_boost_cap':
+    case 'end_boost_cap':
+      return boostCapOp(op, ctx, plan as BusinessOsAccountPlan);
     default:
       // Unreachable through Zod; a `never` here means a variant was added
       // without a branch.
@@ -703,6 +731,36 @@ async function creditOp(
     data: outcome.data,
     ...(outcome.audit ? { audit: outcome.audit } : {}),
     ...(outcome.replayed ? { replayed: true as const } : {}),
+    invalidatesEntitlements: false,
+  };
+}
+
+/**
+ * Boost slice 6b: set or end this account's spending limit. The plan row is
+ * not touched (before = after), the audit names the limit instead, and the
+ * entitlement cache is left alone: the cap is not an `EntitlementService` input.
+ */
+async function boostCapOp(
+  op: Extract<AdminOp, { op: 'set_boost_cap' | 'end_boost_cap' }>,
+  ctx: AdminOpContext,
+  plan: BusinessOsAccountPlan
+): Promise<AdminOpOutcome> {
+  const outcome = await executeBoostCapAdminOp(op, {
+    accountId: ctx.accountId,
+    adminId: ctx.adminId,
+    bounds: BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS,
+    defaultCap: BOOST_PURCHASE_CAP_DEFAULT,
+    repository: ctx.boostCap.repository,
+  });
+  if (!outcome.ok) return outcome;
+  return {
+    ok: true,
+    action: outcome.action,
+    before: plan,
+    after: plan,
+    data: outcome.data,
+    ...(outcome.audit ? { audit: outcome.audit } : {}),
+    ...(outcome.unchanged ? { unchanged: true as const } : {}),
     invalidatesEntitlements: false,
   };
 }

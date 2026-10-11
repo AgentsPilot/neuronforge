@@ -3,6 +3,13 @@
  * AC-39), the account scope (AC-26, AC-41, AC-42 / SA-WR-3), the override
  * strip (SA-WR-1), the revenue panel's branches (AC-22, AC-23), the cut-over
  * (AC-40) and the ceiling (AC-15).
+ *
+ * Slice 1b: Section 4, K-2 and K-4 through the builder (AC-16, AC-17, AC-19,
+ * AC-37, AC-38, SA-W11, SA-W12, SA-WR-8), the picked-business scope of every
+ * credit and lot read (AC-42), the lot narrowing in the wiring (SA-W14) and
+ * the wiring's credit reads (SA-WR-10). Every test injects a fake
+ * `credits.getSnapshots`, so the real entitlement service is never reached;
+ * the snapshots it returns are REAL resolutions of the config's own plans.
  */
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
@@ -24,14 +31,29 @@ jest.mock('@/lib/repositories/BusinessOsAccountPlanRepository', () => ({
     pagePlans: jest.fn(),
   },
 }));
+// SA-W14: the wiring's two lot reads, faked at the repository boundary.
+const mockLotsAllAccounts = jest.fn();
+const mockLotsForAccount = jest.fn();
+jest.mock('@/lib/repositories/BusinessOsCreditLotRepository', () => ({
+  businessOsCreditLotRepository: {
+    listLotsWithDrawsAllAccounts: (...a: unknown[]) => mockLotsAllAccounts(...a),
+    listLotsWithDraws: (...a: unknown[]) => mockLotsForAccount(...a),
+  },
+}));
 
 import type { BusinessOsAccountPlan } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import type { CreditLedgerRow } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { stateForCohort } from '@/lib/business-os/entitlements/lifecycle';
+import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
+import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
+import { adminCreditPercentDeps } from '@/lib/business-os/credits/adminCreditPercentDeps';
+import type { AdminCreditPercentDeps, AdminTotalsRow } from '@/lib/business-os/credits/adminCreditPercent';
 import { buildFinanceHealth, type FinanceHealthDeps } from '../financeHealth';
-import { findPlanWithoutOverrides } from '../financeHealthDeps';
+import { financeHealthDeps, findPlanWithoutOverrides, toFinanceLot } from '../financeHealthDeps';
+import type { FinanceLot } from '../creditsSection';
 import { resolveFinanceWindow } from '../financeWindow';
+import { FINANCE_RULES_INVALID_HEADLINE, K4_INFORMATION_HEADLINE } from '../financeRules';
 
 const config = getEntitlementConfig();
 const TIER = config.tierOrder[0];
@@ -95,6 +117,69 @@ type Result<T> = Promise<{ data: T | null; error: Error | null }>;
 const ok = <T>(data: T): Result<T> => Promise.resolve({ data, error: null });
 const fail = (): Result<never> => Promise.resolve({ data: null, error: new Error('read failed') });
 
+/** A REAL snapshot of one of the config's plans (no figure typed here). */
+function snapshotOf(planId: string) {
+  const resolution = resolveEntitlements({ config, account: previewAccountFor(config, planId, NOW), overrides: [], addons: [], now: NOW });
+  return { resolution, unavailable: false, stale: false };
+}
+/** The monthly allowance the config gives a plan, read from the same resolution. */
+function allowanceOf(planId: string): number {
+  const value = snapshotOf(planId).resolution.values['credits.allowance']?.value as { perMonth?: number } | undefined;
+  if (typeof value?.perMonth !== 'number') throw new Error(`no monthly allowance for ${planId}`);
+  return value.perMonth;
+}
+const ALLOWANCE_A = allowanceOf(CHAMPION);
+const ALLOWANCE_B = allowanceOf(TIER);
+/** The current credit period of a 1 September anchor, on NOW. */
+const PERIOD = '2026-11-01T00:00:00+00:00';
+
+/** The pass's reads, faked: A at 200% of its allowance, B at 10% (default). */
+function creditDeps(opts: { unavailable?: string[]; totals?: AdminTotalsRow[]; failTotals?: boolean; ceiling?: boolean } = {}) {
+  const getSnapshots = jest.fn(async (ids: string[]) => {
+    const out = new Map<string, unknown>();
+    for (const id of ids) {
+      if (opts.unavailable?.includes(id)) out.set(id, { resolution: null, unavailable: true, stale: false });
+      else out.set(id, snapshotOf(id === B ? TIER : CHAMPION));
+    }
+    return out;
+  });
+  const findPeriodAnchorsBatch = jest.fn(async (ids: readonly string[]) => ({
+    data: Object.fromEntries(ids.map((id) => [id, '2026-09-01T00:00:00.000Z'])),
+    error: null,
+  }));
+  const totals = opts.totals ?? [
+    { user_id: A, period_start: PERIOD, credits_total: String(ALLOWANCE_A * 2) },
+    { user_id: B, period_start: PERIOD, credits_total: String(ALLOWANCE_B / 10) },
+  ];
+  type TotalsArgs = Parameters<AdminCreditPercentDeps['listTotalsForAccountsInRange']>;
+  type TotalsResult = Awaited<ReturnType<AdminCreditPercentDeps['listTotalsForAccountsInRange']>>;
+  const listTotalsForAccountsInRange = jest.fn<Promise<TotalsResult>, TotalsArgs>(async (ids) =>
+    opts.failTotals
+      ? { data: null, error: new Error('totals failed') }
+      : { data: { rows: totals.filter((row) => ids.includes(row.user_id)), reachedCeiling: opts.ceiling ?? false }, error: null }
+  );
+  return {
+    getSnapshots: getSnapshots as unknown as AdminCreditPercentDeps['getSnapshots'] & jest.Mock,
+    findPeriodAnchorsBatch,
+    listTotalsForAccountsInRange,
+  };
+}
+
+const ADMIN_X = '55555555-5555-4555-8555-555555555555';
+function giftLot(accountId: string | null, creditsGranted: number, extra: Partial<FinanceLot> = {}): FinanceLot {
+  return {
+    id: `44444444-4444-4444-8444-${String(Math.round(creditsGranted * 1000)).padStart(12, '0')}`,
+    accountId,
+    source: 'admin_grant',
+    creditsGranted,
+    expiresAt: null,
+    createdAt: '2026-11-02T10:00:00.000Z',
+    actorAdminId: ADMIN_X,
+    draws: [],
+    ...extra,
+  };
+}
+
 // Overrides replace whole deps (e.g. a failing pagePlans); the result keeps the defaults' mock types.
 function makeDeps(overrides: Record<string, unknown> = {}) {
   const defaults = {
@@ -119,11 +204,16 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     ),
     config,
     isPlatformAccount: (id: string) => id === PLATFORM,
+    credits: creditDeps(),
+    lots: {
+      allAccounts: jest.fn(() => ok<FinanceLot[]>([])),
+      forAccount: jest.fn<Result<FinanceLot[]>, [string]>(() => ok<FinanceLot[]>([])),
+    },
   };
   return { ...defaults, ...overrides } as typeof defaults;
 }
 
-const logger = () => ({ error: jest.fn(), warn: jest.fn() });
+const logger = () => ({ error: jest.fn(), warn: jest.fn(), info: jest.fn() });
 
 async function run(deps = makeDeps(), accountId: string | null = null, log = logger(), now = NOW, window = WINDOW) {
   const result = await buildFinanceHealth({ window, accountId, now }, log, deps as unknown as FinanceHealthDeps);
@@ -446,5 +536,274 @@ describe('SA-WR-1: override rows (admin reason text) never travel past the wirin
     const result = await findPlanWithoutOverrides(A);
     expect(result.data).toBeNull();
     expect(result.error?.message).toBe('down');
+  });
+});
+
+describe('Section 4, K-2 and K-4 (slice 1b)', () => {
+  it('all businesses: rows by % used, K-2 amber at 1, K-4 grey 0, names for the rows shown, counts only in the counts', async () => {
+    const { result, deps, log } = await run();
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const credits = result.payload.credits;
+    expect(credits.status).toBe('ok');
+    expect(credits.scope).toBe('all');
+    expect(credits.farOverAllowancePercent).toBe(150);
+    expect(credits.figures).toMatchObject({ accounts: 2, overAllowance: 1, farOverAllowance: 1, unknownAccounts: 0 });
+    expect(credits.figures?.rows).toEqual([
+      expect.objectContaining({ accountId: A, name: 'Acme Dental', nameStatus: 'found', group: 'founding_partner', usedTenths: 2000, farOverAllowance: true, giftedOutstanding: 0 }),
+      expect.objectContaining({ accountId: B, name: null, nameStatus: 'missing', group: `tier:${TIER}`, usedTenths: 100, farOverAllowance: false }),
+    ]);
+    expect(credits.figures?.rows[1].tierLabel).toEqual(expect.any(String));
+    expect(result.payload.tiles.k2).toMatchObject({ status: 'amber', value: { value: 1, exact: true }, headline: 'Accounts at or over the far-over-allowance line' });
+    // AC-8: no lots → K-4 shows 0, grey, with its information line.
+    expect(result.payload.tiles.k4).toMatchObject({ status: 'neutral', value: { value: 0, exact: true }, headline: K4_INFORMATION_HEADLINE });
+    expect(credits.gifted?.outstanding).toBe(0);
+    // R-b once, never the one-account read; Section 4's own names call.
+    expect(deps.lots.allAccounts).toHaveBeenCalledTimes(1);
+    expect(deps.lots.forAccount).not.toHaveBeenCalled();
+    expect(deps.findNames).toHaveBeenCalledWith([A, B]);
+    expect(result.counts).toMatchObject({ creditAccounts: 2, creditsPass: 'ok', creditPositions: { position: 2, no_allowance: 0, unknown: 0 }, creditLots: 0, creditRowsShown: 2 });
+    // The pass's one info line: counts and timing only.
+    expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'ok', accounts: 2, position: 2 }), 'Admin credit positions pass served');
+    expect(JSON.stringify(log.info.mock.calls)).not.toContain(String(ALLOWANCE_A * 2));
+  });
+
+  it('K-2 green "All clear" when every account is read and none is far over', async () => {
+    const deps = makeDeps({ credits: creditDeps({ totals: [{ user_id: A, period_start: PERIOD, credits_total: '1' }] }) });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k2).toMatchObject({ status: 'green', value: { value: 0, exact: true } });
+  });
+
+  it('SA-WR-8: one account unreadable and none far over → K-2 amber "1 account could not be read", never green', async () => {
+    const deps = makeDeps({ credits: creditDeps({ unavailable: [B], totals: [{ user_id: A, period_start: PERIOD, credits_total: '1' }] }) });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.credits.figures).toMatchObject({ unknownAccounts: 1, farOverAllowance: 0 });
+    expect(result.payload.tiles.k2).toEqual({
+      id: 'k2_far_over_allowance',
+      status: 'amber',
+      headline: '1 account could not be read',
+      value: { value: 0, exact: false },
+      previous: null,
+    });
+  });
+
+  it('SA-WR-8: one account unreadable and one far over → K-2 amber from the rule', async () => {
+    const { result } = await run(makeDeps({ credits: creditDeps({ unavailable: [B] }) }));
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k2).toMatchObject({ status: 'amber', headline: 'Accounts at or over the far-over-allowance line', value: { value: 1, exact: false } });
+  });
+
+  it.each([
+    ['the totals read fails', { failTotals: true }, 'failed'],
+    ['the totals read reaches its ceiling', { ceiling: true }, 'failed'],
+  ])('AC-16: %s → Section 4 unknown, K-2 unavailable, K-4 still shows (SA-W12), the other sections ok', async (_n, opts, pass) => {
+    const deps = makeDeps({
+      credits: creditDeps(opts),
+      lots: { allAccounts: jest.fn(() => ok([giftLot(A, 12.5)])), forAccount: jest.fn() },
+    });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.credits).toMatchObject({ status: 'unknown', figures: null });
+    expect(result.payload.tiles.k2).toMatchObject({ status: 'unavailable', value: null });
+    expect(result.payload.tiles.k4).toMatchObject({ status: 'neutral', value: { value: 12.5, exact: true } });
+    expect(result.payload.accounts.status).toBe('ok');
+    expect(result.payload.aiCost.status).toBe('ok');
+    expect(result.counts.creditsPass).toBe(pass);
+  });
+
+  it('AC-37 / SA-W11: the plan walk fails → Section 4 unknown, NO pass call, K-4 still shows', async () => {
+    const deps = makeDeps({
+      plans: { pagePlans: jest.fn(fail) },
+      lots: { allAccounts: jest.fn(() => ok([giftLot(A, 3)])), forAccount: jest.fn() },
+    });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.credits.status).toBe('unknown');
+    expect(result.payload.tiles.k2.status).toBe('unavailable');
+    expect(result.payload.tiles.k4.value).toEqual({ value: 3, exact: true });
+    expect(deps.credits.getSnapshots).not.toHaveBeenCalled();
+    expect(deps.credits.findPeriodAnchorsBatch).not.toHaveBeenCalled();
+    expect(deps.credits.listTotalsForAccountsInRange).not.toHaveBeenCalled();
+    expect(result.counts).toMatchObject({ creditsPass: 'skipped', creditAccounts: null, creditPositions: null });
+  });
+
+  it('SA-W11: the plan walk capped at 20,000 → Section 4 unknown, NO pass call, K-4 still shows', async () => {
+    let page = 0;
+    const pagePlans = jest.fn(() => {
+      page += 1;
+      return ok(Array.from({ length: 500 }, (_, i) => plan(`${String(page).padStart(8, '0')}-0000-4000-8000-${String(i).padStart(12, '0')}`)));
+    });
+    const deps = makeDeps({ plans: { pagePlans } });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.accounts.status).toBe('partial');
+    expect(result.payload.credits.status).toBe('unknown');
+    expect(result.payload.tiles.k2.status).toBe('unavailable');
+    expect(result.payload.tiles.k4.status).toBe('neutral');
+    expect(deps.credits.getSnapshots).not.toHaveBeenCalled();
+    expect(result.counts.creditsPass).toBe('skipped');
+  });
+
+  it('AC-38: the lots read fails → gifted column, window and K-4 unknown; the table and K-2 render', async () => {
+    const deps = makeDeps({ lots: { allAccounts: jest.fn(fail), forAccount: jest.fn() } });
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.credits.status).toBe('ok');
+    expect(result.payload.credits.gifted).toBeNull();
+    expect(result.payload.credits.figures?.rows.map((r) => r.giftedOutstanding)).toEqual([null, null]);
+    expect(result.payload.tiles.k4).toMatchObject({ status: 'unavailable', value: null });
+    expect(result.payload.tiles.k2.status).toBe('amber');
+    expect(result.counts.creditLots).toBeNull();
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'credit_lots' }), expect.any(String));
+  });
+
+  it('SA-W10: an invalid far-over line in data → K-2 unavailable with the rules-invalid headline, logged at error', async () => {
+    const { result, log } = await run(makeDeps({ metricParams: { farOverAllowancePercent: 99 } }));
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k2).toMatchObject({ status: 'unavailable', headline: FINANCE_RULES_INVALID_HEADLINE, value: null });
+    expect(result.payload.credits.farOverAllowancePercent).toBeNull();
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'rules', tile: 'k2_far_over_allowance' }), expect.any(String));
+  });
+
+  it('SA-W10: the line as data — at 120 a 130% account becomes far over, with no code change', async () => {
+    const totals = [{ user_id: A, period_start: PERIOD, credits_total: String(ALLOWANCE_A * 1.3) }];
+    const at150 = await run(makeDeps({ credits: creditDeps({ totals }) }));
+    const at120 = await run(makeDeps({ credits: creditDeps({ totals }), metricParams: { farOverAllowancePercent: 120 } }));
+    if (at150.result.kind !== 'ok' || at120.result.kind !== 'ok') throw new Error('expected ok');
+    expect(at150.result.payload.tiles.k2.value).toEqual({ value: 0, exact: true });
+    expect(at120.result.payload.tiles.k2.value).toEqual({ value: 1, exact: true });
+  });
+
+  it('SA-W9: a deleted account\u2019s lot is not in K-4; it is its own figure', async () => {
+    const deps = makeDeps({ lots: { allAccounts: jest.fn(() => ok([giftLot(A, 4), giftLot(null, 30)])), forAccount: jest.fn() } });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k4.value).toEqual({ value: 4, exact: true });
+    expect(result.payload.credits.gifted).toMatchObject({ outstanding: 4, deletedAccountsOutstanding: 30, window: { granted: 34, grants: 2, grantingAdmins: 1 } });
+  });
+
+  it('a platform account in the plan rows is labelled and never looked up by name (SA-WR-5)', async () => {
+    const deps = makeDeps({ plans: { pagePlans: jest.fn(() => ok([plan(A), plan(PLATFORM)])) } });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.credits.figures?.rows.find((r) => r.accountId === PLATFORM)).toMatchObject({ nameStatus: 'platform', name: null });
+    for (const [ids] of deps.findNames.mock.calls as unknown as Array<[string[]]>) expect(ids).not.toContain(PLATFORM);
+  });
+
+  it('names fail → Section 4 rows still show, "name unavailable"', async () => {
+    const { result } = await run(makeDeps({ findNames: jest.fn(fail) }));
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.credits.figures?.rows.every((r) => r.nameStatus === 'unavailable')).toBe(true);
+  });
+});
+
+describe('AC-42 (slice 1b): with a business picked, every credit and lot read gets exactly that id', () => {
+  it('positions pass, lots and names narrow to [A]; R-b gets ZERO calls', async () => {
+    const deps = makeDeps({ lots: { allAccounts: jest.fn(() => ok([])), forAccount: jest.fn(() => ok([giftLot(A, 6)])) } });
+    const { result } = await run(deps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+
+    expect(deps.lots.allAccounts).not.toHaveBeenCalled();
+    expect(deps.plans.pagePlans).not.toHaveBeenCalled();
+    expect(deps.lots.forAccount).toHaveBeenCalledTimes(1);
+    expect(deps.lots.forAccount).toHaveBeenCalledWith(A);
+
+    expect(deps.credits.getSnapshots).toHaveBeenCalledTimes(1);
+    expect(deps.credits.getSnapshots).toHaveBeenCalledWith([A]);
+    expect(deps.credits.findPeriodAnchorsBatch.mock.calls).toEqual([[[A]]]);
+    expect(deps.credits.listTotalsForAccountsInRange.mock.calls.map((c) => c[0])).toEqual([[A]]);
+
+    for (const [ids] of deps.findNames.mock.calls as unknown as Array<[string[]]>) expect(ids).toEqual([A]);
+
+    expect(result.payload.credits).toMatchObject({ scope: 'one', status: 'ok', figures: { accounts: 1 } });
+    expect(result.payload.credits.figures?.rows.map((r) => r.accountId)).toEqual([A]);
+    expect(result.payload.tiles.k4.value).toEqual({ value: 6, exact: true });
+    expect(result.payload.credits.gifted?.accountsNotListed).toBe(0);
+  });
+
+  it('a picked business with no plan row → 404 path, and no credit or lot read at all', async () => {
+    const deps = makeDeps({ findPlanForAccount: jest.fn(() => ok({ plan: null })) });
+    const { result } = await run(deps, A);
+    expect(result).toEqual({ kind: 'account_not_found' });
+    expect(deps.credits.getSnapshots).not.toHaveBeenCalled();
+    expect(deps.lots.forAccount).not.toHaveBeenCalled();
+    expect(deps.lots.allAccounts).not.toHaveBeenCalled();
+  });
+});
+
+describe('the wiring (SA-W13, SA-W14, SA-WR-10)', () => {
+  const SECRET = 'SECRET-LOT-REASON-do-not-leak';
+  const KEY = 'admin_grant:SECRET-KEY-do-not-leak';
+  const lotRow = (accountId: string | null) => ({
+    id: '44444444-4444-4444-8444-000000000001',
+    accountId,
+    source: 'admin_grant' as const,
+    creditsGranted: 9,
+    creditsBase: 9,
+    creditsBonus: 0,
+    creditValueVersion: 3,
+    expiresAt: null,
+    idempotencyKey: KEY,
+    sourceRef: '66666666-6666-4666-8666-666666666666',
+    actorKind: 'admin' as const,
+    actorAdminId: ADMIN_X,
+    reason: SECRET,
+    createdAt: '2026-11-02T10:00:00.000Z',
+    draws: [
+      {
+        id: '55555555-5555-4555-8555-000000000001',
+        lotId: '44444444-4444-4444-8444-000000000001',
+        accountId,
+        kind: 'reversal' as const,
+        credits: 2,
+        reason: SECRET,
+        actorAdminId: ADMIN_X,
+        idempotencyKey: `admin_reversal:${SECRET}`,
+        createdAt: '2026-11-03T10:00:00.000Z',
+      },
+    ],
+  });
+
+  it('SA-WR-10: the production credit reads are exactly adminCreditPercentDeps()\u2019s two, with NO getSnapshots (the real service)', () => {
+    const wired = financeHealthDeps();
+    expect(Object.keys(wired.credits).sort()).toEqual(Object.keys(adminCreditPercentDeps()).sort());
+    expect(Object.keys(wired.credits).sort()).toEqual(['findPeriodAnchorsBatch', 'listTotalsForAccountsInRange']);
+    expect(wired.credits).not.toHaveProperty('getSnapshots');
+    expect(Object.keys(wired.lots).sort()).toEqual(['allAccounts', 'forAccount']);
+  });
+
+  it('SA-W14: toFinanceLot keeps exactly the narrow fields, field by field', () => {
+    const lot = toFinanceLot(lotRow(A));
+    expect(Object.keys(lot).sort()).toEqual(['accountId', 'actorAdminId', 'createdAt', 'creditsGranted', 'draws', 'expiresAt', 'id', 'source']);
+    expect(Object.keys(lot.draws[0]).sort()).toEqual(['createdAt', 'credits', 'kind']);
+    expect(JSON.stringify(lot)).not.toContain(SECRET);
+    expect(JSON.stringify(lot)).not.toContain('SECRET-KEY');
+  });
+
+  it('SA-W14: a planted reason on a lot and a draw never reaches the payload or any log line (all businesses and one picked)', async () => {
+    mockLotsAllAccounts.mockResolvedValue({ data: [lotRow(A), lotRow(null)], error: null });
+    mockLotsForAccount.mockResolvedValue({ data: [lotRow(A)], error: null });
+    const wired = financeHealthDeps();
+    for (const accountId of [null, A]) {
+      const log = logger();
+      const { result } = await run(makeDeps({ lots: wired.lots }), accountId, log);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      // The lots really travelled: 9 granted − 2 taken back.
+      expect(result.payload.tiles.k4.value).toEqual({ value: 7, exact: true });
+      const everything = JSON.stringify([result, log.error.mock.calls, log.warn.mock.calls, log.info.mock.calls, Object.values(mockRepoLog).map((f) => f.mock.calls)]);
+      expect(everything).not.toContain(SECRET);
+      expect(everything).not.toContain('SECRET-KEY');
+      expect(everything).not.toContain(ADMIN_X);
+    }
+    expect(mockLotsAllAccounts).toHaveBeenCalledTimes(1);
+    expect(mockLotsAllAccounts).toHaveBeenCalledWith();
+    expect(mockLotsForAccount).toHaveBeenCalledWith(A);
+  });
+
+  it('a failed lot read is passed on as an error, never as "no lots"', async () => {
+    mockLotsAllAccounts.mockResolvedValue({ data: null, error: new Error('down') });
+    const result = await financeHealthDeps().lots.allAccounts();
+    expect(result).toEqual({ data: null, error: expect.any(Error) });
   });
 });

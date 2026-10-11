@@ -20,9 +20,16 @@
  *    any test that merely looked for the id, which is why the label/value
  *    pairing is asserted here rather than the value alone.
  *
- * 2. The business name appears next to the user when there is one, and NOTHING
- *    appears when there is not. Blank is the chosen rendering for an
- *    agent-platform row, so a placeholder creeping in is a regression.
+ * 2. The business name appears next to the user when there is one. When there
+ *    is none, the Business cell shows an em dash: since Admin Layout Standard
+ *    L-1d the row is a table row, and §5.7 "never blank" replaced the card's
+ *    omitted line (SA Q-4). It must never carry a name it does not have.
+ *
+ * L-1d (cards → table): the rows are found by `closest('tr')` and the values by
+ * their cell testids (`audit-cell-resource`, `-business`, `-user`) instead of
+ * the card's inline "Resource:" / "Entity id:" / "User:" / "Business:" labels.
+ * The column header names the cell now, so the label/value pairing the first
+ * rule needs is the cell itself.
  *
  * This renders the real page component in jsdom, following the convention of the
  * sibling suites in this folder (Playwright is not installed — CLAUDE.md
@@ -45,6 +52,13 @@ jest.mock('@/lib/logger', () => ({
     child: jest.fn().mockReturnThis(),
   }),
 }));
+
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`,
+// and `@/lib/logger/client` re-exports from the mocked `@/lib/logger` above.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
 
 import AuditTrailPage from '../page';
 
@@ -98,69 +112,70 @@ function mockRoute(logs: unknown[]): jest.Mock {
   return fetchMock;
 }
 
-/** The rendered card for one log row, found by the text unique to it. */
-async function cardFor(text: string | RegExp): Promise<HTMLElement> {
+/** The table row for one log, found by the text unique to it. */
+async function rowFor(text: string | RegExp): Promise<HTMLElement> {
   const label = await screen.findByText(text);
-  // The row card is the nearest ancestor carrying the row's rounded-xl shell.
-  const card = label.closest('div.rounded-xl');
-  if (!card) throw new Error(`No row card found for "${text}"`);
-  return card as HTMLElement;
+  const row = label.closest('tr');
+  if (!row) throw new Error(`No table row found for "${text}"`);
+  return row as HTMLElement;
 }
 
+const cell = (row: HTMLElement, name: 'resource' | 'business' | 'user') =>
+  within(row).getByTestId(`audit-cell-${name}`);
+
 describe('a resource name that exists', () => {
-  it('is shown under the Resource label, and the entity id is not in the metadata line', async () => {
+  it('is shown in the Resource cell, and the entity id is not on the row', async () => {
     mockRoute([NAMED_ROW]);
     render(<AuditTrailPage />);
 
-    const card = await cardFor('Weekly Digest Agent');
-    expect(within(card).getByText('Weekly Digest Agent')).toBeTruthy();
-
-    // The label and the value sit in the same element: "Resource: <name>".
-    const resourceLine = within(card).getByText(/^Resource:/);
-    expect(resourceLine.textContent).toContain('Weekly Digest Agent');
-    expect(resourceLine.textContent).not.toContain(NAMED_ENTITY_ID);
+    const row = await rowFor('Weekly Digest Agent');
+    const resource = cell(row, 'resource');
+    expect(resource.textContent).toBe('Weekly Digest Agent');
+    expect(resource.textContent).not.toContain(NAMED_ENTITY_ID);
 
     // No id-labelled fallback on a named row.
-    expect(within(card).queryByText(/^Entity id:/)).toBeNull();
+    expect(within(row).queryByText(/^Entity id/)).toBeNull();
+    expect(row.textContent).not.toContain(NAMED_ENTITY_ID.slice(0, 8));
   });
 });
 
 describe('a resource name that is missing', () => {
-  it('never presents the entity id under the Resource label', async () => {
+  it('never presents the entity id as the resource name', async () => {
     mockRoute([NAMELESS_ROW]);
     render(<AuditTrailPage />);
 
     // Note where a regression actually surfaces: restoring
-    // `log.resource_name || log.entity_id` removes the "Entity id:" label
-    // entirely, so this LOCATOR throws ("Unable to find an element with the text:
-    // /^Entity id:/") before the assertion below ever runs. The guard holds —
-    // the failure message just names the symptom rather than the cause.
-    const card = await cardFor(/^Entity id:/);
+    // `log.resource_name || log.entity_id` removes the "Entity id" label
+    // entirely, so this LOCATOR throws before the assertion below ever runs.
+    // The guard holds — the failure message just names the symptom.
+    const row = await rowFor(/^Entity id$/);
 
     // THE regression guard. Before the fix this read "Resource: bbbbbbbb-...".
-    const resourceLines = within(card).queryAllByText(/^Resource:/);
-    for (const line of resourceLines) {
-      expect(line.textContent).not.toContain(NAMELESS_ENTITY_ID);
-    }
+    const resource = cell(row, 'resource');
+    expect(resource.textContent?.startsWith('Entity id ')).toBe(true);
+    expect(resource.textContent).not.toBe(NAMELESS_ENTITY_ID);
   });
 
-  it('shows the id labelled as an id instead', async () => {
+  it('shows the id labelled as an id instead: short in the cell, whole on hover', async () => {
     mockRoute([NAMELESS_ROW]);
     render(<AuditTrailPage />);
 
-    const idLine = await screen.findByText(/^Entity id:/);
-    expect(idLine.textContent).toContain(NAMELESS_ENTITY_ID);
+    const resource = cell(await rowFor(/^Entity id$/), 'resource');
+    expect(resource.textContent).toBe(`Entity id ${NAMELESS_ENTITY_ID.slice(0, 8)}…`);
+    expect(resource.querySelector(`[title="${NAMELESS_ENTITY_ID}"]`)).toBeTruthy();
   });
 
-  it('does not dress the missing name as an error', async () => {
+  it('does not dress the missing name as an error (in the Resource cell)', async () => {
     mockRoute([NAMELESS_ROW]);
     render(<AuditTrailPage />);
 
-    await screen.findByText(/^Entity id:/);
     // ~44% of rows are in this state, several of them deliberately. No word
-    // suggesting a defect, and no empty-value placeholder, may appear.
+    // suggesting a defect, and no empty-value placeholder, may appear in the
+    // Resource cell. Scoped to that cell since L-1d: the em dash is now the
+    // §5.7 rendering of an empty Business or User cell (SA Q-4).
+    const text = cell(await rowFor(/^Entity id$/), 'resource').textContent ?? '';
     for (const word of [/missing/i, /unknown resource/i, /no name/i, /n\/a/i, /—/]) {
-      expect(screen.queryByText(word)).toBeNull();
+      expect({ word: String(word), found: word.test(text) }).toEqual({ word: String(word), found: false });
     }
   });
 });
@@ -170,27 +185,26 @@ describe('the business name', () => {
     mockRoute([NAMED_ROW]);
     render(<AuditTrailPage />);
 
-    const card = await cardFor('Weekly Digest Agent');
-    const businessLine = within(card).getByText(/^Business:/);
-    expect(businessLine.textContent).toContain('Acme Dental');
+    const row = await rowFor('Weekly Digest Agent');
+    expect(cell(row, 'business').textContent).toBe('Acme Dental');
     // The user is still there — the business is an addition, not a replacement.
-    expect(within(card).getByText(/^User:/).textContent).toContain('owner@example.com');
+    expect(cell(row, 'user').textContent).toBe('owner@example.com');
   });
 
-  it('renders nothing at all when the account has no business profile', async () => {
+  it('shows an em dash and no name when the account has no business profile (§5.7)', async () => {
     mockRoute([NAMELESS_ROW]);
     render(<AuditTrailPage />);
 
-    await screen.findByText(/^Entity id:/);
-    expect(screen.queryByText(/^Business:/)).toBeNull();
+    const business = cell(await rowFor(/^Entity id$/), 'business');
+    expect(business.textContent).toBe('—');
   });
 
-  it('renders nothing when the business exists but has not named itself', async () => {
+  it('shows an em dash when the business exists but has not named itself', async () => {
     mockRoute([{ ...NAMED_ROW, business: { company_name: null } }]);
     render(<AuditTrailPage />);
 
-    await screen.findByText('Weekly Digest Agent');
-    expect(screen.queryByText(/^Business:/)).toBeNull();
+    const business = cell(await rowFor('Weekly Digest Agent'), 'business');
+    expect(business.textContent).toBe('—');
   });
 
   it('keeps each row on its own business across a mixed page', async () => {
@@ -199,10 +213,12 @@ describe('the business name', () => {
 
     await waitFor(() => expect(screen.getByText('Weekly Digest Agent')).toBeTruthy());
 
-    const namedCard = await cardFor('Weekly Digest Agent');
-    expect(within(namedCard).getByText(/^Business:/).textContent).toContain('Acme Dental');
+    const namedRow = await rowFor('Weekly Digest Agent');
+    expect(cell(namedRow, 'business').textContent).toBe('Acme Dental');
 
-    const namelessCard = (await screen.findByText(/^Entity id:/)).closest('div.rounded-xl') as HTMLElement;
-    expect(within(namelessCard).queryByText(/^Business:/)).toBeNull();
+    const namelessRow = await rowFor(/^Entity id$/);
+    expect(namelessRow).not.toBe(namedRow);
+    expect(cell(namelessRow, 'business').textContent).toBe('—');
+    expect(namelessRow.textContent).not.toContain('Acme Dental');
   });
 });

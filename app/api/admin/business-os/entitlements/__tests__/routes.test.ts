@@ -264,6 +264,41 @@ jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
   },
 }));
 
+// Credits boost slice 6b: the cap override functions (set_boost_cap / end_boost_cap).
+const mockBoostCap = {
+  active: null as null | { id: string; capMinor: number },
+  writes: [] as Array<Record<string, unknown>>,
+};
+jest.mock('@/lib/repositories/BusinessOsBoostPurchaseRepository', () => ({
+  businessOsBoostPurchaseRepository: {
+    async findActiveCapOverride() {
+      repositoryCalls.push('findActiveCapOverride');
+      const active = mockBoostCap.active;
+      return {
+        data: active
+          ? { id: active.id, accountId: '11111111-1111-4111-8111-111111111111', capMinor: active.capMinor, currency: 'USD', reason: 'earlier', actorAdminId: '22222222-2222-4222-8222-222222222222', createdAt: '2026-10-01T00:00:00.000Z' }
+          : null,
+        error: null,
+      };
+    },
+    async setCapOverride(input: Record<string, unknown>) {
+      repositoryCalls.push('setCapOverride');
+      mockBoostCap.writes.push({ set: input });
+      const previous = mockBoostCap.active?.id ?? null;
+      mockBoostCap.active = { id: '67676767-6767-4767-8767-676767676767', capMinor: input.capMinor as number };
+      return { data: { outcome: 'set', overrideId: '67676767-6767-4767-8767-676767676767', previousOverrideId: previous }, error: null };
+    },
+    async endCapOverride(input: Record<string, unknown>) {
+      repositoryCalls.push('endCapOverride');
+      mockBoostCap.writes.push({ end: input });
+      if (!mockBoostCap.active) return { data: { outcome: 'none_active' }, error: null };
+      const id = mockBoostCap.active.id;
+      mockBoostCap.active = null;
+      return { data: { outcome: 'ended', overrideId: id }, error: null };
+    },
+  },
+}));
+
 /** Every write method of the plan and lot repositories, for the no-write-on-refusal checks (W11b-6). */
 const WRITE_METHODS = ['updatePlan', 'ensurePlanRow', 'createOverride', 'endOverride', 'resetPlanState', 'recordLot', 'reverseLot'];
 
@@ -1209,3 +1244,127 @@ describe('slice 11b — give / take back credits through the accounts route', ()
   });
 });
 
+describe('credits boost slice 6b — the spending limit through the accounts route (SA C-1, C-2, C-3)', () => {
+  const CORRELATION = 'corr-6b';
+  const OVERRIDE = '67676767-6767-4767-8767-676767676767';
+
+  function request(body: unknown, accountId = ACCOUNT): NextRequest {
+    return new NextRequest(new URL(`/api/admin/business-os/entitlements/accounts/${accountId}`, 'http://localhost'), {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'content-type': 'application/json', 'x-correlation-id': CORRELATION },
+    });
+  }
+
+  async function call(body: unknown, accountId = ACCOUNT) {
+    const req = request(body, accountId);
+    const response = await accountRoute.POST(req, { params: { accountId } });
+    return { response, req, json: await response.json() };
+  }
+
+  let invalidate: jest.SpyInstance;
+  beforeEach(() => {
+    mockBoostCap.active = null;
+    mockBoostCap.writes = [];
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getEntitlementService } = require('@/lib/business-os/entitlements/EntitlementService');
+    invalidate = jest.spyOn(getEntitlementService(), 'invalidate');
+  });
+  afterEach(() => invalidate.mockRestore());
+
+  it('set: 200, one audit entry on the account plan (operator-only) with the limit before and after, flushed, cache untouched', async () => {
+    const { response, req, json } = await call({ op: 'set_boost_cap', amountMinor: 50000, reason: 'annual prepay customer' });
+    expect(response.status).toBe(200);
+    expect(json).toEqual({ success: true, data: { accountId: ACCOUNT, op: 'set_boost_cap', overrideId: OVERRIDE, previousOverrideId: null, amountMinor: 50000 } });
+    expect(state.audit).toEqual([
+      {
+        action: 'BOS_BOOST_CAP_OVERRIDE_SET',
+        entityType: 'business_os_account_plan',
+        entityId: ACCOUNT,
+        userId: ACCOUNT,
+        actorId: ADMIN,
+        changes: { before: { capMinor: 15000, source: 'default' }, after: { capMinor: 50000, source: 'override' } },
+        details: {
+          reason: 'annual prepay customer',
+          op: 'set_boost_cap',
+          correlationId: CORRELATION,
+          overrideId: OVERRIDE,
+          previousOverrideId: null,
+          amountMinor: 50000,
+          window_days: 30,
+          currency: 'USD',
+          default_cap_minor: 15000,
+          override_id: OVERRIDE,
+          previous_override_id: null,
+        },
+        severity: 'warning',
+        request: req,
+      },
+    ]);
+    expect(state.events).toEqual(['log', 'flush']);
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(mockBoostCap.writes).toEqual([{ set: { accountId: ACCOUNT, capMinor: 50000, currency: 'USD', reason: 'annual prepay customer', actorAdminId: ADMIN } }]);
+  });
+
+  it('C-2: the same limit again → 200 { unchanged: true }, no write, no audit, no flush', async () => {
+    mockBoostCap.active = { id: OVERRIDE, capMinor: 50000 };
+    const { response, json } = await call({ op: 'set_boost_cap', amountMinor: 50000, reason: 'double click' });
+    expect(response.status).toBe(200);
+    expect(json).toEqual({ success: true, data: { accountId: ACCOUNT, op: 'set_boost_cap', unchanged: true, amountMinor: 50000, overrideId: OVERRIDE } });
+    expect(mockBoostCap.writes).toEqual([]);
+    expect(state.audit).toEqual([]);
+    expect(state.events).toEqual([]);
+  });
+
+  it('end: 200 and BOS_BOOST_CAP_OVERRIDE_ENDED; a repeated end → 409 no_active_cap_override with no audit', async () => {
+    mockBoostCap.active = { id: OVERRIDE, capMinor: 50000 };
+    const first = await call({ op: 'end_boost_cap', reason: 'campaign over' });
+    expect(first.response.status).toBe(200);
+    expect(state.audit.map((entry) => [entry.action, entry.entityType, (entry.changes as Record<string, unknown>).after])).toEqual([
+      ['BOS_BOOST_CAP_OVERRIDE_ENDED', 'business_os_account_plan', { capMinor: 15000, source: 'default' }],
+    ]);
+    state.audit = [];
+    const second = await call({ op: 'end_boost_cap', reason: 'campaign over' });
+    expect(second.response.status).toBe(409);
+    expect(second.json).toMatchObject({ success: false, error: 'no_active_cap_override' });
+    expect(state.audit).toEqual([]);
+  });
+
+  it.each([
+    ['zero', { op: 'set_boost_cap', amountMinor: 0, reason: 'support case' }],
+    ['a fraction of a dollar', { op: 'set_boost_cap', amountMinor: 15050, reason: 'support case' }],
+    ['above $1,500', { op: 'set_boost_cap', amountMinor: 150100, reason: 'support case' }],
+    ['no reason', { op: 'set_boost_cap', amountMinor: 50000 }],
+    ['a short reason', { op: 'end_boost_cap', reason: 'no' }],
+    ['an account id in the body', { op: 'set_boost_cap', amountMinor: 50000, reason: 'support case', accountId: ACCOUNT }],
+  ])('%s → 400 invalid_body, nothing read or written', async (_name, body) => {
+    const { response, json } = await call(body);
+    expect(response.status).toBe(400);
+    expect(json).toMatchObject({ success: false, error: 'invalid_body' });
+    expect(mockBoostCap.writes).toEqual([]);
+    expect(state.audit).toEqual([]);
+  });
+
+  it('the admin\'s own account → 403 own_account, nothing read', async () => {
+    const { response } = await call({ op: 'set_boost_cap', amountMinor: 50000, reason: 'support case' }, ADMIN);
+    expect(response.status).toBe(403);
+    expect(repositoryCalls).toEqual([]);
+  });
+
+  it('signed out → 401 and a non-admin → 403, before the body is read', async () => {
+    state.user = null;
+    expect((await call({ op: 'set_boost_cap', amountMinor: 50000, reason: 'support case' })).response.status).toBe(401);
+    state.user = { id: ADMIN };
+    state.isAdmin = false;
+    expect((await call({ op: 'set_boost_cap', amountMinor: 50000, reason: 'support case' })).response.status).toBe(403);
+    expect(mockBoostCap.writes).toEqual([]);
+  });
+
+  it('a missing plan row → 409, nothing written', async () => {
+    state.plan = null;
+    const { response, json } = await call({ op: 'set_boost_cap', amountMinor: 50000, reason: 'support case' });
+    expect(response.status).toBe(409);
+    expect(json).toMatchObject({ error: 'plan_row_missing' });
+    expect(mockBoostCap.writes).toEqual([]);
+  });
+});

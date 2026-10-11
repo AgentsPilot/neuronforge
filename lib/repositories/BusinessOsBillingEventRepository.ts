@@ -30,9 +30,11 @@
 // function sets). Every Stripe id is shape-checked here before the query, as
 // the migration's CHECKs do after it.
 //
-// CALLERS: none yet (P-3b.2 adds the webhook use case). A source guard in
+// CALLERS: the P-3b.2 webhook plan handler (`lib/business-os/billing/
+// planBillingHandler.ts` wires the singleton; `planPaymentApply.ts` calls both
+// methods through it). A source guard in
 // `lib/repositories/__tests__/BusinessOsBillingEventRepository.test.ts` holds
-// the exact list of files allowed to name this repository, so the first
+// the exact list of files allowed to name this repository, so every new
 // caller is a reviewed change. Deliberately NOT exported from
 // `lib/repositories/index.ts`, for the same reason as the billing account
 // repository: a barrel export would let any file reach it unseen.

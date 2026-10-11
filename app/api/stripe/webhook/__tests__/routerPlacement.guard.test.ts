@@ -40,7 +40,20 @@ function walk(node: ts.Node, visit: (n: ts.Node) => void): void {
  */
 // P-3a: planCheckout.ts records the checkout lock and reads the billing row
 // (workplan BUSINESS_OS_PLAN_PAYMENTS_P3A_WORKPLAN.md §4).
-const BILLING_REPOSITORY_CALLERS = ['businessOsStripeCustomer.ts', 'planCheckout.ts'];
+// P-3b.2 (workplan BUSINESS_OS_PLAN_PAYMENTS_P3B_WORKPLAN.md §3.1): the plan
+// webhook handler wires the two billing repositories; its three use cases name
+// them as port TYPES only. Each file lists EXACTLY the repositories it imports.
+const BILLING_ACCOUNTS = '@/lib/repositories/BusinessOsBillingAccountRepository';
+const BILLING_EVENTS = '@/lib/repositories/BusinessOsBillingEventRepository';
+const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
+  'businessOsStripeCustomer.ts': [BILLING_ACCOUNTS],
+  'planCheckout.ts': [BILLING_ACCOUNTS],
+  'planBillingHandler.ts': [BILLING_ACCOUNTS, BILLING_EVENTS],
+  'planPaymentApply.ts': [BILLING_ACCOUNTS, BILLING_EVENTS],
+  'planCheckoutSessionEvents.ts': [BILLING_ACCOUNTS],
+  'planSubscriptionMirror.ts': [BILLING_ACCOUNTS],
+};
+const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 
 const REPOSITORIES_DIR = path.join(ROOT, 'lib', 'repositories');
 
@@ -992,13 +1005,38 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
       }).toEqual({ file, supabase: false, from: false, repositoryImports: [] });
     }
     // The allow-listed callers exist and really are the ones that import a
-    // repository: the billing repository and nothing else.
+    // repository: the billing repositories listed for them, and nothing else.
     for (const name of BILLING_REPOSITORY_CALLERS) {
       const caller = path.join(dir, name);
-      expect(repositoryImportsOf(caller, fs.readFileSync(caller, 'utf8'))).toEqual([
-        '@/lib/repositories/BusinessOsBillingAccountRepository',
-      ]);
+      expect({ name, imports: repositoryImportsOf(caller, fs.readFileSync(caller, 'utf8')) }).toEqual({
+        name,
+        imports: BILLING_REPOSITORY_IMPORTS[name],
+      });
     }
+  });
+
+  it('P-3b.2: the Business OS flow handlers are exactly `boost` (boost 4a) and `plan`, the plan one from the billing module', () => {
+    const declaration = sf.statements
+      .filter(ts.isVariableStatement)
+      .flatMap((s) => [...s.declarationList.declarations])
+      .find((d) => d.name.getText(sf) === 'BUSINESS_OS_FLOW_HANDLERS');
+    expect(declaration?.initializer !== undefined && ts.isObjectLiteralExpression(declaration.initializer)).toBe(true);
+    const literal = declaration!.initializer as ts.ObjectLiteralExpression;
+    expect(literal.properties.map((p) => p.getText(sf))).toEqual(['boost: handleBoostWebhookEvent', 'plan: handlePlanBillingEvent']);
+
+    const importedFrom = sf.statements
+      .filter(ts.isImportDeclaration)
+      .filter((d) => {
+        const bindings = d.importClause?.namedBindings;
+        return !!bindings && ts.isNamedImports(bindings) && bindings.elements.some((e) => e.name.text === 'handlePlanBillingEvent');
+      })
+      .map((d) => (d.moduleSpecifier as ts.StringLiteral).text);
+    expect(importedFrom).toEqual(['@/lib/business-os/billing/planBillingHandler']);
+
+    // Reached only through the map, after the router answered `flow`; named
+    // nowhere else in the route (all billing logic lives in the billing module).
+    expect(codeOf(post!).match(/BUSINESS_OS_FLOW_HANDLERS\[outcome\.flow\]/g)).toHaveLength(1);
+    expect(codeOf(sf).match(/handlePlanBillingEvent/g)).toHaveLength(2);
   });
 
   it('the repository-import check bites: barrel, file, relative path, type-only, re-export, dynamic import and require (M-1 negative control)', () => {

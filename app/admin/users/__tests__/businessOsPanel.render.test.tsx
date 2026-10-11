@@ -236,6 +236,7 @@ describe('BusinessOsPanel', () => {
         serverMode: 'test',
         purchases: { status: 'ok', rows: [], truncated: { test: false, live: false } },
         cap: { status: 'ok', default: { amountMinor: 15000, currency: 'USD', windowDays: 30 }, active: null, history: [] },
+        limits: { minMinor: 100, maxMinor: 150000, stepMinor: 100, currency: 'USD', windowDays: 30, reasonMin: 3, reasonMax: 500 },
       },
     };
     const fetchMock = mockFetch({
@@ -252,6 +253,75 @@ describe('BusinessOsPanel', () => {
     const credits = screen.getByTestId('credits-block');
     expect(credits.compareDocumentPosition(boost) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/api/admin/business-os/credits/accounts/${ACCOUNT}/boost`))).toBe(true);
+  });
+
+  it('boost 6b (SA C-5): Take back on a top-up opens the Credits block\'s Take back dialog on that purchase\'s lot', async () => {
+    const LOT = 'cccccccc-3333-4333-8333-33333333333c';
+    const boostLot = {
+      id: LOT,
+      source: 'boost_purchase',
+      credits: 13750,
+      remaining: 13750,
+      expired: false,
+      counted: true,
+      expiresAt: null,
+      reason: null,
+      actorKind: 'stripe_webhook',
+      actorAdminId: null,
+      createdAt: '2026-10-01T12:05:00.000Z',
+      takeBacks: [],
+    };
+    const credits = { ...CREDITS, data: { ...CREDITS.data, extra: { status: 'ok', extraCredits: 13750, hasInconsistentLot: false, lots: [boostLot] } } };
+    const purchase = {
+      id: 'aaaaaaaa-1111-4111-8111-11111111111a',
+      livemode: false,
+      status: 'paid',
+      packageId: 'plus',
+      packageVersion: 1,
+      priceMinor: 2500,
+      currency: 'USD',
+      creditsTotal: 13750,
+      amountTotalMinor: 2500,
+      amountTaxMinor: 0,
+      amountRefundedMinor: 0,
+      flagReason: null,
+      lotId: LOT,
+      stripe: { paymentIntentId: 'pi_3Test1', chargeId: null, disputeId: null, checkoutSessionId: null },
+      createdAt: '2026-10-01T12:00:00.000Z',
+      paidAt: '2026-10-01T12:05:00.000Z',
+      statusChangedAt: '2026-10-01T12:05:00.000Z',
+      checkoutExpiresAt: '2026-10-01T12:30:00.000Z',
+    };
+    const boost = {
+      success: true,
+      data: {
+        accountId: ACCOUNT,
+        isOwnAccount: false,
+        serverMode: 'test',
+        purchases: { status: 'ok', rows: [purchase], truncated: { test: false, live: false } },
+        cap: { status: 'ok', default: { amountMinor: 15000, currency: 'USD', windowDays: 30 }, active: null, history: [] },
+        limits: { minMinor: 100, maxMinor: 150000, stepMinor: 100, currency: 'USD', windowDays: 30, reasonMin: 3, reasonMax: 500 },
+      },
+    };
+    mockFetch({
+      [`/credits/accounts/${ACCOUNT}/boost`]: { status: 200, body: boost },
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+      [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: credits },
+    });
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: { randomUUID: () => '00000000-0000-4000-8000-000000000001' },
+    });
+    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+
+    const boostBlock = await screen.findByTestId('boost-block');
+    const takeBack = await within(boostBlock).findByTestId('boost-take-back');
+    fireEvent.click(takeBack);
+    const dialog = await screen.findByTestId('credit-form-dialog');
+    expect(dialog.textContent).toContain('Take back credits from Acme Therapy');
+    // A paid lot: 11b's server still requires confirmPaidCredits, and the dialog asks for it.
+    expect(within(dialog).getByTestId('paid-credits-confirm')).toBeTruthy();
   });
 
   it('shows no Credits block for a login with no business', async () => {
@@ -378,13 +448,16 @@ describe('the Businesses list', () => {
     expect(screen.getByTestId('ai-spend-card').textContent).toContain('$0.4321');
   });
 
-  it('P-4: says under the heading that the list is every login; heading and count pill unchanged', async () => {
+  // L-4a: AdminPageHeader renders the purpose without a test id, and the count
+  // pill is gone (§5.3); the first KPI tile carries the count.
+  it('P-4: says under the heading that the list is every login; heading and shown count unchanged', async () => {
     mockFetch({ '/api/admin/users?': { status: 200, body: listBody() } });
     render(<UsersPage />);
 
-    expect((await screen.findByTestId('list-scope-note')).textContent).toContain('Every login on the platform');
+    const header = screen.getByRole('banner');
+    expect(within(header).getByText(/Every login on the platform/)).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Businesses');
-    expect(screen.getByTestId('count-pill').textContent).toContain('2');
+    expect((await screen.findByTestId('kpi-shown')).getAttribute('aria-label')).toContain('2');
   });
 
   it('P-5: the row detail shows no Role field (SA-5a-1)', async () => {

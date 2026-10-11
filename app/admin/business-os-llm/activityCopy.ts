@@ -112,6 +112,8 @@ export const MARKER_LOST = 'No audit entry — lost';
 /** Neutral for every reason (SA-CR-B-3); the reason follows as visible text. */
 export const MARKER_ENTRY_UNKNOWN = 'Audit entry unknown';
 export const MARKER_ACCOUNT_MISMATCH = 'Audit entry on another account — defect';
+/** SA C-1: a charge of a non-AI service has no AI audit entry by design. */
+export const MARKER_NOT_AI = 'Not an AI action';
 
 /** The reason, short, shown as visible text in the chip (QA E-B3: never hover-only). */
 export const ENTRY_UNKNOWN_SHORT = {

@@ -42,6 +42,20 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`.
+// Every method routes to `record`, so the AC-B13 checks below still see every
+// page log line as well as the picker's.
+jest.mock('@/lib/logger/client', () => ({
+  clientLogger: {
+    child: () => ({
+      info: (...args: unknown[]) => record(...args),
+      warn: (...args: unknown[]) => record(...args),
+      error: (...args: unknown[]) => record(...args),
+      debug: (...args: unknown[]) => record(...args),
+    }),
+  },
+}));
+
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(mockSearch),
@@ -50,7 +64,7 @@ jest.mock('next/navigation', () => ({
 import { ARCHIVING_OVERVIEW_URL } from '@/hooks/useLatestArchiveCutoff';
 
 import AuditTrailPage from '../page';
-import { BUSINESS_SEARCH_PATH } from '../BusinessAccountPicker';
+import { BUSINESS_SEARCH_PATH } from '@/app/admin/components/layout/AdminBusinessPicker';
 
 const ACME = '99999999-9999-4999-8999-999999999999';
 const UNNAMED = '22222222-2222-4222-8222-222222222222';
@@ -197,9 +211,9 @@ describe('choosing a business', () => {
   });
 
   it('goes back to every account when the chip is cleared', async () => {
-    // Filter state is the only source of truth here — the URL is a record of
-    // arrival and is deliberately never written to — so clearing is observable
-    // exactly where it matters: the next request drops `user_id` entirely.
+    // The URL is the filter hook's projection (Admin Layout Standard L-1c), but
+    // the request is what matters here: after clearing, the next request drops
+    // `user_id` entirely.
     const fetchMock = mockFetch();
     render(<AuditTrailPage />);
 
@@ -207,7 +221,7 @@ describe('choosing a business', () => {
     fireEvent.click(await screen.findByText('Acme Dental'));
     await waitFor(() => expect(auditUrls(fetchMock).length).toBe(2));
 
-    fireEvent.click(await screen.findByLabelText('Show every account'));
+    fireEvent.click(await screen.findByLabelText('Remove business'));
     await waitFor(() => expect(auditUrls(fetchMock).length).toBe(3));
     expect(new URLSearchParams(auditUrls(fetchMock).at(-1)!.split('?')[1]).get('user_id')).toBeNull();
   });
@@ -216,11 +230,25 @@ describe('choosing a business', () => {
     const fetchMock = mockFetch();
     render(<AuditTrailPage />);
 
-    expect(screen.queryByTestId('account-filter-chip')).toBeNull();
+    expect(screen.queryByTestId('business-filter-chip')).toBeNull();
     await openPicker(fetchMock);
     fireEvent.click(await screen.findByText('Acme Dental'));
 
-    expect(await screen.findByTestId('account-filter-chip')).toBeTruthy();
+    expect(await screen.findByTestId('business-filter-chip')).toBeTruthy();
+  });
+
+  it('names the picked business at once, before any row could name it (F-31)', async () => {
+    // The log list is empty, so no loaded row can supply the name: only the
+    // name the picker showed can (L-1e, the picked-name path).
+    const fetchMock = mockFetch();
+    render(<AuditTrailPage />);
+
+    await openPicker(fetchMock);
+    fireEvent.click(await screen.findByText('Acme Dental'));
+
+    const chip = await screen.findByTestId('business-filter-chip');
+    expect(chip.textContent).toContain('Business: Acme Dental');
+    expect(chip.textContent).not.toContain(ACME.slice(0, 8));
   });
 
   it('can be driven from the keyboard', async () => {
@@ -281,6 +309,17 @@ describe('a business with no name, and an account with no business profile', () 
     const hint = await screen.findByTestId('business-picker-hint');
     expect(hint.textContent).toContain('Only accounts with a business profile can be found by name');
     expect(hint.textContent).toContain('Paste a full account id');
+
+    // L-4a (user request 2026-10-11): the note is one help line under the whole
+    // bar, linked to the picker input, and no longer inside the picker's column.
+    const input = screen.getByLabelText('Business');
+    expect(hint.id).toBeTruthy();
+    expect(input.getAttribute('aria-describedby')).toBe(hint.id);
+    // The bar's own last line: a direct child of the bar, not of the controls row.
+    expect(hint.parentElement).toBe(screen.getByRole('search', { name: 'Filters' }));
+    const pickerColumn = input.closest('.relative')?.parentElement;
+    expect(pickerColumn?.contains(screen.getByText('Business', { selector: 'label' }))).toBe(true);
+    expect(pickerColumn?.contains(hint)).toBe(false);
   });
 
   it('offers a pasted account id, so an account with no profile is still reachable', async () => {
@@ -360,7 +399,7 @@ describe('a business name never reaches a log line (AC-B13)', () => {
     const logged = JSON.stringify(loggerCalls);
     expect(logged).not.toContain('acme dental');
     // Something was recorded, so the failure is not silent.
-    expect(logged).toContain('Business list for the audit account filter failed');
+    expect(logged).toContain('Business list for the business picker failed');
     expect(fetchMock).toHaveBeenCalled();
   });
 });
@@ -386,15 +425,29 @@ describe('when the business list cannot be read', () => {
 });
 
 describe('the deep link still works', () => {
-  it('filters by the id in the URL on arrival and leaves the URL alone', async () => {
+  it('filters by the id in the URL on arrival and rewrites user_id to account by replace', async () => {
     mockSearch = `user_id=${ACME}`;
     window.history.replaceState({}, '', `/admin/audit-trail?user_id=${ACME}`);
-    const fetchMock = mockFetch();
-    render(<AuditTrailPage />);
+    const lengthBefore = window.history.length;
+    const replaceSpy = jest.spyOn(window.history, 'replaceState');
+    const pushSpy = jest.spyOn(window.history, 'pushState');
+    try {
+      const fetchMock = mockFetch();
+      render(<AuditTrailPage />);
 
-    await waitFor(() => expect(auditUrls(fetchMock).length).toBe(1));
-    expect(new URLSearchParams(auditUrls(fetchMock)[0].split('?')[1]).get('user_id')).toBe(ACME);
-    expect(new URLSearchParams(window.location.search).get('user_id')).toBe(ACME);
+      await waitFor(() => expect(auditUrls(fetchMock).length).toBe(1));
+      // The route still receives its own name.
+      expect(new URLSearchParams(auditUrls(fetchMock)[0].split('?')[1]).get('user_id')).toBe(ACME);
+      // U-9: the legacy name is read and rewritten to the canonical one.
+      expect(window.location.search).toBe(`?account=${ACME}`);
+      // SA M-1: null state, so Next 14.2 copies its own keys onto the entry.
+      expect(replaceSpy).toHaveBeenCalledWith(null, '', `/admin/audit-trail?account=${ACME}`);
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(window.history.length).toBe(lengthBefore);
+    } finally {
+      replaceSpy.mockRestore();
+      pushSpy.mockRestore();
+    }
   });
 });
 

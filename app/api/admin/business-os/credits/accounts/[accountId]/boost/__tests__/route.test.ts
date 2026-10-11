@@ -234,7 +234,9 @@ describe('the payload', () => {
   it('pins the keys: no email, no secret, no client secret, no receipt link, ids only for Stripe', async () => {
     asAdmin();
     const { data } = (await (await call(ACCOUNT)).json()) as { data: AdminBoostView };
-    expect(Object.keys(data).sort()).toEqual(['accountId', 'cap', 'isOwnAccount', 'purchases', 'serverMode']);
+    expect(Object.keys(data).sort()).toEqual(['accountId', 'cap', 'isOwnAccount', 'limits', 'purchases', 'serverMode']);
+    // Slice 6b: the limit dialog's bounds, from configuration (SA C-3, BQ-1: $1 to $1,500 per 30 days).
+    expect(data.limits).toEqual({ minMinor: 100, maxMinor: 150000, stepMinor: 100, currency: 'USD', windowDays: 30, reasonMin: 3, reasonMax: 500 });
     if (data.purchases.status !== 'ok') throw new Error('expected ok');
     expect(Object.keys(data.purchases.rows[0]).sort()).toEqual(
       [
