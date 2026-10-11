@@ -1,10 +1,10 @@
 # Requirement: AI Model Price Review (proposal, approve, apply)
 
-> **Last Updated**: 2026-10-09
+> **Last Updated**: 2026-10-10
 
 **Created by:** BA
 **Date:** 2026-10-08
-**Status:** Draft; business questions Q0–Q9 DECIDED by the user 2026-10-08 (section 8). SA requirement review 2026-10-08: APPROVED WITH CONDITIONS (see SA Requirement Review section). Slice 1: workplan SA-approved 2026-10-09 ([workplan](/docs/workplans/AI_MODEL_PRICE_REVIEW_SLICE1_WORKPLAN.md)); code complete, uncommitted, awaiting SA code review
+**Status:** Draft; business questions Q0–Q9 DECIDED by the user 2026-10-08 (section 8). SA requirement review 2026-10-08: APPROVED WITH CONDITIONS (see SA Requirement Review section). Slice 1: workplan SA-approved 2026-10-09 ([workplan](/docs/workplans/AI_MODEL_PRICE_REVIEW_SLICE1_WORKPLAN.md)); MERGED 2026-10-10 (PR #281, commit 236ad66, merge 6869ed13). Slice 2: workplan SA-approved with changes 2026-10-10 ([workplan](/docs/workplans/AI_MODEL_PRICE_REVIEW_SLICE2_WORKPLAN.md)); capture done ([capture](/docs/workplans/AI_MODEL_PRICE_REVIEW_SLICE2_CAPTURE_2026-10-10.md)); user approved the 12-row retire list in writing 2026-10-10; code complete 2026-10-11, uncommitted; the dependent view is recreated hardened by user decision 2026-10-11 (workplan 4.6); ready for SA code review
 
 ## Overview
 
@@ -384,7 +384,7 @@ All **DECIDED** by the user on 2026-10-08. The original options and BA recommend
 | 1 | Truth fix + sync audit flush | No | R-7 |
 | 2 | Capture + baseline + precision + partial unique + new columns + empty image table + retire duplicate/alias rows | Yes | Readers unchanged; zero charge change |
 | 3 | Proposal tables + submit RPC + repository + submit/read routes + server-side flags (R-3, R-4) | Yes | Research contract and runbook |
-| 4 | Review UI, read-only + upload | No | |
+| 4 | Review UI, read-only + upload | No | **Follow-up from slice 2 QA (2026-10-11):** the admin pricing list (`listAll()`, no `retired_date` filter) shows retired rows exactly like active ones, so after the slice 2 retire it still lists all 54 rows. The review UI must hide retired rows or label them as retired. If slice 8 keeps any part of the old page, the same applies there. Not fixed in slice 2 |
 | 5 | Customer-impact view (R-6) | No | Ships **before** apply |
 | 6 | Readers on the authoritative store: images (resolver + Layer 2 guardrail), cached-input, `EmbeddingService`; stop reading the two settings | No | An empty table falls back, so it is safe |
 | 7 | Approve / reject / apply RPC + audit + effective time + margin prompt (MP-FR-14) | Yes | |
@@ -407,3 +407,7 @@ All **DECIDED** by the user on 2026-10-08. The original options and BA recommend
 | 2026-10-08 | SA requirement review | APPROVED WITH CONDITIONS: findings 1–11 (AB-10 unproven, image/guardrail readers, conservative-rate dependency, per-instance cache, Mistral dead, same-day unique collision); rulings R-1..R-8 (DB authoritative + image sibling table, exact numeric, capture-first baseline, frozen proposals via service-role RPC, researcher-side cross-check, blocking flags, guard plan, impact sources); slice plan 1–12 replaces section 7; slice 1 cleared to start |
 | 2026-10-09 | Reminder channel decided | User chose email to admins for MP-FR-15 (not the SA default banner); slice 11 now needs a scheduled job + email, SA to rule in its workplan |
 | 2026-10-09 | Slice 1 workplan approved; code complete | SA approved the slice 1 workplan with C-1 (T-2 no longer claims every charge comes from the table) and C-2 (the Sync paragraph says it also adds missing listed models); MT-1/MT-2 approved, MT-3 dropped; display option C; Sync audit flushed with `await auditTrail.flush().catch(...)` as in the sibling pricing route. Dev implemented MP-FR-1 page text, exact per-token display with a per-1M line, and the Sync audit flush; uncommitted, awaiting SA code review |
+| 2026-10-10 | Slice 2 workplan written | Dev workplan for R-8 row 2: read-only capture (definition, security, row shape, precision proof for AB-10, 90-day alias usage from `token_usage`, price fingerprint), guarded no-op baseline, unconstrained numeric, partial unique index on active rows, nullable cached-input and provenance columns, empty `ai_model_image_pricing`, fingerprint-checked retirement of duplicate rows; no code written, awaiting SA |
+| 2026-10-10 | Slice 2 code written | C-1 found a dependent view `public.pilot_cost_savings_summary` on both cost columns: the schema migration drops it, alters the columns and recreates it from the captured definition in one transaction (deviation D-1, SA to rule). Baseline `20261052` and schema migration `20261053` (renumbered, D-2), rollback, checker, retire script with the 12 approved ids and its rollback, comment-only edits, Jest test. View owner, grants, options and comment pending (T-2b). Uncommitted |
+| 2026-10-11 | Slice 2 view hardened | User decision: the dependent view `pilot_cost_savings_summary` is recreated with `security_invoker = true`, anon loses all access, SELECT only for authenticated and service_role, owner postgres, no comment; the rollback keeps the hardening. Slice 2 code complete, awaiting SA code review |
+| 2026-10-11 | Slice 2 SA code review and QA fixes | SA CR-1 to CR-3 applied (view guard refuses triggers, extra rewrite rules and comments; Infinity excluded in the two new CHECKs; apply-order expectations). QA follow-up recorded under slice 4: the admin pricing list shows retired rows unlabelled |
