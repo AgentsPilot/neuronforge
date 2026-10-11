@@ -7,7 +7,7 @@
 **Skills applied:** `business-os-entitlements` (this page sits beside the module; the rules are in §2.8)
 **Branch:** `feature/admin-layout-l5`, cut from `feature/admin-layout-l4b` at `0f02f80b` (PR #309, open). The L-5 PR targets `main` and carries L-4b until #309 merges. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-11
-**Status:** Code Complete — uncommitted, for SA code review + QA (fast-track). SA workplan review APPROVED WITH CONDITIONS; M-1 and M-2 applied before coding
+**Status:** Committed — 0e40bd0c, PR #310 open (fast-track after SA code review + QA); awaiting checks + user merge. SA workplan review APPROVED WITH CONDITIONS; M-1 and M-2 applied before coding
 **Path:** **UI short path by classification** (R-7): L-5 builds **no** shared export. Every shared part it uses already exists on the branch (`AdminPageHeader` with `badge` and `asOf`, `AdminLoading` / `AdminError`, `readAdminResponse` with `sessionEndedCopy`, the Refresh-only `AdminFilterBar`, `KpiStrip` / `KpiTile` in anchor and no-target mode, `StatusChip` tones `neutral` / `info` / `ok` / `warn` / `danger`, the `adminTable` constants, `formatUtc` / `formatCount`). The only edit in the shared folder is the migrated-pages registry entry in its guard test (the L-3 and L-4b precedent). Run as SA workplan review → Dev → SA code review + QA → RM under the user's fast-track (RM commits and opens the PR after SA and QA, without a user diff review). **If SA rules that the Enforcement tile turns green when enforced (§7.8 as written, Q-1 option b), the slice builds the K-4 `green` status and becomes full cycle.** The recommendation below avoids that
 
 ## Overview
@@ -672,4 +672,18 @@ None. One plans fetch per read (pinned above); the KPIs are computed from the sa
 
 ## Commit Info
 
-[RM will populate this section]
+| Field | Value |
+|---|---|
+| Branch | `feature/admin-layout-l5` |
+| Commit | `0e40bd0c` feat(admin): admin layout standard L-5 — Plans & entitlements header, KPI strip, chips, shared states |
+| Merge from main | None needed — branch already contains origin/main `d1bc95e2` |
+| PR | [#310](https://github.com/AgentsPilot/neuronforge/pull/310) (contains #309, L-4b) — open, not merged |
+| Tests at commit | 55 suites / 1622 tests (scoped jest), `test:bos-entitlements` 239 / 6804, `lint:hooks` clean |
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|---|---|---|
+| 2026-10-11 | Committed, PR #310 | RM: SA code review Low doc fixes applied (§2.2 PlanCard citation → `:103-110`); commit 0e40bd0c, branch already contained origin/main `d1bc95e2`; scoped jest 55 / 1622, `test:bos-entitlements` 239 / 6804, `lint:hooks` clean. PR #310 opened, not merged |

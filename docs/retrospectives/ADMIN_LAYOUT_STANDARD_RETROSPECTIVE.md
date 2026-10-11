@@ -261,4 +261,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 ### Conclusions & process improvements
 - Cross-check any new KPI colour rule against the Health page's rule for the same fact before building it.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l5 — 0e40bd0c, PR #310
