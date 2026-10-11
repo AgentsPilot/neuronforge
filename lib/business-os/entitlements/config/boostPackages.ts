@@ -133,3 +133,16 @@ export const BOOST_PURCHASE_CAP_DEFAULT = deepFreeze({
   currency: 'USD',
   windowDays: 30,
 } as const satisfies BoostPurchaseCap);
+
+/**
+ * The bounds of an admin's per-account cap override (boost slice 6b, FR-22;
+ * BQ-1 decided by the user 2026-10-10: $1,500 per 30 days, 10× the default;
+ * SA C-3). Whole dollars only. Raising the ceiling is a reviewed change here,
+ * never a literal in the admin op or the dialog. The window is the default's.
+ */
+export const BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS = deepFreeze({
+  minMinor: 100,
+  maxMinor: 150000,
+  stepMinor: 100,
+  currency: 'USD',
+} as const);

@@ -20,7 +20,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Briefcase } from 'lucide-react';
 
@@ -95,6 +95,22 @@ interface Props {
 export function BusinessOsPanel({ accountId, userName }: Props) {
   const [plan, setPlan] = useState<Load<AccountPayload>>({ state: 'loading' });
   const [summary, setSummary] = useState<Load<AccountSummaryPayload>>({ state: 'loading' });
+  // Credits boost 6b (SA C-5): Take back from a top-up opens the Credits block's dialog.
+  const [takeBackableLots, setTakeBackableLots] = useState<string[]>([]);
+  const [loadedLots, setLoadedLots] = useState<string[]>([]);
+  const [takeBackRequest, setTakeBackRequest] = useState<{ lotId: string; seq: number } | null>(null);
+  const onTakeBackableLots = useCallback((lotIds: string[], loadedLotIds: string[]) => {
+    setTakeBackableLots(lotIds);
+    setLoadedLots(loadedLotIds);
+  }, []);
+  const takeBack = useMemo(
+    () => ({
+      lotIds: new Set(takeBackableLots),
+      loadedLotIds: new Set(loadedLots),
+      onTakeBack: (lotId: string) => setTakeBackRequest((previous) => ({ lotId, seq: (previous?.seq ?? 0) + 1 })),
+    }),
+    [takeBackableLots, loadedLots]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -172,10 +188,16 @@ export function BusinessOsPanel({ accountId, userName }: Props) {
           )}
 
           {/* Credits (credit deduction slice 11c): its own read, first after the header */}
-          <CreditsBlock accountId={accountId} businessLabel={businessLabel} />
+          <CreditsBlock
+            accountId={accountId}
+            businessLabel={businessLabel}
+            takeBackRequest={takeBackRequest}
+            onTakeBackableLots={onTakeBackableLots}
+          />
 
-          {/* Credit top-ups (credits boost slice 6a): its own read, after Credits */}
-          <BoostBlock accountId={accountId} />
+          {/* Credit top-ups (credits boost slice 6a): its own read, after Credits.
+              6b (SA C-5): its Take back opens the Credits block's dialog on the purchase's lot. */}
+          <BoostBlock accountId={accountId} businessLabel={businessLabel} takeBack={takeBack} />
 
           {/* Plan: the entitlements API, rendered by the Plans & entitlements
               component, collapsed by default here only (user UI fixes,

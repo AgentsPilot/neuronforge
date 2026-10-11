@@ -258,6 +258,14 @@ export const AUDIT_EVENTS = {
   // user and actor), NEVER against a purchase, so it reaches no owner's audit.
   // Details: the run id and the correlation id; never an account or a payment.
   BOS_BOOST_RECONCILE_TRIGGERED: 'BOS_BOOST_RECONCILE_TRIGGERED',
+  // Credits boost slice 6b: an admin set or ended ONE account's spending limit
+  // for top-ups (FR-22), through the entitlements admin route (set_boost_cap /
+  // end_boost_cap). Entity 'business_os_account_plan' (operator-only, BD-26),
+  // id = the account; the admin as actor. Changes: the limit before and after
+  // (minor units, default or override); details: the reason, the window, the
+  // override ids. Never written for a repeated identical set (SA C-2).
+  BOS_BOOST_CAP_OVERRIDE_SET: 'BOS_BOOST_CAP_OVERRIDE_SET',
+  BOS_BOOST_CAP_OVERRIDE_ENDED: 'BOS_BOOST_CAP_OVERRIDE_ENDED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -922,6 +930,18 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_BOOST_FLAGGED]: {
     severity: 'warning',
     description: 'A Business OS credits boost payment was flagged for review (reason code recorded)',
+  },
+  // Credits boost slice 6b: 'warning' + SOC2, like the credit grant: an admin
+  // changed how much one business may spend.
+  [AUDIT_EVENTS.BOS_BOOST_CAP_OVERRIDE_SET]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: "An admin set a Business OS account's credit top-up spending limit (amount, window and reason recorded)",
+  },
+  [AUDIT_EVENTS.BOS_BOOST_CAP_OVERRIDE_ENDED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: "An admin returned a Business OS account's credit top-up spending limit to the default (reason recorded)",
   },
   // Credits boost slice 4b.2: 'warning' + SOC2, like BOS_QUEUE_DRAIN_STARTED —
   // an admin made the platform credit, expire or fail purchases across every
