@@ -6,7 +6,7 @@
 **Requirement:** [BUSINESS_OS_TEST_TAKE_CREDITS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_TEST_TAKE_CREDITS_REQUIREMENT.md) (SA approved with C-1 to C-6; Q-1 decided: any account)
 **Branch:** `feature/test-harness-take-credits` (worktree `neuronforge-take-credits`)
 **Date:** 2026-10-11
-**Status:** Code Complete (uncommitted, awaiting SA code review)
+**Status:** Committed, PR #302 open (SA APPROVED WITH FIXES, SF-1 fixed; QA PASS WITH NOTES; manual browser checks owed)
 
 ## Overview
 
@@ -127,12 +127,19 @@ No other changes requested. The scope is proportionate to the requirement.
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/test-harness-take-credits` |
+| Feature commit | `4bf75291` feat(test-business-os): admin-only test "take credits" tool (TC-1) |
+| Merge of latest main | `1d1f2051` (trivial conflict in `docs/BUSINESS_OS_TEST_PAGE_SCOPE.md` Change History, both rows kept; guards + route + audit re-run 18/18 suites, 351/351 tests) |
+| PR | [#302](https://github.com/AgentsPilot/neuronforge/pull/302) to `main`, merge commit only, not merged yet |
+| Files | 25 (19 modified, 6 new); no migration |
 
 ## Change History
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-11 | Committed + PR (RM) | `4bf75291` + merge `1d1f2051`, PR #302 opened |
 | 2026-10-11 | Created and implemented (Dev) | Compact workplan; implemented directly per the user's short-path instruction |
 
 ### SF-1 fix — 2026-10-11

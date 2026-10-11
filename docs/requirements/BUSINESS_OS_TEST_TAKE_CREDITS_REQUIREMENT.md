@@ -4,7 +4,7 @@
 
 **Created by:** BA
 **Date:** 2026-10-11
-**Status:** Code complete (TC-1, uncommitted), awaiting SA code review. SA approved with conditions (C-1 to C-6) and Q-1 decided by the user, 2026-10-11. Workplan: [BUSINESS_OS_TEST_TAKE_CREDITS_WORKPLAN.md](/docs/workplans/BUSINESS_OS_TEST_TAKE_CREDITS_WORKPLAN.md)
+**Status:** TC-1 committed (`4bf75291`, merge of main `1d1f2051`) on `feature/test-harness-take-credits`, PR [#302](https://github.com/AgentsPilot/neuronforge/pull/302) open, awaiting the manual browser checks and the user's merge. SA code review APPROVED WITH FIXES (SF-1 fixed), QA PASS WITH NOTES. SA approved the requirement with conditions (C-1 to C-6) and Q-1 decided by the user, 2026-10-11. Workplan: [BUSINESS_OS_TEST_TAKE_CREDITS_WORKPLAN.md](/docs/workplans/BUSINESS_OS_TEST_TAKE_CREDITS_WORKPLAN.md)
 **Worktree / branch:** `neuronforge-take-credits` / `feature/test-harness-take-credits`
 
 ## Overview
@@ -189,6 +189,7 @@ The charge row is itself the permanent record: append-only, with its id and time
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-11 | TC-1 committed + PR (RM) | Commit `4bf75291` (feature + docs), merge of latest main `1d1f2051` (trivial Change History conflict in `BUSINESS_OS_TEST_PAGE_SCOPE.md`, both rows kept). PR [#302](https://github.com/AgentsPilot/neuronforge/pull/302) to main. SA APPROVED WITH FIXES (SF-1 fixed), QA PASS WITH NOTES; manual browser checks owed (checklist in the PR). No migration |
 | 2026-10-11 | TC-1 implemented (Dev) | Route, switch, audit event, harness tab, C-1 tripwire (`not_applicable` entry state), guards (charge-repo `ALLOWED`, `KNOWN_NON_GATE_IMPORTERS`) and docs. Uncommitted, awaiting SA code review. Confirm step shows the company name and the account id (Q-1) |
 | 2026-10-11 | Q-1 decided (user) | Allow any account; no test-tag refusal. Confirm step shows company name + account id (SA) |
 | 2026-10-11 | SA review | APPROVED WITH CONDITIONS C-1 to C-6. Ruled on the 3 BA points: widen the charge-repo guard to the route; register it as a non-gate entitlements importer; ledger readers verified in code. None errors. AI Activity would show the test row's audit as "lost" (C-1). Schema CHECKs accept the values |
