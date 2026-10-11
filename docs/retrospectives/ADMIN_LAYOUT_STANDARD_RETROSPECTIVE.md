@@ -147,4 +147,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 ### Conclusions & process improvements
 - State machines with "has loaded" flags need an explicit test for success → failure → retry; add it to the default QA probe list for the remaining pages.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l2a — 61681eef, PR #295

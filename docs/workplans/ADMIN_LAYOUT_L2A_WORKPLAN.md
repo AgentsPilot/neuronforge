@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md): §1 (row 6), §4.3, §5.1 to §5.12, §6.1 (S-1 to S-10), §6.2 C-6, C-7, C-8, C-11, C-14, §7.5 (L-2a), §9 F-43, F-44, F-48, F-54, F-55, F-94, §10 D-2 (b), D-3 (a), D-4 (a), D-6 (a), D-9 (a), D-10 (a), D-15, §12.3; SA rulings Q-13, Q-14, SA-R-4 (K-5), SA-R-11, SA-R-14; SA re-check R-7, R-13, R-17, RC-1, RC-6; L-1c / L-1d / L-1e workplans and their SA reviews ([L-1c](/docs/workplans/ADMIN_LAYOUT_L1C_WORKPLAN.md), [L-1d](/docs/workplans/ADMIN_LAYOUT_L1D_WORKPLAN.md), [L-1e](/docs/workplans/ADMIN_LAYOUT_L1E_WORKPLAN.md))
 **Branch:** `feature/admin-layout-l2a`, at `origin/main` `39680689` (L-1d PR #292 and L-1e PR #293 merged, so the PR carries only L-2a; SA M-4). Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-11
-**Status:** Code complete — SA approved, QA B-1 fixed — awaiting QA re-check (2026-10-11, uncommitted)
+**Status:** COMMITTED — 61681eef on `feature/admin-layout-l2a`, PR #295 open (fast-track: SA approved, QA PASS after B-1 fix); awaiting checks + user merge
 **Path:** **full cycle** (SA re-check R-7: L-2a builds the same-page filter mode of `KpiTile`, a shared export no pilot needed). After SA code review + QA, RM commits and opens the PR (user fast-track for these UI slices)
 
 ## Overview
@@ -918,3 +918,4 @@ B-1 is closed. Nothing else from the first report is open (E-1 and E-2 are notes
 | 2026-10-11 | SA code review | CODE APPROVED, no must-fix. M-1 to M-4 and S-1 to S-9 verified; tsc claim re-run and confirmed (19 identical errors on `origin/main`); 90 suites re-run green; notes N-1 to N-5 |
 | 2026-10-11 | QA report | QA. Jest subset 86 suites / 2,366 tests green; entitlements 6,382 green; scoped tsc clean outside the 19 pre-existing `page.tsx` errors (identical on `origin/main`); 35 throwaway probes (inbound links byte-identical to main, route Zod parity, M-1 breadcrumbs, chips, picker, states, a11y). **FAIL** on B-1 (Medium): after a failed read, the next read shows $0.00 tiles and "No data found" instead of placeholders |
 | 2026-10-11 | QA re-check | QA. B-1 fix verified: 17 probes (500 / network / 403 × Try again, Refresh, filter change, scope switch, window button) show placeholders and "Reading…" while pending, never zeros, then render normally; analytics + layout suites 22 / 558 green. **PASS** |
+| 2026-10-11 | Committed + PR | RM. Commit 61681eef on `feature/admin-layout-l2a` (origin/main 39680689 already contained, no merge needed); jest subset 90 suites / 2,427 tests, entitlements 233 / 6,382, lint:hooks clean; PR #295 opened, not merged |
