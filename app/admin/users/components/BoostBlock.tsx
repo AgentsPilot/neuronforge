@@ -16,7 +16,18 @@
  *   - the spending limit: the default from configuration, or the active admin
  *     override with its reason, admin and date, and the last 20 changes.
  *
- * Read only in 6a: no limit change, no reconcile button and no Take back (6b).
+ * Slice 6b adds the actions, hidden on the admin's own account (the server
+ * refuses it regardless, 403 `own_account`):
+ *   - Set limit / Back to default (`BoostCapDialog`, the entitlements admin
+ *     route's `set_boost_cap` / `end_boost_cap`; SA C-2, C-3);
+ *   - Take back credits on a purchase with credits: opens 11c's Take back
+ *     dialog on that purchase's lot, through the panel (SA C-5). When the lot
+ *     is not among the Credits block's lots that can be taken back (expired,
+ *     used up, or not loaded yet), the row says "Take back in Credits above";
+ *   - "Run billing reconcile now (all accounts)" (`BoostReconcileDialog`, the
+ *     4b.2 route with an empty body; SA C-6).
+ * A success shows its sentence as a status line and reads the block again.
+ *
  * A block the server could not read says so; it never shows zeros. Free text
  * (reasons) is rendered as text only.
  */
@@ -33,9 +44,11 @@ import {
   type StripeDashboardKind,
 } from '@/lib/business-os/boost/boostAdminView';
 import type { AdminBoostCapBlock, AdminBoostPurchaseRow, AdminBoostView } from '@/lib/business-os/boost/boostAdminViewTypes';
-import { formatMinorAmount } from '@/lib/business-os/currency';
 
+import { BOOST_ACTION_COPY, money, perWindow } from '../boostCopy';
 import { formatCredits, formatUtc, shortId } from '../creditCopy';
+import { BoostCapDialog, type BoostCapDialogMode, type CurrentLimit } from './BoostCapDialog';
+import { BoostReconcileDialog } from './BoostReconcileDialog';
 
 export const BOOST_BLOCK_COPY = {
   heading: 'Credit top-ups',
@@ -142,24 +155,28 @@ function isPurchasesBlock(value: unknown): boolean {
   );
 }
 
+function isLimits(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    isNumber(value.minMinor) &&
+    isNumber(value.maxMinor) &&
+    isNumber(value.stepMinor) &&
+    isString(value.currency) &&
+    isNumber(value.windowDays) &&
+    isNumber(value.reasonMin) &&
+    isNumber(value.reasonMax)
+  );
+}
+
 export function isAdminBoostView(value: unknown): value is AdminBoostView {
   return (
     isObject(value) &&
     typeof value.isOwnAccount === 'boolean' &&
     (value.serverMode === null || value.serverMode === 'test' || value.serverMode === 'live') &&
     isPurchasesBlock(value.purchases) &&
-    isCapBlock(value.cap)
+    isCapBlock(value.cap) &&
+    isLimits(value.limits)
   );
-}
-
-/** Minor units in their own currency, through the shared rule (SA CR-1); never throws. */
-function money(minor: number, currency: string): string {
-  if (!Number.isFinite(minor)) return 'unreadable';
-  try {
-    return formatMinorAmount(minor, currency, 'en');
-  } catch {
-    return 'unreadable';
-  }
 }
 
 /** QA6a-L2: the note names the mode that was cut. */
@@ -227,7 +244,43 @@ function StripeRef({ kind, id, livemode, label }: { kind: StripeDashboardKind; i
   );
 }
 
-function PurchaseRow({ row }: { row: AdminBoostPurchaseRow }) {
+interface TakeBack {
+  /** Lots the Credits block offers Take back for right now (6b, SA C-5). */
+  lotIds: ReadonlySet<string>;
+  /** Every lot the Credits block has loaded (QA6b-L2). */
+  loadedLotIds: ReadonlySet<string>;
+  onTakeBack: (lotId: string) => void;
+}
+
+function TakeBackAction({ lotId, takeBack }: { lotId: string; takeBack: TakeBack | null }) {
+  // Loaded but not take-back-able (expired, used up, not counted yet): nothing to offer (QA6b-L2).
+  if (takeBack && takeBack.loadedLotIds.has(lotId) && !takeBack.lotIds.has(lotId)) {
+    return (
+      <span data-testid="boost-take-back-none" className="ml-auto text-xs text-slate-500">
+        {BOOST_ACTION_COPY.nothingToTakeBack}
+      </span>
+    );
+  }
+  if (takeBack && takeBack.lotIds.has(lotId)) {
+    return (
+      <button
+        type="button"
+        data-testid="boost-take-back"
+        onClick={() => takeBack.onTakeBack(lotId)}
+        className="ml-auto rounded border border-slate-600 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-700/50"
+      >
+        {BOOST_ACTION_COPY.takeBackButton}
+      </button>
+    );
+  }
+  return (
+    <span data-testid="boost-take-back-above" className="ml-auto text-xs text-slate-500">
+      {BOOST_ACTION_COPY.takeBackAbove}
+    </span>
+  );
+}
+
+function PurchaseRow({ row, canChange, takeBack }: { row: AdminBoostPurchaseRow; canChange: boolean; takeBack: TakeBack | null }) {
   const tone = adminBoostStatusTone(row.status);
   const reason = row.status === 'flagged_mismatch' ? adminBoostFlagReasonWords(row.flagReason) : null;
   const paid = row.amountTotalMinor ?? row.priceMinor;
@@ -273,16 +326,13 @@ function PurchaseRow({ row }: { row: AdminBoostPurchaseRow }) {
             Session {row.stripe.checkoutSessionId.slice(0, 14)}…
           </span>
         )}
+        {canChange && row.lotId !== null && <TakeBackAction lotId={row.lotId} takeBack={takeBack} />}
       </div>
     </li>
   );
 }
 
-function perWindow(amountMinor: number, currency: string, windowDays: number): string {
-  return `${money(amountMinor, currency)} per ${windowDays} days`;
-}
-
-function CapSection({ cap }: { cap: AdminBoostCapBlock }) {
+function CapSection({ cap, canChange, onAction }: { cap: AdminBoostCapBlock; canChange: boolean; onAction: (mode: BoostCapDialogMode) => void }) {
   if (cap.status === 'error') {
     return (
       <p data-testid="boost-cap-error" className="text-sm text-rose-300">
@@ -308,6 +358,28 @@ function CapSection({ cap }: { cap: AdminBoostCapBlock }) {
         <p data-testid="boost-cap-default">
           <span className="font-semibold text-white">Default: {perWindow(cap.default.amountMinor, cap.default.currency, windowDays)}</span>
         </p>
+      )}
+      {canChange && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            data-testid="boost-cap-set"
+            onClick={() => onAction('set')}
+            className="rounded border border-emerald-500/50 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-500/10"
+          >
+            {BOOST_ACTION_COPY.setLimitButton}
+          </button>
+          {cap.active && (
+            <button
+              type="button"
+              data-testid="boost-cap-end"
+              onClick={() => onAction('end')}
+              className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-200 hover:bg-slate-700/50"
+            >
+              {BOOST_ACTION_COPY.backToDefaultButton}
+            </button>
+          )}
+        </div>
       )}
       <details data-testid="boost-cap-history">
         <summary className="cursor-pointer select-none text-xs text-slate-400 hover:text-white">{BOOST_BLOCK_COPY.historyHeading}</summary>
@@ -345,11 +417,25 @@ function CapSection({ cap }: { cap: AdminBoostCapBlock }) {
   );
 }
 
-export function BoostBlock({ accountId }: { accountId: string }) {
-  const [load, setLoad] = useState<Load>({ state: 'loading' });
-  const url = `/api/admin/business-os/credits/accounts/${encodeURIComponent(accountId)}/boost`;
+interface Props {
+  accountId: string;
+  /** What the dialogs name: the business, or the account id. */
+  businessLabel?: string;
+  /** 6b (SA C-5): from the panel, the Credits block's lots that can be taken back, and the way to open its dialog. */
+  takeBack?: TakeBack | null;
+}
 
-  const reload = useCallback(() => {
+export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props) {
+  const [load, setLoad] = useState<Load>({ state: 'loading' });
+  const [reloadToken, setReloadToken] = useState(0);
+  const [capDialog, setCapDialog] = useState<BoostCapDialogMode | null>(null);
+  const [reconcileOpen, setReconcileOpen] = useState(false);
+  // The last action's sentences. Outside the `ok` branch, so a failed re-read cannot hide them.
+  const [notice, setNotice] = useState<string[] | null>(null);
+  const url = `/api/admin/business-os/credits/accounts/${encodeURIComponent(accountId)}/boost`;
+  const label = businessLabel ?? accountId;
+
+  useEffect(() => {
     let cancelled = false;
     setLoad({ state: 'loading' });
     void readView(url).then((next) => {
@@ -358,9 +444,25 @@ export function BoostBlock({ accountId }: { accountId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [url, reloadToken]);
 
-  useEffect(() => reload(), [reload]);
+  const reload = useCallback(() => setReloadToken((n) => n + 1), []);
+
+  function finished(lines: string[]) {
+    setCapDialog(null);
+    setReconcileOpen(false);
+    setNotice(lines);
+    reload();
+  }
+
+  const view = load.state === 'ok' ? load.data : null;
+  const canChange = view !== null && !view.isOwnAccount;
+  const current: CurrentLimit | null =
+    view && view.cap.status === 'ok'
+      ? view.cap.active
+        ? { amountMinor: view.cap.active.amountMinor, currency: view.cap.active.currency, source: 'override' }
+        : { amountMinor: view.cap.default.amountMinor, currency: view.cap.default.currency, source: 'default' }
+      : null;
 
   return (
     <div data-testid="boost-block">
@@ -368,6 +470,29 @@ export function BoostBlock({ accountId }: { accountId: string }) {
         <Receipt className="h-4 w-4 text-sky-300" aria-hidden="true" />
         {BOOST_BLOCK_COPY.heading}
       </h4>
+
+      {notice && (
+        <div
+          data-testid="boost-notice"
+          role="status"
+          className="mt-2 flex items-start gap-2 rounded border border-emerald-500/40 bg-emerald-500/10 p-2 text-sm text-emerald-200"
+        >
+          <div className="flex-1">
+            {notice.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
+          <button
+            type="button"
+            data-testid="boost-notice-dismiss"
+            aria-label="Dismiss"
+            onClick={() => setNotice(null)}
+            className="rounded px-1 text-emerald-300 hover:bg-emerald-500/20"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {load.state === 'loading' && <p className="mt-2 text-sm text-slate-400">{BOOST_BLOCK_COPY.loading}</p>}
 
@@ -397,7 +522,7 @@ export function BoostBlock({ accountId }: { accountId: string }) {
             <>
               <ul className="space-y-2">
                 {load.data.purchases.rows.map((row) => (
-                  <PurchaseRow key={row.id} row={row} />
+                  <PurchaseRow key={row.id} row={row} canChange={canChange} takeBack={takeBack} />
                 ))}
               </ul>
               {truncatedNote(load.data.purchases.truncated) && (
@@ -408,8 +533,59 @@ export function BoostBlock({ accountId }: { accountId: string }) {
             </>
           )}
 
-          <CapSection cap={load.data.cap} />
+          <CapSection
+            cap={load.data.cap}
+            canChange={canChange}
+            onAction={(mode) => {
+              setNotice(null);
+              setCapDialog(mode);
+            }}
+          />
+
+          {load.data.isOwnAccount ? (
+            <p data-testid="boost-own-account" className="text-sm text-slate-400">
+              {BOOST_ACTION_COPY.ownAccount}
+            </p>
+          ) : (
+            <button
+              type="button"
+              data-testid="boost-reconcile"
+              onClick={() => {
+                setNotice(null);
+                setReconcileOpen(true);
+              }}
+              className="rounded border border-sky-500/50 px-3 py-1.5 text-sm text-sky-200 hover:bg-sky-500/10"
+            >
+              {BOOST_ACTION_COPY.reconcileButton}
+            </button>
+          )}
         </div>
+      )}
+
+      {capDialog && view && current && view.cap.status === 'ok' && (
+        <BoostCapDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setCapDialog(null);
+          }}
+          mode={capDialog}
+          accountId={accountId}
+          businessLabel={label}
+          limits={view.limits}
+          current={current}
+          defaultLimit={{ amountMinor: view.cap.default.amountMinor, currency: view.cap.default.currency }}
+          onSuccess={finished}
+        />
+      )}
+
+      {reconcileOpen && (
+        <BoostReconcileDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setReconcileOpen(false);
+          }}
+          onFinished={finished}
+        />
       )}
     </div>
   );

@@ -115,11 +115,15 @@ describe('SA C-4: Stripe dashboard links', () => {
 });
 
 describe('money and the payload', () => {
-  it('SA CR-1: has no money formatter of its own (no typed "/ 100"); the block uses lib/business-os/currency.ts', () => {
+  it('SA CR-1: has no money formatter of its own (no typed "/ 100"); the admin block\'s money goes through lib/business-os/currency.ts', () => {
     const code = read('lib/business-os/boost/boostAdminView.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
     expect(code).not.toMatch(/\/\s*100\b|Intl\.NumberFormat|formatMinorAmount/);
+    // Since 6b the block and its dialogs share `money()` in app/admin/users/boostCopy.ts.
+    const copy = read('app/admin/users/boostCopy.ts');
+    expect(copy).toMatch(/import \{ formatMinorAmount \} from '@\/lib\/business-os\/currency'/);
+    expect(copy).not.toMatch(/\/\s*100/);
     const block = read('app/admin/users/components/BoostBlock.tsx');
-    expect(block).toMatch(/import \{ formatMinorAmount \} from '@\/lib\/business-os\/currency'/);
+    expect(block).toMatch(/import \{ BOOST_ACTION_COPY, money, perWindow \} from '..\/boostCopy'/);
     expect(block).not.toMatch(/\/\s*100\b/);
   });
 

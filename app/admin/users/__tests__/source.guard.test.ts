@@ -168,7 +168,8 @@ describe('the Credits block (credit deduction slice 11c)', () => {
 
   it('the panel renders the block above the plan, with the business label (user UI fixes, 2026-10-04)', () => {
     const panel = codeOf(read(`${ROOT}/components/BusinessOsPanel.tsx`));
-    expect(panel).toContain('<CreditsBlock accountId={accountId} businessLabel={businessLabel} />');
+    // Boost slice 6b adds the take-back wiring props after these two (SA C-5).
+    expect(panel).toMatch(/<CreditsBlock\s+accountId=\{accountId\}\s+businessLabel=\{businessLabel\}/);
     expect(panel.indexOf('<CreditsBlock')).toBeLessThan(panel.indexOf('<EntitlementSnapshot'));
   });
 
