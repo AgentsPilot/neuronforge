@@ -9,7 +9,7 @@
 **Branch:** `fix/secdef-lockdown-slice-5` (worktree `neuronforge-secdef-s5`). Created off `6e5c4b7e`; TL fast-forwarded it on 2026-10-11 to `origin/main` `492066b9`, which includes PR #288 (slice 4a, `20261050`, merged 2026-10-11 05:58 UTC as `7916cc68`)
 **Migration number:** `20261051`. Checked 2026-10-11, twice (at the workplan and after implementation): `origin/main` `492066b9` tops at `20261050`. The only open PR (#290, finance health) touches nothing under `supabase/`. Re-check at PR time (T-10 rule)
 **Date:** 2026-10-11
-**Status:** Code Complete. The workplan is SA-approved with conditions S5-1 to S5-6, all folded in. Five files are written and left uncommitted. Awaiting SA code review.
+**Status:** ✅ Applied on prod 2026-10-11 and accepted (PR #297). SA and QA approved. User acceptance: pre-check CLEAN, checker 108/0, N1 42501, D1 after apply 5/5 (D1 before skipped by the user). Remaining: one Postgres-log look at about T+24 h.
 
 ## Overview
 
@@ -601,15 +601,15 @@ WHERE users.created_at >= pg_catalog.now() - pg_catalog.make_interval(hours => 2
 
 | Check | Result (user) |
 |---|---|
-| Pre-check status; Q11 trigger map; Q12 verdict | ⬜ |
-| D1 before | ⬜ |
-| Migration | ⬜ |
-| Checker | ⬜ |
-| N1 | ⬜ |
-| D1 after | ⬜ |
-| N2, P1 (optional) | ⬜ |
-| Postgres logs, one look at about T+24 h | ⬜ |
-| EVENTS, SIGNUP, inventory re-run (optional) | ⬜ |
+| Pre-check status; Q11 trigger map; Q12 verdict | ✅ CLEAN; 18 x 1 enabled trigger; Q12 D1 may run |
+| D1 before | ➖ skipped by the user (baseline only) |
+| Migration | ✅ applied 2026-10-11 |
+| Checker | ✅ VERDICT PASS 108 pass 0 fail |
+| N1 | ✅ 42501 permission denied for function tg_service_events |
+| D1 after | ✅ priced_services 5, events_this_transaction 5, no error |
+| N2, P1 (optional) | ➖ not run (checker proves the grants) |
+| Postgres logs, one look at about T+24 h | ⬜ pending (user) |
+| EVENTS, SIGNUP, inventory re-run (optional) | ➖ not run |
 
 ---
 
@@ -629,3 +629,4 @@ WHERE users.created_at >= pg_catalog.now() - pg_catalog.make_interval(hours => 2
 | 2026-10-11 | SA code review | APPROVED WITH NITS. S5-1 to S5-6 verified in code. PostgreSQL desk-check of the new Q3, Q11 and Q12 rows and of D1: `tg_service_events` emits `pricing.changed` on any price change with `created_at` = transaction start, RLS allows the own-row update, so D1 observes the firing. Checker 54/54 before and 108/0 after; rollback restores the TSV set. One Low nit (D1 event count can over-count future-dated or concurrently committed events; optional `entity_id` filter). Slice 5 test 95/95, `test:authz-guard` 203/203 |
 | 2026-10-11 | QA (local PGlite) | Full run of §5.2. Pre-check, run for the first time, reads `CLEAN` with every §2.1 value, and the same on ICU `und`; no defect found. Checker 54/54 before, 108/0 after, and the migration is idempotent. The 18 triggers fire unchanged after the revoke as `anon`, `authenticated` and a non-superuser auth-admin stand-in, both `WHEN`-clause triggers included; the matrix is identical before and after. Direct calls: `42501` for client roles, `0A000` for `service_role`. Client `CREATE TRIGGER` now fails with `42501`. N1, N2, P1 and D1 run verbatim; D1 observes the event and leaves no rows. The Q12 and Q11 negatives behave as specified, and the rollback restores the pre-state row for row. Static 95/95, authz-guard 203/203. Ready for commit |
 | 2026-10-11 | SA optional D1 tightening not adopted (TL) | The event count is corroboration only; the pass signal is no permission error; adopting it would require a PGlite re-run of D1 |
+| 2026-10-11 | Prod apply and acceptance (user, recorded by TL) | pre-check CLEAN at 14:45 UTC (Q3 trigger x18, Q11 exactly one enabled trigger each incl. auth.users and exchange_rates, Q12 D1 may run with the 3 known scheduling_services triggers); migration applied after the pre-check on 2026-10-11; checker VERDICT PASS 108 pass 0 fail; N1 42501 permission denied for function tg_service_events; D1 after apply: priced_services 5, events_this_transaction 5, no error (trigger fires without client EXECUTE); D1 before skipped by the user (baseline only, not needed for the pass rule) |
