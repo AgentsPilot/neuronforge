@@ -31,6 +31,21 @@ jest.mock('@/lib/logger', () => ({
     child: jest.fn().mockReturnThis(),
   }),
 }));
+// RC-1 (Admin Layout Standard L-1b): the Jobs files log through `clientLogger.child`;
+// warn and error reach the same spies as before.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return {
+    clientLogger: {
+      child: () => ({
+        error: (...a: unknown[]) => mockLoggerError(...a),
+        warn: (...a: unknown[]) => mockLoggerWarn(...a),
+        info: noop,
+        debug: noop,
+      }),
+    },
+  };
+});
 
 import AdminJobsQueuesPage from '../jobs-queues/page';
 import { RetryQueueItemDialog } from '../components/jobs/RetryQueueItemDialog';

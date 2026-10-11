@@ -26,6 +26,16 @@ jest.mock('@/lib/logger', () => ({
     child: jest.fn().mockReturnThis(),
   }),
 }));
+// RC-1 (Admin Layout Standard L-1b): the Jobs files log through `clientLogger.child`;
+// error reaches the same spy as before.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return {
+    clientLogger: {
+      child: () => ({ error: (...a: unknown[]) => mockLoggerError(...a), warn: noop, info: noop, debug: noop }),
+    },
+  };
+});
 
 import AdminJobsQueuesPage from '../jobs-queues/page';
 import { buildJobsQueuesView } from '@/lib/admin/jobs/buildJobsQueuesView';
@@ -52,6 +62,15 @@ beforeAll(() => {
 // 50-row paging flows exceed Jest's 5 s default (the 7d drain render suite's
 // precedent, SA L-1). Explicit per-test timeouts below still win.
 jest.setTimeout(20000);
+
+// A wait whose condition needs a 50-row page rendered (each row with Radix
+// dialog triggers) gets more than waitFor's 1000 ms default. Measured alone,
+// the first page takes ~0.9-1.3 s, and a Refresh (jobs view, every card
+// re-rendered, then the items page) up to ~2.1 s. Such waits passed only when
+// the long synchronous render starved waitFor's timer; under load the timer
+// fired between the two renders ("expected 1–50, got 51–100"). The condition
+// is unchanged, so a real regression still fails, just later.
+const ROWS_RENDERED = { timeout: 10_000 };
 
 function jobsView(): JobsQueuesView {
   return buildJobsQueuesView(
@@ -351,17 +370,17 @@ describe('U-4 / U-5: tabs and paging', () => {
 
   it('U-5: "Showing 1–50 of 132"; Next goes to page 2; Previous disabled on page 1; Next disabled on the last page', async () => {
     const panel = await openPanel('lead_responses');
-    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 1–50 of 132'));
+    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 1–50 of 132'), ROWS_RENDERED);
     const previous = within(panel).getByRole('button', { name: 'Previous' });
     const next = within(panel).getByRole('button', { name: 'Next' });
     expect(previous).toBeDisabled();
     expect(next).toBeEnabled();
     fireEvent.click(next);
-    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 51–100 of 132'));
+    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 51–100 of 132'), ROWS_RENDERED);
     expect(itemUrls().at(-1)).toBe('/api/admin/jobs-queues/items?queue=lead_responses&state=stuck&page=2');
     expect(previous).toBeEnabled();
     fireEvent.click(next);
-    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 101–132 of 132'));
+    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 101–132 of 132'), ROWS_RENDERED);
     expect(next).toBeDisabled();
     fireEvent.click(previous);
     await waitFor(() => expect(itemUrls().at(-1)).toContain('page=2'));
@@ -377,13 +396,13 @@ describe('U-4 / U-5: tabs and paging', () => {
     expect(within(panel).getByRole('button', { name: 'Previous' })).toBeDisabled();
     expect(within(panel).getByRole('button', { name: 'Next' })).toBeDisabled();
     await act(async () => release());
-    await waitFor(() => expect(within(panel).getByRole('button', { name: 'Next' })).toBeEnabled());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: 'Next' })).toBeEnabled(), ROWS_RENDERED);
     expect(panel).toHaveAttribute('aria-busy', 'false');
   });
 
   it('U-4: a tab asks for that state, page 1; changing tab after paging resets to page 1', async () => {
     const panel = await openPanel('lead_responses');
-    await waitFor(() => expect(within(panel).getByRole('button', { name: 'Next' })).toBeEnabled());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: 'Next' })).toBeEnabled(), ROWS_RENDERED);
     fireEvent.click(within(panel).getByRole('button', { name: 'Next' }));
     await waitFor(() => expect(itemUrls().at(-1)).toContain('page=2'));
     fireEvent.click(within(panel).getByRole('button', { name: 'Dead-lettered' }));
@@ -444,9 +463,9 @@ describe('W7A-2: past the end, and refresh resets to page 1', () => {
     };
     const user = userEvent.setup();
     const panel = await openPanel('lead_responses');
-    await waitFor(() => expect(within(panel).getByRole('button', { name: 'Next' })).toBeEnabled());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: 'Next' })).toBeEnabled(), ROWS_RENDERED);
     fireEvent.click(within(panel).getByRole('button', { name: 'Next' }));
-    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 51–100 of 132'));
+    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 51–100 of 132'), ROWS_RENDERED);
     const before = itemCalls().length;
 
     // The real Drain now dialog on the same card; its success refreshes the page.
@@ -455,7 +474,7 @@ describe('W7A-2: past the end, and refresh resets to page 1', () => {
     await user.type(within(dialog).getByLabelText(/Why are you draining this queue/), 'stuck backlog');
     await user.click(within(dialog).getByRole('button', { name: 'Confirm' }));
 
-    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 1–3 of 3'));
+    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 1–3 of 3'), ROWS_RENDERED);
     expect(itemUrls().slice(before).every((u) => u.endsWith('&page=1'))).toBe(true);
     expect(within(panel).queryByTestId('queue-items-error')).toBeNull();
     expect(mockLoggerError).not.toHaveBeenCalled();
@@ -482,12 +501,12 @@ describe('W7A-2: past the end, and refresh resets to page 1', () => {
       body: { success: true, data: itemsView(params, Array.from({ length: 50 }, (_, i) => item({ id: `${params.get('page')}-${i}-aaaa` })), 132) },
     });
     const panel = await openPanel('lead_responses');
-    await waitFor(() => expect(within(panel).getByRole('button', { name: 'Next' })).toBeEnabled());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: 'Next' })).toBeEnabled(), ROWS_RENDERED);
     fireEvent.click(within(panel).getByRole('button', { name: 'Next' }));
-    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 51–100 of 132'));
+    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 51–100 of 132'), ROWS_RENDERED);
     const before = itemCalls().length;
     fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
-    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 1–50 of 132'));
+    await waitFor(() => expect(within(panel).getByTestId('queue-items-showing').textContent).toBe('Showing 1–50 of 132'), ROWS_RENDERED);
     // One request for the refresh, and it asks for page 1 (not page 2 first).
     expect(itemUrls().slice(before)).toEqual(['/api/admin/jobs-queues/items?queue=lead_responses&state=stuck&page=1']);
   });
