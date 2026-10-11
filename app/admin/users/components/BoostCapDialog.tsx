@@ -24,9 +24,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { AdminBoostLimits } from '@/lib/business-os/boost/boostAdminViewTypes';
 
+import {
+  ADMIN_DIALOG_CLASS,
+  ADMIN_DIALOG_DESCRIPTION_CLASS,
+  ADMIN_DIALOG_TITLE_CLASS,
+} from '@/app/admin/components/layout/adminDialog';
 import { BOOST_ACTION_COPY, boostActionErrorSentence, money, perWindow } from '../boostCopy';
 
-const DARK_DIALOG = '!border-slate-700 !bg-slate-900 !text-slate-100';
 const DARK_INPUT = '!border-slate-600 !bg-slate-800 !text-white';
 
 export type BoostCapDialogMode = 'set' | 'end';
@@ -162,10 +166,10 @@ export function BoostCapDialog({ open, onOpenChange, mode, accountId, businessLa
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent data-testid="boost-cap-dialog" className={DARK_DIALOG}>
+      <DialogContent data-testid="boost-cap-dialog" className={ADMIN_DIALOG_CLASS}>
         <DialogHeader>
-          <DialogTitle className="!text-white">{title}</DialogTitle>
-          <DialogDescription className="!text-slate-400">{description}</DialogDescription>
+          <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>{title}</DialogTitle>
+          <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>{description}</DialogDescription>
         </DialogHeader>
 
         {error && (
