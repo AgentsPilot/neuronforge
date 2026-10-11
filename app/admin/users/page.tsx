@@ -1182,7 +1182,7 @@ export default function UsersPage() {
                                     Danger area
                                   </h3>
                                   <p className="text-sm text-slate-400 mb-4">
-                                    Check what removing this account would delete and what refuses it. Removing is offered only when the check allows it, and needs the email typed again. A refused check changes nothing.
+                                    Permanent actions for this account. Each runs a check first; a refused check changes nothing.
                                   </p>
                                   {SHOW_AD1_DELETE_ENTRY && (
                                     <>
@@ -1213,6 +1213,7 @@ export default function UsersPage() {
                                     <TestAccountCleanupPanel
                                       key={user.id}
                                       lockedEmail={user.email}
+                                      tone="admin-dark"
                                       onRemoved={() => {
                                         // AU-C2: CLEAN only, once the admin clicks Done (or the panel unmounts); the row leaves the list.
                                         void fetchUsers();
