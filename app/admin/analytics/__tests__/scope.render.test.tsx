@@ -21,6 +21,12 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// RC-1 (L-2a): the page and the shared business picker log through `clientLogger.child`.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
+
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(mockSearch),
@@ -104,10 +110,10 @@ describe('the Business OS lens', () => {
     expect(screen.getByTestId('scope-notes').textContent).toContain('1,000');
   });
 
-  it('shows the existing error state when the route fails', async () => {
+  it('shows the route error string when the route fails (§5.10 rule 1, L-2a)', async () => {
     mockRoute({ ok: false, body: { success: false, error: 'Invalid query parameters' } });
     render(<AdminCostAnalytics />);
-    await waitFor(() => expect(document.body.textContent).toContain('Failed to fetch data'));
+    await waitFor(() => expect(document.body.textContent).toContain('Invalid query parameters'));
   });
 
   it('a 400 from the route says the query was not valid, not "Failed to fetch data"', async () => {
@@ -131,7 +137,8 @@ describe('a custom date range with the start after the end (QA E-3)', () => {
     const callsBefore = fetchMock.mock.calls.length;
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
-    expect((await screen.findByTestId('date-range-error')).textContent).toContain('start date is after the end date');
+    // L-2a: the shared Custom row owns the check and its alert (DatePresets, §5.5 part 2).
+    expect((await screen.findByRole('alert')).textContent).toContain('The start date must not be after the end date');
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
     expect(urls(fetchMock).some((u) => u.includes('2026-09-20') && u.includes('2026-09-01'))).toBe(false);
   });

@@ -125,3 +125,26 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Fix inherited behaviour bugs in a shared component when it is first extracted; later adopters multiply the cost.
 
 ### Status: COMMITTED — feature/admin-layout-l1e — a58ee4b5, PR #293
+
+---
+
+## L-2a: AI cost & usage, part 1 (header, KPI strip, filter bar, URL, states) — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-2a workplan](/docs/workplans/ADMIN_LAYOUT_L2A_WORKPLAN.md)
+
+### What went well
+- First page migration on the finished building blocks; every inbound link (Health, Businesses, Activity cutover) still produces a byte-identical request, and no link builder was edited.
+- SA checked the route's own Zod rules with the installed version before ruling on what the page may send, and caught the breadcrumb reset semantics (M-1) and the lost All-scope token total (M-2) at workplan stage.
+- The page shrank from 1,690 to about 1,030 lines by extracting only what the slice rewrote; the owner-text guard was widened to the folder so the split could not weaken it.
+- Twelve mutation checks bit, including one run under a non-UTC time zone.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved, nothing to fix).
+- Number of Dev ↔ QA bug fix cycles: 1 (B-1: a read after a failure showed zeros as if real — a regression vs main's spinner; fixed with a regression test).
+- 19 pre-existing type errors remain in the table half of page.tsx (identical on main); L-2b rewrites those lines.
+- Browser checks still owed (A-B1..A-B20 plus L-1a..L-1e).
+
+### Conclusions & process improvements
+- State machines with "has loaded" flags need an explicit test for success → failure → retry; add it to the default QA probe list for the remaining pages.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)

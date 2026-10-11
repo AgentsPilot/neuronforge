@@ -12,12 +12,18 @@
  * and minute-form or ISO-instant bounds (`linked`, what inbound links such as
  * the Health tiles carry). Linked bounds are kept byte for byte (U-7, SA-R-1)
  * and a minute is never passed through Date, which would read it as local time.
+ *
+ * L-2a adds the window extras (D-2 (b)): windows a page already offered beyond
+ * the standard five, kept as a page's own buttons. They are opt-in per page
+ * (`windowFilter({ extras })`, `DatePresets extras`), so a page that lists none
+ * still ignores `range=90d` (U-4).
  */
 
 import {
   ADMIN_WINDOW_PRESETS,
   isRealDate,
   resolveAdminWindow,
+  todayUtc,
   type AdminWindowPreset,
 } from '@/app/admin/components/adminWindowPresets';
 import { formatUtc } from './adminFormat';
@@ -28,7 +34,17 @@ export type AdminWindowValue =
   | { kind: 'none' }
   | { kind: 'preset'; preset: AdminWindowPreset }
   | { kind: 'custom'; from: string | null; to: string | null }
-  | { kind: 'linked'; from: string | null; to: string | null };
+  | { kind: 'linked'; from: string | null; to: string | null }
+  | { kind: 'extra'; extra: AdminWindowExtra };
+
+/** Only what a page keeps today (D-2 (b)); a later page adds its own here. */
+export const ADMIN_WINDOW_EXTRAS = ['24h', '90d'] as const;
+export type AdminWindowExtra = (typeof ADMIN_WINDOW_EXTRAS)[number];
+
+export const ADMIN_WINDOW_EXTRA_LABELS: Readonly<Record<AdminWindowExtra, string>> = {
+  '24h': '24 hours',
+  '90d': '90 days',
+};
 
 export const ADMIN_WINDOW_LABELS: Readonly<Record<AdminWindowPreset | 'custom', string>> = {
   today: 'Today',
@@ -71,10 +87,18 @@ export function boundForm(raw: string): BoundForm | null {
   return null;
 }
 
-/** Parses the window's canonical keys (after the hook has applied the aliases). */
-export function parseWindow(get: (key: string) => string | null): AdminWindowValue | undefined {
+/**
+ * Parses the window's canonical keys (after the hook has applied the aliases).
+ * `range` names an extra only when the page lists that extra.
+ */
+export function parseWindow(
+  get: (key: string) => string | null,
+  extras: readonly AdminWindowExtra[] = [],
+): AdminWindowValue | undefined {
   const range = get('range');
   if (range !== null && isAdminWindowPreset(range)) return { kind: 'preset', preset: range };
+  const extra = extras.find((listed) => listed === range);
+  if (extra !== undefined) return { kind: 'extra', extra };
 
   // `from` / `to` present with `range` absent, `custom` or unknown: custom is implied (U-7).
   const rawFrom = get('from');
@@ -99,6 +123,8 @@ export function serialiseWindow(value: AdminWindowValue): Readonly<Record<string
       return {};
     case 'preset':
       return { range: value.preset };
+    case 'extra':
+      return { range: value.extra };
     case 'custom':
     case 'linked': {
       const out: Record<string, string> = { range: 'custom' };
@@ -112,6 +138,7 @@ export function serialiseWindow(value: AdminWindowValue): Readonly<Record<string
 export function windowEquals(a: AdminWindowValue, b: AdminWindowValue): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'preset' && b.kind === 'preset') return a.preset === b.preset;
+  if (a.kind === 'extra' && b.kind === 'extra') return a.extra === b.extra;
   if ((a.kind === 'custom' || a.kind === 'linked') && (b.kind === 'custom' || b.kind === 'linked')) {
     return a.from === b.from && a.to === b.to;
   }
@@ -123,12 +150,15 @@ export function windowFilter(options: {
   defaultValue: AdminWindowValue;
   /** Legacy names, read forever and never written (U-9), e.g. date_from → from. */
   aliases?: Readonly<Record<string, 'from' | 'to'>>;
+  /** The page's own extra windows (D-2 (b)); none by default. */
+  extras?: readonly AdminWindowExtra[];
 }): AdminFilterField<AdminWindowValue> {
+  const extras = options.extras ?? [];
   return {
     keys: ['range', 'from', 'to'],
     aliases: options.aliases,
     defaultValue: options.defaultValue,
-    parse: parseWindow,
+    parse: (get) => parseWindow(get, extras),
     serialise: serialiseWindow,
     equals: windowEquals,
   };
@@ -139,6 +169,8 @@ export type ResolvedWindow =
   | { kind: 'none' }
   | { kind: 'dates'; from: string | null; to: string | null }
   | { kind: 'linked'; from: string | null; to: string | null };
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function resolveWindow(value: AdminWindowValue, now: Date): ResolvedWindow {
   switch (value.kind) {
@@ -152,6 +184,22 @@ export function resolveWindow(value: AdminWindowValue, now: Date): ResolvedWindo
       return { kind: 'dates', from: value.from, to: value.to };
     case 'linked':
       return { kind: 'linked', from: value.from, to: value.to };
+    case 'extra':
+      if (value.extra === '90d') {
+        // The last 90 UTC calendar days including today (U-8), as Costs' 90 days.
+        const to = todayUtc(now);
+        const from = new Date(Date.parse(`${to}T00:00:00.000Z`) - 89 * DAY_MS).toISOString().slice(0, 10);
+        return { kind: 'dates', from, to };
+      }
+      // "24 hours" is an exact rolling window: now minus 24 h to now. It depends
+      // on the clock to the millisecond, so a page must never key a request on
+      // this result (AI cost & usage maps the extra to `period=1` instead), and
+      // DatePresets seeds empty inputs from it, as for a linked value (SA S-6).
+      return {
+        kind: 'linked',
+        from: new Date(now.getTime() - DAY_MS).toISOString(),
+        to: now.toISOString(),
+      };
   }
 }
 

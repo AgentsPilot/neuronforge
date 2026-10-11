@@ -39,6 +39,9 @@
  * in that one file only, so the shared helpers stay fetch-free and a second
  * fetching component needs a deliberate edit here; the Audit trail registry
  * comment notes the original picker left the page.
+ *
+ * Amended by L-2a: AI cost & usage (part a) joins the registry with its five
+ * files. No new shared file, so the expected files and part (a) are unchanged.
  */
 
 import * as fs from 'fs';
@@ -487,6 +490,18 @@ const MIGRATED_PAGES = [
     // the folder for Activity and Finance until L-8 deletes it (R-11).
     page: '/admin/audit-trail (Audit trail)',
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
+  },
+  {
+    // L-2a (part a): header, KPI strip, filter bar, states, URL. The table and
+    // drawers in page.tsx are L-2b.
+    page: '/admin/analytics (AI cost & usage)',
+    files: [
+      'app/admin/analytics/page.tsx',
+      'app/admin/analytics/analyticsTypes.ts',
+      'app/admin/analytics/analyticsFilters.ts',
+      'app/admin/analytics/components/AnalyticsKpis.tsx',
+      'app/admin/analytics/components/AnalyticsFilterBar.tsx',
+    ],
   },
 ] as const;
 

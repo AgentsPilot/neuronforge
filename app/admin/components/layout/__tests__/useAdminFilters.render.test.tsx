@@ -329,3 +329,37 @@ describe('QA E-1 (L-1d): an outside change that parses to the current state stil
     expect(replaceSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('hrefFor (L-2a: the same-page filter tile link)', () => {
+  it('is empty for a patch that leaves every field at its default', () => {
+    arrive('severity=info');
+    render(<Harness />);
+    expect(api.hrefFor({ severity: 'all' })).toBe('');
+  });
+
+  it('drops an alias present in the URL and writes the canonical key, keeping tab', () => {
+    arrive('tab=x&user_id=abc');
+    render(<Harness />);
+    expect(api.hrefFor({ severity: 'info' })).toBe('?tab=x&account=abc&severity=info');
+  });
+
+  it('omits page-only and default values, in spec order', () => {
+    arrive('search=abc&range=7d');
+    render(<Harness />);
+    expect(api.hrefFor({ severity: 'critical', account: '' })).toBe('?range=7d&severity=critical');
+    expect(api.hrefFor({ window: { kind: 'none' } })).toBe('');
+  });
+
+  it('writes no history and changes no state', () => {
+    arrive('severity=info');
+    render(<Harness />);
+    const first = api.filters;
+    replaceSpy.mockClear();
+    const href = api.hrefFor({ severity: 'critical', account: 'abc' });
+    expect(href).toBe('?account=abc&severity=critical');
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(pushSpy).not.toHaveBeenCalled();
+    expect(api.filters).toBe(first);
+    expect(window.location.search).toBe('?severity=info');
+  });
+});

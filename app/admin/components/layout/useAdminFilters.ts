@@ -50,6 +50,14 @@ export interface AdminFilters<S> {
   clear: () => void;
   /** Every field at its default (drives Clear's disabled state). */
   isDefault: boolean;
+  /**
+   * The search string the URL WOULD have after `setFilters(patch)`: '' or
+   * '?a=b' (L-2a, the same-page filter tile's real link). The same projection
+   * as the write (U-3 defaults omitted, aliases dropped, unrelated keys such as
+   * `tab` kept). No pathname: the page prepends its own, so the hook needs no
+   * `usePathname`. Writes nothing and changes no state.
+   */
+  hrefFor: (patch: Partial<S>) => string;
 }
 
 /** Search-params shape this hook reads: Next's ReadonlyURLSearchParams or a plain URLSearchParams. */
@@ -187,7 +195,17 @@ export function useAdminFilters<S extends object>(spec: AdminFilterSpec<S>): Adm
     [filters, spec],
   );
 
-  return { filters, setFilters, clear, isDefault };
+  // From the state and the `useSearchParams` string, never `window.location`,
+  // so the server render and the client render agree (no hydration mismatch).
+  const hrefFor = useCallback(
+    (patch: Partial<S>) => {
+      const search = projectSearch(spec, mergeKeepingIdentity(spec, filters, patch), incoming ?? '');
+      return search ? `?${search}` : '';
+    },
+    [filters, incoming, spec],
+  );
+
+  return { filters, setFilters, clear, isDefault, hrefFor };
 }
 
 /** One string param: empty means absent; `isValid` false means ignored (U-4). */

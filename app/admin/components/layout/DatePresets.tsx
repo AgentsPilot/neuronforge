@@ -14,14 +14,21 @@
  * Only "From after To" is refused here (and real dates, which the native input
  * guarantees). Route-specific caps such as finance's 92 days are not this
  * control's rules (SA Q-11).
+ *
+ * L-2a: a page may add its own extra windows (`extras`, D-2 (b)), shown after
+ * Custom with the same pressed and second-click rules, and may require both
+ * dates before Apply (`requireBothDates`, for a route that cannot take a
+ * one-sided window).
  */
 
 import { useId, useState } from 'react';
 
 import {
+  ADMIN_WINDOW_EXTRA_LABELS,
   ADMIN_WINDOW_LABELS,
   resolveWindow,
   windowEquals,
+  type AdminWindowExtra,
   type AdminWindowValue,
 } from './adminWindow';
 import { ADMIN_WINDOW_PRESETS } from '@/app/admin/components/adminWindowPresets';
@@ -42,19 +49,27 @@ export interface DatePresetsProps {
   /** The page's default window: where a second click on the pressed preset goes back to (SA M-2). */
   defaultValue: AdminWindowValue;
   onChange: (next: AdminWindowValue) => void;
+  /** The page's own extra windows, after Custom (D-2 (b)). Default none. */
+  extras?: readonly AdminWindowExtra[];
+  /** Apply needs both dates; the "both empty goes back to the default" rule then does not apply. Default false. */
+  requireBothDates?: boolean;
 }
 
-/** What the inputs start from: the applied custom dates, the applied preset's dates, else empty. */
+/**
+ * What the inputs start from: the applied custom dates, the applied preset's
+ * or extra's dates, else empty (a linked value, or an extra that resolves to
+ * instants, such as 24 hours).
+ */
 function draftFrom(value: AdminWindowValue): { from: string; to: string } {
   if (value.kind === 'custom') return { from: value.from ?? '', to: value.to ?? '' };
-  if (value.kind === 'preset') {
+  if (value.kind === 'preset' || value.kind === 'extra') {
     const resolved = resolveWindow(value, new Date());
     if (resolved.kind === 'dates') return { from: resolved.from ?? '', to: resolved.to ?? '' };
   }
   return { from: '', to: '' };
 }
 
-export function DatePresets({ value, defaultValue, onChange }: DatePresetsProps) {
+export function DatePresets({ value, defaultValue, onChange, extras = [], requireBothDates = false }: DatePresetsProps) {
   const fromId = useId();
   const toId = useId();
   const [open, setOpen] = useState(false);
@@ -73,7 +88,8 @@ export function DatePresets({ value, defaultValue, onChange }: DatePresetsProps)
 
   const showRow = open || value.kind === 'custom';
   const bothEmpty = draft.from === '' && draft.to === '';
-  const canApply = !bothEmpty || value.kind === 'custom';
+  const bothSet = draft.from !== '' && draft.to !== '';
+  const canApply = requireBothDates ? bothSet : !bothEmpty || value.kind === 'custom';
 
   const pickPreset = (next: AdminWindowValue) => {
     setOpen(false);
@@ -89,6 +105,7 @@ export function DatePresets({ value, defaultValue, onChange }: DatePresetsProps)
   };
 
   const apply = () => {
+    if (requireBothDates && !bothSet) return;
     if (bothEmpty) {
       onChange(defaultValue);
       return;
@@ -131,6 +148,20 @@ export function DatePresets({ value, defaultValue, onChange }: DatePresetsProps)
         >
           {ADMIN_WINDOW_LABELS.custom}
         </button>
+        {extras.map((extra) => {
+          const pressed = value.kind === 'extra' && value.extra === extra;
+          return (
+            <button
+              key={extra}
+              type="button"
+              aria-pressed={pressed}
+              onClick={() => pickPreset({ kind: 'extra', extra })}
+              className={buttonClass(pressed)}
+            >
+              {ADMIN_WINDOW_EXTRA_LABELS[extra]}
+            </button>
+          );
+        })}
       </div>
 
       {showRow && (

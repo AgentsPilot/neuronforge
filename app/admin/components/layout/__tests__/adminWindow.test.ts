@@ -5,6 +5,8 @@
  */
 
 import {
+  ADMIN_WINDOW_EXTRA_LABELS,
+  ADMIN_WINDOW_EXTRAS,
   boundForm,
   linkedWindowLabel,
   parseWindow,
@@ -189,5 +191,66 @@ describe('linkedWindowLabel', () => {
   it('is one-sided both ways, and shows a date as is', () => {
     expect(linkedWindowLabel({ from: null, to: '2026-09-29T16:51' })).toBe('Linked window up to 2026-09-29 16:51 UTC');
     expect(linkedWindowLabel({ from: '2026-09-25', to: '2026-09-26T10:30' })).toBe('Linked window 2026-09-25 to 2026-09-26 10:30 UTC');
+  });
+});
+
+describe('window extras (L-2a, D-2 (b))', () => {
+  const withExtras = (query: string) => parseWindow(getter(query), ['24h', '90d']);
+
+  it('are 24 hours and 90 days, labelled in words', () => {
+    expect(ADMIN_WINDOW_EXTRAS).toEqual(['24h', '90d']);
+    expect(ADMIN_WINDOW_EXTRA_LABELS).toEqual({ '24h': '24 hours', '90d': '90 days' });
+  });
+
+  it('range=24h / range=90d parse only when the page lists them (U-4 for every other page)', () => {
+    expect(withExtras('range=24h')).toEqual({ kind: 'extra', extra: '24h' });
+    expect(withExtras('range=90d')).toEqual({ kind: 'extra', extra: '90d' });
+    expect(parse('range=24h')).toBeUndefined();
+    expect(parse('range=90d')).toBeUndefined();
+    expect(parseWindow(getter('range=90d'), ['24h'])).toBeUndefined();
+    // A preset is still a preset, and an unknown range still falls through to the bounds.
+    expect(withExtras('range=7d')).toEqual({ kind: 'preset', preset: '7d' });
+    expect(withExtras('range=48h&from=2026-10-01&to=2026-10-05')).toEqual({ kind: 'custom', from: '2026-10-01', to: '2026-10-05' });
+  });
+
+  it('a listed extra wins over bounds beside it, as a preset does', () => {
+    expect(withExtras('range=90d&from=2026-10-01&to=2026-10-05')).toEqual({ kind: 'extra', extra: '90d' });
+  });
+
+  it('serialises to range, compares by value, and round trips', () => {
+    expect(serialiseWindow({ kind: 'extra', extra: '24h' })).toEqual({ range: '24h' });
+    expect(serialiseWindow({ kind: 'extra', extra: '90d' })).toEqual({ range: '90d' });
+    expect(windowEquals({ kind: 'extra', extra: '90d' }, { kind: 'extra', extra: '90d' })).toBe(true);
+    expect(windowEquals({ kind: 'extra', extra: '90d' }, { kind: 'extra', extra: '24h' })).toBe(false);
+    expect(windowEquals({ kind: 'extra', extra: '90d' }, { kind: 'preset', preset: '30d' })).toBe(false);
+    for (const extra of ADMIN_WINDOW_EXTRAS) {
+      const params = new URLSearchParams(serialiseWindow({ kind: 'extra', extra }) as Record<string, string>);
+      expect(withExtras(params.toString())).toEqual({ kind: 'extra', extra });
+    }
+  });
+
+  it('windowFilter parses the extras it is given, and none by default', () => {
+    const listed = windowFilter({ defaultValue: { kind: 'none' }, extras: ['90d'] });
+    const unlisted = windowFilter({ defaultValue: { kind: 'none' } });
+    expect(listed.parse(getter('range=90d'))).toEqual({ kind: 'extra', extra: '90d' });
+    expect(listed.parse(getter('range=24h'))).toBeUndefined();
+    expect(unlisted.parse(getter('range=90d'))).toBeUndefined();
+    expect(unlisted.parse(getter('range=7d'))).toEqual({ kind: 'preset', preset: '7d' });
+  });
+
+  it('resolveWindow: 90 days is the last 90 UTC calendar days including today; 24 hours is now minus 24 h to now', () => {
+    const now = new Date('2026-10-11T09:15:00.000Z');
+    expect(resolveWindow({ kind: 'extra', extra: '90d' }, now)).toEqual({ kind: 'dates', from: '2026-07-14', to: '2026-10-11' });
+    expect(resolveWindow({ kind: 'extra', extra: '24h' }, now)).toEqual({
+      kind: 'linked',
+      from: '2026-10-10T09:15:00.000Z',
+      to: '2026-10-11T09:15:00.000Z',
+    });
+    // Across a year boundary, in UTC whatever the clock's local zone.
+    expect(resolveWindow({ kind: 'extra', extra: '90d' }, new Date('2026-01-01T00:30:00.000Z'))).toEqual({
+      kind: 'dates',
+      from: '2025-10-04',
+      to: '2026-01-01',
+    });
   });
 });

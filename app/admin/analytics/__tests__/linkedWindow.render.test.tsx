@@ -6,6 +6,12 @@
  * AI cost & usage — the exact-window deep link from the Health landing (admin
  * reorganisation slice 4, SA C-9). Both bounds or neither; ISO with an offset;
  * sent verbatim; any period change clears it.
+ *
+ * L-2a: the parse rule moved into `analyticsFilters.ts` (its unit cases moved
+ * to `analyticsFilters.test.ts`), the chip is the shared bar's
+ * (`linked-window-chip`, X "Remove linked window"), the window buttons carry the
+ * standard labels and `aria-pressed`, and the URL follows the standard contract
+ * (BOS scope is the default, so it is omitted; `user` is rewritten to `account`).
  */
 
 import React from 'react';
@@ -21,6 +27,12 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// RC-1 (L-2a): the page and the shared business picker log through `clientLogger.child`.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
+
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(mockSearch),
@@ -28,7 +40,6 @@ jest.mock('next/navigation', () => ({
 }));
 
 import AdminCostAnalytics from '../page';
-import { parseLinkedWindow, urlWithoutLinkedWindow } from '../linkedWindow';
 
 const FROM = '2026-09-25T08:14:00.000Z';
 const TO = '2026-09-26T08:14:00.000Z';
@@ -67,26 +78,6 @@ function linkTo(query: string) {
   window.history.replaceState(null, '', `/admin/analytics?${query}`);
 }
 
-describe('parseLinkedWindow', () => {
-  const p = (q: string) => parseLinkedWindow(new URLSearchParams(q));
-
-  it('accepts both bounds as ISO with an offset', () => {
-    expect(p(`dateFrom=${FROM}&dateTo=${TO}`)).toEqual({ from: FROM, to: TO });
-    expect(p('dateFrom=2026-09-25T08:14:00%2B03:00&dateTo=2026-09-26T08:14:00%2B03:00')).not.toBeNull();
-  });
-
-  it.each([
-    [`dateFrom=${FROM}`],
-    [`dateTo=${TO}`],
-    ['dateFrom=2026-09-25T08:14&dateTo=2026-09-26T08:14'], // no offset
-    ['dateFrom=2026-09-25&dateTo=2026-09-26'], // date only
-    [`dateFrom=${TO}&dateTo=${FROM}`], // reversed
-    ['dateFrom=garbage&dateTo=nonsense'],
-  ])('ignores both for %s', (q) => {
-    expect(p(q)).toBeNull();
-  });
-});
-
 describe('the page', () => {
   it('sends a linked window verbatim, with scope=bos, and shows the chip', async () => {
     mockSearch = `scope=bos&dateFrom=${FROM}&dateTo=${TO}`;
@@ -99,7 +90,7 @@ describe('the page', () => {
     expect(q.get('dateTo')).toBe(TO);
     expect(q.get('scope')).toBe('bos');
     expect(q.get('period')).toBeNull();
-    expect((await screen.findByTestId('linked-window')).textContent).toContain('2026-09-25 08:14');
+    expect((await screen.findByTestId('linked-window-chip')).textContent).toContain('2026-09-25 08:14');
   });
 
   it('ignores an invalid pair and falls back to the default period', async () => {
@@ -111,18 +102,18 @@ describe('the page', () => {
     const q = firstQuery(fetchMock);
     expect(q.get('dateFrom')).toBeNull();
     expect(q.get('period')).toBe('30');
-    expect(screen.queryByTestId('linked-window')).toBeNull();
+    expect(screen.queryByTestId('linked-window-chip')).toBeNull();
   });
 
   it('a period change clears the linked window', async () => {
     mockSearch = `dateFrom=${FROM}&dateTo=${TO}`;
     const fetchMock = mockRoute();
     render(<AdminCostAnalytics />);
-    await screen.findByTestId('linked-window');
+    await screen.findByTestId('linked-window-chip');
 
-    fireEvent.click(screen.getByRole('button', { name: '7d' }));
+    fireEvent.click(screen.getByRole('button', { name: '7 days' }));
 
-    await waitFor(() => expect(screen.queryByTestId('linked-window')).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId('linked-window-chip')).toBeNull());
     await waitFor(() => {
       const last = new URL(String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0]), 'http://x').searchParams;
       expect(last.get('period')).toBe('7');
@@ -134,23 +125,26 @@ describe('the page', () => {
     linkTo(`scope=bos&user=99999999-9999-4999-8999-999999999999&dateFrom=${FROM}&dateTo=${TO}`);
     mockRoute();
     render(<AdminCostAnalytics />);
-    await screen.findByTestId('linked-window');
-    fireEvent.click(screen.getByRole('button', { name: 'Clear the linked window' }));
-    await waitFor(() => expect(screen.queryByTestId('linked-window')).toBeNull());
+    await screen.findByTestId('linked-window-chip');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove linked window' }));
+    await waitFor(() => expect(screen.queryByTestId('linked-window-chip')).toBeNull());
     const params = new URLSearchParams(window.location.search);
     expect(params.get('dateFrom')).toBeNull();
     expect(params.get('dateTo')).toBeNull();
-    // Other parameters survive.
-    expect(params.get('scope')).toBe('bos');
-    expect(params.get('user')).toBe('99999999-9999-4999-8999-999999999999');
+    expect(params.get('from')).toBeNull();
+    expect(params.get('to')).toBeNull();
+    // The business survives under its standard name (U-9); BOS scope is the default, so it is omitted (U-3).
+    expect(params.get('account')).toBe('99999999-9999-4999-8999-999999999999');
+    expect(params.get('user')).toBeNull();
+    expect(params.get('scope')).toBeNull();
   });
 
   it('a preset click also removes the window from the URL', async () => {
     linkTo(`dateFrom=${FROM}&dateTo=${TO}`);
     mockRoute();
     render(<AdminCostAnalytics />);
-    await screen.findByTestId('linked-window');
-    fireEvent.click(screen.getByRole('button', { name: '24h' }));
+    await screen.findByTestId('linked-window-chip');
+    fireEvent.click(screen.getByRole('button', { name: '24 hours' }));
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('dateFrom')).toBeNull());
   });
 
@@ -158,24 +152,11 @@ describe('the page', () => {
     linkTo(`dateFrom=${FROM}&dateTo=${TO}`);
     mockRoute();
     render(<AdminCostAnalytics />);
-    await screen.findByTestId('linked-window');
-    for (const label of ['24h', '7d', '30d', '90d']) {
-      expect(screen.getByRole('button', { name: label }).className).not.toContain('bg-purple-500');
+    await screen.findByTestId('linked-window-chip');
+    for (const label of ['24 hours', '7 days', '30 days', '90 days']) {
+      expect(screen.getByRole('button', { name: label }).getAttribute('aria-pressed')).toBe('false');
     }
-    fireEvent.click(screen.getByRole('button', { name: 'Clear the linked window' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '30d' }).className).toContain('bg-purple-500'));
-  });
-});
-
-describe('urlWithoutLinkedWindow', () => {
-  it('drops only the two window parameters', () => {
-    expect(urlWithoutLinkedWindow(`http://x/admin/analytics?scope=bos&dateFrom=${FROM}&dateTo=${TO}`)).toBe(
-      '/admin/analytics?scope=bos'
-    );
-    expect(urlWithoutLinkedWindow(`http://x/admin/analytics?dateFrom=${FROM}`)).toBe('/admin/analytics');
-  });
-
-  it('returns null when there is nothing to remove', () => {
-    expect(urlWithoutLinkedWindow('http://x/admin/analytics?scope=bos')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove linked window' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '30 days' }).getAttribute('aria-pressed')).toBe('true'));
   });
 });

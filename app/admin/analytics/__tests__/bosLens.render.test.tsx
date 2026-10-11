@@ -28,6 +28,12 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// RC-1 (L-2a): the page and the shared business picker log through `clientLogger.child`.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
+
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(mockSearch),
@@ -152,7 +158,9 @@ async function rowFor(label: string): Promise<HTMLElement> {
 }
 
 async function groupBy(dim: string) {
-  fireEvent.click(await screen.findByTestId(`group-by-${dim}`));
+  // L-2a: Group by is a native select in the bar (§7.5); each option keeps its testid.
+  await screen.findByTestId(`group-by-${dim}`);
+  fireEvent.change(screen.getByTestId('group-by-select'), { target: { value: dim } });
   await waitFor(() => expect(lastQuery().get('breakdownBy')).toBe(dim));
 }
 
