@@ -1,12 +1,12 @@
 # Workplan: Admin Layout Standard — Slice L-1b (KPI strip and tile, status chip, admin dialog class → pilot Scheduled jobs & queues)
 
-> **Last Updated**: 2026-10-10
+> **Last Updated**: 2026-10-11
 
 **Developer:** Dev
 **Requirement:** [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md): §5.3, §5.4 (K-1 to K-10), §5.5 part 6, §5.9, §5.10, §5.11, §5.12, §6.1 (S-1 to S-10), §6.2 (C-3, C-5, C-10, C-11, C-12, C-14), §7.2, §9 (F-56, F-60, F-88, F-89), §10 (D-4, D-8, D-15), §12.2, §12.3; SA re-check RC-1 and RC-5; L-1a SA code review carry-overs CR-1 and CR-4 ([ADMIN_LAYOUT_L1A_WORKPLAN.md](/docs/workplans/ADMIN_LAYOUT_L1A_WORKPLAN.md))
 **Branch:** `feature/admin-layout-l1b`, cut from `origin/main` `a42bae2a` (L-1a merged as PR #285; finance page PR #284 also on main). Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-10
-**Status:** Code Complete — uncommitted, awaiting SA code review (workplan SA-approved with conditions 2026-10-10; M-1 to M-3 met, S-1, S-2, S-4 done; see Implementation Notes)
+**Status:** Committed (`ea6f4ce9`) — PR #287 open, awaiting required checks + user merge. SA code-approved and QA passed with notes 2026-10-10; user approved the diff 2026-10-11. Browser check (SA S-3) owed
 **Path:** full cycle (new shared patterns, CLAUDE.md rule 7)
 
 ## Overview
@@ -679,3 +679,4 @@ Do items 1 to 7 twice: DevTools → Rendering → "Emulate CSS media feature pre
 | 2026-10-10 | Dev implementation | T-1 to T-14 done, uncommitted. M-1 to M-3 met; S-1, S-2, S-4 done; deviations DV-1 to DV-6; verification V-1 to V-6 recorded (1101 + 6057 tests green, scoped tsc canary then clean, ESLint clean) |
 | 2026-10-10 | SA code review | CODE APPROVED for QA: M-1 to M-3, S-1, S-2, S-4 met; scope clean; Jobs pins hold; dialog specificity verified against `dialog.tsx`; 445 tests re-run green. CR-1 and CR-2 low should-fix (requirement status cell, pending promise in the S-2 test); S-3 is with QA (V-7) |
 | 2026-10-10 | QA report | PASS WITH NOTES: 1101 + 6057 tests green; scoped tsc canary (2 planted errors) then 0; 30 throwaway edge cases green and deleted; no bugs; edge cases E-1 to E-3 (Low); browser checklist (incl. SA S-3 computed style, F-88 seen or not seen) owed by TL |
+| 2026-10-11 | Committed + PR (RM) | User approved the diff; slice committed as `ea6f4ce9` on `feature/admin-layout-l1b`, origin/main merged in (`5ecee3a8`, clean; main brought only `app/admin/users` boost-block files into app/admin), tests re-run green (1101 + 6219), PR #287 opened — awaiting required checks + user merge |

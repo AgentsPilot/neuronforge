@@ -56,4 +56,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Before planning a shared component, scan main for what other sessions merged since the requirement was written.
 - Get a signed-in admin browser (in-app pane or Chrome extension) set up before L-1c, so the owed checks are cleared together.
 
-### Status: APPROVED by user 2026-10-11 — commit + PR pending (RM)
+### Status: COMMITTED — feature/admin-layout-l1b — ea6f4ce9, PR #287
