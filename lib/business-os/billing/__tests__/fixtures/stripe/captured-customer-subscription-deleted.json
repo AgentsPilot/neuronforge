@@ -1,0 +1,216 @@
+{
+  "_fixture_source": "CAPTURED (2025-09-30.clover) from the AgentsPilot Stripe sandbox (test mode) by `stripe listen` during the P-3b.2 live demo run of 2026-10-09 (workplan §9 / T26, SA Q-9 / C-6): the customer.subscription.deleted event when the demo subscription was cancelled on 2026-10-11. Personal data scrubbed before commit: customer email/name/address/phone, hosted_invoice_url, invoice_pdf and checkout client_secret replaced with placeholders, and the bos_user_id metadata value replaced with a fake UUID. Ids, prices, amounts, statuses, timestamps, metadata keys and api_version are as Stripe sent them.",
+  "api_version": "2025-09-30.clover",
+  "created": 1791727351,
+  "data": {
+    "object": {
+      "application": null,
+      "application_fee_percent": null,
+      "automatic_tax": {
+        "disabled_reason": null,
+        "enabled": false,
+        "liability": null
+      },
+      "billing_cycle_anchor": 1791541460,
+      "billing_cycle_anchor_config": null,
+      "billing_mode": {
+        "flexible": {
+          "proration_discounts": "included"
+        },
+        "type": "flexible",
+        "updated_at": 1791541348
+      },
+      "billing_thresholds": null,
+      "cancel_at": null,
+      "cancel_at_period_end": false,
+      "canceled_at": 1791727351,
+      "cancellation_details": {
+        "comment": null,
+        "feedback": null,
+        "feedback_option": null,
+        "reason": "cancellation_requested"
+      },
+      "collection_method": "charge_automatically",
+      "created": 1791541460,
+      "currency": "usd",
+      "customer": "cus_VPPm24dSEgPBjT",
+      "customer_account": null,
+      "days_until_due": null,
+      "default_payment_method": "pm_1UOayN56GTXD0wwiuqmryuOG",
+      "default_source": null,
+      "default_tax_rates": [],
+      "description": null,
+      "discounts": [],
+      "ended_at": 1791727351,
+      "id": "sub_1UOayP56GTXD0wwiRAo7opmW",
+      "invoice_settings": {
+        "account_tax_ids": null,
+        "custom_fields": null,
+        "description": null,
+        "footer": null,
+        "issuer": {
+          "type": "self"
+        }
+      },
+      "items": {
+        "data": [
+          {
+            "billing_thresholds": null,
+            "created": 1791541460,
+            "current_period_end": 1794219860,
+            "current_period_start": 1791541460,
+            "current_trial": null,
+            "discounts": [],
+            "id": "si_VPPoFYIhJ8KnbN",
+            "metadata": {},
+            "object": "subscription_item",
+            "plan": {
+              "active": true,
+              "amount": 7900,
+              "amount_decimal": "7900",
+              "billing_scheme": "per_unit",
+              "created": 1791316677,
+              "currency": "usd",
+              "id": "price_1UNeUr56GTXD0wwiTXnG5mek",
+              "interval": "month",
+              "interval_count": 1,
+              "livemode": false,
+              "metadata": {
+                "product": "business_os_plan"
+              },
+              "meter": null,
+              "nickname": "bos basic monthly usd",
+              "object": "plan",
+              "product": "bos_plan_basic",
+              "tiers_mode": null,
+              "transform_usage": null,
+              "trial_period_days": null,
+              "usage_type": "licensed"
+            },
+            "price": {
+              "active": true,
+              "billing_scheme": "per_unit",
+              "created": 1791316677,
+              "currency": "usd",
+              "custom_unit_amount": null,
+              "id": "price_1UNeUr56GTXD0wwiTXnG5mek",
+              "livemode": false,
+              "lookup_key": "bos_plan_basic_monthly_usd",
+              "metadata": {
+                "product": "business_os_plan"
+              },
+              "nickname": "bos basic monthly usd",
+              "object": "price",
+              "product": "bos_plan_basic",
+              "recurring": {
+                "interval": "month",
+                "interval_count": 1,
+                "meter": null,
+                "trial_period_days": null,
+                "usage_type": "licensed"
+              },
+              "tax_behavior": "exclusive",
+              "tiers_mode": null,
+              "transform_quantity": null,
+              "type": "recurring",
+              "unit_amount": 7900,
+              "unit_amount_decimal": "7900"
+            },
+            "quantity": 1,
+            "subscription": "sub_1UOayP56GTXD0wwiRAo7opmW",
+            "tax_rates": []
+          }
+        ],
+        "has_more": false,
+        "object": "list",
+        "total_count": 1,
+        "url": "/v1/subscription_items?subscription=sub_1UOayP56GTXD0wwiRAo7opmW"
+      },
+      "latest_invoice": "in_1UOayO56GTXD0wwizYihw0Rd",
+      "livemode": false,
+      "managed_payments": {
+        "enabled": false
+      },
+      "metadata": {
+        "bos_user_id": "00000000-0000-4000-8000-0000000000c6",
+        "product": "business_os_plan"
+      },
+      "next_pending_invoice_item_invoice": null,
+      "object": "subscription",
+      "on_behalf_of": null,
+      "pause_collection": null,
+      "payment_settings": {
+        "payment_method_options": {
+          "acss_debit": null,
+          "bancontact": null,
+          "billie": null,
+          "blik": null,
+          "card": {
+            "network": null,
+            "request_three_d_secure": "automatic"
+          },
+          "customer_balance": null,
+          "konbini": null,
+          "payto": null,
+          "pix": null,
+          "sepa_debit": null,
+          "upi": null,
+          "us_bank_account": null
+        },
+        "payment_method_types": [
+          "card"
+        ],
+        "save_default_payment_method": "off"
+      },
+      "pending_invoice_item_interval": null,
+      "pending_setup_intent": null,
+      "pending_update": null,
+      "plan": {
+        "active": true,
+        "amount": 7900,
+        "amount_decimal": "7900",
+        "billing_scheme": "per_unit",
+        "created": 1791316677,
+        "currency": "usd",
+        "id": "price_1UNeUr56GTXD0wwiTXnG5mek",
+        "interval": "month",
+        "interval_count": 1,
+        "livemode": false,
+        "metadata": {
+          "product": "business_os_plan"
+        },
+        "meter": null,
+        "nickname": "bos basic monthly usd",
+        "object": "plan",
+        "product": "bos_plan_basic",
+        "tiers_mode": null,
+        "transform_usage": null,
+        "trial_period_days": null,
+        "usage_type": "licensed"
+      },
+      "quantity": 1,
+      "schedule": null,
+      "start_date": 1791541460,
+      "status": "canceled",
+      "test_clock": null,
+      "transfer_data": null,
+      "trial_end": null,
+      "trial_settings": {
+        "end_behavior": {
+          "billing_cycle_anchor": "now",
+          "missing_payment_method": "create_invoice"
+        }
+      },
+      "trial_start": null
+    }
+  },
+  "id": "evt_1UPNKd56GTXD0wwisRK9pmnj",
+  "livemode": false,
+  "object": "event",
+  "pending_webhooks": 2,
+  "request": {
+    "id": "req_6HzcJTMYMZH0vu",
+    "idempotency_key": null
+  },
+  "type": "customer.subscription.deleted"
+}

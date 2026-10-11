@@ -13926,7 +13926,7 @@ exports[`Stripe webhook, platform path through the Business OS router (P-1) P2. 
 }
 `;
 
-exports[`Stripe webhook, platform path through the Business OS router (P-1) P3. invoice.paid on a price the catalog knows: no handler yet, claim released, 500 1`] = `
+exports[`Stripe webhook, platform path through the Business OS router (P-1) P3. invoice.paid on a known price, ids not Stripe-shaped: the plan handler refuses to write, claim released, 500 1`] = `
 {
   "body": {
     "error": "Webhook processing failed",
@@ -13980,7 +13980,7 @@ exports[`Stripe webhook, platform path through the Business OS router (P-1) P3. 
         [
           "update",
           {
-            "failure_message": "No Business OS handler is registered for flow 'plan'",
+            "failure_message": "invalid_input",
             "status": "failed",
           },
         ],

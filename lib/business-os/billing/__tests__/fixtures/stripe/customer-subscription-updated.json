@@ -1,0 +1,59 @@
+{
+  "_fixture_source": "HAND-BUILT, Basil-shaped (2025-10-29.clover). NOT a captured payload: a customer.subscription.updated event for a plan subscription. Replace with the payload captured during the P-3b local demo (workplan §9, SA Q-9 / C-6), labelled with its real api_version.",
+  "id": "evt_handbuilt_subscription_updated",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "created": 1790600000,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": {
+    "id": null,
+    "idempotency_key": null
+  },
+  "type": "customer.subscription.updated",
+  "data": {
+    "object": {
+      "id": "sub_probe_1",
+      "object": "subscription",
+      "billing_cycle_anchor": 1790000000,
+      "cancel_at_period_end": true,
+      "canceled_at": null,
+      "created": 1790000000,
+      "currency": "usd",
+      "customer": "cus_probe_1",
+      "ended_at": null,
+      "items": {
+        "object": "list",
+        "data": [
+          {
+            "id": "si_probe_1",
+            "object": "subscription_item",
+            "current_period_end": 1792592000,
+            "current_period_start": 1790000000,
+            "price": {
+              "id": "price_probe_a_handbuilt",
+              "object": "price",
+              "currency": "usd",
+              "lookup_key": null,
+              "unit_amount": 2000
+            },
+            "quantity": 1,
+            "subscription": "sub_probe_1"
+          }
+        ],
+        "has_more": false,
+        "total_count": 1,
+        "url": "/v1/subscription_items?subscription=sub_probe_1"
+      },
+      "livemode": false,
+      "metadata": {
+        "product": "business_os_plan",
+        "bos_user_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "status": "active"
+    },
+    "previous_attributes": {
+      "cancel_at_period_end": false
+    }
+  }
+}

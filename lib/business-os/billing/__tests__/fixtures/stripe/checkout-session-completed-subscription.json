@@ -1,0 +1,36 @@
+{
+  "_fixture_source": "HAND-BUILT, Basil-shaped (2025-10-29.clover). NOT a captured payload: a checkout.session.completed event for an embedded subscription-mode plan checkout (P-3a). Replace with the payload captured during the P-3b local demo (workplan §9, SA Q-9 / C-6), labelled with its real api_version.",
+  "id": "evt_handbuilt_session_completed",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "created": 1790000050,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": {
+    "id": null,
+    "idempotency_key": null
+  },
+  "type": "checkout.session.completed",
+  "data": {
+    "object": {
+      "id": "cs_test_handbuilt_1",
+      "object": "checkout.session",
+      "amount_subtotal": 2000,
+      "amount_total": 2000,
+      "currency": "usd",
+      "customer": "cus_probe_1",
+      "customer_email": null,
+      "expires_at": 1790001860,
+      "livemode": false,
+      "metadata": {
+        "product": "business_os_plan",
+        "bos_user_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "mode": "subscription",
+      "payment_status": "paid",
+      "status": "complete",
+      "subscription": "sub_probe_1",
+      "ui_mode": "embedded"
+    }
+  }
+}

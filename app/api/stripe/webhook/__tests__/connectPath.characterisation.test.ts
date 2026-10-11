@@ -761,7 +761,12 @@ describe('Stripe webhook, platform path through the Business OS router (P-1)', (
     expect(logged('bos_billing_event_denied')).toEqual([{ level: 'warn', reason: 'unknown_price', alert: undefined }]);
   });
 
-  it('P3. invoice.paid on a price the catalog knows: no handler yet, claim released, 500', async () => {
+  // Plan payments P-3b.2 (SA F-1, with the CF-5 session's written agreement):
+  // the `plan` handler is now registered, so this no longer pins "no handler
+  // yet". The fixture's ids are not Stripe-shaped, so the handler refuses to
+  // write and the claim is released. The handler's return path is covered by
+  // `planHandler.route.test.ts` (F-2).
+  it('P3. invoice.paid on a known price, ids not Stripe-shaped: the plan handler refuses to write, claim released, 500', async () => {
     const result = await run({
       fixtureDir: 'platform',
       fixture: 'invoice-paid-known-price.json',
@@ -772,7 +777,7 @@ describe('Stripe webhook, platform path through the Business OS router (P-1)', (
     expect(claimStatus(result)).toBe('failed');
     expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
     expect(logged('bos_billing_event_denied')).toEqual([]);
-    expect(logged('bos_billing_plan_unhandled')).toEqual([{ level: 'warn', reason: undefined, alert: undefined }]);
+    expect(logged('bos_billing_plan_unhandled')).toEqual([]);
   });
 
   it('P4. invoice.paid, unknown price but a Business OS marker: denied and alerted', async () => {
