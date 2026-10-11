@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md): §1 (row 8), §3, §4.6, §5.3, §5.4 (K-1 to K-10), §5.5 (Refresh-only bar), §5.7, §5.9, §5.10, §5.11, §5.12, §6.1, §6.2 C-2, C-3, C-4, C-5, C-10, C-11, C-12, C-13, C-14, §7.6, §9 F-61 to F-64, F-88, §10 D-4 (a), D-8 (a); SA rulings Q-3 (one alias line), Q-12 (retention select stays Radix), re-check R-7 (a page slice that builds a shared export runs the full cycle)
 **Branch:** `feature/admin-layout-l3`, cut from `feature/admin-layout-l2b` at `daa1d814` (PR #296, which carries L-2a #295; both open). The L-3 PR targets `main` and carries them until they merge. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-11
-**Status:** Code Complete (2026-10-11, uncommitted) — next SA code review → QA → RM. Workplan SA-reviewed — APPROVED WITH CONDITIONS (2026-10-11; M-1 to M-5 applied before coding)
+**Status:** Committed (2026-10-11) — commit 4bcf33d1 on `feature/admin-layout-l3`, PR #298 open against main (fast-track: SA code review approved, QA PASS WITH NOTES); awaiting checks + user merge
 **Path:** **Full cycle by classification** (R-7): L-3 builds two shared exports no pilot needed, the `badge` prop of `AdminPageHeader` and the `neutral` tone of `StatusChip`. Both were deferred to "the first page with a factual badge" (§1 rows 1, 2, 3); the "Runs off" badge is that page. Run as SA workplan review → Dev → SA code review → QA → RM under the user's fast-track (RM commits and opens the PR after SA and QA, without a user diff review)
 
 ## Overview
@@ -648,3 +648,4 @@ None. One GET on load, one per Refresh / Try again, one POST plus one GET per ru
 | 2026-10-11 | SA workplan review | APPROVED WITH CONDITIONS: Q-1 to Q-8 ruled (strip built; Last run red / amber only; `badge` as data; `neutral` without icon; run POST keeps its own copy; three negative-control assertions; server "As of"; full cycle); failed refresh keeps clearing; M-1 to M-5 before coding, S-1 to S-8 at code review; no product question |
 | 2026-10-11 | Implemented | Dev: M-1 to M-5 applied to this workplan; code complete, uncommitted; V-1 to V-8 green (61 suites / 1,807 tests; canary-proven scoped tsc; 11 mutations each red); deviations and user-visible changes in Implementation Notes; requirement records updated |
 | 2026-10-11 | QA | PASS WITH NOTES: 61 suites / 1,807 tests and entitlements 233 / 6,382 green; canary-proven scoped tsc clean; 47 throwaway probes passed (deleted); no bugs, 4 Low edge cases; browser checks B-1 to B-10 for TL |
+| 2026-10-11 | Committed + PR | RM fast-track: commit 4bcf33d1, origin/main e3c9789d merged in (no file changes), PR #298; Jest 61 / 1,807, entitlements 233 / 6,382, lint:hooks clean |
