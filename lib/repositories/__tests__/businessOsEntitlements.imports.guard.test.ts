@@ -157,6 +157,12 @@ const ALLOWED = new Set(
     // else (the slice 11c test below pins the one method). Listed in
     // NO_STATE_WRITE_REFERRERS below.
     'lib/business-os/credits/adminCreditPositionDeps.ts',
+    // ── Credits boost slice 6a, 2026-10-09 — the admin "Credit top-ups" view ──
+    // The route passes the plan repository to the tenant check, exactly as the
+    // 11c route above does: READ ONLY through `isBusinessOsTenant`. An admin
+    // route, gated by `requireAdmin`. Its test replaces the repository with a fake.
+    'app/api/admin/business-os/credits/accounts/[accountId]/boost/route.ts',
+    'app/api/admin/business-os/credits/accounts/[accountId]/boost/__tests__/route.test.ts',
     // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
     // READ ONLY, `findPeriodAnchorsBatch` and nothing else (SA SQ-43). The one
     // file that wires the plan repository for the admin Businesses list's

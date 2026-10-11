@@ -15,7 +15,9 @@
  *
  * Imports from lib/admin/jobs and lib/cron are `import type` only (C-21).
  * The shared Dialog primitive falls back to light colours on the admin shell;
- * the `!` classes override that (the ArchiveConfirmDialog precedent).
+ * the shared admin dialog classes (`ADMIN_DIALOG_CLASS` and its title and
+ * description companions, Admin Layout Standard C-10) override that and make
+ * the corner close readable in the light scheme (F-88).
  */
 
 import { useId, useState } from 'react';
@@ -29,13 +31,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { createLogger } from '@/lib/logger';
+import { clientLogger } from '@/lib/logger/client';
+import {
+  ADMIN_DIALOG_CLASS,
+  ADMIN_DIALOG_DESCRIPTION_CLASS,
+  ADMIN_DIALOG_TITLE_CLASS,
+} from '@/app/admin/components/layout/adminDialog';
+import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import type { BosQueueId } from '@/lib/cron/bosCronJobs';
 import type { DrainCount, DrainResult } from '@/lib/admin/jobs/jobsQueuesTypes';
 
-const logger = createLogger({ module: 'AdminDrainNowDialog' });
+const logger = clientLogger.child({ module: 'AdminDrainNowDialog' });
 
-const DARK_DIALOG = '!border-slate-700 !bg-slate-900 !text-slate-100';
 const REASON_MIN = 3;
 const REASON_MAX = 500;
 
@@ -167,7 +174,8 @@ export function DrainNowDialog({ queueId, queueLabel, drainedByLabel, onDrained 
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ queue: queueId, reason: reason.trim() }),
       });
-      const body: unknown = await response.json().catch(() => null);
+      // A body that is not a JSON object reads as null, as an unparseable one always did.
+      const body: unknown = await readJsonBody(response);
       if (response.ok && isDrainResult(body)) {
         setResult({ counts: body.data.counts, durationMs: body.data.durationMs });
         onDrained();
@@ -198,7 +206,7 @@ export function DrainNowDialog({ queueId, queueLabel, drainedByLabel, onDrained 
       </DialogTrigger>
       <DialogContent
         data-testid="drain-dialog"
-        className={DARK_DIALOG}
+        className={ADMIN_DIALOG_CLASS}
         onEscapeKeyDown={(event) => {
           if (busy) event.preventDefault();
         }}
@@ -207,8 +215,8 @@ export function DrainNowDialog({ queueId, queueLabel, drainedByLabel, onDrained 
         }}
       >
         <DialogHeader>
-          <DialogTitle className="!text-white">Drain {queueLabel} now?</DialogTitle>
-          <DialogDescription className="!text-slate-400">
+          <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>Drain {queueLabel} now?</DialogTitle>
+          <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>
             Runs this queue&apos;s scheduled step now, the same one {drainedByLabel} runs: it recovers items whose
             run died, picks up items that are due, and processes them. Each item is checked again before it goes
             out.

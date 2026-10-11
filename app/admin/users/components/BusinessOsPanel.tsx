@@ -32,6 +32,7 @@ import {
 import type { AccountPayload } from '@/app/admin/business-os-tiers/types';
 import type { AccountSummaryPayload } from '../types';
 import { CreditsBlock } from './CreditsBlock';
+import { BoostBlock } from './BoostBlock';
 
 /**
  * Every refusal the summary route can return, as a sentence. Kept complete by a
@@ -172,6 +173,9 @@ export function BusinessOsPanel({ accountId, userName }: Props) {
 
           {/* Credits (credit deduction slice 11c): its own read, first after the header */}
           <CreditsBlock accountId={accountId} businessLabel={businessLabel} />
+
+          {/* Credit top-ups (credits boost slice 6a): its own read, after Credits */}
+          <BoostBlock accountId={accountId} />
 
           {/* Plan: the entitlements API, rendered by the Plans & entitlements
               component, collapsed by default here only (user UI fixes,
