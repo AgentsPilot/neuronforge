@@ -26,6 +26,8 @@
  * is one of the platform's own fixed labels.
  *
  * Imports from lib/admin/jobs and lib/cron are `import type` only (C-21).
+ * The dialog takes the shared admin dialog classes (Admin Layout Standard
+ * C-10), which also make the corner close readable in the light scheme (F-88).
  */
 
 import { useId, useRef, useState } from 'react';
@@ -39,13 +41,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { createLogger } from '@/lib/logger';
+import { clientLogger } from '@/lib/logger/client';
+import {
+  ADMIN_DIALOG_CLASS,
+  ADMIN_DIALOG_DESCRIPTION_CLASS,
+  ADMIN_DIALOG_TITLE_CLASS,
+} from '@/app/admin/components/layout/adminDialog';
+import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import type { BosQueueId } from '@/lib/cron/bosCronJobs';
 import type { QueueItemView } from '@/lib/admin/jobs/jobsQueuesTypes';
 
-const logger = createLogger({ module: 'AdminCancelQueueItemDialog' });
+const logger = clientLogger.child({ module: 'AdminCancelQueueItemDialog' });
 
-const DARK_DIALOG = '!border-slate-700 !bg-slate-900 !text-slate-100';
 const REASON_MIN = 3;
 const REASON_MAX = 500;
 
@@ -206,7 +213,7 @@ export function CancelQueueItemDialog({ queueId, queueLabel, item, onChanged }: 
           reason: reason.trim(),
         }),
       });
-      const body: unknown = await response.json().catch(() => null);
+      const body: unknown = await readJsonBody(response);
       const kind = classify(response.status, body);
       if (kind !== 'cancelled') {
         logger.warn({ queue: queueId, status: response.status, kind }, 'Queue item cancel did not complete');
@@ -235,7 +242,7 @@ export function CancelQueueItemDialog({ queueId, queueLabel, item, onChanged }: 
       <DialogContent
         data-testid="cancel-item-dialog"
         aria-label={`Cancel an item in ${queueLabel}`}
-        className={DARK_DIALOG}
+        className={ADMIN_DIALOG_CLASS}
         onEscapeKeyDown={(event) => {
           if (busy) event.preventDefault();
         }}
@@ -244,8 +251,8 @@ export function CancelQueueItemDialog({ queueId, queueLabel, item, onChanged }: 
         }}
       >
         <DialogHeader>
-          <DialogTitle className="!text-white">Cancel this item?</DialogTitle>
-          <DialogDescription className="!text-slate-400">
+          <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>Cancel this item?</DialogTitle>
+          <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>
             {item.kindLabel} for {item.businessName} · item {item.id.slice(0, 8)} · {item.statusLabel}
           </DialogDescription>
         </DialogHeader>

@@ -21,6 +21,11 @@ import userEvent from '@testing-library/user-event';
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), child: jest.fn().mockReturnThis() }),
 }));
+// RC-1 (Admin Layout Standard L-1b): the Jobs files log through `clientLogger.child`.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
 
 import AdminJobsQueuesPage from '../jobs-queues/page';
 import { buildJobsQueuesView } from '@/lib/admin/jobs/buildJobsQueuesView';
