@@ -1,8 +1,9 @@
 'use client';
 
 /**
- * Business OS Tiers — what the four Business OS plans are, and what none of
- * them is doing yet.
+ * Plans & entitlements (the sidebar label; this page was "Business OS Tiers"
+ * until Admin Layout Standard L-5) — what the four Business OS plans are, and
+ * what none of them is doing yet.
  *
  * ── Why this is its own page and not part of /admin/onboarding ──────────────
  * `/admin/onboarding` is the **agent platform's** free tier. Business OS is a
@@ -23,7 +24,17 @@
  * could also re-derive from it — and each re-derivation is a second copy of a
  * rule that already exists, free to drift from the resolver's. So the boundary
  * is HTTP, and `adminPlansView` is `server-only` to make that structural rather
- * than a convention.
+ * than a convention. The one import from outside this folder is the shared
+ * admin layout folder, which may not import the entitlements module either
+ * (Admin Layout Standard §6.1 S-4).
+ *
+ * ── Layout (Admin Layout Standard L-5) ──────────────────────────────────────
+ * The shared header (h1 = the sidebar label, "Read-only" as the neutral chip,
+ * the server's "As of"), the KPI strip (every figure from the one plans read),
+ * the Refresh-only bar, the shared loading and error states, then the content.
+ * A failed refresh keeps the cards on screen under the error (an existing
+ * choice): nothing here confirms an action, so stale cards mislead nobody, and
+ * the "As of" line still dates them. The strip hides while the error shows.
  *
  * ── Read-only (v1) ──────────────────────────────────────────────────────────
  * Nothing here writes. The write operations exist on the accounts route, are
@@ -33,13 +44,25 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+
+import { AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 
 import { AccountLookup } from './components/AccountLookup';
 import { EnforcementBanner } from './components/EnforcementBanner';
 import { NotBuiltPanel } from './components/NotBuiltPanel';
 import { PlanCard } from './components/PlanCard';
+import { PlansKpis } from './components/PlansKpis';
 import type { PlansPayload } from './types';
+
+/** Noun phrase for the loading line, the fallback error and the Refresh name. */
+const WHAT = 'the plans';
+
+/** §5.7 card shell. */
+const CARD = 'rounded-xl border border-slate-700 bg-slate-800/40 p-4';
 
 export default function BusinessOsTiersPage() {
   const [payload, setPayload] = useState<PlansPayload | null>(null);
@@ -50,14 +73,26 @@ export default function BusinessOsTiersPage() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/admin/business-os/entitlements/plans');
-      const body = await response.json();
-      if (!response.ok || !body?.success) {
-        throw new Error(typeof body?.error === 'string' ? body.error : 'Could not read the plans');
+      // Only the fetch sits inside this try: a rejection here is a network
+      // failure, and nothing else is ever labelled as one (§5.10 rule 3). The
+      // browser's own message is never shown (rule 4). The call keeps its one
+      // argument (F-38 is a data item, not this slice).
+      let response: Response;
+      try {
+        response = await fetch('/api/admin/business-os/entitlements/plans');
+      } catch {
+        setError(ADMIN_NETWORK_ERROR);
+        return;
       }
-      setPayload(body.data as PlansPayload);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not read the plans');
+      // Never throws: a non-JSON reply (an HTML 504 from the edge, say) falls
+      // to the fixed sentence, and a 401 / 403 says the session ended (RC-4).
+      const result = await readAdminResponse<PlansPayload>(response, { what: WHAT, sessionEndedCopy: true });
+      if (!result.ok) {
+        // `payload` is kept on purpose: see the Layout note above.
+        setError(result.message);
+        return;
+      }
+      setPayload(result.data);
     } finally {
       setLoading(false);
     }
@@ -69,55 +104,31 @@ export default function BusinessOsTiersPage() {
 
   return (
     <div className="space-y-6">
-      <header className="border-b border-slate-700">
-        <div className="flex flex-wrap items-start justify-between gap-4 pb-4">
-          <div>
-            <div className="mb-1 flex items-center gap-3">
-              <h1 className="text-xl font-semibold text-white">Business OS Tiers</h1>
-              <span className="rounded bg-purple-500/20 px-2 py-1 text-xs text-purple-400">
-                Read-only
-              </span>
-            </div>
-            <p className="max-w-3xl text-sm text-slate-400">
-              The four Business OS plans, what each includes, and what cannot be sold at all. Read
-              from the same configuration the resolver uses, so this page cannot disagree with the
-              system.{' '}
-              <span className="text-slate-500">
-                This is Business OS — not the agent platform&apos;s free tier, which lives on the
-                Onboarding page.
-              </span>
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={loading}
-            className="flex items-center gap-2 rounded border border-slate-600 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 disabled:opacity-40"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
-            Refresh
-          </button>
-        </div>
-      </header>
+      <AdminPageHeader
+        title="Plans & entitlements"
+        purpose="What each Business OS plan includes and what cannot be sold, read from the configuration the resolver uses; not the agent platform's free tier, which is on the Onboarding page."
+        badge={{ label: 'Read-only', testId: 'read-only-badge' }}
+        asOf={payload ? `As of ${formatUtc(payload.generatedAt)}.` : null}
+      />
 
-      {error && (
-        <div
-          data-testid="page-error"
-          className="flex items-start gap-3 rounded-lg border border-rose-500/40 bg-rose-500/10 p-4"
-        >
-          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-rose-400" aria-hidden="true" />
-          <p className="text-sm text-rose-100">{error}</p>
-        </div>
-      )}
+      {/* K-10: hidden while the page shows an error, even over stale cards. */}
+      <PlansKpis payload={error ? null : payload} loading={loading} />
 
-      {loading && !payload && <p className="text-sm text-slate-400">Reading the configuration…</p>}
+      {/* Refresh only: no filters, so no Clear and no "Read at" beside the
+          header's server "As of" (§5.5 part 6). */}
+      <AdminFilterBar what={WHAT} busy={loading} onRefresh={() => void load()} />
+
+      {error && <AdminError message={error} testId="page-error" onRetry={() => void load()} />}
+
+      {!payload && loading && <AdminLoading what={WHAT} />}
 
       {payload && (
-        <>
-          {/* First, above everything, and never conditional on the mode being
-              off: when it is `enforce` it says so in different words rather
-              than disappearing. A banner that vanishes is a banner nobody
-              learns to look for. */}
+        <div data-testid="plans-content" aria-busy={loading} className="space-y-6">
+          {/* First in the content (the header, the strip and the bar sit above
+              it, §5.1), and never conditional on the mode being off: when it is
+              `enforce` it says so in different words rather than disappearing.
+              A banner that vanishes is a banner nobody learns to look for. The
+              Enforcement tile links straight to it. */}
           <EnforcementBanner
             mode={payload.mode}
             meaning={payload.modeMeaning}
@@ -126,10 +137,7 @@ export default function BusinessOsTiersPage() {
           />
 
           {payload.withheldWithoutGate.length > 0 && (
-            <section
-              data-testid="no-gate-summary"
-              className="rounded-lg border border-slate-700/60 bg-slate-800/30 p-4"
-            >
+            <section id="withheld-without-gate" data-testid="no-gate-summary" className={CARD}>
               <h2 className="text-sm font-semibold text-slate-300">
                 Withheld in the plan, not yet refused by the product
               </h2>
@@ -152,14 +160,16 @@ export default function BusinessOsTiersPage() {
             </section>
           )}
 
-          <section>
+          <section id="plans">
             <h2 className="mb-3 text-sm font-semibold text-white">The four plans</h2>
+            {/* Four columns at xl, not §5.7's three: four plans in three columns
+                leave an orphan card (SA L-5 Q-7, a recorded deviation). */}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {payload.plans.map((plan) => (
                 <PlanCard key={plan.id} plan={plan} />
               ))}
             </div>
-            <p className="mt-2 text-xs text-slate-500">
+            <p className="mt-2 text-xs text-slate-400">
               Matrix version {payload.matrixVersion}. Two of these are tiers (something to buy) and
               two are cohorts (what somebody has while they are not paying).
             </p>
@@ -169,7 +179,7 @@ export default function BusinessOsTiersPage() {
 
           <AccountLookup />
 
-          <section className="rounded-lg border border-slate-700/60 p-4">
+          <section className={CARD}>
             <h2 className="text-sm font-semibold text-slate-300">Changing any of this</h2>
             <p className="mt-1 max-w-3xl text-sm text-slate-400">
               Not from here. This page reads. What a plan includes is a configuration change in{' '}
@@ -191,7 +201,7 @@ export default function BusinessOsTiersPage() {
               ))}
             </ul>
           </section>
-        </>
+        </div>
       )}
     </div>
   );

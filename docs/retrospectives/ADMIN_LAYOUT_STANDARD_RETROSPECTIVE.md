@@ -239,3 +239,26 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - When a slice moves destructive-flow code, require an explicit old→new guard assertion map in the workplan; it made the review mechanical.
 
 ### Status: COMMITTED — feature/admin-layout-l4b — cae9eea0, PR #309
+
+---
+
+## L-5: Plans & entitlements — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-5 workplan](/docs/workplans/ADMIN_LAYOUT_L5_WORKPLAN.md)
+
+### What went well
+- First page migrated with no shared export at all — the building blocks covered everything.
+- Dev caught at planning that the requirement's amber Enforcement tile would contradict the Health page's tile for production's normal state; SA verified against the Health rules and ruled it neutral.
+- SA re-ruled the INACTIVE chip to warn (not danger): FYI, but still unmistakable as the user asked on 2026-09-29.
+- Entitlements rules respected: no import from the entitlements module, no tier or capability literals; the shared contract fixtures untouched.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1, M-2; code approved, three doc nits).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- "Try again" focus loss is now recorded on three pages — worth a single shared fix.
+- Browser checks still owed.
+
+### Conclusions & process improvements
+- Cross-check any new KPI colour rule against the Health page's rule for the same fact before building it.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
