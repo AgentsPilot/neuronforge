@@ -9,7 +9,7 @@
 **Branch:** `fix/secdef-lockdown-slice-4a` (worktree `neuronforge-secdef-s4a`, off `origin/main` `7e5964ec`, the PR #282 merge)
 **Migration number:** `20261050` proposed. Checked 2026-10-10: `origin/main` `7e5964ec` tops at `20261049`; `gh pr list` shows no open PR touching `supabase/migrations/`, `supabase/SQL Scripts/` or `supabase/held/`. Re-check at PR time (T-10 rule)
 **Date:** 2026-10-10
-**Status:** Code Complete. Workplan SA-approved (S4a-1 to S4a-4 folded in); code SA-approved 2026-10-10; QA PASS (local PGlite). Acceptance amended 2026-10-11 (user): F1 to F5 waived, agent runs out of scope. Awaiting PR and prod apply.
+**Status:** Code Complete. Workplan SA-approved (S4a-1 to S4a-4 folded in); code SA-approved 2026-10-10; QA PASS (local PGlite). Acceptance amended 2026-10-11 (user): F1 to F5 waived, agent runs out of scope. ✅ Applied on prod 2026-10-11 05:49 UTC and accepted (PR #288, commit c5748897).
 
 ## Overview
 
@@ -604,14 +604,14 @@ WHERE error_patterns.last_seen >= pg_catalog.now() - pg_catalog.make_interval(mi
 
 | Check | Result (user) |
 |---|---|
-| Pre-check status | ⬜ |
-| Checker | ⬜ |
-| N1, N2 | ⬜ |
-| P1 to P6 (outcome verbatim) | ⬜ |
+| Pre-check status | ✅ prod 2026-10-11 |
+| Checker | ✅ prod 2026-10-11 |
+| N1, N2 | ✅ prod 2026-10-11 |
+| P1 to P6 (outcome verbatim) | ✅ prod 2026-10-11 |
 | F1 before and after (corroboration) | ➖ waived 2026-10-11 (agent runs out of scope) |
 | F2, F3, F4 | ➖ waived 2026-10-11 (agent runs out of scope) |
-| F5 (optional) | ⬜ |
-| Logs: Postgres to T+24 h; count of R-11 expired-session anon hits for 4b | ⬜ |
+| F5 (optional) | ➖ waived 2026-10-11 |
+| Logs: Postgres to T+24 h; count of R-11 expired-session anon hits for 4b | ✅ only the 2 deliberate N1/N2 refusals after T; 24 h watch continues; R-11 hits 0 so far |
 
 ---
 
@@ -631,3 +631,4 @@ _RM to populate._
 | 2026-10-10 | SA code review | CODE APPROVED (one Low doc nit: inventory §6 row 4a and requirement S4a row still say "awaiting SA code review"). Desk-checked the grant arithmetic (checker 24/12 before, 36/0 after; rollback restores the TSV grantee set), the `4b review` tag never counted, `COLLATE "C"`, the acceptance-block arities against prod `nargs`, and the F1/F5 columns. Slice test 85/85, authz guard 203/203; `20261050` still free |
 | 2026-10-10 | QA | PASS, ready for commit. Static test 85/85, authz guard 203/203. Local PGlite run on a prod-shaped fixture (git bodies and tables, TSV grant shape). Pre-check `CLEAN`, also under ICU `und`. Checker 24/12 before and 36/0 after; migration idempotent. N1 and N2 `42501`; P1 to P3 no error; P4 to P6 `23502` (exact messages recorded); F1 and F5 valid. Rollback restores all four roles, the checker matches the pre-state row for row, and the pre-check is `CLEAN`. All negatives stop or fail safe (missing function, foreign grantor, `anon`-runnable INVOKER caller, foreign-owned SECDEF caller, INVOKER trigger, policy `TO public`, column default). An INVOKER caller that `anon` cannot run shows `ok 4b review` and is not counted. No bugs |
 | 2026-10-11 | Acceptance amended (TL, user decision) | User is focused on Business OS; agent creation and execution are out of scope. F1 to F5 waived. Proof per SA S4a-2: checker 36/0 (C5/C6), N1/N2 refusals, P1 to P6 signed-in calls, Postgres logs to T+24 h |
+| 2026-10-11 | Prod apply and acceptance (user, recorded by TL) | pre-check CLEAN; migration applied 2026-10-11 05:49 UTC (08:49 local); checker VERDICT PASS 36 pass 0 fail; N1 and N2 (anon) 42501 permission denied for function increment_executions_used / get_top_insights; P1 to P6 (authenticated) passed: P1 to P3 no error, P4 to P6 23502 not-null as expected; Postgres logs from T show only the 2 deliberate N1/N2 refusals (08:51:01, 08:51:13 local); F1 to F5 waived (agent runs out of scope, user 2026-10-11) |
