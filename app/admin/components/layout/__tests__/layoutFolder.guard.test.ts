@@ -27,6 +27,12 @@
  * nothing and is not a client module (G-3) and near-miss self-tests (G-4); S-6
  * is made non-vacuous: `useAdminFilters.ts` must write history and no file may
  * call `pushState` (G-5); Audit trail part 1 joins the registry (G-6).
+ *
+ * Amended by L-1d: `AdminDrawer.tsx`, `OpenRowButton.tsx` and `adminTable.ts`
+ * join the expected files (G-1); the Audit trail registry entry drops "part 1"
+ * from its label (its files are unchanged). No rule changes: the drawer's
+ * sections are `div role="group"`, never `<section` (S-8), and the new tones
+ * are sky and amber, never green (S-7).
  */
 
 import * as fs from 'fs';
@@ -60,14 +66,17 @@ const SOURCE_FILES = ALL_FILES.filter((f) => !isTest(f) && /\.tsx?$/.test(f));
 const TSX_SOURCES = SOURCE_FILES.filter((f) => f.endsWith('.tsx'));
 
 const EXPECTED_SOURCES = [
+  'AdminDrawer.tsx',
   'AdminFilterBar.tsx',
   'AdminPageHeader.tsx',
   'AdminStates.tsx',
   'DatePresets.tsx',
   'KpiStrip.tsx',
+  'OpenRowButton.tsx',
   'StatusChip.tsx',
   'adminDialog.ts',
   'adminFormat.ts',
+  'adminTable.ts',
   'adminWindow.ts',
   'readAdminResponse.ts',
   'readJsonBody.ts',
@@ -436,9 +445,10 @@ const MIGRATED_PAGES = [
   },
   {
     // G-6. The original `BusinessAccountPicker.tsx` is deliberately not listed:
-    // it is unmigrated (it still calls `.json(`) and is replaced on this page by
-    // the shared picker in L-1d (RC-8).
-    page: '/admin/audit-trail (Audit trail, part 1)',
+    // it is unmigrated (it still calls `.json(`) and still sits on this page
+    // until the shared picker replaces it in L-1e (RC-8, split from L-1d by SA
+    // at the L-1d workplan review, Q-1).
+    page: '/admin/audit-trail (Audit trail)',
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },
 ] as const;

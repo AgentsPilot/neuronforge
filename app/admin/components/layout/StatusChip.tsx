@@ -8,15 +8,16 @@
  * (A-7: colour and icon are never the only signal). A `<span>`, never a
  * `<div>` (F-62), so it can sit inside a table cell, a heading row or a link.
  *
- * L-1b builds the four tones its pilot (Scheduled jobs & queues) uses. `info`
- * and `neutral` arrive with their first consumer (SA Q-4).
+ * L-1b builds the four tones its pilot (Scheduled jobs & queues) uses. L-1d
+ * adds `info` with its first consumer (the Audit trail severity "Info").
+ * `neutral` arrives with its first consumer (SA Q-4).
  */
 
-import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDashed } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDashed, Info } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
-/** §5.9 tones built in L-1b. */
-export type StatusTone = 'danger' | 'warn' | 'ok' | 'unknown';
+/** §5.9 tones built so far (L-1b; `info` L-1d). */
+export type StatusTone = 'danger' | 'warn' | 'ok' | 'info' | 'unknown';
 
 /**
  * THE ONLY GREEN in the shared admin layout folder (§6.1 S-7, pinned by the
@@ -31,6 +32,7 @@ const TONES: Record<StatusTone, { classes: string; icon: LucideIcon }> = {
   danger: { classes: 'border-red-500/40 bg-red-500/15 text-red-300', icon: AlertOctagon },
   warn: { classes: 'border-amber-500/40 bg-amber-500/15 text-amber-300', icon: AlertTriangle },
   ok: { classes: OK_TONE, icon: CheckCircle2 },
+  info: { classes: 'border-sky-500/40 bg-sky-500/15 text-sky-300', icon: Info },
   unknown: { classes: 'border-dashed border-slate-600 bg-slate-800/60 text-slate-400', icon: CircleDashed },
 };
 

@@ -467,17 +467,18 @@ describe('the shared states', () => {
     expect((await screen.findByTestId('audit-error')).textContent).toBe('Your admin session has ended. Sign in again.');
   });
 
-  it('a failed Refresh keeps the cards on screen, and Try again reads again', async () => {
+  it('a failed Refresh keeps the rows on screen, and Try again reads again', async () => {
     answer = { kind: 'rows', logs: [ROW] };
     const fetchMock = mockFetch();
     render(<AuditTrailPage />);
-    expect(await screen.findByRole('heading', { level: 3, name: 'User Login' })).toBeTruthy();
+    // L-1d: the card's h3 became the row's Event cell.
+    expect(await screen.findByRole('cell', { name: 'User Login' })).toBeTruthy();
     await settled();
 
     answer = { kind: 'html', status: 502 };
     fireEvent.click(screen.getByRole('button', { name: 'Refresh the audit trail' }));
     expect(await screen.findByTestId('audit-error')).toBeTruthy();
-    expect(screen.getByRole('heading', { level: 3, name: 'User Login' })).toBeTruthy();
+    expect(screen.getByRole('cell', { name: 'User Login' })).toBeTruthy();
 
     answer = { kind: 'rows', logs: [ROW] };
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));

@@ -52,6 +52,25 @@ describe('StatusChip', () => {
     expect((container.firstElementChild as HTMLElement).className).toContain('border-dashed');
   });
 
+  it('info (L-1d): sky classes, exactly the words, one hidden icon, and no green', () => {
+    const { container } = render(
+      <StatusChip tone="info" testId="audit-severity">
+        Info
+      </StatusChip>
+    );
+    const chip = container.firstElementChild as HTMLElement;
+    expect(chip.tagName).toBe('SPAN');
+    expect(chip.getAttribute('data-tone')).toBe('info');
+    expect(chip.textContent).toBe('Info');
+    for (const cls of ['border-sky-500/40', 'bg-sky-500/15', 'text-sky-300']) expect(chip.className).toContain(cls);
+    const icons = chip.querySelectorAll('svg');
+    expect(icons).toHaveLength(1);
+    expect(icons[0].getAttribute('aria-hidden')).toBe('true');
+    // lucide names its icons in the class: the Info icon, not another tone's.
+    expect(icons[0].getAttribute('class')).toContain('lucide-info');
+    expect(GREEN.test(chip.className)).toBe(false);
+  });
+
   it('no testId: no data-testid attribute', () => {
     const { container } = render(<StatusChip tone="warn">Behind</StatusChip>);
     expect((container.firstElementChild as HTMLElement).hasAttribute('data-testid')).toBe(false);

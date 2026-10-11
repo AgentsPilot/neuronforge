@@ -253,3 +253,79 @@ describe('re-reading the URL (SA M-1: one last-known string)', () => {
     expect(effectRuns).toBe(1);
   });
 });
+
+describe('QA E-1 (L-1d): an outside change that parses to the current state still cleans the address bar', () => {
+  it('junk from the defaults: the same object, no extra [filters] run, and the bar is cleaned by replaceState(null, ...)', () => {
+    const { rerender } = render(<Harness />);
+    const first = api.filters;
+
+    arrive('severity=catastrophic&range=bogus');
+    replaceSpy.mockClear();
+    rerender(<Harness />);
+
+    expect(api.filters).toBe(first);
+    expect(effectRuns).toBe(1);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(replaceSpy).toHaveBeenCalledWith(null, '', PATH);
+    expect(window.location.search).toBe('');
+  });
+
+  it('the alias of the applied account: the same object, and the bar goes back to the canonical name', () => {
+    arrive('account=abc');
+    const { rerender } = render(<Harness />);
+    const first = api.filters;
+    expect(first.account).toBe('abc');
+
+    arrive('user_id=abc');
+    replaceSpy.mockClear();
+    rerender(<Harness />);
+
+    expect(api.filters).toBe(first);
+    expect(effectRuns).toBe(1);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toBe('?account=abc');
+  });
+
+  it('an outside change that DOES alter the state writes exactly once, not twice (SA M-3)', () => {
+    const { rerender } = render(<Harness />);
+
+    arrive('severity=warning&user_id=abc');
+    replaceSpy.mockClear();
+    rerender(<Harness />);
+
+    expect(api.filters.severity).toBe('warning');
+    expect(api.filters.account).toBe('abc');
+    expect(effectRuns).toBe(2);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toBe('?account=abc&severity=warning');
+  });
+
+  it('mount: a clean URL writes nothing and runs the [filters] effect once; an alias is rewritten exactly once (SA M-3)', () => {
+    replaceSpy.mockClear();
+    const { unmount } = render(<Harness />);
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(effectRuns).toBe(1);
+    unmount();
+
+    effectRuns = 0;
+    arrive('user_id=abc');
+    replaceSpy.mockClear();
+    render(<Harness />);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(effectRuns).toBe(1);
+  });
+
+  it("Next's echo of our own write still causes no extra replaceState", () => {
+    const { rerender } = render(<Harness />);
+    act(() => api.setFilters({ severity: 'info' }));
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    const afterWrite = api.filters;
+
+    mockSearch = 'severity=info';
+    rerender(<Harness />);
+    rerender(<Harness />);
+
+    expect(api.filters).toBe(afterWrite);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+  });
+});

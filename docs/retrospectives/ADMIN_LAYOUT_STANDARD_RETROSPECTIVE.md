@@ -80,3 +80,26 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Carry QA E-1 (URL not cleaned after an outside change that resolves to current filters) into L-1d.
 
 ### Status: COMMITTED — feature/admin-layout-l1c — 1752d93d, PR #291
+
+---
+
+## L-1d: table constants, drawer, Open-row button with Audit trail (part 2) as pilot — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-1d workplan](/docs/workplans/ADMIN_LAYOUT_L1D_WORKPLAN.md)
+
+### What went well
+- The business picker was split out to L-1e at workplan time (pre-authorised by SA), keeping L-1d at about 4 days.
+- The drawer generalises the Activity drill-down; light-OS title and close-X contrast are fixed by inline colour and child-selector specificity without editing components/ui/sheet.tsx.
+- Mutation checks (a)–(k) all bit; one (h) initially did not, which exposed a jsdom accessible-name padding quirk and led to a stronger assertion.
+- QA's edge-case probe found a real reachable bug (B-1: drawer could reopen unasked and drop focus to the body after the open row left the list); fixed with a regression test before commit.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 1 (B-1, Medium; SA had rated it Low as "outside URL change only" — QA showed it reachable via in-flight reads, search and Back/Forward).
+- Browser checks (D-B1..D-B13, plus L-1a..L-1c owed checks) still not done: no signed-in admin browser.
+
+### Conclusions & process improvements
+- When a component's open state is derived from data that can change underneath it, test "the item disappears while open" explicitly — carry this into the Businesses and Activity drawer slices.
+- Low note for L-1e: the focus fallback (content area) has no visible ring.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)

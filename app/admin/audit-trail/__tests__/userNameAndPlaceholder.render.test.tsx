@@ -17,6 +17,11 @@
  *
  * Renders the real page in jsdom, like the sibling suites (Playwright is not
  * installed — CLAUDE.md § Testing).
+ *
+ * L-1d (cards → table, inline expand → drawer): the user line is the row's
+ * `audit-cell-user` cell, and a bare account id there is shortened with the
+ * full id in `title` (§5.7 Ids). R-1 opens the drawer through the row's Open
+ * button and reads its `dt` / `dd` pair.
  */
 
 import React from 'react';
@@ -80,12 +85,12 @@ function mockRoute(logs: unknown[]): void {
   }));
 }
 
-/** The "User: …" line of the row card that contains `text`. */
+/** The User cell of the table row that contains `text`. */
 async function userLineContaining(text: string): Promise<HTMLElement> {
   const value = await screen.findByText(text);
-  const card = value.closest('div.rounded-xl');
-  if (!card) throw new Error(`No row card for "${text}"`);
-  return within(card as HTMLElement).getByText(/^User:/);
+  const row = value.closest('tr');
+  if (!row) throw new Error(`No table row for "${text}"`);
+  return within(row as HTMLElement).getByTestId('audit-cell-user');
 }
 
 describe('person names on the audit row', () => {
@@ -94,30 +99,32 @@ describe('person names on the audit row', () => {
     render(<AuditTrailPage />);
 
     const line = await userLineContaining('Dana Cohen');
-    expect(line.textContent).toBe('User: Dana Cohen');
+    expect(line.textContent).toBe('Dana Cohen');
     expect(line.textContent).not.toContain(NAMED_ACCOUNT);
 
-    fireEvent.click(await screen.findByText('Dana Cohen'));
+    fireEvent.click(screen.getByRole('button', { name: /^Open details for/ }));
 
-    const tileLabel = await screen.findByText('User', { selector: 'div' });
+    const tileLabel = await screen.findByText('User', { selector: 'dt' });
     const tile = tileLabel.parentElement as HTMLElement;
     expect(within(tile).getByText('Dana Cohen')).toBeTruthy();
   });
 
-  it('R-2: an account with no name (users: null) still shows its id', async () => {
+  it('R-2: an account with no name (users: null) still shows its id, short, whole on hover', async () => {
     mockRoute([UNNAMED_ROW]);
     render(<AuditTrailPage />);
 
-    const line = await userLineContaining(UNNAMED_ACCOUNT);
-    expect(line.textContent).toBe(`User: ${UNNAMED_ACCOUNT}`);
+    const line = await userLineContaining(`${UNNAMED_ACCOUNT.slice(0, 8)}…`);
+    expect(line.textContent).toBe(`${UNNAMED_ACCOUNT.slice(0, 8)}…`);
+    expect(line.querySelector(`[title="${UNNAMED_ACCOUNT}"]`)).toBeTruthy();
   });
 
-  it('R-3: a row with no users key (failed lookup) renders and shows the id', async () => {
+  it('R-3: a row with no users key (failed lookup) renders and shows the id, short, whole on hover', async () => {
     mockRoute([UNKNOWN_ROW]);
     render(<AuditTrailPage />);
 
-    const line = await userLineContaining(UNKNOWN_ACCOUNT);
-    expect(line.textContent).toBe(`User: ${UNKNOWN_ACCOUNT}`);
+    const line = await userLineContaining(`${UNKNOWN_ACCOUNT.slice(0, 8)}…`);
+    expect(line.textContent).toBe(`${UNKNOWN_ACCOUNT.slice(0, 8)}…`);
+    expect(line.querySelector(`[title="${UNKNOWN_ACCOUNT}"]`)).toBeTruthy();
   });
 });
 
