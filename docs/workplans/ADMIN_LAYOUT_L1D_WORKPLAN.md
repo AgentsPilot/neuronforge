@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md): §1 (rows 3 and 4), §5.7, §5.8 (D-1 to D-8), §5.9, §5.10 (Partial notice), §5.11, §5.12 (A-1 to A-9), §6.1 (S-1 to S-10), §6.2 (C-3 `AdminNotice`, C-6, C-9, C-12 `info` tone, C-13, C-14), §7.4, §9 (F-29, F-31, F-56, F-65, F-66), §12.2 (L-1d line), §12.3; SA re-check R-3, R-6, R-8 (Q-16), RC-6, RC-7, R-11; L-1c workplan SA review Q-1 (RC-8 and the pre-authorised L-1e split), N-3, N-4; L-1c SA code review SF-1, N-2; L-1c QA report E-1 ([ADMIN_LAYOUT_L1C_WORKPLAN.md](/docs/workplans/ADMIN_LAYOUT_L1C_WORKPLAN.md))
 **Branch:** `feature/admin-layout-l1d`, cut from `feature/admin-layout-l1c`; L-1c merged as PR #291 and the branch was fast-forwarded to `origin/main` `4530dfb4` before implementation, so its diff against `main` is L-1d only. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-11
-**Status:** Code Complete — uncommitted, awaiting SA code review (Implementation Notes below)
+**Status:** Committed — 63704ac5 on `feature/admin-layout-l1d`, PR #292 open (fast-track: SA approved, QA PASS); awaiting checks + user merge
 **Path:** full cycle (new shared patterns, CLAUDE.md rule 7). Fast-track after SA + QA (user rule for these UI slices)
 
 ## Overview
@@ -797,7 +797,13 @@ Note (Low, no action needed for this slice): when the opener is gone, focus land
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-l1d` |
+| Commit | `63704ac5` |
+| Update from main | `origin/main` 4530dfb4, already up to date (no merge commit) |
+| PR | [#292](https://github.com/AgentsPilot/neuronforge/pull/292) against `main`, open; user merges |
+| Tests after update | 80 suites / 1,727 tests passed; `test:bos-entitlements` 233 / 6,382 passed; hooks ESLint exit 0 |
 
 ---
 
@@ -811,3 +817,4 @@ Note (Low, no action needed for this slice): when the opener is gone, focus land
 | 2026-10-11 | SA code review | CODE APPROVED for QA: M-1 to M-4 and S-1 to S-5 verified, deviations 1 to 8 accepted, no must-fix; two Low optional items (drawer reopen after an outside change, no overlay-click unit case); SA spot run 57 suites / 1,192 tests green |
 | 2026-10-11 | QA report | QA: FAIL (narrow). Green: 80 suites / 1,726 tests and entitlements 233 / 6,382; scoped tsc caught the canary, then ran clean; 24 edge cases run. Bug B-1 (Medium; SA comment 1, raised because it is reachable through a read already in flight): a stale `isOpen` reopens the drawer by itself, and focus drops to the body. Edge cases E-1 to E-3. Browser checklist D-B1 to D-B13 for TL |
 | 2026-10-11 | QA re-check | QA: **PASS**. B-1 fixed: the drawer never reopens unasked after a Refresh in flight, a search keystroke or a Back/Forward change, and focus never lands on `<body>`. Ordinary closes keep the content during the slide-out and return focus to the opener. E-1 fixed ("Unknown"). Audit trail + shared layout suites: 29 suites / 545 tests green |
+| 2026-10-11 | Committed + PR | RM fast-track: commit 63704ac5, PR #292 open against main; awaiting checks + user merge. Browser checks D-B1 to D-B13 still owed |

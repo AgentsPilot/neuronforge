@@ -102,4 +102,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - When a component's open state is derived from data that can change underneath it, test "the item disappears while open" explicitly — carry this into the Businesses and Activity drawer slices.
 - Low note for L-1e: the focus fallback (content area) has no visible ring.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l1d — 63704ac5, PR #292
