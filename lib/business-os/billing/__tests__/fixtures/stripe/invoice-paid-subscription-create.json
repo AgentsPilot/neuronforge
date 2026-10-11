@@ -1,5 +1,5 @@
 {
-  "_fixture_source": "HAND-BUILT, Basil-shaped (2025-10-29.clover). NOT a captured payload: replace by running scripts/capture-stripe-billing-fixtures.ts with a sk_test_ key (C-8).",
+  "_fixture_source": "HAND-BUILT, Basil-shaped (2025-10-29.clover). NOT a captured payload: replace by running scripts/capture-stripe-billing-fixtures.ts with a sk_test_ key (C-8). P-3b.2 added status_transitions, total_taxes and discounts, the invoice fields the plan handler reads (workplan §3.7).",
   "id": "evt_handbuilt_paid_create",
   "object": "event",
   "api_version": "2025-10-29.clover",
@@ -91,7 +91,15 @@
         "total_count": 1,
         "url": "/v1/invoices/in_handbuilt_create/lines"
       },
-      "total": 2000
+      "total": 2000,
+      "discounts": [],
+      "total_taxes": [],
+      "status_transitions": {
+        "finalized_at": 1790000060,
+        "marked_uncollectible_at": null,
+        "paid_at": 1790000070,
+        "voided_at": null
+      }
     }
   }
 }

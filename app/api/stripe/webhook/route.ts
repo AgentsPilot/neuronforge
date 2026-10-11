@@ -50,6 +50,7 @@ import {
   type BusinessOsFlow,
 } from '@/lib/business-os/billing/webhookDispatcher';
 import { handleBoostWebhookEvent } from '@/lib/business-os/boost/boostWebhookDeps';
+import { handlePlanBillingEvent } from '@/lib/business-os/billing/planBillingHandler';
 import Stripe from 'stripe';
 
 // Disable body parsing for webhook signature verification
@@ -2163,6 +2164,7 @@ const BUSINESS_OS_FLOW_HANDLERS: Partial<
   Record<BusinessOsFlow, (event: Stripe.Event, log: Logger) => Promise<void>>
 > = {
   boost: handleBoostWebhookEvent,
+  plan: handlePlanBillingEvent,
 };
 
 /**
