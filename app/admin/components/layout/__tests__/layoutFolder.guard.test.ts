@@ -522,6 +522,25 @@ const MIGRATED_PAGES = [
       'app/admin/archiving/components/ArchivingKpis.tsx',
     ],
   },
+  {
+    // L-4a (the list) and L-4b (the row detail in the drawer, SA L-4a Q-8). The
+    // panel, credit, top-up and delete components are deliberately NOT listed
+    // (L-4b SA Q-5, the G-6 precedent): BusinessOsPanel, CreditsBlock,
+    // CreditFormDialog, BoostBlock, BoostCapDialog, BoostReconcileDialog and
+    // DeleteBusinessDialog each still read their own route with `.json(`, and
+    // their error copy is pinned by their own render and contract tests.
+    // Converting them is not a layout change.
+    page: '/admin/users (Businesses)',
+    files: [
+      'app/admin/users/page.tsx',
+      'app/admin/users/usersFilters.ts',
+      'app/admin/users/useBusinessDetails.ts',
+      'app/admin/users/usersFormat.ts',
+      'app/admin/users/components/BusinessesKpis.tsx',
+      'app/admin/users/components/BusinessDetail.tsx',
+      'app/admin/users/components/BusinessAuditSection.tsx',
+    ],
+  },
 ] as const;
 
 const PAGE_HEADER_IMPORT = /import\s*\{[^}]*\bAdminPageHeader\b[^}]*\}\s*from\s*['"]@\/app\/admin\/components\/layout\/AdminPageHeader['"]/;

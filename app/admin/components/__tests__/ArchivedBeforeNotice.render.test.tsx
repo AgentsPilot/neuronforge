@@ -71,7 +71,9 @@ describe('N-4: where it is used, and what it reads', () => {
 
   it('both admin audit screens render it', () => {
     expect(read('app', 'admin', 'audit-trail', 'page.tsx')).toMatch(/<ArchivedBeforeNotice\b/);
-    expect(read('app', 'admin', 'users', 'page.tsx')).toMatch(/<ArchivedBeforeNotice\b/);
+    // Admin Layout Standard L-4b: the Businesses audit block moved from the
+    // page into the drawer's audit section; the screen still renders it.
+    expect(read('app', 'admin', 'users', 'components', 'BusinessAuditSection.tsx')).toMatch(/<ArchivedBeforeNotice\b/);
   });
 
   it('the hook fetches only the archiving overview (no parked audit route, no new route)', () => {
