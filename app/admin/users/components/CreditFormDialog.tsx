@@ -47,10 +47,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+import {
+  ADMIN_DIALOG_CLASS,
+  ADMIN_DIALOG_DESCRIPTION_CLASS,
+  ADMIN_DIALOG_TITLE_CLASS,
+} from '@/app/admin/components/layout/adminDialog';
 import { CREDIT_COPY, creditErrorSentence, formatCredits, formatUtc } from '../creditCopy';
 import type { AccountCreditPositionPayload, CreditLotView } from '../types';
 
-const DARK_DIALOG = '!border-slate-700 !bg-slate-900 !text-slate-100';
 const DARK_INPUT = '!border-slate-600 !bg-slate-800 !text-white';
 
 type Limits = AccountCreditPositionPayload['limits'];
@@ -244,10 +248,10 @@ export function CreditFormDialog({ open, onOpenChange, mode, accountId, business
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent data-testid="credit-form-dialog" className={DARK_DIALOG}>
+      <DialogContent data-testid="credit-form-dialog" className={ADMIN_DIALOG_CLASS}>
         <DialogHeader>
-          <DialogTitle className="!text-white">{title}</DialogTitle>
-          <DialogDescription className="!text-slate-400">
+          <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>{title}</DialogTitle>
+          <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>
             {isGive
               ? `Whole credits, from 1 to ${formatCredits(limits.grantCeiling)}. The reason is internal: the business never sees it.`
               : `${lotLeftSentence} The reason is internal: the business never sees it.`}

@@ -23,6 +23,12 @@
  * Privacy (AC-B13): a business name never reaches a log line, and neither does
  * the search text (a search IS usually a business name). The only log is a
  * rejected fetch, with `{ err }` alone.
+ *
+ * L-4a (user request 2026-10-11): the picker renders no standing note of its
+ * own. A note about it is the filter bar's `help` line under the whole bar; the
+ * page owns that line's id and passes it here as `describedBy` (SA Q-5). An
+ * in-column note made this column taller than its neighbours and broke the
+ * bar's one control row.
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -73,12 +79,16 @@ export interface AdminBusinessPickerProps {
   onSelect: (accountId: string, name: string | null) => void;
   /** Visible label. Default "Business". */
   label?: string;
-  /** The input's id. Default from useId(). The listbox, hint and option ids always come from useId(). */
+  /** The input's id. Default from useId(). The listbox and option ids always come from useId(). */
   id?: string;
   /** Default "Filter by business name…". */
   placeholder?: string;
-  /** Optional standing note under the field, linked by aria-describedby. Default none. */
-  hint?: string;
+  /**
+   * Id of an element the PAGE owns and renders (normally the filter bar's
+   * `help` line), put on the input's `aria-describedby`. The picker renders no
+   * note itself; an id with no matching element is a page bug. Default none.
+   */
+  describedBy?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -111,13 +121,12 @@ export function AdminBusinessPicker({
   label = 'Business',
   id,
   placeholder = 'Filter by business name…',
-  hint,
+  describedBy,
 }: AdminBusinessPickerProps) {
   // F-70: generated ids, so two pickers on one page never share one.
   const base = useId();
   const inputId = id ?? `${base}-input`;
   const listboxId = `${base}-options`;
-  const hintId = `${base}-hint`;
   const optionId = (index: number) => `${base}-option-${index}`;
 
   const [query, setQuery] = useState('');
@@ -258,7 +267,7 @@ export function AdminBusinessPicker({
           aria-controls={listboxId}
           aria-autocomplete="list"
           aria-activedescendant={activeDescendant}
-          aria-describedby={hint ? hintId : undefined}
+          aria-describedby={describedBy}
           autoComplete="off"
           maxLength={SEARCH_MAX_CHARS}
           data-testid="business-picker-input"
@@ -351,12 +360,6 @@ export function AdminBusinessPicker({
           </div>
         )}
       </div>
-
-      {hint && (
-        <p id={hintId} className="mt-1 text-xs leading-4 text-slate-400" data-testid="business-picker-hint">
-          {hint}
-        </p>
-      )}
     </div>
   );
 }

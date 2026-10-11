@@ -32,6 +32,9 @@ const SCREEN_FILES = [
   // Admin delete AD-1c
   `${ROOT}/components/DeleteBusinessDialog.tsx`,
   `${ROOT}/deletionCopy.ts`,
+  // Admin Layout Standard L-4a
+  `${ROOT}/usersFilters.ts`,
+  `${ROOT}/components/BusinessesKpis.tsx`,
 ];
 
 /**
@@ -342,5 +345,58 @@ describe('the account hard delete in the danger area (AU-1 / AU-2; SA AU-C2 … 
 
   it('AU-C7: the panel has no console.*', () => {
     expect(codeOf(read(PANEL_FILE))).not.toMatch(/console\./);
+  });
+});
+
+describe('the dialogs use the shared admin class (Admin Layout Standard L-4a; D-8 (a), F-88, F-103)', () => {
+  const DIALOG_FILES = [
+    `${ROOT}/components/CreditFormDialog.tsx`,
+    `${ROOT}/components/DeleteBusinessDialog.tsx`,
+    `${ROOT}/components/BoostCapDialog.tsx`,
+    `${ROOT}/components/BoostReconcileDialog.tsx`,
+  ];
+
+  /** What keeps a file off the shared dialog class; empty when it is on it. */
+  function dialogClassFindings(code: string): string[] {
+    const findings: string[] = [];
+    const imported = /import\s*\{[^}]*\bADMIN_DIALOG_CLASS\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/adminDialog'/;
+    if (!imported.test(code)) findings.push('no ADMIN_DIALOG_CLASS import from the alias');
+    const contents = [...code.matchAll(/<DialogContent\b[^>]*>/g)].map((m) => m[0]);
+    if (contents.length === 0) findings.push('no DialogContent');
+    for (const tag of contents) {
+      if (!/className=\{(?:ADMIN_DIALOG_CLASS|`\$\{ADMIN_DIALOG_CLASS\}[^`]*`)\}/.test(tag)) findings.push(`not on the class: ${tag}`);
+    }
+    if (/\bDARK_DIALOG\b/.test(code)) findings.push('DARK_DIALOG');
+    return findings;
+  }
+
+  it('the matcher sees each way off the class (planted samples)', () => {
+    const IMPORT = "import { ADMIN_DIALOG_CLASS } from '@/app/admin/components/layout/adminDialog';";
+    const TEMPLATE_CLASS = 'className={`${ADMIN_DIALOG_CLASS} sm:!max-w-2xl`}';
+    expect(dialogClassFindings(`${IMPORT} <DialogContent data-testid="x" className={ADMIN_DIALOG_CLASS}>`)).toEqual([]);
+    expect(dialogClassFindings(`${IMPORT} <DialogContent ${TEMPLATE_CLASS} aria-busy={b}>`)).toEqual([]);
+    expect(dialogClassFindings(`${IMPORT} const DARK_DIALOG = 'x'; <DialogContent className={ADMIN_DIALOG_CLASS}>`)).toEqual([
+      'DARK_DIALOG',
+    ]);
+    expect(dialogClassFindings(`${IMPORT} <DialogContent className={DARK}>`)).toHaveLength(1);
+    expect(dialogClassFindings('<DialogContent className={ADMIN_DIALOG_CLASS}>')).toEqual([
+      'no ADMIN_DIALOG_CLASS import from the alias',
+    ]);
+    expect(dialogClassFindings(IMPORT)).toEqual(['no DialogContent']);
+  });
+
+  it.each(DIALOG_FILES)('%s passes ADMIN_DIALOG_CLASS to DialogContent and declares no DARK_DIALOG', (file) => {
+    expect({ file, findings: dialogClassFindings(codeOf(read(file))) }).toEqual({ file, findings: [] });
+  });
+});
+
+describe('no dead Advanced Filters panel (Admin Layout Standard L-4a; D-11 (a), F-2)', () => {
+  // Words only the panel used. Not "Email Verified" or "Auth Provider": the
+  // row detail's user card shows "Email Verified:" and "Auth Providers:".
+  const PANEL_WORDS = ['Apply Filters', 'showAdvancedFilters', 'Has Agents', 'All Providers', 'Unverified Only', 'Joined Date'];
+
+  it('page.tsx names none of the panel words', () => {
+    const page = codeOf(read(`${ROOT}/page.tsx`));
+    expect(PANEL_WORDS.filter((word) => page.includes(word))).toEqual([]);
   });
 });

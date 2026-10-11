@@ -86,13 +86,13 @@ function mockFetch(reply: Reply = { kind: 'list' }): jest.Mock {
 
 const urls = (fetchMock: jest.Mock) => fetchMock.mock.calls.map((call: unknown[]) => String(call[0]));
 
-function Harness(props: { selected?: string; onSelect?: jest.Mock; onOther?: jest.Mock; withHint?: boolean }) {
+function Harness(props: { selected?: string; onSelect?: jest.Mock; onOther?: jest.Mock; describedBy?: string }) {
   return (
     <div>
       <AdminBusinessPicker
         selectedAccountId={props.selected ?? ''}
         onSelect={props.onSelect ?? jest.fn()}
-        hint={props.withHint ? 'Paste a full account id to filter by any other account.' : undefined}
+        describedBy={props.describedBy}
       />
       <AdminBusinessPicker
         selectedAccountId=""
@@ -153,7 +153,7 @@ describe('no read until the picker is used (RC-6)', () => {
 describe('ids, label and props (F-70, M-4)', () => {
   it('gives the two pickers distinct generated ids, each label resolving its own input', async () => {
     const fetchMock = mockFetch();
-    render(<Harness withHint />);
+    render(<Harness describedBy="page-note" />);
     expect(first()).not.toBe(second());
     expect(first().id).not.toBe(second().id);
     expect(first().id).not.toContain('audit-business');
@@ -185,7 +185,7 @@ describe('ids, label and props (F-70, M-4)', () => {
 
   it('the id prop overrides the input id only', async () => {
     const fetchMock = mockFetch();
-    render(<AdminBusinessPicker selectedAccountId="" onSelect={jest.fn()} id="my-picker" hint="A note" />);
+    render(<AdminBusinessPicker selectedAccountId="" onSelect={jest.fn()} id="my-picker" describedBy="note-id" />);
     const input = screen.getByLabelText('Business');
     expect(input.id).toBe('my-picker');
     fireEvent.focus(input);
@@ -193,23 +193,24 @@ describe('ids, label and props (F-70, M-4)', () => {
     const listbox = await screen.findByRole('listbox');
     expect(listbox.id).not.toBe('my-picker');
     expect(listbox.id).not.toContain('my-picker');
-    expect(screen.getByTestId('business-picker-hint').id).not.toContain('my-picker');
+    // L-4a: `hint` became `describedBy` (SA Q-5); the page-owned id is used as given.
+    expect(input.getAttribute('aria-describedby')).toBe('note-id');
   });
 
-  it('shows no hint and no aria-describedby by default', () => {
+  it('no aria-describedby by default', () => {
     mockFetch();
     render(<Harness />);
-    expect(screen.queryByTestId('business-picker-hint')).toBeNull();
     expect(first().getAttribute('aria-describedby')).toBeNull();
   });
 
-  it('shows a given hint and links it with aria-describedby', () => {
+  it('puts the given describedBy id on its own input only, and renders no note itself', () => {
     mockFetch();
-    render(<Harness withHint />);
-    const hint = screen.getByTestId('business-picker-hint');
-    expect(hint.textContent).toBe('Paste a full account id to filter by any other account.');
-    expect(first().getAttribute('aria-describedby')).toBe(hint.id);
+    const { container } = render(<Harness describedBy="page-note" />);
+    expect(first().getAttribute('aria-describedby')).toBe('page-note');
     expect(second().getAttribute('aria-describedby')).toBeNull();
+    // The page owns the described element (the filter bar's help line); the picker renders none.
+    expect(container.querySelector('#page-note')).toBeNull();
+    expect(screen.queryByTestId('business-picker-hint')).toBeNull();
   });
 
   it('keeps the combobox attributes and the listbox name', async () => {

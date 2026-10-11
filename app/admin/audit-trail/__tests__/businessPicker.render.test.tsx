@@ -309,6 +309,17 @@ describe('a business with no name, and an account with no business profile', () 
     const hint = await screen.findByTestId('business-picker-hint');
     expect(hint.textContent).toContain('Only accounts with a business profile can be found by name');
     expect(hint.textContent).toContain('Paste a full account id');
+
+    // L-4a (user request 2026-10-11): the note is one help line under the whole
+    // bar, linked to the picker input, and no longer inside the picker's column.
+    const input = screen.getByLabelText('Business');
+    expect(hint.id).toBeTruthy();
+    expect(input.getAttribute('aria-describedby')).toBe(hint.id);
+    // The bar's own last line: a direct child of the bar, not of the controls row.
+    expect(hint.parentElement).toBe(screen.getByRole('search', { name: 'Filters' }));
+    const pickerColumn = input.closest('.relative')?.parentElement;
+    expect(pickerColumn?.contains(screen.getByText('Business', { selector: 'label' }))).toBe(true);
+    expect(pickerColumn?.contains(hint)).toBe(false);
   });
 
   it('offers a pasted account id, so an account with no profile is still reachable', async () => {

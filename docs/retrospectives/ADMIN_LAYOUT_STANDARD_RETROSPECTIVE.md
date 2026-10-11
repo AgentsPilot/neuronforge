@@ -192,3 +192,27 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Shared AdminError "Try again" focus handling should be fixed once in the shared component rather than per page.
 
 ### Status: COMMITTED — feature/admin-layout-l3 — 4bcf33d1, PR #298
+
+---
+
+## L-4a: Businesses list + shared filter-bar alignment fix — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-4a workplan](/docs/workplans/ADMIN_LAYOUT_L4A_WORKPLAN.md)
+
+### What went well
+- The user's alignment report (Audit trail picker hint making the field taller) was folded into the next slice and fixed once in the shared bar: top-aligned fields, visible "Window" label, picker hint moved to one help line under the bar; every page using the bar benefits.
+- The only product question (empty search should reload) was asked in plain words and answered immediately (D-16).
+- The 420-line row detail was left byte-identical for L-4b, so every source-guard position check passed unedited.
+- Four Businesses dialogs (not two — the boost slices had added two more) moved to the shared dialog class.
+- Fifteen mutation checks bit; QA found no bugs. TL fixed QA's cosmetic note (the "BOS AI failures" button 4 px shorter than the fields) before commit.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-5; code approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Browser checks still owed: the Chrome extension shows no connected browser from this session.
+
+### Conclusions & process improvements
+- User-reported visual glitches on a shared component are cheapest folded into the very next slice that touches the bar.
+- L-4b carries a user request: the per-business audit section starts collapsed.
+
+### Status: COMMITTED — feature/admin-layout-l4 — 38c35a37, PR #300

@@ -47,6 +47,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 import {
+  ADMIN_DIALOG_CLASS,
+  ADMIN_DIALOG_DESCRIPTION_CLASS,
+  ADMIN_DIALOG_TITLE_CLASS,
+} from '@/app/admin/components/layout/adminDialog';
+import {
   BLOCKING_STATUSES,
   DELETION_AREA_LABELS,
   DELETION_COMMIT_UNKNOWN,
@@ -75,7 +80,6 @@ import type {
   DeletionRefusalView,
 } from '../types';
 
-const DARK_DIALOG = '!border-slate-700 !bg-slate-900 !text-slate-100 sm:!max-w-2xl';
 const DARK_INPUT = '!border-slate-600 !bg-slate-800 !text-white';
 
 type PreviewState =
@@ -659,14 +663,14 @@ export function DeleteBusinessDialog({ open, onOpenChange, accountId, onDeleted 
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent data-testid="delete-business-dialog" className={DARK_DIALOG} aria-busy={isSubmitting}>
+      <DialogContent data-testid="delete-business-dialog" className={`${ADMIN_DIALOG_CLASS} sm:!max-w-2xl`} aria-busy={isSubmitting}>
         <DialogHeader>
-          <DialogTitle className="!text-white">
+          <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>
             <span ref={resultHeading} tabIndex={-1} data-testid="deletion-title" className="outline-none">
               {title}
             </span>
           </DialogTitle>
-          <DialogDescription className="!text-slate-400">{description}</DialogDescription>
+          <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>{description}</DialogDescription>
         </DialogHeader>
 
         {/* One live region for the dialog's whole life: loading, the blocked or ready state, progress, the outcome. */}

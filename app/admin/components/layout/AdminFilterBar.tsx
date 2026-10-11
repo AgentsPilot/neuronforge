@@ -12,18 +12,28 @@
  * their DOM is unchanged). Never a `region` (SA-R-13).
  *
  * No shared part fetches: Refresh calls the page's own read.
+ *
+ * L-4a (user request 2026-10-11, §5.5 Layout): the controls row is
+ * top-aligned (`items-start`); every field is a label row then a control, and
+ * Clear and the Read at + Refresh group sit under `AdminFieldSpacer`, so all
+ * controls share one row whatever grows under a field (SA Q-4). A standing
+ * note about one control is the bar's `help` line, the last line inside the
+ * bar, linked to that control by `aria-describedby`; never a note inside the
+ * field column. Refresh takes `ADMIN_BUTTON` (SA Q-7, M-2); Clear keeps its own
+ * quieter style. The no-controls branch is untouched.
  */
 
 import type { ReactNode } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 
-import { DatePresets } from './DatePresets';
+import { AdminFieldSpacer, DatePresets } from './DatePresets';
 import { linkedWindowLabel, type AdminWindowExtra, type AdminWindowValue } from './adminWindow';
 import { formatUtcTime } from './adminFormat';
+import { ADMIN_BUTTON } from './adminTable';
 
 // The field classes live beside the Window control (which uses them too) so the
 // two files do not import each other; pages import them from the bar.
-export { ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL } from './DatePresets';
+export { ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL, AdminFieldSpacer } from './DatePresets';
 
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
 
@@ -67,6 +77,12 @@ export interface AdminFilterBarProps {
   canClear?: boolean;
   /** Part 7: chips for what the controls cannot show at a glance. */
   chips?: readonly AdminActiveChip[];
+  /**
+   * A standing note about one control, as the bar's last line (§5.5 Layout).
+   * The page owns `id` and passes the same id to the control's
+   * `aria-describedby` (for the picker, its `describedBy` prop). Default none.
+   */
+  help?: { id: string; text: string; testId?: string };
 }
 
 function RefreshButton({ onRefresh, busy, what }: Pick<AdminFilterBarProps, 'onRefresh' | 'busy' | 'what'>) {
@@ -78,7 +94,7 @@ function RefreshButton({ onRefresh, busy, what }: Pick<AdminFilterBarProps, 'onR
       aria-label={`Refresh ${what}`}
       aria-busy={busy}
       disabled={busy}
-      className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+      className={`flex items-center gap-2 transition-colors ${ADMIN_BUTTON}`}
     >
       <RefreshCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} aria-hidden="true" />
       Refresh
@@ -124,6 +140,7 @@ export function AdminFilterBar({
   onClear,
   canClear,
   chips,
+  help,
 }: AdminFilterBarProps) {
   const hasControls =
     windowControl !== undefined || business !== undefined || children !== undefined || onClear !== undefined;
@@ -155,7 +172,7 @@ export function AdminFilterBar({
 
   return (
     <div role="search" aria-label="Filters" className="space-y-3 rounded-xl border border-slate-700 bg-slate-800/40 p-3">
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-wrap items-start gap-3">
         {windowControl && (
           <DatePresets
             value={windowControl.value}
@@ -168,18 +185,24 @@ export function AdminFilterBar({
         {business}
         {children}
         {onClear && (
-          <button
-            type="button"
-            onClick={onClear}
-            disabled={canClear === false}
-            className={`rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-60 ${FOCUS_RING}`}
-          >
-            Clear
-          </button>
+          <div>
+            <AdminFieldSpacer />
+            <button
+              type="button"
+              onClick={onClear}
+              disabled={canClear === false}
+              className={`rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-60 ${FOCUS_RING}`}
+            >
+              Clear
+            </button>
+          </div>
         )}
-        <div className="ml-auto flex items-center gap-3">
-          <ReadAt readAt={readAt} />
-          <RefreshButton onRefresh={onRefresh} busy={busy} what={what} />
+        <div className="ml-auto">
+          <AdminFieldSpacer />
+          <div className="flex items-center gap-3">
+            <ReadAt readAt={readAt} />
+            <RefreshButton onRefresh={onRefresh} busy={busy} what={what} />
+          </div>
         </div>
       </div>
       {allChips.length > 0 && (
@@ -188,6 +211,11 @@ export function AdminFilterBar({
             <Chip key={chip.key} chip={chip} />
           ))}
         </div>
+      )}
+      {help && (
+        <p id={help.id} data-testid={help.testId} className="text-xs text-slate-400">
+          {help.text}
+        </p>
       )}
     </div>
   );
