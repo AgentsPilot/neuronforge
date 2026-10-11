@@ -1,12 +1,12 @@
 # Workplan: AI Model Price Review, Slice 2 (capture, baseline, exact prices, active-row uniqueness, new columns, image table, retire duplicates)
 
-> **Last Updated**: 2026-10-10
+> **Last Updated**: 2026-10-12
 
 **Developer:** Dev
 **Requirement:** [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md) (SA Requirement Review 2026-10-08: findings 1, 3, 4, 8; R-1, R-2 storage pattern; R-8 row 2; MP-NFR-3, MP-NFR-5, MP-FR-16)
 **Branch:** `feature/ai-model-price-review-slice2` (local worktree `neuronforge-model-pricing-s2`, cut from `fix/ai-model-price-review-slice1` / PR #281, not pushed)
 **Date:** 2026-10-10
-**Status:** Code Complete (2026-10-11, uncommitted; T-2b filled with the user-approved hardened view; ready for SA code review)
+**Status:** COMPLETE: merged 2026-10-11 (PR #304, commit 856455c4, merge 7cf7974a) and applied to production 2026-10-11, checker VERDICT PASS (see [Production apply record](#production-apply-record))
 
 ## Overview
 
@@ -25,7 +25,7 @@ Slice 2 is the schema groundwork for reviewed prices. It captures the live defin
 9. [Risks and rollback](#9-risks-and-rollback)
 10. [Open questions for SA](#10-open-questions-for-sa)
 11. [Task list](#11-task-list)
-12. [SA Review Notes](#sa-review-notes) · [QA Testing Report](#qa-testing-report) · [Commit Info](#commit-info) · [Change History](#change-history)
+12. [SA Review Notes](#sa-review-notes) · [QA Testing Report](#qa-testing-report) · [Production apply record](#production-apply-record) · [Commit Info](#commit-info) · [Change History](#change-history)
 
 ---
 
@@ -502,6 +502,8 @@ npm run test:bos-entitlements
 
 Rollback order is the reverse: the schema rollback (4.5), then the retire rollback. Each is independent of the other.
 
+Steps 6 to 12 were run on 2026-10-11 by TL through the Supabase connector, with the user's explicit go-ahead; results are in the [Production apply record](#production-apply-record).
+
 ---
 
 ## 9. Risks and rollback
@@ -830,9 +832,30 @@ Rollback, only if needed: schema rollback, then retire rollback, each in a new t
 
 ---
 
+## Production apply record
+
+Run by TL on 2026-10-11 through the Supabase connector (project `jgccgkyhpwirgknnceoh`, Postgres 17), with the user's explicit go-ahead, exactly from the committed files.
+
+| # | Step | Result |
+|---|---|---|
+| 7 | P-1 re-run | Identical to the approved list: 12 retire rows, 3 kept rows, no ties. The three aliases still had zero calls ever in `token_usage` |
+| 6 | Baseline `20261052` | Ran; no-op as designed (table exists) |
+| - | Pre-retire fingerprint (independent read) | `76c7cfe8e89e2464f9fa866668682426`; 54 active, 0 retired |
+| 8 | Retire script | Committed. Printed fingerprint F0 `76c7cfe8e89e2464f9fa866668682426` (unchanged); 42 active, 12 retired; no row deleted |
+| 10 | Schema migration `20261053` | Committed; every view guard passed. The view was recreated with `security_invoker=true` |
+| 11 | Checker (run without its leading `SET default_transaction_read_only`, which can persist on a pooled connection; the rest is SELECT only) | **VERDICT PASS, 83 pass 0 fail.** V-1 cost columns `numeric`; V-2 old type stored `0.00000008`, new type stores `0.000000075`; V-4 fingerprint `76c7cfe8e89e2464f9fa866668682426` = F0; rows active 42 retired 12; V-5 `security_invoker=true` |
+| - | Anon probe of the view (HEAD, no rows read) | 401, was 200 before |
+| - | Service-role price read as the app does it | 200; gpt-4o $2.50 / $10 and gpt-4o-mini $0.15 / $0.60 per 1M, unchanged |
+| 12 | `/admin/system-config` and one Business OS chat message | Owed by the user after deploy. The page still lists all 54 rows (expected; noted for the review UI slice) |
+
 ## Commit Info
 
-_RM to populate._
+| Item | Value |
+|---|---|
+| PR | #304, merged 2026-10-11 |
+| Commit | `856455c4` feat(pricing): exact price storage, image price table, retire duplicate price rows (price review slice 2) |
+| Merge | `7cf7974a` |
+| Migration numbers | `20261052` baseline, `20261053` schema change (D-2) |
 
 ---
 
@@ -846,3 +869,4 @@ _RM to populate._
 | 2026-10-11 | T-2b filled: view hardened | User decision: recreate `pilot_cost_savings_summary` with `security_invoker = true`, owner postgres, no comment, anon loses all access, SELECT only for authenticated and service_role; the rollback recreates the same hardened view and does not restore anon. Checker V-5 and the Jest test assert the hardened values; RK-11 added. Non-admins now get no rows (security_invoker plus admin-only RLS on `ai_model_pricing`) |
 | 2026-10-11 | SA code review and QA fixes | CR-1: view guard refuses on a trigger on the view, a rewrite rule beyond its own, and (migration only) a comment on the view or its columns. CR-2: both new CHECKs exclude `'Infinity'`. CR-3: section 8 step 11 states V-4 equals F0, `active 42 retired 12`, and the read-only recovery. Retire keep check counted per model; schema rollback range check uses `abs()`; test pins the identical fingerprint in the retire script, the retire rollback and checker V-4. QA: admin page still lists 54 rows after the retire (1.2, section 8 step 12; follow-up in the requirement under slice 4); section 4.5 now precedes 4.6; section 10 numbers. `lib/ai/pricing.ts` comment reflowed (SA nit) |
 | 2026-10-11 | Migrations renumbered | `20261051` was taken on origin/main (SECURITY DEFINER slice 5, d1247417). Baseline is now `20261052`, schema change `20261053` (and its rollback); test paths and every reference updated. The baseline content was already run on production on 2026-10-11 as a no-op |
+| 2026-10-12 | Applied and merged | PR #304 merged (856455c4, merge 7cf7974a). Production apply record added: retire, `20261053` and checker (VERDICT PASS 83/0, fingerprint unchanged) run 2026-10-11 by TL via the Supabase connector with the user's go-ahead; anon now refused on the view. Status COMPLETE. User post-deploy smoke check (step 12) still owed |
