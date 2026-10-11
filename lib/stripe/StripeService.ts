@@ -293,7 +293,12 @@ export class StripeService {
         ...(startingAfter ? { starting_after: startingAfter } : {}),
       });
       for (const subscription of result.data) subscriptions.push({ id: subscription.id, status: subscription.status });
-      if (!result.has_more || result.data.length === 0) return { subscriptions, complete: true };
+      if (!result.has_more) return { subscriptions, complete: true };
+      // "More" with nothing on the page: no cursor to go on with. Fail closed
+      // through this method's own contract (`complete: false`), which the
+      // checkout already refuses as `subscription_check_incomplete` (503). A
+      // throw here would surface as `stripe_error` (502) instead.
+      if (result.data.length === 0) return { subscriptions, complete: false };
       startingAfter = result.data[result.data.length - 1].id;
     }
     return { subscriptions, complete: false };
@@ -360,6 +365,130 @@ export class StripeService {
   /** Expire an open checkout session, so it can no longer be paid. */
   async expireCheckoutSession(sessionId: string): Promise<void> {
     await this.stripe.checkout.sessions.expire(sessionId);
+  }
+
+  // ── Business OS plan webhook reads (plan payments P-3b.2, workplan §3.1, §3.6) ──
+  // Three Stripe-only READS for the plan webhook handler and router: no database
+  // client, no product record, no write of any kind. Each pages to the end, and
+  // gives up (throws) after `maxPages` rather than answer with a partial list:
+  // the webhook treats a throw as "could not tell", releases the claim and
+  // Stripe retries, whereas a partial list could decide a payment wrongly.
+
+  /**
+   * One subscription, fresh, in the shape the plan handler reads (§3.7):
+   * status, `billing_cycle_anchor`, `cancel_at_period_end`, `ended_at`, the
+   * customer, the metadata and EVERY item price (paged when the embedded item
+   * list says `has_more`). Unix seconds are returned as Stripe gives them.
+   */
+  async retrieveBusinessOsSubscription(
+    subscriptionId: string,
+    options: { maxPages?: number } = {}
+  ): Promise<{
+    id: string;
+    status: Stripe.Subscription.Status;
+    customerId: string | null;
+    billingCycleAnchor: number;
+    cancelAtPeriodEnd: boolean;
+    endedAt: number | null;
+    livemode: boolean;
+    metadata: Stripe.Metadata;
+    priceIds: string[];
+  }> {
+    const subscription = await this.stripe.subscriptions.retrieve(subscriptionId);
+    const priceIds: string[] = [];
+    const add = (items: ReadonlyArray<Stripe.SubscriptionItem>) => {
+      for (const item of items) {
+        const id = item.price?.id;
+        if (id && !priceIds.includes(id)) priceIds.push(id);
+      }
+    };
+
+    if (subscription.items?.has_more) {
+      // The embedded list is only the first page: read every item instead.
+      const maxPages = options.maxPages ?? 10;
+      let startingAfter: string | undefined;
+      let complete = false;
+      for (let page = 0; page < maxPages; page += 1) {
+        const result = await this.stripe.subscriptionItems.list({
+          subscription: subscription.id,
+          limit: 100,
+          ...(startingAfter ? { starting_after: startingAfter } : {}),
+        });
+        add(result.data);
+        if (!result.has_more) {
+          complete = true;
+          break;
+        }
+        // "More" with nothing on the page: no cursor to go on with. Fail closed.
+        if (result.data.length === 0) throw new Error('subscription_items_incomplete');
+        startingAfter = result.data[result.data.length - 1].id;
+      }
+      if (!complete) throw new Error('subscription_items_incomplete');
+    } else {
+      add(subscription.items?.data ?? []);
+    }
+
+    const customer = subscription.customer;
+    return {
+      id: subscription.id,
+      status: subscription.status,
+      customerId: typeof customer === 'string' ? customer : customer?.id ?? null,
+      billingCycleAnchor: subscription.billing_cycle_anchor,
+      cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      endedAt: subscription.ended_at ?? null,
+      livemode: subscription.livemode,
+      metadata: subscription.metadata ?? {},
+      priceIds,
+    };
+  }
+
+  /**
+   * Every line of an invoice (CF-2 / P-1 SA Q-8): an event embeds only the
+   * first page, so a truncated invoice is read in full here instead of being
+   * denied. Throws when the lines do not end within `maxPages`.
+   */
+  async listInvoiceLinesAll(invoiceId: string, options: { maxPages?: number } = {}): Promise<Stripe.InvoiceLineItem[]> {
+    const maxPages = options.maxPages ?? 10;
+    const lines: Stripe.InvoiceLineItem[] = [];
+    let startingAfter: string | undefined;
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await this.stripe.invoices.listLineItems(invoiceId, {
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      lines.push(...result.data);
+      if (!result.has_more) return lines;
+      // "More" with nothing on the page: no cursor to go on with. Fail closed.
+      if (result.data.length === 0) throw new Error('invoice_lines_incomplete');
+      startingAfter = result.data[result.data.length - 1].id;
+    }
+    throw new Error('invoice_lines_incomplete');
+  }
+
+  /**
+   * The distinct price ids a checkout session sells, from its line items (the
+   * session event carries none). A line without a price contributes nothing.
+   * Throws when the items do not end within `maxPages`.
+   */
+  async listCheckoutSessionPriceIds(sessionId: string, options: { maxPages?: number } = {}): Promise<string[]> {
+    const maxPages = options.maxPages ?? 10;
+    const priceIds: string[] = [];
+    let startingAfter: string | undefined;
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await this.stripe.checkout.sessions.listLineItems(sessionId, {
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      for (const item of result.data) {
+        const id = item.price?.id;
+        if (id && !priceIds.includes(id)) priceIds.push(id);
+      }
+      if (!result.has_more) return priceIds;
+      // "More" with nothing on the page: no cursor to go on with. Fail closed.
+      if (result.data.length === 0) throw new Error('checkout_session_items_incomplete');
+      startingAfter = result.data[result.data.length - 1].id;
+    }
+    throw new Error('checkout_session_items_incomplete');
   }
 
   /**

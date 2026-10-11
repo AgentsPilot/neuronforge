@@ -41,9 +41,11 @@ export const ADMIN_COUNT_LINE = 'text-xs text-slate-400';
 
 /**
  * The admin button ("style A": Refresh, "Try again") with the A-1 focus ring.
- * First consumer: the Audit trail pager (§5.7 Pagination). `AdminStates` and
- * `AdminFilterBar` still carry the same classes inline and converge on this
- * constant when either file is next touched (L-1d SA Q-7).
+ * First consumer: the Audit trail pager (§5.7 Pagination). Since L-4a the
+ * filter bar's Refresh uses it too, composed with its own layout classes (SA
+ * M-2). `AdminStates`' "Try again" still carries the same classes inline and
+ * converges on this constant when that file is next touched (L-1d SA Q-7). The
+ * bar's Clear deliberately keeps its own quieter style (no fill; §5.5 part 5).
  */
 export const ADMIN_BUTTON =
   'rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';

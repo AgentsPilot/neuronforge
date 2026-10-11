@@ -1,0 +1,683 @@
+/**
+ * planPaymentApply (plan payments P-3b.2, workplan §3.2, §3.3, §8; SA rulings
+ * Q-2, Q-3, Q-4; conditions C-2, C-6).
+ *
+ * Jest cannot run `business_os_apply_plan_payment`, so the billing-event port
+ * here is a FAKE THAT MODELS THE FUNCTION'S RULES (§3.2 steps 2 to 11: billing
+ * row by account and mode, customer check, idempotency by invoice then by
+ * event, subscription identity and replacement, plan row, "newest" by the
+ * billing row's Stripe facts, the anchor on the first plan-writing invoice of a
+ * subscription, plan_version grandfathering). The same C-6 cases are pinned in
+ * SQL by `scripts/probe-bos-apply-plan-payment.sql` (P01 to P15), which ran on
+ * PGlite in P-3b.1 and runs on production at G-2.
+ *
+ * Tier names are read from the plan lookup keys, never written as literals (FR-12).
+ */
+
+jest.mock('@/lib/logger', () => {
+  const make = (): Record<string, unknown> => {
+    const logger: Record<string, unknown> = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    logger.child = () => logger;
+    return logger;
+  };
+  return { createLogger: () => make() };
+});
+
+import fs from 'fs';
+import path from 'path';
+import type Stripe from 'stripe';
+
+import {
+  applyPaidPlanInvoice,
+  PlanPaymentRetryError,
+  recordFailedPlanInvoice,
+  type PlanPaymentDeps,
+} from '@/lib/business-os/billing/planPaymentApply';
+import { BOS_PLAN_LOOKUP_KEYS, planTierForLookupKey } from '@/lib/business-os/billing/planPriceCatalog';
+import type { BusinessOsBillingAccount } from '@/lib/repositories/BusinessOsBillingAccountRepository';
+import type {
+  BusinessOsApplyPlanPaymentInput,
+  BusinessOsApplyPlanPaymentResult,
+  BusinessOsBillingEventInput,
+} from '@/lib/repositories/BusinessOsBillingEventRepository';
+import type { RecordPlanChangeInput } from '@/lib/business-os/entitlements/recordPlanChange';
+import type { Logger } from '@/lib/logger';
+
+// ── Fixtures, with Stripe-shaped ids ─────────────────────────────────────────
+
+const FIXTURES = path.join(__dirname, 'fixtures', 'stripe');
+const [KEY_A, KEY_B] = BOS_PLAN_LOOKUP_KEYS;
+const TIER_A = planTierForLookupKey(KEY_A) as string;
+const TIER_B = planTierForLookupKey(KEY_B) as string;
+const PRICE_A = 'price_probe_a_handbuilt';
+const PRICE_B = 'price_probe_b_handbuilt';
+
+const ACCOUNT = '11111111-1111-4111-8111-111111111111';
+const OTHER_ACCOUNT = '22222222-2222-4222-8222-222222222222';
+const CUSTOMER = 'cus_A1';
+const SUB_1 = 'sub_S1';
+const SUB_2 = 'sub_S2';
+const PERIOD_1_END = new Date(1792592000 * 1000).toISOString(); // the fixture line's period end
+const ANCHOR = 1_790_000_000;
+const ANCHOR_ISO = new Date(ANCHOR * 1000).toISOString();
+
+let eventSeq = 0;
+
+/** A fixture event with Stripe-shaped ids, edited by `change`. */
+function invoiceEvent(
+  name: string,
+  opts: { invoiceId: string; subscriptionId?: string; customerId?: string; livemode?: boolean },
+  change: (invoice: Stripe.Invoice) => void = () => undefined
+): Stripe.Event {
+  const event = JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8')) as Stripe.Event;
+  eventSeq += 1;
+  event.id = `evt_T${eventSeq}`;
+  event.livemode = opts.livemode ?? false;
+  const invoice = event.data.object as Stripe.Invoice;
+  invoice.id = opts.invoiceId;
+  invoice.customer = opts.customerId ?? CUSTOMER;
+  invoice.parent!.subscription_details!.subscription = opts.subscriptionId ?? SUB_1;
+  change(invoice);
+  return event;
+}
+
+const paidCreate = (invoiceId = 'in_C1', subscriptionId = SUB_1) =>
+  invoiceEvent('invoice-paid-subscription-create.json', { invoiceId, subscriptionId });
+
+// ── A fake of the apply function (§3.2) and its tables ──────────────────────
+
+interface PlanRow {
+  tier: string | null;
+  planVersion: number;
+  tierExpiresAt: string | null;
+  periodAnchor: string;
+  cohort: string | null;
+}
+
+interface EventRow {
+  id: string;
+  userId: string | null;
+  kind: string;
+  stripeEventId: string | null;
+  invoiceId: string | null;
+  subscriptionId: string | null;
+  planWritten: boolean;
+  refusalReason: string | null;
+  input: unknown;
+}
+
+function billingRow(overrides: Partial<BusinessOsBillingAccount> = {}): BusinessOsBillingAccount {
+  return {
+    id: '33333333-3333-4333-8333-333333333333',
+    accountId: ACCOUNT,
+    livemode: false,
+    stripeCustomerId: CUSTOMER,
+    stripeSubscriptionId: null,
+    subscriptionStatus: null,
+    boughtTier: null,
+    currentPeriodEnd: null,
+    cancelAtPeriodEnd: false,
+    pendingTier: null,
+    openCheckoutSessionId: null,
+    openCheckoutExpiresAt: null,
+    lastInvoiceId: null,
+    lastPaidAt: null,
+    lastPaymentFailedAt: null,
+    failedAttempts: 0,
+    actionRequiredInvoiceUrl: null,
+    founderDiscountAppliedAt: null,
+    endedAt: null,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+class FakeWorld {
+  billing: BusinessOsBillingAccount | null = billingRow();
+  plan: PlanRow | null = { tier: null, planVersion: 0, tierExpiresAt: null, periodAnchor: '2026-09-01T00:00:00.000Z', cohort: 'trial' };
+  events: EventRow[] = [];
+  applyCalls: BusinessOsApplyPlanPaymentInput[] = [];
+  /** Another account's row holding a subscription (UNIQUE), for `subscription_held_elsewhere`. */
+  heldElsewhere = new Set<string>();
+  private seq = 0;
+
+  private rowId(): string {
+    this.seq += 1;
+    return `44444444-4444-4444-8444-${String(this.seq).padStart(12, '0')}`;
+  }
+
+  /** §3.2, steps 2 to 11. */
+  apply(input: BusinessOsApplyPlanPaymentInput): BusinessOsApplyPlanPaymentResult {
+    this.applyCalls.push(input);
+    const row = this.billing;
+    if (!row || row.accountId !== input.accountId || row.livemode !== input.livemode) return { status: 'billing_row_missing' };
+    if (row.stripeCustomerId !== input.stripeCustomerId) return { status: 'customer_mismatch' };
+    const paid = this.events.find((e) => e.kind === 'invoice_paid' && e.invoiceId === input.stripeInvoiceId);
+    if (paid) return { status: 'already_applied', eventRowId: paid.id };
+    const byEvent = this.events.find((e) => input.stripeEventId !== null && e.stripeEventId === input.stripeEventId);
+    if (byEvent) return { status: 'already_recorded', eventRowId: byEvent.id };
+
+    let replacement = false;
+    let refusal: string | null = null;
+    if (row.stripeSubscriptionId === null || row.stripeSubscriptionId === input.stripeSubscriptionId) replacement = false;
+    else if (input.replacesSubscriptionId !== null && row.stripeSubscriptionId === input.replacesSubscriptionId) replacement = true;
+    else refusal = 'second_subscription';
+    if (!refusal && row.stripeSubscriptionId !== input.stripeSubscriptionId && this.heldElsewhere.has(input.stripeSubscriptionId)) {
+      refusal = 'subscription_held_elsewhere';
+    }
+    if (refusal) {
+      const id = this.rowId();
+      this.events.push({ id, userId: input.accountId, kind: 'mismatch_refused', stripeEventId: input.stripeEventId, invoiceId: input.stripeInvoiceId, subscriptionId: input.stripeSubscriptionId, planWritten: false, refusalReason: refusal, input });
+      return { status: 'subscription_conflict', eventRowId: id };
+    }
+    const plan = this.plan;
+    if (!plan) return { status: 'plan_row_missing' };
+
+    const tierBefore = plan.tier;
+    const inForce = plan.tier !== null && (plan.tierExpiresAt === null || Date.parse(plan.tierExpiresAt) > Date.now());
+    const newest =
+      replacement ||
+      row.currentPeriodEnd === null ||
+      Date.parse(input.periodEnd) > Date.parse(row.currentPeriodEnd) ||
+      (Date.parse(input.periodEnd) === Date.parse(row.currentPeriodEnd) &&
+        (row.lastPaidAt === null || Date.parse(input.paidAt) >= Date.parse(row.lastPaidAt)));
+    const planWritten = input.assignsPlan && newest;
+    const anchorSet =
+      planWritten &&
+      !this.events.some((e) => e.userId === input.accountId && e.kind === 'invoice_paid' && e.subscriptionId === input.stripeSubscriptionId && e.planWritten);
+    const id = this.rowId();
+    this.events.push({ id, userId: input.accountId, kind: 'invoice_paid', stripeEventId: input.stripeEventId, invoiceId: input.stripeInvoiceId, subscriptionId: input.stripeSubscriptionId, planWritten, refusalReason: null, input });
+    if (planWritten) {
+      plan.planVersion = tierBefore !== input.tier || !inForce ? input.planVersion : plan.planVersion;
+      plan.tier = input.tier;
+      plan.tierExpiresAt = input.periodEnd;
+      if (anchorSet) plan.periodAnchor = input.billingCycleAnchor;
+    }
+    this.billing = {
+      ...row,
+      stripeSubscriptionId: input.stripeSubscriptionId,
+      subscriptionStatus: input.subscriptionStatus,
+      endedAt: replacement ? null : row.endedAt,
+      cancelAtPeriodEnd: replacement ? false : row.cancelAtPeriodEnd,
+      boughtTier: planWritten ? input.tier : row.boughtTier,
+      currentPeriodEnd: newest ? input.periodEnd : row.currentPeriodEnd,
+      lastInvoiceId: newest ? input.stripeInvoiceId : row.lastInvoiceId,
+      lastPaidAt: newest ? input.paidAt : row.lastPaidAt,
+    };
+    return {
+      status: planWritten ? 'applied' : 'recorded',
+      eventRowId: id,
+      tierBefore,
+      tierAfter: planWritten ? input.tier : tierBefore,
+      planWritten,
+      anchorSet,
+    };
+  }
+
+  record(input: BusinessOsBillingEventInput): { outcome: 'recorded'; eventRowId: string } | { outcome: 'duplicate' } {
+    if (input.stripeEventId !== null && this.events.some((e) => e.stripeEventId === input.stripeEventId)) return { outcome: 'duplicate' };
+    const id = this.rowId();
+    this.events.push({
+      id,
+      userId: input.accountId,
+      kind: input.kind,
+      stripeEventId: input.stripeEventId,
+      invoiceId: input.stripeInvoiceId ?? null,
+      subscriptionId: input.stripeSubscriptionId ?? null,
+      planWritten: false,
+      refusalReason: input.refusalReason ?? null,
+      input,
+    });
+    return { outcome: 'recorded', eventRowId: id };
+  }
+}
+
+// ── Harness ─────────────────────────────────────────────────────────────────
+
+interface StripeSubscription {
+  id: string;
+  status: string;
+  customerId: string | null;
+  billingCycleAnchor: number;
+  cancelAtPeriodEnd: boolean;
+  endedAt: number | null;
+  livemode: boolean;
+  metadata: Record<string, string>;
+  priceIds: string[];
+}
+
+function subscriptionAt(id: string, overrides: Partial<StripeSubscription> = {}): StripeSubscription {
+  return { id, status: 'active', customerId: CUSTOMER, billingCycleAnchor: ANCHOR, cancelAtPeriodEnd: false, endedAt: null, livemode: false, metadata: {}, priceIds: [PRICE_A], ...overrides };
+}
+
+function setup(world = new FakeWorld()) {
+  const subscriptions = new Map<string, StripeSubscription | Error>([[SUB_1, subscriptionAt(SUB_1)], [SUB_2, subscriptionAt(SUB_2, { billingCycleAnchor: ANCHOR + 86400 * 90 })]]);
+  const audits: RecordPlanChangeInput[] = [];
+  const order: string[] = [];
+  const lines = jest.fn();
+  const findBySub = jest.fn(async (id: string, livemode: boolean) => ({
+    data: world.billing && world.billing.stripeSubscriptionId === id && world.billing.livemode === livemode ? world.billing : null,
+    error: null,
+  }));
+  const findByCustomer = jest.fn(async (id: string, livemode: boolean) => ({
+    data: world.billing && world.billing.stripeCustomerId === id && world.billing.livemode === livemode ? world.billing : null,
+    error: null,
+  }));
+  const deps: PlanPaymentDeps = {
+    billingAccounts: { findByStripeSubscription: findBySub, findByStripeCustomer: findByCustomer } as unknown as PlanPaymentDeps['billingAccounts'],
+    billingEvents: {
+      applyPlanPayment: jest.fn(async (input: BusinessOsApplyPlanPaymentInput) => {
+        order.push('apply');
+        return { data: world.apply(input), error: null };
+      }),
+      recordEvent: jest.fn(async (input: BusinessOsBillingEventInput) => ({ data: world.record(input), error: null })),
+    } as unknown as PlanPaymentDeps['billingEvents'],
+    stripe: () =>
+      ({
+        listInvoiceLinesAll: lines,
+        retrieveBusinessOsSubscription: jest.fn(async (id: string) => {
+          const found = subscriptions.get(id);
+          if (found instanceof Error) throw found;
+          if (!found) throw Object.assign(new Error('No such subscription'), { code: 'resource_missing' });
+          return found;
+        }),
+      }) as unknown as ReturnType<PlanPaymentDeps['stripe']>,
+    catalog: { load: jest.fn(async () => ({ byPriceId: new Map([[PRICE_A, KEY_A], [PRICE_B, KEY_B]]), fromCache: false })) },
+    entitlementConfig: () => ({ tierOrder: [TIER_A, TIER_B], matrix: { version: 7 } }) as unknown as ReturnType<PlanPaymentDeps['entitlementConfig']>,
+    recordPlanChange: jest.fn(async (input: RecordPlanChangeInput) => {
+      order.push(`audit:${input.action}`);
+      audits.push(input);
+    }),
+  };
+  const logLines: Array<{ level: string; ctx: Record<string, unknown> }> = [];
+  const at = (level: string) => (ctx: Record<string, unknown>) => {
+    logLines.push({ level, ctx });
+  };
+  const log = { info: at('info'), warn: at('warn'), error: at('error'), debug: at('debug') } as unknown as Logger;
+  const logged = (event: string) => logLines.filter((l) => l.ctx.event === event);
+  return { world, deps, audits, order, subscriptions, lines, log, logged, findBySub, findByCustomer };
+}
+
+const paid = (h: ReturnType<typeof setup>, event: Stripe.Event) => applyPaidPlanInvoice(event, h.log, h.deps);
+const historyKinds = (world: FakeWorld) => world.events.map((e) => `${e.kind}${e.refusalReason ? `:${e.refusalReason}` : ''}`);
+
+// ── C-6: the required cases ─────────────────────────────────────────────────
+
+describe('C-6 (SA-P2, SA-P16): the plan row moves only on the newest paid invoice', () => {
+  it('C6-7 first buy from trial: tier written, cohort untouched, anchor = billing_cycle_anchor, expiry = line period end, audit after apply', async () => {
+    const h = setup();
+    await paid(h, paidCreate());
+    expect(h.world.plan).toEqual({ tier: TIER_A, planVersion: 7, tierExpiresAt: PERIOD_1_END, periodAnchor: ANCHOR_ISO, cohort: 'trial' });
+    expect(h.world.billing).toMatchObject({ stripeSubscriptionId: SUB_1, subscriptionStatus: 'active', boughtTier: TIER_A, currentPeriodEnd: PERIOD_1_END });
+    expect(h.order).toEqual(['apply', 'audit:BOS_BILLING_INVOICE_PAID']);
+    expect(h.audits[0]).toMatchObject({
+      accountId: ACCOUNT,
+      actor: { kind: 'system', source: 'stripe_webhook' },
+      entityType: 'business_os_account_plan',
+      entityId: ACCOUNT,
+      severity: 'info',
+      invalidatesEntitlements: true,
+      changes: { before: { tier: null }, after: { tier: TIER_A, tierExpiresAt: PERIOD_1_END, periodAnchor: ANCHOR_ISO } },
+      details: { invoiceId: 'in_C1', subscriptionId: SUB_1, tier: TIER_A, amountMinor: 2000, planWritten: true, anchorSet: true, livemode: false },
+    });
+    expect(h.logged('bos_billing_invoice_applied')).toHaveLength(1);
+  });
+
+  it('C6-1 replay: the same invoice twice, then under another event id: one history row, plan and audit written once', async () => {
+    const h = setup();
+    const first = paidCreate();
+    await paid(h, first);
+    await paid(h, first);
+    await paid(h, paidCreate()); // same invoice id, new event id
+    expect(h.world.events.filter((e) => e.kind === 'invoice_paid')).toHaveLength(1);
+    expect(h.audits).toHaveLength(1);
+    expect(h.logged('bos_billing_invoice_replayed').map((l) => l.ctx.status)).toEqual(['already_applied', 'already_applied']);
+  });
+
+  it('C6-2 out-of-order renewal: N+1 applied, N delivered late is recorded with plan_written false; expiry and anchor stay', async () => {
+    const h = setup();
+    await paid(h, paidCreate());
+    const renewal = invoiceEvent('invoice-paid-renewal.json', { invoiceId: 'in_R2' });
+    await paid(h, renewal);
+    const after = { ...h.world.plan };
+    // A late, OLDER renewal for the first period (new invoice id).
+    await paid(h, invoiceEvent('invoice-paid-renewal.json', { invoiceId: 'in_R1' }, (i) => {
+      i.lines.data[0].period = { start: 1790000000, end: 1792592000 };
+      i.status_transitions.paid_at = 1792592999;
+    }));
+    expect(h.world.plan).toEqual(after);
+    expect(h.world.plan?.tierExpiresAt).toBe(new Date(1795184000 * 1000).toISOString());
+    expect(h.world.events.map((e) => e.planWritten)).toEqual([true, true, false]);
+    expect(h.audits.map((a) => (a.details as { planWritten: boolean }).planWritten)).toEqual([true, true, false]);
+    expect(h.audits[2].invalidatesEntitlements).toBe(false);
+  });
+
+  it('C6-2b a renewal never moves the anchor and keeps plan_version (grandfathering, Q-8)', async () => {
+    const h = setup();
+    await paid(h, paidCreate());
+    h.world.plan!.planVersion = 3; // sold at an older matrix version
+    await paid(h, invoiceEvent('invoice-paid-renewal.json', { invoiceId: 'in_R2' }));
+    expect(h.world.plan).toMatchObject({ periodAnchor: ANCHOR_ISO, planVersion: 3, tier: TIER_A });
+    expect(h.audits[1].changes).toEqual({ before: { tier: TIER_A }, after: { tier: TIER_A, tierExpiresAt: new Date(1795184000 * 1000).toISOString() } });
+  });
+
+  it('C6-3 upgrade: proration with the old tier credited; tier changes, expiry and anchor unchanged, plan_version current; a late replay of the first invoice never downgrades', async () => {
+    const h = setup();
+    const create = paidCreate();
+    await paid(h, create);
+    h.world.plan!.planVersion = 3;
+    const upgrade = invoiceEvent('invoice-paid-proration.json', { invoiceId: 'in_U1' });
+    await paid(h, upgrade);
+    expect(h.world.plan).toMatchObject({ tier: TIER_B, tierExpiresAt: PERIOD_1_END, periodAnchor: ANCHOR_ISO, planVersion: 7 });
+    await paid(h, create);
+    expect(h.world.plan?.tier).toBe(TIER_B);
+    expect(h.logged('bos_billing_invoice_replayed')).toHaveLength(1);
+  });
+
+  it('C6-4 re-buy after the old subscription ended at Stripe: replacement, new anchor, subscription replaced', async () => {
+    const h = setup();
+    h.world.billing = billingRow({ stripeSubscriptionId: SUB_1, subscriptionStatus: 'canceled', endedAt: '2026-09-15T00:00:00.000Z', currentPeriodEnd: '2027-01-01T00:00:00.000Z' });
+    h.subscriptions.set(SUB_1, subscriptionAt(SUB_1, { status: 'canceled' }));
+    // The new subscription's invoice is found by its customer (the row still names the old one).
+    await paid(h, paidCreate('in_N1', SUB_2));
+    expect((h.deps.billingEvents.applyPlanPayment as jest.Mock).mock.calls[0][0]).toMatchObject({ stripeSubscriptionId: SUB_2, replacesSubscriptionId: SUB_1 });
+    expect(h.world.billing).toMatchObject({ stripeSubscriptionId: SUB_2, endedAt: null });
+    expect(h.world.plan).toMatchObject({ tier: TIER_A, periodAnchor: new Date((ANCHOR + 86400 * 90) * 1000).toISOString() });
+  });
+
+  it('C6-4b re-buy while the old subscription is LIVE at Stripe: refused (second_subscription), alerted and audited, no plan write', async () => {
+    const h = setup();
+    h.world.billing = billingRow({ stripeSubscriptionId: SUB_1, subscriptionStatus: 'active' });
+    await paid(h, paidCreate('in_N1', SUB_2));
+    expect((h.deps.billingEvents.applyPlanPayment as jest.Mock).mock.calls[0][0].replacesSubscriptionId).toBeNull();
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:second_subscription']);
+    expect(h.world.plan?.tier).toBeNull();
+    expect(h.logged('bos_billing_payment_refused')).toEqual([
+      expect.objectContaining({ level: 'error', ctx: expect.objectContaining({ reason: 'second_subscription', alert: true }) }),
+    ]);
+    expect(h.audits).toEqual([expect.objectContaining({ action: 'BOS_BILLING_PAYMENT_REFUSED', severity: 'warning', invalidatesEntitlements: false })]);
+  });
+
+  it('a held subscription Stripe does not know is not PROVEN ended: refused as a second subscription', async () => {
+    const h = setup();
+    h.world.billing = billingRow({ stripeSubscriptionId: 'sub_Gone' });
+    await paid(h, paidCreate('in_N1', SUB_2));
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:second_subscription']);
+    expect(h.logged('bos_billing_held_subscription_missing')).toHaveLength(1);
+  });
+
+  it('subscription held elsewhere (another account holds it): refused, no plan write', async () => {
+    const h = setup();
+    h.world.heldElsewhere.add(SUB_1);
+    await paid(h, paidCreate());
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:subscription_held_elsewhere']);
+    expect(h.logged('bos_billing_payment_refused')[0].ctx.reason).toBe('subscription_held_elsewhere');
+  });
+
+  it('C6-5 $0 trial invoice: history row, no tier, no anchor; the next non-zero invoice writes the tier AND sets the anchor', async () => {
+    const h = setup();
+    await paid(h, invoiceEvent('invoice-paid-trial-zero.json', { invoiceId: 'in_T0' }));
+    expect(h.world.plan).toMatchObject({ tier: null, periodAnchor: '2026-09-01T00:00:00.000Z' });
+    expect(h.world.events[0]).toMatchObject({ kind: 'invoice_paid', planWritten: false });
+    expect(h.audits[0]).toMatchObject({ invalidatesEntitlements: false, details: expect.objectContaining({ planWritten: false, anchorSet: false }) });
+    await paid(h, invoiceEvent('invoice-paid-renewal.json', { invoiceId: 'in_R1' }));
+    expect(h.world.plan).toMatchObject({ tier: TIER_A, periodAnchor: ANCHOR_ISO });
+  });
+});
+
+// ── Refusals and "could not tell" ───────────────────────────────────────────
+
+describe('refusals are recorded, alerted and final; "could not tell" throws', () => {
+  it('unknown customer: a refusal row with NO account, the money recorded, alert, no audit, nothing applied', async () => {
+    const h = setup();
+    h.world.billing = null;
+    await paid(h, paidCreate());
+    expect(h.world.events).toEqual([expect.objectContaining({ userId: null, kind: 'mismatch_refused', refusalReason: 'unknown_customer' })]);
+    expect((h.world.events[0].input as BusinessOsBillingEventInput)).toMatchObject({ amountMinor: 2000, currency: 'usd', stripeCustomerId: CUSTOMER });
+    expect(h.deps.billingEvents.applyPlanPayment).not.toHaveBeenCalled();
+    expect(h.audits).toEqual([]);
+    expect(h.logged('bos_billing_payment_refused')[0].ctx.alert).toBe(true);
+  });
+
+  it('a detached billing row (account deleted) is an unknown customer', async () => {
+    const h = setup();
+    h.world.billing = billingRow({ accountId: null });
+    await paid(h, paidCreate());
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:unknown_customer']);
+  });
+
+  it('the account comes from the billing row by SUBSCRIPTION first; metadata never chooses it', async () => {
+    const h = setup();
+    h.world.billing = billingRow({ stripeSubscriptionId: SUB_1 });
+    await paid(h, paidCreate());
+    expect(h.findBySub).toHaveBeenCalledWith(SUB_1, false);
+    expect(h.findByCustomer).not.toHaveBeenCalled();
+  });
+
+  it('metadata naming another account: refused (metadata_account_mismatch), no apply', async () => {
+    const h = setup();
+    const event = invoiceEvent('invoice-paid-subscription-create.json', { invoiceId: 'in_C1' }, (i) => {
+      i.parent!.subscription_details!.metadata = { bos_user_id: OTHER_ACCOUNT };
+    });
+    await paid(h, event);
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:metadata_account_mismatch']);
+    expect(h.world.events[0].userId).toBe(ACCOUNT);
+    expect(h.deps.billingEvents.applyPlanPayment).not.toHaveBeenCalled();
+    expect(h.audits[0]).toMatchObject({ action: 'BOS_BILLING_PAYMENT_REFUSED', accountId: ACCOUNT });
+  });
+
+  it('metadata naming THIS account is fine', async () => {
+    const h = setup();
+    await paid(h, invoiceEvent('invoice-paid-subscription-create.json', { invoiceId: 'in_C1' }, (i) => {
+      i.parent!.subscription_details!.metadata = { bos_user_id: ACCOUNT, product: 'business_os_plan' };
+    }));
+    expect(h.world.plan?.tier).toBe(TIER_A);
+  });
+
+  it('non-USD (SA-P15 backstop): refused, the currency recorded as NULL', async () => {
+    const h = setup();
+    await paid(h, invoiceEvent('invoice-paid-subscription-create.json', { invoiceId: 'in_C1' }, (i) => { i.currency = 'eur'; }));
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:currency_not_usd']);
+    expect((h.world.events[0].input as BusinessOsBillingEventInput).currency).toBeNull();
+  });
+
+  it('a subscription row with another customer: refused (customer_mismatch)', async () => {
+    const h = setup();
+    h.world.billing = billingRow({ stripeSubscriptionId: SUB_1, stripeCustomerId: 'cus_Other' });
+    await paid(h, paidCreate());
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:customer_mismatch']);
+  });
+
+  it('Stripe says the subscription belongs to another customer: refused (customer_mismatch)', async () => {
+    const h = setup();
+    h.subscriptions.set(SUB_1, subscriptionAt(SUB_1, { customerId: 'cus_Other' }));
+    await paid(h, paidCreate());
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:customer_mismatch']);
+  });
+
+  it('a tier the config does not define: refused (tier_not_configured)', async () => {
+    const h = setup();
+    h.deps.entitlementConfig = () => ({ tierOrder: [TIER_B], matrix: { version: 7 } }) as unknown as ReturnType<PlanPaymentDeps['entitlementConfig']>;
+    await paid(h, paidCreate());
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:tier_not_configured']);
+  });
+
+  it('mixed positive tiers: refused (mixed_tiers)', async () => {
+    const h = setup();
+    await paid(h, invoiceEvent('invoice-paid-proration.json', { invoiceId: 'in_U1' }, (i) => { i.lines.data[0].amount = 50; }));
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:mixed_tiers']);
+  });
+
+  it('a resent refused event is a replay: no second row, no second audit (C-2)', async () => {
+    const h = setup();
+    const event = invoiceEvent('invoice-paid-subscription-create.json', { invoiceId: 'in_C1' }, (i) => { i.currency = 'eur'; });
+    await paid(h, event);
+    await paid(h, event);
+    expect(h.world.events).toHaveLength(1);
+    expect(h.audits).toHaveLength(1);
+    expect(h.logged('bos_billing_payment_refusal_replayed')).toHaveLength(1);
+  });
+
+  it('Q-3: no plan row → throws (claim released, Stripe retries), error + alert, NOTHING written, no audit', async () => {
+    const h = setup();
+    h.world.plan = null;
+    await expect(paid(h, paidCreate())).rejects.toBeInstanceOf(PlanPaymentRetryError);
+    expect(h.world.events).toEqual([]);
+    expect(h.audits).toEqual([]);
+    expect(h.logged('bos_billing_plan_row_missing')[0]).toMatchObject({ level: 'error', ctx: expect.objectContaining({ alert: true }) });
+  });
+
+  it('the billing row vanishing before the apply throws (retried)', async () => {
+    const h = setup();
+    const original = h.deps.billingEvents.applyPlanPayment;
+    h.deps.billingEvents.applyPlanPayment = jest.fn(async () => ({ data: { status: 'billing_row_missing' as const }, error: null }));
+    await expect(paid(h, paidCreate())).rejects.toThrow('billing_row_missing');
+    h.deps.billingEvents.applyPlanPayment = original;
+  });
+
+  it('a customer change between read and lock (function says customer_mismatch): refused and recorded', async () => {
+    const h = setup();
+    h.deps.billingEvents.applyPlanPayment = jest.fn(async () => ({ data: { status: 'customer_mismatch' as const }, error: null }));
+    await paid(h, paidCreate());
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:customer_mismatch']);
+  });
+
+  it.each([
+    ['the Stripe subscription read', (h: ReturnType<typeof setup>) => h.subscriptions.set(SUB_1, new Error('stripe down'))],
+    ['the billing row read', (h: ReturnType<typeof setup>) => h.findByCustomer.mockResolvedValueOnce({ data: null, error: new Error('db down') } as never)],
+    ['the catalog', (h: ReturnType<typeof setup>) => (h.deps.catalog.load as jest.Mock).mockRejectedValueOnce(new Error('catalog down'))],
+    ['the apply call', (h: ReturnType<typeof setup>) => { h.deps.billingEvents.applyPlanPayment = jest.fn(async () => ({ data: null, error: new Error('rpc down') })); }],
+    ['the refusal insert', (h: ReturnType<typeof setup>) => { h.world.billing = null; h.deps.billingEvents.recordEvent = jest.fn(async () => ({ data: null, error: new Error('insert down') })); }],
+  ])('a failure of %s throws (could not tell), never a final answer', async (_label, breakIt) => {
+    const h = setup();
+    breakIt(h);
+    await expect(paid(h, paidCreate())).rejects.toThrow();
+    expect(h.audits).toEqual([]);
+  });
+
+  it('a truncated invoice is read in full (CF-2) before the facts', async () => {
+    const h = setup();
+    const event = invoiceEvent('invoice-paid-subscription-create.json', { invoiceId: 'in_C1' }, (i) => { i.lines.has_more = true; });
+    h.lines.mockResolvedValue((event.data.object as Stripe.Invoice).lines.data);
+    await paid(h, event);
+    expect(h.lines).toHaveBeenCalledWith('in_C1');
+    expect(h.world.plan?.tier).toBe(TIER_A);
+  });
+
+  it('logs and audit details carry ids only: no email, no metadata value', async () => {
+    const h = setup();
+    await paid(h, invoiceEvent('invoice-paid-subscription-create.json', { invoiceId: 'in_C1' }, (i) => {
+      i.parent!.subscription_details!.metadata = { bos_user_id: ACCOUNT, product: 'business_os_plan' };
+    }));
+    const text = JSON.stringify(h.audits);
+    expect(text).not.toContain('fixture@example.invalid');
+    expect(text).not.toContain('business_os_plan');
+  });
+});
+
+// ── QA hardening: metadata can never choose the account (SR-8) ──────────────
+
+describe('metadata never chooses the account (SR-8, QA hardening)', () => {
+  /** Every account id the run touched: lookups, apply, history rows, audits. */
+  function accountsTouched(h: ReturnType<typeof setup>): string[] {
+    const ids = new Set<string>();
+    for (const call of (h.deps.billingEvents.applyPlanPayment as jest.Mock).mock.calls) ids.add(call[0].accountId);
+    for (const row of h.world.events) if (row.userId) ids.add(row.userId);
+    for (const audit of h.audits) ids.add(audit.accountId);
+    return [...ids];
+  }
+  const naming = (account: string) =>
+    invoiceEvent('invoice-paid-subscription-create.json', { invoiceId: 'in_M1' }, (i) => {
+      i.parent!.subscription_details!.metadata = { bos_user_id: account, product: 'business_os_plan' };
+      i.metadata = { bos_user_id: account };
+    });
+
+  it('metadata names account B, the billing row (by subscription) is account A: refused under A, B is never touched', async () => {
+    const h = setup();
+    h.world.billing = billingRow({ stripeSubscriptionId: SUB_1 });
+    await paid(h, naming(OTHER_ACCOUNT));
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:metadata_account_mismatch']);
+    expect(accountsTouched(h)).toEqual([ACCOUNT]);
+    expect(h.findBySub).toHaveBeenCalledWith(SUB_1, false);
+    // The lookups are by Stripe ids only: no lookup ever took the metadata value.
+    for (const call of [...h.findBySub.mock.calls, ...h.findByCustomer.mock.calls]) expect(call).not.toContain(OTHER_ACCOUNT);
+    expect(h.world.plan?.tier).toBeNull();
+  });
+
+  it('metadata names account B, the billing row (by customer) is account A: refused under A, never B', async () => {
+    const h = setup();
+    await paid(h, naming(OTHER_ACCOUNT));
+    expect(h.findByCustomer).toHaveBeenCalledWith(CUSTOMER, false);
+    expect(accountsTouched(h)).toEqual([ACCOUNT]);
+    expect(h.deps.billingEvents.applyPlanPayment).not.toHaveBeenCalled();
+  });
+
+  it('metadata only, no billing row for the invoice (B has a record for ANOTHER customer): unknown_customer with no account, B never touched', async () => {
+    const h = setup();
+    h.world.billing = billingRow({ accountId: OTHER_ACCOUNT, stripeCustomerId: 'cus_B1', stripeSubscriptionId: 'sub_B1' });
+    await paid(h, naming(OTHER_ACCOUNT));
+    expect(h.world.events).toEqual([expect.objectContaining({ userId: null, kind: 'mismatch_refused', refusalReason: 'unknown_customer' })]);
+    expect(accountsTouched(h)).toEqual([]);
+    expect(h.deps.billingEvents.applyPlanPayment).not.toHaveBeenCalled();
+    expect(h.audits).toEqual([]);
+  });
+
+  it('the same holds for a failed payment: metadata only → unknown_customer, never B', async () => {
+    const h = setup();
+    h.world.billing = null;
+    const event = invoiceEvent('invoice-payment-failed.json', { invoiceId: 'in_MF1' }, (i) => {
+      i.parent!.subscription_details!.metadata = { bos_user_id: OTHER_ACCOUNT };
+    });
+    await recordFailedPlanInvoice(event, h.log, h.deps);
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:unknown_customer']);
+    expect(accountsTouched(h)).toEqual([]);
+  });
+});
+
+// ── invoice.payment_failed (SA Q-2) ─────────────────────────────────────────
+
+describe('invoice.payment_failed (SA Q-2): one history row, no plan or billing write', () => {
+  const failed = (invoiceId = 'in_F1') => invoiceEvent('invoice-payment-failed.json', { invoiceId });
+  const run = (h: ReturnType<typeof setup>, event: Stripe.Event) => recordFailedPlanInvoice(event, h.log, h.deps);
+
+  it('records invoice_payment_failed with the amount due, warns, applies nothing, audits nothing', async () => {
+    const h = setup();
+    await run(h, failed());
+    expect(historyKinds(h.world)).toEqual(['invoice_payment_failed']);
+    expect(h.world.events[0]).toMatchObject({ userId: ACCOUNT, invoiceId: 'in_F1', subscriptionId: SUB_1 });
+    expect(h.world.events[0].input).toMatchObject({ amountMinor: 5000, tier: TIER_B, paidAt: null, currency: 'usd' });
+    expect(h.deps.billingEvents.applyPlanPayment).not.toHaveBeenCalled();
+    expect(h.audits).toEqual([]);
+    expect(h.world.plan?.tier).toBeNull();
+    expect(h.logged('bos_billing_payment_failed')[0].level).toBe('warn');
+  });
+
+  it('a redelivery is a replay (event-id duplicate counts as done)', async () => {
+    const h = setup();
+    const event = failed();
+    await run(h, event);
+    await run(h, event);
+    expect(h.world.events).toHaveLength(1);
+    expect(h.logged('bos_billing_payment_failed_replayed')).toHaveLength(1);
+  });
+
+  it('the same account and metadata checks as paid apply first', async () => {
+    const unknown = setup();
+    unknown.world.billing = null;
+    await run(unknown, failed());
+    expect(historyKinds(unknown.world)).toEqual(['mismatch_refused:unknown_customer']);
+
+    const mismatch = setup();
+    await run(mismatch, invoiceEvent('invoice-payment-failed.json', { invoiceId: 'in_F1' }, (i) => {
+      i.parent!.subscription_details!.metadata = { bos_user_id: OTHER_ACCOUNT };
+    }));
+    expect(historyKinds(mismatch.world)).toEqual(['mismatch_refused:metadata_account_mismatch']);
+  });
+
+  it('a record failure throws', async () => {
+    const h = setup();
+    h.deps.billingEvents.recordEvent = jest.fn(async () => ({ data: null, error: new Error('down') }));
+    await expect(run(h, failed())).rejects.toThrow('down');
+  });
+});

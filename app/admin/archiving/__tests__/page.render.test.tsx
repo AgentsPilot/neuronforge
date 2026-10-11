@@ -8,14 +8,21 @@
  * cutoffs, the dropdown switching without a refetch, what the confirm dialog
  * promises (including K-1 at 180 and 90 days), and that nothing is sent while
  * runs are switched off.
+ *
+ * Admin Layout Standard L-3 adds T-3 to T-11 at the end (header, KPI strip,
+ * table, states, dialog class) and edits one P-6 line (the Try again button is
+ * the sibling of the testid element, RC-3).
  */
 
 import '@testing-library/jest-dom';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import ArchivingPage from '../page';
 import type { ArchiveRunSummary, ArchivingOverview } from '@/lib/archiving/types';
+import { RUN_HISTORY_LIMIT } from '@/lib/archiving/config';
+import { ADMIN_DIALOG_CLASS } from '@/app/admin/components/layout/adminDialog';
+import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 
 // Radix Select uses pointer capture and scrollIntoView, which jsdom lacks.
 // Stubbed locally rather than in a global setup file (workplan §5.5).
@@ -406,7 +413,8 @@ describe('P-6: when the overview cannot be read', () => {
 
     const error = await screen.findByTestId('page-error');
     expect(error).toHaveTextContent('Could not read the archiving overview');
-    expect(within(error).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    // AdminError puts the testid on the message element (RC-3); the button is its sibling.
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.queryByTestId('source-audit_trail')).not.toBeInTheDocument();
     expect(screen.queryByTestId('total-rows')).not.toBeInTheDocument();
   });
@@ -467,5 +475,338 @@ describe('P-7: an empty table', () => {
       await user.click(await screen.findByRole('option', { name: label }));
       expect(screen.getByTestId('eligible-rows')).toHaveTextContent('0');
     }
+  });
+});
+
+// ── Admin Layout Standard L-3 (workplan §6.1, T-3 to T-11) ─────────────────
+
+describe('L-3 T-3: the header', () => {
+  it('has exactly one h1 "Archiving", the server "As of" line, and no Runs off badge while runs are on', async () => {
+    stubFetch({ ...overview(), runsEnabled: true });
+    render(<ArchivingPage />);
+    await screen.findByTestId('source-audit_trail');
+
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0].textContent).toBe('Archiving');
+    expect(screen.getByTestId('as-of').textContent).toBe('As of 2026-09-26 12:00 UTC.');
+    expect(screen.queryByTestId('runs-off-badge')).not.toBeInTheDocument();
+  });
+
+  it('with runs off, the badge is a neutral chip (a span, no icon) beside the title', async () => {
+    await renderPage();
+    const badge = screen.getByTestId('runs-off-badge');
+    expect(badge.tagName).toBe('SPAN');
+    expect(badge.textContent).toBe('Runs off');
+    expect(badge.getAttribute('data-tone')).toBe('neutral');
+    expect(badge.querySelector('svg')).toBeNull();
+    expect(badge.parentElement).toBe(screen.getByRole('heading', { level: 1 }).parentElement);
+  });
+
+  it('shows no "As of" line and no badge before the first read answers', () => {
+    global.fetch = jest.fn(() => new Promise(() => undefined)) as unknown as typeof fetch;
+    render(<ArchivingPage />);
+    expect(screen.queryByTestId('as-of')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('runs-off-badge')).not.toBeInTheDocument();
+  });
+});
+
+describe('L-3 T-4: the KPI strip', () => {
+  const TILES = ['kpi-rows-now', 'kpi-eligible-now', 'kpi-archived-total', 'kpi-last-run'];
+
+  it('shows four same-page anchor tiles with the overview figures', async () => {
+    await renderPage();
+
+    const tiles = TILES.map((id) => screen.getByTestId(id));
+    expect(tiles.map((tile) => tile.tagName)).toEqual(['A', 'A', 'A', 'A']);
+    expect(tiles.map((tile) => tile.getAttribute('href'))).toEqual([
+      '#sources',
+      '#sources',
+      '#run-history',
+      '#run-history',
+    ]);
+    expect(tiles[0]).toHaveAccessibleName('Rows now, 12,345');
+    expect(tiles[1]).toHaveAccessibleName('Eligible now, 1,111');
+    expect(tiles[1]).toHaveAccessibleDescription('At 365 days, before 2025-09-26 12:00 UTC');
+    expect(tiles[2]).toHaveAccessibleName('Archived total, 0');
+    expect(tiles[3]).toHaveAccessibleName('Last run, None yet');
+    // Every anchor lands somewhere.
+    expect(document.getElementById('sources')).not.toBeNull();
+    expect(document.getElementById('run-history')).toBe(screen.getByTestId('run-history-panel'));
+  });
+
+  it('SA M-1: the card keeps its own ids, each exactly once; the tiles never reuse them', async () => {
+    await renderPage(overview({ lastRun: run() }, [run()]));
+    for (const id of ['total-rows', 'archived-total', 'eligible-rows', 'eligible-cutoff', 'last-run', 'oldest-record']) {
+      expect(screen.getAllByTestId(id)).toHaveLength(1);
+    }
+  });
+
+  it('SA S-7: the tiles are links, so the Archive button keeps its single match', async () => {
+    await renderPage();
+    expect(screen.getAllByRole('button', { name: 'Archive' })).toHaveLength(1);
+  });
+
+  it('Eligible now follows the select (180, then 90) together with the card, with no refetch', async () => {
+    const fetchMock = await renderPage();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('combobox', { name: 'Keep records live for' }));
+    await user.click(await screen.findByRole('option', { name: '180 days' }));
+    expect(screen.getByTestId('kpi-eligible-now')).toHaveAccessibleName('Eligible now, 2,222');
+    expect(screen.getByTestId('kpi-eligible-now')).toHaveAccessibleDescription('At 180 days, before 2026-03-30 12:00 UTC');
+    expect(screen.getByTestId('eligible-rows')).toHaveTextContent('2,222');
+
+    await user.click(screen.getByRole('combobox', { name: 'Keep records live for' }));
+    await user.click(await screen.findByRole('option', { name: '90 days' }));
+    expect(screen.getByTestId('kpi-eligible-now')).toHaveAccessibleName('Eligible now, 3,333');
+    expect(screen.getByTestId('eligible-rows')).toHaveTextContent('3,333');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('SA S-2: a missing selected option reads "—" and "Not available", as the card says', async () => {
+    await renderPage(
+      overview({ options: [{ retentionDays: 180, cutoff: '2026-03-30T12:00:00.000Z', eligibleRows: 2222 }] })
+    );
+    const tile = screen.getByTestId('kpi-eligible-now');
+    expect(tile).toHaveAccessibleName('Eligible now, —');
+    expect(tile).toHaveAccessibleDescription('Not available');
+  });
+});
+
+describe('L-3 T-5: the Last run tile colour comes from the run status (SA Q-2)', () => {
+  it.each([
+    ['failed', { status: 'failed' as const }, 'red', 'Last run, Failed, needs action'],
+    ['partial', { status: 'partial' as const }, 'amber', 'Last run, Partial, needs a look'],
+    ['stalled', { status: 'running' as const, isStale: true }, 'amber', 'Last run, Stalled, needs a look'],
+    ['succeeded', { status: 'succeeded' as const }, 'neutral', 'Last run, Succeeded'],
+    ['running', { status: 'running' as const, isStale: false, finishedAt: null }, 'neutral', 'Last run, Running'],
+  ])('%s → %s', async (_name, overrides, status, name) => {
+    await renderPage(overview({}, [run(overrides)]));
+    const tile = screen.getByTestId('kpi-last-run');
+    expect(tile.getAttribute('data-status')).toBe(status);
+    expect(tile).toHaveAccessibleName(name);
+    expect(tile).toHaveAccessibleDescription('2026-09-26 11:00 UTC · 4,321 rows');
+  });
+});
+
+describe('L-3 T-6: K-10 placeholders', () => {
+  it('shows four placeholders and no tiles while the first read is pending', () => {
+    global.fetch = jest.fn(() => new Promise(() => undefined)) as unknown as typeof fetch;
+    render(<ArchivingPage />);
+    expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(4);
+    expect(screen.queryByTestId('kpi-rows-now')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Reading the archiving overview…');
+  });
+
+  it('shows no strip and no placeholders on error', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ success: false, error: 'Nope' }),
+    })) as unknown as typeof fetch;
+    render(<ArchivingPage />);
+    await screen.findByTestId('page-error');
+    expect(screen.queryAllByTestId('kpi-placeholder')).toHaveLength(0);
+    expect(screen.queryByTestId('kpi-rows-now')).not.toBeInTheDocument();
+  });
+});
+
+describe('L-3 T-7: the run history table', () => {
+  const runs = [
+    run({ id: 'run-3', status: 'running', isStale: true, finishedAt: null }),
+    run({ id: 'run-2', status: 'failed', errorCode: 'batch_failed' }),
+    run({ id: 'run-1' }),
+  ];
+
+  it('is the named standard table with numeric cells right-aligned and tabular', async () => {
+    await renderPage(overview({}, runs));
+    const table = screen.getByRole('table', { name: 'Run history' });
+    const headers = within(table).getAllByRole('columnheader');
+    for (const label of ['Rows archived', 'Batches']) {
+      const header = headers.find((th) => th.textContent === label);
+      expect(header?.className).toContain('text-right');
+    }
+    const cells = within(screen.getByTestId('run-run-1')).getAllByRole('cell');
+    for (const index of [4, 5]) {
+      expect(cells[index].className).toContain('text-right');
+      expect(cells[index].className).toContain('tabular-nums');
+    }
+    expect(cells[4].textContent).toBe('4,321');
+    // The error code stays the route's code, shown as a code (F-61 is the user's).
+    expect(within(screen.getByTestId('run-run-2')).getByText('batch_failed').className).toContain('font-mono');
+  });
+
+  it('every status is a chip with the §2.4 tone and an icon', async () => {
+    await renderPage(
+      overview({}, [
+        ...runs,
+        run({ id: 'live', status: 'running', isStale: false, finishedAt: null }),
+        run({ id: 'part', status: 'partial' }),
+      ])
+    );
+    const table = screen.getByRole('table', { name: 'Run history' });
+    const tones: Array<[string, string]> = [
+      ['run-3', 'warn'],
+      ['run-2', 'danger'],
+      ['run-1', 'ok'],
+      ['live', 'info'],
+      ['part', 'warn'],
+    ];
+    for (const [id, tone] of tones) {
+      const chip = within(table).getByTestId(`run-status-${id}`);
+      expect(chip.tagName).toBe('SPAN');
+      expect(chip.getAttribute('data-tone')).toBe(tone);
+      expect(chip.querySelector('svg')).not.toBeNull();
+    }
+  });
+
+  it('the count line says how many runs it lists, singular for one', async () => {
+    await renderPage(overview({}, runs));
+    expect(screen.getByTestId('run-count').textContent).toBe('3 runs, newest first');
+  });
+
+  it('the count line says one run in the singular', async () => {
+    await renderPage(overview({}, [run()]));
+    expect(screen.getByTestId('run-count').textContent).toBe('1 run, newest first');
+  });
+
+  it('at RUN_HISTORY_LIMIT runs the count line says these are the latest (SA M-3)', async () => {
+    const many = Array.from({ length: RUN_HISTORY_LIMIT }, (_, index) => run({ id: `r${index}` }));
+    await renderPage(overview({}, many));
+    expect(screen.getByTestId('run-count').textContent).toBe(`The latest ${RUN_HISTORY_LIMIT} runs, newest first`);
+  });
+});
+
+describe('L-3 T-8: F-62, no div inside a span', () => {
+  it('holds page-wide with runs, a last run and the Runs off badge', async () => {
+    const runs = [run({ id: 'a', status: 'failed' }), run({ id: 'b' })];
+    await renderPage(overview({ lastRun: runs[0], archivedTotal: 10 }, runs));
+    expect(screen.getByTestId('runs-off-badge')).toBeInTheDocument();
+    expect(document.querySelectorAll('span div')).toHaveLength(0);
+  });
+});
+
+describe('L-3 T-9: states and Refresh', () => {
+  it('a rejected fetch shows exactly the shared network sentence, never the browser message', async () => {
+    global.fetch = jest.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    }) as unknown as typeof fetch;
+    render(<ArchivingPage />);
+    expect((await screen.findByTestId('page-error')).textContent).toBe(ADMIN_NETWORK_ERROR);
+    expect(document.body).not.toHaveTextContent('Failed to fetch');
+  });
+
+  it('a 401 says the admin session has ended', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ success: false, error: 'Unauthorized' }),
+    })) as unknown as typeof fetch;
+    render(<ArchivingPage />);
+    expect((await screen.findByTestId('page-error')).textContent).toBe('Your admin session has ended. Sign in again.');
+  });
+
+  it('Refresh is named, busy while reading, and keeps the content mounted with aria-busy', async () => {
+    let resolveSecond: ((value: unknown) => void) | undefined;
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ success: true, data: overview() }) })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          })
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<ArchivingPage />);
+    await screen.findByTestId('source-audit_trail');
+
+    const refresh = screen.getByRole('button', { name: 'Refresh the archiving overview' });
+    expect(refresh).toHaveAttribute('aria-busy', 'false');
+    await userEvent.click(refresh);
+
+    await waitFor(() => expect(refresh).toHaveAttribute('aria-busy', 'true'));
+    expect(screen.getByTestId('archiving-content')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('source-audit_trail')).toBeInTheDocument();
+    expect(screen.getByTestId('kpi-rows-now')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSecond?.({ ok: true, json: async () => ({ success: true, data: overview() }) });
+    });
+    await waitFor(() => expect(refresh).toHaveAttribute('aria-busy', 'false'));
+    expect(screen.getByTestId('archiving-content')).toHaveAttribute('aria-busy', 'false');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a failed refresh clears the counts, the strip and the "As of" line (§5.5, kept on purpose)', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ success: true, data: overview() }) })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ success: false, error: 'Nope' }) });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<ArchivingPage />);
+    await screen.findByTestId('source-audit_trail');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh the archiving overview' }));
+
+    expect((await screen.findByTestId('page-error')).textContent).toBe('Nope');
+    expect(screen.queryByTestId('source-audit_trail')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('total-rows')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('kpi-rows-now')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('as-of')).not.toBeInTheDocument();
+  });
+
+  it('SA S-1: the chosen retention survives a failed refresh and a Try again', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ success: true, data: overview() }) })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ success: false, error: 'Nope' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ success: true, data: overview() }) });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const user = userEvent.setup();
+    render(<ArchivingPage />);
+    await screen.findByTestId('source-audit_trail');
+
+    await user.click(screen.getByRole('combobox', { name: 'Keep records live for' }));
+    await user.click(await screen.findByRole('option', { name: '180 days' }));
+    await user.click(screen.getByRole('button', { name: 'Refresh the archiving overview' }));
+    await user.click(await screen.findByRole('button', { name: 'Try again' }));
+
+    await screen.findByTestId('source-audit_trail');
+    expect(screen.getByRole('combobox', { name: 'Keep records live for' })).toHaveTextContent('180 days');
+    expect(screen.getByTestId('kpi-eligible-now')).toHaveAccessibleName('Eligible now, 2,222');
+  });
+});
+
+describe('L-3 T-10: the confirm dialog takes the shared class (C-10, F-88)', () => {
+  it('carries every class of ADMIN_DIALOG_CLASS, and its close button is a direct child', async () => {
+    await renderPage();
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    const dialog = await screen.findByRole('dialog');
+    for (const cls of ADMIN_DIALOG_CLASS.split(' ')) expect(dialog.className.split(' ')).toContain(cls);
+    expect(within(dialog).getByRole('button', { name: 'Close' }).parentElement).toBe(dialog);
+  });
+});
+
+describe('L-3 T-11: a rejected run POST keeps its own sentence (SA Q-5)', () => {
+  it('reads "The run could not be continued." in the §5.10 red, not the shared network sentence', async () => {
+    const data = { ...overview({}, [run({ id: 'part', status: 'partial' })]), runsEnabled: true };
+    global.fetch = jest.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') throw new TypeError('Failed to fetch');
+      return { ok: true, json: async () => ({ success: true, data }) };
+    }) as unknown as typeof fetch;
+    render(<ArchivingPage />);
+    await screen.findByTestId('source-audit_trail');
+
+    await userEvent.click(screen.getByTestId('continue-part'));
+
+    const notice = await screen.findByTestId('run-notice');
+    expect(notice.textContent).toBe('The run could not be continued.');
+    expect(notice.textContent).not.toBe(ADMIN_NETWORK_ERROR);
+    // SA S-8: the error tone is the §5.10 red; rose is gone.
+    expect(notice.className).toContain('border-red-500/40');
+    expect(notice.className).not.toMatch(/rose/);
   });
 });

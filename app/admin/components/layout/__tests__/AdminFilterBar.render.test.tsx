@@ -11,7 +11,13 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import { AdminFilterBar, type AdminActiveChip } from '@/app/admin/components/layout/AdminFilterBar';
+import {
+  AdminFieldSpacer as BarSpacer,
+  AdminFilterBar,
+  type AdminActiveChip,
+} from '@/app/admin/components/layout/AdminFilterBar';
+import { AdminFieldSpacer as PresetsSpacer } from '@/app/admin/components/layout/DatePresets';
+import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
 
 describe('AdminFilterBar (Refresh)', () => {
   it('names the button "Refresh {what}", shows "Refresh", and calls onRefresh on click', () => {
@@ -145,5 +151,86 @@ describe('AdminFilterBar (full form, L-1c)', () => {
     );
     expect(screen.queryByTestId('linked-window-chip')).toBeNull();
     expect(screen.queryAllByRole('button', { name: /^Remove/ })).toHaveLength(0);
+  });
+});
+
+describe('AdminFilterBar (one label row, help line; L-4a)', () => {
+  const NONE = { kind: 'none' } as const;
+  const isSpacer = (element: Element | null | undefined) =>
+    element?.getAttribute('aria-hidden') === 'true' && (element?.className ?? '').includes('invisible');
+
+  it('with controls, the controls row is top-aligned and Clear and Refresh each sit under a spacer', () => {
+    render(
+      <AdminFilterBar
+        what="the x"
+        busy={false}
+        onRefresh={() => undefined}
+        windowControl={{ value: NONE, defaultValue: NONE, onChange: () => undefined }}
+        onClear={() => undefined}
+        readAt="2026-10-11T14:02:00.000Z"
+      />,
+    );
+    const clear = screen.getByRole('button', { name: 'Clear' });
+    expect(isSpacer(clear.previousElementSibling)).toBe(true);
+    // Refresh shares its row with "Read at"; the spacer sits above that row.
+    const refreshRow = screen.getByRole('button', { name: 'Refresh the x' }).parentElement;
+    expect(refreshRow?.textContent).toContain('Read at 14:02 UTC');
+    expect(isSpacer(refreshRow?.previousElementSibling)).toBe(true);
+    const controlsRow = screen.getByRole('search').firstElementChild as HTMLElement;
+    expect(controlsRow.className).toContain('items-start');
+    expect(controlsRow.className).not.toContain('items-end');
+  });
+
+  it('Refresh takes ADMIN_BUTTON with its layout classes; Clear keeps its own quieter style (SA M-2)', () => {
+    render(<AdminFilterBar what="the x" busy={false} onRefresh={() => undefined} onClear={() => undefined} />);
+    expect(screen.getByRole('button', { name: 'Refresh the x' }).className).toBe(
+      `flex items-center gap-2 transition-colors ${ADMIN_BUTTON}`,
+    );
+    expect(screen.getByRole('button', { name: 'Clear' }).className).toBe(
+      'rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500',
+    );
+  });
+
+  it('with help, one line with the given id, text and test id is the last child inside role="search"', () => {
+    const chip: AdminActiveChip = { key: 'a', label: 'A', removeLabel: 'Remove a', onRemove: () => undefined };
+    render(
+      <AdminFilterBar
+        what="the x"
+        busy={false}
+        onRefresh={() => undefined}
+        onClear={() => undefined}
+        chips={[chip]}
+        help={{ id: 'note-1', text: 'A standing note.', testId: 'the-note' }}
+      />,
+    );
+    const bar = screen.getByRole('search', { name: 'Filters' });
+    const note = screen.getByTestId('the-note');
+    expect(note.id).toBe('note-1');
+    expect(note.tagName).toBe('P');
+    expect(note.textContent).toBe('A standing note.');
+    expect(bar.lastElementChild).toBe(note);
+    expect(bar.querySelectorAll('#note-1')).toHaveLength(1);
+  });
+
+  it('without help, no help line', () => {
+    render(<AdminFilterBar what="the x" busy={false} onRefresh={() => undefined} onClear={() => undefined} />);
+    const bar = screen.getByRole('search', { name: 'Filters' });
+    expect(bar.querySelectorAll('p')).toHaveLength(0);
+    expect(bar.children).toHaveLength(1);
+  });
+
+  it('the no-controls branch keeps the L-1a DOM: no spacer and no help line', () => {
+    const { container } = render(
+      <AdminFilterBar what="the x" busy={false} onRefresh={() => undefined} readAt="2026-10-11T14:02:00.000Z" />,
+    );
+    expect(container.querySelectorAll('[aria-hidden="true"].invisible')).toHaveLength(0);
+    expect(container.querySelectorAll('p')).toHaveLength(0);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toBe('flex flex-wrap items-end gap-3');
+    expect(root.firstElementChild?.className).toBe('ml-auto flex items-center gap-3');
+  });
+
+  it('re-exports the same AdminFieldSpacer as DatePresets', () => {
+    expect(BarSpacer).toBe(PresetsSpacer);
   });
 });

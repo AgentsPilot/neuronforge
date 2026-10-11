@@ -49,3 +49,27 @@ describe('AdminPageHeader actions (L-1c)', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 });
+
+describe('AdminPageHeader badge (L-3)', () => {
+  it('renders the badge as a neutral chip beside the one h1, with its test id', () => {
+    render(<AdminPageHeader title="Archiving" purpose="p" badge={{ label: 'Runs off', testId: 'runs-off-badge' }} />);
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    const chip = screen.getByTestId('runs-off-badge');
+    expect(chip.tagName).toBe('SPAN');
+    expect(chip.textContent).toBe('Runs off');
+    expect(chip.getAttribute('data-tone')).toBe('neutral');
+    // Beside the title: the chip and the h1 share one row.
+    expect(chip.parentElement).toBe(headings[0].parentElement);
+    expect(chip.querySelector('svg')).toBeNull();
+  });
+
+  it('without a badge the h1 is a direct child of the first div (the pre-L-3 DOM) and no chip renders', () => {
+    const { container } = render(<AdminPageHeader title="Health" purpose="p" asOf="As of x." />);
+    const firstDiv = container.querySelector('header > div');
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading.parentElement).toBe(firstDiv);
+    expect(container.querySelector('[data-tone]')).toBeNull();
+    expect(firstDiv?.children).toHaveLength(3);
+  });
+});

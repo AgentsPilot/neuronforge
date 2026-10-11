@@ -448,13 +448,16 @@ describe('the Businesses list', () => {
     expect(screen.getByTestId('ai-spend-card').textContent).toContain('$0.4321');
   });
 
-  it('P-4: says under the heading that the list is every login; heading and count pill unchanged', async () => {
+  // L-4a: AdminPageHeader renders the purpose without a test id, and the count
+  // pill is gone (§5.3); the first KPI tile carries the count.
+  it('P-4: says under the heading that the list is every login; heading and shown count unchanged', async () => {
     mockFetch({ '/api/admin/users?': { status: 200, body: listBody() } });
     render(<UsersPage />);
 
-    expect((await screen.findByTestId('list-scope-note')).textContent).toContain('Every login on the platform');
+    const header = screen.getByRole('banner');
+    expect(within(header).getByText(/Every login on the platform/)).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Businesses');
-    expect(screen.getByTestId('count-pill').textContent).toContain('2');
+    expect((await screen.findByTestId('kpi-shown')).getAttribute('aria-label')).toContain('2');
   });
 
   it('P-5: the row detail shows no Role field (SA-5a-1)', async () => {

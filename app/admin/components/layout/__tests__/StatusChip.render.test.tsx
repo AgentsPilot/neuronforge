@@ -71,6 +71,24 @@ describe('StatusChip', () => {
     expect(GREEN.test(chip.className)).toBe(false);
   });
 
+  it('neutral (L-3): a span, slate classes, exactly the words, no icon and no green', () => {
+    const { container } = render(
+      <StatusChip tone="neutral" testId="runs-off-badge">
+        Runs off
+      </StatusChip>
+    );
+    const chip = container.firstElementChild as HTMLElement;
+    expect(chip.tagName).toBe('SPAN');
+    expect(chip.getAttribute('data-testid')).toBe('runs-off-badge');
+    expect(chip.getAttribute('data-tone')).toBe('neutral');
+    expect(chip.textContent).toBe('Runs off');
+    for (const cls of ['border-slate-600', 'bg-slate-700/40', 'text-slate-300']) expect(chip.className).toContain(cls);
+    // §5.9: the icon is optional for neutral only; a plain state word needs no glyph.
+    expect(chip.querySelectorAll('svg')).toHaveLength(0);
+    expect(chip.querySelector('div')).toBeNull();
+    expect(GREEN.test(chip.className)).toBe(false);
+  });
+
   it('no testId: no data-testid attribute', () => {
     const { container } = render(<StatusChip tone="warn">Behind</StatusChip>);
     expect((container.firstElementChild as HTMLElement).hasAttribute('data-testid')).toBe(false);

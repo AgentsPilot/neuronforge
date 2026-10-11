@@ -492,6 +492,17 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['getEntitlementConfig'],
       why: 'Finance & business health slice 1a (SA-WR-4): the production wiring of the admin finance page reads the entitlement config once and hands it to the pure classifier as a parameter. It resolves no account, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Plan payments P-3b.2, 2026-10-07 — the webhook plan handler ─────────
+    {
+      file: 'lib/business-os/billing/planBillingHandler.ts',
+      symbols: ['getEntitlementConfig', 'recordPlanChange'],
+      why: 'Plan payments P-3b.2 (workplan §3.1): the webhook `plan` flow handler WIRES the production ports: `getEntitlementConfig` (read by the apply use case for the configured tiers and the matrix version) and `recordPlanChange` (audit + flush + cache invalidation AFTER a payment was applied, SA-P3 c). It answers a Stripe event; it refuses no request by plan or capability and calls no `check()` / `decide()`, so it is not a gate.',
+    },
+    {
+      file: 'lib/business-os/billing/planPaymentApply.ts',
+      symbols: ['EntitlementConfig', 'RecordPlanChangeInput', 'resolveAccountId', 'tierIsConfigured'],
+      why: 'Plan payments P-3b.2 (workplan §3.2, §3.3): applies a PAID Stripe plan invoice. `resolveAccountId` is the account seam for the id taken from our billing row (SR-8); `tierIsConfigured` refuses to WRITE a tier the config does not define (RC-1, a data-integrity refusal of a payment, not a refusal of a request by plan); the two TYPES describe its ports. It calls no `check()` / `decide()` and gates no feature. If it ever does, it moves to ENFORCEMENT_POINTS.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */
