@@ -11,7 +11,9 @@ import {
   ADMIN_TBODY,
   ADMIN_TD,
   ADMIN_TD_ID,
+  ADMIN_TD_NUM,
   ADMIN_TH,
+  ADMIN_TH_NUM,
   ADMIN_THEAD,
   formatShortId,
 } from '@/app/admin/components/layout/adminTable';
@@ -27,6 +29,12 @@ describe('the §5.7 table classes', () => {
     ['ADMIN_TBODY', ADMIN_TBODY, ['divide-y', 'divide-slate-800']],
     ['ADMIN_TD', ADMIN_TD, ['px-3', 'py-2', 'align-top']],
     ['ADMIN_TD_ID', ADMIN_TD_ID, ['font-mono', 'text-[11px]', 'text-slate-400']],
+    [
+      'ADMIN_TH_NUM',
+      ADMIN_TH_NUM,
+      ['px-3', 'py-2', 'text-right', 'text-[11px]', 'font-medium', 'uppercase', 'tracking-wide', 'text-slate-400'],
+    ],
+    ['ADMIN_TD_NUM', ADMIN_TD_NUM, ['px-3', 'py-2', 'align-top', 'text-right', 'tabular-nums', 'whitespace-nowrap']],
     ['ADMIN_COUNT_LINE', ADMIN_COUNT_LINE, ['text-xs', 'text-slate-400']],
     [
       'ADMIN_BUTTON',
@@ -49,14 +57,25 @@ describe('the §5.7 table classes', () => {
   });
 
   it('one density: no constant uses the old card padding (py-4 / px-6)', () => {
-    for (const value of [ADMIN_TABLE_WRAP, ADMIN_TABLE, ADMIN_TH, ADMIN_TD, ADMIN_TD_ID, ADMIN_BUTTON]) {
+    for (const value of [ADMIN_TABLE_WRAP, ADMIN_TABLE, ADMIN_TH, ADMIN_TD, ADMIN_TH_NUM, ADMIN_TD_NUM, ADMIN_TD_ID, ADMIN_BUTTON]) {
       expect(classesOf(value)).not.toContain('py-4');
       expect(classesOf(value)).not.toContain('px-6');
     }
   });
 
   it('only the id cell is monospace', () => {
-    const others = [ADMIN_TABLE_WRAP, ADMIN_TABLE, ADMIN_THEAD, ADMIN_TH, ADMIN_TBODY, ADMIN_TD, ADMIN_COUNT_LINE, ADMIN_BUTTON];
+    const others = [
+      ADMIN_TABLE_WRAP,
+      ADMIN_TABLE,
+      ADMIN_THEAD,
+      ADMIN_TH,
+      ADMIN_TH_NUM,
+      ADMIN_TBODY,
+      ADMIN_TD,
+      ADMIN_TD_NUM,
+      ADMIN_COUNT_LINE,
+      ADMIN_BUTTON,
+    ];
     for (const value of others) expect(value).not.toContain('font-mono');
     expect(ADMIN_TD_ID).toContain('font-mono');
   });

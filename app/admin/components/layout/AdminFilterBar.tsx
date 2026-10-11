@@ -18,7 +18,7 @@ import type { ReactNode } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 
 import { DatePresets } from './DatePresets';
-import { linkedWindowLabel, type AdminWindowValue } from './adminWindow';
+import { linkedWindowLabel, type AdminWindowExtra, type AdminWindowValue } from './adminWindow';
 import { formatUtcTime } from './adminFormat';
 
 // The field classes live beside the Window control (which uses them too) so the
@@ -53,6 +53,10 @@ export interface AdminFilterBarProps {
     value: AdminWindowValue;
     defaultValue: AdminWindowValue;
     onChange: (next: AdminWindowValue) => void;
+    /** The page's own extra windows (D-2 (b), L-2a). Default none. */
+    extras?: readonly AdminWindowExtra[];
+    /** Apply needs both dates (L-2a). Default false. */
+    requireBothDates?: boolean;
   };
   /** Part 3: the business picker. */
   business?: ReactNode;
@@ -157,6 +161,8 @@ export function AdminFilterBar({
             value={windowControl.value}
             defaultValue={windowControl.defaultValue}
             onChange={windowControl.onChange}
+            extras={windowControl.extras}
+            requireBothDates={windowControl.requireBothDates}
           />
         )}
         {business}

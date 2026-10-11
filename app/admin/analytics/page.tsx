@@ -1,232 +1,70 @@
 'use client';
 
-import { useEffect, useState, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
+import { ChevronRight } from 'lucide-react';
+
+import { clientLogger } from '@/lib/logger/client';
+import { AdminDrawer } from '@/app/admin/components/layout/AdminDrawer';
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { ADMIN_COUNT_LINE } from '@/app/admin/components/layout/adminTable';
+import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
+import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
+
 import {
-  RefreshCw,
-  Calendar,
-  DollarSign,
-  Zap,
-  BarChart3,
-  AlertCircle,
-  ChevronDown,
-  Cpu,
-  X,
-  ArrowRight,
-  Hash,
-  Clock,
-  Layers,
-  Activity,
-  Users,
-  Bot,
-  Database,
-  Code,
-  FileJson,
-  ChevronRight,
-  Check
-} from 'lucide-react';
-import { formatLinkedBound, parseLinkedWindow, urlWithoutLinkedWindow, type LinkedWindow } from './linkedWindow';
+  ANALYTICS_FILTER_SPEC,
+  ANALYTICS_PATH,
+  DIMENSION_FIELD,
+  analyticsRequestParams,
+  drillPatch,
+  normaliseForScope,
+  rowClickPatch,
+  scopeSwitchPatch,
+  type AnalyticsFilters,
+  type DrillField,
+} from './analyticsFilters';
+import {
+  UNPAGED_ROW_CAP,
+  type BreakdownDimension,
+  type CategoryTotals,
+  type DrillDownItem,
+  type DrillDownResponse,
+  type ExecutionDetails,
+  type PeriodComparison,
+  type Scope,
+} from './analyticsTypes';
+import { isDrilled, readMeta } from './analyticsCall';
+import { AnalyticsCallDetails } from './components/AnalyticsCallDetails';
+import { AnalyticsExecutionCard } from './components/AnalyticsExecutionCard';
+import { ANALYTICS_WHAT, AnalyticsFilterBar, drillValueLabel, type DrillLabels } from './components/AnalyticsFilterBar';
+import { AnalyticsKpis } from './components/AnalyticsKpis';
+import { AnalyticsSummaryCards } from './components/AnalyticsSummaryCards';
+import { AnalyticsTable } from './components/AnalyticsTable';
 
-// Types
-interface CategoryBreakdown {
-  creation: { cost: number; tokens: number; calls: number };
-  execution: { cost: number; tokens: number; calls: number };
-  memory: { cost: number; tokens: number; calls: number };
-  system: { cost: number; tokens: number; calls: number };
-}
+// A client file logs through the client logger (F-56).
+const logger = clientLogger.child({ module: 'AdminCostAnalytics' });
 
-interface PeriodComparison {
-  previousPeriod: {
-    cost: number;
-    tokens: number;
-    calls: number;
-    from: string;
-    to: string;
-  };
-  changes: {
-    costPct: number;
-    tokensPct: number;
-    callsPct: number;
-  };
-}
+const PURPOSE = 'What Business OS and agent-platform AI calls cost, by provider, model and feature.';
 
-interface DrillDownItem {
-  id: string;
-  label: string;
-  cost: number;
-  tokens: number;
-  inputTokens: number;
-  outputTokens: number;
-  calls: number;
-  percentage: number;
-  type: 'provider' | 'model' | 'activity' | 'user' | 'agent' | 'execution' | 'call';
-  metadata?: Record<string, unknown>;
-  isHighCost?: boolean;
-  category_breakdown?: CategoryBreakdown;
-}
-
-interface Filters {
-  provider?: string;
-  model?: string;
-  activity?: string;
-  user?: string;
-  agent?: string;
-  execution?: string;
-  category?: string;
-  request_type?: string;
-  feature?: string;
-  component?: string;
-  endpoint?: string;
-}
-
-interface FilterLabels {
-  provider?: string;
-  model?: string;
-  activity?: string;
-  user?: string;
-  agent?: string;
-  execution?: string;
-  category?: string;
-  request_type?: string;
-  feature?: string;
-  component?: string;
-  endpoint?: string;
-}
-
-interface AvailableFilters {
-  providers: string[];
-  models: string[];
-  activities: string[];
-  users: Array<{ id: string; label: string }>;
-  agents: Array<{ id: string; label: string }>;
-}
+const EMPTY_TOTALS = { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, calls: 0 };
 
 /**
- * Metadata only (ADMIN_BOS_CLEANUP C3-5, FYI-1): this is a cross-account admin
- * view, so it carries no prompt, step, schema or run payload.
+ * A 400 is the route refusing the query (e.g. a date range it cannot use), not
+ * a server failure: say which. A recorded page override of §5.10 rule 1 (SA Q-10).
  */
-interface AgentData {
-  id: string;
-  name: string;
-  connectedPlugins?: string[] | null;
-  mode?: string | null;
-  status?: string | null;
-}
-
-interface ExecutionDetails {
-  executionId: string;
-  startedAt?: string;
-  completedAt?: string;
-  status?: string;
-  agent?: AgentData | null;
-}
-
-type CategoryTotals = CategoryBreakdown;
-
-interface DrillDownResponse {
-  success: boolean;
-  totals: { cost: number; tokens: number; inputTokens: number; outputTokens: number; calls: number };
-  items: DrillDownItem[];
-  filters: Filters;
-  availableFilters: AvailableFilters;
-  executionDetails?: ExecutionDetails;
-  categoryTotals?: CategoryTotals;
-  period?: { from: string; to: string };
-  comparison?: PeriodComparison;
-  scope?: 'bos' | 'all';
-  /** The unpaged read hit the 1,000-row cap; totals may be missing rows. */
-  possiblyIncomplete?: boolean;
-}
-
-/** 'bos' = the platform's Business OS row definition, applied by the route. */
-type Scope = 'bos' | 'all';
-
-/** PostgREST's row cap on the (unpaged) ledger read. Parked: see the notes on screen. */
-const UNPAGED_ROW_CAP = 1000;
-
-type BreakdownDimension = 'provider' | 'model' | 'activity' | 'user' | 'agent' | 'execution' | 'request_type' | 'feature' | 'component' | 'endpoint';
-
-const PERIOD_OPTIONS = [
-  { value: 1, label: '24h' },
-  { value: 7, label: '7d' },
-  { value: 30, label: '30d' },
-  { value: 90, label: '90d' },
-  { value: -1, label: 'Custom' },
-] as const;
-
-const BREAKDOWN_OPTIONS: Array<{ value: BreakdownDimension; label: string; icon: React.ElementType }> = [
-  { value: 'provider', label: 'Provider', icon: Layers },
-  { value: 'model', label: 'Model', icon: Cpu },
-  { value: 'activity', label: 'Activity Type', icon: Activity },
-  { value: 'request_type', label: 'Request Type', icon: Code },
-  { value: 'feature', label: 'Feature', icon: Zap },
-  { value: 'component', label: 'Component', icon: FileJson },
-  { value: 'endpoint', label: 'Endpoint', icon: ArrowRight },
-  { value: 'user', label: 'User', icon: Users },
-  { value: 'agent', label: 'Agent', icon: Bot },
-  { value: 'execution', label: 'Execution', icon: Database },
-];
+const INVALID_QUERY = 'The selected filters or dates are not valid. Check the date range and try again.';
 
 /**
- * Views that exist only for AgentsPilot agents. Business OS scope has no agents
- * or executions, and the route refuses these views there (ADMIN_BOS_CLEANUP
- * C3-2, C3-3). The Group By menu, the row-click drill path and the scope toggle
- * all read this one set, so they cannot disagree.
+ * A breadcrumb button's props: link-styled while deeper crumbs follow, plain
+ * white and `aria-current` when it is the last; the A-1 focus ring either way.
  */
-const BOS_HIDDEN_DIMENSIONS: ReadonlySet<BreakdownDimension> = new Set<BreakdownDimension>(['agent', 'execution']);
-
-/** Business OS drill order: feature, then component, then account (FYI-2). */
-const BOS_DRILL_ORDER: readonly BreakdownDimension[] = ['feature', 'component', 'user', 'model', 'provider'];
-
-function breakdownOptionsFor(scope: Scope) {
-  return scope === 'bos' ? BREAKDOWN_OPTIONS.filter((o) => !BOS_HIDDEN_DIMENSIONS.has(o.value)) : BREAKDOWN_OPTIONS;
-}
-
-/**
- * Where a Business OS row click goes when the "All" path would reach a hidden
- * view: the first drill dimension not already filtered and not the one just
- * clicked. Null when every one is taken, in which case the view stays put.
- */
-function bosDrillTarget(nextFilters: Filters, clicked: BreakdownDimension): BreakdownDimension | null {
-  return BOS_DRILL_ORDER.find((d) => d !== clicked && !nextFilters[d]) ?? null;
-}
-
-/**
- * Context chips showing related dimensions
- */
-function ContextChips({ item, breakdownBy, scope }: { item: DrillDownItem; breakdownBy: BreakdownDimension; scope: Scope }) {
-  const chips: React.ReactNode[] = [];
-  const meta = item.metadata || {};
-
-  if (breakdownBy !== 'user' && meta.userCount && (meta.userCount as number) > 0) {
-    chips.push(
-      <span key="users" className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">
-        {meta.userCount} users
-      </span>
-    );
-  }
-
-  // Agents and executions are AgentsPilot counts: not shown in Business OS scope (C3-2).
-  if (scope === 'all' && breakdownBy !== 'agent' && meta.agentCount && (meta.agentCount as number) > 0) {
-    chips.push(
-      <span key="agents" className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">
-        {meta.agentCount} agents
-      </span>
-    );
-  }
-
-  if (scope === 'all' && breakdownBy !== 'execution' && meta.executionCount && (meta.executionCount as number) > 0) {
-    chips.push(
-      <span key="executions" className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">
-        {meta.executionCount} executions
-      </span>
-    );
-  }
-
-  if (chips.length === 0) return null;
-  return <div className="flex gap-1 flex-wrap mt-1">{chips}</div>;
-}
+const crumbProps = (isLast: boolean) => ({
+  className: `rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${
+    isLast ? 'text-white' : 'text-purple-400 hover:underline'
+  }`,
+  'aria-current': isLast ? ('true' as const) : undefined,
+});
 
 // useSearchParams needs a Suspense boundary in Next 14.
 export default function AdminCostAnalytics() {
@@ -238,217 +76,160 @@ export default function AdminCostAnalytics() {
 }
 
 function AdminCostAnalyticsContent() {
-  // Null outside the App Router (e.g. a unit test); treated as "no deep link".
-  const searchParams = useSearchParams();
-  // "Business OS only" is ON by default (user decision, 2026-09-25). A link
-  // can ask for ?scope=all, or narrow to one account with ?user=<id>.
-  const [scope, setScope] = useState<Scope>(() => (searchParams?.get('scope') === 'all' ? 'all' : 'bos'));
-  const [possiblyIncomplete, setPossiblyIncomplete] = useState(false);
-  // An exact window from a deep link (slice 4, SA C-9): the Health spend tile
-  // links here with the bounds it counted. Any period or custom-range change
-  // clears it.
-  const [linkedWindow, setLinkedWindow] = useState<LinkedWindow | null>(() => parseLinkedWindow(searchParams));
+  // The URL is the filter state's projection (Admin Layout Standard C-7): the
+  // first state is parsed from the URL synchronously, so the first read already
+  // sees an inbound link's filters, and drill clicks, breadcrumbs, the scope
+  // switch and the KPI tiles all write through this one hook (L-2a §2.3).
+  const { filters, setFilters, clear, isDefault, hrefFor } = useAdminFilters(ANALYTICS_FILTER_SPEC);
   /**
-   * Leave the linked window: drop it from state AND from the address bar, so a
-   * reload does not bring it back. `replaceState` changes the URL only; it does
-   * not navigate or refetch (the state change above does that).
+   * Readable labels for drilled values (an agent name, an account name), keyed
+   * by filter and read only while their id is the applied value. Not in the
+   * URL: after a reload the chip and breadcrumb show the value itself (SA Q-8).
    */
-  const clearLinkedWindow = useCallback(() => {
-    setLinkedWindow(null);
-    if (typeof window !== 'undefined') {
-      const next = urlWithoutLinkedWindow(window.location.href);
-      if (next !== null) window.history.replaceState(window.history.state, '', next);
-    }
-  }, []);
-  const [dateRangeError, setDateRangeError] = useState<string | null>(null);
-  const [breakdownBy, setBreakdownBy] = useState<BreakdownDimension>('provider');
-  const [filters, setFilters] = useState<Filters>(() => {
-    const user = searchParams?.get('user');
-    return user ? { user } : {};
-  });
-  const [filterLabels, setFilterLabels] = useState<FilterLabels>(() => {
-    const user = searchParams?.get('user');
-    return user ? { user: `Account ${user.slice(0, 8)}` } : {};
-  });
+  const [labels, setLabels] = useState<DrillLabels>({});
+  /** The business last picked, with the name the picker showed (not in the URL). */
+  const [pickedBusiness, setPickedBusiness] = useState<{ accountId: string; name: string | null } | null>(null);
+  // What Business OS scope cannot hold is never sent, even for a stale or
+  // hand-made link: the request is built from the normalised filters.
+  const effective = useMemo(() => ({ ...filters, ...normaliseForScope(filters) }), [filters]);
+  const scope: Scope = effective.scope;
+  const breakdownBy: BreakdownDimension = effective.groupBy;
+  // Dates are at day precision, so the string is stable within a UTC day; the
+  // read is keyed on it, so a change that yields the same request sends none.
+  const query = analyticsRequestParams(effective, new Date()).toString();
+
+  const [possiblyIncomplete, setPossiblyIncomplete] = useState(false);
   const [items, setItems] = useState<DrillDownItem[]>([]);
-  const [totals, setTotals] = useState({ cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, calls: 0 });
-  const [availableFilters, setAvailableFilters] = useState<AvailableFilters>({
-    providers: [], models: [], activities: [], users: [], agents: []
-  });
+  const [totals, setTotals] = useState(EMPTY_TOTALS);
   const [loading, setLoading] = useState(true);
+  /** A read has succeeded: the KPI placeholders and "Reading…" give way (K-10, §5.10). */
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [period, setPeriod] = useState<number>(30);
-  const [customDateFrom, setCustomDateFrom] = useState<string>('');
-  const [customDateTo, setCustomDateTo] = useState<string>('');
-  const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
-  const [appliedDateRange, setAppliedDateRange] = useState<{ from: string; to: string } | null>(null);
-  const [selectedCall, setSelectedCall] = useState<DrillDownItem | null>(null);
+  /** When the data was last read successfully: the bar's "Read at HH:mm UTC". */
+  const [readAt, setReadAt] = useState<string | null>(null);
+  // The call drawer (L-2b, the L-1d pattern). `isOpen` drives the panel and
+  // `openCallId` names its call. Closing clears only `isOpen`, so the content
+  // stays during Radix's slide-out; the next open replaces the id. A read in
+  // flight can land while the drawer is open: the effect below handles a call
+  // that leaves `items` (L-1d QA B-1).
+  const [isOpen, setIsOpen] = useState(false);
+  const [openCallId, setOpenCallId] = useState<string | null>(null);
+  /** The call's Open button: focus goes back to it on close (D-6). */
+  const opener = useRef<HTMLButtonElement | null>(null);
+  /** Where focus goes when the opener's row is gone: the always-mounted content area (QA B-1). */
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const [executionDetails, setExecutionDetails] = useState<ExecutionDetails | null>(null);
   const [categoryTotals, setCategoryTotals] = useState<CategoryTotals | null>(null);
-  const [showAgentJson, setShowAgentJson] = useState(false);
   const [comparison, setComparison] = useState<PeriodComparison | null>(null);
 
-  const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const queryParams = new URLSearchParams({ breakdownBy, scope });
-
-      if (filters.provider) queryParams.set('provider', filters.provider);
-      if (filters.model) queryParams.set('model', filters.model);
-      if (filters.activity) queryParams.set('activity', filters.activity);
-      if (filters.request_type) queryParams.set('request_type', filters.request_type);
-      if (filters.feature) queryParams.set('feature', filters.feature);
-      if (filters.component) queryParams.set('component', filters.component);
-      if (filters.endpoint) queryParams.set('endpoint', filters.endpoint);
-      if (filters.user) queryParams.set('user', filters.user);
-      if (filters.agent) queryParams.set('agent', filters.agent);
-      if (filters.execution) queryParams.set('execution', filters.execution);
-      if (filters.category && filters.category !== 'all') queryParams.set('category', filters.category);
-
-      if (linkedWindow) {
-        // Verbatim: never through the browser-local T23:59:59 path below.
-        queryParams.set('dateFrom', linkedWindow.from);
-        queryParams.set('dateTo', linkedWindow.to);
-      } else if (period === -1 && appliedDateRange) {
-        queryParams.set('dateFrom', new Date(appliedDateRange.from).toISOString());
-        queryParams.set('dateTo', new Date(appliedDateRange.to + 'T23:59:59').toISOString());
-      } else if (period > 0) {
-        queryParams.set('period', period.toString());
-      }
-
-      const response = await fetch(`/api/admin/token-usage/drill-down?${queryParams}`, {
-        cache: 'no-store'
-      });
-
-      if (!response.ok) {
-        // A 400 is the route refusing the query (e.g. a date range it cannot
-        // use), not a server failure: say which.
-        throw new Error(
-          response.status === 400
-            ? 'The selected filters or dates are not valid. Check the date range and try again.'
-            : 'Failed to fetch data'
-        );
-      }
-
-      const result: DrillDownResponse = await response.json();
-
-      if (!result.success) {
-        throw new Error('API returned unsuccessful response');
-      }
-
-      setItems(result.items);
-      setTotals(result.totals);
-      setPossiblyIncomplete(result.possiblyIncomplete === true);
-      setAvailableFilters(result.availableFilters);
-      if (result.executionDetails) {
-        setExecutionDetails(result.executionDetails);
-      } else {
-        setExecutionDetails(null);
-      }
-      if (result.categoryTotals) {
-        setCategoryTotals(result.categoryTotals);
-      } else {
-        setCategoryTotals(null);
-      }
-      if (result.comparison) {
-        setComparison(result.comparison);
-      } else {
-        setComparison(null);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+  const fetchData = useCallback(async (requestQuery: string) => {
+    const fail = (message: string) => {
+      setError(message);
       setItems([]);
-      setTotals({ cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, calls: 0 });
+      setTotals(EMPTY_TOTALS);
+      // QA B-1: the zeroed figures are not data. The next read must show the
+      // first-read state (placeholders, "Reading…"), never "$0.00" and "No data found".
+      setHasLoaded(false);
+    };
+    setLoading(true);
+    setError(null);
+    try {
+      // Only the fetch sits inside this try: a rejection here is a network
+      // failure; anything else must never be labelled as one.
+      let response: Response;
+      try {
+        response = await fetch(`/api/admin/token-usage/drill-down?${requestQuery}`, {
+          cache: 'no-store'
+        });
+      } catch (err) {
+        logger.error({ err }, 'Could not reach the AI cost drill-down route');
+        fail(ADMIN_NETWORK_ERROR);
+        return;
+      }
+
+      // The route answers at the top level, not under `data`; the cast is the
+      // same trust the page placed in the body before (no runtime shape check).
+      const result = await readAdminResponse(response, {
+        what: ANALYTICS_WHAT,
+        sessionEndedCopy: true,
+        pick: (body) => body as unknown as DrillDownResponse,
+      });
+      if (!result.ok) {
+        fail(result.status === 400 ? INVALID_QUERY : result.message);
+        return;
+      }
+
+      const data = result.data;
+      setItems(data.items);
+      setTotals(data.totals);
+      setPossiblyIncomplete(data.possiblyIncomplete === true);
+      setExecutionDetails(data.executionDetails ?? null);
+      setCategoryTotals(data.categoryTotals ?? null);
+      setComparison(data.comparison ?? null);
+      setHasLoaded(true);
+      setReadAt(new Date().toISOString());
     } finally {
       setLoading(false);
     }
-  }, [breakdownBy, filters, period, appliedDateRange, scope, linkedWindow]);
+  }, []);
 
   useEffect(() => {
-    if (linkedWindow) {
-      fetchData();
-    } else if (period === -1) {
-      if (appliedDateRange) {
-        fetchData();
-      }
-    } else {
-      fetchData();
+    void fetchData(query);
+  }, [fetchData, query]);
+
+  // A link may name what Business OS scope cannot hold (`?category=memory`,
+  // `?group_by=agent`): converge the URL and the controls. The request was
+  // already built from the normalised filters, so this sends no request.
+  useEffect(() => {
+    const fix = normaliseForScope(filters);
+    if (Object.keys(fix).length > 0) setFilters(fix);
+  }, [filters, setFilters]);
+
+  /** An aggregate row's name, plain left click: record its label and drill in place (§5.8 D-3). */
+  const drill = (item: DrillDownItem) => {
+    const field = DIMENSION_FIELD[breakdownBy];
+    setLabels((prev) => ({ ...prev, [field]: { id: item.id, label: item.label } }));
+    setFilters(rowClickPatch(item, effective));
+    // QA-B1: the clicked link unmounts when the drilled rows arrive, which would
+    // drop focus to <body>. The content area stays mounted, so focus goes there.
+    contentRef.current?.focus();
+  };
+
+  /** The same drill as a real address, for a modified or middle click. */
+  const drillHref = (item: DrillDownItem) => `${ANALYTICS_PATH}${hrefFor(rowClickPatch(item, effective))}`;
+
+  /** The call the drawer shows; null once that call is no longer loaded. */
+  const openCall =
+    openCallId === null ? null : items.find((item) => item.id === openCallId && item.type === 'call') ?? null;
+
+  const openCallDetails = (item: DrillDownItem, button: HTMLButtonElement) => {
+    opener.current = button;
+    setOpenCallId(item.id);
+    setIsOpen(true);
+  };
+
+  const closeCallDetails = () => {
+    setIsOpen(false);
+    setOpenCallId(null);
+  };
+
+  // QA B-1 (L-1d): the open call left `items` (a read landed without it, or a
+  // failed read emptied them). The drawer has already closed through its
+  // `open` prop, and Radix does not call onOpenChange for a prop change, so end
+  // the open state too; otherwise a later read that brings the call back would
+  // reopen the drawer unasked.
+  useEffect(() => {
+    if (isOpen && openCall === null) {
+      setIsOpen(false);
+      setOpenCallId(null);
     }
-  }, [fetchData, period, appliedDateRange, linkedWindow]);
+  }, [isOpen, openCall]);
 
-  const handleRowClick = (item: DrillDownItem) => {
-    if (item.type === 'call') {
-      setSelectedCall(item);
-      return;
-    }
-
-    const newFilters = { ...filters };
-    const newLabels = { ...filterLabels };
-    let nextBreakdown: BreakdownDimension = breakdownBy;
-
-    switch (breakdownBy) {
-      case 'provider':
-        newFilters.provider = item.id;
-        newLabels.provider = item.label;
-        nextBreakdown = 'model';
-        break;
-      case 'model':
-        newFilters.model = item.id;
-        newLabels.model = item.label;
-        nextBreakdown = 'activity';
-        break;
-      case 'activity':
-        newFilters.activity = item.id;
-        newLabels.activity = item.label;
-        nextBreakdown = 'agent';
-        break;
-      case 'request_type':
-        newFilters.request_type = item.id;
-        newLabels.request_type = item.label;
-        nextBreakdown = 'agent';
-        break;
-      case 'feature':
-        newFilters.feature = item.id;
-        newLabels.feature = item.label;
-        nextBreakdown = 'agent';
-        break;
-      case 'component':
-        newFilters.component = item.id;
-        newLabels.component = item.label;
-        nextBreakdown = 'agent';
-        break;
-      case 'endpoint':
-        newFilters.endpoint = item.id;
-        newLabels.endpoint = item.label;
-        nextBreakdown = 'agent';
-        break;
-      case 'user':
-        newFilters.user = item.id;
-        newLabels.user = item.label;
-        nextBreakdown = 'agent';
-        break;
-      case 'agent':
-        newFilters.agent = item.id;
-        newLabels.agent = item.label;
-        nextBreakdown = 'execution';
-        break;
-      case 'execution':
-        newFilters.execution = item.id;
-        newLabels.execution = item.label;
-        break;
-    }
-
-    // Business OS scope never drills into agents (C3-2, FYI-2): go to the next
-    // Business OS dimension instead, or stay put when none is left.
-    if (scope === 'bos' && BOS_HIDDEN_DIMENSIONS.has(nextBreakdown)) {
-      nextBreakdown = bosDrillTarget(newFilters, breakdownBy) ?? breakdownBy;
-    }
-
-    setFilters(newFilters);
-    setFilterLabels(newLabels);
-    setBreakdownBy(nextBreakdown);
+  // D-6: back to the call's Open button; when that row is gone its button is
+  // detached, so focus goes to the content area, never <body>.
+  const returnFocus = () => {
+    if (opener.current?.isConnected) opener.current.focus();
+    else contentRef.current?.focus();
   };
 
   /**
@@ -458,1233 +239,309 @@ function AdminCostAnalyticsContent() {
    */
   const handleScopeToggle = () => {
     const next: Scope = scope === 'bos' ? 'all' : 'bos';
-    setScope(next);
+    setFilters(scopeSwitchPatch(next, filters));
     if (next === 'bos') {
-      const withoutHidden = <T extends Filters | FilterLabels>(prev: T): T => {
-        const rest = { ...prev };
-        delete rest.agent;
-        delete rest.execution;
-        delete rest.category;
-        return rest;
-      };
-      setFilters(withoutHidden);
-      setFilterLabels(withoutHidden);
-      setBreakdownBy((b) => (BOS_HIDDEN_DIMENSIONS.has(b) ? 'provider' : b));
-      setSelectedCall(null);
+      closeCallDetails();
       setExecutionDetails(null);
     }
   };
 
-  const removeFilter = (key: keyof Filters) => {
-    const newFilters = { ...filters };
-    const newLabels = { ...filterLabels };
-    delete newFilters[key];
-    delete newLabels[key];
-    setFilters(newFilters);
-    setFilterLabels(newLabels);
-  };
-
+  /** The breadcrumb "All Data": drill filters, business and category cleared; scope, window and group by kept. */
   const clearAllFilters = () => {
-    setFilters({});
-    setFilterLabels({});
-    setSelectedCall(null);
+    setFilters(drillPatch({}));
+    closeCallDetails();
   };
 
-  const formatCost = (cost: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 4
-    }).format(cost);
-  };
+  /** A breadcrumb's text: the recorded label while its id is applied, else the value. */
+  const labelOf = (field: DrillField) => drillValueLabel(labels, field, filters[field]);
 
-  const formatNumber = (num: number) => {
-    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-    return new Intl.NumberFormat('en-US').format(num);
-  };
+  /** A KPI tile's target: the filtered view's real link, and the same patch applied in place. */
+  const tile = (patch: Partial<AnalyticsFilters>) => ({
+    href: `${ANALYTICS_PATH}${hrefFor(patch)}`,
+    apply: () => setFilters(patch),
+  });
 
-  const handlePeriodSelect = (value: number) => {
-    clearLinkedWindow();
-    if (value === -1) {
-      const today = new Date();
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(today.getDate() - 30);
-      const fromDate = thirtyDaysAgo.toISOString().split('T')[0];
-      const toDate = today.toISOString().split('T')[0];
-      setCustomDateFrom(fromDate);
-      setCustomDateTo(toDate);
-      setAppliedDateRange({ from: fromDate, to: toDate });
-      setShowCustomDatePicker(true);
-    } else {
-      setShowCustomDatePicker(false);
-      setAppliedDateRange(null);
-    }
-    setPeriod(value);
-  };
+  // §5.10: loading and errors replace the content only; the header and the bar stay (F-55).
+  const showContent = !error && hasLoaded;
 
-  const handleApplyDateRange = () => {
-    clearLinkedWindow();
-    if (customDateFrom && customDateTo) {
-      // Caught here with a clear message rather than sent to the route, which
-      // refuses it with a 400 (QA E-3). ISO dates compare correctly as strings.
-      if (customDateFrom > customDateTo) {
-        setDateRangeError('The start date is after the end date. Choose a start on or before the end.');
-        return;
-      }
-      setDateRangeError(null);
-      setAppliedDateRange({ from: customDateFrom, to: customDateTo });
-    }
-  };
+  /** "All Data" is the last crumb only when no other crumb shows. */
+  const hasDeeperCrumb = Boolean(
+    filters.provider ||
+      filters.model ||
+      filters.activity ||
+      filters.account ||
+      filters.requestType ||
+      filters.feature ||
+      filters.component ||
+      filters.endpoint ||
+      (scope === 'all' && (filters.agent || filters.execution)),
+  );
 
-  const activeFiltersCount = Object.keys(filters).filter(k => k !== 'category' || filters.category !== 'all').length;
+  // QA E-QA-1: a slow "All" response must not redraw the run card after a
+  // switch to Business OS scope.
+  const runAgent = scope === 'all' ? executionDetails?.agent ?? null : null;
 
-  // Calculate category percentages
-  const totalCategoryCost = categoryTotals
-    ? categoryTotals.creation.cost + categoryTotals.execution.cost + categoryTotals.memory.cost + categoryTotals.system.cost
-    : totals.cost;
-
-  const getCategoryPct = (cost: number) => {
-    if (totalCategoryCost === 0) return 0;
-    return Math.round((cost / totalCategoryCost) * 100);
-  };
-
-  // Top consumers from items
-  const topConsumers = [...items]
-    .sort((a, b) => b.cost - a.cost)
-    .slice(0, 3);
-
-  if (loading && items.length === 0) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <RefreshCw className="w-12 h-12 text-purple-400 animate-spin mx-auto mb-4" />
-          <p className="text-slate-300">Loading cost analytics...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-6 max-w-md text-center">
-          <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-red-300 mb-2">Failed to Load Analytics</h3>
-          <p className="text-red-400 mb-4">{error}</p>
-          <button
-            onClick={fetchData}
-            className="px-4 py-2 bg-red-500/20 text-red-300 rounded-lg hover:bg-red-500/30 transition-colors border border-red-500/30"
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
-    );
-  }
+  /** The open call's time, the drawer title's suffix (UTC, F-50). */
+  const openCallTime = openCall ? readMeta(openCall).timestamp : null;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <header className="flex items-center justify-between border-b border-slate-700 pb-4">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold text-white">Token Usage Analytics</h1>
-          <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">BI System</span>
-        </div>
-        <div className="flex items-center gap-4">
-          {/* Business OS lens (slice 2a). The route applies the platform's own
-              definition of a Business OS row, legacy-tagged rows included. */}
-          <button
-            type="button"
-            role="switch"
-            aria-checked={scope === 'bos'}
-            data-testid="scope-toggle"
-            onClick={handleScopeToggle}
-            className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
-              scope === 'bos'
-                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-200'
-                : 'border-slate-700 text-slate-400 hover:text-white'
-            }`}
-          >
-            Business OS only
-          </button>
-          {/* Period Selector - Inline Button Group */}
-          <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg p-1">
-            {PERIOD_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                onClick={() => handlePeriodSelect(option.value)}
-                className={`px-3 py-1.5 text-sm rounded transition-colors ${
-                  // No preset is the active window while a linked window applies
-                  // (SA code review 4): the chip is the one statement of the window.
-                  !linkedWindow && period === option.value
-                    ? 'bg-purple-500 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                {option.value === -1 ? (
-                  <span className="flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5" />
-                    {option.label}
-                  </span>
-                ) : option.label}
-              </button>
-            ))}
-          </div>
-          {/* Refresh */}
-          <button
-            onClick={fetchData}
-            disabled={loading}
-            className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
-          >
-            <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-      </header>
+      <AdminPageHeader title="AI cost & usage" purpose={PURPOSE} />
 
-      {linkedWindow && (
-        <div data-testid="linked-window" className="flex items-center gap-2 text-xs text-slate-300">
-          <span className="px-2 py-1 rounded bg-slate-800 border border-slate-600">
-            Linked window {formatLinkedBound(linkedWindow.from)} to {formatLinkedBound(linkedWindow.to)} UTC
-          </span>
-          <button
-            type="button"
-            onClick={clearLinkedWindow}
-            aria-label="Clear the linked window"
-            className="p-1 rounded hover:bg-slate-700"
-          >
-            <X className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        </div>
+      {!error && (
+        <AnalyticsKpis
+          scope={scope}
+          totals={totals}
+          categoryTotals={categoryTotals}
+          comparison={comparison}
+          possiblyIncomplete={possiblyIncomplete}
+          category={effective.category}
+          firstLoad={!hasLoaded}
+          tile={tile}
+        />
       )}
 
-      {/* What these numbers are, and are not (slice 2a). */}
-      <div data-testid="scope-notes" className="space-y-1 text-xs text-slate-400">
-        {scope === 'bos' ? (
-          <p>
-            <span className="px-2 py-0.5 mr-2 rounded bg-emerald-500/20 text-emerald-300">Business OS only</span>
-            Includes legacy-tagged Business OS rows. Costs are USD, estimated from the model pricing table.
-          </p>
-        ) : (
-          <p>Both products. Costs are USD, estimated from the model pricing table.</p>
-        )}
-        <p>Totals may be incomplete above {UNPAGED_ROW_CAP.toLocaleString('en-US')} calls in the selected period.</p>
-        {possiblyIncomplete && (
-          <p data-testid="incomplete-banner" className="text-amber-300">
-            This period reached {UNPAGED_ROW_CAP.toLocaleString('en-US')} calls, so the totals below are a lower
-            bound. Narrow the period for an exact figure.
-          </p>
-        )}
-      </div>
+      <AnalyticsFilterBar
+        filters={effective}
+        setFilters={setFilters}
+        onClear={clear}
+        canClear={!isDefault}
+        onScopeToggle={handleScopeToggle}
+        labels={labels}
+        pickedBusiness={pickedBusiness}
+        onPickBusiness={(accountId, name) => {
+          setPickedBusiness({ accountId, name });
+          setFilters({ account: accountId });
+        }}
+        busy={loading}
+        readAt={readAt}
+        onRefresh={() => void fetchData(query)}
+      />
 
-      {/* Custom Date Range Picker */}
-      {showCustomDatePicker && (
-        <div className="flex items-center gap-3 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2">
-          <input
-            type="date"
-            value={customDateFrom}
-            onChange={(e) => setCustomDateFrom(e.target.value)}
-            className="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white [color-scheme:dark]"
-          />
-          <span className="text-slate-500">to</span>
-          <input
-            type="date"
-            value={customDateTo}
-            onChange={(e) => setCustomDateTo(e.target.value)}
-            className="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white [color-scheme:dark]"
-          />
-          <button
-            onClick={handleApplyDateRange}
-            disabled={!customDateFrom || !customDateTo}
-            className="px-3 py-1.5 bg-purple-500 hover:bg-purple-600 text-white text-sm font-medium rounded transition-colors disabled:opacity-50"
-          >
-            Apply
-          </button>
-          {dateRangeError && (
-            <span data-testid="date-range-error" role="alert" className="text-sm text-amber-300">
-              {dateRangeError}
-            </span>
-          )}
-        </div>
-      )}
+      {/* Always mounted (error and first read included), so focus has a
+          connected place to land when the open call's row is gone (QA B-1). */}
+      <div
+        ref={contentRef}
+        tabIndex={-1}
+        aria-busy={loading}
+        data-testid="analytics-content"
+        className="space-y-4 focus:outline-none"
+      >
+        {error && <AdminError message={error} testId="analytics-error" onRetry={() => void fetchData(query)} />}
+        {!error && !hasLoaded && <AdminLoading what={ANALYTICS_WHAT} />}
 
-      {/* TOP SECTION: Category Summary Cards - 5 cards in a row */}
-      <section className="grid grid-cols-5 gap-4">
-        {/* Total */}
-        <div data-testid="category-card-total" className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-slate-400">Total Spend</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-slate-600/50 text-slate-400">
-              {scope === 'bos' ? 'Business OS' : 'All'}
-            </span>
-          </div>
-          <div className="text-2xl font-bold text-white mb-1">{formatCost(totals.cost)}</div>
-          <div className="text-sm text-slate-400">{formatNumber(totals.tokens)} tokens</div>
-          {comparison && (
-            <div className="flex items-center gap-1 mt-2 text-xs">
-              <span className={comparison.changes.costPct > 0 ? 'text-red-400' : comparison.changes.costPct < 0 ? 'text-green-400' : 'text-slate-400'}>
-                {comparison.changes.costPct > 0 ? '+' : ''}{comparison.changes.costPct.toFixed(1)}%
-              </span>
-              <span className="text-slate-500">vs prev period</span>
-            </div>
-          )}
-        </div>
-
-        {/* The four category cards are the AgentsPilot taxonomy. In Business OS
-            scope every row lands in one of them, which would only repeat the
-            Total, so only the Total shows there (C3-1, FYI-3). */}
-        {scope === 'all' && (
-        <>
-        {/* Creation */}
-        <button
-          data-testid="category-card-creation"
-          onClick={() => {
-            if (filters.category === 'creation') {
-              removeFilter('category');
-            } else {
-              setFilters(prev => ({ ...prev, category: 'creation' }));
-              setFilterLabels(prev => ({ ...prev, category: 'Creation' }));
-            }
-          }}
-          className={`bg-slate-800 border rounded-xl p-5 cursor-pointer transition-all text-left ${
-            filters.category === 'creation'
-              ? 'border-purple-500 ring-1 ring-purple-500/50'
-              : 'border-purple-500/30 hover:border-purple-500/60'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-slate-400">Creation</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-400">
-              {getCategoryPct(categoryTotals?.creation.cost || 0)}%
-            </span>
-          </div>
-          <div className="text-2xl font-bold text-purple-400 mb-1">
-            {formatCost(categoryTotals?.creation.cost || 0)}
-          </div>
-          <div className="text-sm text-slate-400">{formatNumber(categoryTotals?.creation.tokens || 0)} tokens</div>
-          <div className="text-xs text-slate-500 mt-2">Intent, Semantic Plan, IR</div>
-        </button>
-
-        {/* Execution */}
-        <button
-          data-testid="category-card-execution"
-          onClick={() => {
-            if (filters.category === 'execution') {
-              removeFilter('category');
-            } else {
-              setFilters(prev => ({ ...prev, category: 'execution' }));
-              setFilterLabels(prev => ({ ...prev, category: 'Execution' }));
-            }
-          }}
-          className={`bg-slate-800 border rounded-xl p-5 cursor-pointer transition-all text-left ${
-            filters.category === 'execution'
-              ? 'border-emerald-500 ring-1 ring-emerald-500/50'
-              : 'border-emerald-500/30 hover:border-emerald-500/60'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-slate-400">Execution</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
-              {getCategoryPct(categoryTotals?.execution.cost || 0)}%
-            </span>
-          </div>
-          <div className="text-2xl font-bold text-emerald-400 mb-1">
-            {formatCost(categoryTotals?.execution.cost || 0)}
-          </div>
-          <div className="text-sm text-slate-400">{formatNumber(categoryTotals?.execution.tokens || 0)} tokens</div>
-          <div className="text-xs text-slate-500 mt-2">Agent runs, LLM decisions</div>
-        </button>
-
-        {/* Memory */}
-        <button
-          data-testid="category-card-memory"
-          onClick={() => {
-            if (filters.category === 'memory') {
-              removeFilter('category');
-            } else {
-              setFilters(prev => ({ ...prev, category: 'memory' }));
-              setFilterLabels(prev => ({ ...prev, category: 'Memory' }));
-            }
-          }}
-          className={`bg-slate-800 border rounded-xl p-5 cursor-pointer transition-all text-left ${
-            filters.category === 'memory'
-              ? 'border-blue-500 ring-1 ring-blue-500/50'
-              : 'border-blue-500/30 hover:border-blue-500/60'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-slate-400">Memory</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400">
-              {getCategoryPct(categoryTotals?.memory.cost || 0)}%
-            </span>
-          </div>
-          <div className="text-2xl font-bold text-blue-400 mb-1">
-            {formatCost(categoryTotals?.memory.cost || 0)}
-          </div>
-          <div className="text-sm text-slate-400">{formatNumber(categoryTotals?.memory.tokens || 0)} tokens</div>
-          <div className="text-xs text-slate-500 mt-2">Embeddings, summarization</div>
-        </button>
-
-        {/* System */}
-        <button
-          data-testid="category-card-system"
-          onClick={() => {
-            if (filters.category === 'system') {
-              removeFilter('category');
-            } else {
-              setFilters(prev => ({ ...prev, category: 'system' }));
-              setFilterLabels(prev => ({ ...prev, category: 'System' }));
-            }
-          }}
-          className={`bg-slate-800 border rounded-xl p-5 cursor-pointer transition-all text-left ${
-            filters.category === 'system'
-              ? 'border-orange-500 ring-1 ring-orange-500/50'
-              : 'border-orange-500/30 hover:border-orange-500/60'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-slate-400">System</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-orange-500/20 text-orange-400">
-              {getCategoryPct(categoryTotals?.system.cost || 0)}%
-            </span>
-          </div>
-          <div className="text-2xl font-bold text-orange-400 mb-1">
-            {formatCost(categoryTotals?.system.cost || 0)}
-          </div>
-          <div className="text-sm text-slate-400">{formatNumber(categoryTotals?.system.tokens || 0)} tokens</div>
-          <div className="text-xs text-slate-500 mt-2">Platform, calibration</div>
-        </button>
-        </>
-        )}
-      </section>
-
-      {/* MAIN CONTENT: Two Panels (3 cols left + 9 cols right) */}
-      <div className="grid grid-cols-12 gap-6">
-
-        {/* LEFT PANEL: Filters & Dimensions (3 cols) */}
-        <aside className="col-span-3 space-y-4">
-
-          {/* Active Filters */}
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-white">Active Filters</h3>
-              {activeFiltersCount > 0 && (
-                <button onClick={clearAllFilters} className="text-xs text-purple-400 hover:underline">
-                  Clear all
-                </button>
+        {showContent && (
+          <>
+            <div className="space-y-3">
+              {possiblyIncomplete && (
+                <AdminNotice testId="incomplete-banner">
+                  This period reached {UNPAGED_ROW_CAP.toLocaleString('en-US')} calls, so the totals below are a lower
+                  bound. Narrow the period for an exact figure.
+                </AdminNotice>
               )}
+              {/* What these numbers are, and are not (slice 2a). */}
+              <div data-testid="scope-notes" className="space-y-1 text-xs text-slate-400">
+                {scope === 'bos' ? (
+                  <p>
+                    Business OS only: includes legacy-tagged Business OS rows. Costs are USD, estimated from the model
+                    pricing table.
+                  </p>
+                ) : (
+                  <p>Both products. Costs are USD, estimated from the model pricing table.</p>
+                )}
+                <p>Totals may be incomplete above {UNPAGED_ROW_CAP.toLocaleString('en-US')} calls in the selected period.</p>
+              </div>
             </div>
-            <div className="space-y-2">
-              {activeFiltersCount === 0 ? (
-                <div className="text-xs text-slate-500 text-center py-2">Click any dimension to filter</div>
-              ) : (
+
+            {/* Breadcrumb trail (rewired in L-2a, SA M-1; L-2b class edits only). */}
+            <div className="flex items-center gap-2 text-sm flex-wrap">
+              <button type="button" onClick={clearAllFilters} {...crumbProps(!hasDeeperCrumb)}>
+                All Data
+              </button>
+              {filters.provider && (
                 <>
-                  {/* Category, Agent and Execution chips are AgentsPilot-only (C3-2). */}
-                  {scope === 'all' && filters.category && filters.category !== 'all' && (
-                    <div className={`flex items-center justify-between rounded-lg px-3 py-2 ${
-                      filters.category === 'creation' ? 'bg-purple-500/10 border border-purple-500/30' :
-                      filters.category === 'execution' ? 'bg-emerald-500/10 border border-emerald-500/30' :
-                      filters.category === 'memory' ? 'bg-blue-500/10 border border-blue-500/30' :
-                      'bg-orange-500/10 border border-orange-500/30'
-                    }`}>
-                      <span className="text-sm text-white">Category: {filterLabels.category}</span>
-                      <button onClick={() => removeFilter('category')} className="text-slate-400 hover:text-white">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                  {filters.provider && (
-                    <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
-                      <span className="text-sm text-white">Provider: {filterLabels.provider}</span>
-                      <button onClick={() => removeFilter('provider')} className="text-slate-400 hover:text-white">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                  {filters.model && (
-                    <div className="flex items-center justify-between bg-cyan-500/10 border border-cyan-500/30 rounded-lg px-3 py-2">
-                      <span className="text-sm text-white">Model: {filterLabels.model}</span>
-                      <button onClick={() => removeFilter('model')} className="text-slate-400 hover:text-white">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                  {filters.activity && (
-                    <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
-                      <span className="text-sm text-white truncate">Activity: {filterLabels.activity}</span>
-                      <button onClick={() => removeFilter('activity')} className="text-slate-400 hover:text-white flex-shrink-0">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                  {filters.user && (
-                    <div className="flex items-center justify-between bg-pink-500/10 border border-pink-500/30 rounded-lg px-3 py-2">
-                      <span className="text-sm text-white truncate">User: {filterLabels.user}</span>
-                      <button onClick={() => removeFilter('user')} className="text-slate-400 hover:text-white flex-shrink-0">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                  {scope === 'all' && filters.agent && (
-                    <div className="flex items-center justify-between bg-violet-500/10 border border-violet-500/30 rounded-lg px-3 py-2">
-                      <span className="text-sm text-white truncate">Agent: {filterLabels.agent}</span>
-                      <button onClick={() => removeFilter('agent')} className="text-slate-400 hover:text-white flex-shrink-0">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                  {scope === 'all' && filters.execution && (
-                    <div className="flex items-center justify-between bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2">
-                      <span className="text-sm text-white truncate">Execution: {filterLabels.execution?.slice(0, 12)}...</span>
-                      <button onClick={() => removeFilter('execution')} className="text-slate-400 hover:text-white flex-shrink-0">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(drillPatch({ provider: filters.provider }));
+                    }}
+                    {...crumbProps(!(filters.model || filters.activity || filters.account || filters.agent || filters.execution))}
+                  >
+                    {labelOf('provider')}
+                  </button>
+                </>
+              )}
+              {filters.model && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(drillPatch({ provider: filters.provider, model: filters.model }));
+                    }}
+                    {...crumbProps(!(filters.activity || filters.account || filters.agent || filters.execution))}
+                  >
+                    {labelOf('model')}
+                  </button>
+                </>
+              )}
+              {filters.activity && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(drillPatch({ provider: filters.provider, model: filters.model, activity: filters.activity }));
+                    }}
+                    {...crumbProps(!(filters.account || filters.agent || filters.execution))}
+                  >
+                    {labelOf('activity')}
+                  </button>
+                </>
+              )}
+              {filters.account && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(drillPatch({ provider: filters.provider, model: filters.model, activity: filters.activity, account: filters.account }));
+                    }}
+                    {...crumbProps(!(filters.agent || filters.execution))}
+                  >
+                    {labelOf('account')}
+                  </button>
+                </>
+              )}
+              {filters.requestType && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(drillPatch({ provider: filters.provider, model: filters.model, activity: filters.activity, requestType: filters.requestType }));
+                    }}
+                    {...crumbProps(!(filters.account || filters.agent || filters.execution))}
+                  >
+                    {labelOf('requestType')}
+                  </button>
+                </>
+              )}
+              {filters.feature && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(drillPatch({ provider: filters.provider, model: filters.model, activity: filters.activity, feature: filters.feature }));
+                    }}
+                    {...crumbProps(!(filters.account || filters.agent || filters.execution))}
+                  >
+                    {labelOf('feature')}
+                  </button>
+                </>
+              )}
+              {filters.component && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(drillPatch({ provider: filters.provider, model: filters.model, activity: filters.activity, component: filters.component }));
+                    }}
+                    {...crumbProps(!(filters.account || filters.agent || filters.execution))}
+                  >
+                    {labelOf('component')}
+                  </button>
+                </>
+              )}
+              {filters.endpoint && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(drillPatch({ provider: filters.provider, model: filters.model, activity: filters.activity, endpoint: filters.endpoint }));
+                    }}
+                    {...crumbProps(!(filters.account || filters.agent || filters.execution))}
+                  >
+                    {labelOf('endpoint')}
+                  </button>
+                </>
+              )}
+              {scope === 'all' && filters.agent && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(drillPatch({ provider: filters.provider, model: filters.model, activity: filters.activity, requestType: filters.requestType, feature: filters.feature, component: filters.component, endpoint: filters.endpoint, account: filters.account, agent: filters.agent }));
+                    }}
+                    {...crumbProps(!(filters.execution))}
+                  >
+                    {labelOf('agent')}
+                  </button>
+                </>
+              )}
+              {scope === 'all' && filters.execution && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <span className="text-white" aria-current="true" title={`Execution: ${filters.execution}`}>
+                    {labelOf('execution')}
+                  </span>
                 </>
               )}
             </div>
-          </div>
 
-          {/* Dimension Selector */}
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-            <h3 className="text-sm font-medium text-white mb-3">Group By</h3>
-            <div className="space-y-2">
-              {breakdownOptionsFor(scope).map((option) => {
-                const Icon = option.icon;
-                const isSelected = breakdownBy === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    data-testid={`group-by-${option.value}`}
-                    onClick={() => setBreakdownBy(option.value)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between transition-colors ${
-                      isSelected
-                        ? 'bg-purple-500/20 border border-purple-500 text-white'
-                        : 'border border-slate-700 text-slate-400 hover:border-slate-600'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Icon className="w-4 h-4" />
-                      {option.label}
-                    </span>
-                    {isSelected && <Check className="w-4 h-4" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+            {/* The run every call row belongs to: context first (SA Q-2, S-2). */}
+            {runAgent && executionDetails && <AnalyticsExecutionCard details={executionDetails} agent={runAgent} />}
 
-          {/* Quick Stats */}
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-            <h3 className="text-sm font-medium text-white mb-3">Quick Stats</h3>
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Total Calls</span>
-                <span className="font-medium text-white">{formatNumber(totals.calls)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Avg Cost/Call</span>
-                <span className="font-medium text-white">{totals.calls > 0 ? formatCost(totals.cost / totals.calls) : '-'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Avg Tokens/Call</span>
-                <span className="font-medium text-white">{totals.calls > 0 ? formatNumber(Math.round(totals.tokens / totals.calls)) : '-'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Input Tokens</span>
-                <span className="font-medium text-white">{formatNumber(totals.inputTokens)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Output Tokens</span>
-                <span className="font-medium text-white">{formatNumber(totals.outputTokens)}</span>
-              </div>
-            </div>
-          </div>
+            <p className={ADMIN_COUNT_LINE} data-testid="analytics-count">
+              Showing {items.length} {items.length === 1 ? 'item' : 'items'}
+            </p>
 
-          {/* Top Consumers */}
-          {topConsumers.length > 0 && (
-            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-              <h3 className="text-sm font-medium text-white mb-3">Top Token Consumers</h3>
-              <div className="space-y-3">
-                {topConsumers.map((item, i) => {
-                  const initials = item.label.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-                  const colors = ['from-purple-500 to-blue-500', 'from-emerald-500 to-blue-500', 'from-orange-500 to-red-500'];
-                  return (
-                    <div key={item.id} className="flex items-center gap-2">
-                      <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${colors[i % 3]} flex items-center justify-center text-xs font-bold text-white`}>
-                        {initials || '??'}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-white truncate">{item.label}</div>
-                        <div className="text-xs text-slate-500">{formatCost(item.cost)}</div>
-                      </div>
-                      <div className="text-sm text-purple-400">{item.percentage.toFixed(0)}%</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </aside>
-
-        {/* RIGHT PANEL: Data Table (9 cols) */}
-        <section className="col-span-9 space-y-4">
-
-          {/* Breadcrumb Trail */}
-          <div className="flex items-center gap-2 text-sm flex-wrap">
-            <button onClick={clearAllFilters} className="text-purple-400 hover:underline">All Data</button>
-            {filters.provider && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <button
-                  onClick={() => {
-                    setFilters({ provider: filters.provider });
-                    setFilterLabels({ provider: filterLabels.provider });
-                  }}
-                  className={`${filters.model || filters.activity || filters.user || filters.agent || filters.execution ? 'text-purple-400 hover:underline' : 'text-white'}`}
-                >
-                  {filterLabels.provider}
-                </button>
-              </>
+            {items.length > 0 ? (
+              <AnalyticsTable
+                items={items}
+                scope={scope}
+                breakdownBy={breakdownBy}
+                totals={totals}
+                categoryTotals={categoryTotals}
+                drilled={isDrilled(effective)}
+                drillHref={drillHref}
+                onDrill={drill}
+                onOpenCall={openCallDetails}
+              />
+            ) : (
+              <AdminEmpty
+                testId="analytics-empty"
+                message="No AI usage matches this window and these filters."
+                hint="Try a longer window, the other scope or fewer filters."
+                onClear={isDefault ? undefined : clear}
+              />
             )}
-            {filters.model && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <button
-                  onClick={() => {
-                    setFilters({ provider: filters.provider, model: filters.model });
-                    setFilterLabels({ provider: filterLabels.provider, model: filterLabels.model });
-                  }}
-                  className={`${filters.activity || filters.user || filters.agent || filters.execution ? 'text-purple-400 hover:underline' : 'text-white'}`}
-                >
-                  {filterLabels.model}
-                </button>
-              </>
-            )}
-            {filters.activity && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <button
-                  onClick={() => {
-                    setFilters({ provider: filters.provider, model: filters.model, activity: filters.activity });
-                    setFilterLabels({ provider: filterLabels.provider, model: filterLabels.model, activity: filterLabels.activity });
-                  }}
-                  className={`${filters.user || filters.agent || filters.execution ? 'text-purple-400 hover:underline' : 'text-white'}`}
-                >
-                  {filterLabels.activity}
-                </button>
-              </>
-            )}
-            {filters.user && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <button
-                  onClick={() => {
-                    setFilters({ provider: filters.provider, model: filters.model, activity: filters.activity, user: filters.user });
-                    setFilterLabels({ provider: filterLabels.provider, model: filterLabels.model, activity: filterLabels.activity, user: filterLabels.user });
-                  }}
-                  className={`${filters.agent || filters.execution ? 'text-purple-400 hover:underline' : 'text-white'}`}
-                >
-                  {filterLabels.user}
-                </button>
-              </>
-            )}
-            {filters.request_type && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <button
-                  onClick={() => {
-                    setFilters({ provider: filters.provider, model: filters.model, activity: filters.activity, request_type: filters.request_type });
-                    setFilterLabels({ provider: filterLabels.provider, model: filterLabels.model, activity: filterLabels.activity, request_type: filterLabels.request_type });
-                  }}
-                  className={`${filters.user || filters.agent || filters.execution ? 'text-purple-400 hover:underline' : 'text-white'}`}
-                >
-                  {filterLabels.request_type}
-                </button>
-              </>
-            )}
-            {filters.feature && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <button
-                  onClick={() => {
-                    setFilters({ provider: filters.provider, model: filters.model, activity: filters.activity, feature: filters.feature });
-                    setFilterLabels({ provider: filterLabels.provider, model: filterLabels.model, activity: filterLabels.activity, feature: filterLabels.feature });
-                  }}
-                  className={`${filters.user || filters.agent || filters.execution ? 'text-purple-400 hover:underline' : 'text-white'}`}
-                >
-                  {filterLabels.feature}
-                </button>
-              </>
-            )}
-            {filters.component && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <button
-                  onClick={() => {
-                    setFilters({ provider: filters.provider, model: filters.model, activity: filters.activity, component: filters.component });
-                    setFilterLabels({ provider: filterLabels.provider, model: filterLabels.model, activity: filterLabels.activity, component: filterLabels.component });
-                  }}
-                  className={`${filters.user || filters.agent || filters.execution ? 'text-purple-400 hover:underline' : 'text-white'}`}
-                >
-                  {filterLabels.component}
-                </button>
-              </>
-            )}
-            {filters.endpoint && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <button
-                  onClick={() => {
-                    setFilters({ provider: filters.provider, model: filters.model, activity: filters.activity, endpoint: filters.endpoint });
-                    setFilterLabels({ provider: filterLabels.provider, model: filterLabels.model, activity: filterLabels.activity, endpoint: filterLabels.endpoint });
-                  }}
-                  className={`${filters.user || filters.agent || filters.execution ? 'text-purple-400 hover:underline' : 'text-white'}`}
-                >
-                  {filterLabels.endpoint}
-                </button>
-              </>
-            )}
-            {scope === 'all' && filters.agent && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <button
-                  onClick={() => {
-                    setFilters({ provider: filters.provider, model: filters.model, activity: filters.activity, request_type: filters.request_type, feature: filters.feature, component: filters.component, endpoint: filters.endpoint, user: filters.user, agent: filters.agent });
-                    setFilterLabels({ provider: filterLabels.provider, model: filterLabels.model, activity: filterLabels.activity, request_type: filterLabels.request_type, feature: filterLabels.feature, component: filterLabels.component, endpoint: filterLabels.endpoint, user: filterLabels.user, agent: filterLabels.agent });
-                  }}
-                  className={`${filters.execution ? 'text-purple-400 hover:underline' : 'text-white'}`}
-                >
-                  {filterLabels.agent}
-                </button>
-              </>
-            )}
-            {scope === 'all' && filters.execution && (
-              <>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-                <span className="text-white" title={`Execution: ${filters.execution}`}>
-                  {filterLabels.execution || `Exec: ${filters.execution.slice(0, 8)}...`}
-                </span>
-              </>
-            )}
-            <span className="text-slate-500 ml-4">| Showing {items.length} {items.length === 1 ? 'item' : 'items'}</span>
-          </div>
 
-          {/* Data Table */}
-          <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-slate-900/50">
-                <tr className="text-left text-xs text-slate-400 uppercase tracking-wider">
-                  <th className="px-4 py-3 font-medium">{BREAKDOWN_OPTIONS.find(o => o.value === breakdownBy)?.label || 'Name'}</th>
-                  <th className="px-4 py-3 font-medium text-right">Cost</th>
-                  {items.length > 0 && items[0].type === 'call' ? (
-                    <>
-                      <th className="px-4 py-3 font-medium text-right">Input Tokens</th>
-                      <th className="px-4 py-3 font-medium text-right">Output Tokens</th>
-                      <th className="px-4 py-3 font-medium text-right">Total Tokens</th>
-                      <th className="px-4 py-3 font-medium text-right">Latency</th>
-                      <th className="px-4 py-3 font-medium text-right">Status</th>
-                    </>
-                  ) : (
-                    <>
-                      <th className="px-4 py-3 font-medium text-right">Tokens</th>
-                      <th className="px-4 py-3 font-medium text-right">Calls</th>
-                      {/* AgentsPilot taxonomy: in Business OS scope these would read
-                          "-" on every row while the cost sits in System (W3-7). */}
-                      {scope === 'all' && (
-                        <>
-                          <th data-testid="table-col-creation" className="px-4 py-3 font-medium text-right text-purple-400">Creation</th>
-                          <th data-testid="table-col-execution" className="px-4 py-3 font-medium text-right text-emerald-400">Execution</th>
-                          <th data-testid="table-col-memory" className="px-4 py-3 font-medium text-right text-blue-400">Memory</th>
-                        </>
-                      )}
-                      <th className="px-4 py-3 font-medium text-right">Trend</th>
-                      <th className="px-4 py-3 font-medium w-8"></th>
-                    </>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700">
-                {items.length === 0 ? (
-                  <tr>
-                    <td colSpan={scope === 'all' ? 9 : 6} className="px-6 py-12 text-center">
-                      <Cpu className="w-12 h-12 mx-auto mb-4 text-slate-600" />
-                      <p className="text-lg font-medium text-slate-400">No data found</p>
-                      <p className="text-sm text-slate-500">Try adjusting your filters or time period</p>
-                    </td>
-                  </tr>
-                ) : (
-                  items.map((item) => {
-                    const category = item.metadata?.category as string;
-                    return (
-                      <tr
-                        key={item.id}
-                        onClick={() => handleRowClick(item)}
-                        className={`transition-colors ${
-                          item.type === 'call' ? 'cursor-default' : 'cursor-pointer hover:bg-purple-500/5'
-                        }`}
-                      >
-                        <td className="px-4 py-4">
-                          <div className="flex items-center gap-3">
-                            {/* Model Icon for provider/model views */}
-                            {(item.type === 'provider' || item.type === 'model') && (
-                              <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold ${
-                                item.id.includes('gpt-4o') ? 'bg-gradient-to-br from-green-500 to-green-700' :
-                                item.id.includes('gpt-4') ? 'bg-gradient-to-br from-green-400 to-green-600' :
-                                item.id.includes('claude') ? 'bg-gradient-to-br from-purple-500 to-purple-700' :
-                                item.id.includes('embedding') ? 'bg-gradient-to-br from-blue-500 to-blue-700' :
-                                item.id === 'openai' ? 'bg-gradient-to-br from-emerald-500 to-emerald-700' :
-                                item.id === 'anthropic' ? 'bg-gradient-to-br from-purple-500 to-purple-700' :
-                                item.id === 'google' ? 'bg-gradient-to-br from-blue-500 to-blue-700' :
-                                'bg-gradient-to-br from-slate-500 to-slate-700'
-                              }`}>
-                                {item.label.split('-')[0].slice(0, 3).toUpperCase()}
-                              </div>
-                            )}
-                            <div>
-                              <div className="font-medium text-white">{item.label}</div>
-                              {/* Context chips */}
-                              <ContextChips item={item} breakdownBy={breakdownBy} scope={scope} />
-                              {/* Category badge for activity type */}
-                              {item.type === 'activity' && category && (
-                                <span className={`inline-block mt-1 px-2 py-0.5 rounded text-xs ${
-                                  category === 'creation' ? 'bg-purple-500/20 text-purple-400' :
-                                  category === 'execution' ? 'bg-emerald-500/20 text-emerald-400' :
-                                  category === 'memory' ? 'bg-blue-500/20 text-blue-400' :
-                                  category === 'system' ? 'bg-orange-500/20 text-orange-400' :
-                                  'bg-slate-500/20 text-slate-400'
-                                }`}>
-                                  {category}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 text-right font-semibold text-white">{formatCost(item.cost)}</td>
-                        {item.type === 'call' ? (
-                          <>
-                            <td className="px-4 py-4 text-right text-slate-400">{formatNumber(item.inputTokens)}</td>
-                            <td className="px-4 py-4 text-right text-slate-400">{formatNumber(item.outputTokens)}</td>
-                            <td className="px-4 py-4 text-right text-white font-medium">{formatNumber(item.tokens)}</td>
-                            <td className="px-4 py-4 text-right text-slate-400">
-                              {item.metadata?.latencyMs ? `${Math.round(item.metadata.latencyMs as number)}ms` : '-'}
-                            </td>
-                            <td className="px-4 py-4 text-right">
-                              {item.metadata?.success ? (
-                                <span className="text-green-400">✓</span>
-                              ) : (
-                                <span className="text-red-400">✗</span>
-                              )}
-                            </td>
-                          </>
-                        ) : (
-                          <>
-                            <td className="px-4 py-4 text-right text-slate-400">{formatNumber(item.tokens)}</td>
-                            <td className="px-4 py-4 text-right text-slate-400">{formatNumber(item.calls)}</td>
-                            {scope === 'all' && (
-                              <>
-                                <td className="px-4 py-4 text-right text-purple-400">
-                                  {item.category_breakdown?.creation.cost ? formatCost(item.category_breakdown.creation.cost) : '-'}
-                                </td>
-                                <td className="px-4 py-4 text-right text-emerald-400">
-                                  {item.category_breakdown?.execution.cost ? formatCost(item.category_breakdown.execution.cost) : '-'}
-                                </td>
-                                <td className="px-4 py-4 text-right text-blue-400">
-                                  {item.category_breakdown?.memory.cost ? formatCost(item.category_breakdown.memory.cost) : '-'}
-                                </td>
-                              </>
-                            )}
-                            <td className="px-4 py-4 text-right">
-                              {/* Trend placeholder - would need per-item comparison data */}
-                              <span className="text-slate-500 text-sm">-</span>
-                            </td>
-                            <td className="px-4 py-4">
-                              <ChevronRight className="w-5 h-5 text-slate-500" />
-                            </td>
-                          </>
-                        )}
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-              {/* Footer totals */}
-              {items.length > 0 && items[0].type !== 'call' && (
-                <tfoot className="bg-slate-900/30 border-t border-slate-600">
-                  <tr className="text-sm">
-                    <td className="px-4 py-3 font-medium text-white">
-                      {filters.provider || filters.model || filters.activity || filters.agent ? 'Subtotal' : 'Total'}
-                    </td>
-                    <td className="px-4 py-3 text-right font-bold text-white">{formatCost(totals.cost)}</td>
-                    <td className="px-4 py-3 text-right text-slate-400">{formatNumber(totals.tokens)}</td>
-                    <td className="px-4 py-3 text-right text-slate-400">{formatNumber(totals.calls)}</td>
-                    {scope === 'all' && (
-                      <>
-                        <td className="px-4 py-3 text-right text-purple-400 font-medium">
-                          {formatCost(categoryTotals?.creation.cost || 0)}
-                        </td>
-                        <td className="px-4 py-3 text-right text-emerald-400 font-medium">
-                          {formatCost(categoryTotals?.execution.cost || 0)}
-                        </td>
-                        <td className="px-4 py-3 text-right text-blue-400 font-medium">
-                          {formatCost(categoryTotals?.memory.cost || 0)}
-                        </td>
-                      </>
-                    )}
-                    <td colSpan={2}></td>
-                  </tr>
-                </tfoot>
-              )}
-              {items.length > 0 && items[0].type === 'call' && (
-                <tfoot className="bg-slate-900/30 border-t border-slate-600">
-                  <tr className="text-sm">
-                    <td className="px-4 py-3 font-medium text-white">Total</td>
-                    <td className="px-4 py-3 text-right font-bold text-white">{formatCost(totals.cost)}</td>
-                    <td className="px-4 py-3 text-right text-slate-400">{formatNumber(totals.inputTokens)}</td>
-                    <td className="px-4 py-3 text-right text-slate-400">{formatNumber(totals.outputTokens)}</td>
-                    <td className="px-4 py-3 text-right font-bold text-white">{formatNumber(totals.tokens)}</td>
-                    <td colSpan={2}></td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-        </section>
-      </div>
-
-      {/* Agent Details Panel - shown when viewing execution calls */}
-      {/* QA E-QA-1: a slow "All" response must not redraw this panel after a
-          switch to Business OS scope. */}
-      {scope === 'all' && executionDetails?.agent && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden"
-        >
-          <button
-            onClick={() => setShowAgentJson(!showAgentJson)}
-            className="w-full px-4 py-3 bg-slate-700/30 border-b border-slate-700 flex items-center justify-between hover:bg-slate-700/50 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <FileJson className="w-5 h-5 text-blue-400" />
-              <div className="text-left">
-                <h3 className="font-semibold text-white">{executionDetails.agent.name}</h3>
-                <p className="text-xs text-slate-400">
-                  {executionDetails.agent.mode && <span className="capitalize">{executionDetails.agent.mode}</span>}
-                  {executionDetails.agent.status && <span className="ml-2 capitalize">• {executionDetails.agent.status}</span>}
-                  {executionDetails.agent.connectedPlugins && executionDetails.agent.connectedPlugins.length > 0 && (
-                    <span className="ml-2">• {executionDetails.agent.connectedPlugins.length} plugin(s)</span>
-                  )}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">{showAgentJson ? 'Hide' : 'Show'} details</span>
-              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${showAgentJson ? 'rotate-180' : ''}`} />
-            </div>
-          </button>
-
-          <AnimatePresence>
-            {showAgentJson && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="overflow-hidden"
-              >
-                <div className="p-4 space-y-4 max-h-[600px] overflow-y-auto">
-                  {/* Execution Info */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-slate-700/30 rounded-lg">
-                    <div>
-                      <p className="text-xs text-slate-400">Started</p>
-                      <p className="text-sm text-white">
-                        {executionDetails.startedAt
-                          ? new Date(executionDetails.startedAt).toLocaleString()
-                          : 'N/A'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400">Completed</p>
-                      <p className="text-sm text-white">
-                        {executionDetails.completedAt
-                          ? new Date(executionDetails.completedAt).toLocaleString()
-                          : 'In Progress'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400">Status</p>
-                      <p className={`text-sm font-medium ${
-                        executionDetails.status === 'completed' ? 'text-green-400' :
-                        executionDetails.status === 'failed' ? 'text-red-400' :
-                        'text-yellow-400'
-                      }`}>
-                        {executionDetails.status || 'Unknown'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400">Agent ID</p>
-                      <p className="text-xs text-slate-500 font-mono truncate" title={executionDetails.agent.id}>
-                        {executionDetails.agent.id.slice(0, 8)}...
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Connected Plugins */}
-                  {executionDetails.agent.connectedPlugins && executionDetails.agent.connectedPlugins.length > 0 && (
-                    <div className="p-4 bg-slate-700/30 rounded-lg">
-                      <p className="text-xs text-slate-400 mb-2">Connected Plugins</p>
-                      <div className="flex flex-wrap gap-2">
-                        {executionDetails.agent.connectedPlugins.map((plugin: string) => (
-                          <span key={plugin} className="px-2 py-1 bg-purple-500/20 text-purple-300 text-xs rounded-full">
-                            {plugin}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-      )}
-
-      {/* Call Detail Modal */}
-      <AnimatePresence>
-        {selectedCall && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/50 z-40"
-              onClick={() => setSelectedCall(null)}
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg bg-slate-800 rounded-xl border border-slate-700 shadow-2xl z-50 overflow-hidden"
-            >
-              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
-                <div className="flex items-center gap-3">
-                  <Cpu className="w-5 h-5 text-blue-400" />
-                  <h3 className="font-semibold text-white">Call Details</h3>
-                  {selectedCall.metadata?.success !== undefined && (
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                      selectedCall.metadata.success
-                        ? 'bg-green-500/20 text-green-300'
-                        : 'bg-red-500/20 text-red-300'
-                    }`}>
-                      {selectedCall.metadata.success ? 'Success' : 'Failed'}
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={() => setSelectedCall(null)}
-                  className="p-1 hover:bg-slate-700 rounded transition-colors"
-                >
-                  <X className="w-5 h-5 text-slate-400" />
-                </button>
-              </div>
-
-              <div className="p-6 space-y-4 max-h-[70dvh] overflow-y-auto">
-                {/* Primary Info */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Model</p>
-                    <p className="text-sm font-medium text-white">{selectedCall.metadata?.model as string || 'Unknown'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Provider</p>
-                    <p className="text-sm font-medium text-white capitalize">{selectedCall.metadata?.provider as string || 'Unknown'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Cost</p>
-                    <p className={`text-sm font-semibold ${selectedCall.isHighCost ? 'text-red-300' : 'text-green-300'}`}>
-                      {formatCost(selectedCall.cost)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Success</p>
-                    <p className={`text-sm font-medium ${selectedCall.metadata?.success ? 'text-green-300' : 'text-red-300'}`}>
-                      {selectedCall.metadata?.success ? 'Yes' : 'No'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="h-px bg-slate-700" />
-
-                {/* Token Breakdown */}
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Input Tokens</p>
-                    <p className="text-sm text-white">{formatNumber(selectedCall.metadata?.inputTokens as number || 0)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Output Tokens</p>
-                    <p className="text-sm text-white">{formatNumber(selectedCall.metadata?.outputTokens as number || 0)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Total Tokens</p>
-                    <p className="text-sm font-medium text-white">{formatNumber(selectedCall.tokens)}</p>
-                  </div>
-                </div>
-
-                <div className="h-px bg-slate-700" />
-
-                {/* Request Classification */}
-                <div>
-                  <h4 className="text-xs font-semibold text-slate-300 mb-3 uppercase tracking-wider">Classification</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    {selectedCall.metadata?.requestType && (
-                      <div>
-                        <p className="text-xs text-slate-400 mb-1">Request Type</p>
-                        <p className="text-sm text-white">{selectedCall.metadata.requestType as string}</p>
-                      </div>
-                    )}
-                    {selectedCall.metadata?.dbCategory && (
-                      <div>
-                        <p className="text-xs text-slate-400 mb-1">Category</p>
-                        <p className="text-sm text-white capitalize">{selectedCall.metadata.dbCategory as string}</p>
-                      </div>
-                    )}
-                    {selectedCall.metadata?.category && (
-                      <div>
-                        <p className="text-xs text-slate-400 mb-1">BI Category</p>
-                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                          selectedCall.metadata.category === 'creation' ? 'bg-purple-500/20 text-purple-400' :
-                          selectedCall.metadata.category === 'execution' ? 'bg-emerald-500/20 text-emerald-400' :
-                          selectedCall.metadata.category === 'memory' ? 'bg-blue-500/20 text-blue-400' :
-                          'bg-orange-500/20 text-orange-400'
-                        }`}>
-                          {selectedCall.metadata.category as string}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Activity Details */}
-                {(selectedCall.metadata?.activityType || selectedCall.metadata?.activityName || selectedCall.metadata?.activityStep) && (
-                  <>
-                    <div className="h-px bg-slate-700" />
-                    <div>
-                      <h4 className="text-xs font-semibold text-slate-300 mb-3 uppercase tracking-wider">Activity</h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        {selectedCall.metadata?.activityType && (
-                          <div>
-                            <p className="text-xs text-slate-400 mb-1">Activity Type</p>
-                            <p className="text-sm text-white">{selectedCall.metadata.activityType as string}</p>
-                          </div>
-                        )}
-                        {selectedCall.metadata?.activityName && (
-                          <div>
-                            <p className="text-xs text-slate-400 mb-1">Activity Name</p>
-                            <p className="text-sm text-white">{selectedCall.metadata.activityName as string}</p>
-                          </div>
-                        )}
-                        {selectedCall.metadata?.activityStep && (
-                          <div>
-                            <p className="text-xs text-slate-400 mb-1">Activity Step</p>
-                            <p className="text-sm text-white">{selectedCall.metadata.activityStep as string}</p>
-                          </div>
-                        )}
-                        {selectedCall.metadata?.workflowStep && (
-                          <div>
-                            <p className="text-xs text-slate-400 mb-1">Workflow Step</p>
-                            <p className="text-sm text-white">{selectedCall.metadata.workflowStep as string}</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {/* System Context */}
-                {(selectedCall.metadata?.feature || selectedCall.metadata?.component || selectedCall.metadata?.endpoint) && (
-                  <>
-                    <div className="h-px bg-slate-700" />
-                    <div>
-                      <h4 className="text-xs font-semibold text-slate-300 mb-3 uppercase tracking-wider">System Context</h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        {selectedCall.metadata?.feature && (
-                          <div>
-                            <p className="text-xs text-slate-400 mb-1">Feature</p>
-                            <p className="text-sm text-white">{selectedCall.metadata.feature as string}</p>
-                          </div>
-                        )}
-                        {selectedCall.metadata?.component && (
-                          <div>
-                            <p className="text-xs text-slate-400 mb-1">Component</p>
-                            <p className="text-sm text-white">{selectedCall.metadata.component as string}</p>
-                          </div>
-                        )}
-                        {selectedCall.metadata?.endpoint && (
-                          <div className="col-span-2">
-                            <p className="text-xs text-slate-400 mb-1">Endpoint</p>
-                            <p className="text-sm text-white font-mono text-xs bg-slate-900/50 px-2 py-1 rounded border border-slate-700">
-                              {selectedCall.metadata.endpoint as string}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {(selectedCall.metadata?.latencyMs || selectedCall.metadata?.timestamp) && (
-                  <>
-                    <div className="h-px bg-slate-700" />
-                    <div className="grid grid-cols-2 gap-4">
-                      {selectedCall.metadata?.latencyMs && (
-                        <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4 text-slate-400" />
-                          <div>
-                            <p className="text-xs text-slate-400">Latency</p>
-                            <p className="text-sm text-white">
-                              {(selectedCall.metadata.latencyMs as number) >= 1000
-                                ? `${((selectedCall.metadata.latencyMs as number) / 1000).toFixed(2)}s`
-                                : `${selectedCall.metadata.latencyMs}ms`}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                      {selectedCall.metadata?.timestamp && (
-                        <div className="flex items-center gap-2">
-                          <Calendar className="w-4 h-4 text-slate-400" />
-                          <div>
-                            <p className="text-xs text-slate-400">Time</p>
-                            <p className="text-sm text-white">
-                              {new Date(selectedCall.metadata.timestamp as string).toLocaleString()}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                {selectedCall.metadata?.callId && (
-                  <>
-                    <div className="h-px bg-slate-700" />
-                    <div className="flex items-center gap-2">
-                      <Hash className="w-4 h-4 text-slate-400" />
-                      <div className="min-w-0">
-                        <p className="text-xs text-slate-400">Call ID</p>
-                        <p className="text-xs text-slate-500 font-mono truncate">{selectedCall.metadata.callId as string}</p>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </motion.div>
+            {/* Below the table (SA Q-15, R-13). */}
+            <AnalyticsSummaryCards items={items} totals={totals} />
           </>
         )}
-      </AnimatePresence>
+      </div>
+
+      {/* One drawer for the page, rendered unconditionally outside the content
+          and every state branch (SA M-4): a failed read closes it through its
+          `open` prop, never unmounts it. It renders the call already loaded:
+          opening it asks for nothing (R-6). */}
+      <AdminDrawer
+        open={isOpen && openCall !== null}
+        onClose={() => setIsOpen(false)}
+        onReturnFocus={returnFocus}
+        title="Call details"
+        titleSuffix={openCallTime ? formatUtc(openCallTime) : undefined}
+        testId="call-drawer"
+      >
+        {openCall && <AnalyticsCallDetails call={openCall} />}
+      </AdminDrawer>
     </div>
   );
 }

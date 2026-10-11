@@ -125,3 +125,48 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Fix inherited behaviour bugs in a shared component when it is first extracted; later adopters multiply the cost.
 
 ### Status: COMMITTED — feature/admin-layout-l1e — a58ee4b5, PR #293
+
+---
+
+## L-2a: AI cost & usage, part 1 (header, KPI strip, filter bar, URL, states) — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-2a workplan](/docs/workplans/ADMIN_LAYOUT_L2A_WORKPLAN.md)
+
+### What went well
+- First page migration on the finished building blocks; every inbound link (Health, Businesses, Activity cutover) still produces a byte-identical request, and no link builder was edited.
+- SA checked the route's own Zod rules with the installed version before ruling on what the page may send, and caught the breadcrumb reset semantics (M-1) and the lost All-scope token total (M-2) at workplan stage.
+- The page shrank from 1,690 to about 1,030 lines by extracting only what the slice rewrote; the owner-text guard was widened to the folder so the split could not weaken it.
+- Twelve mutation checks bit, including one run under a non-UTC time zone.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved, nothing to fix).
+- Number of Dev ↔ QA bug fix cycles: 1 (B-1: a read after a failure showed zeros as if real — a regression vs main's spinner; fixed with a regression test).
+- 19 pre-existing type errors remain in the table half of page.tsx (identical on main); L-2b rewrites those lines.
+- Browser checks still owed (A-B1..A-B20 plus L-1a..L-1e).
+
+### Conclusions & process improvements
+- State machines with "has loaded" flags need an explicit test for success → failure → retry; add it to the default QA probe list for the remaining pages.
+
+### Status: COMMITTED — feature/admin-layout-l2a — 61681eef, PR #295
+
+---
+
+## L-2b: AI cost & usage, part 2 (table, call drawer, run card, summary cards) — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-2b workplan](/docs/workplans/ADMIN_LAYOUT_L2B_WORKPLAN.md)
+
+### What went well
+- The page went from about 1,030 to 547 lines; the 19 pre-existing type errors in its table half are gone (typed `readMeta`, no casts).
+- Reuse over copy: SA had the existing `isPlainLeftClick` exported instead of duplicated (Q-3).
+- The drawer reused the L-1d B-1 pattern from day one; QA's disappearing-row and success → failure → retry probes all passed first time.
+- Fifteen mutation checks bit, one after adding a mounted-marker pin that SA accepted.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 1 small (QA-B1, Low: focus lost after a drill because drill links are new) — fixed before commit, plus SA C-1 type tidy.
+- Browser checks still owed (B-B1..B-B11, B-QA1..B-QA7, plus earlier slices).
+
+### Conclusions & process improvements
+- Making something newly focusable (rows → links) creates a focus-after-action obligation; add "where does focus go after the action" to QA's default probe list.
+
+### Status: COMMITTED — feature/admin-layout-l2b — 1357ad92, PR #296
