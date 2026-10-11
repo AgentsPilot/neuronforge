@@ -34,3 +34,26 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Keep scanning every MD for backslashes before commit.
 
 ### Status: COMMITTED — feature/admin-layout-standard — 4655d6c5, PR #285
+
+---
+
+## L-1b: KPI strip, status chip, admin dialog class with Scheduled jobs & queues as pilot — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-1b workplan](/docs/workplans/ADMIN_LAYOUT_L1B_WORKPLAN.md)
+
+### What went well
+- Reuse-first check paid off: the finance page (PR #284, another session) had shipped its own KPI strip and date presets; SA confirmed both tiles derive from Health's STATUS_STYLES and set the finance adoption as a later pass-through, and leaned on reusing adminWindowPresets.ts in L-1c instead of building a second preset module.
+- SA's specificity analysis fixed the dialog close-X contrast without editing components/ui/dialog.tsx, and caught the "flex" trap in the primitive (M-2) before it shipped.
+- The green-constant guard was tightened with a planted-violation proof (CR-1, M-3).
+- Jobs' very strict pins (11 buttons, single fetch literal, Drain once, panel buttons) all held unedited.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-3, code approved with no must-fix).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- The browser check (light + dark, dialog X computed style) is still owed for L-1a and L-1b: no signed-in admin browser was available to TL.
+
+### Conclusions & process improvements
+- Before planning a shared component, scan main for what other sessions merged since the requirement was written.
+- Get a signed-in admin browser (in-app pane or Chrome extension) set up before L-1c, so the owed checks are cleared together.
+
+### Status: COMMITTED — feature/admin-layout-l1b — ea6f4ce9, PR #287

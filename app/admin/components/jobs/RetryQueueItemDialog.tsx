@@ -27,6 +27,8 @@
  * platform's fixed labels) and two times (only when they parse as dates).
  *
  * Imports from lib/admin/jobs and lib/cron are `import type` only (C-21).
+ * The dialog takes the shared admin dialog classes (Admin Layout Standard
+ * C-10), which also make the corner close readable in the light scheme (F-88).
  */
 
 import { useId, useRef, useState } from 'react';
@@ -40,15 +42,20 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { createLogger } from '@/lib/logger';
-import { formatUtc } from './jobsFormat';
+import { clientLogger } from '@/lib/logger/client';
+import {
+  ADMIN_DIALOG_CLASS,
+  ADMIN_DIALOG_DESCRIPTION_CLASS,
+  ADMIN_DIALOG_TITLE_CLASS,
+} from '@/app/admin/components/layout/adminDialog';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import { KNOWN_STATUS_LABELS } from './CancelQueueItemDialog';
 import type { BosQueueId } from '@/lib/cron/bosCronJobs';
 import type { QueueItemView } from '@/lib/admin/jobs/jobsQueuesTypes';
 
-const logger = createLogger({ module: 'AdminRetryQueueItemDialog' });
+const logger = clientLogger.child({ module: 'AdminRetryQueueItemDialog' });
 
-const DARK_DIALOG = '!border-slate-700 !bg-slate-900 !text-slate-100';
 const REASON_MIN = 3;
 const REASON_MAX = 500;
 
@@ -250,7 +257,7 @@ export function RetryQueueItemDialog({ queueId, queueLabel, item, windowNote, on
           reason: reason.trim(),
         }),
       });
-      const body: unknown = await response.json().catch(() => null);
+      const body: unknown = await readJsonBody(response);
       const kind = classify(response.status, body);
       if (kind !== 'retried') {
         logger.warn({ queue: queueId, status: response.status, kind }, 'Queue item retry did not complete');
@@ -284,7 +291,7 @@ export function RetryQueueItemDialog({ queueId, queueLabel, item, windowNote, on
       <DialogContent
         data-testid="retry-item-dialog"
         aria-label={`Retry an item in ${queueLabel}`}
-        className={DARK_DIALOG}
+        className={ADMIN_DIALOG_CLASS}
         onEscapeKeyDown={(event) => {
           if (busy) event.preventDefault();
         }}
@@ -293,8 +300,8 @@ export function RetryQueueItemDialog({ queueId, queueLabel, item, windowNote, on
         }}
       >
         <DialogHeader>
-          <DialogTitle className="!text-white">Retry this item?</DialogTitle>
-          <DialogDescription className="!text-slate-400">
+          <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>Retry this item?</DialogTitle>
+          <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>
             {item.kindLabel} for {item.businessName} · item {item.id.slice(0, 8)} · {item.statusLabel} · {item.attempts}{' '}
             attempts so far
           </DialogDescription>
