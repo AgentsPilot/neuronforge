@@ -1,6 +1,6 @@
 /**
  * Wire types of `GET /api/admin/business-os/finance` (finance & business
- * health slice 1a).
+ * health slices 1a and 1b).
  *
  * RUNTIME-FREE on purpose: only `export type` / `export interface`, and the
  * only import is the runtime-free Health tile status. The admin page is a
@@ -136,7 +136,12 @@ export interface FinanceRevenueSection {
   state: FinanceRevenueState;
 }
 
-export type FinanceTileId = 'k1_ai_cost' | 'k3_founding_no_end_date' | 'k5_our_revenue';
+export type FinanceTileId =
+  | 'k1_ai_cost'
+  | 'k2_far_over_allowance'
+  | 'k3_founding_no_end_date'
+  | 'k4_gifted_outstanding'
+  | 'k5_our_revenue';
 
 /** A number and whether it is exact (`false` = a lower bound, "at least"). */
 export interface FinanceMeasured {
@@ -149,7 +154,7 @@ export interface FinanceTile {
   status: TileStatus;
   /** The first matching rule's description, or a fixed state text. Never "OK". */
   headline: string;
-  /** K-1: this month to date (USD); K-3: the count; K-5: none. */
+  /** K-1: this month to date (USD); K-2 and K-3: the count; K-4: credits; K-5: none. */
   value: FinanceMeasured | null;
   /** K-1 only: the same elapsed span of last month (USD). Null when not measured. */
   previous: FinanceMeasured | null;
@@ -160,8 +165,79 @@ export interface FinancePayload {
   window: FinanceWindowInfo;
   /** The validated business filter, or null for all businesses. An id, never a name. */
   accountId: string | null;
-  tiles: { k1: FinanceTile; k3: FinanceTile; k5: FinanceTile };
+  tiles: { k1: FinanceTile; k2: FinanceTile; k3: FinanceTile; k4: FinanceTile; k5: FinanceTile };
   revenue: FinanceRevenueSection;
   accounts: FinanceAccountsSection;
   aiCost: FinanceAiCostSection;
+  credits: FinanceCreditsSection;
+}
+
+// ── Section 4, credits (slice 1b, S1-FR-21 to S1-FR-24) ─────────────────────
+// Every figure below is in CREDITS, the platform's own unit (6 dp). None is
+// money: no currency is attached, and none is ever added to a money figure.
+
+/** One account's row in Section 4. */
+export interface FinanceCreditRow {
+  accountId: string;
+  /** Null when no name was found, the names read failed, or a platform account (see `nameStatus`). */
+  name: string | null;
+  nameStatus: 'found' | 'missing' | 'unavailable' | 'platform';
+  /** The account's current plan group (Section 1's), or null when it has none. */
+  group: FinanceGroupKey | null;
+  tierLabel: string | null;
+  /** `position`: the figures below are read; `no_allowance`: usage with no allowance; `unknown`: could not be read. */
+  kind: 'position' | 'no_allowance' | 'unknown';
+  /** This credit period's allowance; null unless `position`. */
+  allowance: number | null;
+  /** Credits used this credit period; null unless `position`. */
+  used: number | null;
+  /** % used in tenths, rounded DOWN (SA-W17): 1499 = 149.9%. Null unless `position`. */
+  usedTenths: number | null;
+  trial: boolean;
+  /** Used > allowance. Null unless `position`. */
+  overAllowance: boolean | null;
+  /** At or over the far-over-allowance line (K-2). Null unless `position`, or when the line is invalid. */
+  farOverAllowance: boolean | null;
+  /** Admin-granted credits still available now. Null when the lots could not be read. */
+  giftedOutstanding: number | null;
+}
+
+/** The figures that need the credits pass. Null when the section is `unknown`. */
+export interface FinanceCreditsFigures {
+  /** Every account counted (not only the rows shown). */
+  accounts: number;
+  /** Accounts used over their allowance. */
+  overAllowance: number;
+  /** Accounts at or over the far-over-allowance line (= K-2). Null when the line is invalid. */
+  farOverAllowance: number | null;
+  /** Accounts whose figure could not be read: the counts exclude them (AC-17). */
+  unknownAccounts: number;
+  noAllowanceAccounts: number;
+  /** At most the display cap, sorted by % used, highest first (SA-W15). */
+  rows: FinanceCreditRow[];
+}
+
+/** Gifted credits (admin grants). Independent of the credits pass (SA-W12). */
+export interface FinanceGiftedFigures {
+  /** = K-4: Σ outstanding over the lots of existing accounts. Null when any account's lots are unreadable. */
+  outstanding: number | null;
+  /** Accounts holding gifted credits that have no row in the table (no plan row). */
+  accountsNotListed: number | null;
+  /** Outstanding on lots of deleted accounts: shown on its own, never in K-4 (SA-W9). Null when unreadable. */
+  deletedAccountsOutstanding: number | null;
+  /** Accounts with a lot that drew more than it granted (clamped to 0, shown as a note). */
+  inconsistentAccounts: number;
+  /** Grants in the window, deleted accounts included (the grants did happen). Null when unreadable. */
+  window: { granted: number; takenBack: number; grants: number; grantingAdmins: number } | null;
+}
+
+export interface FinanceCreditsSection {
+  /** Never `partial`: there is no "at least" for a per-account percentage. */
+  status: FinanceSectionStatus;
+  scope: 'all' | 'one';
+  /** The far-over-allowance line in percent, from data (SA-W10); null when the configured value is invalid. */
+  farOverAllowancePercent: number | null;
+  figures: FinanceCreditsFigures | null;
+  /** Null when the lots read failed or reached its ceiling (AC-38). */
+  gifted: FinanceGiftedFigures | null;
 }

@@ -225,6 +225,17 @@ describe('source guards (G3, G6, W11a-7)', () => {
     'lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts',
     // ...and the owner surface guard lists the balance core in OWNER_SURFACE.
     'lib/business-os/credits/__tests__/ownerCreditSurface.guard.test.ts',
+    // Finance & business health slice 1b (SA-Q10): the admin finance page's
+    // wiring names the repository (a Pick of its two lot READS, and the
+    // singleton), and the pure credits section calls the balance core for the
+    // gifted figures. The builder takes the narrow `FinanceLot` from the
+    // section and names none of the symbols. The builder test fakes the
+    // repository for the SA-W14 narrowing test; the finance source guard pins
+    // the wiring's two lot calls and names the lot RPCs it forbids.
+    'lib/business-os/finance/financeHealthDeps.ts',
+    'lib/business-os/finance/creditsSection.ts',
+    'lib/business-os/finance/__tests__/financeHealth.test.ts',
+    'lib/business-os/finance/__tests__/finance.source.guard.test.ts',
   ];
   const ALLOWED = new Set(ALLOWED_LIST.map((p) => p.split('/').join(sep)));
 

@@ -1,5 +1,5 @@
 /**
- * Every user-facing string of the admin finance page (slice 1a). The render
+ * Every user-facing string of the admin finance page (slices 1a and 1b). The render
  * test asserts against these constants, so a wording change is one edit.
  *
  * Tile states reuse Health's `STATUS_STYLES` labels as they are (SA-W7); the
@@ -32,9 +32,16 @@ export const RETRY = 'Retry';
 export const TILE_LABELS = {
   k1: 'AI cost this month',
   k1Sub: 'This month vs last month, UTC',
+  k2: 'Accounts far over allowance',
   k3: 'Founding Partners with no end date',
+  k4: 'Gifted credits outstanding',
+  k4Sub: 'Credits, now',
   k5: 'Our revenue',
 } as const;
+/** K-2's subtitle: the line comes from the payload (data, SA-W10), never typed here. */
+export function k2Subtitle(percent: number | null): string {
+  return percent === null ? 'Line not set' : `At or over ${percent}% of this period's allowance`;
+}
 export const TILE_PREVIOUS = 'Same days last month:';
 export const AT_LEAST = 'At least';
 
@@ -112,3 +119,40 @@ export const TRIGGER_LABELS: Record<FinanceTriggerKey, string> = {
 };
 
 export const NOTICE_LABEL = 'Note:';
+
+// ── Section 4, credits (slice 1b) ───────────────────────────────────────────
+export const CREDITS_TITLE = 'Credits';
+export const CREDITS_SOURCE = 'Credit totals and admin grants; credit period per account; grants in the window, UTC';
+export const CREDITS_OVER = 'Accounts over allowance';
+export const CREDITS_FAR_OVER = 'At or over the far line';
+export const CREDITS_GIFTED = 'Gifted credits outstanding';
+export const CREDITS_GRANTED = 'Granted in the window';
+export const CREDITS_TAKEN_BACK = 'Taken back in the window';
+export const CREDITS_GRANTING_ADMINS = 'admins granted';
+export const CREDITS_GRANTS = 'grants';
+export const CREDITS_BUSINESS = 'Business';
+export const CREDITS_PLAN = 'Plan group';
+export const CREDITS_ALLOWANCE = 'Allowance';
+export const CREDITS_USED = 'Used';
+export const CREDITS_USED_PERCENT = '% used';
+export const CREDITS_OVER_COLUMN = 'Over allowance';
+export const CREDITS_GIFTED_COLUMN = 'Gifted outstanding';
+export const CREDITS_TRIAL = 'trial';
+export const CREDITS_YES = 'Yes';
+export const CREDITS_NO = 'No';
+export const CREDITS_UNKNOWN = 'Unknown';
+export const CREDITS_NO_ALLOWANCE = 'No allowance';
+export const CREDITS_LESS_THAN_TENTH = '<0.1%';
+export const CREDITS_NO_ACCOUNTS = 'No accounts to show';
+export const CREDITS_SHOWING = (shown: number, total: number) => `Showing ${shown} of ${total}`;
+export const CREDITS_UNKNOWN_NOTE = (count: number) =>
+  `${count} ${count === 1 ? 'account' : 'accounts'} could not be read; the counts leave them out.`;
+/** §8.4: until credit deduction draws from lots, "outstanding" is what remains available, not "unused". */
+export const CREDITS_GIFTED_NOTE =
+  'Gifted credits are not drawn down by usage yet: outstanding means granted, not taken back and not expired.';
+export const CREDITS_DELETED_NOTE = (credits: string) => `${credits} credits on deleted accounts, not counted.`;
+export const CREDITS_NOT_LISTED_NOTE = (count: number) =>
+  `${count} ${count === 1 ? 'account holds' : 'accounts hold'} gifted credits but has no plan row; included in the total.`;
+export const CREDITS_INCONSISTENT_NOTE = (count: number) =>
+  `${count} ${count === 1 ? 'account has' : 'accounts have'} a lot that gave back more than it granted (shown as 0).`;
+export const CREDITS_GIFTED_UNKNOWN = 'Gifted credits could not be read.';

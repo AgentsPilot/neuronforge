@@ -9,8 +9,8 @@
  * `push`. A reload or a shared link reproduces the view. An invalid value falls
  * back to the default with a small notice. Only ids and enums reach the URL.
  *
- * Order (S1-FR-5): KPI strip, our revenue, Section 1, Section 3. No Section 2,
- * 4, 5 or 6 heading in slice 1a.
+ * Order (S1-FR-5): KPI strip, our revenue, Section 1, Section 3, Section 4
+ * (credits, slice 1b). No Section 2, 5 or 6 heading in slice 1.
  */
 
 import { useCallback, useMemo } from 'react';
@@ -22,6 +22,7 @@ import { useFinanceData } from '../useFinanceData';
 import { LOADING, NOTICE_LABEL, PAGE_LOAD_FAILED, PAGE_PURPOSE, PAGE_TITLE, PRESET_LABELS, REFRESH, RETRY } from '../financeCopy';
 import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
+import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
 import { FinanceKpiStrip } from './FinanceKpiStrip';
 import { RevenuePanel } from './RevenuePanel';
@@ -88,10 +89,11 @@ export function FinanceView() {
 
       {data && !error && (
         <div className="space-y-4">
-          <FinanceKpiStrip tiles={data.tiles} />
+          <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} />
           <RevenuePanel revenue={data.revenue} />
           <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
           <AiCostSection aiCost={data.aiCost} accountId={data.accountId} windowLabel={windowLabel} onRetry={reload} />
+          <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
         </div>
       )}
     </div>

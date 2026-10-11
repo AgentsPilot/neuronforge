@@ -1,6 +1,7 @@
 /**
- * The admin finance & business health page's builder (slice 1a). Workplan
- * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md.
+ * The admin finance & business health page's builder (slices 1a and 1b).
+ * Workplans docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md and
+ * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_WORKPLAN.md.
  *
  * ONE ORCHESTRATOR, SETTLED SECTIONS (SA-Q8). Every independent read starts at
  * once through `settle`, so a read that throws becomes `{ error }` and never
@@ -15,9 +16,18 @@
  *      a failed read → `account_check_failed`), before any other read;
  *   2. every account-scoped read then receives exactly that id;
  *   3. NO all-accounts method is called (`pagePlans`, the all-accounts ledger
- *      read, the all-accounts billing read). The platform-wide revenue head
- *      count is the one deliberate exception: it reads no account and no amount.
- * Business names are looked up only for ids taken from ledger rows already read.
+ *      read, the all-accounts billing read, the all-accounts lot read). The
+ *      platform-wide revenue head count is the one deliberate exception: it
+ *      reads no account and no amount.
+ * Business names are looked up only for ids taken from rows already read
+ * (ledger rows for Section 3, plan rows for Section 4).
+ *
+ * SECTION 4, CREDITS (slice 1b). The credit-position pass starts as soon as the
+ * plan walk has its account list, beside the ledger reads; a failed or capped
+ * walk runs NO pass (AC-37, SA-W11). The pass's failure makes the section
+ * unknown and K-2 unavailable, but K-4 depends only on the lots read and still
+ * shows (SA-W12). The lots arrive already narrowed by the wiring (SA-W14): no
+ * admin-written text reaches this file.
  *
  * The plan read's override rows (admin `reason` text) never reach this file:
  * the wiring maps the result to `{ plan }` (SA-WR-1), and the dep's type has
@@ -45,12 +55,26 @@ import { cutoverClamp, settle } from '@/lib/business-os/credits/aiActivity';
 import { CREDIT_REPORT_LIMITS } from '@/lib/business-os/credits/creditReport';
 import { isPayingBillingRow } from '@/lib/business-os/billing/payingSubscriptionStatuses';
 import { missingOriginalIds, sumCostUsd, summariseAiCost } from './aiCost';
-import { colourFinanceTile, FINANCE_COULD_NOT_CHECK_HEADLINE, FINANCE_RULES, type FinanceMeasurement, type FinanceRuleSet } from './financeRules';
+import { readAdminCreditPositions, type AdminCreditPercentDeps, type AdminCreditPositionsPass } from '@/lib/business-os/credits/adminCreditPercent';
+import { buildCreditsSection, type FinanceLot } from './creditsSection';
+import {
+  colourFarOverAllowanceTile,
+  colourFinanceTile,
+  farOverAllowancePercentOf,
+  FINANCE_COULD_NOT_CHECK_HEADLINE,
+  FINANCE_METRIC_PARAMS,
+  FINANCE_RULES,
+  K4_INFORMATION_HEADLINE,
+  type FinanceMeasurement,
+  type FinanceRuleSet,
+} from './financeRules';
 import { isEmptySpan, k1Spans, type FinanceSpan, type ResolvedFinanceWindow } from './financeWindow';
 import { classifyAccounts, tierLabelForGroup, type ClassifyInput } from './planGroups';
 import type {
   FinanceAccountsSection,
   FinanceAiCostSection,
+  FinanceCreditRow,
+  FinanceCreditsSection,
   FinanceGroupKey,
   FinancePayload,
   FinanceRevenueSection,
@@ -68,6 +92,8 @@ export const FINANCE_LIMITS = {
   PLAN_CEILING: 20_000,
   ORIGINALS_MAX: CREDIT_REPORT_LIMITS.ORIGINALS_MAX,
   ORIGINALS_PER_REQUEST: CREDIT_REPORT_LIMITS.ORIGINALS_PER_REQUEST,
+  /** Section 4 rows shown (SA-W15): one names request (the identity read's 200-id chunk). Counts cover every account. */
+  CREDIT_ROWS_SHOWN: 200,
 } as const;
 
 /** The revenue panel's "none yet" and "recorded" headlines for K-5 (S1-FR-26). */
@@ -77,6 +103,8 @@ export const K5_RECORDED = 'Revenue recorded, not yet shown';
 export interface FinanceHealthLogger {
   error: (ctx: Record<string, unknown>, msg: string) => void;
   warn: (ctx: Record<string, unknown>, msg: string) => void;
+  /** The credit-position pass logs one line: counts and timing only. */
+  info: (ctx: Record<string, unknown>, msg: string) => void;
 }
 
 export interface FinanceHealthDeps {
@@ -101,6 +129,23 @@ export interface FinanceHealthDeps {
   isPlatformAccount: (accountId: string) => boolean;
   /** Injected in tests (AC-20); production uses `FINANCE_RULES`. */
   rules?: FinanceRuleSet;
+  /**
+   * The credit-position pass's reads (slice 1b, SA-W13). Production wires
+   * them with `adminCreditPercentDeps()`, so the pass reads the real
+   * entitlement service; tests also inject `getSnapshots` (SA-WR-10).
+   */
+  credits: AdminCreditPercentDeps;
+  /**
+   * The two lot reads, mapped narrow by the wiring (SA-W14). Read only.
+   * `allAccounts` only when no business is picked; `forAccount` gets exactly
+   * the picked id.
+   */
+  lots: {
+    allAccounts: () => Promise<RepoResult<FinanceLot[]>>;
+    forAccount: (accountId: string) => Promise<RepoResult<FinanceLot[]>>;
+  };
+  /** Injected in tests (SA-W10); production uses `FINANCE_METRIC_PARAMS`. */
+  metricParams?: unknown;
 }
 
 export interface FinanceHealthInput {
@@ -122,6 +167,16 @@ export interface FinanceHealthCounts {
   unresolvedAdjustments: number;
   topAccounts: number;
   namesFound: number;
+  /** Section 4 (slice 1b): accounts the pass answered for; null when no pass ran (SA-WR-13). */
+  creditAccounts: number | null;
+  /** `skipped`: the plan walk failed or was capped, so no pass ran (SA-W11). */
+  creditsPass: AdminCreditPositionsPass['outcome'] | 'skipped';
+  /** Positions by kind; null when the pass did not answer. */
+  creditPositions: { position: number; no_allowance: number; unknown: number } | null;
+  /** Lot rows read; null when the lots read failed. */
+  creditLots: number | null;
+  creditRowsShown: number;
+  creditNamesFound: number;
 }
 
 export type FinanceHealthResult =
@@ -189,10 +244,29 @@ export async function buildFinanceHealth(
   const clamp = cutoverClamp(window.start, window.end);
   const spans = k1Spans(now);
 
-  const [plansResult, payingResult, revenueResult, windowResult, k1Current, k1Previous] = await Promise.all([
+  const plansPromise: Promise<RepoResult<PlanWalk>> =
     accountId !== null
       ? Promise.resolve<RepoResult<PlanWalk>>({ data: { rows: [pickedPlan as BusinessOsAccountPlan], capped: false }, error: null })
-      : settle(() => walkPlans(deps.plans)),
+      : settle(() => walkPlans(deps.plans));
+  // Chained on the walk so it starts as soon as the account list exists. A
+  // failed or capped walk runs NO pass: never a partial count (AC-37, SA-W11).
+  // The ids are the walk's own rows, or the one picked (and checked) business.
+  // The pass is documented never to throw, but the page must not depend on
+  // it: any throw becomes a FAILED pass (Section 4 unknown, K-2 unavailable),
+  // never a 500. K-4 rests on the lots read only and still shows (SA-W12).
+  const positionsPromise: Promise<AdminCreditPositionsPass | null> = plansPromise.then(async (walk) => {
+    if (!walk.data || walk.data.capped) return null;
+    const ids = walk.data.rows.map((row) => row.user_id);
+    try {
+      return await readAdminCreditPositions(ids, deps.credits, logger, { now });
+    } catch (err) {
+      failed('credit_positions', err instanceof Error ? err : new Error(String(err)));
+      return { outcome: 'failed', byUserId: new Map(ids.map((id) => [id, { kind: 'unknown' as const }])) };
+    }
+  });
+
+  const [plansResult, payingResult, revenueResult, windowResult, k1Current, k1Previous, lotsResult, positionsPass] = await Promise.all([
+    plansPromise,
     accountId !== null
       ? settle<FinanceBillingStatusRow[]>(async () => {
           const one = await deps.finance.findLiveBillingStatusForAccount(accountId);
@@ -203,6 +277,8 @@ export async function buildFinanceHealth(
     clamp.readFrom === null ? Promise.resolve(EMPTY_LEDGER) : readLedger({ from: clamp.readFrom, to: window.end }),
     readSpan(spans.current),
     spans.previousBeforeCutover ? Promise.resolve(null) : readSpan(spans.previous),
+    settle<FinanceLot[]>(() => (accountId !== null ? deps.lots.forAccount(accountId) : deps.lots.allAccounts())),
+    positionsPromise,
   ]);
 
   if (plansResult.error) failed('plans', plansResult.error);
@@ -211,6 +287,7 @@ export async function buildFinanceHealth(
   if (windowResult.error) failed('ledger_window', windowResult.error);
   if (k1Current.error) failed('ledger_k1_current', k1Current.error);
   if (k1Previous?.error) failed('ledger_k1_previous', k1Previous.error);
+  if (lotsResult.error) failed('credit_lots', lotsResult.error);
 
   // ── 3. Section 1 ──────────────────────────────────────────────────────────
   const payingIds = payingResult.data
@@ -281,7 +358,56 @@ export async function buildFinanceHealth(
         state: revenueResult.data.planInvoicesPaid > 0 || revenueResult.data.boostsPaid > 0 ? 'recorded' : 'none_yet',
       };
 
-  // ── 6. Tiles ──────────────────────────────────────────────────────────────
+  // ── 6. Section 4, credits (slice 1b) ─────────────────────────────────────
+  const metricParams = deps.metricParams ?? FINANCE_METRIC_PARAMS;
+  const farOverAllowancePercent = farOverAllowancePercentOf(metricParams);
+  const creditAccountIds =
+    plansResult.data && !plansResult.data.capped ? plansResult.data.rows.map((row) => row.user_id) : null;
+  const groupOfAccount = classified?.groupByAccount ?? null;
+  const builtCredits = buildCreditsSection({
+    accountIds: creditAccountIds,
+    groupOf: (id) => groupOfAccount?.get(id),
+    tierLabelOf: (key: FinanceGroupKey) => tierLabelForGroup(deps.config, key),
+    positions: positionsPass?.outcome === 'ok' ? positionsPass.byUserId : null,
+    lots: lotsResult.data,
+    window: { start: window.start, end: window.end },
+    now,
+    farOverAllowancePercent,
+    displayCap: FINANCE_LIMITS.CREDIT_ROWS_SHOWN,
+  });
+
+  // Names for the rows shown only, ids taken from the plan rows already read;
+  // never for a platform account (labelled, SA-WR-5).
+  let creditRows: FinanceCreditRow[] = [];
+  let creditNamesFound = 0;
+  if (builtCredits.figures) {
+    const shownRows = builtCredits.figures.rows;
+    const creditNameIds = shownRows.filter((row) => !deps.isPlatformAccount(row.accountId)).map((row) => row.accountId);
+    const creditNames =
+      creditNameIds.length > 0 ? await settle(() => deps.findNames(creditNameIds)) : { data: [], error: null };
+    if (creditNames.error) failed('credit_names', creditNames.error);
+    const creditNameOf = new Map((creditNames.data ?? []).map((n) => [n.user_id, n.company_name]));
+    creditNamesFound = creditNameOf.size;
+    creditRows = shownRows.map((row) => ({
+      ...row,
+      ...(deps.isPlatformAccount(row.accountId)
+        ? { name: null, nameStatus: 'platform' as const }
+        : !creditNames.data
+          ? { name: null, nameStatus: 'unavailable' as const }
+          : creditNameOf.get(row.accountId)
+            ? { name: creditNameOf.get(row.accountId) as string, nameStatus: 'found' as const }
+            : { name: null, nameStatus: 'missing' as const }),
+    }));
+  }
+  const credits: FinanceCreditsSection = {
+    status: builtCredits.figures ? 'ok' : 'unknown',
+    scope: accountId !== null ? 'one' : 'all',
+    farOverAllowancePercent,
+    figures: builtCredits.figures ? { ...builtCredits.figures, rows: creditRows } : null,
+    gifted: builtCredits.gifted,
+  };
+
+  // ── 7. Tiles ──────────────────────────────────────────────────────────────
   const onRuleError = (problem: { tile: string; ruleId: string | null; reason: string }) =>
     logger.error({ read: 'rules', ...problem }, 'Finance tile rule list is invalid');
 
@@ -320,6 +446,27 @@ export async function buildFinanceHealth(
     { onRuleError, unavailableHeadline: FINANCE_COULD_NOT_CHECK_HEADLINE }
   );
 
+  // K-2 (SA-WR-8): an account that could not be read makes the count a lower bound.
+  const creditFigures = credits.figures;
+  const k2Measured =
+    creditFigures && creditFigures.farOverAllowance !== null
+      ? { farOverAllowance: creditFigures.farOverAllowance, unknownAccounts: creditFigures.unknownAccounts }
+      : null;
+  const k2Colour = colourFarOverAllowanceTile(rules.k2_far_over_allowance, k2Measured, metricParams, { onRuleError });
+  const k2Value =
+    k2Measured && k2Colour.status !== 'unavailable'
+      ? { value: k2Measured.farOverAllowance, exact: k2Measured.unknownAccounts === 0 }
+      : null;
+
+  // K-4 never needs the pass: only the lots read (SA-W12). Information only, never green.
+  const k4Outstanding = credits.gifted?.outstanding ?? null;
+  const k4Colour = colourFinanceTile(
+    'k4_gifted_outstanding',
+    rules.k4_gifted_outstanding,
+    k4Outstanding === null ? null : { metrics: {}, information: K4_INFORMATION_HEADLINE },
+    { onRuleError }
+  );
+
   const tile = (
     id: FinanceTile['id'],
     colour: { status: FinanceTile['status']; headline: string },
@@ -340,13 +487,24 @@ export async function buildFinanceHealth(
     accountId,
     tiles: {
       k1: tile('k1_ai_cost', k1Colour, current, previous),
+      k2: tile('k2_far_over_allowance', k2Colour, k2Value),
       k3: tile('k3_founding_no_end_date', k3Colour, k3Value),
+      k4: tile('k4_gifted_outstanding', k4Colour, k4Outstanding === null ? null : { value: k4Outstanding, exact: true }),
       k5: tile('k5_our_revenue', k5Colour, null),
     },
     revenue,
     accounts,
     aiCost,
+    credits,
   };
+
+  // Counts by kind for the route's one line: never a figure.
+  let creditPositions: FinanceHealthCounts['creditPositions'] = null;
+  if (positionsPass?.outcome === 'ok') {
+    const tally = { position: 0, no_allowance: 0, unknown: 0 };
+    for (const value of positionsPass.byUserId.values()) tally[value.kind] += 1;
+    creditPositions = tally;
+  }
 
   return {
     kind: 'ok',
@@ -361,6 +519,12 @@ export async function buildFinanceHealth(
       unresolvedAdjustments: figures?.unresolvedAdjustments ?? 0,
       topAccounts: topAccounts.length,
       namesFound,
+      creditAccounts: positionsPass ? positionsPass.byUserId.size : null,
+      creditsPass: positionsPass ? positionsPass.outcome : 'skipped',
+      creditPositions,
+      creditLots: lotsResult.data ? lotsResult.data.length : null,
+      creditRowsShown: creditRows.length,
+      creditNamesFound,
     },
   };
 }

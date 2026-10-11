@@ -13,7 +13,7 @@
 
 **Branch:** `feature/bos-credits-boost-slice-6`, cut from `origin/main` `90c33582` (after #278)
 **Date:** 2026-10-09
-**Status:** **6a approved and committed 2026-10-10, [PR #283](https://github.com/AgentsPilot/neuronforge/pull/283) open. BQ-1 decided 2026-10-10: $1,500 per 30 days ceiling; 6b next.** **6a review fixes applied 2026-10-10 (SA CR-1, N-1; QA6a-L1, L2); QA re-check PASS 2026-10-10** (§5.1). *(Earlier: **6a implemented 2026-10-09; SA code review: Fix Required (CR-1, a second money formatter using / 100)** (results in §5.1; nothing committed). 6b waits for BQ-1. *(Earlier: **SA approved with conditions 2026-10-09** (C-1 to C-6; split 6a / 6b). BQ-1 (the highest admin limit) is with the user. No code is written.)*)*
+**Status:** **6b approved and committed 2026-10-11, [PR #289](https://github.com/AgentsPilot/neuronforge/pull/289) open.** **6b QA follow-ups applied 2026-10-10 (QA6b-M1, L1, L2); QA re-check PASS 2026-10-10** (§5.2). *(Earlier: **6b implemented 2026-10-10; SA code review approved 2026-10-10; QA PASS WITH NOTES 2026-10-10 (QA6b-M1 to fix, then a QA re-check)** (results in §5.2; nothing committed; on `feature/bos-credits-boost-slice-6b` from 6c941064). **6a merged 2026-10-10 ([PR #283](https://github.com/AgentsPilot/neuronforge/pull/283), 6c941064). BQ-1 decided 2026-10-10: $1,500 per 30 days ceiling.** *(Earlier: 6a approved and committed, PR #283 open.)* **6a review fixes applied 2026-10-10 (SA CR-1, N-1; QA6a-L1, L2); QA re-check PASS 2026-10-10** (§5.1). *(Earlier: **6a implemented 2026-10-09; SA code review: Fix Required (CR-1, a second money formatter using / 100)** (results in §5.1; nothing committed). 6b waits for BQ-1. *(Earlier: **SA approved with conditions 2026-10-09** (C-1 to C-6; split 6a / 6b). BQ-1 (the highest admin limit) is with the user. No code is written.)*)*)*
 
 ## Overview
 
@@ -257,11 +257,11 @@ end_boost_cap: { op, reason: trim 3..500 }                                      
 - ✅ T6.5 Registers: access doc row 103 + census, entitlements non-gate entry; `test:bos-entitlements`, `test:authz-guard`
 
 **6b**
-- [ ] T6.6 `boostCapAdminOps.ts` + the `adminOps.ts` wiring + tests (reason required, bounds, own account 403, platform 409, tenant 404, plan row 409, `none_active` 409, write failure 500, audit entity and changes)
-- [ ] T6.7 Audit events + pins
-- [ ] T6.8 `BoostCapDialog` + tests (two steps, one POST at a time, reason required, errors in words, re-read after success)
-- [ ] T6.9 The reconcile button + tests (confirm, counts in words, error) and the Take back link (Q-3)
-- [ ] T6.10 Docs: requirement status, results here
+- ✅ T6.6 `boostCapAdminOps.ts` + the `adminOps.ts` wiring + tests (reason required, bounds, own account 403, platform 409, tenant 404, plan row 409, `none_active` 409, write failure 500, audit entity and changes)
+- ✅ T6.7 Audit events + pins
+- ✅ T6.8 `BoostCapDialog` + tests (two steps, one POST at a time, reason required, errors in words, re-read after success)
+- ✅ T6.9 The reconcile button + tests (confirm, counts in words, error) and the Take back link (Q-3)
+- ✅ T6.10 Docs: requirement status, results here
 
 ---
 
@@ -353,6 +353,101 @@ end_boost_cap: { op, reason: trim 3..500 }                                      
 
 **Re-run:** the 6a suites 183 green (route 17, view 22, block 38, panel 22, repository 84). Broad set (`--ci`, 354 files): **353 suites, 10,064 tests, 110 snapshots**, no snapshot changed; the one red suite is again the environmental `stripePlanPriceScripts`. Types-first tsc: **0 errors in 6a files** (3 elsewhere, `lib/geo/countries.ts`, untouched). ESLint cannot run in this worktree (no `node_modules`, by rule); CI runs it.
 
+### 5.2 Results (Dev, 2026-10-10): 6b
+
+**What was built:**
+- **`BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS`** (`lib/business-os/entitlements/config/boostPackages.ts`, beside the default): `{ minMinor: 100, maxMinor: 150000, stepMinor: 100, currency: 'USD' }`. BQ-1 sets the ceiling at $1,500 per 30 days; SA C-3 makes it configuration, never a literal.
+- **`lib/business-os/boost/boostCapAdminOps.ts`** (it imports nothing from the entitlements module; a source guard pins it):
+  - the schemas: `set_boost_cap` is `{ amountMinor: int, min 100, max 150000, a multiple of 100, reason 3–500 trimmed }` and `.strict()`; `end_boost_cap` is `{ reason }`;
+  - `executeBoostCapAdminOp`. **set** reads the active override first: a read failure is 500 `cap_override_read_failed`; the **same amount → `{ unchanged: true }`, no write, no audit (C-2)**. It then calls `setCapOverride` (`no_plan_row` → 409). **end** reads the active override for the audit's "before", then calls `endCapOverride` (`none_active` → 409 `no_active_cap_override`, which also answers a repeated end);
+  - the audit is on `business_os_account_plan` (operator-only), with the id being the account and changes `{ before, after }` as `{ capMinor, source: default | override }`, plus the window, the default and the override ids.
+- **`adminOps.ts` (inside the module):**
+  - the two schemas are in the union, built with the configured bounds;
+  - both ops are in `OWN_ACCOUNT_GUARDED_OPS` (403);
+  - **step 1b refuses the platform account for both (409, C-1)**;
+  - the dispatch goes through `boostCapOp`, with `invalidatesEntitlements: false` and the plan row untouched;
+  - `AdminOpOutcome` gains `unchanged?` and an `audit` of either kind.
+- **The entitlements route:** it wires `boostCap: { repository: businessOsBoostPurchaseRepository }`, and on `outcome.unchanged` it answers 200 with no audit and no flush. No new handler, so `adminGate.writes` is unchanged.
+- **Audit:** `BOS_BOOST_CAP_OVERRIDE_SET` and `_ENDED` (`warning`, SOC2, audience `bos`); the pins move to 196 / 51.
+- **The 6a GET** gains `limits` (the bounds from configuration, the window, the reason bounds), still `Cache-Control: private, no-store`. Its entitlements non-gate entry adds `BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS`.
+- **UI:**
+  - **`BoostCapDialog`** follows 11c's dialog pattern: two steps, one POST at a time, and no closing while in flight. The result sentence is built from the server's answer.
+  - **`BoostReconcileDialog`** asks for confirmation, then POSTs `{}` to the 4b.2 route (C-6) and shows the counts in words.
+  - **`BoostBlock`** adds Set limit, Back to default (only with an override), the reconcile button, the per-purchase Take back, a status line after any action and a re-read. All of these are hidden on the admin's own account, with a sentence saying why. The shape check now also requires `limits`.
+  - **Take back (C-5):** `BusinessOsPanel` holds the lots `CreditsBlock` offers Take back for (reported by a new `onTakeBackableLots` prop, using the block's own `isTakeBackable` rule). `BoostBlock` shows "Take back credits" only for a purchase whose `lotId` is in that set; the click becomes a `takeBackRequest` that `CreditsBlock` turns into its existing Take back dialog on that lot, which still sends `reduce_credit_lot` with `confirmPaidCredits`. Otherwise the row says "Take back in Credits above". `money()` / `perWindow()` moved to `app/admin/users/boostCopy.ts`.
+
+**What the admin sees (exact wording):**
+
+*In the block:*
+- Buttons: "Set limit", "Back to default", "Run billing reconcile now (all accounts)", and on a purchase "Take back credits", or the text "Take back in Credits above".
+- On their own account: "This is your own account: an admin cannot change it."
+
+*The Set limit dialog:*
+- Title: "Set the top-up spending limit for {business}".
+- Description: "Whole dollars, from $1 to $1,500, per 30 days. The reason is internal: the business never sees it."
+- "Now: $150 per 30 days (the default)" (or "(set by an admin)").
+- Fields: "Limit in dollars (per 30 days)" and "Reason (internal, 3 to 500 characters)", then Continue.
+- Confirm step: "Set the limit of {business} to $500 per 30 days", then "Now" / "After" ("$500 per 30 days (set by an admin)") / "Reason", then Back / Confirm.
+
+*The Back to default dialog:*
+- Title: "Return {business} to the default limit".
+- Description: "The default is $150 per 30 days. …"
+- Confirm step: "Return the limit of {business} to the default: $150 per 30 days".
+
+*Results:*
+- "Set the limit of {business} to $500 per 30 days."
+- "The limit of {business} was already $500 per 30 days; nothing changed."
+- "{business} is back on the default limit of $150 per 30 days."
+
+*Errors:*
+- "You cannot change your own account."
+- "This business has no plan yet, so it has no limit to change."
+- "This business is already on the default limit."
+- "The current limit could not be read. Nothing was changed. Try again."
+- "The limit could not be saved. Try again."
+- "The amount or the reason is not valid."
+
+*Reconcile:*
+- Title: "Run billing reconcile now".
+- Description: "This checks Stripe for unfinished credit top-ups of every business, not only this one. It may add credits, close expired checkouts or mark failed payments, exactly as the nightly run at 05:41 UTC does."
+- Buttons: Close / "Run now" ("Running…").
+- Result: "Reconcile finished: N stuck top-ups examined, N credited, N expired, N marked failed, N need a person, N left for the next run.", plus, when relevant: "N open disputes re-read, N concluded.", "N missing receipts filled.", "It stopped at its time limit with N top-ups left; the nightly run picks them up.", "Stripe could not be read, so nothing was checked."
+- Failure: "The reconcile could not run. Nothing is lost: the nightly run will try again."
+
+| Run (scratch configs, `--ci`) | Result |
+|---|---|
+| `boostCapAdminOps.test.ts`: 31. The bounds; accepts $1 / $500 / $1,500; refuses 0, negative, $150.50, a fraction of a cent, $1,501, a string, NaN; missing / short / blank / long reasons; unknown keys (account id, currency, window); trimming; names and the platform refusal; set from the default and replacing an override (exact audit); **C-2 no-op and a double submit → one write, one audit**; the default figure as an override; read / write failures and no plan row; end, a repeated end 409, a write failure; source guards (no entitlements import, no table / lot / plan write, the action literals registered) | ✅ |
+| `adminOps.test.ts`: 102 (11 ops now: the union, `OWN_ACCOUNT_GUARDED_OPS` and the executed-actions leg updated; the own-account 403 with nothing read for both new ops; **C-1 platform 409 before the tenant check**; tenant 404 / plan-row 409 with nothing written; set with the plan row untouched and the cache left alone; C-2 through the executor; end 409; the schema bounds through `adminOpSchema`) | ✅ |
+| Entitlements `routes.test.ts`: 100 (+9: set → 200 with the exact audit entry on `business_os_account_plan`, `log` then `flush`, the cache untouched; **unchanged → 200, no write, audit or flush**; end, then a repeated end 409; six invalid bodies 400 with nothing written (0, $150.50, $1,501, no reason, a short reason, an account id in the body); own account 403 with nothing read; 401 / 403; missing plan row 409) | ✅ |
+| `boostBlock.actions.render.test.tsx`: 26. Buttons and the own account; the Set limit dialog's words and current limit; six bad amounts and a short reason keep Continue disabled; the confirm restates now / after / reason, POSTs minor units and a trimmed reason, then the notice from the server and a re-read; unchanged; **a double Confirm while in flight → one POST, the dialog cannot close**; four refusals in words; Back to default; the reconcile confirm (every business), **an empty body with no account id**, the counts in words, the deadline / Stripe sentences, one run at a time, a failure; Take back (button → `onTakeBack(lotId)`, the fallback text, no lot → nothing) | ✅ |
+| `businessOsPanel.render.test.tsx` (+1: **end to end, Take back on a top-up opens the Credits block's dialog on that lot**, titled "Take back credits from Acme Therapy" with the paid-credits confirmation) and the 6a fixture with `limits`; `boostBlock.render.test.tsx` (`limits` in the fixture; the old "read only" case is now "no form in the block; no button at all on the own account"); `creditsBlock.render.test.tsx` unchanged and green; `source.guard.test.ts` (the panel pin allows the two new props) | ✅ |
+| 6a GET route test (the payload keys now include `limits`, pinned with the configured values); `boostAdminView.test.ts` (money now through `boostCopy.ts`, still the shared formatter) | ✅ |
+| Mutations (each restored, SHA-1 identical): the C-2 no-op removed → 4 red; the C-1 platform refusal for the cap ops removed → 2 red | ✅ |
+| `test:bos-entitlements` set + `test:authz-guard` equivalent | ✅ (the one red, the panel source pin, fixed above; re-run green) |
+| Broad set (`--ci`, 356 files) | ✅ **355 suites, 10,180 tests, 110 snapshots**; no snapshot changed. The one red suite is again the environmental `stripePlanPriceScripts` |
+| `oneAddressPolicy` on a Linux-path copy (deleted after) | ✅ 4 |
+| Types-first tsc (`tsconfig.6b.json`) | ✅ **0 errors in 6b files** (3 elsewhere, `lib/geo/countries.ts`) |
+
+**Deviations:**
+1. **`unchanged` is a new outcome flag** on `AdminOpOutcome`, handled in the route next to `replayed`. Reusing `replayed` would have logged a misleading "replayed" line.
+2. **`limits` in the GET** carries `minMinor`, `maxMinor`, `stepMinor`, `currency`, `windowDays`, `reasonMin` and `reasonMax`. It is broader than "default + ceiling", because the dialog needs the step and the reason bounds too.
+3. **The reason bounds** come from the credits module's `CREDIT_REASON_MIN` / `MAX` (3 / 500), the same as 11b's ops and 2a's SQL.
+4. **Take back goes through the panel** with two optional `CreditsBlock` props (`takeBackRequest`, `onTakeBackableLots`). `CreditsBlock`'s own behaviour and tests are unchanged, apart from the `isTakeBackable` helper being shared with its own row.
+5. **The admin census on `origin/main` is 101**, one more than 6a registered. The extra handler came from another merge; it is flagged in the admin access doc's Change History and not registered here.
+6. **ESLint could not run in this worktree** (no `node_modules`); CI runs it.
+
+**QA follow-ups (Dev, 2026-10-10): QA6b-M1, QA6b-L1, QA6b-L2.**
+
+| # | Change | Tests |
+|---|---|---|
+| **QA6b-M1** (Medium) | `boostCopy.reconcileOutcome(data)` decides whether a 200 really ran. `passesFailed` > 0, missing counts, or counts without `boostExamined` → `null`, and the dialog shows "The reconcile could not run. Nothing is lost: the nightly run will try again." instead of "0 examined". A run whose list read failed adds "Some top-ups could not be listed; the nightly run tries again." | Three 200 shapes → the failure line and no notice (`passesFailed: 1`; counts without `boostExamined`; no counts); `boostListFailed: 1` → its line |
+| **QA6b-L1** (Low) | The limit reason is counted in **code points**, as 2a's SQL counts it (`char_length(btrim(reason))`): the Zod schema (`reasonLength`, 3..500 after trim) and the dialog (`[...reason.trim()].length`). 11b's credit reasons are unchanged (§9) | Schema: two emoji refused, three accepted, 500 emoji (1,000 UTF-16 units) accepted, 501 refused. Dialog: two emoji keep Continue disabled, three enable it |
+| **QA6b-L2** (Low) | `CreditsBlock` now also reports every lot it loaded. A purchase whose lot is **loaded but cannot be taken back** (expired, used up, not counted) shows "Nothing left to take back". "Take back in Credits above" is kept only for a lot the Credits block has not loaded (yet). The button is unchanged for a take-back-able lot | The loaded-but-not-take-back-able case; the not-loaded case; the panel end-to-end case unchanged |
+
+**Re-run:** the 6b suites plus `creditsBlock` and the panel, 355 green; broad set (`--ci`, 356 files) **355 suites, 10,187 tests, 110 snapshots**, no snapshot changed, the one red being the environmental `stripePlanPriceScripts`; `oneAddressPolicy` (Linux-path copy) 4 green; types-first tsc **0 errors in 6b files** (3 elsewhere, `lib/geo/countries.ts`).
+
+**Note on L1:** JavaScript's `trim()` removes all white space, while SQL's `btrim` removes spaces only, so a reason padded with tabs or new lines could still count differently. The SQL check is the backstop: such a request gets a 500 `cap_override_write_failed`, never a wrong write.
+
 ## 6. Estimate and risks
 
 | Item | Value |
@@ -394,6 +489,14 @@ end_boost_cap: { op, reason: trim 3..500 }                                      
 - ✅ **Decided by the user 2026-10-10: $1,500 per 30 days**, configurable (a config constant beside `BOOST_PURCHASE_CAP_DEFAULT`, never a literal). **This binds 6b** (SA C-3: `capMaxMinor` = 150000).
 
 ---
+
+## 9. Notes (follow-ups)
+
+| For | Note |
+|---|---|
+| Credit deduction 11b (QA6b-L1) | The credit reasons (`grantCreditsSchema` / `reduceCreditLotSchema`, and `CreditFormDialog`) still count UTF-16 units (`.length`), while the 11a SQL counts code points. A reason of two emoji passes the client and the schema and is refused by the database. The same `[...value].length` change applies there; it was left alone in 6b on purpose (another slice's code) |
+| Admin census | `origin/main` `7e5964ec` holds 101 admin handlers, one more than registered at 6a; the extra one landed from another change (admin access doc Change History, 2026-10-10) |
+| 6c | The global "flagged purchases" list across accounts, and the per-purchase audit trail (Q-6) |
 
 ## SA Review Notes
 
@@ -491,7 +594,50 @@ The slice reuses the right infrastructure: 11c's per-account view and its route 
 | N-1 | the route | Info: like 11c's route it sets no `Cache-Control`. An admin JSON read behind `requireAdmin` is not cached by shared caches here. Add `private, no-store` if 6b touches the route, for consistency with the owner routes. | Info |
 
 #### Code Approved for QA: **No, pending CR-1** (a re-check of that diff only)
+
 **SA re-check of the 6a fixes (2026-10-10, diff only):** ✅ **Code Approved for QA.** CR-1: the local formatter is gone, and `BoostBlock` uses `currency.ts` `formatMinorAmount` through a guarded `money()` (NFR-9). N-1: the GET answers with `Cache-Control: private, no-store`. QA L1: `isAdminBoostView` rejects a malformed payload as "could not be read" instead of throwing. QA L2: the truncation note names the mode. 99 tests in the four 6a suites green.
+
+### SA Code Review (6b)
+
+**Code Review by SA — 2026-10-10 (branch `feature/bos-credits-boost-slice-6b`, off `6c941064`)**
+**Status:** ✅ **Code Approved for QA.** There are no must-fix items. One out-of-scope finding goes to the coordinator (N-1).
+
+#### What I verified myself
+
+| Check | Result |
+|---|---|
+| 13 suites (`--ci`): `boostCapAdminOps`, `adminOps`, the entitlements routes, the 6a GET, `boostAdminView`, `boostBlock` (render + actions), `businessOsPanel`, the users `source.guard`, `eventAudience`, `enforcementPoints`, **`admin-authz-surface.guard`**, **`adminGate.writes`** | ✅ **983 passed** |
+| Mutation M1: the C-2 no-op removed (an identical set writes) | ✅ Caught (2 red) |
+| Mutation M2: the boost ops dropped from the own-account guard set | ✅ Caught (5 red) |
+| Restoration after each mutation | ✅ SHA-1 checked |
+| `console.*` in the new files | ✅ 0 |
+
+#### Conditions C-1 to C-6 and BQ-1
+
+| | Met? |
+|---|---|
+| C-1 own-account and platform refusals | ✅ `BOOST_CAP_ADMIN_OP_NAMES` are in `OWN_ACCOUNT_GUARDED_OPS` (403, M2), and step 1b refuses the platform account for boost ops (`refuseBoostCapOpForPlatformAccount`, 409). Then the existing tenant 404 and plan-row 409 run before the dispatch. **All refusals come before any write.** The account comes only from the path |
+| C-2 the no-op | ✅ `set_boost_cap` with the same amount as the active override → `{ unchanged: true }`, no write, and the route **skips the audit and the flush**. A repeated `end` → 409 `no_active_cap_override` |
+| C-3 bounds and BQ-1 | ✅ `BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS` (min 100, **max 150000 = $1,500**, step 100, USD) is a **config constant** beside the default, frozen, used by the Zod schema and sent to the dialog by the 6a GET. No literal in the op or the dialog |
+| C-4 links | ✅ (6a, unchanged) |
+| C-5 Take back | ✅ `CreditsBlock` exposes its take-backable lots and accepts a `takeBackRequest`. The purchase row opens **11c's own dialog**, which still posts `reduce_credit_lot` with `confirmPaidCredits`; nothing changes on the server. A lot not offered there gets the "in Credits above" fallback |
+| C-6 reconcile | ✅ `BoostReconcileDialog` POSTs the literal `'{}'`, with a confirm step labelled "(all accounts)" |
+
+#### Other checks
+
+- **Audit:** `BOS_BOOST_CAP_OVERRIDE_SET` / `_ENDED` (warning, SOC2, `bos`) on **`business_os_account_plan` (operator-only, BD-26)**, entity id = the account, the admin as actor. `changes` = `{ before, after }` (default or override amounts). `details` = the window and currency, the override ids, and the admin's reason (added by the route). No email. ✅
+- **Import direction and registration:** `boostCapAdminOps.ts` imports nothing from the entitlements module (only `callCatalog`, `creditAdminOps` constants and repository types). `adminOps.ts` imports it, the 11b direction, so no registration is due. The 6a route's non-gate entry gains `BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS`. ✅
+- **One submit at a time:** the dialogs hold one POST, with C-2 as the server backstop. ✅
+- **Admin authz guard:** no new write handler (`adminGate.writes` passes). The 6a GET stays gated, `no-store` is kept, and register row 74's text is updated for the two ops. ✅
+- **Owner-facing surfaces unchanged.** ✅
+
+#### §5.2 deviations: all accepted
+
+#### Note for the coordinator (out of scope)
+
+- **N-1:** the Dev measured the admin access census on `origin/main` `7e5964ec` as **101**, with **one admin handler from another merge not registered** in `ADMIN_IDENTIFICATION_AND_ACCESS.md`. That is another session's gap, not 6b's. It needs a register row (and a census update) in whichever PR touches the doc next. The required guard proves the gate, not the doc row, which is why it passes.
+
+#### Code Approved for QA: **Yes**
 
 ## QA Testing Report
 
@@ -603,6 +749,114 @@ Dev 6a set + guards: 9 suites, 457 tests   currency.formatMinorAmount: 9 tests  
 - [x] **QA PASS.** SA CR-1 and N-1 and QA6a-L1 and L2 are confirmed, and nothing regressed. 6a is ready for the user's diff once SA's re-check also approves.
 - [ ] Issues found
 
+### QA — 6b (2026-10-10)
+
+**Test mode:** full
+**Strategy used:**
+- **B (Jest):**
+  - the real entitlements accounts route, with the real gate and `adminOps`, from a copy of `routes.test.ts` whose boost mock gained read-failure, write-failure and `no_plan_row` switches;
+  - the real `BoostBlock` and dialogs, from a copy of `boostBlock.actions.render.test.tsx`;
+  - mocks only: no real Supabase or Stripe.
+- **D (manual browser) skipped:** the dialogs are covered by render tests, including the Dev's end-to-end panel Take back test.
+- **Mutation probes skipped:** SA was reviewing the same tree in parallel.
+- Every run is SHA-bracketed (25 source files, PRE_OK / POST_OK), and the worktree was unchanged at the end.
+
+**Focus:** api, ui, security
+**Input source:** prompt keywords (coordinator)
+
+#### Test Coverage
+| Area | Tested? | Result | Notes |
+|---|---|---|---|
+| Denied first | ✅ | Pass | Signed out 401; non-admin and a throwing admin check 403. Tested for set, end, an invalid body, non-JSON, the platform id and a malformed id: always 401 / 403, with **no repository call, write or audit** |
+| Own account | ✅ | Pass | Both ops → 403 `own_account`, nothing read. This includes an upper-case path for an admin whose id has letters |
+| Platform account (C-1) | ✅ | Pass | Both ops: the all-zero id and `SYSTEM_ADMIN_USER_ID` (upper-case in the env) → 409 `platform_account` **before the tenant check**, nothing read |
+| Tenant / plan row | ✅ | Pass | Not a tenant → 404 `not_a_business_os_account`, with no boost read. A failed tenant check → 500, nothing written. No plan row → 409 `plan_row_missing` with no boost read, for both ops. The SQL's own `no_plan_row` answer (a race) → 409, no audit |
+| Amount (C-3) | ✅ | Pass | 100 ($1) and 150000 ($1,500) are accepted. These are 400 `invalid_body` with nothing written: 0, 99, 150001, 150100, 15050, 100.5, −100, −15000, the string "15000", null, true, 1e21, `MAX_SAFE_INTEGER`, a missing amount. No details are leaked outside development |
+| Reason | ✅ | Pass | "abc", 500 characters, and 500 padded with spaces are accepted. These → 400 for set, and the end cases also leave the override in place: missing, "ab", "   ab   ", whitespace only, tabs and newlines only, 501 characters, a number, null. The stored and audited reason is **trimmed** |
+| Extra keys | ✅ | Pass | 400 with nothing written for set + `accountId` / `userId` / `currency` / `windowDays` / `requestId`; end + `amountMinor` / `accountId`; an unknown op; an array body |
+| C-2 no-op | ✅ | Pass | The same active amount, with the same or a different reason → 200 `{ unchanged: true, amountMinor, overrideId }`. **No write, no audit, no flush, no cache invalidation** |
+| Set / replace | ✅ | Pass | $300 override → $700: 200 with `previousOverrideId` = the old id. One audit row: `BOS_BOOST_CAP_OVERRIDE_SET`, `warning`, entity `business_os_account_plan` = the account, actor the admin. Changes `{before: {30000, override}, after: {70000, override}}`. Details carry the reason, both ids, the window, the currency and the default, and no email. Log then flush; cache untouched |
+| End | ✅ | Pass | Active → 200 with the ended id. One `BOS_BOOST_CAP_OVERRIDE_ENDED` audit, before override → after default ($150). A repeated end → 409 `no_active_cap_override` with no second audit. None active → 409 with no audit |
+| Failures | ✅ | Pass | A read failure → 500 `cap_override_read_failed` for set **and end**: **no write attempted**, no audit. A write failure → 500 `cap_override_write_failed`, no audit |
+| Owner never sees it | ✅ | Pass | `AUDIT_ENTITY_OWNER_VISIBILITY.business_os_account_plan` is `operator`, and `isOwnerHiddenFilter({entityType})` is true. The entries are hidden by entity, not by action (`isOwnerHiddenFilter({action})` is false), which is the same as the 11b credit rows |
+| Set dialog: form | ✅ | Pass | Continue is enabled for "1", "99", "1500", "$500", "1,000", " 500 ", "0500". It stays disabled for "0", "1501", "150.50", "150.00", "-5", "abc", "1e3", "", 20 digits. Reason: "abc" and 500 characters enable it; "", "ab", "  ab  ", spaces only and 501 characters do not |
+| Set dialog: words and confirm | ✅ | Pass | The title, "Whole dollars, from $1 to $1,500, per 30 days. The reason is internal…", and "Now: $500 per 30 days (set by an admin)". The confirm reads "Set the limit of Acme Therapy to $700 per 30 days", with Now / After "$700 per 30 days (set by an admin)" / the trimmed reason |
+| One submit at a time | ✅ | Pass | Confirm clicked three times plus an Enter while the POST is pending → **one POST**, body exactly `{op, amountMinor: 50000, reason}`. "Saving…" shows, Back is disabled, and Escape does not close the dialog. The result line uses the **server's** amount (the server answered $600 → "Set the limit of Acme Therapy to $600 per 30 days."). The block re-reads |
+| Result lines | ✅ | Pass | Unchanged → "The limit of Acme Therapy was already $500 per 30 days; nothing changed." End → "Acme Therapy is back on the default limit of $150 per 30 days." |
+| Error lines | ✅ | Pass | All 9 codes in their exact words, plus a gate 403, a non-JSON 502, a 200 with `success:false` and a network error → the generic sentence. In each case the dialog returns to the form **with the amount and reason kept**, and no notice is shown |
+| Back to default | ✅ | Pass | Shown only with an active override. When the cap read failed, neither button shows. The words and the confirm are right, and it posts exactly `{op:'end_boost_cap', reason}` (trimmed) |
+| Own account (UI) | ✅ | Pass | **No button at all** (no Set, Back, reconcile or Take back), and no fallback text. "This is your own account: an admin cannot change it." is shown |
+| Take back (C-5) | ✅ | Pass | The button appears only for a lot the Credits block offers, and `onTakeBack(lotId)` is called. Another lot → "Take back in Credits above". No lot → nothing. The block mounted alone → fallback, no crash. The Dev's panel end-to-end test (the 11c dialog on that lot with the paid-credits confirmation) passes in the bar |
+| Reconcile | ⚠️ | Partial | The URL and body are exactly `{}`, and **no account id appears anywhere in the request**. All five sentences are exact. All zeros → the first sentence only. 500 / 403 / non-JSON / no `counts` → the failure line. One run at a time (double click plus Enter → 1 POST), "Running…", cannot close mid-run, and the block re-reads. **A failed boost pass reads as a clean run (QA6b-M1)** |
+| No `console.*` | ✅ | Pass | None in the eight new or changed source files |
+| Regression bar | ✅ | Pass | The `test:bos-entitlements` set, `test:authz-guard`, `lib/business-os/boost/__tests__`, `adminGate.writes` and the currency test, listed explicitly (bracketed route files included): **243 suites, 7,186 tests green** (235 `.ts` + 8 `.tsx`; 2 suites that import JSX were re-run under the JSX config, 13 tests), 0 snapshots changed. Types-first tsc (`tsconfig.6b.json`): **0 errors in 6b files** (3 in the untouched `lib/geo/countries.ts`) |
+
+#### Issues Found
+
+##### Bugs (must fix before commit)
+1. **QA6b-M1: a reconcile whose boost pass failed is reported as a clean run with zeros.** Files: `app/admin/users/components/BoostReconcileDialog.tsx` and `app/admin/users/boostCopy.ts` `reconcileSentences`. Severity: Medium.
+   - **Steps to reproduce:** the boost pass throws, for example on a code defect or an unexpected error inside the pass. `runReconcilePasses` catches it, and the 4b.2 route answers **200** `{ success: true, data: { counts: {}, passesRun: 1, passesFailed: 1 } }`.
+   - **Expected:** "The reconcile could not run. Nothing is lost: the nightly run will try again."
+   - **Actual:** a green notice, "Reconcile finished: 0 stuck top-ups examined, 0 credited, 0 expired, 0 marked failed, 0 need a person, 0 left for the next run." The admin is told nothing was stuck when nothing was checked. `reconcileSentences` also turns any missing count into 0.
+   - **Fix (UI only):** treat `passesFailed > 0`, or a missing `boostExamined`, as the failure line. Optionally also say so when `boostListFailed > 0` (a list read was refused, so some rows were not looked at). Add the case to `boostBlock.actions.render.test.tsx`.
+
+##### Edge Cases (nice to fix)
+1. **QA6b-L1: the reason length is counted differently by the browser and the database.** Severity: Low.
+   - The dialog and Zod count UTF-16 units; the SQL counts characters (`char_length(btrim(reason)) BETWEEN 3 AND 500`).
+   - So a reason of two emoji (4 units, 2 characters) passes the dialog and Zod, then the function refuses it, and the admin gets "The limit could not be saved. Try again."
+   - The upper bound is safe. 11b's credit reasons have the same gap.
+   - **Fix:** count code points (`[...s].length`) in both, or accept it.
+2. **QA6b-L2: a misleading fallback for a lot with nothing left.** "Take back in Credits above" also shows for a purchase whose lot is fully taken back, used up or expired, where the Credits block offers no Take back. Severity: Low (wording). Suggested: show it only when the lot is simply not among the loaded lots, and "Nothing left to take back" otherwise.
+
+##### Observations (no action needed)
+- Setting $150, the default figure, while on the default writes an override of $150. This is allowed by design and audited.
+- A Take back click while the Credits block is re-reading is consumed and does nothing, because the request's `seq` is marked handled before the lot lookup. The admin can click again.
+- The reconcile button is hidden on the admin's own account, although reconcile covers all accounts. This is consistent with "no action on your own account".
+
+#### Test Outputs / Logs
+```text
+QA route (copy of routes.test.ts + QA matrix): 167 passed (Dev 100 + QA 67)
+  set $150 on default -> 200 override written (by design)
+  isOwnerHiddenFilter: entity business_os_account_plan -> hidden; by action -> false (hidden by entity)
+QA UI (copy of actions test + QA cases): 78 tests, 77 passed, 1 failed = QA6b-M1
+  passesFailed=1 -> error=none | notice=Reconcile finished: 0 stuck top-ups examined, 0 credited, 0 expired, 0 marked failed, 0 need a person, 0 left for the next run.
+Bar (explicit paths, --ci): 235 + 8 suites, 6,929 + 257 tests (+13 under the JSX config), 0 snapshots changed
+tsc tsconfig.6b.json: 3 errors, all lib/geo/countries.ts (untouched); 0 in 6b files
+SHA bracket: PRE_OK / POST_OK on every run; git status unchanged
+```
+
+#### Final Status
+- [ ] All acceptance criteria pass, ready for commit
+- [x] **QA PASS WITH NOTES: issues found that the Dev must address before commit.**
+  - QA6b-M1 (Medium, a UI-only fix). QA re-checks that diff.
+  - L1 and L2 are Low and optional.
+  - Everything else in 6b passed: the cap ops, C-1 to C-6, the audit, owner visibility, the dialogs, Take back and the reconcile request.
+
+### QA re-check (6b) — 2026-10-10
+
+**Scope:** the §5.2 "QA follow-ups" diff: QA6b-M1, QA6b-L1, QA6b-L2.
+**Strategy:** B (Jest). I re-ran my two scratch suites, rebuilt from the Dev's current `routes.test.ts` and `boostBlock.actions.render.test.tsx` plus my QA cases and the new re-check cases. Mocks only. Every run is SHA-bracketed (25 source files, PRE_OK / POST_OK), and the worktree was unchanged at the end.
+
+| Check | Result | Evidence |
+|---|---|---|
+| **M1 closed** | ✅ | Seven 200 answers that did not really run → the failure line "The reconcile could not run. Nothing is lost: the nightly run will try again." and **no green notice**:<br>• `passesFailed` 1 with empty counts;<br>• `passesFailed` 1 even with full counts;<br>• counts without `boostExamined`;<br>• no counts;<br>• `counts: null`;<br>• `boostExamined` as a string;<br>• `passesRun` 0.<br>A clean run with `boostExamined: 0` still shows "Reconcile finished: 0 …". `boostListFailed` 2 adds "Some top-ups could not be listed; the nightly run tries again." after the counts; `boostListFailed` 0 adds nothing. My original M1 case now passes |
+| **L1: code points** | ✅ | **Route** (real Zod through `adminOps`), set: 2 emoji → 400; 3 → 200; 500 emoji (1,000 UTF-16 units) → 200; 501 → 400. Also 2 emoji padded with spaces → 400; "ab" + emoji → 200; combining marks accepted. End: 2 emoji → 400, 3 → 200. **Dialog:** the same boundaries for Set and Back to default. Tab or newline padding around "ab" → disabled; around "abc" → enabled |
+| **The tab / newline trim edge** | ✅ | The Dev's note can't happen through this route, because Zod's JS `trim()` runs **before** the write: the reason the repository receives, and so the reason SQL's `btrim` sees, is already trimmed. "\t\n  ab👍\t\n" is written as "ab👍". "\r\n\tcampaign over\t" is written as "campaign over". NBSP / em-space padding is stripped as well. "\t\nab\t\n" → 400. The SQL check stays a backstop only |
+| **L2: three states** | ✅ | A take-back-able lot → the "Take back credits" button, calling `onTakeBack(lotId)`. A lot that is loaded but cannot be taken back → "Nothing left to take back", with no button. A lot that is not loaded → "Take back in Credits above". No lot → none of the three. Own account → none of the three |
+| Everything else from QA — 6b | ✅ | Re-run unchanged and green: denied first, own account / platform / tenant / plan-row refusals, the amount, reason and extra-key matrices, C-2, set / replace / end with the operator-only audit, read and write failures, the dialogs, one submit at a time, every error line, reconcile `{}` |
+| Regression | ✅ | The Dev's 6b set, `creditsBlock`, the panel (Take back end-to-end), the source guard, `adminOps`, the entitlements routes, the 6a GET route, `enforcementPoints`, the imports guard, `eventAudience`, the authz surface guard and `adminGate.writes`: **15 suites, 1,085 tests green**, 0 snapshots. tsc `tsconfig.6b.json`: **0 in 6b files** (3 in the untouched `lib/geo/countries.ts`). No `console.*` |
+
+```text
+QA route re-check: 178 passed   QA UI re-check: 104 passed
+M1 passesFailed 1, empty counts / full counts / no boostExamined / no counts / null / string / passesRun 0 -> error=yes notice=none
+listFailed lines: ["Reconcile finished: 7 stuck top-ups examined, …","Some top-ups could not be listed; the nightly run tries again."]
+Dev 6b set + guards: 15 suites, 1,085 tests   tsc: 0 in 6b files
+```
+
+#### Final Status (re-check)
+- [x] **QA PASS.** QA6b-M1 is closed, and L1 and L2 are confirmed. 6b is ready for the user's diff and the commit.
+- [ ] Issues found
+
 ## Commit Info
 
 ---
@@ -620,3 +874,10 @@ Dev 6a set + guards: 9 suites, 457 tests   currency.formatMinorAmount: 9 tests  
 | 2026-10-10 | SA re-check of the 6a fixes: Code Approved for QA | CR-1 shared money formatter, N-1 `no-store`, QA L1 / L2. 99 tests green |
 | 2026-10-10 | QA re-check (6a): PASS | The shared formatter is in use: USD whole "$25", fractions "$27.30", JPY "¥2,500", tax and refunds in their own currency, never a throw. The five malformed bodies show "Credit top-ups could not be read", with no render error and the Credits block still up inside the full panel. The truncation note names test / live / both / none. The 200 carries `Cache-Control: private, no-store`. Dev 6a set and guards green; tsc 0 in 6a files |
 | 2026-10-10 | 6a approved and committed, PR #283 open; BQ-1 decided | The user saw the diff and approved the commit (2026-10-10). RM committed on `feature/bos-credits-boost-slice-6` and opened [PR #283](https://github.com/AgentsPilot/neuronforge/pull/283) to `main`. BQ-1: the user set the admin ceiling at $1,500 per 30 days, configurable; it binds 6b |
+| 2026-10-10 | 6a merged; 6b started | PR #283 merged into main (6c941064). 6b (the limit actions, Take back and the reconcile button) starts on `feature/bos-credits-boost-slice-6b` |
+| 2026-10-10 | 6b implemented, awaiting SA code review | The cap ops `set_boost_cap` / `end_boost_cap` on the entitlements admin route (C-1 platform 409, C-2 no-op, C-3 bounds from configuration, $1 to $1,500 per BQ-1), the audit events, the 6a GET's `limits`, the dialogs (Set limit, Back to default, reconcile with an empty body), Take back through the panel to the 11c dialog (C-5). Results, exact wording and six deviations in §5.2. Nothing committed |
+| 2026-10-10 | SA code review (6b): Code Approved for QA | 983 tests green; mutations caught (the identical-set no-op removed, boost ops dropped from the own-account guard). C-1 to C-6 met; the $1,500 ceiling is config. Operator-only audit with before/after; import direction as 11b; Take back via the 11c dialog; reconcile posts `{}`. N-1 for the coordinator: one admin handler on main is missing from the access register (another session's) |
+| 2026-10-10 | QA (6b): PASS WITH NOTES, not ready for commit | Mocks only, SHA-bracketed. Real route and executor: denied first with nothing read; own account 403; platform 409 for both ops before the tenant check; 404 / 500 / plan row 409; amount bounds $1 to $1,500, whole dollars (15 bad values → 400); reason 3 to 500, trimmed (10 bad → 400); extra keys 400; C-2 no-op with no write, audit or flush; set / replace / end with an operator-only audit before → after; repeated end 409; read or write failure 500 with nothing written. UI: one POST at a time (clicks, Enter, Escape), result from the server answer incl. unchanged, every error line, Back to default only with an override, nothing on the own account, Take back via the 11c dialog with fallback, reconcile posts exactly `{}`. Bar 243 suites / 7,186 tests green; tsc 0 in 6b files. **QA6b-M1 (Medium):** a failed boost pass (200, `passesFailed` 1, empty counts) shows "Reconcile finished: 0 …" instead of the failure line. L1 emoji reason length, L2 fallback wording |
+| 2026-10-10 | 6b QA follow-ups applied | QA6b-M1: a 200 reconcile answer with a failed pass or without the boost counts shows the failure line (and a failed list read is mentioned). QA6b-L1: the limit reason is counted in code points, as the SQL counts it (11b's reasons noted as a follow-up in §9). QA6b-L2: "Take back in Credits above" only for a lot the Credits block has not loaded; a loaded lot with nothing left shows "Nothing left to take back". Results in §5.2. Nothing committed |
+| 2026-10-10 | QA re-check (6b): PASS | M1 closed: seven 200 answers that did not really run (`passesFailed` > 0, no `boostExamined`, no or null counts, `passesRun` 0) show the failure line with no green notice, and `boostListFailed` adds its line. L1: reason length in code points on the route and in the dialog (2 emoji refused, 3 and 500 accepted, 501 refused); the tab / newline trim edge cannot arise, because the JS-trimmed reason is what reaches SQL. L2: button / "Nothing left to take back" / "Take back in Credits above" / none. Dev 6b set and guards 1,085 green; tsc 0 in 6b files. Ready for the user diff |
+| 2026-10-11 | 6b approved and committed, PR #289 open | The user saw the diff and approved the commit (2026-10-11). RM committed on `feature/bos-credits-boost-slice-6b` and opened [PR #289](https://github.com/AgentsPilot/neuronforge/pull/289) to `main` |

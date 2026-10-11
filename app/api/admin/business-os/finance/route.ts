@@ -144,13 +144,27 @@ export async function GET(request: NextRequest) {
     }
 
     const { payload, counts } = result;
-    // Ids, filters, statuses and counts only: never a business name, never a figure.
+    // Ids, filters, statuses and counts only: never a business name, never a
+    // figure (no credit figure either). `counts.creditAccounts` and
+    // `counts.creditsPass` make the credit pass's scale trigger visible from
+    // this route too (SA-WR-13).
     requestLogger.info(
       {
         window: { preset: window.preset, from: window.from, to: window.to },
         accountId,
-        sections: { revenue: payload.revenue.status, accounts: payload.accounts.status, aiCost: payload.aiCost.status },
-        tiles: { k1: payload.tiles.k1.status, k3: payload.tiles.k3.status, k5: payload.tiles.k5.status },
+        sections: {
+          revenue: payload.revenue.status,
+          accounts: payload.accounts.status,
+          aiCost: payload.aiCost.status,
+          credits: payload.credits.status,
+        },
+        tiles: {
+          k1: payload.tiles.k1.status,
+          k2: payload.tiles.k2.status,
+          k3: payload.tiles.k3.status,
+          k4: payload.tiles.k4.status,
+          k5: payload.tiles.k5.status,
+        },
         counts,
         coverage: payload.aiCost.coverage,
         durationMs: Date.now() - startedAt,

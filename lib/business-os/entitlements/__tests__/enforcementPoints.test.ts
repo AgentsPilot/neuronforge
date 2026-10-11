@@ -375,8 +375,8 @@ describe('backward: a gate cannot ship unregistered', () => {
     // ── Credits boost slice 6a, 2026-10-09 — the admin "Credit top-ups" block ──
     {
       file: 'app/api/admin/business-os/credits/accounts/[accountId]/boost/route.ts',
-      symbols: ['BOOST_PURCHASE_CAP_DEFAULT', 'isBusinessOsTenant', 'resolveAccountId'],
-      why: 'Credits boost slice 6a: the admin read-only view of the credit top-ups and spending limit of ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the 11c credit view), resolves the path id through the account seam (`resolveAccountId`), and shows the default limit from configuration (`BOOST_PURCHASE_CAP_DEFAULT`) beside any admin override. It reads no snapshot and refuses nothing: no `check()` / `decide()`, and nothing is blocked by plan. If this file ever gates a request by plan, it belongs in ENFORCEMENT_POINTS.',
+      symbols: ['BOOST_PURCHASE_CAP_DEFAULT', 'BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS', 'isBusinessOsTenant', 'resolveAccountId'],
+      why: 'Credits boost slice 6a: the admin read-only view of the credit top-ups and spending limit of ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the 11c credit view), resolves the path id through the account seam (`resolveAccountId`), and shows the default limit from configuration (`BOOST_PURCHASE_CAP_DEFAULT`) beside any admin override. Slice 6b: it also sends the limit dialog its bounds from configuration (`BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS`), which the admin op checks again on the write. It reads no snapshot and refuses nothing: no `check()` / `decide()`, and nothing is blocked by plan. If this file ever gates a request by plan, it belongs in ENFORCEMENT_POINTS.',
     },
     // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
     {

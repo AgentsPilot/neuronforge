@@ -37,7 +37,8 @@ import { createLogger } from '@/lib/logger';
 import { isPlatformAccount } from '@/lib/business-os/llm/callCatalog';
 import { isBusinessOsTenant } from '@/lib/business-os/entitlements/adminOps';
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
-import { BOOST_PURCHASE_CAP_DEFAULT } from '@/lib/business-os/entitlements/config/boostPackages';
+import { BOOST_PURCHASE_CAP_DEFAULT, BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS } from '@/lib/business-os/entitlements/config/boostPackages';
+import { CREDIT_REASON_MAX, CREDIT_REASON_MIN } from '@/lib/business-os/credits/creditAdminOps';
 import { currentStripeMode } from '@/lib/business-os/billing/stripeMode';
 import { mergeNewestFirst, toAdminActiveCap, toAdminCapChange } from '@/lib/business-os/boost/boostAdminView';
 import type {
@@ -140,6 +141,16 @@ export async function GET(request: NextRequest, context: { params: { accountId: 
       accountId,
       isOwnAccount: gate.user.id.toLowerCase() === accountId,
       serverMode: serverMode(),
+      // Slice 6b: the limit dialog's bounds, from configuration (SA C-3).
+      limits: {
+        minMinor: BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS.minMinor,
+        maxMinor: BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS.maxMinor,
+        stepMinor: BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS.stepMinor,
+        currency: BOOST_PURCHASE_CAP_OVERRIDE_BOUNDS.currency,
+        windowDays: BOOST_PURCHASE_CAP_DEFAULT.windowDays,
+        reasonMin: CREDIT_REASON_MIN,
+        reasonMax: CREDIT_REASON_MAX,
+      },
       purchases,
       cap,
     };
