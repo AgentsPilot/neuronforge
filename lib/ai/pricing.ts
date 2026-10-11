@@ -156,11 +156,13 @@ async function loadPricingFromDatabase(): Promise<void> {
     }
 
     // Rows arrive newest-first (`listActive` orders by effective_date DESC).
-    // The unique constraint allows several effective_date rows per model, so
-    // the FIRST row per provider:model is the current price and every later
-    // row is history. The previous implementation overwrote on every row, which
-    // left the OLDEST price in the cache for any model with more than one row —
-    // exactly the duplicates the admin pricing sync used to create.
+    // The partial unique index on active rows (provider, model_name,
+    // effective_date WHERE retired_date IS NULL) allows several active
+    // effective_date rows per model, so the FIRST row per provider:model is
+    // the current price and every later row is history. The previous
+    // implementation overwrote on every row, which left the OLDEST price in the
+    // cache for any model with more than one row — exactly the duplicates the
+    // admin pricing sync used to create.
     const next = new Map<string, PricingInfo>();
     let superseded = 0;
 

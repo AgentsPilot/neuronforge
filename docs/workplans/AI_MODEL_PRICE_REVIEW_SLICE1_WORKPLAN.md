@@ -533,7 +533,11 @@ formatter sweep: checked 200000 mismatches 0
 
 ## Commit Info
 
-_RM to populate._
+| Item | Value |
+|---|---|
+| PR | #281 |
+| Commit | `236ad66` |
+| Merged as | `6869ed13`, 2026-10-10 |
 
 ---
 
