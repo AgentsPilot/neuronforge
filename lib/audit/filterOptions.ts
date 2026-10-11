@@ -108,6 +108,8 @@ const GROUP_RULES: readonly GroupRule[] = [
   { prefix: 'BOS_CREDIT_LOT_', label: 'Business OS Credits' },
   // Credit deduction slice 8b: an account's plan credits dropping below the low line.
   { prefix: 'BOS_CREDIT_LOW_LINE_', label: 'Business OS Credits' },
+  // Test harness slice TC-1 (TEST ONLY): an admin taking plan credits on the harness.
+  { prefix: 'BOS_TEST_CREDITS_', label: 'Business OS Credits' },
   // ADMIN_BOS_CLEANUP slice 7d: an admin pressing Drain now on a queue. Slices
   // 7b/7c's per-item events (BOS_QUEUE_ITEM_*) will land in the same group.
   { prefix: 'BOS_QUEUE_', label: 'Business OS Queues' },

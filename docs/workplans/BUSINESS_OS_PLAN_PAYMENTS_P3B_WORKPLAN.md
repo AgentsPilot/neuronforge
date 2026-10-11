@@ -1,6 +1,6 @@
 # Workplan: Business OS Plan Payments, P-3b (A paid invoice switches the plan)
 
-> **Last Updated**: 2026-10-07
+> **Last Updated**: 2026-10-11
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): §5 F1 row 3, F4 rows 2–3, F5 row 1, F7 (the plan-row half); §6 (credit period, upgrade); §8 SR-4, SR-6, SR-8, SR-9, SR-10, SR-11, SR-12, SR-16, SR-17; §9.1 P-3b; §9.3 (20261027); §9.4 CF-2; §9.5 rows 6 and 7; findings PF-2, PF-3, PF-9, PF-11, PF-13, PF-15; SA Review SA-P2, SA-P3, SA-P5, SA-P6, SA-P8, SA-P14 (layer 2), SA-P15 (backstop), SA-P16, the tenant-isolation ruling; conditions C-5, C-6, C-7, C-8, C-9.
@@ -8,7 +8,8 @@
 **Depends on:** P-3a merged (#248, 2026-10-07). 20261025 applied (checker PASS, 2026-10-04).
 **Date:** 2026-10-07
 **Branch:** `feature/bos-plan-payments-p3b`, cut from `origin/main` `99df24d3` (the #248 merge) on 2026-10-07, worktree `neuronforge-invite-s1`. Uncommitted. Note for RM: `git switch -c … origin/main` set the branch's upstream to `origin/main`; push with `-u origin feature/bos-plan-payments-p3b`.
-**Status:** P-3b.1 code complete with SA fixes F-1 to F-3 applied, uncommitted; code approved for QA. `routes.test.ts` is unedited except the one SA-approved mock (C-8 ruling). Next: QA.
+**Branch (P-3b.2):** `feature/bos-plan-payments-p3b2`, cut from `origin/main` `90da8301` (after #251 and the CF-5 PR 0 harness, #254) on 2026-10-07, same worktree. Uncommitted. Upstream is `origin/main`; RM pushes with `-u origin feature/bos-plan-payments-p3b2`.
+**Status:** P-3b.1 merged (#251); 20261027 and 20261042 applied to production. **P-3b.2: T14–T27 done; SA approved with fixes (F-1/F-2 done), QA PASS WITH NOTES; rebased on `origin/main`. T26 done 2026-10-11 (demo run 1 on 2026-10-09; the user confirmed the plan switch on 2026-10-11) and merge gate C-6 CLOSED (all five objects captured in `2025-09-30.clover`, every §3.7 field present).** The live re-check moves to the user's separate "Stripe test account setup" session. **P-3b.2 MERGED as [PR #299](https://github.com/AgentsPilot/neuronforge/pull/299) (5c774539, 2026-10-11). P-3b complete.**
 
 ## Overview
 
@@ -326,9 +327,9 @@ No new feature flag: the handler is reachable only where `BUSINESS_OS_PLAN_PRICE
 | # | Gate | Blocks | Owner | State |
 |---|---|---|---|---|
 | G-1 | 20261027 is free on main and in open PRs | Workplan | Dev | ✅ 2026-10-07 (§4) |
-| G-2 | 20261027 **applied to production** with checker VERDICT PASS (+ probe VERDICT PASS) | **P-3b.2 merge** (its code calls the function; the switch being off is not a reason to ship a call to a missing function) | User (paste) / Dev (record) | ⬜ After P-3b.1 merges |
-| G-3 | Connect characterisation snapshot byte-identical before/after (SR-10) | P-3b.2 hand-over | Dev | ⬜ |
-| G-4 | `npm run test:bos-entitlements` green (SR-17) | Each hand-over | Dev | ⬜ |
+| G-2 | 20261027 **applied to production** with checker VERDICT PASS (+ probe VERDICT PASS) | **P-3b.2 merge** (its code calls the function; the switch being off is not a reason to ship a call to a missing function) | User (paste) / Dev (record) | ✅ Applied (TL, P-3b.2 kickoff, 2026-10-07; #251 merged) |
+| G-3 | Connect characterisation snapshot byte-identical before/after (SR-10) | P-3b.2 hand-over | Dev | ⬜ Snapshot file untouched, 100/100 entry hashes equal; 99 pass, **P3 ("no handler yet") fails by design: STOP** (P-3b.2 notes item 1) |
+| G-4 | `npm run test:bos-entitlements` green (SR-17) | Each hand-over | Dev | ✅ P-3b.2: 204 suites, 5511 passed |
 | G-5 | The sandbox → production forwarding link during the demo (P-3a G-5, still open) | Demo | User | ⬜ Decision owed (§9 step 0) |
 | G-6 | Endpoint API version / key-prefix look (P-3a G-4) | **Not** this code. It gates turning the price switch on in a shared environment | User + Offir | ⬜ Kept open by the user |
 
@@ -355,20 +356,20 @@ No new feature flag: the handler is reachable only where `BUSINESS_OS_PLAN_PRICE
 
 **P-3b.2: webhook plan handler**
 
-- [ ] **T14** G-2 recorded (20261027 applied, checker + probe VERDICT PASS)
-- [ ] **T15** Connect harness "before" run recorded (snapshot hash)
-- [ ] **T16** StripeService: three read methods + tests (pagination, no writes)
-- [ ] **T17** Billing account repository: five methods + tests (no `.select()` on updates, `count: 'exact'`, allow-lists, documented no-`user_id` lookups)
-- [ ] **T18** `planInvoiceFacts.ts` (pure) + tests incl. proration, $0, discount, non-USD, mixed tiers
-- [ ] **T19** Resolver: truncation fetch (CF-2), sessions, subscriptions, switch-off byte-identity + tests
-- [ ] **T20** `planPaymentApply.ts` (paid + failed) + tests (§8 C-6 list through a fake repository)
-- [ ] **T21** `planCheckoutSessionEvents.ts` + `planSubscriptionMirror.ts` + tests
-- [ ] **T22** `planBillingHandler.ts`; route registration; guard lists updated
-- [ ] **T23** Connect harness "after": byte-identical (G-3); webhook guard suites green
-- [ ] **T24** Fixtures: hand-built additions now; captured ones from the demo per Q-9
-- [ ] **T25** Jest, `test:bos-entitlements`, eslint, scoped tsc; `git diff --stat`; hand-over to SA code review
-- [ ] **T26** Local demo (§9), after QA; evidence recorded; sandbox subscription cancelled the same day
-- [ ] **T27** Docs: requirement §9.1 / §9.4 CF-2 / Change History; TEST_PAGE_SCOPE
+- [x] **T14** G-2 recorded: 20261027 and 20261042 applied to production, as stated by TL at the P-3b.2 kickoff (P-3b.1 merged as #251, which required the checker and probe VERDICT PASS, SA Q-13). Dev ran no SQL
+- [x] **T15** Connect harness "before": on the fresh branch, `npx jest app/api/stripe/webhook --ci` 9 suites, 251 tests, **100 snapshots** passed (CF-5 PR 0 #254 had already merged, so the baseline is 100 entries). Per-entry sha256 of all 100 entries taken from `git show origin/main:…/connectPath.characterisation.test.ts.snap`
+- [x] **T16** StripeService: `retrieveBusinessOsSubscription`, `listInvoiceLinesAll`, `listCheckoutSessionPriceIds` + `lib/stripe/__tests__/businessOsPlanWebhookReads.test.ts` (12 tests: paging, maxPages throws, no write calls, placed after P-3a's methods)
+- [x] **T17** Billing account repository: `findByStripeSubscription`, `findByStripeCustomer`, `linkCheckoutSession`, `releaseCheckoutLock`, `mirrorSubscriptionState` + 36 tests; source guards updated (five CAS updates, no `.select()`, no `.or()` in the three new ones, the documented no-`user_id` lookups counted)
+- [x] **T18** `planInvoiceFacts.ts` (pure) + 25 tests (Basil and legacy shapes, proration, $0, 100% discount, non-USD, mixed tiers, tax sum, malformed)
+- [x] **T19** Resolver: truncation fetch (CF-2), sessions, subscriptions; switch-off identity with zero Stripe calls + 30 new tests; the P-1 tests unedited except the fixture api-version test (now "labelled with its real API version", for the captured fixtures, Q-9)
+- [x] **T20** `planPaymentApply.ts` (paid + failed) + 35 tests (C-6 list through a fake that models §3.2)
+- [x] **T21** `planCheckoutSessionEvents.ts` + `planSubscriptionMirror.ts` + 24 tests
+- [x] **T22** `planBillingHandler.ts` (+ 13 tests); route registration (one import, one map entry); guard lists updated (router placement map + a registration test, both billing repository caller lists, two entitlements non-gate entries)
+- [x] **T23** Connect harness "after": 99 entries byte-identical, P3 re-recorded alone on purpose (SA F-1, CF-5 written agreement; notes item 11). Webhook guard suites (`routerPlacement`, `pinoLogging`, `routerEdgeCases`, …) green
+- [x] **T24** Fixtures: four P-1 hand-built invoices gained `status_transitions`, `total_taxes`, `discounts`; six new hand-built ones (renewal, $0 trial, session completed / expired, subscription updated / deleted). Captured ones: at the demo (Q-9, C-6), runbook below. **2026-10-11: five captured fixtures added (`captured-*.json`, `2025-09-30.clover`), see "T26 run record"**
+- [x] **T25** Jest, `test:bos-entitlements`, eslint, full `tsc --noEmit` (0 errors); `git diff --stat` checked (no deletion-only file)
+- [x] **T26** Local demo (§9), after QA; evidence recorded. Run 1 on 2026-10-09 (checkout + payment worked; production claimed the events first); the user confirmed the plan-switch check worked on 2026-10-11; sandbox subscription cancelled 2026-10-11 (two days late, not the same day). C-6 closed from the captured events. Record: "T26 run record" below the runbook. The live re-check moves to the user's separate "Stripe test account setup" session
+- [x] **T27** Docs: requirement §9.1 / §9.3 / §9.4 CF-2 / Change History; TEST_PAGE_SCOPE Billing tab
 
 **28 tasks: 14 in P-3b.1 (T0–T13), 14 in P-3b.2 (T14–T27).**
 
@@ -393,6 +394,90 @@ No new feature flag: the handler is reachable only where `BUSINESS_OS_PLAN_PRICE
 **Paste order for the user (G-2, before P-3b.1 merges):** 1. `scripts/precheck-bos-billing-events-migration.sql` (VERDICT PASS; it leaves the tab read-only), 2. in a **new tab** `supabase/migrations/20261027_business_os_billing_events.sql`, 3. `scripts/check-bos-billing-events-migration.sql` (VERDICT PASS), 4. `scripts/probe-bos-apply-plan-payment.sql` with your own **test** account id pasted in (expect the error "PROBE PASS ... rolls everything back"). Rollback, only if needed: `supabase/SQL Scripts/20261027_business_os_billing_events_rollback.sql`.
 
 **Then the cleanup function (20261042, after 20261027, before P-3b.1 merges and deploys).** P-3b.1 adds `business_os_billing_events` to the test-account cleanup plan (Danger Zone, PR #249), and that plan is compiled into the database function `operator_test_account_cleanup`. Its migration 20261041 is applied and never edited, so the generator now writes **`supabase/migrations/20261042_operator_test_account_cleanup_billing_events.sql`** (`CREATE OR REPLACE` of the function only; the schema, the secret table and the stored hash stay). 5. Paste 20261042 in a new tab. It refuses with "Apply ... first" and applies nothing unless 20261041 and 20261027 are already in place. 6. Run the version query in the [cleanup runbook](/docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md) §6.1.1: `applied_version` must equal `CLEANUP_FUNCTION_VERSION` in `lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts` and `knows_billing_events` must be true; then the lock check §6.5 (`false, false, true, false`). Why before the deploy: the app pins the function's version stamp, so between the deploy and the apply the Danger Zone check and delete refuse (fail closed, nothing removed); applied first, only the current build's Danger Zone refuses until P-3b.1 deploys. Rollback, only if needed: `supabase/SQL Scripts/20261042_operator_test_account_cleanup_billing_events_rollback.sql` (restores the 20261041 function, keeps the secret).
+
+### P-3b.2 implementation notes (Dev, 2026-10-07)
+
+**1. STOP: the Connect harness entry P3 cannot stay byte-identical.** P3 is the P-1 *platform* scenario "invoice.paid on a price the catalog knows: **no handler yet**, claim released, 500" (`connectPath.characterisation.test.ts` l. 762). It pins the very behaviour P-3b.2 exists to end: registering `plan: handlePlanBillingEvent` makes the handler run. Measured on this branch, nothing written to the snapshot:
+
+| | `origin/main` | This branch |
+|---|---|---|
+| Snapshot file | 100 entries | **untouched**: all 100 per-entry sha256 equal to `origin/main` (CRLF normalised) |
+| Run | 100 pass | **99 pass, P3 fails** (1 snapshot + 1 log assertion) |
+| P3 snapshot diff | `"failure_message": "No Business OS handler is registered for flow 'plan'"` | `"failure_message": "invalid_input"`: the ONE changed line. Status 500, claim `failed`, no credit-table write, no other effect: all equal |
+| P3 log assertion (l. 773) | `bos_billing_plan_unhandled` logged once at `warn` | not logged (a handler exists) |
+
+Why `invalid_input`: the fixture's ids carry underscores (`evt_platform_known`, `cus_platform_1`), which real Stripe ids never do, so the handler finds no account and the money-history repository refuses the refusal row's event id before any query; the throw releases the claim. Every other entry, Connect and platform, is unchanged.
+
+Per the coordination rule (never a bare `-u`; any existing entry changing resets the CF-5 session's baseline), **P3 was not re-recorded and the test file was not edited.** The tree is left with the registration in place and P3 red, so the decision stays visible (as the P-3b.1 C-8 stop). Options for TL / SA / the CF-5 session:
+- **A (recommended):** the CF-5 session (owner of the harness) or this slice, by agreement, retires P3's "no handler" premise: re-record P3 alone with an anchored `-t "P3\. "` and replace its log assertion with "the plan handler ran" (or rename it). One entry, one line, a P-1 platform scenario, not a Connect entry (SR-10 is about Connect). The other 99 stay byte-identical, provable with the per-entry hash script.
+- **B:** P3's fixture gets Stripe-shaped ids and a mocked billing read so it asserts the real P-3b.2 path (a recorded refusal or an apply). A bigger change to their file.
+- **C:** hold the one route line until CF-5 PRs 1 to 5 land, then add it with A. Everything else in P-3b.2 is independent of the route.
+
+**2. Placement of the reads.** The handler reads a truncated invoice's lines again (the router read them once to recognise it): the dispatcher's outcome carries no invoice (contract unchanged), so two `listLineItems` calls per truncated invoice, which is rare.
+
+**3. Refusal rules beyond §3.3.** Every refusal row has an account except `unknown_customer` (QA P-3b.1 edge case 1 held in code: `refuse()` throws on a NULL account with any other reason). A detached billing row (account deleted) counts as an unknown customer. Stripe ids that do not have Stripe's shape are recorded as NULL, never sent (so a malformed id cannot loop on the repository's `invalid_input`). Extra refusal reasons: `malformed_invoice`, `no_plan_line`, `mixed_tiers` (facts), `customer_mismatch` also when Stripe's fresh subscription names another customer. `invoice.payment_failed` runs the same mode, account, currency, metadata and customer checks as paid (Q-2) before its one history row.
+
+**4. The held subscription.** A different subscription on the record is replaced only when Stripe says it is `canceled` or `incomplete_expired`. If Stripe answers `resource_missing` for it, it is not proven ended: NULL is passed and the function refuses `second_subscription` (logged `bos_billing_held_subscription_missing`). Any other Stripe error throws.
+
+**5. Resolver: mixed recognition on sessions and subscriptions.** §3.6 says "recognised → flow, otherwise `not_business_os`" for subscriptions. A subscription (or session) carrying a plan price AND another price is `deny mixed_prices` (error, alert), as for invoices, so the legacy platform handler never acts on an object that carries a Business OS plan price. For SA to confirm.
+
+**6. Session link.** `linkCheckoutSession` is compare-and-set on this session's lock AND `stripe_subscription_id IS NULL` (`.is()`, no `.or()`). It sets no `subscription_status` (the CHECK allows a subscription with a NULL status; `invoice.paid` writes the status). A completed session whose subscription is held by another account's row (UNIQUE) still clears its own lock; the repository alerts.
+
+**7. Audit.** `BOS_BILLING_INVOICE_PAID` on `applied` and `recorded` (info; `invalidatesEntitlements` only when the plan row was written). `BOS_BILLING_PAYMENT_REFUSED` (warning, no invalidation) on every first-time refusal that has an account, including the function's `subscription_conflict`. Replays write none. Actor: `platformActorId()` + `details.actor = 'stripe_webhook'` through `recordPlanChange` (Q-4). Details carry ids, tier, amount, flags; never an email or a metadata value (tested).
+
+**8. C-6 / Q-9 status: OPEN.** `planStripeFields.c6.test.ts` holds §3.7 as data (plus `amount_due`, `metadata`, `customer`, `amount_total`, `items.has_more`, which the code also reads) and checks every fixture against it; a ratchet (`CAPTURED_OBJECTS`, equality-checked, empty today) must list all five objects (invoice, invoice line, subscription, checkout session, checkout line item) from captured `2025-09-30.clover` payloads before C-6 closes. The hand-built fixtures pass, which proves the checker and the shapes the code expects, **not** the endpoint's version. A web check found Stripe lists no breaking change for `2025-10-29.clover` (a monthly release within clover), which supports SA's P2b-Q2 reasoning but is not the C-6 proof. **So C-6 is satisfied only after T26, before merge.** **Update 2026-10-11: CLOSED**, see "T26 run record" below.
+
+**9. Not done (by design or by instruction).** No SQL, no Stripe call, no live demo. `hasLivePlanSubscription` stays in `adminDeletionFacts.ts`: P-3b.2 adds no second caller (SA optimisation, ruling 2). `bindPlanSubscription.ts`, the Connect paths and the claim code are untouched. CF-5 PR 0 (#254) merged before this branch was cut, so there is nothing to rebase for it; PRs 1 to 5 will each meet the one-line conflict surface (the handler map) only if they edit it.
+
+**10. Carry-forwards unchanged.** C-3 → CF-6 (owner P-4). SA optimisation for P-6a (stale `failed_attempts`, `pending_tier` on a replacement) stays with P-6a.
+
+**11. F-1 done: harness P3 changed ON PURPOSE (for the PR body).** Registering the `plan` handler closes the "no handler yet" gap that P3 pinned, so P3 had to change. This was done with the CF-5 webhook session's **written agreement** (option A, relayed by TL on 2026-10-07). P3 was re-recorded **alone** with `npx jest …/connectPath.characterisation.test.ts -t "P3\. " -u` (never a bare `-u`). Its title now says what it pins: "invoice.paid on a known price, ids not Stripe-shaped: the plan handler refuses to write, claim released, 500". Its `bos_billing_plan_unhandled` assertion is now `[]`. No other line of the harness changed. The snapshot diff is one line: `failure_message` `"No Business OS handler is registered for flow 'plan'"` → `"invalid_input"`. The real handler path (a recorded `unknown_customer` refusal, claim completed, 200, plus a replay) is covered by `planHandler.route.test.ts` (F-2).
+
+Per-entry sha256 against `origin/main` `d5f1efb1` (fetched; not rebased; the harness files are unchanged between the branch base and it):
+
+| | `origin/main` | This branch |
+|---|---|---|
+| Entries | 100 | 100 |
+| Identical (same name, same hash) | 99 | 99 |
+| P3 | `84ae46cd7086…` "P3. invoice.paid on a price the catalog knows: no handler yet, claim released, 500 1" | `46c735bc3d9d…` "P3. invoice.paid on a known price, ids not Stripe-shaped: the plan handler refuses to write, claim released, 500 1" |
+
+**Sequencing with CF-5 (for RM).** If CF-5 PR 1 (claim table + client; 100/100 entries identical) merges first, RM rebases this branch onto it and re-runs the per-entry check: expect 99 identical to the new main plus P3. If this PR merges first, the CF-5 session re-baselines P3 on its side.
+
+### P-3b.2 demo runbook (T26)
+
+Prerequisites, all the user's: the **G-5 choice** (§9 step 0: keep the sandbox's webhook link to production on, and accept production's false alarms, or switch it off for the demo window), the **Stripe CLI** installed and logged in to the sandbox (`acct_1SMy0N56GTXD0wwi`), and a designated **trial test account** that is not payment-held.
+
+| Step | Action | Expected / evidence |
+|---|---|---|
+| 0 | Record the G-5 choice and the time | — |
+| 1 | `.env.local` in this worktree only (never committed, never Vercel): sandbox `STRIPE_SECRET_KEY` (`sk_test_`), `BUSINESS_OS_PLAN_PRICES_ENABLED=true`, `BUSINESS_OS_PLAN_CHECKOUT_ENABLED=true`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`; `npm run check-bos-plan-prices` | VERDICT PASS |
+| 2 | `stripe listen --forward-to localhost:3000/api/stripe/webhook --print-json > <scratch>/demo-events.jsonl` (outside the repo); put the CLI's `whsec_` in `STRIPE_WEBHOOK_SECRET`; `npm run dev`; sign in as the trial test account | CLI "Ready" |
+| 3 | `/test-business-os` → Billing → first tier → Start checkout → `4242 4242 4242 4242` | Logs: `bos_billing_checkout_linked`, then `bos_billing_invoice_applied` (`status: applied`, `planWritten: true`, `anchorSet: true`). Webhook 200s |
+| 4 | Admin Tiers page; `/api/business-os/entitlements/my-plan` | Tier = the first tier; paid-through = Stripe period end; `period_anchor` = `billing_cycle_anchor`; cohort still `trial` |
+| 5 | Read-only SQL on the test account (`livemode = false`): `business_os_billing_events`, `business_os_billing_accounts`, `audit_trail` for `BOS_BILLING_INVOICE_PAID` | One `invoice_paid` row (`plan_written = true`, USD); billing row with subscription, `active`, `current_period_end`, `last_paid_at`, no lock; one audit row, platform actor, `details.actor = stripe_webhook` |
+| 6 | `stripe events resend <invoice.paid evt id>` | `bos_billing_invoice_replayed` (`already_applied`); no new row; no second audit |
+| 7 | Start checkout again | `409 subscription_live` |
+| 8 | **Capture the fixtures (C-6).** For each event id in `demo-events.jsonl` (`checkout.session.completed`, `invoice.paid`, `customer.subscription.updated`, then `customer.subscription.deleted` after step 9, and an `invoice.payment_failed` if one is produced): `stripe events retrieve <evt>` and save it as `lib/business-os/billing/__tests__/fixtures/stripe/captured-<type>.json`, keeping its `api_version` as delivered and setting `_fixture_source` to `"CAPTURED <date> from the P-3b local demo, sandbox acct_1SMy0N56GTXD0wwi, api_version <its version>"`. Also save `stripe checkout sessions list_line_items <cs id>` as `captured-checkout-line-items.json` with the same `_fixture_source` and the session event's `api_version` added at the top level (it is a list response, so the C-6 test reads it as checkout line items). Scrub the customer email to `fixture@example.invalid` before saving | Files saved; nothing else in them changed |
+| 9 | **Cleanup, the same day:** cancel the subscription immediately in the sandbox dashboard | `bos_billing_subscription_mirrored` (`status: canceled`, `ended: true`); the plan keeps its tier until the paid-through date |
+| 10 | Stop the CLI; restore `STRIPE_WEBHOOK_SECRET`; remove both switches from `.env.local` | — |
+| 11 | Set `CAPTURED_OBJECTS` in `planStripeFields.c6.test.ts` to the five objects; run `npx jest lib/business-os/billing --ci` | Every captured payload carries every §3.7 field: C-6 closed. A missing field reopens Q-9 (SA) |
+
+Evidence to record here: G-5 choice and time, VERDICT, session / subscription / invoice / event ids, log lines, SQL results, the production alert time (if the link stayed on), the cancellation time, and the captured files' `api_version`.
+
+### T26 run record
+
+| Item | Value |
+|---|---|
+| Run 1 | 2026-10-09, sandbox `acct_1SMy0N56GTXD0wwi`, test mode. Checkout and payment worked. The sandbox's webhook link to production was on, and **production claimed the events first** |
+| Ids (run 1) | Checkout session `cs_test_a1oxCWvuDSJQ…`; subscription `sub_1UOayP56GTXD0wwiRAo7opmW`; invoice `in_1UOayO56GTXD0wwizYihw0Rd`; price `price_1UNeUr56GTXD0wwiTXnG5mek` (basic, USD 79.00). Events: `invoice.paid` `evt_1UOayQ56GTXD0wwirr2b0IGI`, `customer.subscription.created` `evt_1UOayQ56GTXD0wwif43oXQ9t`, `checkout.session.completed` `evt_1UOayQ56GTXD0wwiQUsAakfo` |
+| Plan switch | The user confirmed on 2026-10-11 that the plan-switch check worked |
+| Endpoint window (2026-10-11) | Production endpoint `we_1UNG3L56GTXD0wwiKUsZn8DU` paused 15:29:11 UTC, re-enabled 15:31:46 UTC. Nothing was bought in the window |
+| Cleanup | The Oct-9 subscription `sub_1UOayP56GTXD0wwiRAo7opmW` was cancelled on 2026-10-11 (`customer.subscription.deleted` `evt_1UPNKd56GTXD0wwisRK9pmnj`). Not the same day as the runbook asks: two days late |
+| Live re-check | Moves to the user's separate "Stripe test account setup" session; not part of this PR |
+| Captured fixtures (C-6) | From the `stripe listen` capture of the four events above, as Stripe rendered them (`api_version` `2025-09-30.clover`): `captured-invoice-paid-subscription-create.json` (invoice + 1 line), `captured-customer-subscription-created.json`, `captured-checkout-session-completed-subscription.json`, `captured-customer-subscription-deleted.json`. The checkout line items were not in any event, so `captured-checkout-session-line-items.json` is the session's `line_items` list, fetched **read-only** on 2026-10-11 (one GET, `--stripe-version 2025-09-30.clover`; the list carries no version of its own, so the requested one is recorded at the top level). No Stripe object was created or changed |
+| Scrubbing | Customer email → `fixture@example.invalid`, name → `Test Customer`, address fields → null (country `XX`), `hosted_invoice_url` / `invoice_pdf` → placeholder, the `bos_user_id` metadata value → a fake UUID. Ids, prices, amounts, statuses, timestamps, metadata keys and `api_version` unchanged. No `whsec_` / `sk_` / `rk_` value in any file |
+| C-6 verdict | **CLOSED.** `CAPTURED_OBJECTS` = all five (invoice, invoice line, subscription, checkout session, checkout line item); every §3.7 field present on every captured object, none missing (`planStripeFields.c6.test.ts`). Q-9 stays closed: `2025-09-30.clover` carries what the code reads |
+| Jest | `npx jest lib/business-os/billing --ci`: 19 suites, 458 passed. `app/api/stripe/webhook` + `lib/payments/__tests__/invoiceLinePrices.test.ts`: 17 suites, 497 passed, 103 snapshots passed |
 
 ---
 
@@ -591,6 +676,21 @@ Tenant isolation is acceptable. `p_user_id` always comes from our own row, which
 3. **Allow-list edits legitimate** (no-deletion-paths, L8 pin).
 4. **FIX-1 (blocks merge, not QA): the collision is live.** Worktree `neuronforge-cleanup-fix` already generates `20261042_operator_test_account_cleanup_v2.sql` with an older generator shape (no PREVIOUS/REQUIRED constants, no order guard). Whichever lands second: rebase on the other's generator, take 20261043, set `PREVIOUS_FUNCTION_MIGRATION` to the first one, add the first's files to the sha256 `APPLIED` pins once applied, regenerate. Tell the other session now. Add one sentence saying this to the generator comment on `FUNCTION_MIGRATION` and to runbook 6.1.1.
 
+### Code Review — P-3b.2
+
+**Code Review by SA — 2026-10-07**
+**Status:** 🔄 Approved with fixes (F-1, F-2). Jest scope (`lib/business-os/billing app/api/stripe lib/repositories lib/business-os/entitlements lib/stripe`): 146 suites, 3425 tests, 1 failure (harness P3, expected). `test:bos-entitlements`: 204 suites, 5511 passed.
+
+**P3 ruling: Option A.** P3 is a P-1 *platform* entry whose title ("no handler yet") pins the gap P-3b.2 exists to close. SR-10 protects the Connect entries, and they stay byte-identical. B would rewrite their fixture. C would hold a finished, switch-gated line for no safety gain, because the switch is off in production either way. `invalid_input` is correct for that fixture and not a smell. The event id is the idempotency key, so it can never be recorded as NULL. Releasing on a malformed one (500, Stripe retries, the retries end) is the safe answer. A signed Stripe event always has an `evt_<alnum>` id, so production cannot reach this path. Deviation 4 (other ids stored as NULL) is consistent: those ids are evidence, not keys.
+
+### Code Review Comments
+1. **F-1 (must, merge gate)** — `connectPath.characterisation.test.ts` P3: re-record P3 alone with an anchored `-t "P3\. "`, **with the CF-5 session's written agreement**. Rename it to say what it now pins: known price, ids not Stripe-shaped, the handler refuses to write, released, 500. Replace the `bos_billing_plan_unhandled` assertion with `[]`. Re-run the per-entry hash script: 99 hashes unchanged, P3 the only diff. — High
+2. **F-2 (must)** — There is no route-level test of the registered handler's *return* path (refusal or apply → claim `completed`, 200). Add one **additive** entry (new id, Stripe-shaped ids, mocked billing read → `unknown_customer` refusal recorded). Put it in the harness (additive, so no existing hash moves; CF-5 session's agreement) or in a route test of this slice's own. — Medium
+3. Money and tenant safety checked, no defect: the account comes from the billing row (subscription, then customer, + livemode), never from metadata. The subscription is read fresh, and a cross-customer subscription is refused. Replacement happens only on `canceled`/`incomplete_expired`, and `resource_missing` leads to a refusal. Tier is checked as configured. A replay writes and audits nothing. PF-15 runs first. Q-2/Q-3/Q-4 are as ruled. The session CAS touches only this session's lock. The mirror writes only status, `cancel_at_period_end` and `ended_at`, by CAS. Count-exact, no `.select()`/`.or()`. The two Stripe-id lookups are an acceptable, documented rule-4 exception (UNIQUE id + livemode; every later write is scoped by the row's `user_id`). Paged reads throw rather than return partial pages. Route diff = import + one line. Switch OFF = zero Stripe calls (tested). Deviation 5 (`deny mixed_prices` on sessions/subscriptions) is confirmed. Deviations 1–8 are accepted.
+4. **C-6 is a merge gate, not a code-review gate.** `CAPTURED_OBJECTS` must list all five objects from T26 captures before merge. A missing field reopens Q-9.
+
+### Code Approved for QA: Yes, after F-1/F-2 (no SA re-review unless the diff goes beyond them). Merge also needs C-6 (T26 capture).
+
 ---
 
 ## QA Testing Report
@@ -665,9 +765,92 @@ Tree after QA: same `git status` and `git diff --stat` as before QA, plus this i
 
 ---
 
+**QA — 2026-10-07 (P-3b.2, webhook plan handler; SA-approved after F-1, F-2)**
+**Test mode:** full
+**Strategy used:** A + B (Jest with mocked Stripe and a recording Supabase client, real route through `planHandler.route.test.ts`), a read-only per-entry hash compare of the Connect harness against `origin/main`, and TS mutation spot-checks. No real DB, no Stripe call, no demo (TL brief).
+**Focus:** api, security, pipeline (webhook)
+**Skipped:** T26 live demo (waits on G-5 and the Stripe CLI), real DB, Stripe, browser
+**Input source:** prompt keywords
+
+### Test Coverage
+| Area | Tested? | Result | Notes |
+|---|---|---|---|
+| Price switch OFF: P-1 outcome on every new branch, zero Stripe calls | ✅ | Pass | Resolver "switch OFF" block green (default switch unset, session deny identical incl. detail, has_more stays `lines_truncated`). Each of the three switch guards (invoice CF-2, session, subscription) removed in turn: each mutation fails tests |
+| Paid invoice: account from the billing row (subscription, then customer, + livemode), never metadata | ✅ | Pass | Metadata choosing the account, or the metadata cross-check removed: both killed |
+| Currency / metadata / customer (row and fresh Stripe) cross-checks; tier configured | ✅ | Pass | One refusal row each, alert, audit when the account is known |
+| Apply called once; replay writes and audits nothing (C6-1, C-2 resent refusal) | ✅ | Pass | Both replay guards (apply and refusal) removed: killed |
+| Older invoice does not overwrite (C6-2); $0 invoice recorded (C6-5); payment_failed one row (Q-2) | ✅ | Pass | Ordering decided in the SQL function (P-3b.1 probe); handler maps `recorded` / `plan_written=false` correctly |
+| No plan row → throw (500, retry) + alert, nothing written (Q-3) | ✅ | Pass | |
+| PF-15 mode mismatch → nothing written + alert; unreadable key mode throws | ✅ | Pass | Check removed: killed |
+| Mixed prices → `deny mixed_prices` (invoice, session, subscription) | ✅ | Pass | |
+| Session completed: link + clear own lock only (CAS); held elsewhere → clear + warn, no link; expired clears only its own | ✅ | Pass | `open_checkout_session_id` filter removed from the release: killed |
+| Mirror: only status / cancel flag / ended_at, read fresh, CAS; deleted → ended_at | ✅ | Pass | Using the embedded object instead of the fresh read: killed |
+| CF-2: has_more → full fetch, paged, throws on partial | ✅ | Pass | `businessOsPlanWebhookReads.test.ts`: all three reads throw after `maxPages`; read-only source guard |
+| Route registration + return path (F-2) | ✅ | Pass | `planHandler.route.test.ts` 2/2; guard pins exactly one handler, `plan` |
+| Connect harness (F-1), run WITHOUT `-u` | ✅ | Pass | 100/100 snapshots pass. Per-entry sha256 vs `origin/main` (`d5f1efb1`; no change to the webhook, billing, Stripe or billing repository files since the branch base `90da8301`): 99 identical, only P3 differs (renamed, `failure_message: invalid_input`). Snapshot file not written by QA |
+
+### Mutation spot-checks (each file copied, mutated, restored, `cmp` identical; `git diff --stat` unchanged)
+| Mutation | Result |
+|---|---|
+| Apply replay (`already_applied`/`already_recorded`) treated as applied | Killed (2) |
+| Refusal replay guard dropped | Killed (2) |
+| Metadata `bos_user_id` chooses the account | Killed (1) |
+| Metadata cross-check removed | Killed (2) |
+| Switch-off early return removed: session / subscription / invoice CF-2 | Killed (5 / 3 / 3) |
+| Lock release without the session CAS | Killed (1) |
+| PF-15 mode check removed | Killed (2) |
+| Mirror uses the embedded subscription, not a fresh read | Killed (5) |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues
+None blocking. A truncated plan invoice has its lines read twice (router, then handler). This is documented in the code and rare.
+
+#### Edge Cases (nice to fix)
+1. The paged reads treat `has_more: true` with an empty page as complete. Stripe does not send that, but a throw would match the "never partial" rule.
+2. "Metadata chooses the account" was killed by a single test. A second assertion, for example on the refusal row's `accountId`, would make the guard less fragile.
+
+### Test Outputs / Logs
+```
+npx jest lib/business-os/billing app/api/stripe lib/repositories lib/business-os/entitlements lib/stripe --ci
+Test Suites: 147 passed, 147 total   Tests: 3427 passed   Snapshots: 107 passed
+npx jest connectPath.characterisation + planHandler.route (no -u): 104 passed, Snapshots 100 passed
+npm run test:bos-entitlements  ->  Test Suites: 204 passed   Tests: 5511 passed
+hash compare vs origin/main: 100 entries each side, 1 diff (P3)
+```
+
+### Only the demo (T26) can prove
+- **C-6 (merge gate):** every §3.7 field is present on the five captured `2025-09-30.clover` objects (`CAPTURED_OBJECTS`). A missing field reopens Q-9.
+- Real Stripe pagination for line items, session items and subscription items.
+- PF-15 against the real key's mode.
+- The `business_os_apply_plan_payment` round trip under the real grants, and the CAS writes against the real row.
+- Real event ordering and retry after a released claim (500).
+- The sandbox subscription is cancelled the same day.
+
+### Final Status
+- [x] All acceptance criteria pass — **PASS WITH NOTES**: ready for commit. Merge stays gated on C-6 (T26 capture) and on CF-5's written agreement for P3 (F-1).
+- [ ] Issues found — Dev must address before commit
+
+Tree after QA: same `git status` and `git diff --stat` as before QA, plus this insert. No test files were added.
+
+---
+
 ## Commit Info
 
-_RM populates this section._
+| Item | Value |
+|---|---|
+| Branch | `feature/bos-plan-payments-p3b2` |
+| Original commit | `5cf96a79` (on `origin/main` `90da8301`, 166 behind at rebase time) |
+| Rebased commit | `05d7ea41`, single commit on `origin/main` `e3c9789d` (PR #295); amended to `f899c74b` with the post-rebase fixes |
+| Final commit | `55a71107` (C-6 fixtures, harness copy, docs), rebased on `origin/main` `c5edc866` (PR #298), pushed as [PR #299](https://github.com/AgentsPilot/neuronforge/pull/299) |
+| Merge | PR #299 merged 2026-10-11 as `5c774539` |
+| Rebase conflicts | `route.ts` (boost 4a had registered `boost: handleBoostWebhookEvent`; both imports kept, map is `boost` + `plan`), requirement Change History (both sides kept), `enforcementPoints.test.ts` (finance slice 1a entries and the P-3b.2 entries both kept). All mechanical |
+| Post-rebase test fixes (folded in) | `routerPlacement.guard.test.ts`: the handler-map assertion now expects `boost` and `plan`. `boostRouting.integration.test.ts`: the plan `invoice.paid` scenario pinned "no handler until P-3b.2"; it now mocks the plan handler (its behaviour is `planHandler.route.test.ts`) and asserts routing only: boost resolver reads nothing, the plan handler receives the event once, the legacy path does not run; no status pinned (SA post-rebase review, 2026-10-11; mutation `plan: handleBoostWebhookEvent` fails it) |
+| Connect harness | 103 entries on both sides; 102 entry hashes identical to `origin/main`, only P3 differs (re-recorded, CF-5 agreement) |
+
 
 ---
 
@@ -679,3 +862,9 @@ _RM populates this section._
 | 2026-10-07 | P-3b.1 implemented (Dev) | Migration 20261027 + pre-check, checker, probe P00 to P15 and rollback (all run on a local PGlite), static test, money history repository, `planWriteChecks.ts`, `recordPlanChange.ts` with the admin route on it (`routes.test.ts` unedited and green), PF-13 in `adminOps.ts`, registrations, audit events, docs and requirement rulings (C-7). **C-8 stop:** the PF-13 route wiring needed one added mock in `routes.test.ts`; SA approved it (C-8 ruling), so the suite is unedited except the one SA-approved mock (C-8 ruling). Uncommitted |
 | 2026-10-07 | SA fixes F-1 to F-3 applied (Dev) | F-1: on a replacement the apply function sets `cancel_at_period_end = false`; checker md5 updated (`7ac579a49380b170e1ba3ac42d512820`), pre-check grant list 8 to 9 columns, probe P12 asserts the cleared flag, static test pins it. All five SQL files re-run on PGlite: pre-check PASS (FAIL after, as designed), checker PASS 16/0 and FAIL on the four sabotages, probe PASS P01 to P15 with and without an existing row, six mutations (the new F-1 one included) each FAIL, rollback drops and refuses with a live row. F-2: the one additive billing-repository mock in `routes.test.ts` (13 lines added, 0 removed, the T11b.1 block byte-identical). F-3: the "unedited" statements now read "unedited except the one SA-approved mock (C-8 ruling)"; §3.4 says both modes |
 | 2026-10-07 | QA notes closed (Dev) | QA Bug 1: `lib/business-os/purge/__tests__/hasLivePlanSubscription.test.ts` (9 tests: both modes read, live-mode alone true, test-mode alone true, not-ended true, ended false, no row false, no subscription false, a failed read in either mode null); bite check: reading test mode only fails 3 tests, file restored byte-identical (cmp). Added to the billing repository caller guard. Pre-check VERDICT detail now says to run the migration only on PASS and "do not run the migration" on FAIL (PGlite: PASS before, FAIL after); static test pins it. Jest scope 456 suites 10484 passed 0 failed; `test:bos-entitlements` 202 suites 5443 passed |
+| 2026-10-07 | P-3b.2 implemented (Dev) | Branch `feature/bos-plan-payments-p3b2` from `origin/main` `90da8301`. T14–T25 and T27: three StripeService reads, five billing repository methods, `planInvoiceFacts`, resolver (CF-2, sessions, subscriptions, switch-off identity with zero Stripe calls), `planPaymentApply` (paid + failed), session events, subscription mirror, `planBillingHandler` with PF-15 first, the one-line route registration, guard lists, entitlements non-gate entries, ten fixtures (six new), the C-6 field checker with a captured-fixture ratchet, docs. Jest scope (`lib/business-os/billing app/api/stripe lib/repositories lib/business-os/entitlements`): 141 suites, 3377 passed, **1 failed: Connect harness P3, which pins "no handler yet" (STOP, notes item 1; snapshot file not written, 100/100 entry hashes equal to main)**; `lib/stripe` green; `test:bos-entitlements` 204 suites 5511 passed; eslint 0 errors; `tsc --noEmit` 0 errors. T26 demo not run (waits on G-5 and the Stripe CLI); runbook written. C-6 open until the demo. Uncommitted |
+| 2026-10-07 | SA F-2 done (Dev) | New `app/api/stripe/webhook/__tests__/planHandler.route.test.ts` (this slice's own, not the CF-5 harness): the REAL route, dispatcher, resolver, plan handler, apply use case and both billing repositories on a recording Supabase client; a recognised plan `invoice.paid` with Stripe-shaped ids and no billing record → one `mismatch_refused` / `unknown_customer` row with `user_id` NULL, alert, claim `completed`, 200; a redelivery (event-id 23505) → replayed, still completed, 200. 2 tests; bite check: with the registration removed both fail (route.ts restored byte-identical, `cmp`). Scope run: 147 suites, 3426 passed, 1 failed (harness P3, awaits F-1 and the CF-5 written agreement); `test:bos-entitlements` 204 / 5511 passed; snapshot file untouched, 100/100 hashes equal to main. F-1 not started |
+| 2026-10-07 | QA hardening (Dev) | (1) `StripeService` paged reads (`retrieveBusinessOsSubscription` items, `listInvoiceLinesAll`, `listCheckoutSessionPriceIds`) now THROW when a page says `has_more: true` but carries no data (fail closed; previously treated as complete); an empty last page is still complete. 4 tests in `businessOsPlanWebhookReads.test.ts`. P-3a's `listCustomerSubscriptions` keeps its existing rule (out of this slice). (2) Four tests in `planPaymentApply.test.ts` that metadata never chooses the account: metadata names B while the billing row (by subscription, or by customer) is A → refused under A, no lookup/apply/history/audit ever names B; metadata only with no billing row (B holds another customer) → `unknown_customer` with no account; the same for a failed payment. Scope run 147 suites 3435 passed 0 failed; `test:bos-entitlements` 204 / 5511; Connect harness 102 tests, 100/100 snapshots passed with no `-u`; eslint 0 errors; `tsc` 0 errors |
+| 2026-10-07 | P-3a list fails closed (Dev, TL request) | `StripeService.listCustomerSubscriptions` (P-3a layer 1b): a page with `has_more: true` and no data now answers `complete: false` instead of `complete: true`; an empty last page is still complete. It fails closed through the method's own `complete` flag, not a throw, because `planCheckout` maps `complete: false` to `subscription_check_incomplete` (503, pinned by `planCheckout.test.ts` l. 438 and `planCheckout.qa.test.ts` l. 270/310), whereas a throw there maps to `stripe_error` (502). No change to `planCheckout.ts`. 1 test in `lib/stripe/__tests__/businessOsPlanCheckout.test.ts`. Scope run (plus `app/api/business-os/billing`): 148 suites 3471 passed, 107 snapshots; `test:bos-entitlements` 204 / 5511 |
+| 2026-10-11 | T26 recorded, C-6 closed (Dev) | Demo run 1 (2026-10-09) and the user's plan-switch confirmation (2026-10-11) recorded; endpoint `we_1UNG3L56GTXD0wwiKUsZn8DU` pause window and the cancellation of `sub_1UOayP56GTXD0wwiRAo7opmW` recorded. Five captured `2025-09-30.clover` fixtures added (scrubbed); `CAPTURED_OBJECTS` lists all five; every §3.7 field present. One read-only Stripe GET (checkout session line items). Harness Billing panel copy now says paying switches the plan. Live re-check moves to the user's "Stripe test account setup" session. Uncommitted |
+| 2026-10-11 | P-3b.2 merged (TL) | Status line and Commit Info: final commit `55a71107` on `c5edc866`, PR #299 merged as `5c774539`. |

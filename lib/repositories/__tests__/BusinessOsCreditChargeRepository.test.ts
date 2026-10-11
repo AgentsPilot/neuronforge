@@ -318,6 +318,10 @@ describe('guardrail: the AI charge recorder is the only production caller (3b-ii
       'lib/business-os/llm/aiChargeRecorder.ts',
       'lib/business-os/llm/__tests__/aiChargeRecorder.test.ts',
       'lib/business-os/llm/__tests__/aiActionAudit.test.ts',
+      // TEST ONLY: remove with the harness tab. Slice TC-1 (SA ruling 1): the
+      // admin test route that takes plan credits, and its suite.
+      'app/api/admin/business-os/test/take-credits/route.ts',
+      'app/api/admin/business-os/test/take-credits/__tests__/route.test.ts',
     ].map((p) => p.split('/').join(sep))
   );
 

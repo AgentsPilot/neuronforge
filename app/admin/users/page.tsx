@@ -1,42 +1,56 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Search,
-  RefreshCw,
-  Eye,
-  Filter,
-  Calendar,
   Clock,
   TrendingUp,
   Users as UsersIcon,
-  Activity,
-  AlertCircle,
   CheckCircle,
-  X,
   Phone,
   Building,
   Shield,
-  Database,
   AlertTriangle,
   MapPin,
   XCircle,
   LogIn,
   Settings,
-  Lock,
   FileText,
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import {
+  AdminFilterBar,
+  ADMIN_FIELD_CONTROL,
+  ADMIN_FIELD_LABEL,
+} from '@/app/admin/components/layout/AdminFilterBar';
+import { AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
+import {
+  ADMIN_BUTTON,
+  ADMIN_COUNT_LINE,
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TD_ID,
+  ADMIN_TH,
+  ADMIN_THEAD,
+  formatShortId,
+} from '@/app/admin/components/layout/adminTable';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
+import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 import { BusinessOsPanel } from './components/BusinessOsPanel';
+import { BusinessesKpis } from './components/BusinessesKpis';
 import { UserNameLine } from './components/UserNameLine';
 import { CreditsLeftCell } from './components/CreditsLeftCell';
 import { DeleteBusinessDialog } from './components/DeleteBusinessDialog';
 import { TestAccountCleanupPanel } from '@/components/business-os/purge/TestAccountCleanupPanel';
-import { countLabels, toStatusFilter, type StatusFilter } from './userName';
+import { rowToggleName, toStatusFilter, type StatusFilter } from './userName';
+import { USERS_FILTER_SPEC, USERS_WHAT } from './usersFilters';
 import type { RowBusiness, RowCreditsLeft } from './types';
 
 const logger = createLogger({ module: 'AdminUsersPage' });
@@ -74,6 +88,46 @@ function businessLabel(user: User): { text: string; muted: boolean } {
   if (user.business === undefined) return { text: 'Business unknown', muted: true };
   if (user.business === null) return { text: 'No Business OS business', muted: true };
   return { text: user.business.companyName || 'Unnamed business', muted: !user.business.companyName };
+}
+
+/** FR-BU4: the list is every login, not only Business OS businesses. The header's purpose line. */
+const PURPOSE = 'Every login on the platform. Logins with no business show "No Business OS business".';
+
+/** The list route answers 100 rows at most on screen; the rest are counted (F-27 stays open). */
+const LIST_ROW_CAP = 100;
+
+const SEARCH_DEBOUNCE_MS = 300;
+
+const MS_PER_HOUR = 3_600_000;
+
+/**
+ * The age line under a list timestamp (§5.11: relative time only as a
+ * secondary hint under the UTC time; L-4a SA M-3). List cells only: always a
+ * relative age, never a locale date. `formatDate` (below) stays as it was for
+ * the row detail, which L-4b owns.
+ */
+function listAge(iso: string): string {
+  const time = new Date(iso).getTime();
+  if (Number.isNaN(time)) return '';
+  const hours = Math.floor((Date.now() - time) / MS_PER_HOUR);
+  if (hours < 1) return 'Just now';
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+/** "1 user" / "N users", or the capped sentence (§5.7 Count line). */
+function countLine(shown: number): string {
+  if (shown > LIST_ROW_CAP) {
+    return `Showing the first ${LIST_ROW_CAP} of ${shown.toLocaleString('en-US')} users, newest first. Narrow the list with the search or the status.`;
+  }
+  return `${shown.toLocaleString('en-US')} ${shown === 1 ? 'user' : 'users'}`;
+}
+
+/** What the list route returns besides the rows (it answers at the top level, not under `data`). */
+interface ListRead {
+  rows: User[];
+  stats: UserStats | null;
+  search: SearchInfo | null;
 }
 
 interface UserLoginStats {
@@ -139,7 +193,11 @@ export default function UsersPage() {
   // business-name search, or one that failed, is stated, never hidden.
   const [searchInfo, setSearchInfo] = useState<SearchInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  /** A list read has succeeded since the last failure: tiles and table show (K-10, §5.10). */
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** When the list was last read successfully: the bar's "Read at HH:mm UTC". */
+  const [readAt, setReadAt] = useState<string | null>(null);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   /** The account whose read-only deletion preview is open (admin delete AD-1c). */
   const [deleteDialogUserId, setDeleteDialogUserId] = useState<string | null>(null);
@@ -149,89 +207,169 @@ export default function UsersPage() {
   const [loadingUserDetails, setLoadingUserDetails] = useState<Record<string, boolean>>({});
   // Opens on active logins (user feedback on slice 2 check M-2, 2026-09-26).
   // The list route already accepts status=active; its own default stays 'all'.
-  const [filter, setFilter] = useState<StatusFilter>('active');
+  // L-4a: the status lives in the URL (`?status=`, default omitted, §5.6); the
+  // search text stays page state and never reaches the URL (D-6 (a)).
+  const { filters, setFilters, clear, isDefault, hrefFor } = useAdminFilters(USERS_FILTER_SPEC);
+  const filter: StatusFilter = toStatusFilter(filters.status);
   const [searchTerm, setSearchTerm] = useState('');
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [auditFilters, setAuditFilters] = useState<Record<string, 'all' | 'login' | 'security' | 'settings'>>({});
 
-  useEffect(() => {
-    fetchUsers();
-  }, [filter]);
+  const searchId = useId();
+  const statusId = useId();
+  /** Always mounted, so focus has a connected place to land (§5.12 A-3). */
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  /** Newest read wins (§5.10; SA M-5): only the read holding the latest number may set read state. */
+  const readSeq = useRef(0);
+  /** The search text of the last read STARTED, whoever started it (SA M-1, D-16). */
+  const lastSearched = useRef<string | null>(null);
+  /** Focus was inside the content area when the newest read started (SA Q-14, S-5). */
+  const focusWasInside = useRef(false);
+  /** Bumped when the newest read settles; the focus fallback runs after that commit (S-5). */
+  const [settledReads, setSettledReads] = useState(0);
+  /**
+   * What the next read asks for. A ref, so `fetchUsers` keeps one identity and
+   * its callers (the detail's `onRemoved` / `onDeleted`, Refresh, Try again)
+   * always read the current status and search.
+   */
+  const query = useRef<{ status: StatusFilter; search: string }>({ status: filter, search: searchTerm });
 
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (searchTerm !== '') {
-        fetchUsers();
-      }
-    }, 300);
+  const fetchUsers = useCallback(async () => {
+    const { status, search } = query.current;
+    readSeq.current += 1;
+    const seq = readSeq.current;
+    const isNewest = () => seq === readSeq.current;
+    lastSearched.current = search;
+    const active = typeof document === 'undefined' ? null : document.activeElement;
+    focusWasInside.current = Boolean(active && contentRef.current?.contains(active));
 
-    return () => clearTimeout(timeoutId);
-  }, [searchTerm]);
+    setLoading(true);
+    setError(null);
 
-  const fetchUsers = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const queryParams = new URLSearchParams({
-        status: filter,  // Backend expects 'status' not 'filter'
-        search: searchTerm
-      });
-
-      // Facts only: the search text may be a person's name or email (QA E-3).
-      logger.debug({ status: filter, hasSearch: searchTerm.trim() !== '', searchLength: searchTerm.length }, 'Fetching admin users');
-
-      const response = await fetch(`/api/admin/users?${queryParams}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        cache: 'no-store'
-      });
-
-      logger.debug({ status: response.status, ok: response.ok }, 'Admin users response');
-
-      if (!response.ok) {
-        let errorMessage = 'Failed to fetch users';
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error || errorData.message || errorMessage;
-        } catch (e) {
-          errorMessage = response.statusText || errorMessage;
-        }
-        throw new Error(errorMessage);
-      }
-
-      const result = await response.json();
-      // Counts only: the raw body holds every login's name and email (SA C-15 (b)).
-      logger.debug(
-        { success: result?.success === true, rows: Array.isArray(result?.data) ? result.data.length : 0 },
-        'Admin users response parsed'
-      );
-
-      if (!result.success) {
-        throw new Error(result.error || 'API returned unsuccessful response');
-      }
-
-      setUsers(result.data || []);
-      setStats(result.stats || null);
-      setSearchInfo(result.search || null);
-
-      logger.debug(
-        { totalUsers: result.data?.length || 0 },
-        'Processed admin users data'
-      );
-
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to fetch admin users');
-      setError(error instanceof Error ? error.message : 'Unknown error occurred');
+    const fail = (message: string) => {
+      setError(message);
       setUsers([]);
       setStats(null);
       setSearchInfo(null);
+      setHasLoaded(false);
+    };
+
+    try {
+      const queryParams = new URLSearchParams({
+        status,  // Backend expects 'status' not 'filter'
+        search
+      });
+
+      // Facts only: the search text may be a person's name or email (QA E-3).
+      logger.debug({ status, hasSearch: search.trim() !== '', searchLength: search.length }, 'Fetching admin users');
+
+      // Only the fetch sits inside this try: a rejection here is a network
+      // failure; nothing else may be labelled as one.
+      let response: Response;
+      try {
+        response = await fetch(`/api/admin/users?${queryParams}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store'
+        });
+      } catch (err) {
+        logger.error({ err }, 'Failed to fetch admin users');
+        if (isNewest()) fail(ADMIN_NETWORK_ERROR);
+        return;
+      }
+
+      logger.debug({ status: response.status, ok: response.ok }, 'Admin users response');
+
+      // §5.10 (C-4): the route's own error, else the fixed copy; never a parser
+      // message or statusText. 401 / 403 read "session ended" (SA Q-13).
+      const result = await readAdminResponse<ListRead>(response, {
+        what: USERS_WHAT,
+        sessionEndedCopy: true,
+        pick: (body) => ({
+          rows: Array.isArray(body.data) ? (body.data as User[]) : [],
+          stats: (body.stats as UserStats | undefined) ?? null,
+          search: (body.search as SearchInfo | undefined) ?? null,
+        }),
+      });
+      // Counts only: the raw body holds every login's name and email (SA C-15 (b)).
+      logger.debug(
+        { success: result.ok, rows: result.ok ? result.data.rows.length : 0 },
+        'Admin users response parsed'
+      );
+
+      // An older read that lands after a newer one started changes nothing (SA M-5).
+      if (!isNewest()) return;
+
+      if (!result.ok) {
+        logger.error({ status: result.status }, 'Failed to fetch admin users');
+        fail(result.message);
+        return;
+      }
+
+      setUsers(result.data.rows);
+      setStats(result.data.stats);
+      setSearchInfo(result.data.search);
+      setHasLoaded(true);
+      setReadAt(new Date().toISOString());
+
+      logger.debug(
+        { totalUsers: result.data.rows.length },
+        'Processed admin users data'
+      );
     } finally {
-      setLoading(false);
+      if (isNewest()) {
+        setLoading(false);
+        setSettledReads((n) => n + 1);
+      }
     }
+  }, []);
+
+  // Declared before the reads below, so they see this render's status and search.
+  useEffect(() => {
+    query.current = { status: filter, search: searchTerm };
+  }, [filter, searchTerm]);
+
+  useEffect(() => {
+    void fetchUsers();
+  }, [filter, fetchUsers]);
+
+  // D-16 / SA M-1: after the pause, read when, and only when, the text differs
+  // from the text of the last read started. That covers an emptied box (the
+  // list shows everyone again), skips the mount (the first read sent ''), and
+  // skips a second read when the status changed inside the pause.
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchTerm !== lastSearched.current) {
+        void fetchUsers();
+      }
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, fetchUsers]);
+
+  // §5.12 A-3 (SA Q-14, S-5): when the newest read settles, focus that was
+  // inside the content area and fell to <body> with the old content (Try again,
+  // the cleanup panel's Done) goes to the content area. A read started from the
+  // bar never moves focus. After commit, because the old content leaves only then.
+  useEffect(() => {
+    if (!focusWasInside.current) return;
+    focusWasInside.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body) contentRef.current?.focus();
+  }, [settledReads]);
+
+  /** §5.5 part 5: back to the defaults (Active, empty search). Exactly one read follows (SA M-1). */
+  const clearAll = () => {
+    clear();
+    setSearchTerm('');
   };
+
+  /** A status tile: its real link (S-3: the path plus `hrefFor`) and the same patch in place. */
+  const statusTile = (status: StatusFilter) => ({
+    href: `/admin/users${hrefFor({ status })}`,
+    apply: () => setFilters({ status }),
+  });
 
   const getFilteredUsers = () => {
     let filtered = users;
@@ -430,296 +568,153 @@ export default function UsersPage() {
    */
 
 
-  // Error Display Component
-  const ErrorDisplay = ({ error, onRetry }: { error: string; onRetry: () => void }) => (
-    <div className="flex flex-col items-center justify-center p-8 text-center">
-      <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
-        <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-red-100 rounded-full">
-          <AlertCircle className="w-6 h-6 text-red-600" />
-        </div>
-        <h3 className="text-lg font-semibold text-red-800 mb-2">Failed to Load Users</h3>
-        <p className="text-red-600 mb-4">{error}</p>
-        <button
-          onClick={onRetry}
-          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-        >
-          Try Again
-        </button>
-      </div>
-    </div>
-  );
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return <ErrorDisplay error={error} onRetry={fetchUsers} />;
-  }
-
   const filteredUsers = getFilteredUsers();
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <header className="flex items-center justify-between border-b border-slate-700 pb-4">
-        <div className="flex items-center gap-4">
-          <div>
-            <h1 className="text-xl font-semibold text-white">Businesses</h1>
-            {/* FR-BU4: the list is every login, not only Business OS businesses. */}
-            <p data-testid="list-scope-note" className="text-sm text-slate-400">
-              Every login on the platform. Logins with no business show &quot;No Business OS business&quot;.
+      <AdminPageHeader title="Businesses" purpose={PURPOSE} />
+
+      {!error && (
+        <BusinessesKpis stats={stats} status={filter} firstLoad={!hasLoaded} statusTile={statusTile} />
+      )}
+
+      <AdminFilterBar
+        what={USERS_WHAT}
+        busy={loading}
+        onRefresh={() => void fetchUsers()}
+        readAt={readAt}
+        onClear={clearAll}
+        canClear={!isDefault || searchTerm !== ''}
+      >
+        <div className="w-full sm:w-72">
+          <label htmlFor={searchId} className={ADMIN_FIELD_LABEL}>
+            Search
+          </label>
+          <input
+            id={searchId}
+            type="text"
+            placeholder="Search users by name, email, company..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className={`${ADMIN_FIELD_CONTROL} w-full`}
+          />
+        </div>
+        <div>
+          <label htmlFor={statusId} className={ADMIN_FIELD_LABEL}>
+            Status
+          </label>
+          <select
+            id={statusId}
+            value={filter}
+            onChange={(e) => setFilters({ status: toStatusFilter(e.target.value) })}
+            className={ADMIN_FIELD_CONTROL}
+          >
+            <option value="all">All Users</option>
+            <option value="active">Active (30 days)</option>
+            <option value="inactive">Inactive (30+ days)</option>
+          </select>
+        </div>
+      </AdminFilterBar>
+
+      {/* Always mounted (§5.10, F-19): a read never unmounts the header, the
+          bar or the search box, and an open row stays open across a read
+          (L-4a §2.5, SA Q-2). */}
+      <div
+        ref={contentRef}
+        tabIndex={-1}
+        aria-busy={loading}
+        data-testid="users-content"
+        className="space-y-4 focus:outline-none"
+      >
+        {error && <AdminError message={error} testId="users-error" onRetry={() => void fetchUsers()} />}
+        {!error && !hasLoaded && <AdminLoading what={USERS_WHAT} />}
+
+        {!error && hasLoaded && (
+          <>
+            {searchInfo?.businessMatchesCapped && (
+              <AdminNotice testId="business-search-capped">
+                More than {searchInfo.businessMatchLimit} businesses match this search; only the first{' '}
+                {searchInfo.businessMatchLimit} by name are included. Refine the search to see the rest.
+              </AdminNotice>
+            )}
+            {searchInfo?.businessSearch === 'failed' && (
+              <AdminNotice testId="business-search-failed">
+                Business names could not be searched just now; these results match people only.
+              </AdminNotice>
+            )}
+
+            <p data-testid="users-count-line" className={ADMIN_COUNT_LINE}>
+              {countLine(filteredUsers.length)}
             </p>
-          </div>
-          {stats && (
-            <>
-              <span data-testid="count-pill" className="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">
-                {stats.totalUsers} {countLabels(filter).pill}
-              </span>
-              <span className="text-xs px-2 py-1 rounded bg-green-500/20 text-green-400">
-                {stats.activeUsers} active
-              </span>
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-            className="px-3 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2"
-          >
-            <Filter className="w-4 h-4" />
-            {showAdvancedFilters ? 'Hide Filters' : 'Filters'}
-          </button>
-          <button
-            onClick={fetchUsers}
-            className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
-          >
-            <RefreshCw className="w-5 h-5 text-slate-400" />
-          </button>
-        </div>
-      </header>
 
-      {/* Stats Cards */}
-      {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-slate-800 border border-blue-500/30 rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <UsersIcon className="w-5 h-5 text-blue-400" />
-              <h3 data-testid="count-card-label" className="text-sm font-medium text-white">
-                {countLabels(filter).card}
-              </h3>
-            </div>
-            <p className="text-2xl font-bold text-white">{formatNumber(stats.totalUsers)}</p>
-          </div>
-
-          <div className="bg-slate-800 border border-green-500/30 rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <Activity className="w-5 h-5 text-green-400" />
-              <h3 className="text-sm font-medium text-white">Active Users</h3>
-            </div>
-            <p className="text-2xl font-bold text-white">{formatNumber(stats.activeUsers)}</p>
-            <p className="text-xs text-slate-400 mt-1">Last 30 days</p>
-          </div>
-
-          <div className="bg-slate-800 border border-purple-500/30 rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <TrendingUp className="w-5 h-5 text-purple-400" />
-              <h3 className="text-sm font-medium text-white">New Today</h3>
-            </div>
-            <p className="text-2xl font-bold text-white">{formatNumber(stats.newUsersToday)}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Filters & Search */}
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2 bg-slate-700/50 rounded-lg px-3 py-2 min-w-[300px]">
-              <Search className="w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search users by name, email, company..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="bg-transparent text-white placeholder-slate-400 text-sm focus:outline-none flex-1"
-              />
-            </div>
-
-            <select
-              value={filter}
-              onChange={(e) => setFilter(toStatusFilter(e.target.value))}
-              className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
-            >
-              <option value="all">All Users</option>
-              <option value="active">Active (30 days)</option>
-              <option value="inactive">Inactive (30+ days)</option>
-            </select>
-          </div>
-
-          {/* Advanced Filters Panel */}
-          {showAdvancedFilters && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="pt-4 border-t border-slate-700"
-            >
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Email Verified</label>
-                  <select
-                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
-                    defaultValue="all"
-                  >
-                    <option value="all">All</option>
-                    <option value="verified">Verified Only</option>
-                    <option value="unverified">Unverified Only</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Auth Provider</label>
-                  <select
-                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
-                    defaultValue="all"
-                  >
-                    <option value="all">All Providers</option>
-                    <option value="email">Email</option>
-                    <option value="google">Google</option>
-                    <option value="github">GitHub</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Joined Date</label>
-                  <select
-                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
-                    defaultValue="all"
-                  >
-                    <option value="all">Any Time</option>
-                    <option value="today">Today</option>
-                    <option value="week">This Week</option>
-                    <option value="month">This Month</option>
-                    <option value="quarter">Last 3 Months</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Has Agents</label>
-                  <select
-                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
-                    defaultValue="all"
-                  >
-                    <option value="all">All</option>
-                    <option value="yes">With Agents</option>
-                    <option value="no">Without Agents</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex justify-end gap-2 mt-4">
-                <button
-                  onClick={() => setShowAdvancedFilters(false)}
-                  className="px-3 py-1 text-sm text-slate-400 hover:text-white transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    // TODO: Apply advanced filters
-                    fetchUsers();
-                  }}
-                  className="px-4 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Apply Filters
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </div>
-      </div>
-
-      {searchInfo?.businessMatchesCapped && (
-        <p data-testid="business-search-capped" className="text-sm text-amber-300">
-          More than {searchInfo.businessMatchLimit} businesses match this search; only the first{' '}
-          {searchInfo.businessMatchLimit} by name are included. Refine the search to see the rest.
-        </p>
-      )}
-      {searchInfo?.businessSearch === 'failed' && (
-        <p data-testid="business-search-failed" className="text-sm text-amber-300">
-          Business names could not be searched just now; these results match people only.
-        </p>
-      )}
-
-      {/* Users Table */}
-      <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-900/50">
-              <tr className="text-left text-xs text-slate-400 uppercase tracking-wider">
-                <th className="px-4 py-3 font-medium">Business / user</th>
-                <th className="px-4 py-3 font-medium">Credits left</th>
-                <th className="px-4 py-3 font-medium">Contact</th>
+            {/* Users Table. The table keeps its old indentation so the row
+                detail below (L-4b) shows no diff at all. */}
+            <div className={ADMIN_TABLE_WRAP}>
+          <table className={ADMIN_TABLE}>
+            <thead className={ADMIN_THEAD}>
+              <tr>
+                <th scope="col" className={ADMIN_TH}>Business / user</th>
+                <th scope="col" className={ADMIN_TH}>Credits left</th>
+                <th scope="col" className={ADMIN_TH}>Contact</th>
                 {/* No status/role column (U-9, 2026-09-26): the Active badge sits
                     beside the name, and the Supabase sign-in role it would have
                     held is not an admin indicator (admins: admin_users only). */}
-                <th className="px-4 py-3 font-medium">Login Activity</th>
-                <th className="px-4 py-3 font-medium">Last Sign In</th>
-                <th className="px-4 py-3 font-medium">Joined</th>
-                <th className="px-4 py-3 font-medium">Actions</th>
+                <th scope="col" className={ADMIN_TH}>Login Activity</th>
+                <th scope="col" className={ADMIN_TH}>Last Sign In</th>
+                <th scope="col" className={ADMIN_TH}>Joined</th>
+                <th scope="col" className={ADMIN_TH}>Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/50">
+            <tbody className={ADMIN_TBODY}>
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
-                    <Database className="w-12 h-12 mx-auto mb-4 text-slate-600" />
+                  <td colSpan={7} className="px-3 py-8 text-center">
                     {searchTerm.trim() !== '' && filter !== 'all' ? (
                       <>
                         {/* U-4: never widen a search silently; offer it in one click. */}
-                        <p data-testid="no-match-filtered" className="text-lg font-medium">
+                        <p data-testid="no-match-filtered" className="text-sm text-slate-200">
                           No match among {filter} users
                         </p>
                         <button
                           type="button"
                           data-testid="search-all-users"
-                          onClick={() => setFilter('all')}
-                          className="mt-3 px-4 py-1.5 text-sm bg-slate-700 border border-slate-600 rounded-lg text-white hover:bg-slate-600 transition-colors"
+                          onClick={() => setFilters({ status: 'all' })}
+                          className={`mt-4 ${ADMIN_BUTTON}`}
                         >
                           Search all users
                         </button>
                       </>
                     ) : (
                       <>
-                        <p className="text-lg font-medium">No users found</p>
-                        <p className="text-sm">Try adjusting your search or filter criteria</p>
+                        <p className="text-sm text-slate-200">No users found</p>
+                        <p className="mt-1 text-xs text-slate-400">Try adjusting your search or filter criteria</p>
                       </>
                     )}
                   </td>
                 </tr>
               ) : (
-                filteredUsers.slice(0, 100).map((user) => {
+                filteredUsers.slice(0, LIST_ROW_CAP).map((user) => {
                   const isExpanded = expandedUserId === user.id;
                   const stats = userLoginStats[user.id];
                   const detailedStats = userDetailedStats[user.id];
                   const isLoading = loadingUserDetails[user.id];
+                  const toggleName = rowToggleName(user.full_name, user.email);
 
                   return (
                     <React.Fragment key={user.id}>
                       {/* Main User Row */}
                       <tr
-                        className={`hover:bg-slate-700/30 transition-all cursor-pointer ${
+                        className={`hover:bg-slate-700/30 transition-colors cursor-pointer ${
                           isExpanded ? 'bg-slate-700/20' : ''
                         }`}
                         onClick={() => handleViewUserDetails(user)}
                       >
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
+                        <td className={ADMIN_TD}>
+                          <div className="flex items-start gap-3">
                             {isExpanded ? (
-                              <ChevronDown className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                              <ChevronDown className="mt-0.5 w-4 h-4 text-blue-400 flex-shrink-0" aria-hidden="true" />
                             ) : (
-                              <ChevronUp className="w-4 h-4 text-slate-500 flex-shrink-0 rotate-180" />
+                              <ChevronUp className="mt-0.5 w-4 h-4 text-slate-400 flex-shrink-0 rotate-180" aria-hidden="true" />
                             )}
                             <div>
                               {/* Business name and user name together (user decision, 2026-09-25). */}
@@ -735,45 +730,47 @@ export default function UsersPage() {
                                 emailConfirmed={user.email_confirmed}
                                 isActive={isActiveUser(user)}
                               />
-                              <p className="text-xs text-slate-500 font-mono mt-1">{user.id.slice(0, 8)}...</p>
+                              <p data-testid="row-short-id" className={`mt-1 ${ADMIN_TD_ID}`} title={user.id}>
+                                {formatShortId(user.id)}
+                              </p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-4 whitespace-nowrap">
+                        <td className={`${ADMIN_TD} whitespace-nowrap`}>
                           <CreditsLeftCell business={user.business} creditsLeft={user.creditsLeft} />
                         </td>
-                        <td className="px-6 py-4">
+                        <td className={ADMIN_TD}>
                           <div className="space-y-1">
                             {user.company && (
                               <p className="text-xs text-slate-400 flex items-center gap-1">
-                                <Building className="w-3 h-3" />
+                                <Building className="w-3 h-3" aria-hidden="true" />
                                 {user.company}
                               </p>
                             )}
                             {user.phone && (
                               <p className="text-xs text-slate-400 flex items-center gap-1">
-                                <Phone className="w-3 h-3" />
+                                <Phone className="w-3 h-3" aria-hidden="true" />
                                 {user.phone}
                               </p>
                             )}
                             {!user.company && !user.phone && (
-                              <p className="text-xs text-slate-500">No contact info</p>
+                              <p className="text-xs text-slate-400">No contact info</p>
                             )}
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className={ADMIN_TD}>
                           {stats ? (
                             <div className="space-y-1">
                               <div className="flex items-center gap-2 text-xs">
-                                <CheckCircle className="w-3 h-3 text-green-400" />
+                                <CheckCircle className="w-3 h-3 text-green-400" aria-hidden="true" />
                                 <span className="text-green-300 font-medium">{stats.total_logins}</span>
-                                <span className="text-slate-500">logins</span>
+                                <span className="text-slate-400">logins</span>
                               </div>
                               {stats.failed_logins > 0 && (
                                 <div className="flex items-center gap-2 text-xs">
-                                  <XCircle className="w-3 h-3 text-red-400" />
+                                  <XCircle className="w-3 h-3 text-red-400" aria-hidden="true" />
                                   <span className="text-red-300 font-medium">{stats.failed_logins}</span>
-                                  <span className="text-slate-500">failed</span>
+                                  <span className="text-slate-400">failed</span>
                                 </div>
                               )}
                             </div>
@@ -783,31 +780,40 @@ export default function UsersPage() {
                             </div>
                           )}
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-400">
-                          <div className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {formatDate(user.last_sign_in_at || '')}
-                          </div>
+                        {/* §5.11 (SA Q-9, M-3): the UTC time, with the age as a second line. */}
+                        <td className={`${ADMIN_TD} whitespace-nowrap`} data-testid="row-last-sign-in">
+                          {user.last_sign_in_at ? (
+                            <>
+                              <span className="block">{formatUtc(user.last_sign_in_at)}</span>
+                              <span className="block text-xs text-slate-400">{listAge(user.last_sign_in_at)}</span>
+                            </>
+                          ) : (
+                            'Never'
+                          )}
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-400">
-                          <div className="flex items-center gap-1">
-                            <Calendar className="w-3 h-3" />
-                            {formatDate(user.created_at)}
-                          </div>
+                        <td className={`${ADMIN_TD} whitespace-nowrap`} data-testid="row-joined">
+                          <span className="block">{formatUtc(user.created_at)}</span>
+                          <span className="block text-xs text-slate-400">{listAge(user.created_at)}</span>
                         </td>
-                        <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleViewUserDetails(user);
-                              }}
-                              className="text-blue-400 hover:text-blue-300 p-1 rounded hover:bg-blue-500/20 transition-colors"
-                              title="Toggle details"
-                            >
-                              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                            </button>
-                          </div>
+                        <td className={ADMIN_TD} onClick={(e) => e.stopPropagation()}>
+                          {/* A-2: a named toggle that says whether the detail is open. */}
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            aria-label={`${isExpanded ? 'Hide' : 'Show'} details for ${toggleName}`}
+                            data-testid="row-toggle"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewUserDetails(user);
+                            }}
+                            className="text-blue-400 hover:text-blue-300 p-1 rounded hover:bg-blue-500/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+                          >
+                            {isExpanded ? (
+                              <ChevronUp className="w-4 h-4" aria-hidden="true" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4" aria-hidden="true" />
+                            )}
+                          </button>
                         </td>
                       </tr>
 
@@ -1234,18 +1240,10 @@ export default function UsersPage() {
               )}
             </tbody>
           </table>
-        </div>
-
-        {filteredUsers.length > 100 && (
-          <div className="px-6 py-3 bg-slate-700/30 border-t border-slate-600">
-            <p className="text-sm text-slate-400">
-              Showing first 100 of {filteredUsers.length} users. Use filters to narrow results.
-            </p>
-          </div>
+            </div>
+          </>
         )}
       </div>
-
-
     </div>
   );
 }

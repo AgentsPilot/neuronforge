@@ -403,8 +403,15 @@ describe('source rules', () => {
 
   it('only the listed files name the repository', () => {
     const ALLOWED = [
-      // P-3b.1 ships the repository with no caller. P-3b.2 adds the webhook
-      // use case (planPaymentApply.ts) here, in its own review.
+      // Not a caller: the P1-C6 / M-1 placement guard names this repository's
+      // module path to pin which billing files import it (P-3b.2).
+      'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
+      // P-3b.2: the apply use case's test imports the input and result TYPES to build its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
+      // P-3b.2 (workplan §3.1): the plan webhook handler wires the singleton;
+      // the apply use case takes it as a port TYPE (applyPlanPayment, recordEvent).
+      'lib/business-os/billing/planBillingHandler.ts',
+      'lib/business-os/billing/planPaymentApply.ts',
       'lib/repositories/BusinessOsBillingEventRepository.ts',
       // Not a caller: the billing account repository's own caller guard lists
       // this file's path, because it imports that repository's status type.
