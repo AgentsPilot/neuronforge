@@ -9,7 +9,7 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 
 describe('AdminLoading', () => {
   it('says "Reading {what}…" with a hidden spinner icon, in a status live region', () => {
@@ -64,5 +64,26 @@ describe('AdminEmpty (L-1c)', () => {
     expect(button.getAttribute('type')).toBe('button');
     fireEvent.click(button);
     expect(onClear).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AdminNotice (L-1d)', () => {
+  it('amber, with the testid on the text element and a hidden icon', () => {
+    const { container } = render(<AdminNotice testId="x-notice">Search scans only this page.</AdminNotice>);
+    const text = screen.getByTestId('x-notice');
+    expect(text.textContent).toBe('Search scans only this page.');
+    const box = container.firstElementChild as HTMLElement;
+    for (const cls of ['border-amber-500/40', 'bg-amber-500/10', 'text-amber-200']) expect(box.className).toContain(cls);
+    const icon = box.querySelector('svg');
+    expect(icon?.getAttribute('aria-hidden')).toBe('true');
+    expect(text.contains(icon)).toBe(false);
+  });
+
+  it('carries no role at all (not alert, not status) and is no region', () => {
+    const { container } = render(<AdminNotice>Partial.</AdminNotice>);
+    expect(container.querySelectorAll('[role]')).toHaveLength(0);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryAllByRole('region')).toHaveLength(0);
   });
 });

@@ -140,6 +140,8 @@ export function useAdminFilters<S extends object>(spec: AdminFilterSpec<S>): Adm
 
   const [filters, setState] = useState<S>(() => parseAll(spec, searchParams));
   const lastKnown = useRef<string | null>(incoming);
+  // Counts outside changes; see the write effect's dependencies (QA E-1).
+  const [rereads, setRereads] = useState(0);
 
   // Re-read only on an outside change (SA M-1): our own write was recorded in
   // lastKnown just before it happened, so its echo is skipped. Every field is
@@ -149,6 +151,7 @@ export function useAdminFilters<S extends object>(spec: AdminFilterSpec<S>): Adm
     lastKnown.current = incoming;
     const next = parseAll(spec, new URLSearchParams(incoming));
     setState((prev) => mergeKeepingIdentity(spec, prev, next));
+    setRereads((n) => n + 1);
   }, [incoming, spec]);
 
   // Write the projection (U-2). One path covers the mount rewrite of aliases,
@@ -162,7 +165,15 @@ export function useAdminFilters<S extends object>(spec: AdminFilterSpec<S>): Adm
     if (url === `${pathname}${search}${hash}`) return;
     lastKnown.current = nextSearch;
     window.history.replaceState(null, '', url);
-  }, [filters, spec, hasRouter]);
+    // `rereads` is read nowhere in the body, and it is NOT unused (QA E-1). An
+    // outside change that parses to the current state (junk such as
+    // `severity=catastrophic`, or `user_id=X` while `account=X` is applied)
+    // keeps `filters` identical, so without this dependency the projection
+    // would never run again and the address bar would keep the junk or the
+    // alias. The re-read effect bumps it in the same batch as its `setState`,
+    // so an outside change that DOES alter the state still runs this effect
+    // once, and the mount and Next's echo of our own write never bump it.
+  }, [filters, spec, hasRouter, rereads]);
 
   const setFilters = useCallback(
     (patch: Partial<S>) => setState((prev) => mergeKeepingIdentity(spec, prev, patch)),

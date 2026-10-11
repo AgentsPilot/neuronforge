@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import {
-  Search, Calendar, User, Activity, AlertCircle,
-  CheckCircle, Info, AlertTriangle, ChevronDown, ChevronUp,
+  Search, Calendar, User, Activity,
   Download, Database, TrendingUp,
   LogIn, LogOut, UserPlus, UserCog, Bot, Play, Trash2, Settings
 } from 'lucide-react';
@@ -25,7 +24,28 @@ import {
   ADMIN_FIELD_LABEL,
   type AdminActiveChip,
 } from '@/app/admin/components/layout/AdminFilterBar';
-import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import {
+  AdminDrawer,
+  DrawerField,
+  DrawerFields,
+  DrawerSection,
+} from '@/app/admin/components/layout/AdminDrawer';
+import { formatCount, formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
+import {
+  ADMIN_BUTTON,
+  ADMIN_COUNT_LINE,
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TD_ID,
+  ADMIN_TH,
+  ADMIN_THEAD,
+  formatShortId,
+} from '@/app/admin/components/layout/adminTable';
+import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
+import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 import { BusinessAccountPicker } from './BusinessAccountPicker';
@@ -213,14 +233,14 @@ const asUsd = (value?: number): string | undefined =>
     ? `$${value.toFixed(10).replace(/(\.\d{6}\d*?)0+$/, '$1')}`
     : undefined;
 
+/**
+ * One allow-listed AI field (FR-A5). Omitted when the stored value is absent
+ * or unusable: the wrapper returns null BEFORE a `DrawerField` exists, so the
+ * drawer never shows a label with an empty value (L-1d SA M-4).
+ */
 function AiDetailValue({ label, value }: { label: string; value?: string }) {
   if (value === undefined) return null;
-  return (
-    <div className="bg-slate-800/30 rounded-lg p-3">
-      <div className="text-xs text-slate-400 mb-1">{label}</div>
-      <div className="text-sm text-slate-200 break-words">{value}</div>
-    </div>
-  );
+  return <DrawerField label={label}>{value}</DrawerField>;
 }
 
 /**
@@ -228,19 +248,15 @@ function AiDetailValue({ label, value }: { label: string; value?: string }) {
  *
  * Pure presentation over an already-stored, already-safe closed shape: no fetch
  * and no ledger read. A per-call cost breakdown is Gap B's drill-down (FR-B2),
- * not this.
+ * not this. The section's heading is its only heading (L-1d SA M-4).
  */
 function AiActionDetails({ details }: { details: AiActionDetailsView }) {
   const outcome = asText(details.outcome);
   const errorCode = asText(details.errorCode);
 
   return (
-    <div className="bg-slate-800/50 rounded-lg p-4">
-      <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
-        <Bot className="w-4 h-4" />
-        AI Action Details
-      </h4>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <DrawerSection title="AI action details" testId="audit-ai-details">
+      <DrawerFields>
         <AiDetailValue label="Area" value={asText(details.area)} />
         <AiDetailValue label="Action Type" value={asText(details.actionType)} />
         <AiDetailValue label="Trigger" value={asText(details.trigger)} />
@@ -257,8 +273,349 @@ function AiActionDetails({ details }: { details: AiActionDetailsView }) {
         <AiDetailValue label="Calls Made" value={asList(details.callNames)} />
         <AiDetailValue label="Models" value={asList(details.models)} />
         <AiDetailValue label="Grouping ID" value={asText(details.groupId)} />
-      </div>
-    </div>
+      </DrawerFields>
+    </DrawerSection>
+  );
+}
+
+/**
+ * Severity as a §5.9 chip. `Partial`, so a lookup is typed as possibly
+ * undefined: any other stored value shows as `unknown`, with its raw word
+ * (L-1d SA S-2).
+ */
+const SEVERITY_TONE: Partial<Record<string, StatusTone>> = { critical: 'danger', warning: 'warn', info: 'info' };
+const SEVERITY_WORD: Partial<Record<string, string>> = { critical: 'Critical', warning: 'Warning', info: 'Info' };
+
+function SeverityChip({ severity, testId }: { severity: string; testId?: string }) {
+  // Own keys only: a stored value such as "constructor" must not resolve to
+  // an Object.prototype member and reach StatusChip as a tone.
+  const known = Object.prototype.hasOwnProperty.call(SEVERITY_TONE, severity);
+  return (
+    <StatusChip tone={(known ? SEVERITY_TONE[severity] : undefined) ?? 'unknown'} testId={testId}>
+      {/* A-7: an empty or missing stored value still shows words. */}
+      {(known ? SEVERITY_WORD[severity] : undefined) ?? (severity || 'Unknown')}
+    </StatusChip>
+  );
+}
+
+/**
+ * The drawer's body for one audit row (Admin Layout Standard L-1d): what the
+ * inline expand used to show, in the same order. It renders the row that is
+ * already loaded, so opening a row asks the route for nothing (R-6).
+ *
+ * Its parameter stays `log`: `filterOptions.guard` reads this file for the AI
+ * detection line and the generic-dump line, word for word (SA Q-9).
+ */
+function AuditEventBody({ log }: { log: AuditLogEntry }) {
+  return (
+    <>
+      <DrawerSection title="Event" testId="audit-event-fields">
+        <DrawerFields>
+          <DrawerField label="Event ID">
+            <span className="font-mono text-xs break-all">{log.id}</span>
+          </DrawerField>
+          <DrawerField label="Time (UTC)">{formatUtc(log.created_at)}</DrawerField>
+          {/* The stored value, offset included: the table drops the seconds. */}
+          <DrawerField label="Recorded" testId="audit-recorded">
+            <span className="font-mono text-xs break-all">{log.created_at}</span>
+          </DrawerField>
+          <DrawerField label="Severity">
+            <SeverityChip severity={log.severity} />
+          </DrawerField>
+          <DrawerField label="Entity type">{log.entity_type}</DrawerField>
+          <DrawerField label="Entity ID">
+            <span className="font-mono text-xs break-all">{log.entity_id}</span>
+          </DrawerField>
+          {/* Shown only when there IS a name: Entity ID above already carries
+              the id, so a nameless row is not padded with a duplicate of it. */}
+          {log.resource_name && <DrawerField label="Resource">{log.resource_name}</DrawerField>}
+          {log.user_id && <DrawerField label="User">{auditUserLabel(log)}</DrawerField>}
+          {/* Omitted when the account has no business profile. */}
+          {log.business?.company_name && <DrawerField label="Business">{log.business.company_name}</DrawerField>}
+          {log.compliance_flags && log.compliance_flags.length > 0 && (
+            <DrawerField label="Compliance">{log.compliance_flags.join(', ')}</DrawerField>
+          )}
+        </DrawerFields>
+      </DrawerSection>
+
+      {/* Business OS AI action details (FR-A5). Detected by entity
+          type, not by the action prefix, so _COMPLETED and _FAILED
+          take the same path. The generic dump below is suppressed
+          for these rows — without that, an AI entry would render
+          the labelled values AND the raw key/value list underneath. */}
+      {log.entity_type === AI_ACTION_ENTITY_TYPE && log.details && (
+        <AiActionDetails details={log.details as AiActionDetailsView} />
+      )}
+
+      {/* The legacy AgentsPilot (AIS) blocks below are moved verbatim from
+          the inline expand, one section heading each, and not restyled: they
+          never appear for a Business OS row (L-1d workplan §3.7). */}
+      {/* Score Changes (for AIS_SCORE_UPDATED) */}
+      {log.action === 'AIS_SCORE_UPDATED' && log.changes && (
+        <DrawerSection title="Score change">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-slate-800/50 rounded-lg p-4">
+              <div className="text-xs text-slate-400 mb-2">Before</div>
+              <div className="text-2xl font-bold text-slate-300">
+                {log.changes.before?.combined_score?.toFixed(2)}
+              </div>
+              <div className="text-xs text-slate-500 mt-1">
+                Multiplier: {log.changes.before?.combined_multiplier?.toFixed(3)}x
+              </div>
+            </div>
+            <div className="flex items-center justify-center">
+              <div className="text-3xl text-blue-400">→</div>
+            </div>
+            <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+              <div className="text-xs text-blue-400 mb-2">After</div>
+              <div className="text-2xl font-bold text-blue-300">
+                {log.changes.after?.combined_score?.toFixed(2)}
+              </div>
+              <div className="text-xs text-blue-400 mt-1">
+                Multiplier: {log.changes.after?.combined_multiplier?.toFixed(3)}x
+              </div>
+              <div className={`text-sm font-semibold mt-2 ${
+                log.changes.delta?.combined_score >= 0 ? 'text-green-400' : 'text-red-400'
+              }`}>
+                {log.changes.delta?.combined_score >= 0 ? '+' : ''}
+                {log.changes.delta?.combined_score?.toFixed(2)} change
+              </div>
+            </div>
+          </div>
+        </DrawerSection>
+      )}
+
+      {/* Score Calculated (for AIS_SCORE_CALCULATED) */}
+      {log.action === 'AIS_SCORE_CALCULATED' && log.details && (
+        <DrawerSection title="Score">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+              <div className="text-xs text-green-400 mb-1">Creation Score</div>
+              <div className="text-2xl font-bold text-green-300">
+                {log.details.creation_score?.toFixed(2)}
+              </div>
+              <div className="text-xs text-green-400 mt-1">
+                {log.details.creation_multiplier?.toFixed(3)}x multiplier
+              </div>
+            </div>
+            <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
+              <div className="text-xs text-purple-400 mb-1">Execution Score</div>
+              <div className="text-2xl font-bold text-purple-300">
+                {log.details.execution_score?.toFixed(2)}
+              </div>
+              <div className="text-xs text-purple-400 mt-1">
+                {log.details.execution_multiplier?.toFixed(3)}x multiplier
+              </div>
+            </div>
+            <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+              <div className="text-xs text-blue-400 mb-1">Combined Score</div>
+              <div className="text-2xl font-bold text-blue-300">
+                {log.details.combined_score?.toFixed(2)}
+              </div>
+              <div className="text-xs text-blue-400 mt-1">
+                {log.details.combined_multiplier?.toFixed(3)}x multiplier
+              </div>
+            </div>
+          </div>
+        </DrawerSection>
+      )}
+
+      {/* Normalization Refresh Started */}
+      {log.action === 'AIS_NORMALIZATION_REFRESH_STARTED' && log.details && (
+        <DrawerSection title="Normalization">
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+                <div className="text-xs text-blue-400 mb-2">Agents Captured</div>
+                <div className="text-3xl font-bold text-blue-300">
+                  {log.details.affected_agents_count || log.details.agent_scores_snapshot?.length || 0}
+                </div>
+              </div>
+              <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
+                <div className="text-xs text-purple-400 mb-2">Ranges Captured</div>
+                <div className="text-3xl font-bold text-purple-300">
+                  {log.details.old_ranges?.length || 0}
+                </div>
+              </div>
+            </div>
+            {log.details.reason && (
+              <div className="bg-slate-800/50 rounded-lg p-4">
+                <div className="text-xs text-slate-400 mb-2">Reason</div>
+                <div className="text-sm text-slate-200">{log.details.reason}</div>
+              </div>
+            )}
+          </div>
+        </DrawerSection>
+      )}
+
+      {/* Normalization Refresh Completed - Show Before/After Changes */}
+      {log.action === 'AIS_NORMALIZATION_REFRESH_COMPLETED' && log.changes && (
+        <DrawerSection title="Normalization">
+          <div className="space-y-4">
+            <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4" />
+              Normalization Ranges Updated
+            </h4>
+
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-slate-800/50 rounded-lg p-4">
+                <div className="text-xs text-slate-400 mb-2">Old Ranges</div>
+                <div className="text-2xl font-bold text-slate-300">
+                  {log.changes.before?.length || 0}
+                </div>
+              </div>
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+                <div className="text-xs text-green-400 mb-2">New Ranges</div>
+                <div className="text-2xl font-bold text-green-300">
+                  {log.changes.after?.length || 0}
+                </div>
+              </div>
+            </div>
+
+            {/* Before/After Ranges Comparison */}
+            {log.changes.before && log.changes.after && (
+              <div className="space-y-3">
+                <div className="text-xs text-slate-400 mb-2">Range Changes:</div>
+                <div className="max-h-96 overflow-y-auto space-y-2">
+                  {log.changes.after.map((newRange: any, idx: number) => {
+                    const oldRange = log.changes.before.find((r: any) => r.range_key === newRange.range_key);
+                    const hasChanged = oldRange && (
+                      oldRange.best_practice_min !== newRange.best_practice_min ||
+                      oldRange.best_practice_max !== newRange.best_practice_max
+                    );
+
+                    return (
+                      <div
+                        key={newRange.range_key}
+                        className={`grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-lg ${
+                          hasChanged ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-slate-800/30'
+                        }`}
+                      >
+                        <div>
+                          <div className="text-xs text-slate-400 mb-1">Range Key</div>
+                          <div className="text-sm font-mono text-slate-200">{newRange.range_key}</div>
+                          {newRange.category && (
+                            <div className="text-xs text-slate-500 mt-1">{newRange.category}</div>
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-400 mb-1">Before</div>
+                          <div className="text-sm text-slate-300">
+                            [{oldRange?.best_practice_min ?? 'N/A'} - {oldRange?.best_practice_max ?? 'N/A'}]
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-green-400 mb-1">After</div>
+                          <div className="text-sm font-semibold text-green-300">
+                            [{newRange.best_practice_min} - {newRange.best_practice_max}]
+                          </div>
+                          {hasChanged && (
+                            <div className="text-xs text-yellow-400 mt-1">✓ Changed</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </DrawerSection>
+      )}
+
+      {/* Normalization Ranges (if available) */}
+      {log.details?.normalization_ranges && (
+        <DrawerSection title="Normalization ranges">
+          <div>
+            <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+              <Database className="w-4 h-4" />
+              Normalization Ranges Used
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {Object.entries(log.details.normalization_ranges).slice(0, 6).map(([key, value]: [string, any]) => (
+                <div key={key} className="bg-slate-800/50 rounded-lg p-3">
+                  <div className="text-xs text-slate-400 mb-1 font-mono">{key}</div>
+                  <div className="text-sm text-slate-200">
+                    [{value?.min || 0} - {value?.max || 0}]
+                  </div>
+                </div>
+              ))}
+            </div>
+            {Object.keys(log.details.normalization_ranges).length > 6 && (
+              <div className="text-xs text-slate-500 mt-2">
+                + {Object.keys(log.details.normalization_ranges).length - 6} more ranges
+              </div>
+            )}
+          </div>
+        </DrawerSection>
+      )}
+
+      {/* Execution Details */}
+      {log.details && (log.details.total_executions || log.details.total_tokens_used) && (
+        <DrawerSection title="Execution">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {log.details.total_executions && (
+              <div className="bg-slate-800/50 rounded-lg p-3">
+                <div className="text-xs text-slate-400 mb-1">Executions</div>
+                <div className="text-lg font-semibold text-slate-200">
+                  {log.details.total_executions}
+                </div>
+              </div>
+            )}
+            {log.details.total_tokens_used && (
+              <div className="bg-slate-800/50 rounded-lg p-3">
+                <div className="text-xs text-slate-400 mb-1">Tokens Used</div>
+                <div className="text-lg font-semibold text-slate-200">
+                  {log.details.total_tokens_used.toLocaleString()}
+                </div>
+              </div>
+            )}
+          </div>
+        </DrawerSection>
+      )}
+      {/* Generic Details (for other event types). AI entries are
+          excluded: AiActionDetails above already renders them as
+          labelled values, and this dump is what FR-A5 replaces. */}
+      {log.details && !log.action.startsWith('AIS_') && log.entity_type !== AI_ACTION_ENTITY_TYPE && (
+        <DrawerSection title="Event details" testId="audit-event-details">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {Object.entries(log.details).map(([key, value]: [string, any]) => (
+              <div key={key} className="flex items-start gap-2">
+                <span className="text-xs text-slate-400 font-mono min-w-[120px]">{key}:</span>
+                <span className="text-sm text-slate-200 flex-1">
+                  {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </DrawerSection>
+      )}
+
+      {/* Generic Changes (for other event types) */}
+      {log.changes && !log.action.startsWith('AIS_') && (
+        <DrawerSection title="Changes made" testId="audit-changes">
+          <div className="space-y-2">
+            {log.changes.before && (
+              <div>
+                <div className="text-xs text-slate-400 mb-1">Before:</div>
+                <div className="text-sm text-slate-200 bg-slate-900/50 rounded p-2">
+                  {JSON.stringify(log.changes.before, null, 2)}
+                </div>
+              </div>
+            )}
+            {log.changes.after && (
+              <div>
+                <div className="text-xs text-slate-400 mb-1">After:</div>
+                <div className="text-sm text-slate-200 bg-slate-900/50 rounded p-2">
+                  {JSON.stringify(log.changes.after, null, 2)}
+                </div>
+              </div>
+            )}
+          </div>
+        </DrawerSection>
+      )}
+    </>
   );
 }
 
@@ -276,7 +633,17 @@ function AuditTrailPageContent() {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedLog, setExpandedLog] = useState<string | null>(null);
+  // The drawer (L-1d). `isOpen` drives the panel and `openId` names its row.
+  // Closing clears only `isOpen`, so the content stays during Radix's slide-out
+  // instead of blanking (SA S-1); the next open replaces `openId`. Modal does
+  // not freeze `logs`: a read already in flight can land while the drawer is
+  // open, and the effect below handles a row that leaves the page (QA B-1).
+  const [isOpen, setIsOpen] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  /** The row's Open button: focus goes back to it on close (D-6). */
+  const opener = useRef<HTMLButtonElement | null>(null);
+  /** Where focus goes when the opener's row is gone (QA B-1): the content area. */
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(20);
   const [pagination, setPagination] = useState<AuditPagination>({
@@ -349,15 +716,6 @@ function AuditTrailPageContent() {
     setCurrentPage(1);
   }, [filters]);
 
-  const getSeverityIcon = (severity: string) => {
-    switch (severity) {
-      case 'critical': return <AlertCircle className="w-5 h-5 text-red-500" />;
-      case 'warning': return <AlertTriangle className="w-5 h-5 text-yellow-500" />;
-      case 'info': return <Info className="w-5 h-5 text-blue-500" />;
-      default: return <CheckCircle className="w-5 h-5 text-green-500" />;
-    }
-  };
-
   const getSeverityColor = (severity: string) => {
     switch (severity) {
       case 'critical': return 'bg-red-500/10 border-red-500/50 text-red-300';
@@ -427,16 +785,31 @@ function AuditTrailPageContent() {
       .split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
+  /** The row the drawer shows; null once that row is no longer loaded. */
+  const selected = openId === null ? null : logs.find((log) => log.id === openId) ?? null;
+
+  const openRow = (id: string, button: HTMLButtonElement) => {
+    opener.current = button;
+    setOpenId(id);
+    setIsOpen(true);
+  };
+
+  // QA B-1: the open row left `logs` (a read landed without it). The drawer has
+  // already closed (its `open` prop went false, and Radix does not call
+  // onOpenChange for a prop change), so end the open state too. Otherwise a
+  // later read that brings the row back would reopen the drawer unasked.
+  useEffect(() => {
+    if (isOpen && selected === null) {
+      setIsOpen(false);
+      setOpenId(null);
+    }
+  }, [isOpen, selected]);
+
+  // D-6: back to the row's Open button; when that row is no longer on the page
+  // its button is detached, so focus goes to the content area, never <body>.
+  const returnFocus = () => {
+    if (opener.current?.isConnected) opener.current.focus();
+    else contentRef.current?.focus();
   };
 
   // Deliberately NOT updated by this PR: the export keeps the old columns and
@@ -473,7 +846,7 @@ function AuditTrailPageContent() {
         {
           key: 'account',
           // Words, testid, title and X label unchanged until the shared picker
-          // replaces this one (L-1d, RC-8). The full id stays reachable on
+          // replaces this one (L-1e, RC-8). The full id stays reachable on
           // hover: the visible text either replaces it with a name or
           // truncates it.
           label: `Account ${accountFilterLabel(logs, filters.account)}`,
@@ -635,16 +1008,16 @@ function AuditTrailPageContent() {
           never refetches on a read (SA M-3, the F-28 mount pin). */}
       <ArchivedBeforeNotice />
 
-      <div aria-busy={loading} className="space-y-6">
+      <div ref={contentRef} tabIndex={-1} aria-busy={loading} className="space-y-6 focus:outline-none">
         {loading && logs.length === 0 && !error ? (
           <AdminLoading what={WHAT} />
         ) : (
           <>
-        {/* Results Count & Pagination */}
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-          <div className="flex items-center justify-between">
-            {/* Left: Results Count */}
-            {/* The route's total is the UNFILTERED count, and the free-text
+            {/* Count line and pager. Hidden only on an error with no rows, so a
+                failed first read shows no zero count under the red box (SA
+                N-2); a search with no matches on this page keeps its pager.
+
+                The route's total is the UNFILTERED count, and the free-text
                 search is applied in memory to one page of rows (route.ts:96-98,
                 :172). So with a search term active, "X of Y" is false in both
                 halves — say what is actually true instead (FR-A4b). The page
@@ -653,524 +1026,213 @@ function AuditTrailPageContent() {
 
                 Every place that would PRINT that count is therefore branched on
                 isSearchActive — here and in the pager's own "Page n of m" label
-                below (:575). What stays deliberately unbranched is the pager's
+                below. What stays deliberately unbranched is the pager's
                 BEHAVIOUR: First/Previous/Next/Last and their enable/disable
                 logic still run off pagination.totalPages, because they page the
                 underlying unfiltered stream, which is what the route actually
                 does. Making them describe a filtered set needs the filtered
                 count, i.e. the separately tracked search fix (Non-Goal 2). The
                 exemption covers the buttons, not the number they sit beside. */}
-            <div className="text-sm text-slate-400">
-              {isSearchActive ? (
-                <>
-                  Showing {pagination.showing} matches on this page
-                  <span className="ml-2 text-slate-500">(Page {currentPage})</span>
-                  <div className="text-xs text-slate-500 mt-1">
-                    Search scans only the current page of results. Use the Action, Entity Type,
-                    Severity and date filters for complete results.
-                  </div>
-                </>
-              ) : (
-                <>
-                  Showing {pagination.showing} of {pagination.total} audit logs
-                  {pagination.totalPages > 1 && (
-                    <span className="ml-2 text-slate-500">
-                      (Page {currentPage} of {pagination.totalPages})
-                    </span>
+            {!(error && logs.length === 0) && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className={ADMIN_COUNT_LINE} data-testid="audit-count">
+                  {isSearchActive ? (
+                    <>
+                      Showing {formatCount(pagination.showing)} matches on this page{' '}
+                      <span className="text-slate-500">(Page {currentPage})</span>
+                    </>
+                  ) : (
+                    <>
+                      Showing {formatCount(pagination.showing)} of {formatCount(pagination.total)} audit logs
+                      {pagination.totalPages > 1 && (
+                        <>
+                          {' '}
+                          <span className="text-slate-500">
+                            (Page {currentPage} of {formatCount(pagination.totalPages)})
+                          </span>
+                        </>
+                      )}
+                    </>
                   )}
-                </>
-              )}
-            </div>
+                </p>
 
-            {/* Right: Pagination Controls */}
-            <div className="flex items-center gap-3">
-              {pagination.totalPages > 1 && (
-                <>
+                {pagination.totalPages > 1 && (
                   <div className="flex items-center gap-2">
                     <button
+                      type="button"
                       onClick={() => setCurrentPage(1)}
                       disabled={currentPage === 1 || loading}
-                      className="px-3 py-1 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                      className={ADMIN_BUTTON}
                     >
                       First
                     </button>
                     <button
+                      type="button"
                       onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                       disabled={currentPage === 1 || loading}
-                      className="px-3 py-1 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                      className={ADMIN_BUTTON}
                     >
                       Previous
                     </button>
-                    {/* Label only — see the note above the results count. The
+                    {/* Label only — see the note above the count line. The
                         buttons either side keep using pagination.totalPages. */}
-                    <span className="text-sm text-slate-400 min-w-[100px] text-center">
+                    <span className="min-w-[100px] text-center text-sm text-slate-400">
                       {isSearchActive
                         ? `Page ${currentPage}`
-                        : `Page ${currentPage} of ${pagination.totalPages}`}
+                        : `Page ${currentPage} of ${formatCount(pagination.totalPages)}`}
                     </span>
                     <button
+                      type="button"
                       onClick={() => setCurrentPage(prev => Math.min(pagination.totalPages, prev + 1))}
                       disabled={!pagination.hasMore || loading}
-                      className="px-3 py-1 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                      className={ADMIN_BUTTON}
                     >
                       Next
                     </button>
                     <button
+                      type="button"
                       onClick={() => setCurrentPage(pagination.totalPages)}
                       disabled={currentPage === pagination.totalPages || loading}
-                      className="px-3 py-1 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                      className={ADMIN_BUTTON}
                     >
                       Last
                     </button>
                   </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Audit Logs */}
-        <div className="space-y-3">
-          {logs.length === 0 ? (
-            error ? null : (
-              <AdminEmpty
-                message="No audit events match these filters."
-                hint="Try a wider window or fewer filters."
-                onClear={isDefault ? undefined : clear}
-                testId="audit-empty"
-              />
-            )
-          ) : (
-            logs.map((log) => (
-              <div
-                key={log.id}
-                className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden"
-              >
-                {/* Header */}
-                <div
-                  className="p-4 cursor-pointer hover:bg-white/5 transition-colors"
-                  onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}
-                >
-                  {/* Row 1: Icon + Title + Badge + Controls */}
-                  <div className="flex items-center justify-between gap-4 w-full mb-3">
-                    {/* Left Side: Icon + Title + Badge */}
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      {/* Icon - Based on Action Type */}
-                      <div className="flex-shrink-0">
-                        {getActionIcon(log.action)}
-                      </div>
-
-                      {/* Title and Badge */}
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-semibold text-white whitespace-nowrap">
-                          {getActionLabel(log.action)}
-                        </h3>
-                        {/* Severity Badge inline with title */}
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
-                          log.severity === 'critical' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
-                          log.severity === 'warning' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
-                          log.severity === 'info' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' :
-                          'bg-slate-500/20 text-slate-400 border border-slate-500/30'
-                        }`}>
-                          {getSeverityIcon(log.severity)}
-                          <span className="capitalize">{log.severity}</span>
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Right Controls */}
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {log.compliance_flags && log.compliance_flags.length > 0 && (
-                        <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-500/20 border border-blue-500/30 rounded text-xs text-blue-300">
-                          {log.compliance_flags.join(', ')}
-                        </div>
-                      )}
-                      <span className="text-xs text-slate-500 whitespace-nowrap">
-                        {formatDate(log.created_at)}
-                      </span>
-                      {expandedLog === log.id ? (
-                        <ChevronUp className="w-5 h-5 text-slate-400" />
-                      ) : (
-                        <ChevronDown className="w-5 h-5 text-slate-400" />
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Row 2: Metadata - Entity, Resource, User */}
-                  <div className="flex items-center gap-4 text-sm pl-14">
-                    <span className="text-slate-500">
-                      Entity: <span className="text-slate-300">{log.entity_type}</span>
-                    </span>
-                    {/* A missing resource name must READ as missing. This used to
-                        be `log.resource_name || log.entity_id`, which printed the
-                        entity's GUID under the label "Resource:" — so an operator
-                        could not tell a named object from an unnamed one, and the
-                        rows that omit the name on purpose (aiActionAudit's Layer 3
-                        privacy decision) looked like rows with a name nobody could
-                        read.
-
-                        Two distinct renderings, no error styling: this is a normal
-                        state for ~44% of rows, not a defect. When there is no name
-                        the id is shown LABELLED AS AN ID and in mono, which is what
-                        it is. Fixing the writers is deliberately out of scope —
-                        making the gap visible first is the point. */}
-                    {log.resource_name ? (
-                      <span className="text-slate-500">
-                        Resource: <span className="text-slate-300">{log.resource_name}</span>
-                      </span>
-                    ) : (
-                      <span className="text-slate-500">
-                        Entity id:{' '}
-                        <span className="font-mono text-xs text-slate-400" title={log.entity_id}>
-                          {log.entity_id}
-                        </span>
-                      </span>
-                    )}
-                    {log.user_id && (
-                      <span className="text-slate-500">
-                        User: <span className="text-slate-300">
-                          {auditUserLabel(log)}
-                        </span>
-                      </span>
-                    )}
-                    {/* Blank is honest: an agent-platform row has no business
-                        profile, and a placeholder would only add noise. */}
-                    {log.business?.company_name && (
-                      <span className="text-slate-500">
-                        Business: <span className="text-slate-300">{log.business.company_name}</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Expanded Details */}
-                {expandedLog === log.id && (
-                  <div className="border-t border-white/10 p-6 bg-slate-900/50 space-y-6">
-
-                    {/* Metadata Section - Always show */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <div className="bg-slate-800/30 rounded-lg p-3">
-                        <div className="text-xs text-slate-400 mb-1">Event ID</div>
-                        <div className="text-xs font-mono text-slate-300 truncate">{log.id}</div>
-                      </div>
-                      <div className="bg-slate-800/30 rounded-lg p-3">
-                        <div className="text-xs text-slate-400 mb-1">Entity ID</div>
-                        <div className="text-xs font-mono text-slate-300 truncate">{log.entity_id}</div>
-                      </div>
-                      <div className="bg-slate-800/30 rounded-lg p-3">
-                        <div className="text-xs text-slate-400 mb-1">Severity</div>
-                        <div className="text-sm font-semibold text-slate-200">{log.severity}</div>
-                      </div>
-                      {log.compliance_flags && log.compliance_flags.length > 0 && (
-                        <div className="bg-slate-800/30 rounded-lg p-3">
-                          <div className="text-xs text-slate-400 mb-1">Compliance</div>
-                          <div className="text-sm font-semibold text-blue-300">{log.compliance_flags.join(', ')}</div>
-                        </div>
-                      )}
-                      {log.user_id && (
-                        <div className="bg-slate-800/30 rounded-lg p-3">
-                          <div className="text-xs text-slate-400 mb-1">User</div>
-                          <div className="text-sm font-semibold text-slate-200 truncate">
-                            {auditUserLabel(log)}
-                          </div>
-                        </div>
-                      )}
-                      {/* Omitted entirely when the account has no business profile. */}
-                      {log.business?.company_name && (
-                        <div className="bg-slate-800/30 rounded-lg p-3">
-                          <div className="text-xs text-slate-400 mb-1">Business</div>
-                          <div className="text-sm font-semibold text-slate-200 truncate">
-                            {log.business.company_name}
-                          </div>
-                        </div>
-                      )}
-                      {/* Shown only when there IS a name. The "Entity ID" card above
-                          already carries the id, so a nameless row is not padded with
-                          a duplicate of it. */}
-                      {log.resource_name && (
-                        <div className="bg-slate-800/30 rounded-lg p-3">
-                          <div className="text-xs text-slate-400 mb-1">Resource</div>
-                          <div className="text-sm font-semibold text-slate-200 truncate">
-                            {log.resource_name}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Business OS AI action details (FR-A5). Detected by entity
-                        type, not by the action prefix, so _COMPLETED and _FAILED
-                        take the same path. The generic dump below is suppressed
-                        for these rows — without that, an AI entry would render
-                        the labelled values AND the raw key/value list underneath. */}
-                    {log.entity_type === AI_ACTION_ENTITY_TYPE && log.details && (
-                      <AiActionDetails details={log.details as AiActionDetailsView} />
-                    )}
-
-                    {/* Score Changes (for AIS_SCORE_UPDATED) */}
-                    {log.action === 'AIS_SCORE_UPDATED' && log.changes && (
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="bg-slate-800/50 rounded-lg p-4">
-                          <div className="text-xs text-slate-400 mb-2">Before</div>
-                          <div className="text-2xl font-bold text-slate-300">
-                            {log.changes.before?.combined_score?.toFixed(2)}
-                          </div>
-                          <div className="text-xs text-slate-500 mt-1">
-                            Multiplier: {log.changes.before?.combined_multiplier?.toFixed(3)}x
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-center">
-                          <div className="text-3xl text-blue-400">→</div>
-                        </div>
-                        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
-                          <div className="text-xs text-blue-400 mb-2">After</div>
-                          <div className="text-2xl font-bold text-blue-300">
-                            {log.changes.after?.combined_score?.toFixed(2)}
-                          </div>
-                          <div className="text-xs text-blue-400 mt-1">
-                            Multiplier: {log.changes.after?.combined_multiplier?.toFixed(3)}x
-                          </div>
-                          <div className={`text-sm font-semibold mt-2 ${
-                            log.changes.delta?.combined_score >= 0 ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                            {log.changes.delta?.combined_score >= 0 ? '+' : ''}
-                            {log.changes.delta?.combined_score?.toFixed(2)} change
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Score Calculated (for AIS_SCORE_CALCULATED) */}
-                    {log.action === 'AIS_SCORE_CALCULATED' && log.details && (
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
-                          <div className="text-xs text-green-400 mb-1">Creation Score</div>
-                          <div className="text-2xl font-bold text-green-300">
-                            {log.details.creation_score?.toFixed(2)}
-                          </div>
-                          <div className="text-xs text-green-400 mt-1">
-                            {log.details.creation_multiplier?.toFixed(3)}x multiplier
-                          </div>
-                        </div>
-                        <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
-                          <div className="text-xs text-purple-400 mb-1">Execution Score</div>
-                          <div className="text-2xl font-bold text-purple-300">
-                            {log.details.execution_score?.toFixed(2)}
-                          </div>
-                          <div className="text-xs text-purple-400 mt-1">
-                            {log.details.execution_multiplier?.toFixed(3)}x multiplier
-                          </div>
-                        </div>
-                        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
-                          <div className="text-xs text-blue-400 mb-1">Combined Score</div>
-                          <div className="text-2xl font-bold text-blue-300">
-                            {log.details.combined_score?.toFixed(2)}
-                          </div>
-                          <div className="text-xs text-blue-400 mt-1">
-                            {log.details.combined_multiplier?.toFixed(3)}x multiplier
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Normalization Refresh Started */}
-                    {log.action === 'AIS_NORMALIZATION_REFRESH_STARTED' && log.details && (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
-                            <div className="text-xs text-blue-400 mb-2">Agents Captured</div>
-                            <div className="text-3xl font-bold text-blue-300">
-                              {log.details.affected_agents_count || log.details.agent_scores_snapshot?.length || 0}
-                            </div>
-                          </div>
-                          <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
-                            <div className="text-xs text-purple-400 mb-2">Ranges Captured</div>
-                            <div className="text-3xl font-bold text-purple-300">
-                              {log.details.old_ranges?.length || 0}
-                            </div>
-                          </div>
-                        </div>
-                        {log.details.reason && (
-                          <div className="bg-slate-800/50 rounded-lg p-4">
-                            <div className="text-xs text-slate-400 mb-2">Reason</div>
-                            <div className="text-sm text-slate-200">{log.details.reason}</div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Normalization Refresh Completed - Show Before/After Changes */}
-                    {log.action === 'AIS_NORMALIZATION_REFRESH_COMPLETED' && log.changes && (
-                      <div className="space-y-4">
-                        <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
-                          <TrendingUp className="w-4 h-4" />
-                          Normalization Ranges Updated
-                        </h4>
-
-                        {/* Summary Cards */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="bg-slate-800/50 rounded-lg p-4">
-                            <div className="text-xs text-slate-400 mb-2">Old Ranges</div>
-                            <div className="text-2xl font-bold text-slate-300">
-                              {log.changes.before?.length || 0}
-                            </div>
-                          </div>
-                          <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
-                            <div className="text-xs text-green-400 mb-2">New Ranges</div>
-                            <div className="text-2xl font-bold text-green-300">
-                              {log.changes.after?.length || 0}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Before/After Ranges Comparison */}
-                        {log.changes.before && log.changes.after && (
-                          <div className="space-y-3">
-                            <div className="text-xs text-slate-400 mb-2">Range Changes:</div>
-                            <div className="max-h-96 overflow-y-auto space-y-2">
-                              {log.changes.after.map((newRange: any, idx: number) => {
-                                const oldRange = log.changes.before.find((r: any) => r.range_key === newRange.range_key);
-                                const hasChanged = oldRange && (
-                                  oldRange.best_practice_min !== newRange.best_practice_min ||
-                                  oldRange.best_practice_max !== newRange.best_practice_max
-                                );
-
-                                return (
-                                  <div
-                                    key={newRange.range_key}
-                                    className={`grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-lg ${
-                                      hasChanged ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-slate-800/30'
-                                    }`}
-                                  >
-                                    <div>
-                                      <div className="text-xs text-slate-400 mb-1">Range Key</div>
-                                      <div className="text-sm font-mono text-slate-200">{newRange.range_key}</div>
-                                      {newRange.category && (
-                                        <div className="text-xs text-slate-500 mt-1">{newRange.category}</div>
-                                      )}
-                                    </div>
-                                    <div>
-                                      <div className="text-xs text-slate-400 mb-1">Before</div>
-                                      <div className="text-sm text-slate-300">
-                                        [{oldRange?.best_practice_min ?? 'N/A'} - {oldRange?.best_practice_max ?? 'N/A'}]
-                                      </div>
-                                    </div>
-                                    <div>
-                                      <div className="text-xs text-green-400 mb-1">After</div>
-                                      <div className="text-sm font-semibold text-green-300">
-                                        [{newRange.best_practice_min} - {newRange.best_practice_max}]
-                                      </div>
-                                      {hasChanged && (
-                                        <div className="text-xs text-yellow-400 mt-1">✓ Changed</div>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Normalization Ranges (if available) */}
-                    {log.details?.normalization_ranges && (
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
-                          <Database className="w-4 h-4" />
-                          Normalization Ranges Used
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {Object.entries(log.details.normalization_ranges).slice(0, 6).map(([key, value]: [string, any]) => (
-                            <div key={key} className="bg-slate-800/50 rounded-lg p-3">
-                              <div className="text-xs text-slate-400 mb-1 font-mono">{key}</div>
-                              <div className="text-sm text-slate-200">
-                                [{value?.min || 0} - {value?.max || 0}]
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        {Object.keys(log.details.normalization_ranges).length > 6 && (
-                          <div className="text-xs text-slate-500 mt-2">
-                            + {Object.keys(log.details.normalization_ranges).length - 6} more ranges
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Execution Details */}
-                    {log.details && (log.details.total_executions || log.details.total_tokens_used) && (
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        {log.details.total_executions && (
-                          <div className="bg-slate-800/50 rounded-lg p-3">
-                            <div className="text-xs text-slate-400 mb-1">Executions</div>
-                            <div className="text-lg font-semibold text-slate-200">
-                              {log.details.total_executions}
-                            </div>
-                          </div>
-                        )}
-                        {log.details.total_tokens_used && (
-                          <div className="bg-slate-800/50 rounded-lg p-3">
-                            <div className="text-xs text-slate-400 mb-1">Tokens Used</div>
-                            <div className="text-lg font-semibold text-slate-200">
-                              {log.details.total_tokens_used.toLocaleString()}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Generic Details (for other event types). AI entries are
-                        excluded: AiActionDetails above already renders them as
-                        labelled values, and this dump is what FR-A5 replaces. */}
-                    {log.details && !log.action.startsWith('AIS_') && log.entity_type !== AI_ACTION_ENTITY_TYPE && (
-                      <div className="bg-slate-800/50 rounded-lg p-4">
-                        <h4 className="text-sm font-semibold text-slate-300 mb-3">Event Details</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {Object.entries(log.details).map(([key, value]: [string, any]) => (
-                            <div key={key} className="flex items-start gap-2">
-                              <span className="text-xs text-slate-400 font-mono min-w-[120px]">{key}:</span>
-                              <span className="text-sm text-slate-200 flex-1">
-                                {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Generic Changes (for other event types) */}
-                    {log.changes && !log.action.startsWith('AIS_') && (
-                      <div className="bg-slate-800/50 rounded-lg p-4">
-                        <h4 className="text-sm font-semibold text-slate-300 mb-3">Changes Made</h4>
-                        <div className="space-y-2">
-                          {log.changes.before && (
-                            <div>
-                              <div className="text-xs text-slate-400 mb-1">Before:</div>
-                              <div className="text-sm text-slate-200 bg-slate-900/50 rounded p-2">
-                                {JSON.stringify(log.changes.before, null, 2)}
-                              </div>
-                            </div>
-                          )}
-                          {log.changes.after && (
-                            <div>
-                              <div className="text-xs text-slate-400 mb-1">After:</div>
-                              <div className="text-sm text-slate-200 bg-slate-900/50 rounded p-2">
-                                {JSON.stringify(log.changes.after, null, 2)}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 )}
               </div>
-            ))
-          )}
-        </div>
+            )}
+
+            {/* The search caveat (FR-A4b) as the standard's Partial notice (§5.10). */}
+            {isSearchActive && (
+              <AdminNotice testId="audit-search-caveat">
+                Search scans only the current page of results. Use the Action, Entity Type,
+                Severity and date filters for complete results.
+              </AdminNotice>
+            )}
+
+            {logs.length === 0 ? (
+              error ? null : (
+                <AdminEmpty
+                  message="No audit events match these filters."
+                  hint="Try a wider window or fewer filters."
+                  onClear={isDefault ? undefined : clear}
+                  testId="audit-empty"
+                />
+              )
+            ) : (
+              <div className={ADMIN_TABLE_WRAP}>
+                <table className={ADMIN_TABLE} aria-label="Audit events" data-testid="audit-table">
+                  <thead className={ADMIN_THEAD}>
+                    <tr>
+                      <th scope="col" className={ADMIN_TH}>Details</th>
+                      <th scope="col" className={ADMIN_TH}>Time (UTC)</th>
+                      <th scope="col" className={ADMIN_TH}>Event</th>
+                      <th scope="col" className={ADMIN_TH}>Severity</th>
+                      <th scope="col" className={ADMIN_TH}>Entity</th>
+                      <th scope="col" className={ADMIN_TH}>Resource</th>
+                      <th scope="col" className={ADMIN_TH}>Business</th>
+                      <th scope="col" className={ADMIN_TH}>User</th>
+                    </tr>
+                  </thead>
+                  <tbody className={ADMIN_TBODY}>
+                    {logs.map((log) => {
+                      const userLabel = auditUserLabel(log);
+                      return (
+                        <tr key={log.id} data-testid="audit-row">
+                          <td className={ADMIN_TD}>
+                            <OpenRowButton
+                              testId="audit-open-details"
+                              label={`Open details for ${getActionLabel(log.action)} at ${formatUtc(log.created_at)}`}
+                              onOpen={(button) => openRow(log.id, button)}
+                            />
+                          </td>
+                          <td className={`${ADMIN_TD} whitespace-nowrap`}>{formatUtc(log.created_at)}</td>
+                          <td className={ADMIN_TD}>
+                            <div className="flex items-center gap-2 text-slate-200">
+                              <span className="flex-shrink-0" aria-hidden="true">
+                                {getActionIcon(log.action)}
+                              </span>
+                              {getActionLabel(log.action)}
+                            </div>
+                            {/* Kept visible on the row, as it was on the card. */}
+                            {log.compliance_flags && log.compliance_flags.length > 0 && (
+                              <div className="text-[11px] text-sky-300">{log.compliance_flags.join(', ')}</div>
+                            )}
+                          </td>
+                          <td className={ADMIN_TD}>
+                            <SeverityChip severity={log.severity} testId="audit-severity" />
+                          </td>
+                          <td className={ADMIN_TD}>{log.entity_type}</td>
+                          {/* A missing resource name must READ as missing. This used to
+                              be `log.resource_name || log.entity_id`, which printed the
+                              entity's GUID under the label "Resource:" — so an operator
+                              could not tell a named object from an unnamed one, and the
+                              rows that omit the name on purpose (aiActionAudit's Layer 3
+                              privacy decision) looked like rows with a name nobody could
+                              read.
+
+                              Two distinct renderings, no error styling: this is a normal
+                              state for ~44% of rows, not a defect. When there is no name
+                              the id is shown LABELLED AS AN ID and in mono, which is what
+                              it is: no "missing" word and no em dash. Fixing the writers
+                              is deliberately out of scope — making the gap visible first
+                              is the point. */}
+                          <td className={ADMIN_TD} data-testid="audit-cell-resource">
+                            {log.resource_name ? (
+                              log.resource_name
+                            ) : (
+                              <>
+                                <span className="text-slate-500">Entity id</span>{' '}
+                                <span className={ADMIN_TD_ID} title={log.entity_id}>
+                                  {formatShortId(log.entity_id)}
+                                </span>
+                              </>
+                            )}
+                          </td>
+                          {/* §5.7 "never blank": an em dash when the account has no
+                              business profile (every agent-platform row) or the
+                              business has not named itself (L-1d SA Q-4). */}
+                          <td className={ADMIN_TD} data-testid="audit-cell-business">
+                            {log.business?.company_name || <span className="text-slate-500">—</span>}
+                          </td>
+                          {/* Name, then sign-in email, then the account id, shortened
+                              with the full id on hover. A system row has no user. */}
+                          <td className={ADMIN_TD} data-testid="audit-cell-user">
+                            {log.user_id && userLabel ? (
+                              userLabel === log.user_id ? (
+                                <span className={ADMIN_TD_ID} title={log.user_id}>
+                                  {formatShortId(log.user_id)}
+                                </span>
+                              ) : (
+                                userLabel
+                              )
+                            ) : (
+                              <span className="text-slate-500">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         )}
       </div>
+
+      {/* One drawer for the page, outside the table (C-9). It renders the row
+          already in memory: opening and closing it asks for nothing (R-6). */}
+      <AdminDrawer
+        open={isOpen && selected !== null}
+        onClose={() => setIsOpen(false)}
+        onReturnFocus={returnFocus}
+        title={selected ? getActionLabel(selected.action) : ''}
+        titleSuffix={selected ? formatUtc(selected.created_at) : undefined}
+        testId="audit-drawer"
+      >
+        {selected && <AuditEventBody log={selected} />}
+      </AdminDrawer>
     </div>
   );
 }
