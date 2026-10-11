@@ -291,6 +291,8 @@ describe('errors (§5.10, F-43, F-55; SA Q-10)', () => {
     expect(screen.queryByTestId('category-card-total')).toBeNull();
     expect(document.body.textContent).not.toContain('$0.00');
     expect(document.body.textContent).not.toContain('No data found');
+    // L-2b: the empty state is `AdminEmpty` now; it must not show either.
+    expect(screen.queryByTestId('analytics-empty')).toBeNull();
     // The header and the bar stay.
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.getByRole('search', { name: 'Filters' })).toBeTruthy();
@@ -594,8 +596,9 @@ describe('inbound links and round trips (workplan §4.2)', () => {
     await settled();
     fireEvent.change(screen.getByTestId('group-by-select'), { target: { value: 'feature' } });
     await waitFor(() => expect(lastQuery().get('breakdownBy')).toBe('feature'));
-    const row = (await screen.findAllByText('Row feature')).find((el) => el.closest('tbody'))!.closest('tr')!;
-    fireEvent.click(row);
+    // L-2b: the row drills through the link on its name (§5.8 D-3); the `tr` has no handler.
+    const link = (await screen.findAllByRole('link', { name: 'Row feature' })).find((el) => el.closest('tbody'))!;
+    fireEvent.click(link);
     await waitFor(() => expect(lastQuery().get('breakdownBy')).toBe('component'));
     expect(lastQuery().get('feature')).toBe('feature-1');
     expect(window.location.search).toBe('?group_by=component&feature=feature-1');

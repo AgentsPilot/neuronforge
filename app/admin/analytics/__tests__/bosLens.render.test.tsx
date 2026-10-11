@@ -151,10 +151,15 @@ const queries = (): URLSearchParams[] =>
   fetchMock.mock.calls.map(([u]) => new URL(String(u), 'http://x').searchParams);
 const lastQuery = () => queries()[queries().length - 1];
 
-/** The row in the table (the label also appears under Top Token Consumers). */
+/**
+ * The row's drill link in the table (the label also appears under "Top 3 by
+ * cost"). L-2b: an aggregate row drills through the link on its name, not a
+ * click on the `tr`, which has no handler (§5.8 D-3, workplan §2.2).
+ */
 async function rowFor(label: string): Promise<HTMLElement> {
-  await waitFor(() => expect(screen.getAllByText(label).some((el) => el.closest('tbody'))).toBe(true));
-  return screen.getAllByText(label).find((el) => el.closest('tbody'))!.closest('tr')!;
+  const inTable = () => screen.queryAllByRole('link', { name: label }).filter((el) => el.closest('tbody'));
+  await waitFor(() => expect(inTable().length).toBeGreaterThan(0));
+  return inTable()[0];
 }
 
 async function groupBy(dim: string) {
@@ -203,13 +208,17 @@ describe('what Business OS scope shows (C3-1, C3-2, W3-7)', () => {
     expect(screen.queryByTestId('group-by-agent')).toBeNull();
     expect(screen.queryByTestId('group-by-execution')).toBeNull();
     for (const c of ['creation', 'execution', 'memory']) expect(screen.queryByTestId(`table-col-${c}`)).toBeNull();
+    // L-2b: the column count (the intent of the old colspan pin), Trend gone (D-9 (a)).
+    expect(screen.getAllByRole('columnheader')).toHaveLength(4);
   });
 
-  it('P-1: the empty state spans the Business OS column count', async () => {
+  it('P-1: the empty state is a sentence, not a table row', async () => {
     fetchMock = stubRoute({ emptyItems: true });
     render(<AdminCostAnalytics />);
-    const empty = (await screen.findByText('No data found')).closest('td')!;
-    expect(empty.getAttribute('colspan')).toBe('6');
+    expect((await screen.findByTestId('analytics-empty')).textContent).toContain(
+      'No AI usage matches this window and these filters.',
+    );
+    expect(screen.queryByRole('table')).toBeNull();
   });
 
   it('P-2: "All" scope keeps all five cards, ten group-bys and the three columns', async () => {
@@ -221,14 +230,18 @@ describe('what Business OS scope shows (C3-1, C3-2, W3-7)', () => {
     for (const c of CATEGORIES) expect(screen.getByTestId(`category-card-${c}`)).toBeTruthy();
     for (const d of ALL_DIMS) expect(screen.getByTestId(`group-by-${d}`)).toBeTruthy();
     for (const c of ['creation', 'execution', 'memory']) expect(screen.getByTestId(`table-col-${c}`)).toBeTruthy();
+    // L-2b: the column count (the intent of the old colspan pin), Trend gone (D-9 (a)).
+    expect(screen.getAllByRole('columnheader')).toHaveLength(7);
   });
 
-  it('P-2: the "All" empty state still spans nine columns', async () => {
+  it('P-2: the "All" empty state is a sentence, not a table row', async () => {
     mockSearch = 'scope=all';
     fetchMock = stubRoute({ emptyItems: true });
     render(<AdminCostAnalytics />);
-    const empty = (await screen.findByText('No data found')).closest('td')!;
-    expect(empty.getAttribute('colspan')).toBe('9');
+    expect((await screen.findByTestId('analytics-empty')).textContent).toContain(
+      'No AI usage matches this window and these filters.',
+    );
+    expect(screen.queryByRole('table')).toBeNull();
   });
 
   it('P-7: no agent or execution context chips in Business OS; both in "All"', async () => {
@@ -355,11 +368,10 @@ describe('the "All" execution detail is metadata only (C3-5, FYI-1)', () => {
     fireEvent.click(await rowFor('Row execution'));
     expect(await screen.findByText('Agent One')).toBeTruthy();
 
-    fireEvent.click(screen.getByText(/Show details/));
-
+    // L-2b: the run card is static, always shown, no "Show details" toggle (SA Q-2).
     expect(await screen.findByText('Started')).toBeTruthy();
     expect(screen.getByText('completed')).toBeTruthy();
-    expect(screen.getByText('Connected Plugins')).toBeTruthy();
+    expect(screen.getByText('Connected plugins')).toBeTruthy();
     expect(screen.getAllByText('google-mail').length).toBeGreaterThan(0);
     const text = document.body.textContent ?? '';
     for (const heading of [

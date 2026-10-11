@@ -127,8 +127,12 @@ export type KpiTileProps = KpiTileBase &
     | { href?: never; filter?: never }
   );
 
-/** A plain left click with no modifier: the only click the filter mode takes over. */
-function isPlainLeftClick(event: MouseEvent<HTMLAnchorElement>): boolean {
+/**
+ * A plain left click with no modifier: the only click the filter mode takes over.
+ * Exported for the AI cost & usage drill link, the same "real link, plain left
+ * click applies in place" contract (§5.8 D-3, L-2b SA Q-3): one implementation.
+ */
+export function isPlainLeftClick(event: MouseEvent<HTMLAnchorElement>): boolean {
   return (
     !event.defaultPrevented &&
     event.button === 0 &&

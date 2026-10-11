@@ -79,17 +79,22 @@ describe('owner text stays out of the AI cost drill-down', () => {
     expect(page).toContain('export default function AdminCostAnalytics');
   });
 
-  it('the walk finds the page and its split files, and no test file (L-2a)', () => {
+  it('the walk finds the page and its split files, and no test file (L-2a, L-2b)', () => {
     for (const file of [
       PAGE,
       'app/admin/analytics/analyticsTypes.ts',
       'app/admin/analytics/analyticsFilters.ts',
+      'app/admin/analytics/analyticsCall.ts',
       'app/admin/analytics/components/AnalyticsKpis.tsx',
       'app/admin/analytics/components/AnalyticsFilterBar.tsx',
+      'app/admin/analytics/components/AnalyticsTable.tsx',
+      'app/admin/analytics/components/AnalyticsCallDetails.tsx',
+      'app/admin/analytics/components/AnalyticsExecutionCard.tsx',
+      'app/admin/analytics/components/AnalyticsSummaryCards.tsx',
     ]) {
       expect(files).toContain(file);
     }
-    expect(files.length).toBeGreaterThanOrEqual(5);
+    expect(files.length).toBeGreaterThanOrEqual(10);
     expect(files.some((file) => file.includes('__tests__') || /\.test\.tsx?$/.test(file))).toBe(false);
   });
 });

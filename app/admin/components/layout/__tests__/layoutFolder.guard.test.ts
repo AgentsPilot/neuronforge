@@ -492,15 +492,20 @@ const MIGRATED_PAGES = [
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },
   {
-    // L-2a (part a): header, KPI strip, filter bar, states, URL. The table and
-    // drawers in page.tsx are L-2b.
+    // L-2a (part a): header, KPI strip, filter bar, states, URL. L-2b (part b):
+    // the table, the call drawer, the run card and the summary cards.
     page: '/admin/analytics (AI cost & usage)',
     files: [
       'app/admin/analytics/page.tsx',
       'app/admin/analytics/analyticsTypes.ts',
       'app/admin/analytics/analyticsFilters.ts',
+      'app/admin/analytics/analyticsCall.ts',
       'app/admin/analytics/components/AnalyticsKpis.tsx',
       'app/admin/analytics/components/AnalyticsFilterBar.tsx',
+      'app/admin/analytics/components/AnalyticsTable.tsx',
+      'app/admin/analytics/components/AnalyticsCallDetails.tsx',
+      'app/admin/analytics/components/AnalyticsExecutionCard.tsx',
+      'app/admin/analytics/components/AnalyticsSummaryCards.tsx',
     ],
   },
 ] as const;

@@ -148,3 +148,25 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - State machines with "has loaded" flags need an explicit test for success → failure → retry; add it to the default QA probe list for the remaining pages.
 
 ### Status: COMMITTED — feature/admin-layout-l2a — 61681eef, PR #295
+
+---
+
+## L-2b: AI cost & usage, part 2 (table, call drawer, run card, summary cards) — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-2b workplan](/docs/workplans/ADMIN_LAYOUT_L2B_WORKPLAN.md)
+
+### What went well
+- The page went from about 1,030 to 547 lines; the 19 pre-existing type errors in its table half are gone (typed `readMeta`, no casts).
+- Reuse over copy: SA had the existing `isPlainLeftClick` exported instead of duplicated (Q-3).
+- The drawer reused the L-1d B-1 pattern from day one; QA's disappearing-row and success → failure → retry probes all passed first time.
+- Fifteen mutation checks bit, one after adding a mounted-marker pin that SA accepted.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 1 small (QA-B1, Low: focus lost after a drill because drill links are new) — fixed before commit, plus SA C-1 type tidy.
+- Browser checks still owed (B-B1..B-B11, B-QA1..B-QA7, plus earlier slices).
+
+### Conclusions & process improvements
+- Making something newly focusable (rows → links) creates a focus-after-action obligation; add "where does focus go after the action" to QA's default probe list.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
