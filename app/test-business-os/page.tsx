@@ -40,6 +40,7 @@ import type { ExecutionResult } from '@/lib/types/plugin-types';
 import { PurgeDangerZone } from '@/components/business-os/purge/PurgeDangerZone';
 import { LlmUsageVerification } from '@/components/test-business-os/llm-usage/LlmUsageVerification';
 import { PlanCheckoutPanel } from '@/components/test-business-os/PlanCheckoutPanel';
+import { TestCreditsPanel } from '@/components/test-business-os/TestCreditsPanel';
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 // Add tabs here. The first real tab will replace/extend this list.
@@ -49,6 +50,7 @@ const TABS = [
   { id: 'danger-zone', label: 'Danger Zone' },
   { id: 'llm-usage', label: 'LLM Usage' },
   { id: 'billing', label: 'Billing' },
+  { id: 'test-credits', label: 'Test credits' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -488,6 +490,21 @@ export default function TestBusinessOSPage() {
         <div style={panelStyle}>
           <h2 style={{ marginTop: 0 }}>Billing — Plan checkout (test)</h2>
           <PlanCheckoutPanel onLog={addDebugLog} onResponse={setLastResponse} />
+        </div>
+      )}
+
+      {/* Tab: Test credits — TEST ONLY (slice TC-1). Admin-only; takes plan
+          credits from any account the admin picks, behind the server switch
+          BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED. Remove with its route. */}
+      {activeTab === 'test-credits' && (
+        <div style={panelStyle}>
+          <h2 style={{ marginTop: 0 }}>Test credits — take plan credits (test only)</h2>
+          <TestCreditsPanel
+            sessionUserId={user?.id ?? null}
+            authLoading={authLoading}
+            onLog={addDebugLog}
+            onResponse={setLastResponse}
+          />
         </div>
       )}
 

@@ -99,6 +99,8 @@ export type AiActivityEntryState =
   | { state: 'too_recent' }
   | { state: 'may_be_archived' }
   | { state: 'lost' }
+  /** SA C-1: the row's effective service is not AI, so no AI audit entry is expected. Never counted in `noEntry`. */
+  | { state: 'not_applicable' }
   | { state: 'unknown'; reason: AiActivityEntryUnknownReason };
 
 /** Counted over the ROWS SHOWN, not the window (workplan § D step 8). */

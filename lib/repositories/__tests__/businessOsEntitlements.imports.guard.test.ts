@@ -163,6 +163,12 @@ const ALLOWED = new Set(
     // route, gated by `requireAdmin`. Its test replaces the repository with a fake.
     'app/api/admin/business-os/credits/accounts/[accountId]/boost/route.ts',
     'app/api/admin/business-os/credits/accounts/[accountId]/boost/__tests__/route.test.ts',
+    // ── Test harness slice TC-1, 2026-10-11 — TEST ONLY, remove with the harness tab ──
+    // The take-credits route passes the plan repository to the tenant check,
+    // exactly as the 11c route above does: READ ONLY through `isBusinessOsTenant`.
+    // An admin route, gated by `requireAdmin`. Its test replaces the repository with a fake.
+    'app/api/admin/business-os/test/take-credits/route.ts',
+    'app/api/admin/business-os/test/take-credits/__tests__/route.test.ts',
     // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
     // READ ONLY, `findPeriodAnchorsBatch` and nothing else (SA SQ-43). The one
     // file that wires the plan repository for the admin Businesses list's

@@ -217,6 +217,13 @@ export const AUDIT_EVENTS = {
   // (BD-26, lib/audit/ownerVisibility.ts): the reason is internal.
   BOS_CREDIT_LOT_GRANTED: 'BOS_CREDIT_LOT_GRANTED',
   BOS_CREDIT_LOT_REDUCED: 'BOS_CREDIT_LOT_REDUCED',
+  // TEST ONLY (slice TC-1): an admin took N plan credits from an account on the
+  // /test-business-os harness, as one test charge on the credit ledger. Written
+  // only by POST /api/admin/business-os/test/take-credits, after the RPC
+  // answers `recorded: true`, then flushed (WC-7). Entity type
+  // 'business_os_credit_period' (operator-only, BD-26), id = the account. Remove
+  // with the harness tab.
+  BOS_TEST_CREDITS_TAKEN: 'BOS_TEST_CREDITS_TAKEN',
   // Credit deduction slice 8b: a recorded AI charge took the account's shown
   // percentage of PLAN credits left from at or above the low line (10) to
   // below it. Written only by lib/business-os/credits/creditLowLine.ts, with
@@ -900,6 +907,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin took credits back from a Business OS credit lot (credits, lot remaining and reason recorded)',
+  },
+  // TEST ONLY (slice TC-1): the same weight as a lot reduction, an admin
+  // changed what an account can spend.
+  [AUDIT_EVENTS.BOS_TEST_CREDITS_TAKEN]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin took plan credits from a Business OS account on the test harness (credits and reason recorded)',
   },
   // Credit deduction slice 8b (SA SQ-46): 'info', no compliance flags — an
   // observation for admins, not an operator alert. The writer passes NO
