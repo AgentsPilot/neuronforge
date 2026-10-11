@@ -7,6 +7,12 @@
  * scope through the route (AC-42), one accountability log line with no name
  * (AC-30), 500 without internals (AC-36) and `no-store` on every status
  * (AC-35).
+ *
+ * Slice 1b: the credits section in the payload, AC-42 for the credit and lot
+ * reads through the route, and the info line's credit statuses and counts
+ * with no credit figure (AC-30, SA-WR-13). The wiring is faked whole, and its
+ * `credits.getSnapshots` is a fake (SA-WR-10): the real entitlement service is
+ * never reached.
  */
 
 import * as fs from 'fs';
@@ -61,6 +67,15 @@ const mockDeps = {
     findLiveBillingStatusForAccount: jest.fn(),
     countLiveRevenueRows: jest.fn(),
   },
+  credits: {
+    getSnapshots: jest.fn(),
+    findPeriodAnchorsBatch: jest.fn(),
+    listTotalsForAccountsInRange: jest.fn(),
+  },
+  lots: {
+    allAccounts: jest.fn(),
+    forAccount: jest.fn(),
+  },
 };
 jest.mock('@/lib/business-os/finance/financeHealthDeps', () => {
   const { getEntitlementConfig } = jest.requireActual('@/lib/business-os/entitlements/source');
@@ -77,6 +92,19 @@ const mockFindNames = jest.fn();
 jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
   businessProfileRepository: { findAdminIdentitiesByUserIds: (...a: unknown[]) => mockFindNames(...a) },
 }));
+
+// Fix round 1: the real pass by default; one test makes it THROW (it is documented never to).
+const mockThrowFromPositions = { on: false };
+jest.mock('@/lib/business-os/credits/adminCreditPercent', () => {
+  const actual = jest.requireActual('@/lib/business-os/credits/adminCreditPercent');
+  return {
+    ...actual,
+    readAdminCreditPositions: (...a: unknown[]) => {
+      if (mockThrowFromPositions.on) throw new Error('positions pass exploded');
+      return actual.readAdminCreditPositions(...a);
+    },
+  };
+});
 
 import { GET } from '../route';
 
@@ -120,8 +148,38 @@ function chargeRow(user_id: string) {
   };
 }
 
+/** A real snapshot of the config's first cohort plan: the credit pass reads a real allowance. */
+function snapshot() {
+  const { getEntitlementConfig } = jest.requireActual('@/lib/business-os/entitlements/source');
+  const { resolveEntitlements } = jest.requireActual('@/lib/business-os/entitlements/resolver');
+  const { previewAccountFor } = jest.requireActual('@/lib/business-os/entitlements/planPresentation');
+  const config = getEntitlementConfig();
+  const planId = Object.keys(config.cohorts)[0];
+  const now = new Date();
+  return { resolution: resolveEntitlements({ config, account: previewAccountFor(config, planId, now), overrides: [], addons: [], now }), unavailable: false, stale: false };
+}
+
+/** Credit figures that must never reach a log line (AC-30). */
+const USED_FIGURE = '7.123456';
+const GIFTED_FIGURE = 13.5;
+
 function seed() {
   const ledger = { data: { rows: [chargeRow(ACCOUNT)], reachedCeiling: false }, error: null };
+  mockDeps.credits.getSnapshots.mockImplementation(async (ids: string[]) => new Map(ids.map((id) => [id, snapshot()])));
+  mockDeps.credits.findPeriodAnchorsBatch.mockImplementation(async (ids: string[]) => ({
+    data: Object.fromEntries(ids.map((id) => [id, '2026-09-01T00:00:00Z'])),
+    error: null,
+  }));
+  mockDeps.credits.listTotalsForAccountsInRange.mockImplementation(async (ids: string[]) => ({
+    data: { rows: ids.map((id) => ({ user_id: id, period_start: `${todayUtc().slice(0, 8)}01T00:00:00+00:00`, credits_total: USED_FIGURE })), reachedCeiling: false },
+    error: null,
+  }));
+  const gift = [{
+    id: '44444444-4444-4444-8444-000000000001', accountId: ACCOUNT, source: 'admin_grant', creditsGranted: GIFTED_FIGURE,
+    expiresAt: null, createdAt: '2026-09-02T00:00:00Z', actorAdminId: ADMIN.id, draws: [],
+  }];
+  mockDeps.lots.allAccounts.mockResolvedValue({ data: gift, error: null });
+  mockDeps.lots.forAccount.mockResolvedValue({ data: gift, error: null });
   mockDeps.plans.pagePlans.mockResolvedValue({ data: [plan(ACCOUNT)], error: null });
   mockDeps.findPlanForAccount.mockResolvedValue({ data: { plan: plan(ACCOUNT) }, error: null });
   mockDeps.ledger.listRowsOfAllAccountsCreatedInRange.mockResolvedValue(ledger);
@@ -138,6 +196,8 @@ const allReads = () => [
   mockDeps.findPlanForAccount,
   ...Object.values(mockDeps.ledger),
   ...Object.values(mockDeps.finance),
+  ...Object.values(mockDeps.credits),
+  ...Object.values(mockDeps.lots),
   mockFindNames,
 ];
 const noReadHappened = () => {
@@ -279,7 +339,10 @@ describe('200', () => {
     expect(body.success).toBe(true);
     expect(body.data.window.preset).toBe('this_month');
     expect(body.data.window.to).toBe(todayUtc());
-    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'generatedAt', 'revenue', 'tiles', 'window']);
+    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'revenue', 'tiles', 'window']);
+    expect(Object.keys(body.data.tiles).sort()).toEqual(['k1', 'k2', 'k3', 'k4', 'k5']);
+    expect(body.data.credits.status).toBe('ok');
+    expect(body.data.tiles.k4.value).toEqual({ value: GIFTED_FIGURE, exact: true });
   });
 
   it('AC-25: a preset with client from / to → the window comes from the server clock', async () => {
@@ -307,6 +370,73 @@ describe('200', () => {
     for (const [id] of mockDeps.ledger.listRowsForAccountCreatedInRange.mock.calls) expect(id).toBe(ACCOUNT);
     expect(mockDeps.finance.countLiveRevenueRows).toHaveBeenCalledWith();
     expect(mockFindNames).toHaveBeenCalledWith([ACCOUNT]);
+  });
+
+  it('AC-42 (slice 1b) through the route: every credit and lot read gets exactly the id; the all-accounts lot read is never called', async () => {
+    const res = await call(`?accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    expect(mockDeps.lots.allAccounts).not.toHaveBeenCalled();
+    expect(mockDeps.lots.forAccount).toHaveBeenCalledTimes(1);
+    expect(mockDeps.lots.forAccount).toHaveBeenCalledWith(ACCOUNT);
+    expect(mockDeps.credits.getSnapshots.mock.calls).toEqual([[[ACCOUNT]]]);
+    expect(mockDeps.credits.findPeriodAnchorsBatch.mock.calls).toEqual([[[ACCOUNT]]]);
+    expect(mockDeps.credits.listTotalsForAccountsInRange.mock.calls.map((c) => c[0])).toEqual([[ACCOUNT]]);
+    for (const [ids] of mockFindNames.mock.calls) expect(ids).toEqual([ACCOUNT]);
+    expect((await res.json()).data.credits.scope).toBe('one');
+  });
+
+  it('all businesses: the named all-accounts lot read, never the one-account read', async () => {
+    await call();
+    expect(mockDeps.lots.allAccounts).toHaveBeenCalledTimes(1);
+    expect(mockDeps.lots.allAccounts).toHaveBeenCalledWith();
+    expect(mockDeps.lots.forAccount).not.toHaveBeenCalled();
+  });
+
+  it('AC-27 (slice 1b): a failed credit pass and a failed lot read → 200, credits unknown, K-4 unavailable, the rest renders', async () => {
+    mockDeps.credits.listTotalsForAccountsInRange.mockResolvedValue({ data: null, error: new Error('x') });
+    mockDeps.lots.allAccounts.mockResolvedValue({ data: null, error: new Error('y') });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.credits.status).toBe('unknown');
+    expect(body.data.tiles.k4.status).toBe('unavailable');
+    expect(body.data.aiCost.status).toBe('ok');
+  });
+
+  it('fix round 1: the positions pass THROWS → still 200; Section 4 unknown, K-2 unavailable, K-4 keeps its value; logged as a read failure', async () => {
+    mockThrowFromPositions.on = true;
+    try {
+      const res = await call();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.credits).toMatchObject({ status: 'unknown', figures: null });
+      expect(body.data.tiles.k2).toMatchObject({ status: 'unavailable', value: null });
+      expect(body.data.tiles.k4).toMatchObject({ status: 'neutral', value: { value: GIFTED_FIGURE, exact: true } });
+      expect(body.data.accounts.status).toBe('ok');
+      expect(body.data.aiCost.status).toBe('ok');
+      expect(mockLog.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'credit_positions' }), 'Finance read failed');
+      expect(mockLog.error).not.toHaveBeenCalledWith(expect.anything(), 'Business OS finance read failed');
+      const line = mockLog.info.mock.calls.find((c) => c[1] === 'Admin read the Business OS finance page');
+      expect(line?.[0]).toMatchObject({ sections: { credits: 'unknown' }, counts: { creditsPass: 'failed', creditAccounts: 1 } });
+    } finally {
+      mockThrowFromPositions.on = false;
+    }
+  });
+
+  it('AC-30 / SA-WR-13 (slice 1b): the info line carries the credit statuses, the credit account count and the pass outcome; no credit figure', async () => {
+    await call();
+    const lines = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(lines).toHaveLength(1);
+    const [ctx] = lines[0];
+    expect(ctx).toMatchObject({
+      sections: { credits: 'ok' },
+      tiles: { k2: expect.any(String), k4: 'neutral' },
+      counts: { creditAccounts: 1, creditsPass: 'ok', creditLots: 1, creditRowsShown: 1 },
+    });
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls]);
+    expect(logged).not.toContain(USED_FIGURE);
+    expect(logged).not.toContain(String(GIFTED_FIGURE));
+    expect(logged).not.toContain(NAME);
   });
 
   it('AC-30: one info line with the admin id, filters, statuses and counts; no name, email or figure', async () => {
