@@ -3,8 +3,8 @@
  * every admin page prints time the same way.
  *
  * L-1a shipped `formatUtc` (Health's "As of" line); L-1b adds `formatCount`
- * (the Jobs KPI values). `formatUtcDate` arrives with the first pilot that
- * uses it.
+ * (the Jobs KPI values); L-1c adds `formatUtcTime` (the filter bar's "Read at"
+ * line). `formatUtcDate` arrives with the first pilot that uses it.
  *
  * `formatUtc` began as a copy of the Jobs formatter. Since L-1b Jobs has no
  * copy of its own: every Jobs file prints time through this one (CR-4).
@@ -31,4 +31,14 @@ export function formatUtc(iso: string | null): string {
  */
 export function formatCount(value: number): string {
   return Number.isFinite(value) ? value.toLocaleString('en-US') : '—';
+}
+
+/**
+ * "HH:mm UTC" for any ISO timestamp (the filter bar's "Read at HH:mm UTC",
+ * §5.5 part 6). Through Date like `formatUtc`, so an offset instant shows its
+ * UTC time. Em dash for null or an invalid value.
+ */
+export function formatUtcTime(iso: string | null): string {
+  const full = formatUtc(iso);
+  return full === '—' ? full : full.slice(11);
 }

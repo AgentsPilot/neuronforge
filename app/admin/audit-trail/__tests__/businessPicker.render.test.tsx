@@ -42,6 +42,20 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`.
+// Every method routes to `record`, so the AC-B13 checks below still see every
+// page log line as well as the picker's.
+jest.mock('@/lib/logger/client', () => ({
+  clientLogger: {
+    child: () => ({
+      info: (...args: unknown[]) => record(...args),
+      warn: (...args: unknown[]) => record(...args),
+      error: (...args: unknown[]) => record(...args),
+      debug: (...args: unknown[]) => record(...args),
+    }),
+  },
+}));
+
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(mockSearch),
@@ -197,9 +211,9 @@ describe('choosing a business', () => {
   });
 
   it('goes back to every account when the chip is cleared', async () => {
-    // Filter state is the only source of truth here — the URL is a record of
-    // arrival and is deliberately never written to — so clearing is observable
-    // exactly where it matters: the next request drops `user_id` entirely.
+    // The URL is the filter hook's projection (Admin Layout Standard L-1c), but
+    // the request is what matters here: after clearing, the next request drops
+    // `user_id` entirely.
     const fetchMock = mockFetch();
     render(<AuditTrailPage />);
 
@@ -386,15 +400,29 @@ describe('when the business list cannot be read', () => {
 });
 
 describe('the deep link still works', () => {
-  it('filters by the id in the URL on arrival and leaves the URL alone', async () => {
+  it('filters by the id in the URL on arrival and rewrites user_id to account by replace', async () => {
     mockSearch = `user_id=${ACME}`;
     window.history.replaceState({}, '', `/admin/audit-trail?user_id=${ACME}`);
-    const fetchMock = mockFetch();
-    render(<AuditTrailPage />);
+    const lengthBefore = window.history.length;
+    const replaceSpy = jest.spyOn(window.history, 'replaceState');
+    const pushSpy = jest.spyOn(window.history, 'pushState');
+    try {
+      const fetchMock = mockFetch();
+      render(<AuditTrailPage />);
 
-    await waitFor(() => expect(auditUrls(fetchMock).length).toBe(1));
-    expect(new URLSearchParams(auditUrls(fetchMock)[0].split('?')[1]).get('user_id')).toBe(ACME);
-    expect(new URLSearchParams(window.location.search).get('user_id')).toBe(ACME);
+      await waitFor(() => expect(auditUrls(fetchMock).length).toBe(1));
+      // The route still receives its own name.
+      expect(new URLSearchParams(auditUrls(fetchMock)[0].split('?')[1]).get('user_id')).toBe(ACME);
+      // U-9: the legacy name is read and rewritten to the canonical one.
+      expect(window.location.search).toBe(`?account=${ACME}`);
+      // SA M-1: null state, so Next 14.2 copies its own keys onto the entry.
+      expect(replaceSpy).toHaveBeenCalledWith(null, '', `/admin/audit-trail?account=${ACME}`);
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(window.history.length).toBe(lengthBefore);
+    } finally {
+      replaceSpy.mockRestore();
+      pushSpy.mockRestore();
+    }
   });
 });
 

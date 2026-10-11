@@ -6,9 +6,11 @@
  *
  * Generalised from Health's own header. A `<header>` with no role and no
  * `<section>` (A-9): inside `<main>` it is not a landmark, so a page's region
- * count is unchanged. The `badge` and `actions` props arrive with the first
- * pilot that needs them (recorded in the requirement's §1).
+ * count is unchanged. L-1c adds `actions` (Audit trail's Export CSV); `badge`
+ * arrives with the first page that has a factual badge (requirement §1).
  */
+
+import type { ReactNode } from 'react';
 
 export interface AdminPageHeaderProps {
   /** Equals the sidebar label (D-3 (a)). Rendered as the page's only h1. */
@@ -17,9 +19,11 @@ export interface AdminPageHeaderProps {
   purpose: string;
   /** Optional server-clock line; omitted when absent. */
   asOf?: string | null;
+  /** Page actions on the right (e.g. Export CSV). Never Refresh: it lives in the filter bar (§5.3). */
+  actions?: ReactNode;
 }
 
-export function AdminPageHeader({ title, purpose, asOf }: AdminPageHeaderProps) {
+export function AdminPageHeader({ title, purpose, asOf, actions }: AdminPageHeaderProps) {
   return (
     <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-700 pb-4">
       <div>
@@ -31,6 +35,7 @@ export function AdminPageHeader({ title, purpose, asOf }: AdminPageHeaderProps) 
           </p>
         )}
       </div>
+      {actions && <div className="flex items-center gap-2">{actions}</div>}
     </header>
   );
 }

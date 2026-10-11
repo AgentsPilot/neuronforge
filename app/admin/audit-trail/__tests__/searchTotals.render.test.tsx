@@ -44,6 +44,13 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`,
+// and `@/lib/logger/client` re-exports from the mocked `@/lib/logger` above.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
+
 import AuditTrailPage from '../page';
 
 /** The unfiltered table in this fixture: 14,332 rows => 717 pages of 20. */

@@ -57,3 +57,26 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Get a signed-in admin browser (in-app pane or Chrome extension) set up before L-1c, so the owed checks are cleared together.
 
 ### Status: COMMITTED — feature/admin-layout-l1b — ea6f4ce9, PR #287
+
+---
+
+## L-1c: URL filter state, date presets, filter bar with Audit trail (part 1) as pilot — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-1c workplan](/docs/workplans/ADMIN_LAYOUT_L1C_WORKPLAN.md)
+
+### What went well
+- SA caught at workplan stage that `replaceState(window.history.state, ...)` would be invisible to Next 14's `useSearchParams` (it carries `__NA`), and switched the mechanism to `replaceState(null, ...)` before any code was written (M-1); five mutation checks then proved the tests bite.
+- Health's minute-form links, the cutover link and every legacy alias round-trip byte for byte; the route accepts the new end-of-day instant (checked against its Zod schema).
+- RC-8 applied early: the shared picker moved to L-1d to keep L-1c at about 5 days.
+- First slice under the user's fast-track rule (commit + PR after SA + QA, no approval wait).
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-5; code approved, two optional comment fixes applied by TL).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Browser checks B-1..B-14 (the only real-browser proof of M-1) are still owed: no signed-in admin browser available. Now owed for L-1a, L-1b and L-1c.
+
+### Conclusions & process improvements
+- Framework-behaviour claims (here: Next's history handling) must be checked against the installed version's source at workplan review — it saved a slice.
+- Carry QA E-1 (URL not cleaned after an outside change that resolves to current filters) into L-1d.
+
+### Status: COMMITTED — feature/admin-layout-l1c — 1752d93d, PR #291
