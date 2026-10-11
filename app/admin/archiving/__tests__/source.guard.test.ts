@@ -55,6 +55,7 @@ function codeOf(source: string): string {
 function isAllowedImport(fromFile: string, specifier: string): boolean {
   if (specifier === 'react' || specifier === 'lucide-react') return true;
   if (specifier.startsWith('@/components/ui/')) return true;
+  if (specifier.startsWith('@/app/admin/components/layout/')) return true;
   // Named, not a prefix: `@/lib/archiving/server/*` is the runner (Slice 2b D-6).
   if (specifier === '@/lib/archiving/config' || specifier === '@/lib/archiving/types') return true;
   if (specifier.startsWith(`@/${ROOT}`)) return true;
@@ -106,6 +107,9 @@ describe('the screen imports nothing server-side', () => {
     expect(isAllowedImport(page, '@/lib/archiving/config')).toBe(true);
     expect(isAllowedImport(page, '@/components/ui/select')).toBe(true);
     expect(isAllowedImport(page, './format')).toBe(true);
+    expect(isAllowedImport(page, '@/app/admin/components/layout/StatusChip')).toBe(true);
+    expect(isAllowedImport(page, '@/app/admin/components/AdminHeader')).toBe(false);
+    expect(isAllowedImport(page, '../components/layout/StatusChip')).toBe(false);
   });
 });
 

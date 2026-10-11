@@ -42,6 +42,10 @@
  *
  * Amended by L-2a: AI cost & usage (part a) joins the registry with its five
  * files. No new shared file, so the expected files and part (a) are unchanged.
+ *
+ * Amended by L-3: Archiving joins the registry; no rule change. Its two shared
+ * exports (the `neutral` StatusChip tone and the `badge` prop of
+ * AdminPageHeader) add no file, no import outside the folder and no green.
  */
 
 import * as fs from 'fs';
@@ -506,6 +510,16 @@ const MIGRATED_PAGES = [
       'app/admin/analytics/components/AnalyticsCallDetails.tsx',
       'app/admin/analytics/components/AnalyticsExecutionCard.tsx',
       'app/admin/analytics/components/AnalyticsSummaryCards.tsx',
+    ],
+  },
+  {
+    // L-3: header with the Runs off badge, KPI strip, Refresh-only bar, states,
+    // the run history table and the confirm dialog class.
+    page: '/admin/archiving (Archiving)',
+    files: [
+      'app/admin/archiving/page.tsx',
+      'app/admin/archiving/components/ArchiveConfirmDialog.tsx',
+      'app/admin/archiving/components/ArchivingKpis.tsx',
     ],
   },
 ] as const;

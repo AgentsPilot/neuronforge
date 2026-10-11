@@ -170,3 +170,25 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Making something newly focusable (rows → links) creates a focus-after-action obligation; add "where does focus go after the action" to QA's default probe list.
 
 ### Status: COMMITTED — feature/admin-layout-l2b — 1357ad92, PR #296
+
+---
+
+## L-3: Archiving — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-3 workplan](/docs/workplans/ADMIN_LAYOUT_L3_WORKPLAN.md)
+
+### What went well
+- Last Monitor page; first consumer of the header badge and the neutral chip, both added with type-level guarantees (icon still required for every other tone).
+- SA kept the deliberate "clear on failed refresh" behaviour because the confirm dialog shows numbers before an irreversible move — a reasoned exception to the standard, recorded.
+- QA probed seven failure kinds × retry and all twelve run outcomes; no bugs.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-5; code approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Focus after "Try again" lands on the body on every migrated page (shared component) — follow-up candidate, not L-3 specific.
+- Browser checks still owed (L-B1..L-B10 plus earlier slices).
+
+### Conclusions & process improvements
+- Shared AdminError "Try again" focus handling should be fixed once in the shared component rather than per page.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
