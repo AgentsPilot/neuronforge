@@ -48,7 +48,7 @@ import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
-import { BusinessAccountPicker } from './BusinessAccountPicker';
+import { AdminBusinessPicker, businessFilterChip } from '@/app/admin/components/layout/AdminBusinessPicker';
 import {
   AUDIT_DEFAULT_WINDOW,
   AUDIT_FILTER_SPEC,
@@ -157,7 +157,8 @@ function auditUserLabel(log: AuditLogEntry): string | null {
 }
 
 /**
- * What the active account chip is labelled with.
+ * The name the active business chip shows when the admin did not just pick it
+ * (an inbound link, Back/Forward), or null when the loaded rows name nothing.
  *
  * The chip used to print `filters.userId.slice(0, 8)` — a truncated GUID, which
  * names nothing to the operator reading it. The readable identity is already in
@@ -167,21 +168,26 @@ function auditUserLabel(log: AuditLogEntry): string | null {
  * never a fetch.
  *
  * Business name first because that is what an operator calls the account, then
- * the same `email → full_name` chain the rows use, and finally the truncated id
- * when there is nothing to fall back on — no rows loaded yet, or a filter that
- * matched none. Saying the id then is honest; a placeholder would not be.
+ * the same chain `auditUserLabel` uses for a row (F-31, L-1e): full name, then
+ * the row's sign-in email, then `users.email`. Null when there is nothing to
+ * fall back on (no rows loaded yet, or a filter that matched none): the chip
+ * then shows the short id, which is honest; a placeholder would not be.
  *
  * The `user_id === userId` test is load-bearing, not defensive tidiness: `logs`
  * still holds the PREVIOUS filter's rows while the next request is in flight, so
  * without it the chip would briefly label this account with another one's name.
  */
-function accountFilterLabel(logs: AuditLogEntry[], userId: string): string {
+function accountFilterName(logs: AuditLogEntry[], userId: string): string | null {
   const own = logs.filter((log) => log.user_id === userId);
+  // QA-2: a whitespace-only value is no name, so it falls through to the next source.
+  const first = (pick: (log: AuditLogEntry) => string | null | undefined): string | undefined =>
+    own.map((log) => pick(log)?.trim()).find((value) => Boolean(value)) || undefined;
   const name =
-    own.find((log) => log.business?.company_name)?.business?.company_name ||
-    own.find((log) => log.users?.email)?.users?.email ||
-    own.find((log) => log.users?.full_name)?.users?.full_name;
-  return name || `${userId.slice(0, 8)}…`;
+    first((log) => log.business?.company_name) ||
+    first((log) => log.users?.full_name) ||
+    first((log) => log.user_email) ||
+    first((log) => log.users?.email);
+  return name || null;
 }
 
 /**
@@ -657,6 +663,13 @@ function AuditTrailPageContent() {
   // already sees an inbound link's filters, and `filters` keeps its identity
   // until a value changes, so the two effects below fire exactly as before.
   const { filters, setFilters, clear, isDefault } = useAdminFilters(AUDIT_FILTER_SPEC);
+  /**
+   * The business the admin last picked, with the name the picker showed, so the
+   * chip names it at once instead of waiting for rows (F-31). Not in the URL (a
+   * name is not a filter). Read only while its id is the applied filter, so
+   * Clear, the chip's X, Back/Forward or a link to another id need no reset.
+   */
+  const [pickedBusiness, setPickedBusiness] = useState<{ accountId: string; name: string | null } | null>(null);
   /** When the list was last read successfully: the bar's "Read at HH:mm UTC". */
   const [readAt, setReadAt] = useState<string | null>(null);
 
@@ -841,20 +854,18 @@ function AuditTrailPageContent() {
     a.click();
   };
 
+  // §5.5 part 7 (L-1e): "Business: {name}" or the short id, the full id on
+  // hover, X "Remove business". The picked name first (only for the id it was
+  // picked for), then the loaded rows; a picked unnamed business (null) falls
+  // through to the rows, then the short id.
+  const pickedName = pickedBusiness && pickedBusiness.accountId === filters.account ? pickedBusiness.name : null;
   const chips: AdminActiveChip[] = filters.account
     ? [
-        {
-          key: 'account',
-          // Words, testid, title and X label unchanged until the shared picker
-          // replaces this one (L-1e, RC-8). The full id stays reachable on
-          // hover: the visible text either replaces it with a name or
-          // truncates it.
-          label: `Account ${accountFilterLabel(logs, filters.account)}`,
-          title: filters.account,
-          testId: 'account-filter-chip',
-          removeLabel: 'Show every account',
+        businessFilterChip({
+          accountId: filters.account,
+          name: pickedName ?? accountFilterName(logs, filters.account),
           onRemove: () => setFilters({ account: '' }),
-        },
+        }),
       ]
     : [];
   const isBosAiFailures = filters.action === BOS_AI_FAILED_ACTION;
@@ -886,14 +897,20 @@ function AuditTrailPageContent() {
           onChange: (next) => setFilters({ window: next }),
         }}
         business={
-          // The original picker, unchanged, for one slice (RC-8): the fixed
-          // width keeps its permanent hint from stretching the row. Account is
-          // the only filter applied at the DATABASE level to a single account
-          // (route.ts `.eq('user_id', accountId)`).
+          // The shared picker (C-6, L-1e), labelled "Business" by default. The
+          // fixed width keeps its standing hint from stretching the row. The
+          // business filter is the only one applied at the DATABASE level to a
+          // single account (route.ts `.eq('user_id', accountId)`). The hint is
+          // said out loud because the list is `business_profiles`: an account
+          // with no profile row can only be reached by pasting its id.
           <div className="w-full sm:w-72">
-            <BusinessAccountPicker
+            <AdminBusinessPicker
               selectedAccountId={filters.account}
-              onSelect={(account) => setFilters({ account })}
+              onSelect={(account, name) => {
+                setPickedBusiness({ accountId: account, name });
+                setFilters({ account });
+              }}
+              hint="Only accounts with a business profile can be found by name. Paste a full account id to filter by any other account."
             />
           </div>
         }

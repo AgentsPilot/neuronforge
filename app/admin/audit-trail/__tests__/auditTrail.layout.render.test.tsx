@@ -314,7 +314,7 @@ describe('inbound links (workplan §4.2): the address bar after mount and the fi
     mockFetch();
     render(<AuditTrailPage />);
     expect((await screen.findByTestId('linked-window-chip')).textContent).toBe('Linked window up to 2026-09-29 16:51 UTC');
-    expect(await screen.findByTestId('account-filter-chip')).toBeTruthy();
+    expect(await screen.findByTestId('business-filter-chip')).toBeTruthy();
   });
 
   it('the search from a link fills the Search box and never reaches the address bar', async () => {

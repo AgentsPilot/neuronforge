@@ -94,14 +94,14 @@ describe('the deep link from Businesses', () => {
     const first = fetchedUrls(fetchMock).find((u) => u.includes('/api/admin/audit-trail')) as string;
     expect(first).toContain('action=BUSINESS_AI_ACTION_FAILED');
     expect(first).toContain(`user_id=${ACCOUNT}`);
-    expect((await screen.findByTestId('account-filter-chip')).textContent).toContain(ACCOUNT.slice(0, 8));
+    expect((await screen.findByTestId('business-filter-chip')).textContent).toContain(ACCOUNT.slice(0, 8));
   });
 
   it('clearing the chip drops the account filter', async () => {
     mockSearch = `user_id=${ACCOUNT}`;
     const fetchMock = mockRoute(EMPTY_PAGE);
     render(<AuditTrailPage />);
-    fireEvent.click(await screen.findByLabelText('Show every account'));
+    fireEvent.click(await screen.findByLabelText('Remove business'));
 
     await waitFor(() => {
       const last = fetchedUrls(fetchMock).at(-1) as string;

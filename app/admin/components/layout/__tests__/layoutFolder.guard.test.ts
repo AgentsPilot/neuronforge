@@ -33,6 +33,12 @@
  * from its label (its files are unchanged). No rule changes: the drawer's
  * sections are `div role="group"`, never `<section` (S-8), and the new tones
  * are sky and amber, never green (S-7).
+ *
+ * Amended by L-1e: `AdminBusinessPicker.tsx` joins the expected files; a new
+ * rule, L-1e F-1 (SA M-3; named apart from the L-1c G-3), allows a `fetch` call
+ * in that one file only, so the shared helpers stay fetch-free and a second
+ * fetching component needs a deliberate edit here; the Audit trail registry
+ * comment notes the original picker left the page.
  */
 
 import * as fs from 'fs';
@@ -66,6 +72,7 @@ const SOURCE_FILES = ALL_FILES.filter((f) => !isTest(f) && /\.tsx?$/.test(f));
 const TSX_SOURCES = SOURCE_FILES.filter((f) => f.endsWith('.tsx'));
 
 const EXPECTED_SOURCES = [
+  'AdminBusinessPicker.tsx',
   'AdminDrawer.tsx',
   'AdminFilterBar.tsx',
   'AdminPageHeader.tsx',
@@ -143,6 +150,14 @@ const CONSOLE = /console\./;
 const JSON_CALL = /\.json\(/;
 const HISTORY_WRITE = /history\.(?:pushState|replaceState)/;
 const PUSH_STATE = /history\.pushState/;
+
+/**
+ * L-1e F-1 (SA M-3): a call to `fetch`, bare or as a member (`window.fetch(`),
+ * not part of a longer name (`refetch(`, `prefetch(`). Run on comment-stripped
+ * code. Only `FETCHING_FILE` may match.
+ */
+const FETCH_CALL = /(?<![A-Za-z0-9_$])fetch\s*\(/;
+const FETCHING_FILE = 'AdminBusinessPicker.tsx';
 
 /** S-8. */
 const SECTION = /<section\b/;
@@ -263,6 +278,16 @@ describe('C-14 part (a): the shared admin layout folder', () => {
     }
   });
 
+  it.each(SOURCE_FILES)('%s calls fetch only if it is AdminBusinessPicker.tsx (L-1e F-1)', (file) => {
+    if (path.posix.basename(file) !== FETCHING_FILE) expect(codeOf(read(file))).not.toMatch(FETCH_CALL);
+  });
+
+  it('AdminBusinessPicker.tsx is the one file that fetches (L-1e F-1 is not vacuous)', () => {
+    expect(codeOf(read(`${LAYOUT_DIR}/${FETCHING_FILE}`))).toMatch(FETCH_CALL);
+    const fetching = SOURCE_FILES.filter((file) => FETCH_CALL.test(codeOf(read(file))));
+    expect(fetching).toEqual([`${LAYOUT_DIR}/${FETCHING_FILE}`]);
+  });
+
   it('the one S-3 exception names a file with no imports that is not a client module (G-3)', () => {
     const source = read(PRESETS_FILE);
     expect(specifiersOf(codeOf(source))).toEqual([]);
@@ -348,6 +373,18 @@ describe('C-14 part (a) self-tests (no dead regex)', () => {
     expect('window.history.pushState(null, "", url)').toMatch(HISTORY_WRITE);
     expect('window.history.pushState(null, "", url)').toMatch(PUSH_STATE);
     expect('window.history.replaceState(null, "", url)').not.toMatch(PUSH_STATE);
+  });
+
+  it('L-1e F-1 catches fetch(, fetch ( and window.fetch(; ignores refetch(, prefetch( and a commented fetch(', () => {
+    expect('const r = await fetch(url);').toMatch(FETCH_CALL);
+    expect('const r = await fetch (url);').toMatch(FETCH_CALL);
+    expect('const r = await window.fetch(url);').toMatch(FETCH_CALL);
+    expect('const r = refetch(url);').not.toMatch(FETCH_CALL);
+    expect('router.prefetch(url);').not.toMatch(FETCH_CALL);
+    const commented = ['// fetch(url)', '/* await fetch(url) */', 'const a = 1;'].join(String.fromCharCode(10));
+    expect(codeOf(commented)).not.toMatch(FETCH_CALL);
+    // The comments themselves would match: the strip is what keeps them out.
+    expect(commented).toMatch(FETCH_CALL);
   });
 
   it('S-8 catches a section and a region role in either quote', () => {
@@ -445,9 +482,9 @@ const MIGRATED_PAGES = [
   },
   {
     // G-6. The original `BusinessAccountPicker.tsx` is deliberately not listed:
-    // it is unmigrated (it still calls `.json(`) and still sits on this page
-    // until the shared picker replaces it in L-1e (RC-8, split from L-1d by SA
-    // at the L-1d workplan review, Q-1).
+    // it is unmigrated (it still calls `.json(`), and since L-1e it is no longer
+    // on this page (the shared `AdminBusinessPicker` replaced it). It stays in
+    // the folder for Activity and Finance until L-8 deletes it (R-11).
     page: '/admin/audit-trail (Audit trail)',
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },

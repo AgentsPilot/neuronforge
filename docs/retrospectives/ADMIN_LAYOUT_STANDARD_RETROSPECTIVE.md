@@ -103,3 +103,25 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Low note for L-1e: the focus fallback (content area) has no visible ring.
 
 ### Status: COMMITTED — feature/admin-layout-l1d — 63704ac5, PR #292
+
+---
+
+## L-1e: shared business picker with Audit trail as pilot — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-1e workplan](/docs/workplans/ADMIN_LAYOUT_L1E_WORKPLAN.md)
+
+### What went well
+- The split from L-1d kept both slices small; L-1e landed at about 1.5 days.
+- SA caught at workplan stage that moving reads to readJsonBody would turn a cancelled request into a visible error (M-1), and specified aria-activedescendant precisely (M-2).
+- A guard now pins the picker as the only shared file allowed to fetch, with self-tests for near-miss names.
+- Nine mutation checks, plus two more for the QA fixes, all bit.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 1 (QA-1 Enter after Escape — inherited from the original picker; QA-2 blank names) — fixed before commit because every later page reuses this file.
+- Browser checks still owed (E-B1..E-B11 plus L-1a..L-1d).
+
+### Conclusions & process improvements
+- Fix inherited behaviour bugs in a shared component when it is first extracted; later adopters multiply the cost.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)

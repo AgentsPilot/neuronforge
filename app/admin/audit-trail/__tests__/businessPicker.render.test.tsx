@@ -64,7 +64,7 @@ jest.mock('next/navigation', () => ({
 import { ARCHIVING_OVERVIEW_URL } from '@/hooks/useLatestArchiveCutoff';
 
 import AuditTrailPage from '../page';
-import { BUSINESS_SEARCH_PATH } from '../BusinessAccountPicker';
+import { BUSINESS_SEARCH_PATH } from '@/app/admin/components/layout/AdminBusinessPicker';
 
 const ACME = '99999999-9999-4999-8999-999999999999';
 const UNNAMED = '22222222-2222-4222-8222-222222222222';
@@ -221,7 +221,7 @@ describe('choosing a business', () => {
     fireEvent.click(await screen.findByText('Acme Dental'));
     await waitFor(() => expect(auditUrls(fetchMock).length).toBe(2));
 
-    fireEvent.click(await screen.findByLabelText('Show every account'));
+    fireEvent.click(await screen.findByLabelText('Remove business'));
     await waitFor(() => expect(auditUrls(fetchMock).length).toBe(3));
     expect(new URLSearchParams(auditUrls(fetchMock).at(-1)!.split('?')[1]).get('user_id')).toBeNull();
   });
@@ -230,11 +230,25 @@ describe('choosing a business', () => {
     const fetchMock = mockFetch();
     render(<AuditTrailPage />);
 
-    expect(screen.queryByTestId('account-filter-chip')).toBeNull();
+    expect(screen.queryByTestId('business-filter-chip')).toBeNull();
     await openPicker(fetchMock);
     fireEvent.click(await screen.findByText('Acme Dental'));
 
-    expect(await screen.findByTestId('account-filter-chip')).toBeTruthy();
+    expect(await screen.findByTestId('business-filter-chip')).toBeTruthy();
+  });
+
+  it('names the picked business at once, before any row could name it (F-31)', async () => {
+    // The log list is empty, so no loaded row can supply the name: only the
+    // name the picker showed can (L-1e, the picked-name path).
+    const fetchMock = mockFetch();
+    render(<AuditTrailPage />);
+
+    await openPicker(fetchMock);
+    fireEvent.click(await screen.findByText('Acme Dental'));
+
+    const chip = await screen.findByTestId('business-filter-chip');
+    expect(chip.textContent).toContain('Business: Acme Dental');
+    expect(chip.textContent).not.toContain(ACME.slice(0, 8));
   });
 
   it('can be driven from the keyboard', async () => {
@@ -374,7 +388,7 @@ describe('a business name never reaches a log line (AC-B13)', () => {
     const logged = JSON.stringify(loggerCalls);
     expect(logged).not.toContain('acme dental');
     // Something was recorded, so the failure is not silent.
-    expect(logged).toContain('Business list for the audit account filter failed');
+    expect(logged).toContain('Business list for the business picker failed');
     expect(fetchMock).toHaveBeenCalled();
   });
 });

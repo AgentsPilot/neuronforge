@@ -89,7 +89,7 @@ beforeEach(() => {
 
 describe('every filter control is reachable by its label', () => {
   it.each([
-    'Account',
+    'Business',
     'Search',
     'Action Type',
     'Severity',
