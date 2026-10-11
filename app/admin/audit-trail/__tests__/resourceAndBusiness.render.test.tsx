@@ -46,6 +46,13 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`,
+// and `@/lib/logger/client` re-exports from the mocked `@/lib/logger` above.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
+
 import AuditTrailPage from '../page';
 
 const NAMED_ENTITY_ID = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';

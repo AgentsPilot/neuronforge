@@ -3,8 +3,8 @@
 /**
  * Shared loading and error states (Admin Layout Standard C-3, §5.10).
  *
- * L-1a ships `AdminLoading` and `AdminError` only; `AdminEmpty` and
- * `AdminNotice` arrive with the first pilot that uses them. Neither part here
+ * L-1a shipped `AdminLoading` and `AdminError`; L-1c adds `AdminEmpty` (Audit
+ * trail's empty list). `AdminNotice` arrives with its first consumer. No part here
  * renders a `<section>` or a region: `role="status"` and `role="alert"` are
  * live regions, not landmarks (A-9), so a page's region count is unchanged.
  */
@@ -50,6 +50,34 @@ export function AdminError({ message, testId, onRetry }: AdminErrorProps) {
           className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
         >
           Try again
+        </button>
+      )}
+    </div>
+  );
+}
+
+export interface AdminEmptyProps {
+  /** One sentence saying what is empty, e.g. "No audit events match these filters." */
+  message: string;
+  /** Optional second line: what to try. */
+  hint?: string;
+  /** When set, a "Clear filters" button follows (pages pass it only while a filter is on). */
+  onClear?: () => void;
+  testId?: string;
+}
+
+export function AdminEmpty({ message, hint, onClear, testId }: AdminEmptyProps) {
+  return (
+    <div data-testid={testId} className="rounded-xl border border-slate-700 bg-slate-800/40 p-8 text-center">
+      <p className="text-sm text-slate-200">{message}</p>
+      {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
+      {onClear && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="mt-4 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+        >
+          Clear filters
         </button>
       )}
     </div>

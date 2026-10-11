@@ -1,12 +1,11 @@
 'use client';
 
 import React, { useState, useEffect, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import {
-  Search, Filter, Calendar, User, Activity, AlertCircle,
+  Search, Calendar, User, Activity, AlertCircle,
   CheckCircle, Info, AlertTriangle, ChevronDown, ChevronUp,
-  Download, RefreshCw, FileText, Database, TrendingUp,
+  Download, Database, TrendingUp,
   LogIn, LogOut, UserPlus, UserCog, Bot, Play, Trash2, Settings
 } from 'lucide-react';
 import {
@@ -17,14 +16,36 @@ import {
 } from '@/lib/audit/filterOptions';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { OPERATOR_AUDIENCES } from '@/lib/audit/eventAudience';
-import { createLogger } from '@/lib/logger';
+import { clientLogger } from '@/lib/logger/client';
 import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import {
+  AdminFilterBar,
+  ADMIN_FIELD_CONTROL,
+  ADMIN_FIELD_LABEL,
+  type AdminActiveChip,
+} from '@/app/admin/components/layout/AdminFilterBar';
+import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
+import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 import { BusinessAccountPicker } from './BusinessAccountPicker';
+import {
+  AUDIT_DEFAULT_WINDOW,
+  AUDIT_FILTER_SPEC,
+  auditRequestParams,
+  isSearchActive as hasActiveSearch,
+} from './auditTrailFilters';
 
-// Structured logging works in a client component: lib/logger.ts configures
-// Pino's `browser: { asObject: true }` transport, and the sibling admin page
-// app/admin/users/page.tsx already calls createLogger at module scope the same way.
-const logger = createLogger({ module: 'AdminAuditTrailPage' });
+// A client file logs through the client logger (Admin Layout Standard F-56).
+const logger = clientLogger.child({ module: 'AdminAuditTrailPage' });
+
+/** Noun phrase for the shared states: "Reading the audit trail…", "Refresh the audit trail". */
+const WHAT = 'the audit trail';
+
+const PURPOSE = 'Track all system events, user actions, and AIS changes across the platform';
+
+/** The page's native controls in the filter bar (each sized here; the shared class has no width). */
+const FIELD_CONTROL = `${ADMIN_FIELD_CONTROL} w-full`;
 
 // Derived once from the audit catalogues (FR-A3): a newly registered event or
 // entity type becomes selectable here with no change to this file.
@@ -95,43 +116,12 @@ interface AuditLogEntry {
   } | null;
 }
 
-interface FilterState {
-  action: string;
-  severity: string;
-  dateFrom: string;
-  dateTo: string;
-  searchTerm: string;
-  entityType: string;
-  /** One account's rows only (set by a deep link from Businesses). '' = everyone. */
-  userId: string;
-}
-
-const EMPTY_FILTERS: FilterState = {
-  action: 'all',
-  severity: 'all',
-  dateFrom: '',
-  dateTo: '',
-  searchTerm: '',
-  entityType: 'all',
-  userId: '',
-};
-
-/**
- * The first filter state, from the URL (e.g. the Businesses panel links to
- * `?action=BUSINESS_AI_ACTION_FAILED&user_id=<id>`). The route validates every
- * value; this only decides what the page asks for first.
- */
-function filtersFromUrl(params: URLSearchParams | null): FilterState {
-  if (!params) return EMPTY_FILTERS;
-  return {
-    action: params.get('action') || 'all',
-    severity: params.get('severity') || 'all',
-    dateFrom: params.get('date_from') || '',
-    dateTo: params.get('date_to') || '',
-    searchTerm: params.get('search') || '',
-    entityType: params.get('entity_type') || 'all',
-    userId: params.get('user_id') || '',
-  };
+/** The route's pagination block, as the page has always trusted it. */
+interface AuditPagination {
+  total: number;
+  totalPages: number;
+  hasMore: boolean;
+  showing: number;
 }
 
 /**
@@ -283,63 +273,68 @@ export default function AuditTrailPage() {
 
 function AuditTrailPageContent() {
   const { user } = useAuth();
-  // Null outside the App Router (e.g. a unit test); treated as "no deep link".
-  const searchParams = useSearchParams();
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(20);
-  const [pagination, setPagination] = useState({
+  const [pagination, setPagination] = useState<AuditPagination>({
     total: 0,
     totalPages: 0,
     hasMore: false,
     showing: 0
   });
-  const [filters, setFilters] = useState<FilterState>(() =>
-    filtersFromUrl(searchParams as URLSearchParams | null)
-  );
+  // The URL is the filter state's projection (Admin Layout Standard C-7): the
+  // first state is parsed from the URL synchronously, so the first read below
+  // already sees an inbound link's filters, and `filters` keeps its identity
+  // until a value changes, so the two effects below fire exactly as before.
+  const { filters, setFilters, clear, isDefault } = useAdminFilters(AUDIT_FILTER_SPEC);
+  /** When the list was last read successfully: the bar's "Read at HH:mm UTC". */
+  const [readAt, setReadAt] = useState<string | null>(null);
 
-  /**
-   * The single definition of "a search is active". Used both to decide whether
-   * to send `search` and to decide whether the totals below may be shown, so
-   * the request and the count line can never disagree: a whitespace-only term
-   * used to be sent (and filtered on) while the page still displayed the
-   * unfiltered "Showing N of M".
-   */
-  const isSearchActive = filters.searchTerm.trim().length > 0;
+  // "A search is active" is defined once, in auditTrailFilters.ts (hasActiveSearch);
+  // the request and the count line both use it, so they can never disagree.
+  const isSearchActive = hasActiveSearch(filters);
 
   const fetchLogs = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
+      const params = auditRequestParams(filters, currentPage, pageSize, new Date());
 
-      const params = new URLSearchParams();
-      if (filters.action !== 'all') params.append('action', filters.action);
-      if (filters.severity !== 'all') params.append('severity', filters.severity);
-      if (filters.entityType !== 'all') params.append('entity_type', filters.entityType);
-      if (filters.dateFrom) params.append('date_from', filters.dateFrom);
-      if (filters.dateTo) params.append('date_to', filters.dateTo);
-      if (isSearchActive) params.append('search', filters.searchTerm);
-      if (filters.userId) params.append('user_id', filters.userId);
-      params.append('page', currentPage.toString());
-      params.append('page_size', pageSize.toString());
-
-      const response = await fetch(`/api/admin/audit-trail?${params.toString()}`);
-      const data = await response.json();
-
-      if (data.success) {
-        setLogs(data.logs);
-        if (data.pagination) {
-          setPagination(data.pagination);
-        }
-      } else {
-        setError(data.error || 'Failed to fetch audit logs');
+      // Only the fetch sits inside this try: a rejection here is a network
+      // failure; anything else must never be labelled as one.
+      let response: Response;
+      try {
+        response = await fetch(`/api/admin/audit-trail?${params.toString()}`);
+      } catch (err) {
+        logger.error({ err }, 'Could not reach the audit trail route');
+        setError(ADMIN_NETWORK_ERROR);
+        return;
       }
-    } catch (err) {
-      setError('Failed to fetch audit logs');
-      logger.error({ err }, 'Failed to fetch audit logs');
+
+      // The route answers `logs` and `pagination` at the top level, not under
+      // `data`; the casts are the same trust the page placed in them before.
+      const result = await readAdminResponse(response, {
+        what: WHAT,
+        sessionEndedCopy: true,
+        pick: (body) => ({
+          logs: body.logs as AuditLogEntry[],
+          pagination: body.pagination as AuditPagination | undefined,
+        }),
+      });
+      if (!result.ok) {
+        logger.error({ status: result.status }, 'Failed to fetch audit logs');
+        // The previous rows stay on screen.
+        setError(result.message);
+        return;
+      }
+      setLogs(result.data.logs);
+      if (result.data.pagination) {
+        setPagination(result.data.pagination);
+      }
+      setReadAt(new Date().toISOString());
     } finally {
       setLoading(false);
     }
@@ -473,256 +468,178 @@ function AuditTrailPageContent() {
     a.click();
   };
 
-  if (loading && logs.length === 0) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
-      </div>
-    );
-  }
+  const chips: AdminActiveChip[] = filters.account
+    ? [
+        {
+          key: 'account',
+          // Words, testid, title and X label unchanged until the shared picker
+          // replaces this one (L-1d, RC-8). The full id stays reachable on
+          // hover: the visible text either replaces it with a name or
+          // truncates it.
+          label: `Account ${accountFilterLabel(logs, filters.account)}`,
+          title: filters.account,
+          testId: 'account-filter-chip',
+          removeLabel: 'Show every account',
+          onRemove: () => setFilters({ account: '' }),
+        },
+      ]
+    : [];
+  const isBosAiFailures = filters.action === BOS_AI_FAILED_ACTION;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <header className="border-b border-slate-700">
-        <div className="flex items-center justify-between pb-4">
-          <div className="flex items-center gap-4">
-            <div className="flex flex-col">
-              <div className="flex items-center gap-4 mb-1">
-                <h1 className="text-xl font-semibold text-white">Audit Trail</h1>
-                <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
-              </div>
-              <p className="text-sm text-slate-400">Track all system events, user actions, and AIS changes across the platform</p>
-            </div>
+      <AdminPageHeader
+        title="Audit trail"
+        purpose={PURPOSE}
+        actions={
+          <button
+            onClick={exportLogs}
+            className="px-4 py-2 bg-violet-600 hover:bg-violet-700 rounded-lg transition-colors flex items-center gap-2"
+          >
+            <Download className="w-5 h-5" />
+            Export CSV
+          </button>
+        }
+      />
+
+      <AdminFilterBar
+        what={WHAT}
+        busy={loading}
+        onRefresh={() => void fetchLogs()}
+        readAt={readAt}
+        windowControl={{
+          value: filters.window,
+          defaultValue: AUDIT_DEFAULT_WINDOW,
+          onChange: (next) => setFilters({ window: next }),
+        }}
+        business={
+          // The original picker, unchanged, for one slice (RC-8): the fixed
+          // width keeps its permanent hint from stretching the row. Account is
+          // the only filter applied at the DATABASE level to a single account
+          // (route.ts `.eq('user_id', accountId)`).
+          <div className="w-full sm:w-72">
+            <BusinessAccountPicker
+              selectedAccountId={filters.account}
+              onSelect={(account) => setFilters({ account })}
+            />
           </div>
-          <div className="flex items-center gap-4">
-            <button
-              onClick={exportLogs}
-              className="px-4 py-2 bg-violet-600 hover:bg-violet-700 rounded-lg transition-colors flex items-center gap-2"
-            >
-              <Download className="w-5 h-5" />
-              Export CSV
-            </button>
-            <button
-              onClick={fetchLogs}
-              disabled={loading}
-              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
-            </button>
+        }
+        onClear={clear}
+        canClear={!isDefault}
+        chips={chips}
+      >
+        {/* Search: applied per keystroke, as before (F-98); held by the hook as
+            page-only, so it is never written to the address bar. */}
+        <div className="w-full sm:w-64">
+          <label htmlFor="audit-search" className={ADMIN_FIELD_LABEL}>Search</label>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+            <input
+              id="audit-search"
+              type="text"
+              placeholder="Search by email, action, resource or entity ID…"
+              value={filters.search}
+              onChange={(e) => setFilters({ search: e.target.value })}
+              className="w-full rounded-lg border border-slate-600 bg-slate-900/50 pl-8 pr-3 py-1.5 text-sm text-white placeholder-slate-400 [color-scheme:dark] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+            />
           </div>
         </div>
-      </header>
 
-        {/* Older entries may be archived (FR-12, archiving slice 3). */}
-        <ArchivedBeforeNotice />
-
-        {/* Filters
-            Deliberately dense: this card sits above every audit row, in the
-            same place, on every visit — so every pixel it spends is a pixel of
-            RESULTS an operator does not see. Hence the small heading, the
-            4-across grid from `xl`, and `Clear All Filters` occupying the grid
-            slot the seven fields leave empty rather than a row of its own. */}
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            <Filter className="w-4 h-4 text-blue-400" />
-            <h2 className="text-sm font-semibold text-white">Filters</h2>
-            {/* One-click view (slice 2c): every failed Business OS AI action. */}
-            <button
-              type="button"
-              data-testid="preset-bos-ai-failures"
-              onClick={() => setFilters({ ...filters, action: BOS_AI_FAILED_ACTION })}
-              className={`ml-auto px-2.5 py-1 text-xs rounded-lg border transition-colors ${
-                filters.action === BOS_AI_FAILED_ACTION
-                  ? 'bg-rose-500/20 border-rose-500/50 text-rose-200'
-                  : 'border-slate-600 text-slate-300 hover:bg-slate-700'
-              }`}
-            >
-              BOS AI failures
-            </button>
-            {filters.userId && (
-              <span
-                data-testid="account-filter-chip"
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-blue-500/20 text-blue-200"
-              >
-                {/* The full id stays reachable on hover: the visible text either
-                    replaces it with a name or truncates it, so a title is the
-                    only place an operator can still read the id they filtered by
-                    (the row's own "User:" line shows the id only when there is no
-                    email or name to show instead). */}
-                <span className="truncate max-w-[18rem]" title={filters.userId}>
-                  Account {accountFilterLabel(logs, filters.userId)}
-                </span>
-                {/* `px-1 text-sm` keeps the dismiss target ~20px wide inside a
-                    chip that is now text-xs — smaller chip, same clickability. */}
-                <button
-                  type="button"
-                  aria-label="Show every account"
-                  onClick={() => setFilters({ ...filters, userId: '' })}
-                  className="px-1 text-sm leading-none text-blue-300 hover:text-white"
-                >
-                  ×
-                </button>
-              </span>
+        {/* Action Filter */}
+        <div className="w-full sm:w-56">
+          <label htmlFor="audit-action" className={ADMIN_FIELD_LABEL}>Action Type</label>
+          <select
+            id="audit-action"
+            value={filters.action}
+            onChange={(e) => setFilters({ action: e.target.value })}
+            className={FIELD_CONTROL}
+          >
+            {/* "all" is a UI sentinel, not a catalogue value — every other
+                option comes from AUDIT_EVENTS via buildActionFilterGroups() */}
+            <option value="all">All Actions</option>
+            {/* A deep link can name an event this list hides; show it rather
+                than a blank select beside filtered results. */}
+            {filters.action !== 'all' && !OFFERED_ACTIONS.has(filters.action) && (
+              <option value={filters.action}>
+                {classifyAuditEvent(filters.action).label} (hidden from this list)
+              </option>
             )}
-          </div>
-
-          {/* Four across from `xl`, not from `lg`, and that is a measurement not
-              a preference: the two `datetime-local` inputs are drawn by the
-              browser and need ~190px of inner width for "09/29/2026, 11:59 PM"
-              plus the calendar button. At the `lg` breakpoint itself (1024px,
-              minus the 256px admin sidebar) a quarter column is ~163px and the
-              date would clip; at `xl` (1280px) it is ~201px, and ~360px on the
-              1920px screen this was asked for. So `lg` keeps three. */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {/* Account — the only filter here applied at the DATABASE level to a
-                single account (route.ts `.eq('user_id', accountId)`), so it is
-                first: everything below narrows within it. Before this the filter
-                could only be cleared, never set, unless the operator already knew
-                the account's UUID. */}
-            <BusinessAccountPicker
-              selectedAccountId={filters.userId}
-              onSelect={(userId) => setFilters({ ...filters, userId })}
-            />
-
-            {/* Search */}
-            <div>
-              <label htmlFor="audit-search" className="block text-xs font-medium text-slate-300 mb-1">Search</label>
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                <input
-                  id="audit-search"
-                  type="text"
-                  placeholder="Search by email, action, resource or entity ID…"
-                  value={filters.searchTerm}
-                  onChange={(e) => setFilters({ ...filters, searchTerm: e.target.value })}
-                  className="w-full pl-8 pr-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-
-            {/* Action Filter */}
-            <div>
-              <label htmlFor="audit-action" className="block text-xs font-medium text-slate-300 mb-1">Action Type</label>
-              <select
-                id="audit-action"
-                value={filters.action}
-                onChange={(e) => setFilters({ ...filters, action: e.target.value })}
-                className="w-full px-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {/* "all" is a UI sentinel, not a catalogue value — every other
-                    option comes from AUDIT_EVENTS via buildActionFilterGroups() */}
-                <option value="all">All Actions</option>
-                {/* A deep link can name an event this list hides; show it rather
-                    than a blank select beside filtered results. */}
-                {filters.action !== 'all' && !OFFERED_ACTIONS.has(filters.action) && (
-                  <option value={filters.action}>
-                    {classifyAuditEvent(filters.action).label} (hidden from this list)
-                  </option>
-                )}
-                {ACTION_FILTER_GROUPS.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.options.map((option) => (
-                      <option key={option.value} value={option.value} title={option.description}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </div>
-
-            {/* Severity Filter */}
-            <div>
-              <label htmlFor="audit-severity" className="block text-xs font-medium text-slate-300 mb-1">Severity</label>
-              <select
-                id="audit-severity"
-                value={filters.severity}
-                onChange={(e) => setFilters({ ...filters, severity: e.target.value })}
-                className="w-full px-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All Severities</option>
-                <option value="info">Info</option>
-                <option value="warning">Warning</option>
-                <option value="critical">Critical</option>
-              </select>
-            </div>
-
-            {/* Date From — `px-2` rather than the `px-3` the other controls use:
-                the browser-drawn date is the widest thing in this grid, so the
-                two date cells get those 8px of inner width back. */}
-            <div>
-              <label htmlFor="audit-date-from" className="block text-xs font-medium text-slate-300 mb-1">From Date</label>
-              <input
-                id="audit-date-from"
-                type="datetime-local"
-                value={filters.dateFrom}
-                onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Date To */}
-            <div>
-              <label htmlFor="audit-date-to" className="block text-xs font-medium text-slate-300 mb-1">To Date</label>
-              <input
-                id="audit-date-to"
-                type="datetime-local"
-                value={filters.dateTo}
-                onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Entity Type */}
-            <div>
-              <label htmlFor="audit-entity-type" className="block text-xs font-medium text-slate-300 mb-1">Entity Type</label>
-              <select
-                id="audit-entity-type"
-                value={filters.entityType}
-                onChange={(e) => setFilters({ ...filters, entityType: e.target.value })}
-                className="w-full px-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {/* As above: only the sentinel is hardcoded; the rest is AUDIT_ENTITY_TYPES */}
-                <option value="all">All Entities</option>
-                {ENTITY_TYPE_FILTER_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
+            {ACTION_FILTER_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.options.map((option) => (
+                  <option key={option.value} value={option.value} title={option.description}>
                     {option.label}
                   </option>
                 ))}
-              </select>
-            </div>
-
-            {/* Clear Filters — INSIDE the grid, as its eighth cell.
-                Seven fields never fill a row of four (or of two), so this takes
-                a slot that was already blank: at `xl` and at `md` it costs zero
-                extra height, where a row of its own cost ~52px. It stays the
-                last focusable control in the card, exactly as before — the DOM
-                order is unchanged, only the box it lands in. `items-end` sits it
-                on the controls' baseline rather than the labels'. */}
-            <div className="flex items-end">
-              <button
-                onClick={() => setFilters(EMPTY_FILTERS)}
-                className="w-full px-3 py-1.5 text-sm rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-              >
-                Clear All Filters
-              </button>
-            </div>
-          </div>
+              </optgroup>
+            ))}
+          </select>
         </div>
 
-        {/* Error Display */}
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-4 flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-red-400 font-medium">Error</p>
-              <p className="text-red-300 text-sm mt-1">{error}</p>
-            </div>
-          </div>
-        )}
+        {/* Severity Filter */}
+        <div className="w-full sm:w-40">
+          <label htmlFor="audit-severity" className={ADMIN_FIELD_LABEL}>Severity</label>
+          <select
+            id="audit-severity"
+            value={filters.severity}
+            onChange={(e) => setFilters({ severity: e.target.value })}
+            className={FIELD_CONTROL}
+          >
+            <option value="all">All Severities</option>
+            <option value="info">Info</option>
+            <option value="warning">Warning</option>
+            <option value="critical">Critical</option>
+          </select>
+        </div>
 
+        {/* Entity Type */}
+        <div className="w-full sm:w-48">
+          <label htmlFor="audit-entity-type" className={ADMIN_FIELD_LABEL}>Entity Type</label>
+          <select
+            id="audit-entity-type"
+            value={filters.entityType}
+            onChange={(e) => setFilters({ entityType: e.target.value })}
+            className={FIELD_CONTROL}
+          >
+            {/* As above: only the sentinel is hardcoded; the rest is AUDIT_ENTITY_TYPES */}
+            <option value="all">All Entities</option>
+            {ENTITY_TYPE_FILTER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* One-click view (slice 2c): every failed Business OS AI action. It
+            only sets the action (no toggle-off); the Action select resets it. */}
+        <button
+          type="button"
+          data-testid="preset-bos-ai-failures"
+          aria-pressed={isBosAiFailures}
+          onClick={() => setFilters({ action: BOS_AI_FAILED_ACTION })}
+          className={`px-2.5 py-1.5 text-xs rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${
+            isBosAiFailures
+              ? 'bg-purple-500/20 border-purple-500/50 text-purple-200'
+              : 'border-slate-600 text-slate-300 hover:bg-slate-700'
+          }`}
+        >
+          BOS AI failures
+        </button>
+      </AdminFilterBar>
+
+      {error && <AdminError message={error} testId="audit-error" onRetry={() => void fetchLogs()} />}
+
+      {/* Older entries may be archived (FR-12, archiving slice 3). Rendered
+          outside every loading / empty / error branch so it mounts once and
+          never refetches on a read (SA M-3, the F-28 mount pin). */}
+      <ArchivedBeforeNotice />
+
+      <div aria-busy={loading} className="space-y-6">
+        {loading && logs.length === 0 && !error ? (
+          <AdminLoading what={WHAT} />
+        ) : (
+          <>
         {/* Results Count & Pagination */}
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
           <div className="flex items-center justify-between">
@@ -767,18 +684,8 @@ function AuditTrailPageContent() {
 
             {/* Right: Pagination Controls */}
             <div className="flex items-center gap-3">
-              <button
-                onClick={fetchLogs}
-                disabled={loading}
-                className="flex items-center gap-2 text-blue-400 hover:text-blue-300 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
-
               {pagination.totalPages > 1 && (
                 <>
-                  <div className="h-4 w-px bg-slate-600" />
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setCurrentPage(1)}
@@ -825,11 +732,14 @@ function AuditTrailPageContent() {
         {/* Audit Logs */}
         <div className="space-y-3">
           {logs.length === 0 ? (
-            <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-12 text-center">
-              <FileText className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-              <p className="text-slate-400 text-lg">No audit logs found</p>
-              <p className="text-slate-500 text-sm mt-2">Try adjusting your filters</p>
-            </div>
+            error ? null : (
+              <AdminEmpty
+                message="No audit events match these filters."
+                hint="Try a wider window or fewer filters."
+                onClear={isDefault ? undefined : clear}
+                testId="audit-empty"
+              />
+            )
           ) : (
             logs.map((log) => (
               <div
@@ -1258,6 +1168,9 @@ function AuditTrailPageContent() {
             ))
           )}
         </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

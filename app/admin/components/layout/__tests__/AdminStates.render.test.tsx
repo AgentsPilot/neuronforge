@@ -9,7 +9,7 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
 
 describe('AdminLoading', () => {
   it('says "Reading {what}…" with a hidden spinner icon, in a status live region', () => {
@@ -46,5 +46,23 @@ describe('AdminError', () => {
     expect(screen.getByTestId('x-error').textContent).toBe('Forbidden');
     fireEvent.click(button);
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AdminEmpty (L-1c)', () => {
+  it('shows the sentence and the hint, with no button without onClear, and no region', () => {
+    render(<AdminEmpty message="No events match." hint="Try fewer filters." testId="x-empty" />);
+    expect(screen.getByTestId('x-empty').textContent).toBe('No events match.Try fewer filters.');
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryAllByRole('region')).toHaveLength(0);
+  });
+
+  it('with onClear, "Clear filters" calls it', () => {
+    const onClear = jest.fn();
+    render(<AdminEmpty message="No events match." onClear={onClear} />);
+    const button = screen.getByRole('button', { name: 'Clear filters' });
+    expect(button.getAttribute('type')).toBe('button');
+    fireEvent.click(button);
+    expect(onClear).toHaveBeenCalledTimes(1);
   });
 });

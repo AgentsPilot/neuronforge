@@ -19,6 +19,14 @@
  * literal counts) and asserts EXACTLY one green constant, in `StatusChip.tsx`
  * (RC-5, SA Q-9); `KpiStrip.tsx`, `StatusChip.tsx` and `adminDialog.ts` join
  * the expected files; Scheduled jobs & queues joins the registry.
+ *
+ * Amended by L-1c: `DatePresets.tsx`, `adminWindow.ts` and `useAdminFilters.ts`
+ * join the expected files (G-1); the one named S-3 exception,
+ * `@/app/admin/components/adminWindowPresets`, joins the allow-list (G-2, SA
+ * ruling on L-1b Q-13 / L-1c Q-2) with a check that the file it names imports
+ * nothing and is not a client module (G-3) and near-miss self-tests (G-4); S-6
+ * is made non-vacuous: `useAdminFilters.ts` must write history and no file may
+ * call `pushState` (G-5); Audit trail part 1 joins the registry (G-6).
  */
 
 import * as fs from 'fs';
@@ -55,12 +63,15 @@ const EXPECTED_SOURCES = [
   'AdminFilterBar.tsx',
   'AdminPageHeader.tsx',
   'AdminStates.tsx',
+  'DatePresets.tsx',
   'KpiStrip.tsx',
   'StatusChip.tsx',
   'adminDialog.ts',
   'adminFormat.ts',
+  'adminWindow.ts',
   'readAdminResponse.ts',
   'readJsonBody.ts',
+  'useAdminFilters.ts',
 ].map((name) => `${LAYOUT_DIR}/${name}`);
 
 // ── Rule helpers (each proved by a self-test below) ─────────────────────────
@@ -89,7 +100,15 @@ const ALLOWED_EXACT = new Set([
   '@/components/ui/sheet',
   '@/components/ui/dialog',
   '@/lib/logger/client',
+  // The one named exception (G-2, SA ruling on L-1b Q-13 / L-1c Q-2): the
+  // shared window presets stay where they are because a `lib/` module and the
+  // finance route import them too, so they cannot move into this folder. Safe
+  // only because the file imports nothing and is not a client module (G-3).
+  '@/app/admin/components/adminWindowPresets',
 ]);
+
+/** The file the G-2 exception names. */
+const PRESETS_FILE = 'app/admin/components/adminWindowPresets.ts';
 function isAllowedImport(spec: string): boolean {
   if (ALLOWED_EXACT.has(spec)) return true;
   if (spec.startsWith('./') && !spec.includes('../')) return true;
@@ -114,6 +133,7 @@ const CONSOLE = /console\./;
 /** S-6. */
 const JSON_CALL = /\.json\(/;
 const HISTORY_WRITE = /history\.(?:pushState|replaceState)/;
+const PUSH_STATE = /history\.pushState/;
 
 /** S-8. */
 const SECTION = /<section\b/;
@@ -227,6 +247,20 @@ describe('C-14 part (a): the shared admin layout folder', () => {
     expect(codeOf(read(`${LAYOUT_DIR}/readJsonBody.ts`))).toMatch(JSON_CALL);
   });
 
+  it('useAdminFilters.ts writes history, and no file in the folder calls pushState (S-6 is not vacuous, G-5)', () => {
+    expect(codeOf(read(`${LAYOUT_DIR}/useAdminFilters.ts`))).toMatch(HISTORY_WRITE);
+    for (const file of SOURCE_FILES) {
+      expect({ file, push: PUSH_STATE.test(codeOf(read(file))) }).toEqual({ file, push: false });
+    }
+  });
+
+  it('the one S-3 exception names a file with no imports that is not a client module (G-3)', () => {
+    const source = read(PRESETS_FILE);
+    expect(specifiersOf(codeOf(source))).toEqual([]);
+    expect(source.trimStart().startsWith("'use client'")).toBe(false);
+    expect(source.trimStart().startsWith('"use client"')).toBe(false);
+  });
+
   it('holds exactly one green constant across the folder, in StatusChip.tsx, and no green outside it (S-7, RC-5)', () => {
     const verdict = greenVerdict(SOURCE_FILES.map((file) => ({ file, code: codeOf(read(file)) })));
     expect(verdict.outside).toEqual([]);
@@ -275,6 +309,13 @@ describe('C-14 part (a) self-tests (no dead regex)', () => {
     expect(isAllowedImport('@/lib/logger/client')).toBe(true);
   });
 
+  it('G-4: the presets exception is exact; near misses and other app paths are refused', () => {
+    expect(isAllowedImport('@/app/admin/components/adminWindowPresets')).toBe(true);
+    expect(isAllowedImport('@/app/admin/components/adminWindowPresetsX')).toBe(false);
+    expect(isAllowedImport('@/app/admin/components/adminWindowPresets/x')).toBe(false);
+    expect(isAllowedImport('@/app/admin/components/health/HealthTile')).toBe(false);
+  });
+
   it('S-4 refuses Business OS, repositories, Supabase and server-only', () => {
     expect(isRefusedImport('@/lib/business-os/entitlements/catalog')).toBe(true);
     expect(isRefusedImport('@/lib/repositories/UserRepository')).toBe(true);
@@ -296,6 +337,8 @@ describe('C-14 part (a) self-tests (no dead regex)', () => {
     expect('await response.json()').toMatch(JSON_CALL);
     expect('window.history.replaceState(null, "", url)').toMatch(HISTORY_WRITE);
     expect('window.history.pushState(null, "", url)').toMatch(HISTORY_WRITE);
+    expect('window.history.pushState(null, "", url)').toMatch(PUSH_STATE);
+    expect('window.history.replaceState(null, "", url)').not.toMatch(PUSH_STATE);
   });
 
   it('S-8 catches a section and a region role in either quote', () => {
@@ -390,6 +433,13 @@ const MIGRATED_PAGES = [
       'app/admin/components/jobs/CancelQueueItemDialog.tsx',
       'app/admin/components/jobs/RetryQueueItemDialog.tsx',
     ],
+  },
+  {
+    // G-6. The original `BusinessAccountPicker.tsx` is deliberately not listed:
+    // it is unmigrated (it still calls `.json(`) and is replaced on this page by
+    // the shared picker in L-1d (RC-8).
+    page: '/admin/audit-trail (Audit trail, part 1)',
+    files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },
 ] as const;
 
