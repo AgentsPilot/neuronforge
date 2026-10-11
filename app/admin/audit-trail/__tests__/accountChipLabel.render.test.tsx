@@ -13,6 +13,11 @@
  * of state with no extra request. `fetch` is asserted to be called exactly once
  * below to pin that: a regression that looked the account up would call it twice.
  *
+ * Admin Layout Standard L-1e: the chip is now the shared business chip
+ * ("Business: {name}", testid `business-filter-chip`), and the fallback chain
+ * after the business name is the rows' own (F-31): full name, then the row's
+ * sign-in email (`user_email`), then `users.email`.
+ *
  * Renders the real page in jsdom like the sibling suites (Playwright is not
  * installed — CLAUDE.md § Testing), and asserts with `toBeTruthy()` /
  * `toBeNull()` because jest-dom is not configured in this project.
@@ -98,7 +103,7 @@ function mockRoute(logs: unknown[]): jest.Mock {
 
 /** The chip, once the first page has arrived. */
 async function chip(fetchMock: jest.Mock): Promise<HTMLElement> {
-  const element = await screen.findByTestId('account-filter-chip');
+  const element = await screen.findByTestId('business-filter-chip');
   await waitFor(() => expect(fetchMock).toHaveBeenCalled());
   return element;
 }
@@ -178,6 +183,50 @@ describe('the account chip when there is no business name', () => {
     await waitFor(() => expect(element.textContent).toContain('Dana Operator'));
   });
 
+  it('prefers the full name over an email when both are loaded (F-31)', async () => {
+    const fetchMock = mockRoute([
+      {
+        ...baseRow,
+        user_id: ACCOUNT,
+        user_email: 'signin@example.test',
+        users: { email: 'profile@example.test', full_name: 'Dana Operator' },
+        business: null,
+      },
+    ]);
+    render(<AuditTrailPage />);
+
+    const element = await chip(fetchMock);
+    await waitFor(() => expect(element.textContent).toContain('Dana Operator'));
+    expect(element.textContent).not.toContain('signin@example.test');
+    expect(element.textContent).not.toContain('profile@example.test');
+  });
+
+  it('uses the row’s sign-in email when the row has no users join (F-31)', async () => {
+    const fetchMock = mockRoute([
+      { ...baseRow, user_id: ACCOUNT, user_email: 'signin@example.test', users: null, business: null },
+    ]);
+    render(<AuditTrailPage />);
+
+    const element = await chip(fetchMock);
+    await waitFor(() => expect(element.textContent).toContain('signin@example.test'));
+    expect(element.textContent).not.toContain(TRUNCATED);
+  });
+
+  it('treats a whitespace-only company name as no name and falls through (QA-2)', async () => {
+    const fetchMock = mockRoute([
+      {
+        ...baseRow,
+        user_id: ACCOUNT,
+        users: { full_name: '   ', email: 'owner@acme.test' },
+        business: { company_name: '   ' },
+      },
+    ]);
+    render(<AuditTrailPage />);
+
+    const element = await chip(fetchMock);
+    await waitFor(() => expect(element.textContent).toContain('Business: owner@acme.test'));
+  });
+
   it('takes the name from whichever loaded row has one', async () => {
     // Identity travels per row, and an AI-action row can be identity-thin.
     const fetchMock = mockRoute([
@@ -188,6 +237,20 @@ describe('the account chip when there is no business name', () => {
 
     const element = await chip(fetchMock);
     await waitFor(() => expect(element.textContent).toContain('Acme Dental'));
+  });
+});
+
+describe('the chip’s words (§5.5 part 7)', () => {
+  it('starts with "Business: " for a name and for the short id', async () => {
+    const named = mockRoute([NAMED_ROW]);
+    const { unmount } = render(<AuditTrailPage />);
+    const element = await chip(named);
+    await waitFor(() => expect(element.textContent).toContain('Business: Acme Dental'));
+    unmount();
+
+    const empty = mockRoute([]);
+    render(<AuditTrailPage />);
+    expect((await chip(empty)).textContent).toContain(`Business: ${TRUNCATED}`);
   });
 });
 
