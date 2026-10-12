@@ -284,4 +284,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Any lookup keyed by a server-supplied string uses Object.hasOwn — add to the standard's coding notes.
 - Do the shared "Try again" focus fix soon; it now affects every page.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l6 — 4d241b1e, PR #315
