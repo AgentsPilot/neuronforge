@@ -22,9 +22,10 @@
  * the panel and the route render one string.
  *
  * ── Read-only (slice 2) ─────────────────────────────────────────────────
- * Nothing on this page writes. There is no form that submits; the only network
- * calls are two `GET`s. Changing a value is still `npm run bos:llm-settings`
- * (runbook §3) until slice 3 lands the writer.
+ * Nothing on this page writes. There is no form that submits; the Settings tab
+ * makes one network call, the settings `GET` (the ledger reader is parked).
+ * Changing a value is still `npm run bos:llm-settings` (runbook §3) until slice
+ * 3 lands the writer.
  *
  * ── Two tabs (credit deduction slice 4a) ────────────────────────────────
  * **Settings** is everything above, unchanged. **Costs & credits** is the
@@ -50,8 +51,21 @@
  * The header is the shared `AdminPageHeader`: the page's only h1, the
  * "Read-only" badge as the neutral chip, and a purpose line that follows the
  * tab (F-68: the Settings words no longer stand over the other two tabs; each
- * tab's intro moved up here and out of its body). The Settings refresh stays in
- * the header's action slot, shown on Settings only, unchanged until L-10.
+ * tab's intro moved up here and out of its body). The header has no actions on
+ * any tab: since L-10 the Settings Refresh lives in its own bar (§5.3).
+ *
+ * ── The Settings tab on the standard (Admin Layout Standard L-10) ────────
+ * Inside the Settings panel, in the §5.1 order: a neutral KPI strip
+ * (`SettingsKpis`), the Refresh-only bar ("Read at" from the payload's
+ * `generatedAt`), the standing note, then the content area (`aria-busy` while
+ * reading) with the shared error, loading and empty states and the cards. The
+ * read goes through `readAdminResponse` (§5.10; no `.json(` here any more); the
+ * request itself is unchanged, and a failed refresh keeps the cards.
+ *
+ * The strip, the bar and the states render only while Settings is shown (SA
+ * M-1): Costs and Activity stay mounted hidden, and a page-wide query in their
+ * suites must not count Settings' placeholders or "Read at". The standing note
+ * is the exception: it is always rendered, hidden with its panel.
  *
  * The tabs follow the APG tablist with MANUAL activation (SA Q-5): Left / Right
  * move focus (wrapping), Home / End go to the first / last, Enter or Space
@@ -86,20 +100,22 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { AlertCircle, RefreshCw } from 'lucide-react';
 
+import { AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import type { AdminFilterSpec } from '@/app/admin/components/layout/useAdminFilters';
 
 import { AreaCard } from './components/AreaCard';
+import { SettingsKpis } from './components/SettingsKpis';
 import { ActivityTab } from './components/activity/ActivityTab';
 import { CostsTab } from './components/costs/CostsTab';
 import { ACTIVITY_FILTER_SPEC } from './activityFilters';
 import { COSTS_FILTER_SPEC } from './costsFilters';
 import { ACTIVITY_INTRO, ACTIVITY_TAB_LABEL, TIMES_ARE_UTC } from './activityCopy';
-import { PAGE_STANDING_NOTE, PAGE_SUBTITLE } from './copy';
+import { PAGE_STANDING_NOTE, PAGE_SUBTITLE, SETTINGS_EMPTY, SETTINGS_WHAT } from './copy';
 import { COSTS_INTRO, COSTS_TAB_LABEL, SETTINGS_TAB_LABEL } from './costCopy';
-import { formatInstant } from './format';
 import type { SettingsPayload } from './types';
 
 type PageTab = 'settings' | 'costs' | 'activity';
@@ -232,16 +248,23 @@ function BusinessOsLlmSettingsContent() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/admin/business-os/llm-settings');
-      const body = await response.json();
-      if (!response.ok || !body?.success) {
-        throw new Error(
-          typeof body?.error === 'string' ? body.error : 'Could not read the settings'
-        );
+      let response: Response;
+      try {
+        response = await fetch('/api/admin/business-os/llm-settings');
+      } catch {
+        // §5.10 rule 3: never the browser's own text ("Failed to fetch").
+        setError(ADMIN_NETWORK_ERROR);
+        return;
       }
-      setPayload(body.data as SettingsPayload);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not read the settings');
+      // §5.10: the route's sentence, else the fixed fallback, never a parser
+      // message; 401 / 403 say the session ended (SA Q-2). A failure keeps the
+      // payload, so a failed refresh keeps the cards on screen.
+      const result = await readAdminResponse<SettingsPayload>(response, {
+        what: SETTINGS_WHAT,
+        sessionEndedCopy: true,
+      });
+      if (result.ok) setPayload(result.data);
+      else setError(result.message);
     } finally {
       setLoading(false);
     }
@@ -258,30 +281,6 @@ function BusinessOsLlmSettingsContent() {
           title="Business OS AI"
           purpose={PURPOSE[tab]}
           badge={{ label: 'Read-only' }}
-          actions={
-            <div className="flex items-center gap-3" hidden={!onSettings}>
-              {/* The label is not rendered without its value: `formatInstant`
-                  returns null for an unreadable instant, and "read at " alone
-                  would read as a missing fact rather than an absent one. */}
-              {payload && formatInstant(payload.generatedAt) && (
-                <span className="text-xs text-slate-500">
-                  read at {formatInstant(payload.generatedAt)}
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => void load()}
-                disabled={loading}
-                title="Re-read the settings"
-                className="rounded-lg border border-slate-700 p-2 transition-colors hover:bg-slate-800 disabled:opacity-40"
-              >
-                <RefreshCw
-                  className={`h-5 w-5 text-slate-400 ${loading ? 'animate-spin' : ''}`}
-                  aria-hidden="true"
-                />
-              </button>
-            </div>
-          }
         />
         <nav className="flex gap-1 border-b border-slate-700" role="tablist" aria-label="Business OS AI">
           {TABS.map(([id, label], index) => (
@@ -326,6 +325,19 @@ function BusinessOsLlmSettingsContent() {
         hidden={!onSettings}
         className="space-y-6"
       >
+        {/* L-10: the strip and the bar render only while Settings is shown (SA
+            M-1). The strip is hidden on an error (K-10), stale cards or not. */}
+        {onSettings && !error && <SettingsKpis payload={payload} firstLoad={loading && !payload} />}
+
+        {onSettings && (
+          <AdminFilterBar
+            onRefresh={() => void load()}
+            busy={loading}
+            what={SETTINGS_WHAT}
+            readAt={payload?.generatedAt ?? null}
+          />
+        )}
+
         {/* Above the cards, not below them: the reason a card can be wrong has
             to be read before the card is.
 
@@ -333,40 +345,36 @@ function BusinessOsLlmSettingsContent() {
             of that banner's strings were framed around the on/off switch, which
             is no longer on the page — but the residual truth is about the VALUES,
             and it is what makes every number below conditional. Muted, not styled
-            as a warning, and with nothing to dismiss. */}
-        <p data-testid="page-standing-note" className="text-xs leading-relaxed text-slate-500" hidden={!onSettings}>
+            as a warning, and with nothing to dismiss. L-10: slate-400 (T-5), and
+            still rendered on every tab, hidden with its panel (SA M-1). */}
+        <p data-testid="page-standing-note" className="text-xs leading-relaxed text-slate-400" hidden={!onSettings}>
           {PAGE_STANDING_NOTE}
         </p>
 
-        {onSettings && error && (
-          <div
-            data-testid="page-error"
-            className="flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200"
-          >
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <span>{error}</span>
-          </div>
-        )}
+        {onSettings && (
+          <div data-testid="settings-content" aria-busy={loading} className="space-y-4">
+            {error && <AdminError testId="page-error" message={error} onRetry={() => void load()} />}
 
-        {onSettings && loading && !payload && (
-          <div className="flex items-center gap-3 py-12 text-slate-300">
-            <RefreshCw className="h-6 w-6 animate-spin text-purple-500" aria-hidden="true" />
-            Reading the settings&hellip;
-          </div>
-        )}
+            {loading && !payload && !error && <AdminLoading what={SETTINGS_WHAT} />}
 
-        {onSettings && payload && (
-          <div className="space-y-3">
-            {payload.areas.map((area) => (
-              <AreaCard
-                key={area.area}
-                area={area}
-                expanded={expanded === area.area}
-                /* One at a time: the expanded card is long, and two open cards
-                   invite comparing values that belong to different areas. */
-                onToggle={() => setExpanded((current) => (current === area.area ? null : area.area))}
-              />
-            ))}
+            {payload && payload.areas.length === 0 && (
+              <AdminEmpty testId="settings-empty" message={SETTINGS_EMPTY} />
+            )}
+
+            {payload && payload.areas.length > 0 && (
+              <div className="space-y-3">
+                {payload.areas.map((area) => (
+                  <AreaCard
+                    key={area.area}
+                    area={area}
+                    expanded={expanded === area.area}
+                    /* One at a time: the expanded card is long, and two open cards
+                       invite comparing values that belong to different areas. */
+                    onToggle={() => setExpanded((current) => (current === area.area ? null : area.area))}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

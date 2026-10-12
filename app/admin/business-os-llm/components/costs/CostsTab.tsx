@@ -33,7 +33,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
 
 import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
@@ -196,32 +195,26 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
               {COSTS_PERIOD_RULE(report.periodLookbackDays)}
             </p>
 
-            {/* The move onto the shared AdminNotice is L-9b (workplan §6.1 E-9). */}
+            {/* L-9b (E-9): the shared notice; same words and reasons, its amber. */}
             {report.incomplete && (
-              <div
-                data-testid="costs-incomplete"
-                className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200"
-              >
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>
-                  {COSTS_INCOMPLETE}{' '}
-                  <span className="text-amber-300/80">
-                    ({report.incompleteReasons.map((r) => INCOMPLETE_REASON_TEXT[r] ?? r).join(', ')})
-                  </span>
+              <AdminNotice testId="costs-incomplete">
+                {COSTS_INCOMPLETE}{' '}
+                <span className="text-amber-300/80">
+                  ({report.incompleteReasons.map((r) => INCOMPLETE_REASON_TEXT[r] ?? r).join(', ')})
                 </span>
-              </div>
+              </AdminNotice>
             )}
 
+            {/* L-10 task 9 (F-120, SA L-10 Q-7): each partial fact is its own
+                shared notice, same words and test ids, after the incomplete one.
+                Separate boxes, not one merged notice: each says a different
+                thing is missing (§5.10 Partial), and no copy changes. */}
             {report.unreadableAmounts > 0 && (
-              <p data-testid="costs-unreadable" className="text-xs text-amber-300">
-                {UNREADABLE_AMOUNTS(report.unreadableAmounts)}
-              </p>
+              <AdminNotice testId="costs-unreadable">{UNREADABLE_AMOUNTS(report.unreadableAmounts)}</AdminNotice>
             )}
 
             {report.sections.names === 'failed' && (
-              <p data-testid="costs-names-failed" className="text-xs text-amber-300">
-                {NAMES_FAILED}
-              </p>
+              <AdminNotice testId="costs-names-failed">{NAMES_FAILED}</AdminNotice>
             )}
 
             {report.sections.totals === 'failed' ? (

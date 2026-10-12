@@ -1,6 +1,6 @@
 # Retrospective: Admin Layout Standard
 
-> **Last Updated**: 2026-10-11
+> **Last Updated**: 2026-10-12
 
 ## Overview
 
@@ -375,3 +375,48 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Shared-hook changes ship behind an opt-in with the default path proven identical by per-suite comparison.
 
 ### Status: COMMITTED — feature/admin-layout-l9 — 57132b85, PR #321
+
+---
+
+## L-9b: Business OS AI Costs sections and leak-check panel restyle — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-9 workplan](/docs/workplans/ADMIN_LAYOUT_L9_WORKPLAN.md)
+
+### What went well
+- Small, mechanical slice after the hard L-9a: seven tables onto the shared table style, chips with icons, UTC times, and the leak check's raw machine code and parser messages replaced by plain sentences — with the leak-check request byte-identical to before.
+- The temporary JSON exception from L-9a was removed on schedule, and a new guard (G-6) keeps local table constants and mono number cells from coming back.
+- SA declined to fold an extra cosmetic item (F-120) into the slice: outside the approved plan, untested, and a layout question of its own.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Browser checks still owed, including the one allowed production leak-check run.
+
+### Conclusions & process improvements
+- Splitting a hard shared change (L-9a) from its follow-on restyle (L-9b) kept both reviews short.
+
+### Status: COMMITTED — feature/admin-layout-l9b — fa599c13, PR #322
+
+---
+
+## L-10: Business OS AI Settings tab (plus F-120 Costs notices) — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-10 workplan](/docs/workplans/ADMIN_LAYOUT_L10_WORKPLAN.md)
+
+### What went well
+- Read-only confirmed against routes and code before any edit; the settings request on the wire is unchanged.
+- No shared source change: the slice reused existing building blocks, so it stayed on the UI short path.
+- Guards were written to walk folders rather than list files (G-7/G-8), and the parked panel's exception is set to fail once its owner converts it.
+- F-120 landed as its own two-file commit, as SA required.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 1 (workplan conditions M-1..M-6; code review fixes F-1..F-3, all test or doc only).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- QA's temporary HEAD copy of page.tsx sat inside the guarded folder during the parallel SA review and was flagged as a stray file. Probes that copy source files should live outside guarded folders.
+- An unrelated flaky insight test turned #322 red in CI; re-run, and a separate fix task proposed.
+- Browser checks still owed.
+
+### Conclusions & process improvements
+- When SA and QA run in parallel, QA writes probe copies outside folders that guards walk.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)

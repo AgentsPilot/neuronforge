@@ -248,3 +248,26 @@ export const LOCK_TEMPERATURE_NOT_APPLICABLE =
 export const READ_ONLY_NOTE =
   'This screen is read-only for now. To change a value, use npm run bos:llm-settings ' +
   '(runbook §3), or switch an area off with runbook §4.';
+
+// ── The Settings tab on the admin layout standard (L-10) ──────────────────
+
+/** Noun phrase for the shared states and Refresh: "Reading the settings…", "Refresh the settings". */
+export const SETTINGS_WHAT = 'the settings';
+
+/** The empty state (F-75, SA Q-5). Not reachable from a healthy catalogue. */
+export const SETTINGS_EMPTY = 'No Business OS AI areas came back from the settings read.';
+
+/** KPI tile labels (§7.13). Every tile is neutral (SA-R-4). */
+export const KPI_AREAS = 'Areas';
+export const KPI_CALLS = 'Calls';
+export const KPI_CALLS_OFF = 'Calls configured off';
+export const KPI_ROW_ISSUES = 'Row issues';
+
+/**
+ * The Calls configured off tile's sub-line (SA Q-1, S-3). The tile counts the
+ * cards' "N calls configured off" chips, which are 0 for an area that is
+ * itself off (RC-4), so the areas are named here instead of being added in.
+ */
+export function KPI_AREAS_OFF(count: number): string {
+  return `plus ${count} ${count === 1 ? 'area' : 'areas'} configured off`;
+}

@@ -11,7 +11,10 @@
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
+import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
+
 import { LeakCheckPanel } from '../components/costs/LeakCheckPanel';
+import { COSTS_PLATFORM_ACCOUNT } from '../costCopy';
 import {
   LEAK_BLIND_SPOT_TEXT,
   LEAK_CLEAN,
@@ -331,5 +334,103 @@ describe('the leak check panel', () => {
     await act(async () => {
       release({ ok: true, status: 200, json: async () => ({ success: true, data: payload() }) } as Response);
     });
+  });
+});
+
+/**
+ * Admin Layout Standard L-9b (workplan §2.8, §6.3 L-1 to L-4): the panel reads
+ * through the shared `readJsonBody`, says the shared sentence on a network
+ * failure, its own words on a non-JSON body, the tab's platform-account
+ * sentence on a 409 (SA M-2), and shows its statuses as `StatusChip`s (Q-5) in
+ * a table on the shared classes.
+ */
+describe('the leak check panel on the admin layout standard (L-9b)', () => {
+  it('L-1: a network failure says the shared sentence, never the browser message, and clears the result', async () => {
+    render(<LeakCheckPanel accountId="" accountLabel={null} />);
+    run();
+    await screen.findByTestId('leak-result');
+    fetchMock.mockImplementation(() => Promise.reject(new TypeError('Failed to fetch')));
+    run();
+    const error = await screen.findByTestId('leak-error');
+    expect(error.textContent).toBe(ADMIN_NETWORK_ERROR);
+    expect(screen.queryByTestId('leak-result')).not.toBeInTheDocument();
+    // Run is the retry: no "Try again" of its own.
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.getByTestId('leak-run')).toBeEnabled();
+  });
+
+  it('L-2: a body that is not JSON says the panel\'s own words, never a parser message', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve({
+        ok: false,
+        status: 502,
+        json: async () => {
+          throw new SyntaxError("Unexpected token '<', \"<html>\" is not valid JSON");
+        },
+      } as unknown as Response)
+    );
+    render(<LeakCheckPanel accountId="" accountLabel={null} />);
+    run();
+    const error = await screen.findByTestId('leak-error');
+    expect(error.textContent).toBe('Could not run the leak check');
+    expect(error).not.toHaveTextContent('Unexpected token');
+  });
+
+  it('L-3: a platform account (409) gets the tab\'s sentence (SA M-2) as a notice, without "Try again"', async () => {
+    fetchMock.mockImplementation(() => respond({ success: false, error: 'platform_account' }, 409));
+    render(<LeakCheckPanel accountId={A} accountLabel="Platform" />);
+    run();
+    const notice = await screen.findByTestId('leak-platform-account');
+    expect(notice.textContent).toBe(COSTS_PLATFORM_ACCOUNT);
+    expect(screen.queryByTestId('leak-error')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.queryByText('platform_account')).toBeNull();
+  });
+
+  it('L-4: status chips by tone with their words, number cells in tabular figures, the table named, no slate-500', async () => {
+    const C = '33333333-3333-4333-8333-333333333333';
+    const D = '44444444-4444-4444-8444-444444444444';
+    fetchMock.mockImplementation(() =>
+      respond({
+        success: true,
+        data: payload({
+          accounts: [
+            finding(),
+            finding({ accountId: B, companyName: 'Beta', status: 'could_not_check', reasons: ['usage_read_failed'] }),
+            finding({ accountId: C, companyName: 'Gamma', status: 'incomplete' }),
+            finding({ accountId: D, companyName: 'Delta', status: 'clean' }),
+          ],
+        }),
+      })
+    );
+    const { container } = render(<LeakCheckPanel accountId="" accountLabel={null} />);
+    run();
+    const table = await screen.findByRole('table', { name: 'Leak check by business' });
+    expect(table).toHaveAttribute('data-testid', 'leak-accounts');
+
+    const expected: Array<[string, keyof typeof LEAK_STATUS_TEXT, string]> = [
+      [A, 'leak', 'danger'],
+      [B, 'could_not_check', 'unknown'],
+      [C, 'incomplete', 'warn'],
+      [D, 'clean', 'neutral'],
+    ];
+    for (const [id, status, tone] of expected) {
+      const row = screen.getByTestId(`leak-account-${id}`);
+      const chip = within(row).getByTestId('leak-status');
+      expect(chip.textContent).toBe(LEAK_STATUS_TEXT[status]);
+      expect(chip).toHaveAttribute('data-tone', tone);
+      // §5.9 / A-7: every meaning tone carries its icon; only neutral has none.
+      expect(chip.querySelector('svg') !== null).toBe(tone !== 'neutral');
+
+      const cells = row.querySelectorAll('td');
+      expect(cells).toHaveLength(9);
+      for (const cell of Array.from(cells).slice(3)) {
+        expect(cell.className).toContain('tabular-nums');
+        expect(cell.className).toContain('text-right');
+        expect(cell.className).not.toContain('font-mono');
+      }
+    }
+    expect(container.querySelector('[class*="text-slate-500"]')).toBeNull();
   });
 });

@@ -30,7 +30,9 @@
  * first read, so an inbound link reads its own view once. The route's query is
  * resolved ONCE per filter change (memoised on the identity-stable `filters`),
  * so Refresh and "Try again" re-send the same dates even across midnight, and
- * a tab click (an outside change for the hook, SA M-1) starts no read. The
+ * a tab switch starts no read: since L-9a the page passes `active` (F-113), so
+ * while another tab is shown the hook neither re-reads nor writes, and on
+ * return it adopts the URL the page wrote without re-parsing it (F-121). The
  * strip, the bar and the shared states are the standard's; the purpose line
  * moved into the page header.
  *
