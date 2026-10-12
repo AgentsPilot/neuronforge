@@ -34,7 +34,8 @@ function accountLabel(companyName: string | null, accountId: string): string {
 
 function SectionShell({ title, testId, children }: { title: React.ReactNode; testId: string; children: React.ReactNode }) {
   return (
-    <section data-testid={testId} className="space-y-3 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+    // `id` = the test id: the KPI strip's anchor tiles point here (L-9a, §2.5).
+    <section id={testId} data-testid={testId} className="space-y-3 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
       <h2 className="text-sm font-semibold text-white">{title}</h2>
       {children}
     </section>

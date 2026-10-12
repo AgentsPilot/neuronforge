@@ -352,3 +352,26 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Shared hooks get defensive handling of caller mistakes from their first consumer, since later pages reuse them without review of the hook itself.
 
 ### Status: COMMITTED — feature/admin-layout-l8b — 597ad7b6, PR #320
+
+---
+
+## L-9a: Business OS AI Costs filters, KPI strip and tab/URL coexistence — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-9 workplan](/docs/workplans/ADMIN_LAYOUT_L9_WORKPLAN.md)
+
+### What went well
+- The hardest shared change of the series — two tabs owning the same address bar — was designed against Next's delayed URL sync (a lagging test harness reproduces it) and behind an opt-in flag, so the five other pages using the hook stayed unchanged (compared suite by suite).
+- SA traced the design end to end at workplan stage and kept KPI tiles neutral when the report is incomplete rather than turning five tiles amber (M-1).
+- QA walked every tab order three ways (instant, lagging, never-catching-up URL): one write per switch, no reads, filters restored.
+- The leak-check production rule was narrowed to a single one-business, one-day read instead of the 45-second every-business walk.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-3; code approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Dev rewrote CostsTab.tsx with a whole-file write against instructions; TL and SA both checked it line by line against HEAD — nothing lost, but the rule exists because a rewrite once blanked a file.
+- The two real-browser checks that prove the Next URL sync (L9-B4, L9-B5) are still owed.
+
+### Conclusions & process improvements
+- Shared-hook changes ship behind an opt-in with the default path proven identical by per-suite comparison.
+
+### Status: COMMITTED — feature/admin-layout-l9 — 57132b85, PR #321
