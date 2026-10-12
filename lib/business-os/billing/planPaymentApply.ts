@@ -36,6 +36,16 @@
  * Audit (SA Q-4): the system actor through `recordPlanChange`, never a null
  * actor. No email and no metadata value in any log line or audit entry.
  *
+ * FIRST PAYMENT (P-5a.1, S5-3 to S5-5, P5-C3, W-5). The apply function stamps
+ * the account's first payment on its lineage row itself (20261028) and says so
+ * in `firstPaymentStamped`. Only that flag drives the side effects here, and
+ * only on `applied` / `recorded`: one `BOS_BILLING_FIRST_PAYMENT_STAMPED`
+ * entry, ALWAYS written when the flag is true, logged with the invoice-paid
+ * entry under the same bounded flush. Its lineage `source` comes from one
+ * post-commit read that never throws (`source: null` and a warn when the port
+ * is missing or the read fails). Nothing after the apply may throw: the money
+ * is already committed and a retry would only replay.
+ *
  * @module lib/business-os/billing/planPaymentApply
  */
 
@@ -52,6 +62,7 @@ import type {
   BusinessOsApplyPlanPaymentResult,
   BusinessOsBillingEventRepository,
 } from '@/lib/repositories/BusinessOsBillingEventRepository';
+import type { BusinessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import type { RecordPlanChangeInput } from '@/lib/business-os/entitlements/recordPlanChange';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
@@ -76,6 +87,13 @@ export interface PlanPaymentDeps {
   catalog: PlanPriceCatalog;
   entitlementConfig: () => Pick<EntitlementConfig, 'tierOrder' | 'matrix'>;
   recordPlanChange: (input: RecordPlanChangeInput) => Promise<void>;
+  /**
+   * P-5a.1: read once, only after the function stamped the first payment, to
+   * name the lineage `source` in the stamp audit entry. Optional on purpose
+   * (SA W-5): a caller that does not wire it still gets the entry, with
+   * `source: null`.
+   */
+  lineage?: Pick<BusinessOsAccountLineageRepository, 'findHoldFactsForAccount'>;
 }
 
 /** Why a plan payment was refused: the `refusal_reason` of its money history row. */
@@ -383,6 +401,40 @@ export async function applyPaidPlanInvoice(event: Stripe.Event, log: Logger, dep
   });
 }
 
+/**
+ * P-5a.1 (SA Q-2, W-5): the lineage `source` of an account whose first
+ * payment was just stamped, for the audit entry only. One read by primary key,
+ * keyed on the account resolved from our billing record (SR-8). It NEVER
+ * throws and never decides anything: a missing port, a failed read, a missing
+ * row or a throw all give `null` and a warn, and the entry is still written.
+ */
+async function firstPaymentSource(deps: PlanPaymentDeps, accountId: string, log: Logger): Promise<string | null> {
+  const warn = (reason: string, err?: unknown) =>
+    log.warn(
+      { event: 'bos_billing_first_payment_source_unread', accountId, reason, ...(err === undefined ? {} : { err }) },
+      'Lineage source of the first payment could not be read; audited without it'
+    );
+  if (!deps.lineage) {
+    warn('no_lineage_port');
+    return null;
+  }
+  try {
+    const read = await deps.lineage.findHoldFactsForAccount(accountId);
+    if (read.error) {
+      warn('read_failed', read.error);
+      return null;
+    }
+    if (!read.data) {
+      warn('no_lineage_row');
+      return null;
+    }
+    return read.data.source ?? null;
+  } catch (err) {
+    warn('read_threw', err);
+    return null;
+  }
+}
+
 async function afterApply(
   deps: PlanPaymentDeps,
   ctx: InvoiceContext,
@@ -407,36 +459,72 @@ async function afterApply(
         { event: 'bos_billing_invoice_applied', status: result.status, planWritten: result.planWritten, anchorSet: result.anchorSet, tier: facts.tier, ...ids },
         'Business OS plan invoice applied'
       );
-      await deps.recordPlanChange({
-        accountId,
-        action: 'BOS_BILLING_INVOICE_PAID',
-        actor: { kind: 'system', source: 'stripe_webhook' },
-        entityType: 'business_os_account_plan',
-        entityId: accountId,
-        changes: {
-          before: { tier: result.tierBefore },
-          after: {
-            tier: result.tierAfter,
-            ...(result.planWritten ? { tierExpiresAt: facts.periodEnd } : {}),
-            ...(result.anchorSet ? { periodAnchor: extra.billingCycleAnchor } : {}),
+
+      // P-5a.1: the stamp entry, built only from the function's own flag and
+      // always written when it is true (W-5), whatever the lineage read says.
+      const companionEntries =
+        result.firstPaymentStamped === true
+          ? [
+              {
+                action: 'BOS_BILLING_FIRST_PAYMENT_STAMPED',
+                entityType: 'business_os_account_lineage' as const,
+                entityId: accountId,
+                details: {
+                  invoiceId: facts.invoiceId,
+                  eventRowId: result.eventRowId,
+                  source: await firstPaymentSource(deps, accountId, log),
+                  livemode,
+                  stripeEventId: event.id,
+                },
+                severity: 'info' as const,
+              },
+            ]
+          : [];
+      if (companionEntries.length > 0) {
+        log.info(
+          { event: 'bos_billing_first_payment_stamped', eventRowId: result.eventRowId, source: companionEntries[0].details.source, ...ids },
+          'Business OS first payment stamped'
+        );
+      }
+
+      try {
+        await deps.recordPlanChange({
+          accountId,
+          action: 'BOS_BILLING_INVOICE_PAID',
+          actor: { kind: 'system', source: 'stripe_webhook' },
+          entityType: 'business_os_account_plan',
+          entityId: accountId,
+          changes: {
+            before: { tier: result.tierBefore },
+            after: {
+              tier: result.tierAfter,
+              ...(result.planWritten ? { tierExpiresAt: facts.periodEnd } : {}),
+              ...(result.anchorSet ? { periodAnchor: extra.billingCycleAnchor } : {}),
+            },
           },
-        },
-        details: {
-          invoiceId: facts.invoiceId,
-          subscriptionId: facts.subscriptionId,
-          tier: facts.tier,
-          amountMinor: facts.amountMinor,
-          planWritten: result.planWritten,
-          anchorSet: result.anchorSet,
-          livemode,
-          stripeEventId: event.id,
-          eventRowId: result.eventRowId,
-        },
-        severity: 'info',
-        // Only a written plan row changes what the account is entitled to.
-        invalidatesEntitlements: result.planWritten,
-        log,
-      });
+          details: {
+            invoiceId: facts.invoiceId,
+            subscriptionId: facts.subscriptionId,
+            tier: facts.tier,
+            amountMinor: facts.amountMinor,
+            planWritten: result.planWritten,
+            anchorSet: result.anchorSet,
+            livemode,
+            stripeEventId: event.id,
+            eventRowId: result.eventRowId,
+          },
+          severity: 'info',
+          // Only a written plan row changes what the account is entitled to.
+          invalidatesEntitlements: result.planWritten,
+          log,
+          ...(companionEntries.length > 0 ? { companionEntries } : {}),
+        });
+      } catch (err) {
+        // S5-5 b: `recordPlanChange` never rejects by contract; if it ever did,
+        // the payment is committed and a retry would only replay, so this is
+        // logged and the event completes.
+        log.error({ err, event: 'bos_billing_invoice_audit_failed', ...ids, alert: true }, 'Business OS plan invoice audit failed after the apply');
+      }
       return;
     }
 

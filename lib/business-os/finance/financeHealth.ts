@@ -1,7 +1,8 @@
 /**
- * The admin finance & business health page's builder (slices 1a and 1b).
- * Workplans docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md and
- * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_WORKPLAN.md.
+ * The admin finance & business health page's builder (slices 1a, 1b and 2a).
+ * Workplans docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md,
+ * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_WORKPLAN.md and
+ * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md.
  *
  * ONE ORCHESTRATOR, SETTLED SECTIONS (SA-Q8). Every independent read starts at
  * once through `settle`, so a read that throws becomes `{ error }` and never
@@ -16,11 +17,19 @@
  *      a failed read → `account_check_failed`), before any other read;
  *   2. every account-scoped read then receives exactly that id;
  *   3. NO all-accounts method is called (`pagePlans`, the all-accounts ledger
- *      read, the all-accounts billing read, the all-accounts lot read). The
+ *      read, the all-accounts billing read, the all-accounts lot read, and
+ *      since slice 2a the all-accounts client payment and refund reads). The
  *      platform-wide revenue head count is the one deliberate exception: it
  *      reads no account and no amount.
  * Business names are looked up only for ids taken from rows already read
- * (ledger rows for Section 3, plan rows for Section 4).
+ * (ledger rows for Section 3, plan rows for Section 4, client payment and
+ * refund rows for the takings block).
+ *
+ * TAKINGS (slice 2a, Section 2 block B). The client payment and refund reads
+ * run beside every other read, settled on their own. The pure `buildTakings`
+ * does the money maths (integer hundredths per currency, never across
+ * currencies); this file only adds the names of the rows shown. A failed
+ * payments read makes the block unknown and touches no other section.
  *
  * SECTION 4, CREDITS (slice 1b). The credit-position pass starts as soon as the
  * plan walk has its account list, beside the ledger reads; a failed or capped
@@ -57,6 +66,7 @@ import { isPayingBillingRow } from '@/lib/business-os/billing/payingSubscription
 import { missingOriginalIds, sumCostUsd, summariseAiCost } from './aiCost';
 import { readAdminCreditPositions, type AdminCreditPercentDeps, type AdminCreditPositionsPass } from '@/lib/business-os/credits/adminCreditPercent';
 import { buildCreditsSection, type FinanceLot } from './creditsSection';
+import { buildTakings } from './takings';
 import {
   colourFarOverAllowanceTile,
   colourFinanceTile,
@@ -78,6 +88,8 @@ import type {
   FinanceGroupKey,
   FinancePayload,
   FinanceRevenueSection,
+  FinanceTakingsRow,
+  FinanceTakingsSection,
   FinanceTile,
   FinanceTopAccount,
 } from './financeTypes';
@@ -94,6 +106,8 @@ export const FINANCE_LIMITS = {
   ORIGINALS_PER_REQUEST: CREDIT_REPORT_LIMITS.ORIGINALS_PER_REQUEST,
   /** Section 4 rows shown (SA-W15): one names request (the identity read's 200-id chunk). Counts cover every account. */
   CREDIT_ROWS_SHOWN: 200,
+  /** Takings rows shown (S2-FR-7): one names request. Every figure above the table covers every row. */
+  TAKINGS_ROWS_SHOWN: 200,
 } as const;
 
 /** The revenue panel's "none yet" and "recorded" headlines for K-5 (S1-FR-26). */
@@ -120,7 +134,13 @@ export interface FinanceHealthDeps {
   >;
   finance: Pick<
     BusinessOsFinanceReadRepository,
-    'listLiveBillingStatusesAllAccounts' | 'findLiveBillingStatusForAccount' | 'countLiveRevenueRows'
+    | 'listLiveBillingStatusesAllAccounts'
+    | 'findLiveBillingStatusForAccount'
+    | 'countLiveRevenueRows'
+    | 'listClientPaymentsAllAccountsPaidInRange'
+    | 'listClientPaymentsForAccountPaidInRange'
+    | 'listClientRefundsAllAccountsCreatedInRange'
+    | 'listClientRefundsForAccountCreatedInRange'
   >;
   /** Business names for display. Injected by the admin route (admin identity reads stay in `app/api/admin/**`). */
   findNames: (accountIds: readonly string[]) => Promise<RepoResult<Array<{ user_id: string; company_name: string | null }>>>;
@@ -177,6 +197,22 @@ export interface FinanceHealthCounts {
   creditLots: number | null;
   creditRowsShown: number;
   creditNamesFound: number;
+  /** Takings (slice 2a): counts and booleans only, never an amount, a currency or a name (SEC-8). */
+  takings: {
+    /** Rows read; null when that read failed. */
+    payments: number | null;
+    refunds: number | null;
+    paymentsCeiling: boolean;
+    refundsCeiling: boolean;
+    otherStatusPayments: number;
+    refundsNotCompleted: number;
+    unreadableAmounts: number;
+    unreadableFees: number;
+    currencies: number;
+    rowsShown: number;
+    rowsTotal: number;
+    namesFound: number;
+  };
 }
 
 export type FinanceHealthResult =
@@ -265,7 +301,21 @@ export async function buildFinanceHealth(
     }
   });
 
-  const [plansResult, payingResult, revenueResult, windowResult, k1Current, k1Previous, lotsResult, positionsPass] = await Promise.all([
+  // Takings (slice 2a): the selected window, half-open, like every other window read.
+  const takingsRange = { from: window.start, to: window.end };
+
+  const [
+    plansResult,
+    payingResult,
+    revenueResult,
+    windowResult,
+    k1Current,
+    k1Previous,
+    lotsResult,
+    positionsPass,
+    clientPayments,
+    clientRefunds,
+  ] = await Promise.all([
     plansPromise,
     accountId !== null
       ? settle<FinanceBillingStatusRow[]>(async () => {
@@ -279,6 +329,16 @@ export async function buildFinanceHealth(
     spans.previousBeforeCutover ? Promise.resolve(null) : readSpan(spans.previous),
     settle<FinanceLot[]>(() => (accountId !== null ? deps.lots.forAccount(accountId) : deps.lots.allAccounts())),
     positionsPromise,
+    settle(() =>
+      accountId !== null
+        ? deps.finance.listClientPaymentsForAccountPaidInRange(accountId, takingsRange)
+        : deps.finance.listClientPaymentsAllAccountsPaidInRange(takingsRange)
+    ),
+    settle(() =>
+      accountId !== null
+        ? deps.finance.listClientRefundsForAccountCreatedInRange(accountId, takingsRange)
+        : deps.finance.listClientRefundsAllAccountsCreatedInRange(takingsRange)
+    ),
   ]);
 
   if (plansResult.error) failed('plans', plansResult.error);
@@ -288,6 +348,8 @@ export async function buildFinanceHealth(
   if (k1Current.error) failed('ledger_k1_current', k1Current.error);
   if (k1Previous?.error) failed('ledger_k1_previous', k1Previous.error);
   if (lotsResult.error) failed('credit_lots', lotsResult.error);
+  if (clientPayments.error) failed('client_payments', clientPayments.error);
+  if (clientRefunds.error) failed('client_refunds', clientRefunds.error);
 
   // ── 3. Section 1 ──────────────────────────────────────────────────────────
   const payingIds = payingResult.data
@@ -407,6 +469,47 @@ export async function buildFinanceHealth(
     gifted: builtCredits.gifted,
   };
 
+  // ── 6b. Section 2 block B, takings (slice 2a) ─────────────────────────────
+  const builtTakings = buildTakings({
+    payments: clientPayments.data,
+    refunds: clientRefunds.data,
+    isPlatformAccount: deps.isPlatformAccount,
+    displayCap: FINANCE_LIMITS.TAKINGS_ROWS_SHOWN,
+  });
+  // Names for the rows shown only, ids taken from the payment and refund rows
+  // just read (with a business picked, those rows came only from R-e′ / R-f′);
+  // never for a platform account (labelled, SA-WR-5) or a NULL id.
+  let takingsRows: FinanceTakingsRow[] = [];
+  let takingsNamesFound = 0;
+  if (builtTakings.figures) {
+    const shown = builtTakings.figures.rows;
+    const takingsNameIds = [
+      ...new Set(shown.filter((row) => row.accountId !== null && !row.isPlatform).map((row) => row.accountId as string)),
+    ];
+    const takingsNames =
+      takingsNameIds.length > 0 ? await settle(() => deps.findNames(takingsNameIds)) : { data: [], error: null };
+    if (takingsNames.error) failed('takings_names', takingsNames.error);
+    const takingsNameOf = new Map((takingsNames.data ?? []).map((n) => [n.user_id, n.company_name]));
+    takingsNamesFound = takingsNameIds.filter((id) => takingsNameOf.get(id)).length;
+    takingsRows = shown.map(({ isPlatform, ...row }) => ({
+      ...row,
+      ...(row.accountId === null
+        ? { name: null, nameStatus: 'unknown_business' as const }
+        : isPlatform
+          ? { name: null, nameStatus: 'platform' as const }
+          : !takingsNames.data
+            ? { name: null, nameStatus: 'unavailable' as const }
+            : takingsNameOf.get(row.accountId)
+              ? { name: takingsNameOf.get(row.accountId) as string, nameStatus: 'found' as const }
+              : { name: null, nameStatus: 'missing' as const }),
+    }));
+  }
+  const takings: FinanceTakingsSection = {
+    status: builtTakings.status,
+    scope: accountId !== null ? 'one' : 'all',
+    figures: builtTakings.figures ? { ...builtTakings.figures, rows: takingsRows } : null,
+  };
+
   // ── 7. Tiles ──────────────────────────────────────────────────────────────
   const onRuleError = (problem: { tile: string; ruleId: string | null; reason: string }) =>
     logger.error({ read: 'rules', ...problem }, 'Finance tile rule list is invalid');
@@ -496,6 +599,7 @@ export async function buildFinanceHealth(
     accounts,
     aiCost,
     credits,
+    takings,
   };
 
   // Counts by kind for the route's one line: never a figure.
@@ -525,6 +629,20 @@ export async function buildFinanceHealth(
       creditLots: lotsResult.data ? lotsResult.data.length : null,
       creditRowsShown: creditRows.length,
       creditNamesFound,
+      takings: {
+        payments: clientPayments.data ? clientPayments.data.rows.length : null,
+        refunds: clientRefunds.data ? clientRefunds.data.rows.length : null,
+        paymentsCeiling: clientPayments.data?.reachedCeiling ?? false,
+        refundsCeiling: clientRefunds.data?.reachedCeiling ?? false,
+        otherStatusPayments: takings.figures?.otherStatusPayments ?? 0,
+        refundsNotCompleted: takings.figures?.refundsNotCompleted ?? 0,
+        unreadableAmounts: takings.figures?.unreadableAmounts ?? 0,
+        unreadableFees: takings.figures?.unreadableFees ?? 0,
+        currencies: takings.figures?.lines.length ?? 0,
+        rowsShown: takingsRows.length,
+        rowsTotal: takings.figures?.rowsTotal ?? 0,
+        namesFound: takingsNamesFound,
+      },
     },
   };
 }

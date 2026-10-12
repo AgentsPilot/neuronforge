@@ -11,7 +11,10 @@
  *     response or a log;
  *   - the ledger read repository: the all-accounts and one-account reads by
  *     time, and the charges by action id (declared on its importer guard);
- *   - the finance read repository: live billing status and revenue head counts;
+ *   - the finance read repository: live billing status and revenue head counts,
+ *     and the client payments and refunds (layer B, slice 2a): the named
+ *     all-accounts reads only when no business is picked, the account-scoped
+ *     ones with exactly the picked id (the builder chooses);
  *   - slice 1b, the credit-position pass: `adminCreditPercentDeps()`, the
  *     Businesses list's own wiring (SA-W13), so this file names neither of the
  *     pass's repository methods. It sets no `getSnapshots`: in production the
@@ -106,6 +109,14 @@ export function financeHealthDeps(): Omit<FinanceHealthDeps, 'findNames'> {
       listLiveBillingStatusesAllAccounts: (opts) => businessOsFinanceReadRepository.listLiveBillingStatusesAllAccounts(opts),
       findLiveBillingStatusForAccount: (accountId) => businessOsFinanceReadRepository.findLiveBillingStatusForAccount(accountId),
       countLiveRevenueRows: () => businessOsFinanceReadRepository.countLiveRevenueRows(),
+      listClientPaymentsAllAccountsPaidInRange: (range, opts) =>
+        businessOsFinanceReadRepository.listClientPaymentsAllAccountsPaidInRange(range, opts),
+      listClientPaymentsForAccountPaidInRange: (accountId, range, opts) =>
+        businessOsFinanceReadRepository.listClientPaymentsForAccountPaidInRange(accountId, range, opts),
+      listClientRefundsAllAccountsCreatedInRange: (range, opts) =>
+        businessOsFinanceReadRepository.listClientRefundsAllAccountsCreatedInRange(range, opts),
+      listClientRefundsForAccountCreatedInRange: (accountId, range, opts) =>
+        businessOsFinanceReadRepository.listClientRefundsForAccountCreatedInRange(accountId, range, opts),
     },
     // SA-WR-4: the classifier takes the config as a parameter; this is where it is read.
     config: getEntitlementConfig(),

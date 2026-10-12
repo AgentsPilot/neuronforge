@@ -41,6 +41,7 @@ import { PurgeDangerZone } from '@/components/business-os/purge/PurgeDangerZone'
 import { LlmUsageVerification } from '@/components/test-business-os/llm-usage/LlmUsageVerification';
 import { PlanCheckoutPanel } from '@/components/test-business-os/PlanCheckoutPanel';
 import { TestCreditsPanel } from '@/components/test-business-os/TestCreditsPanel';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 // Add tabs here. The first real tab will replace/extend this list.
@@ -336,15 +337,7 @@ export default function TestBusinessOSPage() {
           <button
             onClick={seedProfile}
             disabled={isLoading || !user}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#28a745',
-              color: 'white',
-              border: 'none',
-              borderRadius: '3px',
-              cursor: isLoading || !user ? 'not-allowed' : 'pointer',
-              opacity: isLoading || !user ? 0.6 : 1,
-            }}
+            className={harnessButton('success', 'md')}
           >
             Seed Profile
           </button>
@@ -382,16 +375,7 @@ export default function TestBusinessOSPage() {
             <button
               onClick={() => void loadModules()}
               disabled={isLoading || !user}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: isLoading || !user ? 'not-allowed' : 'pointer',
-                opacity: isLoading || !user ? 0.6 : 1,
-                fontSize: '14px',
-              }}
+              className={harnessButton('primary', 'md')}
             >
               {modulesLoaded ? 'Reload modules' : 'Load modules'}
             </button>
@@ -419,15 +403,7 @@ export default function TestBusinessOSPage() {
             <h2 style={{ margin: 0 }}>Last API Response</h2>
             <button
               onClick={copyToClipboard}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: copySuccess ? '#28a745' : '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
+              className={harnessButton(copySuccess ? 'success' : 'primary', 'md')}
             >
               {copySuccess ? '✓ Copied!' : 'Copy to Clipboard'}
             </button>
@@ -512,14 +488,7 @@ export default function TestBusinessOSPage() {
       <div style={{ marginBottom: '20px' }}>
         <button
           onClick={clearLogs}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#dc3545',
-            color: 'white',
-            border: 'none',
-            borderRadius: '3px',
-            cursor: 'pointer',
-          }}
+          className={harnessButton('danger', 'md')}
         >
           Clear Debug Logs
         </button>
