@@ -6,10 +6,32 @@
  *
  * Extracted from AccountLookup (admin reorganisation slice 2b) so the
  * Businesses panel shows the SAME rendering, not a second one that could drift.
- * Read-only, and it imports nothing but the screen's own types.
+ * Read-only, and it imports nothing but the screen's own types and the shared
+ * admin layout folder.
+ *
+ * Admin Layout Standard L-5: the table takes the standard table classes, with
+ * a name and column scopes; labels are slate-400; a set end date prints as
+ * "YYYY-MM-DD HH:mm UTC" (§5.11). Because the Businesses drawer renders this
+ * same component, it takes the same look (SA L-5 Q-4). Same test ids, same
+ * words, and still no fold inside (the drawer folds it).
  */
 
+import {
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TH,
+  ADMIN_THEAD,
+} from '@/app/admin/components/layout/adminTable';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+
 import type { AccountPayload } from '../types';
+
+/** An end date in the §5.11 form, or the existing words when there is none. */
+function endDate(iso: string | null | undefined): string {
+  return iso ? formatUtc(iso) : 'no end date';
+}
 
 /**
  * Every failure the read path can return, in the words an admin needs.
@@ -46,8 +68,8 @@ export function EntitlementSnapshot({ payload }: { payload: AccountPayload }) {
         {[
           ['Tier', payload.plan?.tier ?? 'none'],
           ['Cohort', payload.plan?.cohort ?? 'none'],
-          ['Tier ends', payload.plan?.tier_expires_at ?? 'no end date'],
-          ['Cohort ends', payload.plan?.cohort_expires_at ?? 'no end date'],
+          ['Tier ends', endDate(payload.plan?.tier_expires_at)],
+          ['Cohort ends', endDate(payload.plan?.cohort_expires_at)],
           ['State', payload.state],
           // `basis` is an object with a `kind` and the name of whatever it
           // stands on. Rendering it directly threw on every lookup, and
@@ -62,38 +84,44 @@ export function EntitlementSnapshot({ payload }: { payload: AccountPayload }) {
           ['Anomaly', payload.anomaly ?? 'none'],
         ].map(([label, value]) => (
           <div key={label}>
-            <dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt>
+            <dt className="text-xs uppercase tracking-wide text-slate-400">{label}</dt>
             <dd className="font-mono text-slate-200">{value}</dd>
           </div>
         ))}
       </dl>
 
       <div>
-        <h3 className="mb-2 text-xs uppercase tracking-wide text-slate-500">
+        <h3 className="mb-2 text-xs uppercase tracking-wide text-slate-400">
           Capabilities in force ({granted.length} of{' '}
           {Object.keys(payload.capabilities).length})
         </h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="text-xs uppercase tracking-wide text-slate-500">
+        <div className={ADMIN_TABLE_WRAP}>
+          <table className={ADMIN_TABLE} aria-label="Capabilities in force">
+            <thead className={ADMIN_THEAD}>
               <tr>
-                <th className="pb-1 pr-4 font-normal">Capability</th>
-                <th className="pb-1 pr-4 font-normal">Value</th>
-                <th className="pb-1 font-normal">Decided by</th>
+                <th scope="col" className={ADMIN_TH}>
+                  Capability
+                </th>
+                <th scope="col" className={ADMIN_TH}>
+                  Value
+                </th>
+                <th scope="col" className={ADMIN_TH}>
+                  Decided by
+                </th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className={ADMIN_TBODY}>
               {granted.map(([capability, resolved]) => (
-                <tr key={capability} className="border-t border-slate-700/60">
-                  <td className="py-1 pr-4 font-mono text-slate-300">{capability}</td>
+                <tr key={capability}>
+                  <td className={`${ADMIN_TD} font-mono text-slate-300`}>{capability}</td>
                   {/* QA-8: the server's own rendering, which is the plan
                       cards' rendering. This column used to print the raw
                       JSON of the value. */}
-                  <td className="py-1 pr-4 text-slate-200">{resolved.display}</td>
+                  <td className={`${ADMIN_TD} text-slate-200`}>{resolved.display}</td>
                   {/* FR-10: the layer, never inferred here. An override and
                       a tier can produce the same value, and which one it
                       was is the question an admin is actually asking. */}
-                  <td className="py-1 font-mono text-slate-400">{resolved.decidedBy}</td>
+                  <td className={`${ADMIN_TD} font-mono text-slate-400`}>{resolved.decidedBy}</td>
                 </tr>
               ))}
             </tbody>
@@ -101,7 +129,7 @@ export function EntitlementSnapshot({ payload }: { payload: AccountPayload }) {
         </div>
       </div>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-slate-400">
         This answer is good for {payload.effectiveWithinSeconds} seconds — an admin change made
         elsewhere can take that long to appear here.
       </p>

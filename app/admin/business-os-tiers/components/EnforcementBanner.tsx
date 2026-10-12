@@ -56,6 +56,9 @@ export function EnforcementBanner({ mode, meaning, envVar, enforced }: Props) {
 
   return (
     <section
+      // The Enforcement tile's anchor (Admin Layout Standard L-5, K-6). An id
+      // only: no accessible name, so this stays a note, not a landmark (A-9).
+      id="enforcement"
       data-testid="enforcement-banner"
       role="note"
       className={`rounded-lg border ${tone.border} ${tone.background} p-4`}

@@ -31,6 +31,8 @@
 import { useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Minus } from 'lucide-react';
 
+import { StatusChip } from '@/app/admin/components/layout/StatusChip';
+
 import type { Plan } from '../types';
 
 interface Props {
@@ -45,33 +47,30 @@ export function PlanCard({ plan }: Props) {
       data-testid={`plan-${plan.id}`}
       // An inactive plan is dimmed and dashed so it is unmistakable at a glance
       // on a row of four cards — the badge below says it in words as well, so
-      // the state is never carried by styling alone.
-      className={`flex flex-col rounded-lg border bg-slate-800/40 p-4 ${
-        plan.active ? 'border-slate-700' : 'border-dashed border-rose-500/60 opacity-70'
+      // the state is never carried by styling alone. The dashes are amber, the
+      // INACTIVE chip's `warn` tone, so the two agree (Admin Layout Standard
+      // L-5, SA M-1).
+      className={`flex flex-col rounded-xl border bg-slate-800/40 p-4 ${
+        plan.active ? 'border-slate-700' : 'border-dashed border-amber-500/60 opacity-70'
       }`}
     >
       <header className="border-b border-slate-700 pb-3">
         <div className="flex items-baseline justify-between gap-2">
           <h3 className="text-base font-semibold text-white">{plan.name}</h3>
-          <span
-            className={`rounded px-2 py-0.5 text-xs ${
-              plan.kind === 'tier'
-                ? 'bg-blue-500/20 text-blue-300'
-                : 'bg-slate-600/40 text-slate-300'
-            }`}
-          >
-            {plan.kind}
-          </span>
+          {/* A category, not a status: neutral for both kinds (T-7 forbids a
+              per-page blue accent). */}
+          <StatusChip tone="neutral">{plan.kind}</StatusChip>
         </div>
 
         {/* The internal id is shown on purpose: it is what the `tier` and
             `cohort` columns hold, and an admin reading a plan row needs the
             mapping in front of them. A customer never sees it. */}
-        <p className="mt-1 font-mono text-xs text-slate-500">{plan.id}</p>
+        <p className="mt-1 font-mono text-xs text-slate-400">{plan.id}</p>
 
         <p className="mt-2 text-2xl font-semibold text-white">
           {plan.monthlyPriceUsd === 0 ? (
-            <span className="text-emerald-400">Free</span>
+            // Not green: a price is not a succeeded or clear state (T-6, SA L-5 Q-3).
+            <span className="text-white">Free</span>
           ) : (
             <>
               ${plan.monthlyPriceUsd}
@@ -84,55 +83,53 @@ export function PlanCard({ plan }: Props) {
             when they disagree, which is the state that matters. "Public, not
             sellable" is what a plan looks like before its buy path exists, and an
             operator reading this card needs to see that rather than infer it from
-            a missing badge. */}
+            a missing badge.
+
+            Each flag is a StatusChip (words and icon, §5.9) inside a wrapper
+            span that keeps the flag's test id and tooltip: StatusChip takes no
+            `title` (Admin Layout Standard L-5). The icon adds no text, so the
+            wrapper's text is exactly the words. */}
         <div className="mt-2 flex flex-wrap gap-1.5">
-          <span
-            data-testid={`plan-${plan.id}-shown`}
-            className={`rounded px-1.5 py-0.5 text-xs ${
-              plan.shownToCustomers ? 'bg-sky-500/20 text-sky-300' : 'bg-slate-600/40 text-slate-400'
-            }`}
-          >
-            {plan.shownToCustomers ? 'shown to customers' : 'not shown to customers'}
+          <span data-testid={`plan-${plan.id}-shown`}>
+            <StatusChip tone={plan.shownToCustomers ? 'info' : 'neutral'}>
+              {plan.shownToCustomers ? 'shown to customers' : 'not shown to customers'}
+            </StatusChip>
           </span>
-          <span
-            data-testid={`plan-${plan.id}-buyable`}
-            className={`rounded px-1.5 py-0.5 text-xs ${
-              plan.availableToBuy ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
-            }`}
-          >
-            {plan.availableToBuy ? 'available to buy' : 'not available to buy'}
+          <span data-testid={`plan-${plan.id}-buyable`}>
+            <StatusChip tone={plan.availableToBuy ? 'ok' : 'warn'}>
+              {plan.availableToBuy ? 'available to buy' : 'not available to buy'}
+            </StatusChip>
           </span>
           {/* FYI only (2026-09-29): an operator's marker. It changes nothing about
               what an account on this plan can do, and the tooltip says so, because
-              "inactive" otherwise reads as a switch. */}
+              "inactive" otherwise reads as a switch. `warn`, not `danger` (SA L-5
+              M-1): an inactive plan is neither "needs action" nor "failed"; the
+              upper-case word, the dashes and the dimming keep it unmistakable. */}
           <span
             data-testid={`plan-${plan.id}-active`}
             title="FYI only: this marker changes nothing about the plan or the accounts on it yet."
-            className={`rounded px-1.5 py-0.5 text-xs ${
-              plan.active ? 'bg-slate-600/40 text-slate-300' : 'bg-rose-500/25 text-rose-200 font-semibold'
-            }`}
           >
-            {plan.active ? 'active' : 'INACTIVE'}
+            <StatusChip tone={plan.active ? 'neutral' : 'warn'}>{plan.active ? 'active' : 'INACTIVE'}</StatusChip>
           </span>
         </div>
       </header>
 
       <dl className="space-y-2 border-b border-slate-700 py-3 text-sm">
         <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">Credits</dt>
+          <dt className="text-xs uppercase tracking-wide text-slate-400">Credits</dt>
           <dd data-testid={`plan-${plan.id}-credits`} className="text-slate-200">
             {plan.credits}
           </dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">Ends</dt>
+          <dt className="text-xs uppercase tracking-wide text-slate-400">Ends</dt>
           <dd data-testid={`plan-${plan.id}-ends`} className="text-slate-200">
             {plan.endsWhen}
           </dd>
         </div>
         {plan.inheritsFrom && (
           <div>
-            <dt className="text-xs uppercase tracking-wide text-slate-500">Inherits</dt>
+            <dt className="text-xs uppercase tracking-wide text-slate-400">Inherits</dt>
             <dd className="text-slate-200">
               Everything from <span className="font-mono">{plan.inheritsFrom}</span>, so it changes
               when that plan changes.
@@ -140,19 +137,19 @@ export function PlanCard({ plan }: Props) {
           </div>
         )}
         <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">Resolver state</dt>
+          <dt className="text-xs uppercase tracking-wide text-slate-400">Resolver state</dt>
           <dd className="font-mono text-slate-400">{plan.state}</dd>
         </div>
       </dl>
 
       <div className="flex-1 pt-3">
-        <h4 className="mb-2 text-xs uppercase tracking-wide text-slate-500">
+        <h4 className="mb-2 text-xs uppercase tracking-wide text-slate-400">
           Includes ({plan.includes.length})
         </h4>
         <ul className="space-y-1">
           {plan.includes.map((capability) => (
             <li key={capability.capability} className="flex items-start gap-2 text-sm">
-              <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden="true" />
+              <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-300" aria-hidden="true" />
               <span className="text-slate-200">
                 {capability.label}
                 {/* Only shown when it says more than "yes": a list of 19 rows
@@ -169,7 +166,7 @@ export function PlanCard({ plan }: Props) {
         <button
           type="button"
           onClick={() => setShowWithheld((open) => !open)}
-          className="mt-3 flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200"
+          className="mt-3 flex items-center gap-1 rounded text-xs text-slate-400 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
           aria-expanded={showWithheld}
         >
           {showWithheld ? (
@@ -191,9 +188,9 @@ export function PlanCard({ plan }: Props) {
                     <span
                       data-testid={`no-gate-${capability.capability}`}
                       title="Withheld by the plan, but nothing in the product refuses it yet."
-                      className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-300"
+                      className="ml-2"
                     >
-                      no gate yet
+                      <StatusChip tone="warn">no gate yet</StatusChip>
                     </span>
                   )}
                 </span>
