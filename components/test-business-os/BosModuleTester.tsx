@@ -24,6 +24,7 @@ import {
 import { SchemaForm } from '@/components/test-plugins/tester/SchemaForm';
 import { ResultView } from '@/components/test-plugins/tester/ResultView';
 import { DestructiveConfirm } from '@/components/test-plugins/tester/DestructiveConfirm';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 
 export interface BosModule {
   key: string;
@@ -320,15 +321,8 @@ export function BosModuleTester({
           <button
             onClick={handleRunClick}
             disabled={runDisabled}
-            style={{
-              marginTop: 14,
-              padding: '10px 20px',
-              backgroundColor: runDisabled ? '#adb5bd' : '#28a745',
-              color: 'white',
-              border: 'none',
-              borderRadius: 3,
-              cursor: runDisabled ? 'not-allowed' : 'pointer',
-            }}
+            className={harnessButton('success', 'md')}
+            style={{ marginTop: 14 }}
           >
             {running ? 'Running...' : 'Run'}
           </button>
