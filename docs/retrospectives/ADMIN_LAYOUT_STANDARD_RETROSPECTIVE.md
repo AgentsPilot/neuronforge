@@ -329,4 +329,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 ### Conclusions & process improvements
 - When a page holds several tabs with their own filters, design the URL coexistence rule before the second tab adopts the hook (SA direction recorded for L-9).
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l8 — f67ece30, PR #319

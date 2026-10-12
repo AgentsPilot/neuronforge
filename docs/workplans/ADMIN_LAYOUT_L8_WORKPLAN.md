@@ -7,7 +7,7 @@
 **Skills applied:** `bos-llm-call-standards` read for scope only: this slice adds **no** AI call, changes no model setting and no route (the page stays read-only, two `GET`s plus the picker's). `business-os-entitlements`: not triggered (no import from `lib/business-os/entitlements/`, no tier or capability literal; S-4 holds in the shared folder). `business-os-schema-check`: not triggered (no DB claim beyond the payload fields the tab already reads). No service-role path, no queue
 **Branch:** `feature/admin-layout-l8`, cut from `feature/admin-layout-l7` (PR #316 open, carries #315). The L-8 PR targets `main` and carries L-6 / L-7 until they merge. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-12
-**Status:** L-8a code complete — SA approved, QA passed (QA-L8a-1 fixed) — ready for RM. L-8b not started
+**Status:** L-8a COMMITTED — f67ece30, PR #319 open (fast-track; awaiting checks + user merge). L-8b not started
 **Path:** **Full cycle** (R-6, R-7): L-8 builds the shared `useDrawerResource` (the Activity drill-down is the first drawer that owns a fetch) and extends the shared window extras with Activity's four existing choices. Run under the user's fast-track: SA workplan review → Dev → SA code review + QA → RM commits and opens the PR (no user diff review). Recommended as **two PRs, L-8a then L-8b** (§9)
 
 ## Overview
@@ -856,4 +856,20 @@ None. Reads are exactly one per change (P7) and zero per tab switch for every pa
 
 ## Commit Info
 
-_RM populates this section._
+| Field | Value |
+|---|---|
+| Slice | L-8a |
+| Branch | `feature/admin-layout-l8` |
+| Commit | f67ece30 `feat(admin): admin layout standard L-8a — Business OS AI header, tabs, Activity filters and KPI strip` |
+| Merge of origin/main | 29135d9f (origin/main 8a43eb36, clean, no file changes) |
+| PR | [#319](https://github.com/AgentsPilot/neuronforge/pull/319), open against `main`, fast-track (SA + QA passed); awaiting checks + user merge |
+| Tests after the merge | Requested Jest set 61 suites / 1,819 tests; `test:bos-llm` 23 / 625; `typecheck:bos-llm` passed; `test:bos-entitlements` 242 / 7,062; `lint:hooks` clean |
+| Owed | Browser checks B-1 to B-12 (QA report), B-2 and B-5 mandatory |
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|---|---|---|
+| 2026-10-12 | L-8a committed, PR #319 | RM: commit f67ece30, origin/main merged (29135d9f), PR #319 opened under the fast-track; Status and Commit Info updated |
