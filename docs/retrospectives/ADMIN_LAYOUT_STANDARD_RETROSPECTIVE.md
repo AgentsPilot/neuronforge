@@ -351,4 +351,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 ### Conclusions & process improvements
 - Shared hooks get defensive handling of caller mistakes from their first consumer, since later pages reuse them without review of the hook itself.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l8b — 597ad7b6, PR #320

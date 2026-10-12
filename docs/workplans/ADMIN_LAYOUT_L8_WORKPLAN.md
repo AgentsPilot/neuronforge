@@ -7,7 +7,7 @@
 **Skills applied:** `bos-llm-call-standards` read for scope only: this slice adds **no** AI call, changes no model setting and no route (the page stays read-only, two `GET`s plus the picker's). `business-os-entitlements`: not triggered (no import from `lib/business-os/entitlements/`, no tier or capability literal; S-4 holds in the shared folder). `business-os-schema-check`: not triggered (no DB claim beyond the payload fields the tab already reads). No service-role path, no queue
 **Branch:** `feature/admin-layout-l8`, cut from `feature/admin-layout-l7` (PR #316 open, carries #315). The L-8 PR targets `main` and carries L-6 / L-7 until they merge. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-12
-**Status:** L-8a COMMITTED — f67ece30, PR #319 open (fast-track; awaiting checks + user merge). L-8b CODE COMPLETE (uncommitted, on `feature/admin-layout-l8b`, cut from the L-8a commit) — awaiting SA code review + QA
+**Status:** L-8a COMMITTED — f67ece30, PR #319 open (fast-track; awaiting checks + user merge). L-8b COMMITTED — 597ad7b6, PR #320 open (fast-track; SA + QA passed; awaiting checks + user merge; contains #319)
 **Path:** **Full cycle** (R-6, R-7): L-8 builds the shared `useDrawerResource` (the Activity drill-down is the first drawer that owns a fetch) and extends the shared window extras with Activity's four existing choices. Run under the user's fast-track: SA workplan review → Dev → SA code review + QA → RM commits and opens the PR (no user diff review). Recommended as **two PRs, L-8a then L-8b** (§9)
 
 ## Overview
@@ -1110,6 +1110,16 @@ Signed-in admin, `/admin/business-os-llm?tab=activity`, DevTools Network filtere
 | Tests after the merge | Requested Jest set 61 suites / 1,819 tests; `test:bos-llm` 23 / 625; `typecheck:bos-llm` passed; `test:bos-entitlements` 242 / 7,062; `lint:hooks` clean |
 | Owed | Browser checks B-1 to B-12 (QA report), B-2 and B-5 mandatory |
 
+| Field | Value |
+|---|---|
+| Slice | L-8b |
+| Branch | `feature/admin-layout-l8b` (cut from `feature/admin-layout-l8` at 25bc0a8b) |
+| Commit | 597ad7b6 `feat(admin): admin layout standard L-8b — Activity drawer on the shared drawer, useDrawerResource` |
+| Merge of origin/main | Not needed: origin/main had no commits missing from the branch |
+| PR | [#320](https://github.com/AgentsPilot/neuronforge/pull/320), open against `main`, fast-track (SA + QA passed); contains #319 (L-8a); awaiting checks + user merge |
+| Tests | Requested Jest set 54 suites / 1,653 tests; `test:bos-llm` 23 / 625 (23 snapshots); `typecheck:bos-llm` passed (0 new); `test:bos-entitlements` 242 / 7,062; `lint:hooks` clean |
+| Owed | Browser checks B8-1 to B8-11 (QA report), read only |
+
 ---
 
 ## Change History
@@ -1120,3 +1130,4 @@ Signed-in admin, `/admin/business-os-llm?tab=activity`, DevTools Network filtere
 | 2026-10-12 | L-8b implemented | Dev: tasks 4 and 9; Implementation Notes (L-8b); Status updated. Uncommitted |
 | 2026-10-12 | L-8b SA code review | SA: Code Approved for QA, no must-fix; deviation (no close-when-gone) accepted and written into requirement §5.8 D-7; 3 Low comments |
 | 2026-10-12 | L-8b QA | QA: PASS, no bugs; 26 throwaway probes (deleted), scoped tsc canary, 2 Low edge notes (E-1, E-2); browser checklist B8-1 to B8-11 owed by TL |
+| 2026-10-12 | L-8b committed, PR #320 | RM: TL fold-in line (QA E-2) added to Implementation Notes (L-8b); commit 597ad7b6; origin/main already contained (no merge); PR #320 opened under the fast-track; Status and Commit Info updated |
