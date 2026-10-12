@@ -285,3 +285,26 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Do the shared "Try again" focus fix soon; it now affects every page.
 
 ### Status: COMMITTED — feature/admin-layout-l6 — 4d241b1e, PR #315
+
+---
+
+## L-7: Messages — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-7 workplan](/docs/workplans/ADMIN_LAYOUT_L7_WORKPLAN.md)
+
+### What went well
+- Characterisation first: the page had no tests, so Dev pinned today's behaviour (B-1..B-15) green on the unchanged page before migrating, and the final diff against that baseline contains only the four planned flips.
+- The broken Reply (D-14 b) is gone entirely — no dead code, no reply route call; routes untouched.
+- User decision D-19: failed saves, read changes and deletes now say so in plain words, without ever reading the route's error body.
+- The six console.error calls in the page were converted to the client logger with facts-only context (CLAUDE.md logging rule).
+- Dev caught that the list route answers without a success flag, so the shared helper would have shown every good read as a failure; handled in the page and recorded (F-111).
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Focus after an action removes its own button (Delete, Mark All Read, Try again) still falls to the page body — part of the shared focus follow-up.
+
+### Conclusions & process improvements
+- Pages with no tests get a characterisation suite before any layout change; it made the review of a 780-line rewrite mechanical.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
