@@ -2,6 +2,7 @@
 
 import type { AutoRefreshInterval, AutoRefreshStatus } from '@/hooks/llmUsageRefreshMachine';
 import { AUTO_REFRESH_INTERVALS } from '@/hooks/llmUsageRefreshMachine';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 import { isoToLocalInput, localInputToIso, localTimeZoneName } from './formatters';
 
 interface WindowControlsProps {
@@ -55,22 +56,14 @@ export function WindowControls({
         }}
         style={{ padding: '6px 8px', fontSize: '13px' }}
       />
-      <button type="button" onClick={onStartNow} style={{ padding: '6px 12px', cursor: 'pointer' }}>
+      <button type="button" onClick={onStartNow} className={harnessButton()}>
         Start now
       </button>
       <button
         type="button"
         onClick={onRefresh}
         disabled={refreshDisabled}
-        style={{
-          padding: '6px 16px',
-          backgroundColor: '#007bff',
-          color: 'white',
-          border: 'none',
-          borderRadius: '3px',
-          cursor: refreshDisabled ? 'not-allowed' : 'pointer',
-          opacity: refreshDisabled ? 0.6 : 1,
-        }}
+        className={harnessButton('primary')}
       >
         {loading ? 'Refreshing…' : 'Refresh'}
       </button>
