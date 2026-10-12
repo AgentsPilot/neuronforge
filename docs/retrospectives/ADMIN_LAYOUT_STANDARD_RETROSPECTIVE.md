@@ -396,3 +396,27 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Splitting a hard shared change (L-9a) from its follow-on restyle (L-9b) kept both reviews short.
 
 ### Status: COMMITTED — feature/admin-layout-l9b — fa599c13, PR #322
+
+---
+
+## L-10: Business OS AI Settings tab (plus F-120 Costs notices) — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-10 workplan](/docs/workplans/ADMIN_LAYOUT_L10_WORKPLAN.md)
+
+### What went well
+- Read-only confirmed against routes and code before any edit; the settings request on the wire is unchanged.
+- No shared source change: the slice reused existing building blocks, so it stayed on the UI short path.
+- Guards were written to walk folders rather than list files (G-7/G-8), and the parked panel's exception is set to fail once its owner converts it.
+- F-120 landed as its own two-file commit, as SA required.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 1 (workplan conditions M-1..M-6; code review fixes F-1..F-3, all test or doc only).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- QA's temporary HEAD copy of page.tsx sat inside the guarded folder during the parallel SA review and was flagged as a stray file. Probes that copy source files should live outside guarded folders.
+- An unrelated flaky insight test turned #322 red in CI; re-run, and a separate fix task proposed.
+- Browser checks still owed.
+
+### Conclusions & process improvements
+- When SA and QA run in parallel, QA writes probe copies outside folders that guards walk.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)

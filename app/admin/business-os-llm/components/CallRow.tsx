@@ -28,6 +28,8 @@
  * See `../markers.ts` for why a second list here is the bug this round fixed.
  */
 
+import { StatusChip } from '@/app/admin/components/layout/StatusChip';
+
 import {
   CALL_NAME_CAPTION,
   CALL_OFF_TITLE,
@@ -38,7 +40,6 @@ import {
 } from '../copy';
 import { markerFor, renderedFieldsFor, type MarkerKind, type RenderedField } from '../markers';
 import type { CallView, SettingIssue } from '../types';
-import { Chip } from './Chip';
 import { Marker } from './Marker';
 
 function IssueList({ issues, withField }: { issues: SettingIssue[]; withField?: boolean }) {
@@ -82,7 +83,7 @@ function Field({
       {/* RC-1: the marker lives in the LABEL, never beside the value. */}
       <div
         data-testid={`field-label-${field}`}
-        className="flex items-baseline gap-1 text-[11px] uppercase tracking-wide text-slate-500"
+        className="flex items-baseline gap-1 text-[11px] uppercase tracking-wide text-slate-400"
       >
         <span>{field}</span>
         {marker && <Marker kind={marker} />}
@@ -109,7 +110,7 @@ const FIELD_BODIES: Record<RenderedField, (call: CallView) => React.ReactNode> =
     <>
       <span className="font-mono text-xs">{call.resolved.model}</span>
       {call.provenance.model !== 'default' && (
-        <span className="ml-1 text-[11px] text-slate-500">
+        <span className="ml-1 text-[11px] text-slate-400">
           (code default: <span className="font-mono">{call.defaults.model}</span>)
         </span>
       )}
@@ -179,14 +180,16 @@ export function CallRow({ call, showProvider, areaShowsOff }: Props) {
         {/* FR-7. What KIND of identifier `planner` is — the caption answers
             "what is this string" without inventing prose about what the call
             does, which would be a copy table in a client file. */}
-        <span className="text-[11px] uppercase tracking-wide text-slate-500">
+        <span className="text-[11px] uppercase tracking-wide text-slate-400">
           {CALL_NAME_CAPTION}
         </span>
         <span className="font-mono text-xs text-slate-300">{call.callName}</span>
+        {/* L-10 (§5.9): the shared StatusChip; the pinned hover text rides on
+            a wrapper span, because StatusChip takes no `title` (L-5 precedent). */}
         {showOffChip && (
-          <Chip tone="warn" title={CALL_OFF_TITLE} testId="call-state-chip">
-            Configured: off
-          </Chip>
+          <span data-testid="call-state-chip" title={CALL_OFF_TITLE}>
+            <StatusChip tone="warn">Configured: off</StatusChip>
+          </span>
         )}
       </div>
 

@@ -205,16 +205,16 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
               </AdminNotice>
             )}
 
+            {/* L-10 task 9 (F-120, SA L-10 Q-7): each partial fact is its own
+                shared notice, same words and test ids, after the incomplete one.
+                Separate boxes, not one merged notice: each says a different
+                thing is missing (§5.10 Partial), and no copy changes. */}
             {report.unreadableAmounts > 0 && (
-              <p data-testid="costs-unreadable" className="text-xs text-amber-300">
-                {UNREADABLE_AMOUNTS(report.unreadableAmounts)}
-              </p>
+              <AdminNotice testId="costs-unreadable">{UNREADABLE_AMOUNTS(report.unreadableAmounts)}</AdminNotice>
             )}
 
             {report.sections.names === 'failed' && (
-              <p data-testid="costs-names-failed" className="text-xs text-amber-300">
-                {NAMES_FAILED}
-              </p>
+              <AdminNotice testId="costs-names-failed">{NAMES_FAILED}</AdminNotice>
             )}
 
             {report.sections.totals === 'failed' ? (

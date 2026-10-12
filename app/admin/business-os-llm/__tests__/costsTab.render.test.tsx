@@ -363,12 +363,16 @@ describe('the page: two tabs, Settings first and unchanged', () => {
     expect(await screen.findByTestId('costs-periods')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/credits/report'))).toBe(true);
     expect(screen.getByTestId('page-standing-note')).not.toBeVisible();
-    expect(screen.queryByTitle('Re-read the settings')).not.toBeVisible();
+    // E-1 (Admin Layout Standard L-10, F-69 / D-15): the Settings Refresh is
+    // "Refresh the settings" in the Settings tab's own bar, rendered only while
+    // Settings is shown (SA M-1), so on Costs it is not in the document at all.
+    expect(screen.queryByRole('button', { name: 'Refresh the settings', hidden: true })).toBeNull();
 
     fireEvent.click(screen.getByTestId('tab-settings'));
     // Kept mounted but hidden (CR-N2), so its window and account survive.
     expect(screen.getByTestId('costs-tab')).not.toBeVisible();
     expect(screen.getByTestId('page-standing-note')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Refresh the settings' })).toBeVisible();
   });
 
   it('each tab controls its own tabpanel (CR-N2)', async () => {
