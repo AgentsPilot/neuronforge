@@ -216,3 +216,26 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - L-4b carries a user request: the per-business audit section starts collapsed.
 
 ### Status: COMMITTED — feature/admin-layout-l4 — 38c35a37, PR #300
+
+---
+
+## L-4b: Businesses row detail into the drawer — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-4b workplan](/docs/workplans/ADMIN_LAYOUT_L4B_WORKPLAN.md)
+
+### What went well
+- Two user requests landed in the same slice: the per-business audit section starts collapsed (folded mid-flight), and the whole row stays clickable (D-17), built with six explicit safety rules (controls and text selection ignored, opener always the row's Open button).
+- page.tsx went from 1,249 to 662 lines; the destructive-flow source guard was re-expressed with an explicit old→new assertion map instead of being loosened.
+- SA caught at workplan stage that mounting the audit fold on expand would fire the archive-notice request (M-2) — fixed by always mounting it hidden.
+- Nineteen mutation checks bit; QA's 24 probes (disappearing open row in four ways, nine control kinds, cache across accounts, nested dialogs) found no bugs.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-5; code approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- M-5 only partly met: nested credit/boost dialogs open from state with no trigger, so focus falls to the body after their Escape (pre-existing). Fixing needs five money-UI files — recorded as F-108, its own short slice.
+- Browser checks still owed (B-1..B-12 plus earlier slices).
+
+### Conclusions & process improvements
+- When a slice moves destructive-flow code, require an explicit old→new guard assertion map in the workplan; it made the review mechanical.
+
+### Status: COMMITTED — feature/admin-layout-l4b — cae9eea0, PR #309
