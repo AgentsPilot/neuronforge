@@ -21,7 +21,14 @@ jest.mock('next/navigation', () => ({
 }));
 
 import BusinessOsLlmSettingsPage from '../page';
-import { COSTS_EMPTY, COSTS_PLATFORM_ACCOUNT } from '../costCopy';
+import {
+  COSTS_EMPTY,
+  COSTS_INCOMPLETE,
+  COSTS_PLATFORM_ACCOUNT,
+  INCOMPLETE_REASON_TEXT,
+  NAMES_FAILED,
+  UNREADABLE_AMOUNTS,
+} from '../costCopy';
 import { formatUsd } from '../costFormat';
 import type { CostPeriodFigures, CostReportPayload } from '../costTypes';
 
@@ -588,5 +595,67 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     expect(within(costs()).queryByTestId('kpi-placeholder')).toBeNull();
     expect(within(costs()).queryByTestId('costs-kpi-credits')).toBeNull();
     unmount();
+  });
+});
+
+/*
+ * L-10 task 9 (F-120, SA L-10 Q-7 and M-6): the "unreadable amounts" and
+ * "names failed" lines are the shared notice, one box each, words unchanged.
+ */
+describe('F-1: the partial-report lines on the shared notice (F-120)', () => {
+  /** The amber `AdminNotice` box holding a test id's text element (RC-3: the id is on the `<p>`). */
+  const noticeOf = (testId: string) => {
+    const text = within(costs()).getByTestId(testId);
+    expect(text.tagName).toBe('P');
+    const box = text.parentElement as HTMLElement;
+    expect(box.className).toContain('border-amber-500/40');
+    expect(box.className).toContain('bg-amber-500/10');
+    expect(box.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    return box;
+  };
+
+  it('each line alone is its own notice with its words, never an alert', async () => {
+    stub(() => ok(report({ unreadableAmounts: 3 })));
+    const first = openAt('?tab=costs');
+    await within(costs()).findByTestId('costs-unreadable');
+    noticeOf('costs-unreadable');
+    expect(within(costs()).getByTestId('costs-unreadable').textContent).toBe(UNREADABLE_AMOUNTS(3));
+    expect(within(costs()).queryByTestId('costs-names-failed')).toBeNull();
+    expect(within(costs()).queryByRole('alert')).toBeNull();
+    first.unmount();
+
+    stub(() => ok(report({ sections: { totals: 'ok', rows: 'ok', names: 'failed', originals: 'ok' } })));
+    openAt('?tab=costs');
+    await within(costs()).findByTestId('costs-names-failed');
+    noticeOf('costs-names-failed');
+    expect(within(costs()).getByTestId('costs-names-failed').textContent).toBe(NAMES_FAILED);
+    expect(within(costs()).queryByRole('alert')).toBeNull();
+  });
+
+  it('all three at once: exactly three notices, in the order incomplete, unreadable, names failed; incomplete unchanged', async () => {
+    stub(() =>
+      ok(
+        report({
+          incomplete: true,
+          incompleteReasons: ['rows_ceiling'],
+          unreadableAmounts: 2,
+          sections: { totals: 'ok', rows: 'ok', names: 'failed', originals: 'ok' },
+        }),
+      ),
+    );
+    openAt('?tab=costs');
+    await within(costs()).findByTestId('costs-names-failed');
+
+    const boxes = ['costs-incomplete', 'costs-unreadable', 'costs-names-failed'].map(noticeOf);
+    const allNotices = [...costs().querySelectorAll('div')].filter(
+      (element) => element.className.includes('border-amber-500/40') && element.className.includes('bg-amber-500/10'),
+    );
+    expect(allNotices).toEqual(boxes);
+
+    expect(within(costs()).getByTestId('costs-incomplete')).toHaveTextContent(
+      `${COSTS_INCOMPLETE} (${INCOMPLETE_REASON_TEXT.rows_ceiling ?? 'rows_ceiling'})`,
+    );
+    expect(within(costs()).getByTestId('costs-unreadable').textContent).toBe(UNREADABLE_AMOUNTS(2));
+    expect(within(costs()).queryByRole('alert')).toBeNull();
   });
 });

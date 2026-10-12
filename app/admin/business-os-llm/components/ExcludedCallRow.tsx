@@ -36,12 +36,14 @@ export function ExcludedCallRow({ call }: { call: ExcludedCallView }) {
       className="rounded-lg border border-slate-800 bg-slate-900/40 p-3"
     >
       <div className="mb-1 flex flex-wrap items-baseline gap-2">
-        <span className="text-[11px] uppercase tracking-wide text-slate-600">
+        {/* L-10 (T-5, SA Q-6): information text is slate-400; the row stays
+            quieter than a configurable one through its darker shell. */}
+        <span className="text-[11px] uppercase tracking-wide text-slate-400">
           {CALL_NAME_CAPTION}
         </span>
         <span className="font-mono text-xs text-slate-400">{call.callName}</span>
       </div>
-      <p data-testid="excluded-call-reason" className="text-[11px] leading-snug text-slate-500">
+      <p data-testid="excluded-call-reason" className="text-[11px] leading-snug text-slate-400">
         {call.reason}
       </p>
     </div>
