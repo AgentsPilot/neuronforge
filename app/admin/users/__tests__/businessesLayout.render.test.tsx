@@ -488,7 +488,8 @@ describe('U-9 newest read wins (SA M-5)', () => {
 });
 
 describe('U-10 the table', () => {
-  it('keeps the seven headers, each scope="col"', async () => {
+  // L-4b (SA Q-2 (b)): six headers; the Actions column went with the row toggle.
+  it('keeps the six headers, each scope="col"', async () => {
     mockFetch();
     render(<UsersPage />);
     await screen.findAllByTestId('row-business');
@@ -500,20 +501,18 @@ describe('U-10 the table', () => {
       'Login Activity',
       'Last Sign In',
       'Joined',
-      'Actions',
     ]);
     for (const th of headers) expect(th.getAttribute('scope')).toBe('col');
   });
 
-  it('the row toggle is named for the person and says whether the detail is open', async () => {
+  // L-4b: the row toggle became the drawer's Open button (Q-16, R-8).
+  it('the Open button is named for the person, shows the word "Open", and is not a toggle', async () => {
     mockFetch();
     render(<UsersPage />);
-    const toggle = await screen.findByRole('button', { name: 'Show details for Dana Cohen' });
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(toggle.hasAttribute('title')).toBe(false);
-    fireEvent.click(toggle);
-    const open = await screen.findByRole('button', { name: 'Hide details for Dana Cohen' });
-    expect(open.getAttribute('aria-expanded')).toBe('true');
+    const open = await screen.findByRole('button', { name: 'Open details for Dana Cohen' });
+    expect(open.textContent).toBe('Open');
+    expect(open.hasAttribute('aria-expanded')).toBe(false);
+    expect(open.hasAttribute('title')).toBe(false);
   });
 
   it('the toggle name falls back to the email, then "this login", never "null" (SA S-4)', () => {
@@ -581,6 +580,12 @@ describe('U-12 an open row across list reads (L-4a §2.5, SA Q-2)', () => {
       .map(([u]) => String(u))
       .filter((u) => u.includes(`/entitlements/accounts/${DANA_ID}`) || u.includes(`/accounts/${DANA_ID}/summary`)).length;
 
+  // L-4b: the open row is a modal drawer now. Radix hides the page from role
+  // queries while it is open, so Refresh is found with `hidden: true`; the
+  // request counts are unchanged (SA M-4). The status change is the close.
+  const refreshBehindDrawer = () =>
+    screen.getByRole('button', { name: 'Refresh the business list', hidden: true }) as HTMLButtonElement;
+
   it('stays open across Refresh with no new panel reads; a status change that drops the row closes it', async () => {
     const fetchMock = mockFetch();
     render(<UsersPage />);
@@ -590,15 +595,17 @@ describe('U-12 an open row across list reads (L-4a §2.5, SA Q-2)', () => {
     const panel = screen.getByTestId('bos-panel');
     const readsBefore = panelReads(fetchMock);
 
-    fireEvent.click(refresh());
-    await settled();
+    fireEvent.click(refreshBehindDrawer());
+    await waitFor(() => expect(refreshBehindDrawer().disabled).toBe(false));
     expect(screen.getByTestId('bos-panel')).toBe(panel);
     expect(panelReads(fetchMock)).toBe(readsBefore);
+    expect(screen.getByRole('dialog')).toBeTruthy();
 
     listAnswer = async (q) => (q.get('status') === 'inactive' ? ok([OREN]) : ok([DANA, OREN]));
     fireEvent.change(statusSelect(), { target: { value: 'inactive' } });
     await settled();
     expect(screen.queryByTestId('bos-panel')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
 

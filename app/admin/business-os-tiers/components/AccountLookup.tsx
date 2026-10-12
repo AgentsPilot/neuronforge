@@ -35,7 +35,13 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Search } from 'lucide-react';
+
+import { ADMIN_FIELD_CONTROL } from '@/app/admin/components/layout/AdminFilterBar';
+import { AdminError } from '@/app/admin/components/layout/AdminStates';
+import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
+import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 
 import type { AccountPayload } from '../types';
 import { ENTITLEMENT_ERROR_COPY, EntitlementSnapshot } from './EntitlementSnapshot';
@@ -56,19 +62,35 @@ export function AccountLookup() {
     setPayload(null);
 
     try {
-      const response = await fetch(
-        `/api/admin/business-os/entitlements/accounts/${encodeURIComponent(trimmed)}`
-      );
-      const body = await response.json();
-
-      if (!response.ok || !body?.success) {
-        const code = typeof body?.error === 'string' ? body.error : 'unknown';
-        throw new Error(ENTITLEMENT_ERROR_COPY[code] ?? `Could not read that account (${code}).`);
+      // Only the fetch sits inside this try: a rejection is a network failure
+      // (§5.10 rule 3), and the browser's own message is never shown (rule 4).
+      let response: Response;
+      try {
+        response = await fetch(
+          `/api/admin/business-os/entitlements/accounts/${encodeURIComponent(trimmed)}`
+        );
+      } catch {
+        setError(ADMIN_NETWORK_ERROR);
+        return;
       }
 
-      setPayload(body.data as AccountPayload);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not read that account.');
+      // Never throws (Admin Layout Standard L-5, F-37): a non-JSON reply falls
+      // to "Could not read that account. Try again in a moment.", and a 401 /
+      // 403 from the admin guard says the session ended (RC-4; the route itself
+      // never answers either, so no code below is masked). Otherwise the
+      // message is the route's code verbatim, worded through the same copy
+      // table as before; `accountLookup.contract` proves every code has a
+      // sentence.
+      const result = await readAdminResponse<AccountPayload>(response, {
+        what: 'that account',
+        sessionEndedCopy: true,
+      });
+      if (!result.ok) {
+        setError(ENTITLEMENT_ERROR_COPY[result.message] ?? result.message);
+        return;
+      }
+
+      setPayload(result.data);
     } finally {
       setLoading(false);
     }
@@ -77,7 +99,7 @@ export function AccountLookup() {
   return (
     <section
       data-testid="account-lookup"
-      className="rounded-lg border border-slate-700 bg-slate-800/40 p-4"
+      className="rounded-xl border border-slate-700 bg-slate-800/40 p-4"
     >
       <header className="mb-3 border-b border-slate-700 pb-3">
         <h2 className="text-sm font-semibold text-white">Look up an account</h2>
@@ -91,16 +113,19 @@ export function AccountLookup() {
           different consequences — and it already exists, done properly, on the
           Businesses screen.
         */}
-        <p className="mt-1 max-w-3xl text-xs text-slate-500">
+        <p className="mt-1 max-w-3xl text-xs text-slate-400">
           An account <strong>id</strong>, not an email. Searching by email would make this a way to
           look people up, which is not what a plan-configuration screen should be — find the id on{' '}
-          <a href="/admin/users" className="underline hover:text-slate-300">
+          <Link href="/admin/users" className="underline hover:text-slate-300">
             Businesses
-          </a>{' '}
+          </Link>{' '}
           and paste it here.
         </p>
       </header>
 
+      {/* The shared field and button classes, with only layout classes added
+          (width, flex, gap): never a second colour, padding or border that
+          would rely on class order to win (§6.1 S-9). */}
       <form onSubmit={lookup} className="flex flex-wrap gap-2">
         <input
           type="text"
@@ -108,12 +133,12 @@ export function AccountLookup() {
           onChange={(event) => setAccountId(event.target.value)}
           placeholder="Account id"
           aria-label="Account id"
-          className="min-w-[22rem] flex-1 rounded border border-slate-600 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-200 placeholder:text-slate-600"
+          className={`${ADMIN_FIELD_CONTROL} min-w-[22rem] flex-1 font-mono`}
         />
         <button
           type="submit"
           disabled={loading || accountId.trim().length === 0}
-          className="flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40"
+          className={`${ADMIN_BUTTON} flex items-center gap-2`}
         >
           <Search className="h-4 w-4" aria-hidden="true" />
           {loading ? 'Reading…' : 'Look up'}
@@ -121,9 +146,9 @@ export function AccountLookup() {
       </form>
 
       {error && (
-        <p data-testid="account-error" className="mt-3 text-sm text-rose-300">
-          {error}
-        </p>
+        <div className="mt-3">
+          <AdminError message={error} testId="account-error" />
+        </div>
       )}
 
       {payload && <EntitlementSnapshot payload={payload} />}
