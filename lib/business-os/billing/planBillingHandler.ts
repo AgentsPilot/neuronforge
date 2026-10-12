@@ -37,6 +37,7 @@ import type { Logger } from '@/lib/logger';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { businessOsBillingAccountRepository } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import { businessOsBillingEventRepository } from '@/lib/repositories/BusinessOsBillingEventRepository';
+import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { recordPlanChange } from '@/lib/business-os/entitlements/recordPlanChange';
 import { planPriceCatalog } from '@/lib/business-os/billing/planPriceCatalog';
@@ -106,6 +107,8 @@ export const handlePlanBillingEvent: BusinessOsFlowHandler = createPlanBillingHa
   catalog: planPriceCatalog,
   entitlementConfig: () => getEntitlementConfig(),
   recordPlanChange,
+  // P-5a.1: one read of the lineage source, only after a first payment stamp (SA Q-2).
+  lineage: businessOsAccountLineageRepository,
   stripeMode: currentStripeMode,
   now: () => new Date(),
 });
