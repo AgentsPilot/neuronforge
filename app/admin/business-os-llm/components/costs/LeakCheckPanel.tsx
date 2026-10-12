@@ -14,12 +14,41 @@
  * each run takes a sequence number and aborts the one before it, and an
  * unmount abandons it. A failed run clears the previous result instead of
  * leaving it under the error.
+ *
+ * Admin Layout Standard L-9b (§2.8): an on-demand check, not a page filter, so
+ * it keeps its own form (dates and Run), restyled on the bar's field classes.
+ * The body is read through the shared `readJsonBody` (F-67, leak half): a
+ * network failure says the shared sentence, a non-JSON body says this panel's
+ * own words, never a parser message, and a platform account (409
+ * `platform_account`) gets the same sentence as the tab (SA M-2), without
+ * "Try again" (Run is the retry). The code must be seen before any generic
+ * copy, so the read keeps its own branching rather than `readAdminResponse`.
+ * The account table is on the shared table classes (F-71, F-72) and its
+ * statuses are `StatusChip`s (Q-5); the four verdict boxes stay as they are:
+ * they are results of the run, not page states (Q-7).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Play, RefreshCw } from 'lucide-react';
 
-import { formatInstant } from '../../format';
+import { ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL } from '@/app/admin/components/layout/AdminFilterBar';
+import { AdminError, AdminNotice } from '@/app/admin/components/layout/AdminStates';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import {
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TD_NUM,
+  ADMIN_TH,
+  ADMIN_TH_NUM,
+  ADMIN_THEAD,
+} from '@/app/admin/components/layout/adminTable';
+import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
+import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
+import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
+
+import { COSTS_PLATFORM_ACCOUNT } from '../../costCopy';
 import { formatCount, formatDay, formatUsd, utcDateDaysAgo } from '../../costFormat';
 import {
   LEAK_BLIND_SPOTS_TITLE,
@@ -53,6 +82,9 @@ import type { LeakAccountFindingWire, LeakCheckPayload, LeakGroupExampleWire } f
 
 const LEAK_URL = '/api/admin/business-os/credits/leak-check';
 
+/** Kept words: the panel's fallback when the route gives no reason of its own. */
+const LEAK_ERROR_FALLBACK = 'Could not run the leak check';
+
 export interface LeakCheckPanelProps {
   /** The account chosen on the tab, or '' for every business. */
   accountId: string;
@@ -60,12 +92,23 @@ export interface LeakCheckPanelProps {
   accountLabel: string | null;
 }
 
-const STATUS_CLASS: Record<LeakAccountFindingWire['status'], string> = {
-  leak: 'bg-red-500/15 text-red-200',
-  could_not_check: 'bg-amber-500/15 text-amber-200',
-  incomplete: 'bg-amber-500/15 text-amber-200',
-  clean: 'bg-slate-700/60 text-slate-300',
+/**
+ * §5.9 tones (SA Q-5): a leak is `danger`; "could not check" is `unknown`; a
+ * partly read account is `warn`; a clean row stays `neutral` so the green
+ * verdict box carries the result and a long table is not a wall of green.
+ */
+const STATUS_TONE: Record<LeakAccountFindingWire['status'], StatusTone> = {
+  leak: 'danger',
+  could_not_check: 'unknown',
+  incomplete: 'warn',
+  clean: 'neutral',
 };
+
+/** Why the last run failed: the platform-account case is a notice, anything else an error. */
+interface LeakError {
+  kind: 'platform_account' | 'other';
+  message: string;
+}
 
 function ExampleList({ title, items }: { title: string; items: LeakGroupExampleWire[] }) {
   if (items.length === 0) return null;
@@ -77,7 +120,7 @@ function ExampleList({ title, items }: { title: string; items: LeakGroupExampleW
           <li key={`${title}-${e.groupId}`} data-testid="leak-example">
             {e.groupId} · {formatCount(e.calls)} call{e.calls === 1 ? '' : 's'} · recorded {formatUsd(e.usageUsd)} · charged{' '}
             {formatUsd(e.chargedUsd)}
-            {e.firstCallAt && <> · first call {formatInstant(e.firstCallAt) ?? e.firstCallAt}</>}
+            {e.firstCallAt && <> · first call {formatUtc(e.firstCallAt)}</>}
             {e.direction && <> · {LEAK_DIRECTION_TEXT[e.direction]}</>}
           </li>
         ))}
@@ -98,12 +141,12 @@ function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
     0;
   return (
     <>
-      <tr className="border-t border-slate-800" data-testid={`leak-account-${finding.accountId}`}>
-        <td className="py-1.5 pr-3 text-slate-200">{finding.companyName ?? finding.accountId}</td>
-        <td className="py-1.5 pr-3">
-          <span className={`rounded px-1.5 py-0.5 text-[11px] ${STATUS_CLASS[finding.status]}`} data-testid="leak-status">
+      <tr data-testid={`leak-account-${finding.accountId}`}>
+        <td className={`${ADMIN_TD} text-slate-200`}>{finding.companyName ?? finding.accountId}</td>
+        <td className={ADMIN_TD}>
+          <StatusChip tone={STATUS_TONE[finding.status]} testId="leak-status">
             {LEAK_STATUS_TEXT[finding.status]}
-          </span>
+          </StatusChip>
           {finding.reasons.length > 0 && (
             <span className="ml-2 text-[11px] text-amber-300/80">
               {finding.reasons.map((r) => LEAK_REASON_TEXT[r] ?? r).join(', ')}
@@ -115,22 +158,22 @@ function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
             </span>
           )}
         </td>
-        <td className="py-1.5 pr-3 text-slate-300" data-testid="leak-period">
+        <td className={`${ADMIN_TD} whitespace-nowrap`} data-testid="leak-period">
           {finding.periodStarts.length > 0 ? finding.periodStarts.map(formatDay).join(', ') : '—'}
         </td>
-        <td className="py-1.5 pr-3 text-right tabular-nums">{formatCount(c.uncharged)}</td>
-        <td className="py-1.5 pr-3 text-right tabular-nums">{formatCount(c.ungroupedCalls)}</td>
-        <td className="py-1.5 pr-3 text-right tabular-nums">{formatCount(c.undercharged)}</td>
-        <td className="py-1.5 pr-3 text-right tabular-nums">
+        <td className={ADMIN_TD_NUM}>{formatCount(c.uncharged)}</td>
+        <td className={ADMIN_TD_NUM}>{formatCount(c.ungroupedCalls)}</td>
+        <td className={ADMIN_TD_NUM}>{formatCount(c.undercharged)}</td>
+        <td className={ADMIN_TD_NUM}>
           {formatCount(c.pendingReconciliation)}
           {c.pendingUndercharged > 0 && <span className="text-amber-300"> ({formatCount(c.pendingUndercharged)} under)</span>}
         </td>
-        <td className="py-1.5 pr-3 text-right tabular-nums">{formatCount(c.knownPathCalls)}</td>
-        <td className="py-1.5 text-right tabular-nums">{formatUsd(finding.usd.totalUncharged)}</td>
+        <td className={ADMIN_TD_NUM}>{formatCount(c.knownPathCalls)}</td>
+        <td className={ADMIN_TD_NUM}>{formatUsd(finding.usd.totalUncharged)}</td>
       </tr>
       {hasExamples && (
         <tr>
-          <td colSpan={9} className="pb-2">
+          <td colSpan={9} className={ADMIN_TD}>
             <details className="rounded border border-slate-800 bg-slate-900/40 p-2">
               <summary className="cursor-pointer text-[11px] text-slate-400">{LEAK_EXAMPLES_TITLE}</summary>
               <div className="mt-2 space-y-2">
@@ -167,10 +210,10 @@ function Result({ result }: { result: LeakCheckPayload }) {
 
   return (
     <div className="space-y-3" data-testid="leak-result">
-      <p className="text-xs text-slate-500" data-testid="leak-window">
-        {formatInstant(result.window.start) ?? result.window.start} to {formatInstant(result.window.end) ?? result.window.end}{' '}
+      <p className="text-xs text-slate-400" data-testid="leak-window">
+        {formatUtc(result.window.start)} to {formatUtc(result.window.end)}{' '}
         &middot; {formatCount(result.accountsChecked)} business{result.accountsChecked === 1 ? '' : 'es'} checked &middot; read at{' '}
-        {formatInstant(result.generatedAt) ?? result.generatedAt}
+        {formatUtc(result.generatedAt)}
       </p>
 
       {result.accountsWithLeak > 0 ? (
@@ -229,28 +272,30 @@ function Result({ result }: { result: LeakCheckPayload }) {
       )}
 
       {result.accounts.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-300" data-testid="leak-accounts">
-            <thead className="text-[11px] uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="pb-1 pr-3 font-medium">{LEAK_COLUMNS.business}</th>
-                <th className="pb-1 pr-3 font-medium">{LEAK_COLUMNS.status}</th>
-                <th className="pb-1 pr-3 font-medium">{LEAK_COLUMNS.period}</th>
-                <th className="pb-1 pr-3 text-right font-medium">{LEAK_COLUMNS.uncharged}</th>
-                <th className="pb-1 pr-3 text-right font-medium">{LEAK_COLUMNS.ungrouped}</th>
-                <th className="pb-1 pr-3 text-right font-medium">{LEAK_COLUMNS.undercharged}</th>
-                <th className="pb-1 pr-3 text-right font-medium">{LEAK_COLUMNS.pending}</th>
-                <th className="pb-1 pr-3 text-right font-medium">{LEAK_COLUMNS.known}</th>
-                <th className="pb-1 text-right font-medium">{LEAK_COLUMNS.usd}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.accounts.map((finding) => (
-                <AccountRow key={finding.accountId} finding={finding} />
-              ))}
-            </tbody>
-          </table>
-          <p className="mt-1 text-[11px] text-slate-500">{LEAK_TWO_NIGHTS}</p>
+        <div>
+          <div className={ADMIN_TABLE_WRAP}>
+            <table className={ADMIN_TABLE} data-testid="leak-accounts" aria-label="Leak check by business">
+              <thead className={ADMIN_THEAD}>
+                <tr>
+                  <th scope="col" className={ADMIN_TH}>{LEAK_COLUMNS.business}</th>
+                  <th scope="col" className={ADMIN_TH}>{LEAK_COLUMNS.status}</th>
+                  <th scope="col" className={ADMIN_TH}>{LEAK_COLUMNS.period}</th>
+                  <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.uncharged}</th>
+                  <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.ungrouped}</th>
+                  <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.undercharged}</th>
+                  <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.pending}</th>
+                  <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.known}</th>
+                  <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.usd}</th>
+                </tr>
+              </thead>
+              <tbody className={ADMIN_TBODY}>
+                {result.accounts.map((finding) => (
+                  <AccountRow key={finding.accountId} finding={finding} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">{LEAK_TWO_NIGHTS}</p>
         </div>
       )}
 
@@ -292,7 +337,7 @@ export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps)
   const [to, setTo] = useState(yesterday);
   const [result, setResult] = useState<LeakCheckPayload | null>(null);
   const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LeakError | null>(null);
   const sequence = useRef(0);
   const inFlight = useRef<AbortController | null>(null);
 
@@ -308,17 +353,31 @@ export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps)
     try {
       const params = new URLSearchParams({ from, to });
       if (accountId) params.set('accountId', accountId);
-      const response = await fetch(`${LEAK_URL}?${params.toString()}`, { signal: controller.signal });
-      const body = await response.json();
+      let response: Response;
+      try {
+        response = await fetch(`${LEAK_URL}?${params.toString()}`, { signal: controller.signal });
+      } catch {
+        // A superseded (or aborted) run says nothing about the screen. A
+        // network failure says the shared words, never the browser's (§5.10).
+        if (!isCurrent()) return;
+        setResult(null);
+        setError({ kind: 'other', message: ADMIN_NETWORK_ERROR });
+        return;
+      }
+      // Never throws: a non-JSON body reads as null and gets the kept words.
+      // Newest wins before any setState (SA S-7).
+      const body = await readJsonBody(response);
       if (!isCurrent()) return;
-      if (!response.ok || !body?.success) {
-        throw new Error(typeof body?.error === 'string' ? body.error : 'Could not run the leak check');
+      if (!response.ok || body === null || body.success !== true) {
+        setResult(null);
+        setError(
+          body?.error === 'platform_account'
+            ? { kind: 'platform_account', message: COSTS_PLATFORM_ACCOUNT }
+            : { kind: 'other', message: typeof body?.error === 'string' ? body.error : LEAK_ERROR_FALLBACK }
+        );
+        return;
       }
       setResult(body.data as LeakCheckPayload);
-    } catch (err) {
-      if (!isCurrent()) return;
-      setResult(null);
-      setError(err instanceof Error ? err.message : 'Could not run the leak check');
     } finally {
       if (isCurrent()) setRunning(false);
     }
@@ -341,24 +400,24 @@ export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps)
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col text-[11px] text-slate-400">
-          Check from (UTC)
+        <label>
+          <span className={ADMIN_FIELD_LABEL}>Check from (UTC)</span>
           <input
             type="date"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
             data-testid="leak-from"
-            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
+            className={`${ADMIN_FIELD_CONTROL} w-40`}
           />
         </label>
-        <label className="flex flex-col text-[11px] text-slate-400">
-          Check to (UTC)
+        <label>
+          <span className={ADMIN_FIELD_LABEL}>Check to (UTC)</span>
           <input
             type="date"
             value={to}
             onChange={(e) => setTo(e.target.value)}
             data-testid="leak-to"
-            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
+            className={`${ADMIN_FIELD_CONTROL} w-40`}
           />
         </label>
         <button
@@ -366,7 +425,7 @@ export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps)
           onClick={() => void run()}
           disabled={running}
           data-testid="leak-run"
-          className="flex items-center gap-1.5 rounded-lg border border-purple-500/50 bg-purple-500/15 px-3 py-1.5 text-xs text-purple-100 hover:bg-purple-500/25 disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-lg border border-purple-500/50 bg-purple-500/15 px-3 py-1.5 text-sm text-purple-100 hover:bg-purple-500/25 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
         >
           {running ? (
             <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -375,23 +434,21 @@ export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps)
           )}
           {running ? LEAK_RUNNING : LEAK_RUN}
         </button>
-        <span className="text-[11px] text-slate-500" data-testid="leak-scope">
+        <span className="pb-2 text-[11px] text-slate-400" data-testid="leak-scope">
           {LEAK_SCOPE(accountId ? accountLabel ?? accountId : null)}
         </span>
       </div>
 
-      {error && (
-        <div
-          data-testid="leak-error"
-          className="flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200"
-        >
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>{error}</span>
-        </div>
-      )}
+      {/* No "Try again": Run is the retry. */}
+      {error &&
+        (error.kind === 'platform_account' ? (
+          <AdminNotice testId="leak-platform-account">{error.message}</AdminNotice>
+        ) : (
+          <AdminError testId="leak-error" message={error.message} />
+        ))}
 
       {!result && !error && !running && (
-        <p className="text-xs text-slate-500" data-testid="leak-not-run">
+        <p className="text-xs text-slate-400" data-testid="leak-not-run">
           {LEAK_NOT_RUN}
         </p>
       )}

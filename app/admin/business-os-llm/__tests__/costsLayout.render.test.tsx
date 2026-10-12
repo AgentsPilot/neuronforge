@@ -5,11 +5,12 @@
  * §6.3 C-1 to C-8, C-12): the shared filter bar with the business picker
  * (C-1), the URL contract (C-2 to C-5), Refresh and Try again across midnight
  * (C-6), the platform-account notice (C-7, SA M-2), the empty state (C-8) and
- * the KPI strip (C-12, SA M-1).
+ * the KPI strip (C-12, SA M-1). L-9b adds the sections and the leak panel on
+ * the standard (C-9 to C-11).
  *
  * `useSearchParams` follows `window.location` here, as Next does once
  * `replaceState(null, …)` has been delivered (the `activityLayout.render`
- * harness). The sections and the leak panel (C-9 to C-11) are L-9b.
+ * harness).
  */
 
 import '@testing-library/jest-dom';
@@ -319,6 +320,154 @@ describe('the shared states (§5.10)', () => {
     expect(paramsOf(reportCalls(fetchMock)[before]).has('accountId')).toBe(false);
     await flush();
     expect(window.location.search).toBe('?tab=costs');
+  });
+});
+
+describe('L-9b: the sections and the leak panel on the standard (C-9 to C-11)', () => {
+  const G = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const ACTION = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000003';
+  const sectionsReport = () => {
+    const base = report();
+    return report({
+      periods: [
+        ...base.periods,
+        { accountId: A, companyName: 'Alpha Studio', periodStart: '2026-08-05T00:00:00+00:00', stored: figures(), fromRows: null, matches: null },
+      ],
+      breakdowns: {
+        byActionType: [{ key: 'chat_turn', unresolved: false, charges: 3, credits: 1.5, costUsd: 0.0015, corrections: 0, correctionCredits: 0, correctionCostUsd: 0, failedCharges: 0 }],
+        byArea: [],
+        byService: [],
+        byTrigger: [],
+      },
+      fallback: {
+        count: 1,
+        reconciled: 0,
+        items: [
+          {
+            accountId: A,
+            companyName: 'Alpha Studio',
+            // An offset instant: the UTC time is 08:00, never the "10:00" a text slice would show (F-74).
+            createdAt: '2026-09-18T10:00:00+02:00',
+            actionType: 'lead_reply_recommendation',
+            groupId: G,
+            actionId: ACTION,
+            credits: 0.5,
+            costUsd: 0.0005,
+            reconciled: false,
+          },
+        ],
+      },
+      spreads: [
+        {
+          service: 'chat',
+          actionType: 'chat_turn',
+          area: 'crm',
+          examples: 3,
+          failed: 2,
+          fallbackExcluded: 0,
+          fewExamples: true,
+          costUsd: { p50: 0.002, p90: 0.003 },
+          credits: { p50: 1, p90: 2 },
+        },
+      ],
+    });
+  };
+
+  it('C-9: number cells in tabular figures (never monospace), check chips by tone with icons, fallback time in UTC, no slate-500', async () => {
+    stub(() => ok(sectionsReport()));
+    openAt('?tab=costs');
+    const periods = await within(costs()).findByTestId('costs-periods');
+
+    // Every right-aligned cell of every section table is a tabular, non-monospace number cell (F-71).
+    const numberCells = Array.from(costs().querySelectorAll('td')).filter((cell) => cell.className.includes('text-right'));
+    expect(numberCells.length).toBeGreaterThan(20);
+    for (const cell of numberCells) {
+      expect(cell.className).toContain('tabular-nums');
+      expect(cell.className).not.toContain('font-mono');
+    }
+    const [firstRow] = within(periods).getAllByTestId('period-row');
+    const firstCells = Array.from(firstRow.querySelectorAll('td'));
+    for (const cell of firstCells.slice(2, 10)) expect(cell.className).toContain('tabular-nums');
+
+    // Q-5: matches its rows = ok, mismatch = danger, not checked = unknown; words kept, each with its icon.
+    const chips: Array<[string, string, string]> = [
+      ['period-check-ok', 'ok', 'matches its rows'],
+      ['period-check-mismatch', 'danger', 'mismatch'],
+      ['period-check-skipped', 'unknown', 'not checked'],
+    ];
+    for (const [testId, tone, words] of chips) {
+      const chip = within(periods).getByTestId(testId);
+      expect(chip.textContent).toBe(words);
+      expect(chip).toHaveAttribute('data-tone', tone);
+      expect(chip.querySelector('svg')).not.toBeNull();
+    }
+    const few = within(costs()).getByTestId('spread-few-examples');
+    expect(few).toHaveAttribute('data-tone', 'warn');
+    expect(few.textContent).toBe('few examples');
+
+    // F-74: through Date, ending in UTC; the group id shortened, the full ids on hover (§5.7 Ids).
+    const [fallbackRow] = within(costs()).getAllByTestId('fallback-row');
+    expect(fallbackRow).toHaveTextContent('2026-09-18 08:00 UTC');
+    const groupCell = within(fallbackRow).getByTestId('fallback-group-id');
+    expect(groupCell.textContent).toBe('bbbbbbbb…');
+    expect(groupCell.getAttribute('title')).toContain(G);
+    expect(groupCell.getAttribute('title')).toContain(ACTION);
+
+    // T-5: no slate-500 anywhere in the tab (sections, bar, strip and leak panel).
+    expect(costs().querySelector('[class*="text-slate-500"]')).toBeNull();
+  });
+
+  it('C-10: each section carries its id, and every table has a name', async () => {
+    stub(() => ok(sectionsReport()));
+    openAt('?tab=costs');
+    await within(costs()).findByTestId('costs-periods');
+    for (const id of ['costs-periods', 'costs-breakdowns', 'costs-fallback', 'costs-spread']) {
+      expect(document.getElementById(id)).toHaveAttribute('data-testid', id);
+    }
+    const names = within(costs())
+      .getAllByRole('table')
+      .map((table) => table.getAttribute('aria-label'));
+    expect(names).toEqual([
+      'Per account and billing period',
+      'Breakdown by action type',
+      'Breakdown by area',
+      'Breakdown by service',
+      'Breakdown by trigger',
+      'Fallback-priced charges',
+      'Spread per action type',
+    ]);
+  });
+
+  it('C-11: the leak panel follows the picked business, and returns to every business when the picker is cleared (SA S-6)', async () => {
+    const LEAK_PATH = '/api/admin/business-os/credits/leak-check';
+    const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = url.split('?')[0];
+      // The leak check answers a refusal here: only the request it was sent matters.
+      const body =
+        path === REPORT_PATH
+          ? { success: true, data: report() }
+          : path === LEAK_PATH
+            ? { success: false, error: 'stopped in the test' }
+            : { success: true, data: { areas: [], generatedAt: '2026-10-02T09:00:00.000Z' } };
+      const status = path === LEAK_PATH ? 400 : 200;
+      return { ok: status === 200, status, json: async () => body } as Response;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const leakCalls = () => fetchMock.mock.calls.map((c) => String(c[0])).filter((url) => url.split('?')[0] === LEAK_PATH);
+
+    openAt(`?tab=costs&account=${A}`);
+    await within(costs()).findByTestId('costs-periods');
+    expect(within(costs()).getByTestId('leak-scope')).toHaveTextContent('Checking one business: Alpha Studio');
+    fireEvent.click(within(costs()).getByTestId('leak-run'));
+    await within(costs()).findByTestId('leak-error');
+    expect(paramsOf(leakCalls()[0]).get('accountId')).toBe(A);
+
+    fireEvent.click(within(costs()).getByRole('button', { name: 'Remove business' }));
+    await waitFor(() => expect(within(costs()).getByTestId('leak-scope')).toHaveTextContent('Checking every Business OS business'));
+    fireEvent.click(within(costs()).getByTestId('leak-run'));
+    await waitFor(() => expect(leakCalls()).toHaveLength(2));
+    expect(paramsOf(leakCalls()[1]).has('accountId')).toBe(false);
   });
 });
 

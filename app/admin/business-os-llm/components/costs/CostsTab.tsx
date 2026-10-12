@@ -33,7 +33,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
 
 import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
@@ -196,20 +195,14 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
               {COSTS_PERIOD_RULE(report.periodLookbackDays)}
             </p>
 
-            {/* The move onto the shared AdminNotice is L-9b (workplan §6.1 E-9). */}
+            {/* L-9b (E-9): the shared notice; same words and reasons, its amber. */}
             {report.incomplete && (
-              <div
-                data-testid="costs-incomplete"
-                className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200"
-              >
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>
-                  {COSTS_INCOMPLETE}{' '}
-                  <span className="text-amber-300/80">
-                    ({report.incompleteReasons.map((r) => INCOMPLETE_REASON_TEXT[r] ?? r).join(', ')})
-                  </span>
+              <AdminNotice testId="costs-incomplete">
+                {COSTS_INCOMPLETE}{' '}
+                <span className="text-amber-300/80">
+                  ({report.incompleteReasons.map((r) => INCOMPLETE_REASON_TEXT[r] ?? r).join(', ')})
                 </span>
-              </div>
+              </AdminNotice>
             )}
 
             {report.unreadableAmounts > 0 && (

@@ -172,7 +172,9 @@ describe('states', () => {
     const banner = await screen.findByTestId('costs-incomplete');
     expect(banner).toHaveTextContent(COSTS_INCOMPLETE.slice(0, 20));
     expect(banner).toHaveTextContent('too many ledger rows');
-    expect(banner.className).toMatch(/amber/);
+    // L-9b (E-9): the test id sits on the shared AdminNotice's text element
+    // (RC-3), so the amber is its container's.
+    expect(banner.closest('div')?.className).toMatch(/amber/);
   });
 
   it('a failed totals read says so instead of claiming there were no charges', async () => {

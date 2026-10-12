@@ -636,13 +636,12 @@ describe('L-9a: the Costs & credits tab on the admin layout standard (G-5)', () 
   /**
    * G-5. Reads stay where they are (F-67, Costs half): no `.json(` in the
    * costs folder, and `fetch(` only in the two readers (the picker's fetch
-   * lives in the shared folder). The leak panel's own body read moves onto
-   * `readJsonBody` in L-9b (workplan §2.8, F-67 leak half); until then it is
-   * the one named exception, and L-9b removes it from this list.
+   * lives in the shared folder). L-9b moved the leak panel's body read onto
+   * `readJsonBody` (workplan §2.8, F-67 leak half), so the one-slice exception
+   * L-9a carried is gone: no file in the folder is exempt.
    */
   const COSTS_DIR = `${ROOT}/components/costs/`;
   const COSTS_FETCHERS = [`${COSTS_DIR}CostsTab.tsx`, `${COSTS_DIR}LeakCheckPanel.tsx`];
-  const JSON_UNTIL_L9B = [`${COSTS_DIR}LeakCheckPanel.tsx`];
   const JSON_CALL = /\.json\s*\(/;
   const FETCH_CALL = /(^|[^\w.])fetch\s*\(/;
   const costsFiles = allFiles.filter((relative) => relative.startsWith(COSTS_DIR));
@@ -662,10 +661,56 @@ describe('L-9a: the Costs & credits tab on the admin layout standard (G-5)', () 
 
   it.each(costsFiles)('G-5: %s reads no body directly, and fetches only if it is one of the two readers', (relative) => {
     const code = codeOf(read(relative));
-    expect({ file: relative, json: JSON_CALL.test(code) }).toEqual({ file: relative, json: JSON_UNTIL_L9B.includes(relative) });
+    expect({ file: relative, json: JSON_CALL.test(code) }).toEqual({ file: relative, json: false });
     expect({ file: relative, fetch: FETCH_CALL.test(code) }).toEqual({
       file: relative,
       fetch: COSTS_FETCHERS.includes(relative),
     });
+  });
+});
+
+/*
+ * L-9b: the Costs sections and the leak panel on the standard (G-6). Each rule
+ * is proved on a planted string it must reject, as G-1 to G-5.
+ */
+describe('L-9b: the Costs sections and the leak panel on the admin layout standard (G-6)', () => {
+  const COSTS_DIR = `${ROOT}/components/costs/`;
+  const costsFiles = allFiles.filter((relative) => relative.startsWith(COSTS_DIR));
+
+  /** T-5: information text is slate-400, never slate-500. */
+  const SLATE_500 = /\btext-slate-500\b/;
+  /** F-71: no local table constants (the shared `ADMIN_TH*` / `ADMIN_TD*` are the only ones). */
+  const LOCAL_TABLE_CONST = /\bconst\s+(TH|TD)(_NUM)?\s*=/;
+  /** F-71: no class string that is both a number cell (right-aligned or tabular) and monospace. */
+  const MONO_NUMBER =
+    /['"`][^'"`\n]*\bfont-mono\b[^'"`\n]*\b(text-right|tabular-nums)\b|['"`][^'"`\n]*\b(text-right|tabular-nums)\b[^'"`\n]*\bfont-mono\b/;
+  /** §4.17: the hand-made status pill map gave way to `StatusChip`. */
+  const STATUS_CLASS = /\bSTATUS_CLASS\b/;
+
+  it('G-6: the rules catch planted slate-500, a local number cell, a monospace number class and STATUS_CLASS', () => {
+    expect(SLATE_500.test('<p className="text-xs text-slate-500">')).toBe(true);
+    expect(SLATE_500.test('<p className="text-xs text-slate-400">')).toBe(false);
+    expect(LOCAL_TABLE_CONST.test("const TD_NUM = 'px-3 py-2 text-right font-mono text-slate-200';")).toBe(true);
+    expect(LOCAL_TABLE_CONST.test('const ADMIN_TD_NUM_LOCAL = ADMIN_TD_NUM;')).toBe(false);
+    expect(MONO_NUMBER.test("'px-3 py-2 text-right font-mono text-slate-200'")).toBe(true);
+    expect(MONO_NUMBER.test('`${ADMIN_TD} font-mono tabular-nums`')).toBe(true);
+    expect(MONO_NUMBER.test('`${ADMIN_TD} font-mono`')).toBe(false);
+    expect(STATUS_CLASS.test('const STATUS_CLASS: Record<string, string> = {};')).toBe(true);
+  });
+
+  it('G-6: walks the costs folder, the sections and the leak panel included', () => {
+    expect(costsFiles).toContain(`${COSTS_DIR}CostsSections.tsx`);
+    expect(costsFiles).toContain(`${COSTS_DIR}LeakCheckPanel.tsx`);
+  });
+
+  it.each(costsFiles)('G-6: %s has no slate-500, no local or monospace number cell, and no STATUS_CLASS', (relative) => {
+    const code = codeOf(read(relative));
+    expect({
+      file: relative,
+      slate500: SLATE_500.test(code),
+      localTableConst: LOCAL_TABLE_CONST.test(code),
+      monoNumber: MONO_NUMBER.test(code),
+      statusClass: STATUS_CLASS.test(code),
+    }).toEqual({ file: relative, slate500: false, localTableConst: false, monoNumber: false, statusClass: false });
   });
 });

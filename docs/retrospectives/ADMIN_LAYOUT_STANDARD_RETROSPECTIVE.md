@@ -375,3 +375,24 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Shared-hook changes ship behind an opt-in with the default path proven identical by per-suite comparison.
 
 ### Status: COMMITTED — feature/admin-layout-l9 — 57132b85, PR #321
+
+---
+
+## L-9b: Business OS AI Costs sections and leak-check panel restyle — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-9 workplan](/docs/workplans/ADMIN_LAYOUT_L9_WORKPLAN.md)
+
+### What went well
+- Small, mechanical slice after the hard L-9a: seven tables onto the shared table style, chips with icons, UTC times, and the leak check's raw machine code and parser messages replaced by plain sentences — with the leak-check request byte-identical to before.
+- The temporary JSON exception from L-9a was removed on schedule, and a new guard (G-6) keeps local table constants and mono number cells from coming back.
+- SA declined to fold an extra cosmetic item (F-120) into the slice: outside the approved plan, untested, and a layout question of its own.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Browser checks still owed, including the one allowed production leak-check run.
+
+### Conclusions & process improvements
+- Splitting a hard shared change (L-9a) from its follow-on restyle (L-9b) kept both reviews short.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)

@@ -7,7 +7,7 @@
 **Skills applied:** `bos-llm-call-standards` read for scope only: no AI call, no model setting, no route change (the tab stays two read-only `GET`s plus the picker's). `business-os-entitlements`: not triggered (no import from `lib/business-os/entitlements/`, no tier or capability literal). `business-os-schema-check`: not triggered (no DB claim beyond the payload fields the tab already reads, `costTypes.ts` / `leakTypes.ts`). `tenant-isolation-guard`: not triggered (no write, no service-role path). No queue
 **Branch:** `feature/admin-layout-l9`, cut from `feature/admin-layout-l8b` at d5990480 (PR #320 open, contains #319). The L-9 PR targets `main` and carries L-8a / L-8b until they merge. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-12
-**Status:** L-9a COMMITTED 2026-10-12 — 57132b85, PR #321 open (fast-track; SA code review approved, QA PASS WITH NOTES); awaiting checks + user merge; browser checks L9-B4 / L9-B5 owed. SA workplan review 2026-10-12: APPROVED WITH CONDITIONS (M-1 to M-3 applied before coding; see SA Workplan Review). L-9b not started
+**Status:** L-9a COMMITTED 2026-10-12 — 57132b85, PR #321 open (fast-track; SA code review approved, QA PASS WITH NOTES); awaiting checks + user merge; browser checks L9-B4 / L9-B5 owed. SA workplan review 2026-10-12: APPROVED WITH CONDITIONS (M-1 to M-3 applied before coding; see SA Workplan Review). **L-9b CODE COMPLETE 2026-10-12** on `feature/admin-layout-l9b` (cut from `feature/admin-layout-l9` at 703f6dcb), uncommitted; awaiting SA code review + QA (see Implementation Notes (L-9b))
 **Path:** **Full cycle** (SA L-8 workplan review Q-8, R-7): L-9 builds the `active` option on the shared `useAdminFilters` (F-113). Run under the user's fast-track: SA workplan review → Dev → SA code review + QA → RM commits and opens the PR (no user diff review). Recommended as **two PRs, L-9a then L-9b** (§9)
 
 ## Overview
@@ -439,9 +439,9 @@ Every request on this tab is a `GET`, the leak check included: it writes nothing
 - [x] 5. `page.tsx` coordination + `ActivityTab` prop + `tabCoexistence.render` X-1 to X-12 (+ X-8b) (L-9a)
 - [x] 6. `CostsTab.tsx`, `CostsFilterBar.tsx`, `CostsKpis.tsx`, copy; E-1 to E-8; C-1 to C-8, C-12; G-5 (L-9a)
 - [x] 7. V-1 to V-9 for L-9a; requirement §1 row 15, §6.2 C-7, §7.12 as built, §9, Change History; hand to SA code review + QA (nothing committed by Dev)
-- [ ] 8. `CostsSections.tsx` (§2.7) + C-9, C-10, E-9 (L-9b)
-- [ ] 9. `LeakCheckPanel.tsx` (§2.8) + L-1 to L-4, C-11; G-6 (L-9b)
-- [ ] 10. V-1 to V-9 for L-9b; requirement row and §9 dispositions (F-71, F-72, F-74); hand to SA code review + QA
+- [x] 8. `CostsSections.tsx` (§2.7) + C-9, C-10, E-9 (L-9b)
+- [x] 9. `LeakCheckPanel.tsx` (§2.8) + L-1 to L-4, C-11; G-6 (L-9b)
+- [x] 10. V-1 to V-9 for L-9b; requirement row and §9 dispositions (F-71, F-72, F-74); hand to SA code review + QA (nothing committed by Dev)
 
 ---
 
@@ -823,6 +823,206 @@ None. No extra reads on any tab switch, in any order (Q-1).
 | PR | #321 (base `main`; contains #319 and #320 while they are open) |
 | Tests at merge | admin Jest 83 suites / 2501 tests; `test:bos-llm` 23 / 625; `typecheck:bos-llm`, `test:bos-entitlements` (7062), `lint:hooks` green |
 
+## Implementation Notes (L-9b)
+
+**Dev, 2026-10-12. Code complete, nothing committed** (RM commits after SA code review + QA). Branch `feature/admin-layout-l9b`, cut from `feature/admin-layout-l9` at 703f6dcb. UI short path, fast-track.
+
+### What was built
+
+| File | Change |
+|---|---|
+| `components/costs/CostsSections.tsx` | Local `TH` / `TH_NUM` / `TD` / `TD_NUM` deleted; every table on `ADMIN_TABLE_WRAP` / `ADMIN_TABLE` / `ADMIN_THEAD` / `ADMIN_TH` / `ADMIN_TH_NUM` / `ADMIN_TBODY` / `ADMIN_TD` / `ADMIN_TD_NUM`, `scope="col"` on every header, an `aria-label` on every table ("Per account and billing period", "Breakdown by action type / area / service / trigger", "Fallback-priced charges", "Spread per action type"). Period check and "few examples" on `StatusChip` (Q-5: `ok`, `danger`, `unknown`; `warn`), words and test ids kept. Fallback "When (UTC)" via `formatUtc` (F-74); group id via `formatShortId` on `ADMIN_TD_ID`, full group id and action id in `title` (new test id `fallback-group-id` on that cell). Spread service name slate-400. Codes keep `font-mono`. Header comment. `Chip.tsx` no longer imported here (Settings still uses it) |
+| `components/costs/LeakCheckPanel.tsx` | Read: `fetch` in its own try / catch (network → `ADMIN_NETWORK_ERROR`), body through `readJsonBody`, newest-wins check before every `setState` (S-7); not ok → 409 `platform_account` → `COSTS_PLATFORM_ACCOUNT` in an `AdminNotice` (`leak-platform-account`), else the route's `error`, else "Could not run the leak check" in `AdminError` (`leak-error`), neither with "Try again". `STATUS_CLASS` → `STATUS_TONE` + `StatusChip` (`leak` danger, `could_not_check` unknown, `incomplete` warn, `clean` neutral). Account table on the shared classes, `aria-label` "Leak check by business", numbers on `ADMIN_TD_NUM`. Inputs on `ADMIN_FIELD_LABEL` / `ADMIN_FIELD_CONTROL` (labels and test ids kept); Run keeps its words and purple, gains the focus ring. Window, read-at and example "first call" through `formatUtc` (the page's `formatInstant` import gone). `leak-scope`, `leak-not-run`, `leak-window`, `LEAK_TWO_NIGHTS` slate-500 → slate-400. Four verdict boxes unchanged (Q-7). Header comment |
+| `components/costs/CostsTab.tsx` | The incomplete box on `AdminNotice testId="costs-incomplete"` (E-9), same words and reasons; `AlertTriangle` import removed |
+| `components/activity/ActivityTab.tsx` | Header comment only (F-121, SA L-9a Low note 1): a tab switch starts no read because the page passes `active` |
+| `__tests__/costsTab.render.test.tsx` | E-9 (one line) |
+| `__tests__/leakPanel.render.test.tsx` | New `describe` L-1 to L-4; two imports added; the 13 existing cases unedited |
+| `__tests__/costsLayout.render.test.tsx` | New `describe` C-9, C-10, C-11; header comment |
+| `__tests__/source.guard.test.ts` | G-5: `JSON_UNTIL_L9B` removed, so no file in the costs folder is exempt from "no `.json(`" (SA L-9a "For L-9b"); new `describe` G-6 (planted-string self-test, folder walk, per-file rule: no `text-slate-500`, no local `TH` / `TD` / `TH_NUM` / `TD_NUM` constant, no class string both monospace and right-aligned or tabular, no `STATUS_CLASS`) |
+
+No shared-folder file changed; no route, payload, request parameter, data or money change; no AI call. The registry stays deferred to L-10 (Settings' `page.tsx` and `LedgerCheckPanel.tsx` still read with `.json(`).
+
+### Verification (real output)
+
+| # | Result |
+|---|---|
+| V-1 | `npx jest app/admin/business-os-llm app/admin/components lib/admin/__tests__/admin-authz-surface.guard.test.ts app/__tests__/tailwind-css-escape.guard.test.ts --ci`: **40 suites, 1472 tests, all passed**. `app/admin/business-os-llm` alone: 16 suites, 730 tests |
+| V-2 | `npm run test:bos-llm`: 23 suites, 625 tests, 23 snapshots passed, exit 0. `npm run typecheck:bos-llm`: "499 files in scope, 28 errors, 0 new", passed, exit 0 (the same already-fixed baseline entry `app/api/onboarding/build/route.ts` TS18047 as L-9a, unrelated) |
+| V-3 | `npm run test:bos-entitlements`: 242 suites, 7062 tests passed, exit 0 |
+| V-4 | Scratch `tsconfig.l9b.json` in the session scratchpad (`extends` the worktree `tsconfig.json`, `noEmit`, `incremental: false`, `plugins: []`; `next-env.d.ts`, `app/admin/business-os-llm/**`, `app/admin/components/layout/**`, `adminWindowPresets.ts`, plus the canary). `--listFilesOnly`: 93 files under `app/admin` and the scratch `canary.ts`. Run 1 with `canary.ts` (`const canary: number = 'x';`): exit 2, exactly one error, `canary.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.` Run 2 with the canary deleted and removed from the include: exit 0 |
+| V-5 | `npm run lint:hooks`: exit 0. `npx eslint` on the 8 touched files: exit 0, clean |
+| V-6 | (m) a local `TD_NUM = '… text-right font-mono …'` used for the first period figure → G-6 (`CostsSections.tsx`) and C-9 fail; (n) `STATUS_CLASS` pills back in place of `StatusChip` → G-6 (`LeakCheckPanel.tsx`) and L-4 fail. Each applied by exact replacement in the scratchpad script, run, restored from the saved bytes, md5 equal before and after (`CostsSections.tsx` 2c2ad272…, `LeakCheckPanel.tsx` 16feb950…). Extra: the three components swapped for their L-9a (HEAD) versions → G-5 (`LeakCheckPanel.tsx` `.json(`), G-6 (both files), L-1, L-2, L-3, L-4, C-9, C-10 fail (9 cases); E-9 and C-11 pass there by design (E-9 is a selector change; C-11 pins S-6 behaviour that already held); all three files restored, md5 equal (`CostsTab.tsx` 212a50b3…) |
+| V-7 | `git diff --stat HEAD -- app/api lib app/admin/finance app/admin/audit-trail app/admin/analytics app/admin/users app/admin/messages app/admin/components app/admin/business-os-llm/components/settings app/admin/business-os-llm/components/AreaCard.tsx app/admin/business-os-llm/components/LedgerCheckPanel.tsx app/admin/business-os-llm/page.tsx`: empty. `components/activity`: `ActivityTab.tsx` only, the header comment (3 lines for 1) |
+| V-8 | No `console.` and no `as any` in code in the page folder; `.json(` only in `page.tsx` (Settings) and `LedgerCheckPanel.tsx` (both L-10); no `text-slate-500` under `components/costs/`; `@/lib/` only `ledgerCheckCopy` in `LedgerCheckPanel.tsx` |
+| V-9 | `git status --short`: 8 modified, no new file, nothing deleted. `git diff --stat`: 583 insertions, 203 deletions; no file emptied, no deletion-only file. Line endings preserved: the CRLF files (`CostsSections.tsx`, `LeakCheckPanel.tsx`, `CostsTab.tsx`, `ActivityTab.tsx`, `costsTab.render`, `leakPanel.render`, `source.guard`) are all-CRLF, `costsLayout.render` all-LF as at HEAD |
+
+### Deviations
+
+1. **Platform-account slot in the leak panel:** an `AdminNotice` with its own test id `leak-platform-account` (as the tab's `costs-platform-account`), not inside `AdminError`. §2.8 says "its error / notice slot without Try again"; the notice matches the tab's own treatment of the same sentence.
+2. **Example "first call" times** in the leak panel also go through `formatUtc` (§2.8 named the window and read-at). Same text as `formatInstant`; with it the panel no longer imports `../../format`.
+3. **Run button** text `text-xs` → `text-sm`, to sit with the `text-sm` bar-class inputs beside it. Words, purple and test id kept.
+4. **New test id `fallback-group-id`** on the fallback group-id cell (for C-9); no existing test id changed or removed.
+5. **G-5 edited, not only extended:** the `JSON_UNTIL_L9B` list and its use were removed (planned in L-9a deviation 1 and SA "For L-9b"); the case now asserts `json: false` for every costs file.
+
+### User-visible changes (L-9b, on `/admin/business-os-llm?tab=costs`)
+
+1. The section tables share one look and density with the rest of the admin: a framed table with a tinted header row, numbers right-aligned in tabular figures (no longer monospace).
+2. Period check chips with icons: "matches its rows" is now green (was blue), "mismatch" red, "not checked" dashed grey; "few examples" amber with an icon.
+3. Fallback-priced times end in "UTC" and are converted through the clock (an offset timestamp shows its UTC time); group ids are shortened, with the full group id and action id on hover.
+4. The "may be incomplete" box is the shared amber notice (same words).
+5. Leak check: date inputs and Run look like the filter bar's; statuses are chips with icons (a leak red, "could not check" dashed grey instead of amber, partly read amber, clean grey); the table matches the sections; a network failure says "Could not reach the server…"; a platform account gets the tab's sentence instead of `platform_account`; an unreadable answer says "Could not run the leak check" instead of a parser message; grey information lines are a step lighter (slate-400).
+
+### Tests edited, with reasons
+
+- `costsTab.render.test.tsx` "an amber incomplete banner…" (E-9): `banner.className` → `banner.closest('div')?.className`, still `/amber/`; the test id now sits on the `AdminNotice` text element (RC-3).
+- `source.guard.test.ts` G-5 per-file case: expects `json: false` for every file (the one-slice exception removed, deviation 5).
+- No other existing case edited; `leakPanel.render` (13), `costsLayout.render` (C-1 to C-8, C-12) and every other suite green unedited.
+
+### Out of scope, recorded (not fixed)
+
+- F-120 (Costs "unreadable amounts" / "names failed" amber lines → `AdminNotice`): **not in the L-9b plan** (§2.6 keeps them; §11 records them open), so left as is. A one-line change each if TL wants it in this PR.
+- The `typecheck:bos-llm` baseline entry already fixed (`app/api/onboarding/build/route.ts`), unrelated, as in L-9a.
+- `page.tsx` (Settings) keeps two `text-slate-500` lines (`:267`, `:337`) and `AdminBusinessPicker.tsx:347` one (an option's id); outside the costs folder and this slice (L-10 / shared).
+
+## SA Code Review (L-9b) — 2026-10-12
+
+**Code Review by SA — 2026-10-12**
+**Status:** ✅ Code Approved. No must-fix. Fast-track: proceed to QA, then RM.
+
+### What SA checked
+
+| Area | Result |
+|---|---|
+| Diff shape | `git status --short` + `git diff --stat`: 10 modified (8 code / test, 2 docs), 659 insertions, 214 deletions; no new, deleted, emptied or deletion-only file. Nothing under `app/api`, `lib` or `app/admin/components` changed. No data, API, request, money or LLM change |
+| `CostsSections.tsx` | Local `TH` / `TH_NUM` / `TD` / `TD_NUM` gone; all seven tables on `ADMIN_TABLE_WRAP` / `ADMIN_TABLE` / `ADMIN_THEAD` / `ADMIN_TH(_NUM)` / `ADMIN_TBODY` / `ADMIN_TD(_NUM)`, `scope="col"` on every header (the empty spread header included), a unique `aria-label` on every table. Every number cell on `ADMIN_TD_NUM` (right, `tabular-nums`, no `font-mono`); codes keep `font-mono` on plain `ADMIN_TD`. Check chips per Q-5 (`ok` / `danger` / `unknown`), words and test ids kept. Fallback "When (UTC)" via `formatUtc` (`:308`); group id via `formatShortId` on `ADMIN_TD_ID`, `title` = full group id plus action id, undefined when both are null (`:269`, `:316`). Section `id`s already in place from L-9a |
+| "few examples" `warn` (`:380`) | **Acceptable.** It is a caveat on how far the percentiles can be trusted (partial confidence, §5.9 warn), not a failure and not "could not check"; amber is what the row showed before, so the meaning does not move |
+| `LeakCheckPanel.tsx` read (`:353-384`) | Same request: `GET`, same URL, same `from` / `to` / optional `accountId`, same abort signal. `fetch` in its own try / catch: a superseded or aborted run returns silently; a network failure says `ADMIN_NETWORK_ERROR` and clears the result. Body through `readJsonBody` (never throws, so the dropped outer `catch` loses nothing, and `finally` still clears `running` on every path, early returns included). `isCurrent()` ahead of every `setState` (S-7). Not ok / null body / `success !== true`: 409 `platform_account` (the route's code, `leak-check/route.ts:130`) → `COSTS_PLATFORM_ACCOUNT` in `AdminNotice` (no role, no Try again); else the route's own string (its other answers are human sentences: `:111`, the Zod issue at `:120`, `:181`); else the kept "Could not run the leak check" in `AdminError` (`role="alert"`, no `onRetry`). Never on mount, unchanged |
+| Leak panel UI | Own form kept, on `ADMIN_FIELD_LABEL` / `ADMIN_FIELD_CONTROL` (wrapping `label`s, so each input keeps its accessible name); Run keeps words, purple and test id, gains the focus ring. `STATUS_CLASS` → `STATUS_TONE` + `StatusChip` per Q-5. Account table on the shared classes, "Leak check by business"; the examples row's `colSpan={9}` matches nine headers. Four verdict boxes untouched (Q-7); their icons keep every lucide import in use. Window, read-at and "first call" via `formatUtc` |
+| `CostsTab.tsx` (E-9) | Incomplete box on `AdminNotice testId="costs-incomplete"`, same words and reasons; `AlertTriangle` import removed (no other use). The E-9 test edit (`closest('div')`) is the RC-3 consequence: justified |
+| Guards | G-5: `JSON_UNTIL_L9B` removed; every costs file asserts `json: false` (deviation 5, as SA asked for L-9b). G-6: the planted-string self-test proves each regex rejects and accepts the right strings, the walk proves both files are in scope, the per-file case checks all four rules. Dev's mutation runs (m), (n) and the HEAD swap show G-6, C-9, C-10 and L-1 to L-4 bite |
+| `ActivityTab.tsx` | Header comment only (F-121), accurate to the L-9a design |
+| Deviations 1 to 5 | All accepted. 1: the notice matches the tab's own treatment of the same sentence, and it is not an error. 2: same text, one formatter. 3: `text-sm` sits with the `text-sm` inputs. 4: additive test id. 5: the planned removal |
+| Standards | No `console.*`; no new `any` (the `(global as any).fetch` at `leakPanel.render.test.tsx:129` is pre-existing); `@/lib/` only in comments in the costs folder; no backslash in either MD. Line endings: index `i/lf` for all; the CRLF files fully CRLF, `costsLayout.render` and both MDs LF as at HEAD |
+| Requirement edits | §1 row 15b, §7.12 as built, F-67 / F-71 / F-72 / F-74 / F-121 done, F-120 open: accurate against the diff |
+| Tests run by SA | `npx jest app/admin/business-os-llm --ci`: **16 suites, 730 tests passed**. `npm run test:bos-llm`: **23 suites, 625 tests, 23 snapshots passed** |
+
+### Code Review Comments
+
+1. `app/admin/business-os-llm/__tests__/source.guard.test.ts` G-6 `MONO_NUMBER` — the regex matches class words inside one string literal, so `${ADMIN_TD_NUM} font-mono` (a constant name, not the word `text-right`) would pass G-6. C-9 and L-4 check the rendered cells and would catch it, so the rule is covered — Priority: Low (note only)
+2. `app/admin/business-os-llm/components/costs/CostsSections.tsx:168` and `FiguresCells` — the Total label keeps `text-slate-200` explicitly while the figure cells now inherit `ADMIN_TABLE`'s `text-slate-300` (was `text-slate-200` via the old `TD_NUM`). One step lighter, the same as every other admin table — Priority: Low (note only)
+3. `app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx:353-384` — the outer `try` now has only `finally`. Correct today because nothing after `fetch` can throw; if a later edit adds a throwing step there, it becomes an unhandled rejection from `void run()` — Priority: Low (note for the next editor)
+
+### F-120 ruling
+
+**Leave open; do not fold into L-9b.** It is outside the approved L-9b plan (§2.6 deliberately kept those lines), it is a visible change with no test planned for it, and moving both lines onto `AdminNotice` can stack up to three amber notices under the strip (incomplete, unreadable, names failed), which is a layout decision (one merged notice or three), not a one-liner. Take it with L-10 or the next Costs touch, with its own render case.
+
+### Optimisation Suggestions
+
+- If G-6 is touched again, also reject `ADMIN_TD_NUM` composed with `font-mono` in a template literal (comment 1).
+
+### Code Approved for QA: Yes
+
+QA keeps to the production leak-check ruling (one run, one business, one day); the 409, network and non-JSON cases stay in jsdom (L-1 to L-3).
+
+## QA Report (L-9b) — 2026-10-12
+
+**QA — 2026-10-12**
+**Test mode:** full (UI short path, fast-track)
+**Strategy used:** A (Jest, jsdom, mocked `fetch` only) + scoped `tsc`; D (browser) handed to TL as a checklist, since QA has no browser
+**Focus:** ui, api (the leak read's request and states), accessibility
+**Skipped:** the production leak-check run (L9-B10): QA has no signed-in browser; it stays with TL under the SA ruling (one run, one business picked first, From = To). No other skip
+**Input source:** prompt keywords (TL trigger) + workplan §7.1
+
+### Commands and results (real output, worktree `neuronforge-admin-layout`, branch `feature/admin-layout-l9b`, uncommitted)
+
+| # | Command | Result |
+|---|---|---|
+| Q-1 | `npx jest app/admin/business-os-llm app/admin/components lib/admin/__tests__/admin-authz-surface.guard.test.ts app/__tests__/tailwind-css-escape.guard.test.ts --ci` | **40 suites, 1472 tests passed**, 45.9 s |
+| Q-2 | `npm run test:bos-llm` | **23 suites, 625 tests, 23 snapshots passed**, exit 0 |
+| Q-3 | `npm run typecheck:bos-llm` | "499 files in scope, 28 errors, 0 new", passed, exit 0 (the same already-fixed baseline entry `app/api/onboarding/build/route.ts` TS18047 as L-9a, unrelated) |
+| Q-4 | Scoped `tsc -p` on a scratch `tsconfig.json` in the session scratchpad `qa-l9b/` (`extends` the worktree `tsconfig.json`, `noEmit`, `incremental: false`, `plugins: []`; `next-env.d.ts`, `app/admin/business-os-llm/**`, `app/admin/components/layout/**`, `adminWindowPresets.ts`) | `--listFilesOnly`: 93 files under `app/admin` plus the scratch `canary.ts`. Run 1 with the canary: exit 2, exactly `canary.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.` Run 2, canary deleted and dropped from `include`: **exit 0** |
+| Q-5 | Throwaway probes: `__tests__/zzqa-l9b-leak.render.test.tsx` (22 cases) and `__tests__/zzqa-l9b-sections.render.test.tsx` (8 cases), mocked `fetch`, `console.error` / `console.warn` spied in every case | **30 / 30 passed** (one first-run failure was a probe bug: `getAllByTestId` on zero rows; fixed to `queryAllByTestId`). Both files deleted; `git status --short` identical to before (the same 10 modified files, no new file); source diff stat unchanged |
+
+### Edge cases probed
+
+| Area | Case | Result |
+|---|---|---|
+| Leak states | Network rejection (`TypeError: Failed to fetch`) | `ADMIN_NETWORK_ERROR`, never the browser text; result cleared; inside `role="alert"`; no "Try again"; Run enabled again. The next successful run clears the error and leaves no alert |
+| | 409 `platform_account` | `COSTS_PLATFORM_ACCOUNT` in `leak-platform-account`, no `role="alert"`, no "Try again", `leak-not-run` hidden; the next good run removes it. A 400 carrying `platform_account` gets the same notice (keyed on the code, not the status) |
+| | 400 / 500 / 403 with a route `error` string | That string, in `role="alert"` |
+| | 500 with no `error`, `error` an object, 200 without `success`, `success: 'true'` (string), body an array, body `null`, non-JSON with `ok: false` and with `ok: true` | "Could not run the leak check"; no parser text |
+| | 200 `success: false` with `error` | The route's string |
+| | While running | Previous error cleared at once; Run disabled and reads "Checking…" |
+| Newest wins | Overlapping runs from the UI | Not reachable: Run is disabled while a run is in flight (existing test). Reachable paths probed: unmount during a pending `fetch` then an `AbortError` rejection, and unmount while the body is still being read: nothing set, no React warning, no console error; the signal is aborted |
+| Request | Same GET as HEAD (the request-building lines are unchanged in the diff) | URLs exactly `…/leak-check?from=2026-10-01&to=2026-10-01`, then `…&accountId={A}`, then back without `accountId`; `init` has only `signal` (no method, no body) |
+| C-11 | Scope follows the picked business, returns to every business when cleared | Dev's C-11 (through the real page and picker) green; QA's rerender probe: scope line "Checking one business: Alpha Studio" → "Checking every Business OS business", request drops `accountId` |
+| Verdicts | found / clean / partial / empty window (`end <= start`, 0 businesses) | Each its own box; no account table when `accounts` is empty; "0 businesses checked" |
+| Times | Offsets → UTC | Window `+02:00` / `-05:00` → "2026-09-28 00:00 UTC to 2026-09-29 00:00 UTC"; example first call `+05:30` → "07:00 UTC"; fallback `-03:00` → next-day "02:30 UTC"; `-00:30` crossing the year → "2027-01-01 00:29 UTC"; period start `+02:00` → the previous UTC day |
+| | Unreadable instant | Em dash ("read at —", fallback "When"), never the raw string |
+| Numbers | Huge | 9e15 → "9,000,000,000,000,000", 1e21 full digits, $987,654,321.12, no exponent; NaN / Infinity → em dash |
+| Sections | Zero rows everywhere | Renders; period table header + Total row only (as at HEAD); no fallback / spread table; five tables named |
+| | Missing data | Null group and action id → "—" with no `title`; only one id → `title` names only that one; an id of 8 chars or fewer shown whole; null company → short account id; null spread figures → "—" (no "null" / "NaN") |
+| | Failed sections | `costs-breakdowns-failed`, `costs-fallback-failed`, `costs-spread-failed` render |
+| | Group id | `bbbbbbbb…` shown, `title` "Group {full id} · Action {id}" (C-9 and probe) |
+| Chips | Period check | `ok` emerald, `danger` red with the "rows:" line, `unknown` dashed; each with an `aria-hidden` icon and its words; "few examples" `warn` |
+| | Leak statuses | `danger` / `unknown` / `warn` / `neutral` (L-4), icon on all but neutral |
+| Incomplete box | Through the page | `AdminNotice` `<p data-testid="costs-incomplete">`, amber wrapper, no `alert`; words plus reasons, an unknown reason shown as its code |
+| Focus | Run focused, then clicked | jsdom: focus stays on the button while it is disabled and after the error appears (the code moves no focus; the error is announced through `role="alert"`). jsdom does not apply the browser's focus fix-up for a disabled element, so the real behaviour is browser check QB-6 |
+
+### Accessibility (jsdom)
+
+| Check | Result |
+|---|---|
+| Tables named + `scope="col"` | All seven section tables and "Leak check by business" named; every `th` has `scope="col"` (47 headers in the full probe) |
+| Chips | Text always present; meaning tones carry an `aria-hidden` icon |
+| Leak form | `getByLabelText('Check from (UTC)')` / `('Check to (UTC)')` find the date inputs (wrapping labels) |
+| Run | `getByRole('button', { name: 'Run leak check' })`; `focus-visible:ring-2` present |
+| Errors | `leak-error` inside `role="alert"` (an improvement: at HEAD the leak error had no role) |
+| Landmarks | `queryAllByRole('region')` = 0 in the panel and in the four sections (no named `section`) |
+| T-5 | No `text-slate-500` in the panel or sections |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+
+None.
+
+#### Performance Issues (should fix)
+
+None. No request added; the leak check still runs only on Run.
+
+#### Edge Cases (nice to fix, none a regression)
+
+1. **The platform-account notice in the leak panel is silent to a screen reader** — `LeakCheckPanel.tsx` — Low. It appears as the answer to Run, but `AdminNotice` has no live role (by design, for standing caveats), so nothing is announced; a sighted user sees it. At HEAD the same case showed the raw code with no role either, so not a regression. If fixed later: wrap that slot in `role="status"`, not `alert`.
+2. **Empty spread header** — `CostsSections.tsx` spread table, last `<th scope="col" />` — Low, pre-existing at HEAD. A column header with no name (the "few examples" / "fallback left out" column). A visually hidden word would give it one.
+3. **A success body whose `data` is not a payload** (`{ success: true, data: {} }`) would throw in `Result` on `result.window.start`; `{ success: true }` with no `data` shows the "not run" line silently — `LeakCheckPanel.tsx` — Low, pre-existing (HEAD casts the same way); the route never answers that.
+4. SA comments 1 to 3 stand as SA noted them; QA found nothing further there.
+
+### Browser checks for TL (signed-in admin, DevTools Network + Console open; light and dark emulation; read-only)
+
+| # | Check |
+|---|---|
+| QB-1 (L9-B9) | `/admin/business-os-llm?tab=costs`: section tables framed with a tinted header, one density; numbers right-aligned in tabular figures (not monospace); action types / keys / period starts still monospace |
+| QB-2 | Period check chips: "matches its rows" green with a tick, "mismatch" red with its "rows:" line, "not checked" dashed grey; "few examples" amber with an icon |
+| QB-3 | Fallback-priced list: "When (UTC)" values end in "UTC"; group ids short ("xxxxxxxx…"), hover shows "Group … · Action …" |
+| QB-4 | An incomplete report (only if one shows naturally; else skip): the amber notice reads the same words and reasons |
+| QB-5 | Leak panel before any run: "Check from (UTC)" / "Check to (UTC)" look like the filter bar's date fields, Run purple, scope line readable (slate-400), **no** `leak-check` request on load |
+| QB-6 | Focus, observed on the one allowed run (QB-7): Tab to Run and press Enter; note where focus lands while the button is disabled and after it re-enables. Record it; not a blocker |
+| QB-7 (L9-B10, SA ruling) | **Once only.** Pick one business in the bar first; set From = To = one day; press Run once. Network: exactly one `GET …/leak-check?from=D&to=D&accountId=<that id>`. Result: status chips with icons, the table matching the sections' density, window and read-at ending in "UTC". If it reports a leak, that is a true finding: record it and tell TL. Never run with the picker empty, never repeat |
+| QB-8 | Clear the business: the scope line returns to "Checking every Business OS business" — **do not press Run** |
+| QB-9 (L9-B11) | Light and dark emulation: chips, tables, notice, date inputs (native picker) and Run look right in both |
+| QB-10 | Console: no errors or React warnings through all of the above |
+
+Still owed from L-9a (not L-9b): L9-B4 and L9-B5 (the real Next tab sync).
+
+### Final Status
+
+**Verdict: PASS WITH NOTES.**
+
+- [x] All L-9b acceptance criteria pass in jsdom; 40 / 1472, `test:bos-llm` 23 / 625, `typecheck:bos-llm` 0 new, scoped `tsc` clean after the canary
+- [x] No bugs; three Low edge cases (none a regression) recorded for a later slice
+- [ ] Browser checks QB-1 to QB-10 owed by TL (QA has no browser)
+
 ---
 
 ## Change History
@@ -835,3 +1035,6 @@ None. No extra reads on any tab switch, in any order (Q-1).
 | 2026-10-12 | SA code review (L-9a) | SA: Code Approved, no must-fix. Shared hook default path verified identical; page coordination, the `CostsTab.tsx` rewrite (checked line by line against HEAD), M-1 to M-3 and deviations 1 to 7 accepted. 78 admin suites / 2310 tests and `test:bos-llm` 23 / 625 green. Two Low notes (F-121, `picked` not reset); line endings confirmed |
 | 2026-10-12 | QA report (L-9a) | QA: PASS WITH NOTES. 83 suites / 2501 tests, `test:bos-llm` 23 / 625, `typecheck:bos-llm` 0 new, `test:bos-entitlements` 242 / 7062, scoped `tsc` canary proven then clean. 35 throwaway probes (tab walk in three harnesses, deep links, states, KPI rules, anchors, a11y) all green, then deleted. No bugs. QA had no browser, so L9-B4 / L9-B5 were not run and are owed by TL |
 | 2026-10-12 | L-9a committed, PR opened | RM: commit 57132b85, merged origin/main (b32f119d, clean), PR #321 open (fast-track); awaiting checks + user merge |
+| 2026-10-12 | L-9b implemented | Dev: tasks 8 to 10. Sections and leak panel on the shared table classes and `StatusChip` (Q-5), fallback and leak times via `formatUtc`, leak read on `readJsonBody` with the shared network sentence and `COSTS_PLATFORM_ACCOUNT`, incomplete box on `AdminNotice` (E-9), G-5 exception removed, G-6 added, F-121 comment fixed. C-9 to C-11, L-1 to L-4, E-9; mutations (m), (n). Uncommitted; Implementation Notes (L-9b) added |
+| 2026-10-12 | SA code review (L-9b) | SA: Code Approved, no must-fix. Deviations 1 to 5 accepted; "few examples" `warn` acceptable; leak read verified as the same request, newest-wins kept. F-120 ruled: stays open (not folded). Three Low notes. `app/admin/business-os-llm` 16 / 730 and `test:bos-llm` 23 / 625 green |
+| 2026-10-12 | QA report (L-9b) | QA: PASS WITH NOTES. 40 suites / 1472 tests, `test:bos-llm` 23 / 625, `typecheck:bos-llm` 0 new, scoped `tsc` canary proven then clean. 30 throwaway probes (leak states, request parity, scope follow / clear, verdicts, UTC offsets, huge and missing data, chips, a11y, focus) all green, then deleted. No bugs; three Low edge cases (platform notice silent to screen readers, empty spread header, malformed success data), none a regression. Browser checks QB-1 to QB-10 owed by TL |
