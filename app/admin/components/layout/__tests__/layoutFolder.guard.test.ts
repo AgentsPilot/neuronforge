@@ -46,6 +46,9 @@
  * Amended by L-3: Archiving joins the registry; no rule change. Its two shared
  * exports (the `neutral` StatusChip tone and the `badge` prop of
  * AdminPageHeader) add no file, no import outside the folder and no green.
+ *
+ * Amended by L-5: Plans & entitlements joins the registry; no rule change and
+ * no shared source change.
  */
 
 import * as fs from 'fs';
@@ -520,6 +523,41 @@ const MIGRATED_PAGES = [
       'app/admin/archiving/page.tsx',
       'app/admin/archiving/components/ArchiveConfirmDialog.tsx',
       'app/admin/archiving/components/ArchivingKpis.tsx',
+    ],
+  },
+  {
+    // L-4a (the list) and L-4b (the row detail in the drawer, SA L-4a Q-8). The
+    // panel, credit, top-up and delete components are deliberately NOT listed
+    // (L-4b SA Q-5, the G-6 precedent): BusinessOsPanel, CreditsBlock,
+    // CreditFormDialog, BoostBlock, BoostCapDialog, BoostReconcileDialog and
+    // DeleteBusinessDialog each still read their own route with `.json(`, and
+    // their error copy is pinned by their own render and contract tests.
+    // Converting them is not a layout change.
+    page: '/admin/users (Businesses)',
+    files: [
+      'app/admin/users/page.tsx',
+      'app/admin/users/usersFilters.ts',
+      'app/admin/users/useBusinessDetails.ts',
+      'app/admin/users/usersFormat.ts',
+      'app/admin/users/components/BusinessesKpis.tsx',
+      'app/admin/users/components/BusinessDetail.tsx',
+      'app/admin/users/components/BusinessAuditSection.tsx',
+    ],
+  },
+  {
+    // L-5: header with the Read-only badge, KPI strip, Refresh-only bar, states,
+    // the plan-card chips, the account lookup (both reads through
+    // readAdminResponse) and the snapshot table. `types.ts` is not listed: it
+    // is untouched and has no markup.
+    page: '/admin/business-os-tiers (Plans & entitlements)',
+    files: [
+      'app/admin/business-os-tiers/page.tsx',
+      'app/admin/business-os-tiers/components/PlansKpis.tsx',
+      'app/admin/business-os-tiers/components/AccountLookup.tsx',
+      'app/admin/business-os-tiers/components/EntitlementSnapshot.tsx',
+      'app/admin/business-os-tiers/components/PlanCard.tsx',
+      'app/admin/business-os-tiers/components/NotBuiltPanel.tsx',
+      'app/admin/business-os-tiers/components/EnforcementBanner.tsx',
     ],
   },
 ] as const;

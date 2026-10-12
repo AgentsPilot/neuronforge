@@ -2,8 +2,10 @@
 
 /**
  * The button that opens a row in the admin drawer (Admin Layout Standard C-9,
- * §5.8 D-2). It sits in a table's first cell and is the one way to open a row:
- * no clickable `tr` around it (no nested interactive content, L-1d SA Q-10).
+ * §5.8 D-2). It sits in a table's first cell and is the keyboard path to open
+ * a row (L-1d SA Q-10). A page may add a row click as a mouse extra under D-2,
+ * never exposed as a control on the `tr` and never firing on a control inside
+ * the row; Businesses does (user decision D-17, L-4b).
  *
  * The visible word is "Open"; the accessible name is the caller's full label,
  * which must start with that word ("Open details for …", WCAG 2.5.3 label in

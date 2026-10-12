@@ -372,6 +372,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['creditAllowanceDecision', 'getEntitlementService', 'isBusinessOsTenant', 'resolveAccountId'],
       why: 'Credit deduction slice 11c: the admin read-only credit view of ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the entitlements and summary routes), resolves the path id through the account seam (`resolveAccountId`, required by `accountSeam.guard` for any file that reaches the service), reads `getSnapshot` for DISPLAY (never `check()` / `decide()`) and turns it into the allowance and its deciding layer with `creditAllowanceDecision`, which keeps the capability id inside the module. It refuses nothing: an account over its allowance is shown, not blocked. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Test harness take credits, slice TC-1, 2026-10-11 — TEST ONLY, remove with the harness tab ──
+    {
+      file: 'app/api/admin/business-os/test/take-credits/route.ts',
+      symbols: ['currentCreditValue', 'isBusinessOsTenant', 'resolveAccountId'],
+      why: 'Test harness slice TC-1 (TEST ONLY): the admin route that records one test charge of N plan credits on ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the 11c credit view), resolves the body id through the account seam (`resolveAccountId`), and stamps the charge with `currentCreditValue().version` as every charge does. It refuses by tenancy and identity (platform account, own account, not a tenant), never by plan: no snapshot, no `check()` / `decide()`. If this file ever refuses by plan, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
     // ── Credits boost slice 6a, 2026-10-09 — the admin "Credit top-ups" block ──
     {
       file: 'app/api/admin/business-os/credits/accounts/[accountId]/boost/route.ts',

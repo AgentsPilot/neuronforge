@@ -454,7 +454,9 @@ describe('the Businesses list', () => {
     mockFetch({ '/api/admin/users?': { status: 200, body: listBody() } });
     render(<UsersPage />);
 
-    const header = screen.getByRole('banner');
+    // L-4b: scoped by the h1's own header, not the banner role (SA L-4a code
+    // review comment 1: a <header> is a banner only outside a landmark).
+    const header = screen.getByRole('heading', { level: 1 }).closest('header') as HTMLElement;
     expect(within(header).getByText(/Every login on the platform/)).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Businesses');
     expect((await screen.findByTestId('kpi-shown')).getAttribute('aria-label')).toContain('2');
@@ -464,7 +466,8 @@ describe('the Businesses list', () => {
     await openRowWithStats({ status: 200, body: { success: true, data: { tokens: TOKENS, plugins: PLUGINS } } });
 
     await screen.findByTestId('ai-spend-card');
-    expect(screen.getByText('User ID:')).toBeTruthy();
+    // L-4b: drawer field labels drop the colon (the field grid separates label and value).
+    expect(within(screen.getByRole('dialog')).getByText('User ID')).toBeTruthy();
     expect(screen.queryByText('Role:')).toBeNull();
     expect(document.body.textContent).not.toContain('authenticated');
   });
@@ -560,7 +563,7 @@ describe('the Businesses list', () => {
     expect((await screen.findByTestId('ai-spend-card')).textContent).toContain('could not be read');
     expect(statsCalls(failing)).toBe(1);
 
-    fireEvent.click(row); // close
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' }); // close (L-4b: a row click is a reopen, never a toggle)
     const healthy = mockFetch({
       ...okDetails,
       [`/api/admin/users/${ACCOUNT}/stats`]: { status: 200, body: { success: true, data: { tokens: TOKENS, plugins: PLUGINS } } },
@@ -570,7 +573,7 @@ describe('the Businesses list', () => {
     expect(screen.getByTestId('plugins-card').textContent).toContain('1/2 active');
     expect(statsCalls(healthy)).toBe(1);
 
-    fireEvent.click(row); // close
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' }); // close (L-4b: a row click is a reopen, never a toggle)
     fireEvent.click(row); // reopen: now loaded, served from state
     expect((await screen.findByTestId('ai-spend-card')).textContent).toContain('$0.4321');
     expect(statsCalls(healthy)).toBe(1);
