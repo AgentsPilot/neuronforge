@@ -6,7 +6,7 @@
 **Branch:** `fix/rls-disabled-tables-slice-2` (off `origin/main` @ `a585f6a7`)
 **Requirement:** none. This is a security fix commissioned by TL from prod measurements (same footing as exposed views slice 1a, PR #306), so no BA requirement was written.
 **Date:** 2026-10-11
-**Status:** Code Complete for 2a (`20261056`) and 2b (`20261057`), uncommitted, waiting for SA code review. 2c (`20261058`) is not started: its route code must deploy first (C-6). The workplan was SA approved with conditions C-1 to C-11.
+**Status:** ✅ **2a (`20261056`) and 2b (`20261057`) applied on prod 2026-10-12 and merged** (PR #313, merge `08722970`). Checkers PASS 64/0 and 11/0. **2c (`20261058`) not started** — next, after slice 1b of the exposed-views work. Session handover state: memory `db-exposure-lockdown.md`.
 
 ## Overview
 
@@ -698,9 +698,33 @@ Items 1–4 are nits or follow-ups and do not block. If Dev takes nit 2, re-run 
 
 ## QA Testing Report
 
+### Prod apply and acceptance (TL via the Supabase connector, user-authorized, 2026-10-12)
+
+Pre-checks were run read-only by TL on 2026-10-11/12 before apply: 2a CLEAN (8 tables owner postgres, RLS off, anon/authenticated/service_role 8 of 8 incl. MAINTAIN, PUBLIC none, grantor postgres, 0 column ACLs, 0 policies, no dependent views or foreign policies, `server_version_num` 170004); 2b all six legacy `token_usage` policies matched pin `19300d155780585259ede73ac370586c`.
+
+| Step | Result |
+|---|---|
+| 2a migration `20261056` | Applied from the committed file; pre-guard and post-assert passed |
+| 2a checker | `VERDICT PASS 64 pass 0 fail` |
+| anon SELECT `pricing_config` | `42501 permission denied for table` |
+| authenticated SELECT `contact_messages` | `42501 permission denied for table` |
+| authenticated SELECT `ais_normalization_ranges`, direct and via `get_active_ais_ranges()` | 23 rows both ways |
+| 2b migration `20261057` | Applied; post-assert passed incl. the new-policy pin `ff452c766f1dd1d84c376129b36406c1` (prod rendering matches PGlite) |
+| 2b checker | PASS (post-assert covers C1–C8; 11/0 by construction) |
+| anon SELECT `token_usage` | `42501 permission denied for table` |
+| authenticated as the largest-usage real user (`request.jwt.claims`) | sees 15,124 rows = that user's service-role count, of 29,659 total; 1 distinct user visible |
+| same user INSERT for another user_id | `42501 new row violates row-level security policy` |
+| same user INSERT for own user_id (the StepExecutor path) | accepted, rolled back |
+
+**Verdict:** PASS. The view path (C-11) remains open until exposed-views slice 1b.
+
+
 ---
 
 ## Commit Info
+
+PR #313: commit `762caf28` (2a + 2b package), merge with main `be1e59f5`; merged to main as `08722970` on 2026-10-12.
+
 
 ---
 
@@ -714,3 +738,4 @@ Items 1–4 are nits or follow-ups and do not block. If Dev takes nit 2, re-run 
 | 2026-10-11 | 2a and 2b implemented (uncommitted) | Merged `origin/main` @ `d1bc95e2` (PR #308). Recorded TL's C-4 capture of the `agents` policies (plain owner predicates). Fixed the C-5 wording. Wrote migrations `20261056` (2a: 7 server-only tables + read-only `ais_normalization_ranges`) and `20261057` (2b: `token_usage`), with pre-checks, checkers, rollbacks (exact inverses with a warning) and one static test (103 tests). Local PGlite (PG 17.5) dry run: pre-checks CLEAN, checkers PASS 64/0 and 11/0, every probe as expected, rollback round trip exact, drift refused. **C-11: `daily_token_usage`, `monthly_token_usage` and `agent_executions_with_details` still expose all rows to anon until slice 1b, which must take them first.** 2c (`20261058`) not started; its route code ships first (C-6) |
 | 2026-10-11 | SA code review (2a, 2b) | Code approved with nits. C-1 to C-3 and C-8 to C-11 verified in the code. The md5 pins were recomputed and confirmed consistent with `pg_policies` (pg_get_expr). No client-role UPDATE or DELETE on `token_usage` found. Static test 103/103 and authz guard 203/203 pass. Nits: the StepExecutor insert error is unchecked (follow-up); pin the new policies by md5 in the post-assert; the rollbacks restore MAINTAIN unconditionally; R-6 goes in the PR body |
 | 2026-10-11 | SA nits handled | Nit 2 applied: the 2b post-assert and the 2b checker now pin both owner policies by md5 `ff452c766f1dd1d84c376129b36406c1`, which is the md5 of `(( SELECT auth.uid() AS uid) = user_id)`, the PG 17 rendering, with the other side NULL. Static test 103/103, authz guard 203/203, PGlite 2b dry run PASS 11/0 with an exact rollback round trip. Nit 1 is a backlog follow-up. Nit 3: TL's prod 2a pre-check (CLEAN; 8 of 8 incl. MAINTAIN for anon, authenticated and service_role on all 8 tables; PUBLIC none; grantor postgres; no column ACLs or policies; `server_version_num` 170004) and the 2b pins (all six match `19300d15…586c`) are the MAINTAIN record. Nit 4: PR-body notes for C-11 and R-6 recorded |
+| 2026-10-12 | 2a and 2b applied and merged (TL) | Applied on prod by TL via the Supabase connector with the user's authorization, in order 2a then 2b; checkers 64/0 and 11/0; anon refusals, ais read-only, token_usage owner visibility and cross-user insert refusal proven (QA section). PR #313 merged `08722970`. Next: exposed-views slice 1b, then 2c (`20261058`) |
