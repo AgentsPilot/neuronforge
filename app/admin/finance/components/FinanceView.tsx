@@ -11,7 +11,8 @@
  *
  * Order (S1-FR-5, §11A.0): KPI strip, our revenue, takings through the
  * platform (Section 2 block B, slice 2a, directly under our revenue),
- * Section 1, Section 3, Section 4 (credits, slice 1b).
+ * Section 1, Section 3, Section 4 (credits, slice 1b), then Section 6 block
+ * B, client payment problems (slice 2b), last.
  */
 
 import { useCallback, useMemo } from 'react';
@@ -26,6 +27,7 @@ import { AiCostSection } from './AiCostSection';
 import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
 import { FinanceKpiStrip } from './FinanceKpiStrip';
+import { PaymentProblemsSection } from './PaymentProblemsSection';
 import { RevenuePanel } from './RevenuePanel';
 import { TakingsSection } from './TakingsSection';
 
@@ -97,6 +99,7 @@ export function FinanceView() {
           <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
           <AiCostSection aiCost={data.aiCost} accountId={data.accountId} windowLabel={windowLabel} onRetry={reload} />
           <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
+          <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
         </div>
       )}
     </div>
