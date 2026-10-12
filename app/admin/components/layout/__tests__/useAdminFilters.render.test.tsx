@@ -363,3 +363,177 @@ describe('hrefFor (L-2a: the same-page filter tile link)', () => {
     expect(window.location.search).toBe('?severity=info');
   });
 });
+
+describe('active (L-9, F-113: two tabs on one page own the same keys)', () => {
+  let activeApi: AdminFilters<Filters>;
+  let activeEffectRuns = 0;
+
+  function ActiveHarness({ active }: { active?: boolean }) {
+    // Inline options on purpose: a new object every render must not matter (SA S-2).
+    activeApi = useAdminFilters(SPEC, active === undefined ? undefined : { active });
+    const { filters } = activeApi;
+    useEffect(() => {
+      activeEffectRuns += 1;
+    }, [filters]);
+    return null;
+  }
+
+  const DEFAULTS = { window: { kind: 'none' }, account: '', severity: 'all', search: '' };
+
+  beforeEach(() => {
+    activeEffectRuns = 0;
+  });
+
+  it('A-1: an inactive mount takes the defaults, writes nothing, and hrefFor still answers', () => {
+    arrive('range=7d&account=X');
+    replaceSpy.mockClear();
+    render(<ActiveHarness active={false} />);
+    expect(activeApi.filters).toEqual(DEFAULTS);
+    expect(activeApi.isDefault).toBe(true);
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(window.location.search).toBe('?range=7d&account=X');
+    expect(activeApi.hrefFor({ severity: 'info' })).toBe('?severity=info');
+  });
+
+  it('A-2: inactive, an incoming change is not parsed (same object, no [filters] run) and nothing is written', () => {
+    arrive('severity=info');
+    const { rerender } = render(<ActiveHarness active />);
+    rerender(<ActiveHarness active={false} />);
+    const first = activeApi.filters;
+    replaceSpy.mockClear();
+
+    arrive('severity=warning&range=today&user_id=abc');
+    replaceSpy.mockClear();
+    rerender(<ActiveHarness active={false} />);
+    rerender(<ActiveHarness active={false} />);
+
+    expect(activeApi.filters).toBe(first);
+    expect(activeApi.filters.severity).toBe('info');
+    expect(activeEffectRuns).toBe(1);
+    expect(replaceSpy).not.toHaveBeenCalled();
+  });
+
+  it('A-3: activation when the address bar already equals the projection: no write, no re-parse', () => {
+    arrive('tab=x');
+    const { rerender } = render(<ActiveHarness active={false} />);
+    const first = activeApi.filters;
+    replaceSpy.mockClear();
+    rerender(<ActiveHarness active />);
+    expect(activeApi.filters).toBe(first);
+    expect(activeEffectRuns).toBe(1);
+    expect(replaceSpy).not.toHaveBeenCalled();
+  });
+
+  it('A-4: activation when the address bar lacks the projection: exactly one write, the unrelated key kept', () => {
+    arrive('tab=x&range=7d');
+    const { rerender } = render(<ActiveHarness active />);
+    rerender(<ActiveHarness active={false} />);
+    // The page took the keys while the tab was hidden.
+    arrive('tab=x');
+    rerender(<ActiveHarness active={false} />);
+    replaceSpy.mockClear();
+
+    rerender(<ActiveHarness active />);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(replaceSpy).toHaveBeenCalledWith(null, '', `${PATH}?tab=x&range=7d`);
+    expect(activeApi.filters.window).toEqual({ kind: 'preset', preset: '7d' });
+  });
+
+  it('A-5: activation adopts the stale incoming string without parsing it; its echo is then no outside change', () => {
+    // The previous tab's string, still in useSearchParams and the address bar.
+    arrive('range=90d&severity=info');
+    const { rerender } = render(<ActiveHarness active={false} />);
+    const first = activeApi.filters;
+    replaceSpy.mockClear();
+
+    rerender(<ActiveHarness active />);
+    // Not parsed: the tab keeps its own (default) state, and the bar is corrected to it once.
+    expect(activeApi.filters).toBe(first);
+    expect(activeApi.filters.severity).toBe('all');
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(replaceSpy).toHaveBeenCalledWith(null, '', PATH);
+
+    // Next's echo of that write, then the same string again: nothing.
+    mockSearch = '';
+    rerender(<ActiveHarness active />);
+    rerender(<ActiveHarness active />);
+    expect(activeApi.filters).toBe(first);
+    expect(activeEffectRuns).toBe(1);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('A-6: active again after activation, an outside change re-parses and our own echo does not', () => {
+    arrive('tab=x');
+    const { rerender } = render(<ActiveHarness active={false} />);
+    rerender(<ActiveHarness active />);
+
+    arrive('tab=x&severity=warning');
+    rerender(<ActiveHarness active />);
+    expect(activeApi.filters.severity).toBe('warning');
+
+    act(() => activeApi.setFilters({ severity: 'critical' }));
+    const afterWrite = activeApi.filters;
+    const runs = activeEffectRuns;
+    replaceSpy.mockClear();
+    mockSearch = 'tab=x&severity=critical';
+    rerender(<ActiveHarness active />);
+    expect(activeApi.filters).toBe(afterWrite);
+    expect(activeEffectRuns).toBe(runs);
+    expect(replaceSpy).not.toHaveBeenCalled();
+  });
+
+  it('A-7: setFilters while inactive changes the state and writes nothing; activation writes it once', () => {
+    arrive('tab=x');
+    const { rerender } = render(<ActiveHarness active={false} />);
+    replaceSpy.mockClear();
+    act(() => activeApi.setFilters({ severity: 'critical' }));
+    expect(activeApi.filters.severity).toBe('critical');
+    expect(replaceSpy).not.toHaveBeenCalled();
+
+    rerender(<ActiveHarness active />);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(replaceSpy).toHaveBeenCalledWith(null, '', `${PATH}?tab=x&severity=critical`);
+    rerender(<ActiveHarness active />);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('A-8: becoming inactive writes nothing and changes nothing', () => {
+    arrive('tab=x&range=7d&severity=info');
+    const { rerender } = render(<ActiveHarness active />);
+    const first = activeApi.filters;
+    replaceSpy.mockClear();
+    rerender(<ActiveHarness active={false} />);
+    expect(activeApi.filters).toBe(first);
+    expect(activeEffectRuns).toBe(1);
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(window.location.search).toBe('?tab=x&range=7d&severity=info');
+  });
+
+  it.each([
+    ['omitted', undefined],
+    ['true', true],
+  ])('A-9: active %s behaves as today (mount rewrite, write, outside change, echo)', (_name, active) => {
+    arrive('user_id=abc&tab=x');
+    replaceSpy.mockClear();
+    const { rerender } = render(<ActiveHarness active={active} />);
+    expect(activeApi.filters.account).toBe('abc');
+    expect(replaceSpy).toHaveBeenCalledWith(null, '', `${PATH}?tab=x&account=abc`);
+
+    act(() => activeApi.setFilters({ severity: 'info' }));
+    expect(window.location.search).toBe('?tab=x&account=abc&severity=info');
+    const afterWrite = activeApi.filters;
+    mockSearch = 'tab=x&account=abc&severity=info';
+    rerender(<ActiveHarness active={active} />);
+    expect(activeApi.filters).toBe(afterWrite);
+
+    expect(replaceSpy).toHaveBeenCalledTimes(2);
+
+    // An outside change that is already its own projection: re-parsed, nothing written.
+    arrive('severity=warning');
+    replaceSpy.mockClear();
+    rerender(<ActiveHarness active={active} />);
+    expect(activeApi.filters.severity).toBe('warning');
+    expect(activeApi.filters.account).toBe('');
+    expect(replaceSpy).not.toHaveBeenCalled();
+  });
+});
