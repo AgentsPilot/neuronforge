@@ -33,6 +33,10 @@
  * a tab click (an outside change for the hook, SA M-1) starts no read. The
  * strip, the bar and the shared states are the standard's; the purpose line
  * moved into the page header.
+ *
+ * L-8b: the drawer is the shared `AdminDrawer` with `useDrawerResource`,
+ * rendered once below, outside every state branch (L-2b M-4). When the opener's
+ * row has left the list, closing puts focus on the content area (T-14).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -91,13 +95,24 @@ export function ActivityTab() {
   // B2a: the action whose drawer is open, and the button that opened it.
   const [openActionId, setOpenActionId] = useState<string | null>(null);
   const opener = useRef<HTMLElement | null>(null);
+  /** L-8b (T-14): where focus goes when the opener's row is gone, the always-mounted content area. */
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
+  // One state names the open action, so closing can never leave a hidden "open"
+  // behind that a later read would reopen unasked (the L-1d QA B-1 hazard).
+  // The drawer reads its action by itself, so a list read that lands without
+  // the row (in flight when it was opened) leaves the drawer open on valid data.
   const openDetails = useCallback((actionId: string, button: HTMLElement) => {
     opener.current = button;
     setOpenActionId(actionId);
   }, []);
   const closeDetails = useCallback(() => setOpenActionId(null), []);
-  const returnFocus = useCallback(() => opener.current?.focus(), []);
+  // D-6: back to the row's Open button; when that row has left the list its
+  // button is detached, so focus goes to the content area, never <body>.
+  const returnFocus = useCallback(() => {
+    if (opener.current?.isConnected) opener.current.focus();
+    else contentRef.current?.focus();
+  }, []);
 
   const load = useCallback(async (search: string) => {
     const mine = ++sequence.current;
@@ -193,7 +208,15 @@ export function ActivityTab() {
         onRefresh={reread}
       />
 
-      <div data-testid="activity-content" aria-busy={loading} className="space-y-3">
+      {/* Always mounted (error and first read included), so focus has a
+          connected place to land when the open action's row is gone (T-14). */}
+      <div
+        ref={contentRef}
+        tabIndex={-1}
+        data-testid="activity-content"
+        aria-busy={loading}
+        className="space-y-3 focus:outline-none"
+      >
         {error &&
           (error.kind === 'platform_account' ? (
             <AdminNotice testId="activity-platform-account">{error.message}</AdminNotice>

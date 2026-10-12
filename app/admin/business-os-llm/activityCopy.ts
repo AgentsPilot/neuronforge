@@ -200,14 +200,13 @@ export const COLUMNS = {
 
 // ---- B2a: the drill-down drawer (FR-B2, AC-B17: text, never colour alone) ----
 
-/** The row button's visible text; its accessible name is `OPEN_DETAILS_LABEL`. */
-export const OPEN_DETAILS = 'Open';
 /** The button's accessible name: which action, and when, so a screen reader can tell rows apart. */
 export const OPEN_DETAILS_LABEL = (actionType: string, when: string | null) =>
   `Open details for ${actionType || 'this action'}${when ? ` at ${when}` : ''}`;
 
 export const DRILL_DOWN_TITLE = 'AI action';
-export const DRILL_DOWN_LOADING = 'Reading the AI action…';
+/** L-8b: the shared loading state reads "Reading {what}…", the same words as before. */
+export const DRILL_DOWN_WHAT = 'the AI action';
 /** The route's one 404 body for every "not found": the screen says the same, and nothing more. */
 export const DRILL_DOWN_NOT_FOUND = 'This AI action could not be found.';
 export const DRILL_DOWN_ERROR_FALLBACK = 'Could not read the AI action';

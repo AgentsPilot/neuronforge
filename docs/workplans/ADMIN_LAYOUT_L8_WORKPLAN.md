@@ -7,7 +7,7 @@
 **Skills applied:** `bos-llm-call-standards` read for scope only: this slice adds **no** AI call, changes no model setting and no route (the page stays read-only, two `GET`s plus the picker's). `business-os-entitlements`: not triggered (no import from `lib/business-os/entitlements/`, no tier or capability literal; S-4 holds in the shared folder). `business-os-schema-check`: not triggered (no DB claim beyond the payload fields the tab already reads). No service-role path, no queue
 **Branch:** `feature/admin-layout-l8`, cut from `feature/admin-layout-l7` (PR #316 open, carries #315). The L-8 PR targets `main` and carries L-6 / L-7 until they merge. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-12
-**Status:** L-8a COMMITTED — f67ece30, PR #319 open (fast-track; awaiting checks + user merge). L-8b not started
+**Status:** L-8a COMMITTED — f67ece30, PR #319 open (fast-track; awaiting checks + user merge). L-8b CODE COMPLETE (uncommitted, on `feature/admin-layout-l8b`, cut from the L-8a commit) — awaiting SA code review + QA
 **Path:** **Full cycle** (R-6, R-7): L-8 builds the shared `useDrawerResource` (the Activity drill-down is the first drawer that owns a fetch) and extends the shared window extras with Activity's four existing choices. Run under the user's fast-track: SA workplan review → Dev → SA code review + QA → RM commits and opens the PR (no user diff review). Recommended as **two PRs, L-8a then L-8b** (§9)
 
 ## Overview
@@ -36,6 +36,7 @@ No route, payload, request parameter, model, temperature or provider changes. Th
 - [12. Questions for SA](#12-questions-for-sa)
 - [13. Product question for the user](#13-product-question-for-the-user)
 - [Implementation Notes (L-8a)](#implementation-notes-l-8a)
+- [Implementation Notes (L-8b)](#implementation-notes-l-8b)
 - [SA Review Notes](#sa-review-notes)
 - [QA Testing Report](#qa-testing-report)
 - [Commit Info](#commit-info)
@@ -432,12 +433,12 @@ The page writes nothing (every request is a `GET`), so every check is safe on th
 - [x] 1. SA workplan review; apply any must-fix to this file before coding ✅ (M-1 to M-4 applied 2026-10-12 before coding)
 - [x] 2. V-0 baseline run, counts recorded ✅ (L-8a)
 - [x] 3. Shared: `adminWindow` extras + E-9 + parity and `DatePresets` cases ✅ (L-8a; parity in `app/admin/components/__tests__/`, S-1)
-- [ ] 4. Shared: `useDrawerResource.ts` + H-1 to H-11; guard E-10 (L-8b, not started)
+- [x] 4. ✅ (L-8b) Shared: `useDrawerResource.ts` + H-1 to H-11; guard E-10
 - [x] 5. `activityFilters.ts` + its pure test ✅ (L-8a)
 - [x] 6. ✅ (L-8a) `page.tsx`: header, per-tab purpose, Settings actions wrapper, tab keys, `writeTabToUrl(null)`; `CostsTab.tsx` paragraph (per Q-4)
 - [x] 7. ✅ (L-8a) `ActivityFilterBar.tsx`, `ActivityKpis.tsx`, `ActivityTab.tsx` (hook, states, content wrapper; the focus fallback is L-8b with T-14), `ActivityCountLine.tsx`; delete `ActivityFilters.tsx`
 - [x] 8. ✅ (L-8a) `ActivityTable.tsx` (constants, `OpenRowButton`, outcome chip)
-- [ ] 9. `ActivityDrillDown.tsx` on `useDrawerResource` + `AdminDrawer` (L-8b, not started)
+- [x] 9. ✅ (L-8b) `ActivityDrillDown.tsx` on `useDrawerResource` + `AdminDrawer`; `AdminDrawer.tsx` header comment; E-5 to E-7, T-14 (focus fallback in `ActivityTab.tsx`); V-1 to V-9 for L-8b and the requirement row 14b (Implementation Notes (L-8b))
 - [x] 10. ✅ (L-8a) Repoint both `readJsonBody` imports; delete `business-os-llm/readJsonBody.ts`; copy cleanup in `activityCopy.ts`
 - [x] 11. ✅ (L-8a) Comment corrections (§2.10, §3.1; the `AdminDrawer.tsx` comment is L-8b); BOS AI guard G-1 to G-4
 - [x] 12. ✅ (L-8a: E-1 to E-4, E-8, E-9 (+ E-9b); T-1 to T-13, T-15, T-16) Deliberate edits E-1 to E-8; new `activityLayout.render` T-1 to T-15
@@ -627,6 +628,75 @@ Line endings preserved (page folder CRLF in the working copy, shared folder LF).
 - `typecheck:bos-llm` reports a now-fixed baseline entry in `app/api/onboarding/build/route.ts` ("consider --update-baseline"): unrelated, not touched.
 - The four §11 findings are recorded in the requirement as F-112 to F-117 (with F-114 the route's unknown-area copy, Q-7, and F-115 `activityPresets.ts`, S-4).
 
+## Implementation Notes (L-8b)
+
+**Dev, 2026-10-12.** Branch `feature/admin-layout-l8b`, worktree `neuronforge-admin-layout`, cut from the L-8a commit (HEAD `25bc0a8b`, code `f67ece30`). Nothing committed. Scope per SA M-3 / M-4 / Q-9 and SA code review (L-8a) comment 2.
+
+### Files
+
+| File | Action |
+|---|---|
+| `app/admin/components/layout/useDrawerResource.ts` | **New** (97 lines, LF, no `'use client'`): `useDrawerResource<T>(key, read)`, types `DrawerRead<T>`, `DrawerResourceState<T>`, `DrawerReader<T>`. Imports `react` and `./readAdminResponse` only. No `fetch`, no `.json(`, no history write |
+| `app/admin/components/layout/__tests__/useDrawerResource.render.test.tsx` | **New**: H-1 to H-11 (13 cases; H-8 and H-11 each have a second case) |
+| `app/admin/components/layout/AdminDrawer.tsx` | Header comment only (D-7 states come from `useDrawerResource` + `AdminLoading` / `AdminError` as children; no prop added, SA Q-9) |
+| `app/admin/components/layout/__tests__/layoutFolder.guard.test.ts` | E-10: `useDrawerResource.ts` in `EXPECTED_SOURCES`; an "Amended by L-8b" header paragraph. No rule change, no registry entry (L-10, SA Q-3) |
+| `app/admin/business-os-llm/components/activity/ActivityDrillDown.tsx` | On `AdminDrawer` + `DrawerSection` / `DrawerFields` / `DrawerField` + `AdminLoading` / `AdminError` + `useDrawerResource`; module-level `readDrillDown(actionId, signal)` does the fetch and the body read (404 first, then `readJsonBody`, then the route's `error` or `DRILL_DOWN_ERROR_FALLBACK`); own `Sheet` wiring, `Section`, `Field` and the state machine removed |
+| `app/admin/business-os-llm/components/activity/ActivityTab.tsx` | `contentRef` + `tabIndex={-1}` + `focus:outline-none` on `activity-content`; `returnFocus` falls back to it when the opener is detached; comments. The drawer stays rendered once, outside every branch |
+| `app/admin/business-os-llm/activityCopy.ts` | `OPEN_DETAILS` and its stale comment deleted (SA code review L-8a comment 2); `DRILL_DOWN_LOADING` replaced by `DRILL_DOWN_WHAT = 'the AI action'` (the shared state reads "Reading the AI action…", the same words) |
+| `app/admin/business-os-llm/__tests__/activityDrillDown.render.test.tsx` | E-5, E-6 (below) |
+| `app/admin/business-os-llm/__tests__/activityLayout.render.test.tsx` | T-14 (two cases) appended; header comment and one copy import |
+
+### Edited tests and why
+
+| # | Case | Edit | Why |
+|---|---|---|---|
+| E-5 | `activityDrillDown.render` "a network failure is shown as an error" | Expects `ADMIN_NETWORK_ERROR` and not "offline" | §5.10 rule 3; the hook maps a rejection to the shared words |
+| E-6 | `activityDrillDown.render` "each section is a region labelled by its heading id…" | Retitled "named group"; `getByRole('region', …)` → `getByRole('group', …)`; adds "no region in the dialog" | A-9, `DrawerSection` |
+| E-7 | `activityDrillDown.render` close button | **Not edited**, passes: the X is still a direct child of the dialog and carries `[&>button]:text-slate-300` from `AdminDrawer` | Pinned (§12.3 L-8 item) |
+
+Every other existing case passed unedited, including the 404, the HTML 404 / 502, "a response for a drawer already closed never sets it", Escape-returns-focus and the section, title and heading pins.
+
+### Deviations
+
+- **Close-when-gone (L-1d QA B-1).** The Audit trail and AI cost & usage drawers render the loaded row, so they close when it leaves the data. The Activity drawer reads its own action from the server, so a list read that lands without the row (in flight when the row was opened) leaves the drawer **open on valid data**, and T-14 closes it with Escape as the approved workplan wrote it. The B-1 hazard itself (a hidden "open" state that a later read reopens unasked) cannot arise: one state, `openActionId`, drives the drawer and closing clears it. T-14 pins it: after the close, a read that brings the row back does not reopen the drawer and sends no second drill-down request. SA to confirm.
+- **`DRILL_DOWN_LOADING` removed** with `OPEN_DETAILS`: the shared `AdminLoading` builds the sentence from `DRILL_DOWN_WHAT`, so the old constant had no consumer. Same words on screen. The `drill-down-loading` testid stays on a wrapper (no test pins it).
+- **`drill-down-entry-fields`**: `DrawerFields` takes no testid, so a wrapper `div` carries it (the pinned case reads its text).
+- **Closing clears the hook's answer** (an effect on key `null`), so reopening the same key shows `loading` until its new read lands instead of the earlier figures (H-7).
+- **The drawer's error state has no "Try again"** (as before: reopening the row reads again). Not asked for; recorded only.
+
+### Visible changes (L-8b)
+
+1. Drawer title in slate-100 by an inline colour, readable in the light scheme (F-65); the close X keeps its slate-300 colour, at full opacity, with a purple focus ring (F-66); the panel gains `[color-scheme:dark]` and is full width up to `sm:max-w-3xl` by inline style, as every shared drawer.
+2. Field text one step larger (`text-xs` → `text-sm`, `DrawerFields`); the action-type suffix sits after a real space (`ml-1` instead of `ml-2`).
+3. Sections are named groups, not regions (screen-reader landmark list shrinks; headings and order unchanged).
+4. Loading is the shared spinner line (same words); errors are the shared red block (`role="alert"`); a network failure says "Could not reach the server. Check your connection and try again." instead of the browser's text.
+5. Closing the drawer after its row has left the list puts focus on the content area instead of `<body>`.
+
+### Verification (real output)
+
+| # | Check | Result |
+|---|---|---|
+| V-1 | `npx jest app/admin/business-os-llm app/admin/components app/admin/audit-trail app/admin/finance lib/admin/__tests__/admin-authz-surface.guard.test.ts app/__tests__/tailwind-css-escape.guard.test.ts --ci` | 54 suites, 1,652 tests, all passed. Finance 3 suites and audit-trail 14 suites green with no edit |
+| V-2 | `npm run test:bos-llm` | 23 suites, 625 tests passed, 23 snapshots passed |
+| V-2 | `npm run typecheck:bos-llm` | "499 files in scope, 28 errors, 0 new … passed" (plus the unrelated now-fixed baseline entry in `app/api/onboarding/build/route.ts`, as in L-8a) |
+| V-3 | `npm run test:bos-entitlements` | 242 suites, 7,062 tests passed, exit 0 |
+| V-4 | Scoped `tsc -p` (scratchpad `l8b/`, extends the worktree `tsconfig.json`, `noEmit`, `incremental: false`, `plugins: []`; `next-env.d.ts`, `app/admin/business-os-llm/**`, `app/admin/components/layout/**`, `adminWindowPresets.ts`; `--listFilesOnly` first: the hook, its test and the drawer listed) | Run 1 with `canary.ts` (`const canary: number = 'x';`): exit 2, exactly one error, `canary.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.` Run 2 without it: exit 0, no output |
+| V-5 | `npm run lint:hooks`; `npx eslint` on the 9 touched or new files | Both clean (exit 0, no output) |
+| V-6 | Mutations (e), (f), (g), (h), (m), (n), (r): each applied by script, run, restored; file md5 equal after restore; `git diff` md5 equal before and after the run (`cc6dc847…`) | All 7 RED. (e) H-4 + E-5; (f) H-5, H-6, H-9 + "a response for a drawer already closed never sets it"; (g) H-8; (h) layout guard L-1e F-1 (both the per-file rule and "AdminBusinessPicker.tsx is the one file that fetches"); (m) T-14; (n) "HTML 404" + "404 shows the not-found line" (404 decided after the generic error branch); (r) both H-11 cases |
+| V-7 | `git diff --stat HEAD -- app/api lib app/admin/finance app/admin/audit-trail app/admin/business-os-llm/components/costs` | Empty |
+| V-8 | Greps | No `console.`, `as any`, `window.history.state` or `text-emerald-` in the touched sources; no `.json(` in `components/activity/`; shared folder: `fetch(` only in `AdminBusinessPicker.tsx`, no `getProviderFactory`, no `@/lib/ai` |
+| V-9 | `git status --short` and `git diff --stat` before reading the diff | 7 modified, 2 new; 222 insertions, 173 deletions; no file emptied (`ActivityDrillDown.tsx` 91 / 161, from 349 to 279 lines, the state machine and local `Section` / `Field` gone) |
+
+Line endings preserved: the page folder sources and `activityDrillDown.render` stay CRLF in the working copy (every line), the shared folder and `activityLayout.render` stay LF, the two new files are LF. No backslash in either MD.
+
+TL fold-in (QA E-2): useDrawerResource wraps the read call in a same-tick try/catch so a synchronous throw shows ADMIN_NETWORK_ERROR; test H-4b; mutation (remove the catch) → red, restored md5-equal.
+
+### Out of scope, found on the way (listed, not fixed)
+
+- The drill-down error has no "Try again" (pre-existing).
+- F-116 drawer half (the business short id and "Unknown" in slate-500; the corrections and charges tables in `text-xs`) left as is.
+- QA L-8a E-1 (focus after "Try again" falls to `<body>`, shared `AdminError`) is not covered by the T-14 fallback; still open beside F-104.
+
 ## SA Review Notes
 
 See the SA Workplan Review below.
@@ -740,9 +810,65 @@ L8-B1 to L8-B11 apply, minus the L-8b drawer items in L8-B8 (the drawer is still
 
 ### Code Approved for QA: Yes
 
+## SA Code Review (L-8b) — 2026-10-12
+
+**Reviewed by SA — 2026-10-12**
+**Status:** ✅ Code Approved (no must-fix)
+
+Diff against HEAD `25bc0a8b` on `feature/admin-layout-l8b`: 7 modified, 2 new (`useDrawerResource.ts` and its render test). `git diff --stat` checked first: no file emptied; `ActivityDrillDown.tsx` went from 349 to 279 lines (the old state machine and the local `Section` / `Field` gone). Nothing under `app/api` or `lib/` changed: no LLM, data or route change.
+
+### What was checked
+
+| Item | Result |
+|---|---|
+| Hook API (Q-9) | `useDrawerResource(key, read)`; imports only `react` and `./readAdminResponse`; no `fetch`, no body read. The latest `read` is in a ref, updated by an effect declared before the read effect, so a commit that changes both runs the new function (H-8 second case). The read effect depends on `[key]` only |
+| Abort and newest-wins | A fresh `AbortController` per key; the cleanup sets `current = false` and aborts on key change, close and unmount. Both the resolve and the reject handler check `current` first, so a late answer or an `AbortError` sets nothing |
+| Rejection | A current rejection maps to `ADMIN_NETWORK_ERROR`, never the rejection's text (H-4, E-5) |
+| M-4 stale frame | The state is `Settled<T>` tagged with its key; the hook returns `loading` whenever the tag differs from the current key, so the first render after A to B is `loading` before any effect runs (H-11, both cases) |
+| Close clears the answer | The `key === null` branch sets the stored answer to null, so reopening the same key shows `loading` until the new read lands (H-7) |
+| H-1 to H-11 | Meaningful: a frame recorder proves "sets nothing" (frame count unchanged), not only the final text; `console.error` is spied and asserted uncalled in `afterEach`, so an act warning fails the case. H-10's "no warning" half is weaker under React 18 (it no longer warns on a set after unmount), but the unchanged frame count and the aborted signal carry it |
+| Shared folder | No `'use client'` (a hook module, as `useAdminFilters.ts`; the consuming component carries it). `EXPECTED_SOURCES` gains `useDrawerResource.ts` (E-10) with an amendment paragraph; no rule change; L-1e F-1 (only the picker fetches) and S-6 green |
+| `readDrillDown` | Module-level, stable identity. 404 decided on the status before any body read (QA-B2a-2); then `readJsonBody`; then the route's `error` string, else `DRILL_DOWN_ERROR_FALLBACK`. A rejected `fetch` is left to reject into the hook |
+| Drawer body | `AdminDrawer` with `testId="activity-drill-down"`, `DRILL_DOWN_TITLE`, suffix = the opened charge's action type when ready. Every section kept in order (action, corrections, entry, group) with its heading and testid; `drill-down-entry-fields` and `drill-down-loading` kept on wrappers. The X stays a direct child of `SheetContent` (the children sit in a wrapper `div`), so E-7 passes unedited |
+| Page placement | `ActivityDrillDown` rendered once at the end of `ActivityTab`, outside every state branch (`ActivityTab.tsx:280`) |
+| Focus (D-6, T-14) | `returnFocus` focuses the opener when still connected, else `activity-content` (`tabIndex={-1}`, always mounted), never `<body>`. Same pattern as Audit trail (`audit-trail/page.tsx:1044`), Analytics, Messages and Users |
+| Copy | `OPEN_DETAILS` removed (L-8a comment 2 closed); `DRILL_DOWN_LOADING` replaced by `DRILL_DOWN_WHAT`, same words on screen. No remaining reference to either |
+| Edited tests | E-5 (the shared network words, and asserts "offline" is gone) and E-6 (`group`, not `region`, plus "no region in the dialog") are exactly the edits §6.2 approved; nothing else edited |
+| Accessibility | Sections are named groups; no region inside the dialog (pinned by E-6); loading is `role="status"`, error `role="alert"` |
+| Standards | No `console.*`, no `any`, no `@/lib/` import added (the page's source guard is green); lint and hooks lint clean per V-5 |
+| Line endings | New files LF; the modified files show no whole-file churn in the diff; all normalise to LF on commit |
+
+**Tests run by SA:** `npx jest app/admin/business-os-llm app/admin/components --ci`: 35 suites, 1,233 tests passed. `npm run test:bos-llm`: 23 suites, 625 tests, 23 snapshots passed.
+
+### Ruling on the Dev deviation (no close-when-gone)
+
+**Accepted as a recorded deviation. Close-when-gone is not required for this drawer.**
+
+1. Close-when-gone was never a §5.8 rule. It was the L-1d / L-2a QA B-1 fix for drawers that **render the loaded row**: when the row leaves the data they have nothing true left to show, and a hidden "open" id could reopen the drawer unasked. This drawer reads its own action by id from the server, so what it shows stays correct whatever the list does.
+2. The admin cannot change a filter while the drawer is open: the sheet is modal (focus trap, overlay). The list can only change under an open drawer through a read already in flight when the row was opened (a Refresh, or a filter read just started). Closing the drawer then would take the detail away from an admin who did nothing, which is the more confusing outcome. Leaving it open on valid data is the helpful one.
+3. The B-1 hazard cannot occur: one state (`openActionId`) drives the drawer and closing clears it. T-14 pins it (no reopen when the row returns, and exactly one drill-down request).
+4. Consistency: the rule to carry forward is "a drawer that renders a loaded row closes when the row leaves the data; a drawer that owns its read (`useDrawerResource`) stays open on its own data; both return focus to the opener, else to the content area". SA added this to the requirement §5.8 D-7 today, so later slices (L-9, L-10, Finance) do not have to decide it again.
+
+### Code Review Comments
+
+1. `app/admin/components/layout/useDrawerResource.ts:95` — if a key goes A (ready) to B and back to A without a close, the stored A answer shows again while A is re-read. That is A's data under A's title, so M-4 holds, and the Activity drawer cannot reach it (the drawer is modal and every key change passes through `null`, which clears the answer). Recorded for the hook's next consumer only; no action — Priority: Low
+2. `app/admin/business-os-llm/components/activity/ActivityDrillDown.tsx:66` — the `readJsonBody` import sits below the type imports instead of with the other shared-folder imports at the top. Cosmetic — Priority: Low
+3. The drawer's error state has no "Try again" (pre-existing; Dev recorded it). Reopening the row reads again, so no admin is stuck. Out of scope — Priority: Low
+
+### Optimisation Suggestions
+
+- The L-8b PR must list Dev's five visible changes (title colour and X focus ring, `text-sm` fields, groups instead of regions, shared loading / error states with the shared network sentence, the focus fallback).
+- When a second `useDrawerResource` consumer arrives, consider a "Try again" on its `AdminError` through a `retry` the hook returns. Not now (SA-R-3: one consumer).
+
+### For QA
+
+The L8-B8 drawer-shell items now apply in full: in light and dark emulation the title is readable, the X is visible and shows a purple focus ring; Escape, overlay and X close the drawer; focus returns to the row's Open button. With DevTools set to offline, opening a row shows the shared network sentence, not the browser's text. The fallback to the content area (row gone from the list) is hard to time by hand; T-14 in Jest is its proof.
+
+### Code Approved for QA: Yes
+
 ## QA Testing Report
 
-L-8a: see "QA Report (L-8a) — 2026-10-12" below. L-8b: not yet tested.
+L-8a: see "QA Report (L-8a) — 2026-10-12" below. L-8b: see "QA Report (L-8b) — 2026-10-12" below (PASS).
 
 ## QA Report (L-8a) — 2026-10-12
 
@@ -854,6 +980,124 @@ None. Reads are exactly one per change (P7) and zero per tab switch for every pa
 - [x] All acceptance criteria pass — ready for commit (with the notes above; B-2 and B-5 owed in a browser)
 - [ ] Issues found — Dev must address before commit
 
+## QA Report (L-8b) — 2026-10-12
+
+**QA — 2026-10-12**
+**Test mode:** full
+**Strategy used:** A (Jest unit and render tests in jsdom, mocked `fetch` only), plus D listed for TL (browser, read-only). No route, data or LLM change, so no integration run.
+**Focus:** ui, the shared hook, accessibility
+**Skipped:** the browser itself (QA has no signed-in session); listed below for TL
+**Input source:** TL prompt keywords + SA Code Review (L-8b) "For QA"
+
+Worktree `neuronforge-admin-layout`, branch `feature/admin-layout-l8b`, uncommitted. `git diff --stat` before and after QA: 9 tracked files, 357 insertions, 180 deletions, plus the 2 new files. The code diff was identical after QA (probes deleted; nothing stashed or committed; `node_modules` untouched). The only file QA changed is this workplan.
+
+### Commands run (real output)
+
+| # | Command | Result |
+|---|---|---|
+| 1 | `npx jest app/admin/business-os-llm app/admin/components app/admin/audit-trail app/admin/finance lib/admin/__tests__/admin-authz-surface.guard.test.ts app/__tests__/tailwind-css-escape.guard.test.ts --ci` | 54 suites, 1,652 tests passed (equal to Dev's V-1). One "worker failed to exit gracefully" notice, which was already there before this slice (a timer in another suite) |
+| 2 | `npm run test:bos-llm` | 23 suites, 625 tests, 23 snapshots passed, exit 0 |
+| 3 | `npm run typecheck:bos-llm` | "499 files in scope, 28 errors, 0 new (141.0s) … passed", exit 0 (plus the known fixed baseline entry `app/api/onboarding/build/route.ts`) |
+| 4 | `npm run test:bos-entitlements` | 242 suites, 7,062 tests passed, exit 0 |
+| 5 | Scoped `tsc -p` (scratchpad `qa-l8b/`, extends the worktree `tsconfig.json`, `noEmit`, `incremental: false`, `plugins: []`; `next-env.d.ts`, `app/admin/business-os-llm/**`, `app/admin/components/layout/**`, `adminWindowPresets.ts`). `--listFilesOnly`: 86 page and shared files, including `useDrawerResource.ts`, its test, `AdminDrawer.tsx` and `ActivityDrillDown.tsx` | Run 1 with `canary.ts`: exit 2, exactly `canary.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.` Run 2 without it: exit 0, no output |
+| 6 | `npx eslint` on the hook, its test, `ActivityDrillDown.tsx`, `ActivityTab.tsx`, `AdminDrawer.tsx`, `activityCopy.ts` | exit 0, no output |
+| 7 | Greps | No `console.` or `as any` in the hook or the drawer. The only `fetch(` is `readDrillDown` in the page folder (none in the hook). No remaining `OPEN_DETAILS` (bare) or `DRILL_DOWN_LOADING` anywhere under `app/` |
+
+### Edge-case probes (throwaway files, 26 cases, all deleted afterwards)
+
+Two files:
+
+- **Page-level render probe (22 cases):** `ActivityTab` and the full page. `fetch` is mocked by exact path. Drill-down answers are held as deferred promises, and the mock rejects on abort, like a real `fetch`.
+- **Hook probe (4 cases):** `renderHook`.
+
+Every page case ran with `console.error` spied and asserted uncalled, so an act warning would fail it. A `MutationObserver` also failed the case if the dialog ever showed one action's business under the other action's title suffix.
+
+| # | Probe | Result |
+|---|---|---|
+| P1a | Open A. While loading, the dialog is named "AI action" and shows `role=status` "Reading the AI action…". A lands ("AI action type_alpha", Alpha). Escape. Open B: loading, no Alpha figures, title without a suffix. B lands. Escape. Open A again: loading (not the earlier A figures), a third request, then A's figures. After each Escape, focus is back on the right Open button | ✅ Pass (0 frame violations) |
+| P1b | A in flight; close (A's signal aborted); open B; A answers late and is ignored (still loading); B lands and only B shows | ✅ Pass |
+| P2a | Same row: open, land, close, open (loading, no old figures), close, open. Exactly 3 drill-down requests (one per open). The middle signal is aborted and the last is not. The middle read's late answer (carrying B's payload) sets nothing. The last read lands | ✅ Pass |
+| P2b | Unmount while loading: signal aborted, a late answer sets nothing, no warning | ✅ Pass |
+| P3 | Error states. Each sends one request and shows `role=alert` in the dialog, with no loading line, no body, and the dialog named "AI action".<br>• JSON 404 and HTML 404 → "This AI action could not be found."<br>• HTML 502, 400 with an object `error`, 200 `success:false` without an error, 200 body `null`, 200 body array, 200 `success:"true"` → "Could not read the AI action"<br>• 500, and 200 with a string `error` → that string<br>• Network rejection (`TypeError: Failed to fetch`) → "Could not reach the server. Check your connection and try again."<br>Never "Failed to fetch" or "Unexpected token" | ✅ Pass (11 cases) |
+| P3b | A ready, close, open B, B rejects: the shared network sentence, no Alpha figures | ✅ Pass |
+| P4a | X: named "Close", a direct child of the dialog. It closes, aborts the in-flight read and puts focus back on the opener | ✅ Pass |
+| P4b | Overlay (pointer-down outside the panel): closes, focus back on the opener | ✅ Pass |
+| P5a | Refresh held; open A; A lands; the list read lands without A, so the opener is detached. The drawer stays open on A's valid data (SA ruling). X close puts focus on `activity-content`, not `<body>`. A later Refresh brings A back: no reopen, and drill-down requests stay at 1 | ✅ Pass |
+| P5b | List read fails (route 500) while the drawer is open: the drawer stays. There is exactly one dialog and one `activity-drill-down`, because it is rendered outside the state branches | ✅ Pass |
+| P6 | Accessibility:<br>• dialog named "AI action type_alpha"<br>• the four sections are `group`s named Action / Corrections / Audit entry / Grouping id, with `h3` headings<br>• zero `region` in the dialog<br>• testids `drill-down-action`, `-corrections-section`, `-entry`, `-group`, `-entry-fields`, `-business`, `-cost`, `-credits`, `-group-single` present<br>• close button named "Close"<br>• title inline colour rgb(241, 245, 249) | ✅ Pass |
+| P7 | Full page, drawer open, Settings tab clicked with `fireEvent` (which bypasses the modal): no extra drill-down or list request; the drawer stays open over the Settings panel (see E-1) | ✅ Pass (recorded) |
+| H-a | Hook: key A ready, then B (no close), B ready, back to A. Frames: `A:loading, A:ready=dataA, B:loading, B:ready=dataB, A:loading`. Never another key's data; 3 reads | ✅ Pass |
+| H-b | A current rejection that is itself an `AbortError` (not caused by our abort): the shared network sentence | ✅ Pass |
+| H-c | A new inline `read` on every render: still one read | ✅ Pass |
+| H-d | A `read` that throws synchronously (not async) | Throws out of the effect and unmounts the tree (E-2) |
+
+### Test Coverage (acceptance)
+
+| Acceptance criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| Drawer on the shared `AdminDrawer`, one per page, X a direct child | ✅ | Pass | P4a, P5b, P7 |
+| `useDrawerResource`: newest wins, aborts on close / change / unmount, no late set | ✅ | Pass | P1b, P2a, P2b, H-a, plus Dev's H-1 to H-11 |
+| M-4: never another action's data under the title; reopen shows loading | ✅ | Pass | P1a, P2a, H-a |
+| One drill-down request per open, carrying only `actionId` | ✅ | Pass | P1a, P2a, P5a, existing case |
+| 404 / HTML 404 / HTML 502 / route error / non-success 200 / network | ✅ | Pass | P3 (11 cases) |
+| Focus return (Escape, X, overlay) and the content-area fallback | ✅ | Pass | P1a, P4a, P4b, P5a, T-14 |
+| Close-when-gone not applied (SA ruling); no unasked reopen | ✅ | Pass | P5a |
+| Accessibility (named dialog, named groups, no region, status, alert, "Close") | ✅ | Pass | P6, P3 |
+| No console errors or act warnings | ✅ | Pass | Spied in every probe |
+| L8-B8 in a real browser (light / dark, focus ring, offline) | ⚠️ | Owed | TL, below |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+
+None.
+
+#### Performance Issues
+
+None. One request per open; tab switches and list reads start no drill-down request.
+
+#### Edge Cases (nice to fix, none blocks)
+
+1. **E-1: the drawer stays open if the tab changes under it.** `page.tsx` / `ActivityDrillDown.tsx`. Low, informational.
+   - Forced by a synthetic click, the Activity panel hides but the portal drawer stays over Settings. No request is sent.
+   - An admin cannot reach this. The sheet is modal (pointer blocked, focus trapped), and the tab writer uses `replaceState`, so browser Back leaves the page instead of changing tab.
+   - No action.
+2. **E-2: `useDrawerResource` does not catch a `read` that throws synchronously.** `app/admin/components/layout/useDrawerResource.ts:73`. Low, for the hook's next consumer.
+   - A non-async `read` that throws before returning a promise escapes the effect and unmounts the tree. An async one gives the shared error instead.
+   - `readDrillDown` is `async`, so Activity cannot reach this.
+   - Suggestion for when a second consumer arrives: start the read as `Promise.resolve().then(() => readRef.current(key, signal))`, or state "read must be async" in the type's comment.
+3. **E-3: SA comment 1 clarified.** H-a shows that A (ready) → B (ready) → A answers `loading`, because the stored answer is B's. Only A (ready) → B (in flight) → A shows A's earlier answer again, and it does so under A's own title. Activity cannot reach this, because every key change passes through `null`. Agrees with SA: no action.
+4. **E-4: already there before L-8b, unchanged.** The drawer's error state has no "Try again". A 200 `success: true` without `data` is not guarded (same as HEAD; the route always sends `data`).
+
+### Browser checklist for TL
+
+Signed-in admin, `/admin/business-os-llm?tab=activity`, DevTools Network filtered to `drill-down`, light and dark emulation. Read-only: every request is a GET.
+
+| # | Check | Result |
+|---|---|---|
+| B8-1 | Open a row: exactly one `drill-down?actionId=…` request; the "Reading the AI action…" spinner first; title "AI action {type}" once loaded | |
+| B8-2 | Sections in order Action, Corrections, Audit entry, Grouping id, each with its heading; fields readable at the larger size; the type suffix after a real space | |
+| B8-3 | Light emulation: the title is light text on the dark panel and readable; the X is visible (not faded) | |
+| B8-4 | Dark emulation: title, X and sections look the same as in light | |
+| B8-5 | Tab to the X: a purple focus ring with a dark offset (no white ring) | |
+| B8-6 | Escape closes; focus returns to that row's Open button (visible focus ring on it) | |
+| B8-7 | Reopen, close with the X: focus back on the Open button | |
+| B8-8 | Reopen, click the dimmed area left of the panel: it closes, focus back on the Open button | |
+| B8-9 | Open row A, close, open row B: B's title never shows A's figures, even for a moment; reopening A shows the spinner, not old figures | |
+| B8-10 | DevTools Offline, open a row: red block "Could not reach the server. Check your connection and try again." (not "Failed to fetch"); close; back online, reopen: loads | |
+| B8-11 | Console: no errors or React warnings across the above | |
+
+### Final Status
+
+**Verdict: PASS.**
+
+- Every L-8b acceptance criterion and every requested probe passes in Jest. No bug of any severity.
+- E-1 and E-2 are Low notes that Activity cannot reach. E-3 and E-4 are informational.
+- TL owes the browser checks B8-1 to B8-11 (L8-B8 in full). They are read-only.
+
+- [x] All acceptance criteria pass — ready for commit (browser checks owed by TL)
+- [ ] Issues found — Dev must address before commit
+
 ## Commit Info
 
 | Field | Value |
@@ -873,3 +1117,6 @@ None. Reads are exactly one per change (P7) and zero per tab switch for every pa
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-12 | L-8a committed, PR #319 | RM: commit f67ece30, origin/main merged (29135d9f), PR #319 opened under the fast-track; Status and Commit Info updated |
+| 2026-10-12 | L-8b implemented | Dev: tasks 4 and 9; Implementation Notes (L-8b); Status updated. Uncommitted |
+| 2026-10-12 | L-8b SA code review | SA: Code Approved for QA, no must-fix; deviation (no close-when-gone) accepted and written into requirement §5.8 D-7; 3 Low comments |
+| 2026-10-12 | L-8b QA | QA: PASS, no bugs; 26 throwaway probes (deleted), scoped tsc canary, 2 Low edge notes (E-1, E-2); browser checklist B8-1 to B8-11 owed by TL |

@@ -330,3 +330,25 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - When a page holds several tabs with their own filters, design the URL coexistence rule before the second tab adopts the hook (SA direction recorded for L-9).
 
 ### Status: COMMITTED — feature/admin-layout-l8 — f67ece30, PR #319
+
+---
+
+## L-8b: Business OS AI Activity drawer on the shared drawer + useDrawerResource — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-8 workplan](/docs/workplans/ADMIN_LAYOUT_L8_WORKPLAN.md)
+
+### What went well
+- The original template drawer now runs on the shared one; every section, heading and test id kept, and the light-mode title and close-button fixes (F-65, F-66) now apply to Activity too.
+- The new shared hook for drawers that fetch their own data was specified tightly at workplan stage (SA M-4: answers carry their key, so a stale frame can never show under a new title); QA's frame recorder confirmed it.
+- Dev questioned the close-when-gone rule instead of applying it blindly; SA agreed and wrote the distinction into the standard (§5.8 D-7): a drawer showing a loaded row closes when the row goes, a self-fetching drawer stays on its own data.
+- TL folded in QA's E-2 before commit: a read that throws synchronously now shows the network sentence instead of unmounting the page (test H-4b; mutation confirmed it bites).
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (approved; one deviation accepted and recorded).
+- Number of Dev ↔ QA bug fix cycles: 0 (E-2 hardening done by TL).
+- TL's first attempt at the E-2 guard delayed the read by one tick and broke 12 hook tests; caught immediately by the suite and replaced with a same-tick try/catch.
+
+### Conclusions & process improvements
+- Shared hooks get defensive handling of caller mistakes from their first consumer, since later pages reuse them without review of the hook itself.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
