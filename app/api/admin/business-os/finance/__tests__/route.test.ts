@@ -19,6 +19,15 @@
  * the route (AC-65), a failed takings read is 200 with that block alone
  * unknown (AC-66), and the info line's takings status and counts with no
  * amount, currency code or name (AC-69).
+ *
+ * Slice 2b: the client payment problems block in the payload; the reminder
+ * read bound by the route to exactly `({ correlationId, adminId },
+ * 'payment_reminders', <Date>, { signal })` and never called with a business
+ * picked (SA-WR-24, AC-61, AC-65); every read failing alone (AC-66); no client
+ * data key in the block (AC-64); the info line's block statuses and counts
+ * with no amount, currency, due date or name (AC-69); and the six new reads
+ * plus the reminder read in `allReads()`, so every 401 / 403 / 400 case proves
+ * zero calls on them (AC-45, AC-46).
  */
 
 import * as fs from 'fs';
@@ -76,6 +85,12 @@ const mockDeps = {
     listClientPaymentsForAccountPaidInRange: jest.fn(),
     listClientRefundsAllAccountsCreatedInRange: jest.fn(),
     listClientRefundsForAccountCreatedInRange: jest.fn(),
+    listOverdueClientInvoicesAllAccounts: jest.fn(),
+    listOverdueClientInvoicesForAccount: jest.fn(),
+    listOverdueClientInstalmentsAllAccounts: jest.fn(),
+    listOverdueClientInstalmentsForAccount: jest.fn(),
+    listClientPlansAllAccounts: jest.fn(),
+    listClientPlansForAccount: jest.fn(),
   },
   credits: {
     getSnapshots: jest.fn(),
@@ -101,6 +116,12 @@ jest.mock('@/lib/business-os/finance/financeHealthDeps', () => {
 const mockFindNames = jest.fn();
 jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
   businessProfileRepository: { findAdminIdentitiesByUserIds: (...a: unknown[]) => mockFindNames(...a) },
+}));
+
+// Slice 2b: R-j, the jobs & queues admin read, faked at the repository boundary.
+const mockReadQueueFigures = jest.fn();
+jest.mock('@/lib/repositories/AdminJobsQueuesRepository', () => ({
+  adminJobsQueuesRepository: { readQueueFiguresAllAccounts: (...a: unknown[]) => mockReadQueueFigures(...a) },
 }));
 
 // Fix round 1: the real pass by default; one test makes it THROW (it is documented never to).
@@ -181,6 +202,26 @@ function clientRefund(user_id: string, amount: string, currency: string) {
   return { id: 'dddddddd-0000-4000-8000-000000000001', user_id, amount, currency, status: 'succeeded', created_at: '2026-10-03T10:00:00+00:00' };
 }
 
+/** Slice 2b: an overdue amount, a due date and a currency that must never reach a log line (AC-69). */
+const OVERDUE_FIGURE = '4321.09';
+const DUE_DATE = '2026-09-17';
+function overdueInvoice(user_id: string) {
+  return { id: 'ffffffff-0000-4000-8000-000000000001', user_id, amount: OVERDUE_FIGURE, currency: 'eur', status: 'overdue', due_date: DUE_DATE };
+}
+function pendingInstalment(user_id: string) {
+  return { id: 'ffffffff-0000-4000-8000-000000000002', user_id, amount: '55.00', currency: 'EUR', status: 'pending', due_date: '2020-01-01' };
+}
+function clientPlan(user_id: string) {
+  return {
+    id: 'ffffffff-0000-4000-8000-000000000003', user_id, status: 'active', cancelled_at: null, completed_at: null,
+    next_charge_at: '2099-01-01T00:00:00Z', last_failure_at: null,
+  };
+}
+const REMINDER_FIGURES = {
+  dueNow: 3, later: 1, noDueTime: null, inProgress: 0, stuck: 1, failed24h: 0, failed7d: 2, deadLettered24h: 0,
+  deadLettered7d: 1, skipped7d: 0, guardrailSkips7d: null, unrecognisedStatus: 0, oldestDueAt: '2026-10-01T09:00:00.000Z',
+};
+
 /** Credit figures that must never reach a log line (AC-30). */
 const USED_FIGURE = '7.123456';
 const GIFTED_FIGURE = 13.5;
@@ -217,6 +258,16 @@ function seed() {
   mockDeps.finance.listClientRefundsAllAccountsCreatedInRange.mockResolvedValue(refunds);
   mockDeps.finance.listClientRefundsForAccountCreatedInRange.mockResolvedValue(refunds);
   mockFindNames.mockResolvedValue({ data: [{ user_id: ACCOUNT, company_name: NAME }], error: null });
+  const invoices = { data: { rows: [overdueInvoice(ACCOUNT)], reachedCeiling: false }, error: null };
+  const instalments = { data: { rows: [pendingInstalment(ACCOUNT)], reachedCeiling: false }, error: null };
+  const plans = { data: { rows: [clientPlan(ACCOUNT)], reachedCeiling: false }, error: null };
+  mockDeps.finance.listOverdueClientInvoicesAllAccounts.mockResolvedValue(invoices);
+  mockDeps.finance.listOverdueClientInvoicesForAccount.mockResolvedValue(invoices);
+  mockDeps.finance.listOverdueClientInstalmentsAllAccounts.mockResolvedValue(instalments);
+  mockDeps.finance.listOverdueClientInstalmentsForAccount.mockResolvedValue(instalments);
+  mockDeps.finance.listClientPlansAllAccounts.mockResolvedValue(plans);
+  mockDeps.finance.listClientPlansForAccount.mockResolvedValue(plans);
+  mockReadQueueFigures.mockResolvedValue({ data: REMINDER_FIGURES, error: null });
 }
 
 const allReads = () => [
@@ -227,6 +278,8 @@ const allReads = () => [
   ...Object.values(mockDeps.credits),
   ...Object.values(mockDeps.lots),
   mockFindNames,
+  // Slice 2b: R-j. Every 401 / 403 / 400 case proves zero calls on it too (AC-45, AC-46).
+  mockReadQueueFigures,
 ];
 const noReadHappened = () => {
   for (const fn of allReads()) expect(fn).not.toHaveBeenCalled();
@@ -367,7 +420,7 @@ describe('200', () => {
     expect(body.success).toBe(true);
     expect(body.data.window.preset).toBe('this_month');
     expect(body.data.window.to).toBe(todayUtc());
-    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'revenue', 'takings', 'tiles', 'window']);
+    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'paymentProblems', 'revenue', 'takings', 'tiles', 'window']);
     expect(Object.keys(body.data.tiles).sort()).toEqual(['k1', 'k2', 'k3', 'k4', 'k5']);
     expect(body.data.credits.status).toBe('ok');
     expect(body.data.tiles.k4.value).toEqual({ value: GIFTED_FIGURE, exact: true });
@@ -497,7 +550,8 @@ describe('slice 2a: takings through the route', () => {
 
   it('AC-45: the four takings reads are in allReads(), so every 401 / 403 / 400 case proves zero calls on them', () => {
     for (const fn of Object.values(mockDeps.finance)) expect(allReads()).toContain(fn);
-    expect(Object.keys(mockDeps.finance)).toHaveLength(7);
+    // Slice 2b: the six overdue and plan reads joined the seven (thirteen).
+    expect(Object.keys(mockDeps.finance)).toHaveLength(13);
   });
 
   it('the payload carries takings; AC-48: every money key sits beside a currency, and no money key is top-level', async () => {
@@ -580,6 +634,161 @@ describe('slice 2a: takings through the route', () => {
     expect(logged).not.toContain(TAKINGS_FIGURE);
     expect(logged).not.toContain('9800');
     expect(logged).not.toMatch(/\bILS\b|\bils\b/);
+    expect(logged).not.toContain(NAME);
+  });
+});
+
+describe('slice 2b: client payment problems through the route', () => {
+  beforeEach(asAdmin);
+
+  it('AC-45: the six new reads and the reminder read are in allReads(), so every 401 / 403 / 400 case proves zero calls on them', () => {
+    for (const name of [
+      'listOverdueClientInvoicesAllAccounts',
+      'listOverdueClientInvoicesForAccount',
+      'listOverdueClientInstalmentsAllAccounts',
+      'listOverdueClientInstalmentsForAccount',
+      'listClientPlansAllAccounts',
+      'listClientPlansForAccount',
+    ] as const) {
+      expect(allReads()).toContain(mockDeps.finance[name]);
+    }
+    expect(allReads()).toContain(mockReadQueueFigures);
+  });
+
+  it('AC-45 / AC-46 re-run: signed out, a non-admin and an invalid query each make zero 2b calls, R-j included', async () => {
+    mockGetUser.mockResolvedValue(null);
+    expect((await call()).status).toBe(401);
+    asAdmin();
+    expect((await call('?preset=this_month&currency=EUR')).status).toBe(400);
+    mockGetUser.mockResolvedValue(OWNER);
+    mockIsAdmin.mockResolvedValue(false);
+    expect((await call()).status).toBe(403);
+    expect(mockReadQueueFigures).not.toHaveBeenCalled();
+    for (const fn of Object.values(mockDeps.finance)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('SA-WR-24 / AC-61: R-j is called once with exactly ({ correlationId, adminId }, "payment_reminders", <Date>, { signal }); the payload figures equal its return', async () => {
+    const res = await GET(
+      new NextRequest('http://localhost/api/admin/business-os/finance', { headers: { 'x-correlation-id': 'corr-2b-test' } })
+    );
+    expect(res.status).toBe(200);
+    expect(mockReadQueueFigures).toHaveBeenCalledTimes(1);
+    const args = mockReadQueueFigures.mock.calls[0];
+    expect(args).toHaveLength(4);
+    expect(args[0]).toEqual({ correlationId: 'corr-2b-test', adminId: ADMIN.id });
+    expect(args[1]).toBe('payment_reminders');
+    expect(args[2]).toBeInstanceOf(Date);
+    expect(Object.keys(args[3])).toEqual(['signal']);
+    expect(args[3].signal).toBeInstanceOf(AbortSignal);
+    const body = await res.json();
+    expect(body.data.paymentProblems.reminders).toEqual({
+      status: 'ok',
+      state: 'read',
+      figures: { dueNow: 3, inProgress: 0, stuck: 1, failed24h: 0, failed7d: 2, deadLettered24h: 0, deadLettered7d: 1, oldestDueAt: '2026-10-01T09:00:00.000Z' },
+    });
+  });
+
+  it('the payload: the block with its five parts, the full amounts per currency, due dates as date-only text', async () => {
+    const body = await (await call()).json();
+    const p = body.data.paymentProblems;
+    expect(p.status).toBe('ok');
+    expect(p.scope).toBe('all');
+    expect(p.today).toBe(todayUtc());
+    expect(p.failedPayments).toEqual({ state: 'not_stored' });
+    expect(p.overdueInvoices.figures.lines).toEqual([
+      { currency: 'EUR', marked: 1, pastDue: 0, amount: 4321.09, amountExact: true, unreadable: 0, businesses: 1, oldestDueDate: DUE_DATE },
+    ]);
+    expect(p.overdueInvoices.figures.rows[0]).toMatchObject({ accountId: ACCOUNT, name: NAME, nameStatus: 'found', dueDate: DUE_DATE, kind: 'marked' });
+    expect(p.overdueInstalments.figures.rows[0]).toMatchObject({ kind: 'past_due', dueDate: '2020-01-01' });
+    expect(p.clientPlans.figures).toMatchObject({ activeNow: 1, total: 1, failedCharges: { everRecorded: false, inWindow: 0 } });
+  });
+
+  it('AC-64: no key under paymentProblems names client data; every amount sits beside its currency', async () => {
+    const body = await (await call()).json();
+    const BANNED = new Set(['contact_id', 'email', 'phone', 'notes', 'internal_notes', 'metadata', 'line_items', 'invoice_number', 'client_name']);
+    let amounts = 0;
+    const walk = (node: unknown, parentKey: string | null) => {
+      if (Array.isArray(node)) return node.forEach((child) => walk(child, parentKey));
+      if (node === null || typeof node !== 'object') return;
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        expect({ key, banned: BANNED.has(key) }).toEqual({ key, banned: false });
+        // The only `name` is a business name on a table row (beside its nameStatus).
+        if (key === 'name') expect('nameStatus' in (node as object)).toBe(true);
+        if (key === 'amount') {
+          amounts += 1;
+          expect('currency' in (node as object)).toBe(true);
+        }
+        walk(value, key);
+      }
+    };
+    walk(body.data.paymentProblems, null);
+    // Two lines and two rows.
+    expect(amounts).toBe(4);
+  });
+
+  it('AC-65 / SA-WR-24 through the route: a business picked → R-g′, R-h′, R-i′ get exactly the id; the all-accounts reads and R-j have zero calls', async () => {
+    const res = await call(`?accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    expect(mockDeps.finance.listOverdueClientInvoicesForAccount.mock.calls).toEqual([[ACCOUNT, todayUtc()]]);
+    expect(mockDeps.finance.listOverdueClientInstalmentsForAccount.mock.calls).toEqual([[ACCOUNT, todayUtc()]]);
+    expect(mockDeps.finance.listClientPlansForAccount.mock.calls).toEqual([[ACCOUNT]]);
+    expect(mockDeps.finance.listOverdueClientInvoicesAllAccounts).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listOverdueClientInstalmentsAllAccounts).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listClientPlansAllAccounts).not.toHaveBeenCalled();
+    expect(mockReadQueueFigures).not.toHaveBeenCalled();
+    for (const [ids] of mockFindNames.mock.calls) expect(ids).toEqual([ACCOUNT]);
+    const body = await res.json();
+    expect(body.data.paymentProblems.scope).toBe('one');
+    expect(body.data.paymentProblems.reminders).toEqual({ status: 'ok', state: 'not_narrowed', figures: null });
+  });
+
+  it.each([
+    ['R-g', 'listOverdueClientInvoicesAllAccounts', 'overdueInvoices'],
+    ['R-h', 'listOverdueClientInstalmentsAllAccounts', 'overdueInstalments'],
+    ['R-i', 'listClientPlansAllAccounts', 'clientPlans'],
+  ] as const)('AC-66 through the route: %s fails → 200, that part unknown, the block partial, every other section renders', async (_n, method, part) => {
+    mockDeps.finance[method].mockResolvedValue({ data: null, error: new Error('down') });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.paymentProblems[part]).toEqual({ status: 'unknown', figures: null });
+    expect(body.data.paymentProblems.status).toBe('partial');
+    for (const section of ['accounts', 'aiCost', 'credits', 'takings']) expect(body.data[section].status).toBe('ok');
+  });
+
+  it('AC-66 through the route: R-j fails → 200, reminders failed, the block partial, the other parts ok', async () => {
+    mockReadQueueFigures.mockResolvedValue({ data: null, error: new Error('queue down') });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.paymentProblems.reminders).toEqual({ status: 'unknown', state: 'failed', figures: null });
+    expect(body.data.paymentProblems.status).toBe('partial');
+    expect(body.data.paymentProblems.overdueInvoices.status).toBe('ok');
+  });
+
+  it('AC-69: the info line carries sections.paymentProblems and counts.paymentProblems (counts, booleans, state words); no amount, currency, due date or name in any log call', async () => {
+    await call();
+    const lines = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(lines).toHaveLength(1);
+    const [ctx] = lines[0];
+    expect(ctx.sections.paymentProblems).toEqual({
+      block: 'ok',
+      overdueInvoices: 'ok',
+      overdueInstalments: 'ok',
+      clientPlans: 'ok',
+      reminders: 'read',
+      failedPayments: 'not_stored',
+    });
+    expect(ctx.counts.paymentProblems).toEqual({
+      invoices: 1, instalments: 1, plans: 1, invoicesCeiling: false, instalmentsCeiling: false, plansCeiling: false,
+      unreadableAmounts: 0, unexpectedRows: 0, overdueRowsShown: 2, reminders: 'read', reminderMs: expect.any(Number), namesFound: 1,
+    });
+    for (const value of Object.values(ctx.counts.paymentProblems)) expect(['number', 'boolean', 'string']).toContain(typeof value);
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
+    expect(logged).not.toContain(OVERDUE_FIGURE);
+    expect(logged).not.toContain('4321');
+    expect(logged).not.toContain(DUE_DATE);
+    expect(logged).not.toMatch(/\bEUR\b|\beur\b/);
     expect(logged).not.toContain(NAME);
   });
 });

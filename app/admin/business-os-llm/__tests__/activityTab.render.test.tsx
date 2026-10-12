@@ -19,6 +19,7 @@ jest.mock('next/navigation', () => ({
 }));
 
 import BusinessOsLlmSettingsPage from '../page';
+import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 import { ActivityTab } from '../components/activity/ActivityTab';
 import { resolvePreset } from '../activityPresets';
 import {
@@ -187,12 +188,14 @@ describe('states', () => {
     expect(screen.queryByTestId('activity-table')).not.toBeInTheDocument();
   });
 
+  // E-1 (L-8a): the shared network-failure words (§5.10 rules 3 and 4), never the browser's own text.
   it('a network failure is shown as an error', async () => {
     global.fetch = jest.fn(async () => {
       throw new Error('offline');
     }) as unknown as typeof fetch;
     render(<ActivityTab />);
-    expect(await screen.findByTestId('activity-error')).toHaveTextContent('offline');
+    expect(await screen.findByTestId('activity-error')).toHaveTextContent(ADMIN_NETWORK_ERROR);
+    expect(screen.getByTestId('activity-error')).not.toHaveTextContent('offline');
   });
 
   it('SA-B1-5: a platform account gets its own explanation, not the generic error', async () => {
@@ -509,17 +512,35 @@ describe('the deleted-account bucket (AC-B9)', () => {
 });
 
 describe('controls (AC-B3, AC-B17)', () => {
+  // E-2 (L-8a): the picker is labelled "Business" (C-6); From / To appear under
+  // Custom only; the window is the standard five plus this tab's four (D-2 (b));
+  // the minimum cost has its own named Apply, and Sort is a labelled group.
   it('every control has an accessible name, and the presets say which is pressed', async () => {
     stub(() => ok(payload()));
     render(<ActivityTab />);
     await screen.findByTestId('activity-table');
-    for (const label of ['From (UTC)', 'To (UTC)', 'Minimum cost (USD)', 'Area', 'Outcome', 'Trigger', 'Account']) {
+    for (const label of ['Minimum cost (USD)', 'Area', 'Outcome', 'Trigger', 'Business']) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
-    for (const name of ['Today', 'Yesterday', 'This week', 'Last week', 'This month', 'Last month']) {
-      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-pressed');
-    }
-    expect(screen.getByRole('button', { name: 'Newest first' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByLabelText('From (UTC)')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+    for (const label of ['From (UTC)', 'To (UTC)']) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    const windowButtons = within(screen.getByRole('group', { name: 'Window' })).getAllByRole('button');
+    expect(windowButtons.map((b) => b.textContent)).toEqual([
+      'Today',
+      '7 days',
+      '30 days',
+      'This month',
+      'Custom',
+      'Yesterday',
+      'This week',
+      'Last week',
+      'Last month',
+    ]);
+    for (const button of windowButtons) expect(button).toHaveAttribute('aria-pressed');
+    expect(screen.getByRole('button', { name: 'Apply minimum cost' })).toBeInTheDocument();
+    const sort = screen.getByRole('group', { name: 'Sort' });
+    expect(within(sort).getByRole('button', { name: 'Newest first' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('a preset reads its own window', async () => {
@@ -548,11 +569,14 @@ describe('controls (AC-B3, AC-B17)', () => {
     expect(params.get('trigger')).toBe('scheduled');
   });
 
+  // E-3 (L-8a): split. Custom's dates apply with Custom's Apply (the shared
+  // window); the minimum cost applies with its own "Apply minimum cost" (§5.5).
   it('typed dates and the minimum cost apply with Apply, and mark the window custom', async () => {
     const fetchMock = stub(() => ok(payload()));
     render(<ActivityTab />);
     await screen.findByTestId('activity-table');
     const before = activityCalls(fetchMock).length;
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
     fireEvent.change(screen.getByLabelText('From (UTC)'), { target: { value: '2026-09-20' } });
     fireEvent.change(screen.getByLabelText('To (UTC)'), { target: { value: '2026-09-30' } });
     fireEvent.change(screen.getByLabelText('Minimum cost (USD)'), { target: { value: '0.01' } });
@@ -561,8 +585,13 @@ describe('controls (AC-B3, AC-B17)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(lastActivityParams(fetchMock).get('from')).toBe('2026-09-20'));
     expect(lastActivityParams(fetchMock).get('to')).toBe('2026-09-30');
-    expect(lastActivityParams(fetchMock).get('minCostUsd')).toBe('0.01');
+    expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'This month' })).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.change(screen.getByLabelText('Minimum cost (USD)'), { target: { value: '0.01' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply minimum cost' }));
+    await waitFor(() => expect(lastActivityParams(fetchMock).get('minCostUsd')).toBe('0.01'));
+    expect(lastActivityParams(fetchMock).get('from')).toBe('2026-09-20');
   });
 
   it('only the newest response may set the screen', async () => {
@@ -637,17 +666,20 @@ describe('the page: the Activity tab and the URL (SA-RC-13, SA-B1-8)', () => {
     expect(activityCalls(fetchMock)).toHaveLength(0);
   });
 
-  it('choosing a tab writes ?tab= with replaceState, keeping history.state and the other parameters', async () => {
+  // E-4 (L-8a, SA Q-2): the writer passes null as the state, the L-1c M-1
+  // mechanism that makes Next sync useSearchParams (so the KPI tile links carry
+  // the current tab). Retitled from "keeping history.state".
+  it('choosing a tab writes ?tab= with replaceState(null, …), keeping the other parameters', async () => {
     stubPage();
     window.history.replaceState({ marker: 'kept' }, '', '/admin/business-os-llm?keep=1');
     const spy = jest.spyOn(window.history, 'replaceState');
     render(<BusinessOsLlmSettingsPage />);
     fireEvent.click(screen.getByTestId('tab-activity'));
-    expect(spy).toHaveBeenLastCalledWith({ marker: 'kept' }, '', expect.stringContaining('tab=activity'));
+    expect(spy).toHaveBeenLastCalledWith(null, '', expect.stringContaining('tab=activity'));
     const url = new URL(window.location.href);
     expect(url.searchParams.get('tab')).toBe('activity');
     expect(url.searchParams.get('keep')).toBe('1');
-    expect(window.history.state).toEqual({ marker: 'kept' });
+    expect(window.history.state).toBeNull();
     await screen.findByTestId('activity-table');
 
     fireEvent.click(screen.getByTestId('tab-settings'));

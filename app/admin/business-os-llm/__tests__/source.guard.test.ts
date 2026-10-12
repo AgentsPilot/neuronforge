@@ -522,3 +522,307 @@ describe('S2-T1: the page adds no guard of its own, and offers no lesser tier', 
     expect(adminLayoutGuardVerdict(importOnly, codeOf).guarded).toBe(false);
   });
 });
+
+/**
+ * Admin Layout Standard L-8a (workplan §5): the Activity tab's end state on the
+ * standard, as source rules. Each rule is proved on a planted string it must
+ * reject (this file's own rule: no dead regex). The `@/lib/` rule above is not
+ * edited (R-9).
+ */
+describe('L-8a: the Activity tab on the admin layout standard (G-1 to G-4)', () => {
+  const importsOf = (source: string) =>
+    [...codeOf(source).matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
+
+  /**
+   * G-1. The page no longer imports the ORIGINAL business picker, and the
+   * one-line `readJsonBody.ts` re-export is gone. It never asserts that the
+   * picker file itself is gone: Finance still imports it until the finance
+   * adoption slice deletes it (SA M-2).
+   */
+  const ORIGINAL_PICKER = /^@\/app\/admin\/audit-trail\/BusinessAccountPicker$/;
+
+  it('G-1: the rule catches a planted import of the original picker', () => {
+    const planted = "import { BusinessAccountPicker } from '@/app/admin/audit-trail/BusinessAccountPicker';\n";
+    expect(importsOf(planted).some((i) => ORIGINAL_PICKER.test(i))).toBe(true);
+  });
+
+  it.each(allFiles)('G-1: %s does not import the original business picker', (relative) => {
+    expect({ file: relative, original: importsOf(read(relative)).filter((i) => ORIGINAL_PICKER.test(i)) }).toEqual({
+      file: relative,
+      original: [],
+    });
+  });
+
+  it('G-1: the page folder has no readJsonBody.ts re-export any more', () => {
+    expect(fs.existsSync(path.join(process.cwd(), `${ROOT}/readJsonBody.ts`))).toBe(false);
+    expect(allFiles).not.toContain(`${ROOT}/readJsonBody.ts`);
+  });
+
+  /** G-2. Every import of the shared layout folder goes through the alias (S-1). */
+  const isSharedLayoutImport = (specifier: string) => /(^|\/)components\/layout(\/|$)/.test(specifier);
+  const isAliased = (specifier: string) => specifier.startsWith('@/app/admin/components/layout/');
+
+  it('G-2: the rule catches a planted relative import into the shared folder', () => {
+    const planted = "import { StatusChip } from '../../../components/layout/StatusChip';\n";
+    const offending = importsOf(planted).filter((i) => isSharedLayoutImport(i) && !isAliased(i));
+    expect(offending).toEqual(['../../../components/layout/StatusChip']);
+  });
+
+  it.each(allFiles)('G-2: %s imports the shared folder through the alias only', (relative) => {
+    const offending = importsOf(read(relative)).filter((i) => isSharedLayoutImport(i) && !isAliased(i));
+    expect({ file: relative, offending }).toEqual({ file: relative, offending: [] });
+  });
+
+  /** G-3. Reads stay where they are: no `.json(` in the tab's folder, and `fetch(` only in the two readers. */
+  const ACTIVITY_DIR = `${ROOT}/components/activity/`;
+  const FETCHERS = [`${ACTIVITY_DIR}ActivityTab.tsx`, `${ACTIVITY_DIR}ActivityDrillDown.tsx`];
+  const JSON_CALL = /\.json\s*\(/;
+  const FETCH_CALL = /(^|[^\w.])fetch\s*\(/;
+  const activityFiles = allFiles.filter((relative) => relative.startsWith(ACTIVITY_DIR));
+
+  it('G-3: the rules catch a planted body read and a planted fetch', () => {
+    expect(JSON_CALL.test('const body = await response.json();')).toBe(true);
+    expect(FETCH_CALL.test('const response = await fetch(url);')).toBe(true);
+    // A method merely named like it is not a call of the global.
+    expect(FETCH_CALL.test('client.fetch(url)')).toBe(false);
+  });
+
+  it('G-3: walks the tab folder, both readers included', () => {
+    for (const fetcher of FETCHERS) expect(activityFiles).toContain(fetcher);
+    expect(activityFiles).toContain(`${ACTIVITY_DIR}ActivityFilterBar.tsx`);
+    expect(activityFiles).toContain(`${ACTIVITY_DIR}ActivityKpis.tsx`);
+  });
+
+  it.each(activityFiles)('G-3: %s reads no body directly, and fetches only if it is one of the two readers', (relative) => {
+    const code = codeOf(read(relative));
+    expect({ file: relative, json: JSON_CALL.test(code) }).toEqual({ file: relative, json: false });
+    expect({ file: relative, fetch: FETCH_CALL.test(code) }).toEqual({ file: relative, fetch: FETCHERS.includes(relative) });
+  });
+
+  /**
+   * G-4. `page.tsx` is the folder's only history writer (the filters write
+   * through the shared hook), and it never passes `window.history.state`, the
+   * first argument with which Next 14.2 never syncs `useSearchParams` (SA Q-2).
+   */
+  const HISTORY_WRITE = /history\s*\.\s*(replaceState|pushState)\s*\(/;
+  const KEEPS_STATE = /window\s*\.\s*history\s*\.\s*state\b/;
+
+  it('G-4: the rules catch a planted write that keeps history.state', () => {
+    const planted = "window.history.replaceState(window.history.state, '', url.toString());";
+    expect(HISTORY_WRITE.test(planted)).toBe(true);
+    expect(KEEPS_STATE.test(planted)).toBe(true);
+    expect(KEEPS_STATE.test("window.history.replaceState(null, '', url.toString());")).toBe(false);
+  });
+
+  it.each(allFiles)('G-4: %s writes history only if it is page.tsx', (relative) => {
+    const code = codeOf(read(relative));
+    expect({ file: relative, writes: HISTORY_WRITE.test(code) }).toEqual({
+      file: relative,
+      writes: relative === `${ROOT}/page.tsx`,
+    });
+  });
+
+  it('G-4: page.tsx never passes window.history.state', () => {
+    expect(KEEPS_STATE.test(codeOf(read(`${ROOT}/page.tsx`)))).toBe(false);
+  });
+});
+
+/*
+ * L-9a: the Costs & credits tab on the admin layout standard (G-5). The
+ * "no `@/lib/`" rule above is not edited (R-9). G-1, G-2 and G-4 already walk
+ * every file in the folder, so they cover the new Costs files with no edit.
+ */
+describe('L-9a: the Costs & credits tab on the admin layout standard (G-5)', () => {
+  /**
+   * G-5. Reads stay where they are (F-67, Costs half): no `.json(` in the
+   * costs folder, and `fetch(` only in the two readers (the picker's fetch
+   * lives in the shared folder). L-9b moved the leak panel's body read onto
+   * `readJsonBody` (workplan §2.8, F-67 leak half), so the one-slice exception
+   * L-9a carried is gone: no file in the folder is exempt.
+   */
+  const COSTS_DIR = `${ROOT}/components/costs/`;
+  const COSTS_FETCHERS = [`${COSTS_DIR}CostsTab.tsx`, `${COSTS_DIR}LeakCheckPanel.tsx`];
+  const JSON_CALL = /\.json\s*\(/;
+  const FETCH_CALL = /(^|[^\w.])fetch\s*\(/;
+  const costsFiles = allFiles.filter((relative) => relative.startsWith(COSTS_DIR));
+
+  it('G-5: the rules catch a planted body read and a planted fetch', () => {
+    expect(JSON_CALL.test('const body = await response.json();')).toBe(true);
+    expect(FETCH_CALL.test('const response = await fetch(`${REPORT_URL}?${search}`);')).toBe(true);
+    expect(FETCH_CALL.test('client.fetch(url)')).toBe(false);
+  });
+
+  it('G-5: walks the costs folder, both readers and the new bar and strip included', () => {
+    for (const fetcher of COSTS_FETCHERS) expect(costsFiles).toContain(fetcher);
+    expect(costsFiles).toContain(`${COSTS_DIR}CostsFilterBar.tsx`);
+    expect(costsFiles).toContain(`${COSTS_DIR}CostsKpis.tsx`);
+    expect(costsFiles).toContain(`${COSTS_DIR}CostsSections.tsx`);
+  });
+
+  it.each(costsFiles)('G-5: %s reads no body directly, and fetches only if it is one of the two readers', (relative) => {
+    const code = codeOf(read(relative));
+    expect({ file: relative, json: JSON_CALL.test(code) }).toEqual({ file: relative, json: false });
+    expect({ file: relative, fetch: FETCH_CALL.test(code) }).toEqual({
+      file: relative,
+      fetch: COSTS_FETCHERS.includes(relative),
+    });
+  });
+});
+
+/*
+ * L-9b: the Costs sections and the leak panel on the standard (G-6). Each rule
+ * is proved on a planted string it must reject, as G-1 to G-5.
+ */
+describe('L-9b: the Costs sections and the leak panel on the admin layout standard (G-6)', () => {
+  const COSTS_DIR = `${ROOT}/components/costs/`;
+  const costsFiles = allFiles.filter((relative) => relative.startsWith(COSTS_DIR));
+
+  /** T-5: information text is slate-400, never slate-500. */
+  const SLATE_500 = /\btext-slate-500\b/;
+  /** F-71: no local table constants (the shared `ADMIN_TH*` / `ADMIN_TD*` are the only ones). */
+  const LOCAL_TABLE_CONST = /\bconst\s+(TH|TD)(_NUM)?\s*=/;
+  /** F-71: no class string that is both a number cell (right-aligned or tabular) and monospace. */
+  const MONO_NUMBER =
+    /['"`][^'"`\n]*\bfont-mono\b[^'"`\n]*\b(text-right|tabular-nums)\b|['"`][^'"`\n]*\b(text-right|tabular-nums)\b[^'"`\n]*\bfont-mono\b/;
+  /** §4.17: the hand-made status pill map gave way to `StatusChip`. */
+  const STATUS_CLASS = /\bSTATUS_CLASS\b/;
+
+  it('G-6: the rules catch planted slate-500, a local number cell, a monospace number class and STATUS_CLASS', () => {
+    expect(SLATE_500.test('<p className="text-xs text-slate-500">')).toBe(true);
+    expect(SLATE_500.test('<p className="text-xs text-slate-400">')).toBe(false);
+    expect(LOCAL_TABLE_CONST.test("const TD_NUM = 'px-3 py-2 text-right font-mono text-slate-200';")).toBe(true);
+    expect(LOCAL_TABLE_CONST.test('const ADMIN_TD_NUM_LOCAL = ADMIN_TD_NUM;')).toBe(false);
+    expect(MONO_NUMBER.test("'px-3 py-2 text-right font-mono text-slate-200'")).toBe(true);
+    expect(MONO_NUMBER.test('`${ADMIN_TD} font-mono tabular-nums`')).toBe(true);
+    expect(MONO_NUMBER.test('`${ADMIN_TD} font-mono`')).toBe(false);
+    expect(STATUS_CLASS.test('const STATUS_CLASS: Record<string, string> = {};')).toBe(true);
+  });
+
+  it('G-6: walks the costs folder, the sections and the leak panel included', () => {
+    expect(costsFiles).toContain(`${COSTS_DIR}CostsSections.tsx`);
+    expect(costsFiles).toContain(`${COSTS_DIR}LeakCheckPanel.tsx`);
+  });
+
+  it.each(costsFiles)('G-6: %s has no slate-500, no local or monospace number cell, and no STATUS_CLASS', (relative) => {
+    const code = codeOf(read(relative));
+    expect({
+      file: relative,
+      slate500: SLATE_500.test(code),
+      localTableConst: LOCAL_TABLE_CONST.test(code),
+      monoNumber: MONO_NUMBER.test(code),
+      statusClass: STATUS_CLASS.test(code),
+    }).toEqual({ file: relative, slate500: false, localTableConst: false, monoNumber: false, statusClass: false });
+  });
+});
+
+/*
+ * L-10: the Settings tab on the admin layout standard (G-7, G-8). Each rule is
+ * proved on a planted string it must reject, as G-1 to G-6.
+ */
+describe('L-10: the Settings tab on the admin layout standard (G-7)', () => {
+  /**
+   * G-7 (SA M-2). WALKED, not listed: `page.tsx` plus every file directly
+   * under `components/` (its subfolders belong to G-3, G-5 and G-6), so a
+   * Settings component added later is covered. Two named exclusions: the
+   * parked `LedgerCheckPanel.tsx` (F-123, slice 3's) and `Chip.tsx`, which
+   * only Activity's `RecordStateMarker` still uses (F-116).
+   */
+  const COMPONENTS_DIR = `${ROOT}/components/`;
+  const EXCLUDED = [`${COMPONENTS_DIR}LedgerCheckPanel.tsx`, `${COMPONENTS_DIR}Chip.tsx`];
+  const settingsFiles = allFiles.filter(
+    (relative) =>
+      relative === `${ROOT}/page.tsx` ||
+      (relative.startsWith(COMPONENTS_DIR) &&
+        !relative.slice(COMPONENTS_DIR.length).includes('/') &&
+        !EXCLUDED.includes(relative)),
+  );
+
+  /** T-5: information text is slate-400; slate-500 and slate-600 text are refused. */
+  const DIM_TEXT = /\btext-slate-(500|600)\b/;
+  /** §5.9: the page's own chip gave way to the shared StatusChip. */
+  const OWN_CHIP_IMPORT = /from\s+['"]\.\.?\/Chip['"]/;
+  /** C-5: times through the shared `formatUtc`. */
+  const FORMAT_INSTANT = /\bformatInstant\b/;
+  const FETCH_CALL = /(^|[^\w.])fetch\s*\(/;
+
+  it('G-7: the rules catch planted dim text, the own chip, formatInstant and a fetch; not a border or slate-400', () => {
+    expect(DIM_TEXT.test('<p className="text-xs text-slate-500">')).toBe(true);
+    expect(DIM_TEXT.test('<span className="text-[11px] text-slate-600">')).toBe(true);
+    expect(DIM_TEXT.test("neutral: 'bg-slate-700/60 text-slate-200 border-slate-600/60'")).toBe(false);
+    expect(DIM_TEXT.test('<p className="text-xs text-slate-400">')).toBe(false);
+    expect(OWN_CHIP_IMPORT.test("import { Chip } from './Chip';")).toBe(true);
+    expect(OWN_CHIP_IMPORT.test("import { Chip } from '../Chip';")).toBe(true);
+    expect(OWN_CHIP_IMPORT.test("import { StatusChip } from '@/app/admin/components/layout/StatusChip';")).toBe(false);
+    expect(FORMAT_INSTANT.test("import { formatInstant } from '../format';")).toBe(true);
+    expect(FETCH_CALL.test("await fetch('/api/admin/business-os/llm-settings')")).toBe(true);
+  });
+
+  it('G-7: walks page.tsx and the components directly under components/, the cards and the strip included', () => {
+    expect(settingsFiles).toContain(`${ROOT}/page.tsx`);
+    expect(settingsFiles).toContain(`${COMPONENTS_DIR}AreaCard.tsx`);
+    expect(settingsFiles).toContain(`${COMPONENTS_DIR}CallRow.tsx`);
+    expect(settingsFiles).toContain(`${COMPONENTS_DIR}SettingsKpis.tsx`);
+    for (const excluded of EXCLUDED) expect(settingsFiles).not.toContain(excluded);
+    expect(settingsFiles.some((relative) => relative.startsWith(`${COMPONENTS_DIR}costs/`))).toBe(false);
+  });
+
+  it.each(settingsFiles)('G-7: %s has no dim text, no own chip, no formatInstant, and fetches only if it is page.tsx', (relative) => {
+    const code = codeOf(read(relative));
+    expect({
+      file: relative,
+      dimText: DIM_TEXT.test(code),
+      ownChip: OWN_CHIP_IMPORT.test(code),
+      formatInstant: FORMAT_INSTANT.test(code),
+      fetch: FETCH_CALL.test(code),
+    }).toEqual({
+      file: relative,
+      dimText: false,
+      ownChip: false,
+      formatInstant: false,
+      fetch: relative === `${ROOT}/page.tsx`,
+    });
+  });
+});
+
+describe('L-10: no direct body read on the page, one parked exception that expires (G-8)', () => {
+  /**
+   * G-8 (SA M-3). F-67 is closed for the mounted page: no file in the folder
+   * calls `.json(` except the parked ledger panel (F-123). The exception
+   * cannot come back on screen (no other file names the panel in code), and
+   * it expires loudly: the day slice 3 moves the panel onto `readJsonBody`,
+   * case (c) fails and `PARKED_JSON` must be emptied (the L-9a pattern).
+   */
+  const PARKED_JSON = [`${ROOT}/components/LedgerCheckPanel.tsx`];
+  const JSON_CALL = /\.json\s*\(/;
+  const NAMES_PANEL = /\bLedgerCheckPanel\b/;
+
+  it('G-8: the rules catch a planted body read and a planted mount of the panel', () => {
+    expect(JSON_CALL.test('const body = await response.json();')).toBe(true);
+    expect(JSON_CALL.test('JSON.stringify(area.storedRow, null, 2)')).toBe(false);
+    expect(NAMES_PANEL.test("import { LedgerCheckPanel } from './LedgerCheckPanel';")).toBe(true);
+    expect(NAMES_PANEL.test('<LedgerCheckPanel area={area} since={since} />')).toBe(true);
+  });
+
+  it.each(allFiles)('G-8 (a): %s reads no body directly unless it is the parked panel', (relative) => {
+    const code = codeOf(read(relative));
+    expect({ file: relative, json: JSON_CALL.test(code) }).toEqual({
+      file: relative,
+      json: PARKED_JSON.includes(relative),
+    });
+  });
+
+  it.each(allFiles.filter((relative) => !PARKED_JSON.includes(relative)))(
+    'G-8 (b): %s does not name the parked panel in code',
+    (relative) => {
+      expect({ file: relative, names: NAMES_PANEL.test(codeOf(read(relative))) }).toEqual({
+        file: relative,
+        names: false,
+      });
+    },
+  );
+
+  it('G-8 (c): the exception holds exactly one file, and that file still reads with .json( (else delete it)', () => {
+    expect(PARKED_JSON).toHaveLength(1);
+    expect(JSON_CALL.test(codeOf(read(PARKED_JSON[0])))).toBe(true);
+  });
+});

@@ -3,8 +3,9 @@
 /**
  * The filter bar's business picker (Admin Layout Standard C-6, §5.5 parts 3
  * and 7), generalised by L-1e from `app/admin/audit-trail/BusinessAccountPicker.tsx`.
- * That original stays, unedited, for Activity and Finance until their own
- * slices; L-8 deletes it (R-11). The picker contract test covers both (RC-7).
+ * That original stays, unedited, for Finance only: L-8a moved Activity onto
+ * this picker, and the finance adoption slice deletes the original when it
+ * moves Finance here (SA M-2 on L-8). The picker contract test covers both (RC-7).
  *
  * The list comes from the EXISTING `GET /api/admin/business-os/llm-usage/businesses`
  * (admin-gated, repository-backed, logs neither the search text nor the names),

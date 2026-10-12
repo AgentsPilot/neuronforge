@@ -17,6 +17,18 @@
  * on each re-read, and the URL is re-parsed only when the incoming string
  * differs from it.
  *
+ * `active` (L-9a, F-113: two tabs on one page that own the same keys). Default
+ * `true`, which is exactly the behaviour above. A page that keeps a hidden tab
+ * mounted passes `active: false` for it, and that tab's hook then neither
+ * re-reads nor writes: the address bar describes the visible tab only, and the
+ * page owns the keys while the tab is hidden. An inactive MOUNT takes the
+ * defaults without parsing (a tab mounted by a click renders once with the
+ * previous tab's `useSearchParams` string, because Next delivers the page's
+ * own write in a later transition render). On becoming active the incoming
+ * string is adopted as `lastKnown` WITHOUT parsing (the tab's own state wins;
+ * the page has just written it), and the projection is written once only if
+ * the address bar lacks it. Becoming inactive does nothing.
+ *
  * This is the only file in the shared folder allowed to write history (S-6).
  */
 
@@ -141,32 +153,54 @@ function projectSearch<S>(spec: AdminFilterSpec<S>, filters: S, current: string)
  * `spec` must be a module-level constant: the hook relies on its identity being
  * stable, and an inline spec would re-run `setFilters` and both effects on every render.
  */
-export function useAdminFilters<S extends object>(spec: AdminFilterSpec<S>): AdminFilters<S> {
+export function useAdminFilters<S extends object>(
+  spec: AdminFilterSpec<S>,
+  /** L-9a (F-113): `active` false while the page shows another tab owning the same keys. Default true. */
+  options?: { active?: boolean },
+): AdminFilters<S> {
+  // Read once as a primitive (SA S-2): an inline `{ active }` is a new object
+  // every render, so only the boolean may sit in effect dependencies.
+  const active = options?.active ?? true;
   // Null outside the App Router (e.g. a unit test): every field takes its default and nothing is written.
   const searchParams = useSearchParams();
   const incoming = searchParams ? searchParams.toString() : null;
 
-  const [filters, setState] = useState<S>(() => parseAll(spec, searchParams));
+  // An inactive mount does not parse: its string may be the previous tab's (see the header).
+  const [filters, setState] = useState<S>(() => (active ? parseAll(spec, searchParams) : defaultsOf(spec)));
   const lastKnown = useRef<string | null>(incoming);
   // Counts outside changes; see the write effect's dependencies (QA E-1).
   const [rereads, setRereads] = useState(0);
+  // The previous `active`, so the re-read effect can tell the false-to-true edge.
+  const wasActive = useRef(active);
 
   // Re-read only on an outside change (SA M-1): our own write was recorded in
   // lastKnown just before it happened, so its echo is skipped. Every field is
   // re-parsed, page-only included, so opening a URL reproduces its view.
+  // Declared BEFORE the write effect (SA S-2): on activation the incoming
+  // string is adopted here first, then the write effect runs in the same commit.
   useEffect(() => {
+    const activated = active && !wasActive.current;
+    wasActive.current = active;
+    // Inactive: the string is neither parsed nor recorded (the page owns the keys).
+    if (!active) return;
+    if (activated) {
+      // Adopt without parsing: the tab's own state wins over what it sees now.
+      lastKnown.current = incoming;
+      return;
+    }
     if (incoming === null || incoming === lastKnown.current) return;
     lastKnown.current = incoming;
     const next = parseAll(spec, new URLSearchParams(incoming));
     setState((prev) => mergeKeepingIdentity(spec, prev, next));
     setRereads((n) => n + 1);
-  }, [incoming, spec]);
+  }, [incoming, spec, active]);
 
   // Write the projection (U-2). One path covers the mount rewrite of aliases,
   // the clean-up of invalid values and page-only keys, and every later change.
+  // `active` is a dependency so the activation edge writes once when needed.
   const hasRouter = searchParams !== null;
   useEffect(() => {
-    if (!hasRouter) return;
+    if (!hasRouter || !active) return;
     const { pathname, search, hash } = window.location;
     const nextSearch = projectSearch(spec, filters, search);
     const url = `${pathname}${nextSearch ? `?${nextSearch}` : ''}${hash}`;
@@ -181,7 +215,7 @@ export function useAdminFilters<S extends object>(spec: AdminFilterSpec<S>): Adm
     // alias. The re-read effect bumps it in the same batch as its `setState`,
     // so an outside change that DOES alter the state still runs this effect
     // once, and the mount and Next's echo of our own write never bump it.
-  }, [filters, spec, hasRouter, rereads]);
+  }, [filters, spec, hasRouter, rereads, active]);
 
   const setFilters = useCallback(
     (patch: Partial<S>) => setState((prev) => mergeKeepingIdentity(spec, prev, patch)),

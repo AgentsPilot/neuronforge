@@ -49,6 +49,23 @@
  *
  * Amended by L-5: Plans & entitlements joins the registry; no rule change and
  * no shared source change.
+ *
+ * Amended by L-6: Signup Invites joins the registry; no rule change and no
+ * shared source change. Its `EnforcementNote.tsx` is not listed: the user
+ * removed the note (D-18), so the file no longer exists.
+ *
+ * Amended by L-7: Messages joins the registry; no rule change and no shared
+ * source change. Its `messagesTypes.ts` is not listed: no markup and no read.
+ *
+ * Amended by L-8b: `useDrawerResource.ts` joins the expected files (E-10); no
+ * rule change. The hook never fetches and never reads a body (the page's own
+ * `read` does both, SA Q-9), so L-1e F-1 and S-6 hold for it unchanged. The
+ * Business OS AI page does not join the registry yet (deferred to L-10, SA Q-3).
+ *
+ * Amended by L-10: Business OS AI joins the registry as one entry for its
+ * three tabs; no rule change and no shared source change. The parked
+ * `LedgerCheckPanel.tsx` (still `.json(`, F-123) and `Chip.tsx` are left out
+ * by name, with the reason beside the entry.
  */
 
 import * as fs from 'fs';
@@ -98,6 +115,7 @@ const EXPECTED_SOURCES = [
   'readAdminResponse.ts',
   'readJsonBody.ts',
   'useAdminFilters.ts',
+  'useDrawerResource.ts',
 ].map((name) => `${LAYOUT_DIR}/${name}`);
 
 // ── Rule helpers (each proved by a self-test below) ─────────────────────────
@@ -494,7 +512,8 @@ const MIGRATED_PAGES = [
     // G-6. The original `BusinessAccountPicker.tsx` is deliberately not listed:
     // it is unmigrated (it still calls `.json(`), and since L-1e it is no longer
     // on this page (the shared `AdminBusinessPicker` replaced it). It stays in
-    // the folder for Activity and Finance until L-8 deletes it (R-11).
+    // the folder for Finance only (Activity left it in L-8a); the finance
+    // adoption slice deletes it (SA M-2 on L-8).
     page: '/admin/audit-trail (Audit trail)',
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },
@@ -558,6 +577,80 @@ const MIGRATED_PAGES = [
       'app/admin/business-os-tiers/components/PlanCard.tsx',
       'app/admin/business-os-tiers/components/NotBuiltPanel.tsx',
       'app/admin/business-os-tiers/components/EnforcementBanner.tsx',
+    ],
+  },
+  {
+    // L-6: header with "New invite" and the plan-enforcement badge, the KPI
+    // strip (no-target tiles), the filter bar with page-held filters (never the
+    // URL, D-7 (a)), states, the standard table and chips; the create and
+    // revoke reads on `readJsonBody`. `types.ts` and `inviteFilter.ts` are not
+    // listed: no markup and no read (the L-5 precedent).
+    page: '/admin/business-os-invites (Signup Invites)',
+    files: [
+      'app/admin/business-os-invites/page.tsx',
+      'app/admin/business-os-invites/components/InviteKpis.tsx',
+      'app/admin/business-os-invites/components/InviteFilters.tsx',
+      'app/admin/business-os-invites/components/InviteList.tsx',
+      'app/admin/business-os-invites/components/RevokeDialog.tsx',
+      'app/admin/business-os-invites/components/CreateInviteForm.tsx',
+      'app/admin/business-os-invites/components/CreatedLinkPanel.tsx',
+    ],
+  },
+  {
+    // L-7: header with Mark All Read, the filter bar (Status in the URL, Search
+    // page-held), states, the standard table and chips, the page-level drawer;
+    // the Reply control removed (D-14 (b)). The list's 200 is read with
+    // `readJsonBody` (F-111). `messagesTypes.ts` is not listed: no markup, no read.
+    page: '/admin/messages (Messages)',
+    files: [
+      'app/admin/messages/page.tsx',
+      'app/admin/messages/messagesFilters.ts',
+      'app/admin/messages/messagesFormat.ts',
+      'app/admin/messages/components/MessagesTable.tsx',
+      'app/admin/messages/components/MessageDetail.tsx',
+    ],
+  },
+  {
+    // L-8a / L-8b (header, tabs, Activity), L-9a / L-9b (Costs & credits),
+    // L-10 (Settings): one entry for the page's three tabs (SA L-10 Q-10). The
+    // filter-spec modules are listed because they import the shared folder
+    // (SA L-10 M-4). Deliberately NOT listed (the G-6 precedent):
+    // `components/LedgerCheckPanel.tsx`, parked since 2026-09-24 and not
+    // mounted, still reads with `.json(` (F-123, slice 3 re-mounts and
+    // converts it; the page's own source guard G-8 pins that it stays off
+    // screen); `components/Chip.tsx`, now used only by Activity's
+    // `RecordStateMarker` (F-116); and modules with no markup and no read
+    // (`types.ts`, `copy.ts`, the `*Copy.ts` and `*Types.ts` files, `format.ts`,
+    // `costFormat.ts`, `markers.ts`, `areaState.ts`, `activityPresets.ts`).
+    page: '/admin/business-os-llm (Business OS AI)',
+    files: [
+      'app/admin/business-os-llm/page.tsx',
+      'app/admin/business-os-llm/activityFilters.ts',
+      'app/admin/business-os-llm/costsFilters.ts',
+      'app/admin/business-os-llm/tabWindowFilter.ts',
+      'app/admin/business-os-llm/components/SettingsKpis.tsx',
+      'app/admin/business-os-llm/components/AreaCard.tsx',
+      'app/admin/business-os-llm/components/CallRow.tsx',
+      'app/admin/business-os-llm/components/ExcludedCallRow.tsx',
+      'app/admin/business-os-llm/components/StoredRowPanel.tsx',
+      'app/admin/business-os-llm/components/LastChangedLine.tsx',
+      'app/admin/business-os-llm/components/Marker.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityTab.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityKpis.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityFilterBar.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityTable.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityCountLine.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityDrillDown.tsx',
+      'app/admin/business-os-llm/components/activity/DrillDownCharges.tsx',
+      'app/admin/business-os-llm/components/activity/AuditSummaryLine.tsx',
+      'app/admin/business-os-llm/components/activity/CutoverNotice.tsx',
+      'app/admin/business-os-llm/components/activity/DeletedAccountsBucket.tsx',
+      'app/admin/business-os-llm/components/activity/RecordStateMarker.tsx',
+      'app/admin/business-os-llm/components/costs/CostsTab.tsx',
+      'app/admin/business-os-llm/components/costs/CostsKpis.tsx',
+      'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
+      'app/admin/business-os-llm/components/costs/CostsSections.tsx',
+      'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
     ],
   },
 ] as const;

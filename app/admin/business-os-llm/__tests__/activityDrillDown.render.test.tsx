@@ -38,6 +38,7 @@ import {
 } from '../activityCopy';
 import type { ActivityPayload, ActivityRow } from '../activityTypes';
 import type { ActivityDrillDownCharge, ActivityDrillDownPayload } from '../activityDrillDownTypes';
+import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const ACTION_1 = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
@@ -404,7 +405,10 @@ describe('not found and errors', () => {
     await act(async () => {
       fireEvent.click(screen.getAllByTestId('activity-open-details')[0]);
     });
-    expect(await screen.findByTestId('drill-down-error')).toHaveTextContent('offline');
+    // L-8b E-5: the shared words (§5.10 rule 3), never the browser's own text.
+    const error = await screen.findByTestId('drill-down-error');
+    expect(error).toHaveTextContent(ADMIN_NETWORK_ERROR);
+    expect(error).not.toHaveTextContent('offline');
   });
 });
 
@@ -474,14 +478,16 @@ describe('SA-CR-B2a-1: the close button stays visible on the admin palette', () 
 });
 
 describe('sections are named by their own heading (aria-labelledby)', () => {
-  it('each section is a region labelled by its heading id, with no duplicate aria-label', async () => {
+  it('each section is a named group labelled by its heading id, with no duplicate aria-label', async () => {
     stub(okDrill(drillDown()));
     await openFirstRow();
     const action = await screen.findByTestId('drill-down-action');
     const heading = within(action).getByRole('heading', { name: DRILL_DOWN_SECTIONS.action });
     expect(action).toHaveAttribute('aria-labelledby', heading.id);
     expect(action).not.toHaveAttribute('aria-label');
-    expect(screen.getByRole('region', { name: DRILL_DOWN_SECTIONS.group })).toBe(screen.getByTestId('drill-down-group'));
+    // L-8b E-6: the shared `DrawerSection` is a named group, not a region (A-9).
+    expect(screen.getByRole('group', { name: DRILL_DOWN_SECTIONS.group })).toBe(screen.getByTestId('drill-down-group'));
+    expect(within(screen.getByRole('dialog')).queryAllByRole('region')).toHaveLength(0);
   });
 });
 

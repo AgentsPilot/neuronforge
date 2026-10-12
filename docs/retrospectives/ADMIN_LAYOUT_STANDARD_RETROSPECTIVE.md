@@ -1,6 +1,6 @@
 # Retrospective: Admin Layout Standard
 
-> **Last Updated**: 2026-10-11
+> **Last Updated**: 2026-10-12
 
 ## Overview
 
@@ -262,3 +262,161 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Cross-check any new KPI colour rule against the Health page's rule for the same fact before building it.
 
 ### Status: COMMITTED — feature/admin-layout-l5 — 0e40bd0c, PR #310
+
+---
+
+## L-6: Signup Invites — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-6 workplan](/docs/workplans/ADMIN_LAYOUT_L6_WORKPLAN.md)
+
+### What went well
+- The user removed the outdated "internal demos only" note (D-18); SA found the note also carried one true, live fact (plans not enforced) required by the invite-signup GR-5 rule, and kept it as a neutral header chip — nothing true was lost.
+- The shown-once invite link is protected by a new transitive import walker (G-7) that proves no Invites file can reach URL, history or storage code; SA cross-checked it with an independent TypeScript-based walker.
+- QA's create → filter → refresh → four failure kinds → retry → remount sequence confirmed the link never leaves memory.
+- Twenty-five mutation checks bit, including four added for the pre-commit fixes.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-5; code approved with two Low guard hardenings, folded in).
+- Number of Dev ↔ QA bug fix cycles: 1 small (QA-1: a plain-object lookup of the server's mode word could crash the badge on a prototype key) — fixed with Object.hasOwn before commit.
+- Focus after "Try again" / "Clear filters" still falls to the page body on every migrated page (shared states) — the shared follow-up keeps growing.
+
+### Conclusions & process improvements
+- Any lookup keyed by a server-supplied string uses Object.hasOwn — add to the standard's coding notes.
+- Do the shared "Try again" focus fix soon; it now affects every page.
+
+### Status: COMMITTED — feature/admin-layout-l6 — 4d241b1e, PR #315
+
+---
+
+## L-7: Messages — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-7 workplan](/docs/workplans/ADMIN_LAYOUT_L7_WORKPLAN.md)
+
+### What went well
+- Characterisation first: the page had no tests, so Dev pinned today's behaviour (B-1..B-15) green on the unchanged page before migrating, and the final diff against that baseline contains only the four planned flips.
+- The broken Reply (D-14 b) is gone entirely — no dead code, no reply route call; routes untouched.
+- User decision D-19: failed saves, read changes and deletes now say so in plain words, without ever reading the route's error body.
+- The six console.error calls in the page were converted to the client logger with facts-only context (CLAUDE.md logging rule).
+- Dev caught that the list route answers without a success flag, so the shared helper would have shown every good read as a failure; handled in the page and recorded (F-111).
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Focus after an action removes its own button (Delete, Mark All Read, Try again) still falls to the page body — part of the shared focus follow-up.
+
+### Conclusions & process improvements
+- Pages with no tests get a characterisation suite before any layout change; it made the review of a 780-line rewrite mechanical.
+
+### Status: COMMITTED — feature/admin-layout-l7 — 07198656, PR #316
+
+---
+
+## L-8a: Business OS AI header, tabs and Activity tab (without the drawer) — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-8 workplan](/docs/workplans/ADMIN_LAYOUT_L8_WORKPLAN.md)
+
+### What went well
+- The planned deletion of the original business picker was stopped at planning: the finance page (another session) still imports it, so it moves to the finance adoption slice instead of breaking that page.
+- SA caught that switching tabs would look like an outside URL change to the Activity filters and start a read; fixed by keeping value equality on the window field and pinned by a test that bites only with a window key in the URL (M-1).
+- The page's own ?tab= writer moved to the same history mechanism as the shared hook, so tile links built from the URL stay correct.
+- QA's tab-switch probes (nine clicks, both directions, mouse and keyboard, every filter applied) sent zero extra reads; one Low edge (a malformed minimum cost) was fixed in the bar before commit.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 1 small (QA-L8a-1) — fixed before commit; the SA code-review assumption it contradicted is recorded as superseded.
+- The slice ran to about 4.8 days planned, so it was split (L-8a / L-8b).
+
+### Conclusions & process improvements
+- When a page holds several tabs with their own filters, design the URL coexistence rule before the second tab adopts the hook (SA direction recorded for L-9).
+
+### Status: COMMITTED — feature/admin-layout-l8 — f67ece30, PR #319
+
+---
+
+## L-8b: Business OS AI Activity drawer on the shared drawer + useDrawerResource — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-8 workplan](/docs/workplans/ADMIN_LAYOUT_L8_WORKPLAN.md)
+
+### What went well
+- The original template drawer now runs on the shared one; every section, heading and test id kept, and the light-mode title and close-button fixes (F-65, F-66) now apply to Activity too.
+- The new shared hook for drawers that fetch their own data was specified tightly at workplan stage (SA M-4: answers carry their key, so a stale frame can never show under a new title); QA's frame recorder confirmed it.
+- Dev questioned the close-when-gone rule instead of applying it blindly; SA agreed and wrote the distinction into the standard (§5.8 D-7): a drawer showing a loaded row closes when the row goes, a self-fetching drawer stays on its own data.
+- TL folded in QA's E-2 before commit: a read that throws synchronously now shows the network sentence instead of unmounting the page (test H-4b; mutation confirmed it bites).
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (approved; one deviation accepted and recorded).
+- Number of Dev ↔ QA bug fix cycles: 0 (E-2 hardening done by TL).
+- TL's first attempt at the E-2 guard delayed the read by one tick and broke 12 hook tests; caught immediately by the suite and replaced with a same-tick try/catch.
+
+### Conclusions & process improvements
+- Shared hooks get defensive handling of caller mistakes from their first consumer, since later pages reuse them without review of the hook itself.
+
+### Status: COMMITTED — feature/admin-layout-l8b — 597ad7b6, PR #320
+
+---
+
+## L-9a: Business OS AI Costs filters, KPI strip and tab/URL coexistence — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-9 workplan](/docs/workplans/ADMIN_LAYOUT_L9_WORKPLAN.md)
+
+### What went well
+- The hardest shared change of the series — two tabs owning the same address bar — was designed against Next's delayed URL sync (a lagging test harness reproduces it) and behind an opt-in flag, so the five other pages using the hook stayed unchanged (compared suite by suite).
+- SA traced the design end to end at workplan stage and kept KPI tiles neutral when the report is incomplete rather than turning five tiles amber (M-1).
+- QA walked every tab order three ways (instant, lagging, never-catching-up URL): one write per switch, no reads, filters restored.
+- The leak-check production rule was narrowed to a single one-business, one-day read instead of the 45-second every-business walk.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-3; code approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Dev rewrote CostsTab.tsx with a whole-file write against instructions; TL and SA both checked it line by line against HEAD — nothing lost, but the rule exists because a rewrite once blanked a file.
+- The two real-browser checks that prove the Next URL sync (L9-B4, L9-B5) are still owed.
+
+### Conclusions & process improvements
+- Shared-hook changes ship behind an opt-in with the default path proven identical by per-suite comparison.
+
+### Status: COMMITTED — feature/admin-layout-l9 — 57132b85, PR #321
+
+---
+
+## L-9b: Business OS AI Costs sections and leak-check panel restyle — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-9 workplan](/docs/workplans/ADMIN_LAYOUT_L9_WORKPLAN.md)
+
+### What went well
+- Small, mechanical slice after the hard L-9a: seven tables onto the shared table style, chips with icons, UTC times, and the leak check's raw machine code and parser messages replaced by plain sentences — with the leak-check request byte-identical to before.
+- The temporary JSON exception from L-9a was removed on schedule, and a new guard (G-6) keeps local table constants and mono number cells from coming back.
+- SA declined to fold an extra cosmetic item (F-120) into the slice: outside the approved plan, untested, and a layout question of its own.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Browser checks still owed, including the one allowed production leak-check run.
+
+### Conclusions & process improvements
+- Splitting a hard shared change (L-9a) from its follow-on restyle (L-9b) kept both reviews short.
+
+### Status: COMMITTED — feature/admin-layout-l9b — fa599c13, PR #322
+
+---
+
+## L-10: Business OS AI Settings tab (plus F-120 Costs notices) — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-10 workplan](/docs/workplans/ADMIN_LAYOUT_L10_WORKPLAN.md)
+
+### What went well
+- Read-only confirmed against routes and code before any edit; the settings request on the wire is unchanged.
+- No shared source change: the slice reused existing building blocks, so it stayed on the UI short path.
+- Guards were written to walk folders rather than list files (G-7/G-8), and the parked panel's exception is set to fail once its owner converts it.
+- F-120 landed as its own two-file commit, as SA required.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 1 (workplan conditions M-1..M-6; code review fixes F-1..F-3, all test or doc only).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- QA's temporary HEAD copy of page.tsx sat inside the guarded folder during the parallel SA review and was flagged as a stray file. Probes that copy source files should live outside guarded folders.
+- An unrelated flaky insight test turned #322 red in CI; re-run, and a separate fix task proposed.
+- Browser checks still owed.
+
+### Conclusions & process improvements
+- When SA and QA run in parallel, QA writes probe copies outside folders that guards walk.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)

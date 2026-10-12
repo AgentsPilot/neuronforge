@@ -17,6 +17,13 @@
  * the standard five, kept as a page's own buttons. They are opt-in per page
  * (`windowFilter({ extras })`, `DatePresets extras`), so a page that lists none
  * still ignores `range=90d` (U-4).
+ *
+ * L-8a adds Business OS AI Activity's four (D-2 (b), U-6 names): `yesterday`,
+ * `this_week`, `last_week`, `last_month`, resolved to whole UTC dates with ISO
+ * weeks (Monday to Sunday), exactly as that page's own `activityPresets.ts`
+ * did. The resolution is copied here, not imported, because the shared folder
+ * may not import a page folder (S-3); a parity test beside the existing one in
+ * `app/admin/components/__tests__/` pins the two equal.
  */
 
 import {
@@ -38,12 +45,16 @@ export type AdminWindowValue =
   | { kind: 'extra'; extra: AdminWindowExtra };
 
 /** Only what a page keeps today (D-2 (b)); a later page adds its own here. */
-export const ADMIN_WINDOW_EXTRAS = ['24h', '90d'] as const;
+export const ADMIN_WINDOW_EXTRAS = ['24h', '90d', 'yesterday', 'this_week', 'last_week', 'last_month'] as const;
 export type AdminWindowExtra = (typeof ADMIN_WINDOW_EXTRAS)[number];
 
 export const ADMIN_WINDOW_EXTRA_LABELS: Readonly<Record<AdminWindowExtra, string>> = {
   '24h': '24 hours',
   '90d': '90 days',
+  yesterday: 'Yesterday',
+  this_week: 'This week',
+  last_week: 'Last week',
+  last_month: 'Last month',
 };
 
 export const ADMIN_WINDOW_LABELS: Readonly<Record<AdminWindowPreset | 'custom', string>> = {
@@ -172,6 +183,36 @@ export type ResolvedWindow =
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const isoDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * The four whole-date extras (L-8a). UTC, weeks Monday to Sunday; the same
+ * arithmetic as `app/admin/business-os-llm/activityPresets.ts` (parity-tested).
+ */
+function resolveDateExtra(
+  extra: 'yesterday' | 'this_week' | 'last_week' | 'last_month',
+  now: Date,
+): { from: string; to: string } {
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  // Monday = 0 … Sunday = 6 (getUTCDay is Sunday = 0).
+  const daysSinceMonday = (new Date(today).getUTCDay() + 6) % 7;
+  const monday = today - daysSinceMonday * DAY_MS;
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  switch (extra) {
+    case 'yesterday':
+      return { from: isoDate(today - DAY_MS), to: isoDate(today - DAY_MS) };
+    case 'this_week':
+      return { from: isoDate(monday), to: isoDate(today) };
+    case 'last_week':
+      return { from: isoDate(monday - 7 * DAY_MS), to: isoDate(monday - DAY_MS) };
+    case 'last_month':
+      // Day 0 of this month is the last day of the previous one; Date.UTC rolls
+      // a negative month back into the previous year.
+      return { from: isoDate(Date.UTC(year, month - 1, 1)), to: isoDate(Date.UTC(year, month, 0)) };
+  }
+}
+
 export function resolveWindow(value: AdminWindowValue, now: Date): ResolvedWindow {
   switch (value.kind) {
     case 'none':
@@ -185,6 +226,9 @@ export function resolveWindow(value: AdminWindowValue, now: Date): ResolvedWindo
     case 'linked':
       return { kind: 'linked', from: value.from, to: value.to };
     case 'extra':
+      if (value.extra !== '24h' && value.extra !== '90d') {
+        return { kind: 'dates', ...resolveDateExtra(value.extra, now) };
+      }
       if (value.extra === '90d') {
         // The last 90 UTC calendar days including today (U-8), as Costs' 90 days.
         const to = todayUtc(now);

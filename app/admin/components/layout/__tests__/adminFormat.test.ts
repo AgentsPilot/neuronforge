@@ -7,6 +7,10 @@
  */
 
 import { formatCount, formatUtc, formatUtcTime } from '@/app/admin/components/layout/adminFormat';
+// Finance slice 2b (AC-74): a separate import, so the line above stays unedited (SA-WR-21).
+import { formatUtcDate } from '@/app/admin/components/layout/adminFormat';
+import * as fs from 'fs';
+import * as path from 'path';
 
 describe('formatUtc', () => {
   it('prints a Z instant as "YYYY-MM-DD HH:mm UTC"', () => {
@@ -50,5 +54,47 @@ describe('formatUtcTime (L-1c, the "Read at" line)', () => {
   it('shows an em dash for null and an invalid value', () => {
     expect(formatUtcTime(null)).toBe('—');
     expect(formatUtcTime('not a date')).toBe('—');
+  });
+});
+
+describe('formatUtcDate (finance slice 2b, AC-74: a date-only value is never moved a day)', () => {
+  const ZONES = ['America/New_York', 'Pacific/Auckland'];
+  const original = process.env.TZ;
+  afterEach(() => {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  });
+
+  it.each(ZONES)('2026-09-30 renders as 2026-09-30 with the process in %s', (zone) => {
+    process.env.TZ = zone;
+    expect(formatUtcDate('2026-09-30')).toBe('2026-09-30');
+    expect(formatUtcDate('2026-01-01')).toBe('2026-01-01');
+    expect(formatUtcDate('2024-02-29')).toBe('2024-02-29');
+  });
+
+  it('non-vacuity: the same date passed through Date really does move a day in those zones', () => {
+    // Midnight UTC is the evening before in New York, and the next day's noon in Auckland is still the 30th:
+    // so the control uses the start and end of the UTC day (dateOnlyIsNotMidnightUTC's method).
+    expect(new Date('2026-09-30').toLocaleDateString('en-CA', { timeZone: 'America/New_York' })).toBe('2026-09-29');
+    expect(new Date('2026-09-30T23:59:00Z').toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' })).toBe('2026-10-01');
+  });
+
+  it('shows an em dash for null, an empty string, a date that does not exist and a timestamp', () => {
+    expect(formatUtcDate(null)).toBe('—');
+    expect(formatUtcDate('')).toBe('—');
+    expect(formatUtcDate('2026-02-30')).toBe('—');
+    expect(formatUtcDate('2026-09-30T00:00:00Z')).toBe('—');
+    expect(formatUtcDate('30/09/2026')).toBe('—');
+  });
+
+  it('its body never builds a Date (no new Date, no Date.parse): the text is returned as it is', () => {
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/admin/components/layout/adminFormat.ts'), 'utf8');
+    const start = code.indexOf('export function formatUtcDate');
+    expect(start).toBeGreaterThan(-1);
+    const body = code.slice(start).split(/\r?\n\}\r?\n/)[0];
+    expect(body).toMatch(/isRealDate/);
+    expect(body).not.toMatch(/new Date|Date\.parse/);
+    // Planted negative control: the rule sees a Date in a body.
+    expect('return new Date(value).toISOString();').toMatch(/new Date|Date\.parse/);
   });
 });

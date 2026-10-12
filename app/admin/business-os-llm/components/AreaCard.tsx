@@ -35,6 +35,8 @@
 
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
+import { StatusChip } from '@/app/admin/components/layout/StatusChip';
+
 import {
   AREA_OFF_CAVEAT,
   ISSUE_GLOSS,
@@ -47,7 +49,6 @@ import { areaOffSummary } from '../areaState';
 import { callsSetPerCall } from '../markers';
 import type { AreaView } from '../types';
 import { CallRow } from './CallRow';
-import { Chip } from './Chip';
 import { ExcludedCallRow } from './ExcludedCallRow';
 import { LastChangedLine } from './LastChangedLine';
 import { StoredRowPanel } from './StoredRowPanel';
@@ -121,6 +122,8 @@ export function AreaCard({ area, expanded, onToggle }: Props) {
   return (
     <article
       data-testid={`area-card-${area.area}`}
+      /* L-10: the target of the Settings KPI anchor tiles (§7.13). */
+      id={`bos-llm-area-${area.area}`}
       className="rounded-xl border border-slate-700 bg-slate-800/40 backdrop-blur"
     >
       <button
@@ -140,31 +143,35 @@ export function AreaCard({ area, expanded, onToggle }: Props) {
             <h3 className="text-sm font-semibold text-white">{area.area}</h3>
 
             {/* FR-2 / FR-16: the chip describes the CONFIGURATION, says so,
-                and renders only in the exception. */}
+                and renders only in the exception.
+
+                L-10 (§5.9): the shared StatusChip, same words and test ids;
+                amber chips gain their icon. The pinned hover text rides on a
+                wrapper span, because StatusChip takes no `title` (L-5
+                precedent). "set per call" is `info`: purple is reserved (T-7). */}
             {areaShowsOff && (
-              <Chip tone="warn" testId="state-chip">
+              <StatusChip tone="warn" testId="state-chip">
                 Configured: off
-              </Chip>
+              </StatusChip>
             )}
 
-            <Chip tone="quiet" testId="call-count-chip">
-              {callCount} {callCount === 1 ? 'call' : 'calls'}
-            </Chip>
+            <StatusChip tone="neutral" testId="call-count-chip">
+              {`${callCount} ${callCount === 1 ? 'call' : 'calls'}`}
+            </StatusChip>
             {setPerCall > 0 && (
-              <Chip tone="accent" title={setPerCallTitle(setPerCall)} testId="set-per-call-chip">
-                {setPerCall} set per call
-              </Chip>
+              <span data-testid="set-per-call-chip" title={setPerCallTitle(setPerCall)}>
+                <StatusChip tone="info">{`${setPerCall} set per call`}</StatusChip>
+              </span>
             )}
             {offCalls > 0 && (
-              <Chip tone="warn" testId="calls-off-chip">
-                {offCalls} {offCalls === 1 ? 'call' : 'calls'} configured off
-              </Chip>
+              <StatusChip tone="warn" testId="calls-off-chip">
+                {`${offCalls} ${offCalls === 1 ? 'call' : 'calls'} configured off`}
+              </StatusChip>
             )}
             {area.areaIssues.length > 0 && (
-              <Chip tone="warn" testId="area-issue-chip">
-                {area.areaIssues.length}{' '}
-                {area.areaIssues.length === 1 ? 'row issue' : 'row issues'}
-              </Chip>
+              <StatusChip tone="warn" testId="area-issue-chip">
+                {`${area.areaIssues.length} ${area.areaIssues.length === 1 ? 'row issue' : 'row issues'}`}
+              </StatusChip>
             )}
           </div>
 
@@ -198,7 +205,7 @@ export function AreaCard({ area, expanded, onToggle }: Props) {
         <div className="space-y-4 border-t border-slate-700 p-4">
           {/* RC-8: this line shared its wrapper with the two notices FR-1 and
               FR-5 deleted, and nothing asserted it. It stays, verbatim. */}
-          <p data-testid="read-only-note" className="text-xs text-slate-500">
+          <p data-testid="read-only-note" className="text-xs text-slate-400">
             {READ_ONLY_NOTE}
           </p>
 
@@ -222,7 +229,7 @@ export function AreaCard({ area, expanded, onToggle }: Props) {
             {/* At the point of use: only one card expands at a time, so exactly
                 one legend is ever on screen. A page-header legend would be far
                 from the marks, read once, then forgotten. */}
-            <p data-testid="marker-legend" className="text-[11px] leading-relaxed text-slate-500">
+            <p data-testid="marker-legend" className="text-[11px] leading-relaxed text-slate-400">
               {MARKER_LEGEND}
             </p>
             {area.calls.map((call) => (

@@ -14,9 +14,28 @@
  * never compares a date to decide whether a link has expired. Slice 1c's filters
  * and email search run in the page (`inviteFilter.ts`); this list renders
  * whatever rows it is given.
+ *
+ * ── Admin Layout Standard L-6 (§5.7, §5.9, §5.11) ───────────────────────────
+ * The standard table: shared classes, unique headers ("Email status", F-40),
+ * "(UTC)" on the date headers, `scope="col"`, a named table. State and email
+ * status are `StatusChip`s (tones ruled by SA L-6 Q-3 / Q-4: Revoked is a
+ * deliberate admin act, so neutral; "Sent (not tracked)" is not a proven
+ * outcome, so info; Unknown keeps its amber prompt to check, so warn). The
+ * revoke form stays inline under its row (D-8): no drawer (SA Q-7).
  */
 
 import { useState } from 'react';
+
+import { AdminEmpty } from '@/app/admin/components/layout/AdminStates';
+import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
+import {
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TH,
+  ADMIN_THEAD,
+} from '@/app/admin/components/layout/adminTable';
 
 import type { InviteEmailStatus, InviteRow, InviteState } from '../types';
 import { RevokeDialog } from './RevokeDialog';
@@ -26,94 +45,100 @@ interface Props {
   onRevoked: (invite: InviteRow) => void;
   /** Slice 1c: "no invites yet" and "nothing matches" are different answers. */
   emptyMessage?: string;
+  /** Set only while a filter is on: the empty state offers "Clear filters" (§5.10). */
+  onClearFilters?: () => void;
 }
 
-const STATE_STYLE: Record<InviteState, { label: string; className: string }> = {
-  pending: { label: 'Pending', className: 'bg-sky-500/20 text-sky-300' },
-  expired: { label: 'Expired', className: 'bg-slate-500/20 text-slate-300' },
-  revoked: { label: 'Revoked', className: 'bg-rose-500/20 text-rose-300' },
-  accepted: { label: 'Accepted', className: 'bg-emerald-500/20 text-emerald-300' },
+const STATE_STYLE: Record<InviteState, { label: string; tone: StatusTone }> = {
+  pending: { label: 'Pending', tone: 'info' },
+  expired: { label: 'Expired', tone: 'neutral' },
+  revoked: { label: 'Revoked', tone: 'neutral' },
+  accepted: { label: 'Accepted', tone: 'ok' },
 };
 
 /** Slice 2a: the invitation email. "Sent" means the provider accepted it, not that it arrived. */
-const EMAIL_STYLE: Record<InviteEmailStatus, { label: string; className: string; title: string }> = {
-  not_emailed: { label: 'Not emailed', className: 'bg-slate-500/20 text-slate-300', title: 'The link was copied, not emailed' },
-  sent: { label: 'Sent', className: 'bg-emerald-500/20 text-emerald-300', title: 'Accepted by the email provider' },
+const EMAIL_STYLE: Record<InviteEmailStatus, { label: string; tone: StatusTone; title: string }> = {
+  not_emailed: { label: 'Not emailed', tone: 'neutral', title: 'The link was copied, not emailed' },
+  sent: { label: 'Sent', tone: 'ok', title: 'Accepted by the email provider' },
   sent_untracked: {
     label: 'Sent (not tracked)',
-    className: 'bg-emerald-500/10 text-emerald-200',
+    tone: 'info',
     title: 'Sent through a fallback transport that reports no delivery',
   },
-  not_sent: { label: 'Not sent', className: 'bg-rose-500/20 text-rose-300', title: 'The email did not go out' },
-  unknown: { label: 'Unknown', className: 'bg-amber-500/20 text-amber-300', title: 'An email was attempted but no result was recorded' },
+  not_sent: { label: 'Not sent', tone: 'danger', title: 'The email did not go out' },
+  unknown: { label: 'Unknown', tone: 'warn', title: 'An email was attempted but no result was recorded' },
 };
 
-/** A calendar date, the same everywhere: the ISO date part, in UTC. */
+/**
+ * A calendar date, the same everywhere: the ISO date part, in UTC (§5.11 date
+ * form). Kept local: the shared `formatUtcDate` stays deferred (SA L-6 Q-6).
+ */
 function day(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '—';
 }
 
-export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.' }: Props) {
+const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
+
+export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.', onClearFilters }: Props) {
   const [revoking, setRevoking] = useState<string | null>(null);
 
   if (invites.length === 0) {
-    return (
-      <p data-testid="invite-list-empty" className="text-sm text-slate-400">
-        {emptyMessage}
-      </p>
-    );
+    return <AdminEmpty testId="invite-list-empty" message={emptyMessage} onClear={onClearFilters} />;
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-700">
-      <table data-testid="invite-list" className="w-full text-left text-sm">
-        <thead className="bg-slate-800/60 text-xs uppercase text-slate-400">
+    <div className={ADMIN_TABLE_WRAP}>
+      <table data-testid="invite-list" aria-label="Invites" className={ADMIN_TABLE}>
+        <thead className={ADMIN_THEAD}>
           <tr>
-            <th className="px-3 py-2">Email</th>
-            <th className="px-3 py-2">Plan</th>
-            <th className="px-3 py-2">Access</th>
-            <th className="px-3 py-2">Invited by</th>
-            <th className="px-3 py-2">Created</th>
-            <th className="px-3 py-2">Link expires</th>
-            <th className="px-3 py-2">State</th>
-            <th className="px-3 py-2">Email</th>
-            <th className="px-3 py-2">First opened</th>
-            <th className="px-3 py-2" />
+            <th scope="col" className={ADMIN_TH}>Email</th>
+            <th scope="col" className={ADMIN_TH}>Plan</th>
+            <th scope="col" className={ADMIN_TH}>Access</th>
+            <th scope="col" className={ADMIN_TH}>Invited by</th>
+            <th scope="col" className={ADMIN_TH}>Created (UTC)</th>
+            <th scope="col" className={ADMIN_TH}>Link expires (UTC)</th>
+            <th scope="col" className={ADMIN_TH}>State</th>
+            <th scope="col" className={ADMIN_TH}>Email status</th>
+            <th scope="col" className={ADMIN_TH}>First opened (UTC)</th>
+            <th scope="col" className={ADMIN_TH}>
+              <span className="sr-only">Actions</span>
+            </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-700/60 text-slate-200">
+        <tbody className={ADMIN_TBODY}>
           {invites.map((invite) => {
             const style = STATE_STYLE[invite.state];
             const emailStyle = invite.emailStatus ? EMAIL_STYLE[invite.emailStatus] : undefined;
             const canRevoke = invite.state === 'pending' || invite.state === 'expired';
             return (
-              <tr key={invite.id} data-testid={`invite-row-${invite.id}`} className="align-top">
-                <td className="px-3 py-2 font-mono text-xs">{invite.email}</td>
-                <td className="px-3 py-2">{invite.grantLabel}</td>
-                <td className="px-3 py-2 text-slate-400">{invite.accessSummary}</td>
-                <td className="px-3 py-2 text-slate-400">
+              <tr key={invite.id} data-testid={`invite-row-${invite.id}`}>
+                <td className={`${ADMIN_TD} font-mono text-xs text-slate-200`}>{invite.email}</td>
+                <td className={`${ADMIN_TD} text-slate-200`}>{invite.grantLabel}</td>
+                <td className={`${ADMIN_TD} text-slate-400`}>{invite.accessSummary}</td>
+                <td className={`${ADMIN_TD} text-slate-400`}>
                   {invite.inviterDisplayName}
                   {invite.issuerKind === 'account' && (
-                    <p data-testid="invite-issuer-account" className="mt-1 text-xs text-slate-500">
+                    <p data-testid="invite-issuer-account" className="mt-1 text-xs text-slate-400">
                       Champion · <span className="font-mono">{invite.issuerAccountId}</span>
                     </p>
                   )}
                 </td>
-                <td className="px-3 py-2 text-slate-400">{day(invite.createdAt)}</td>
-                <td className="px-3 py-2 text-slate-400">
-                  {day(invite.linkExpiresAt)} <span className="text-xs text-slate-500">({invite.linkExpiryDays} days)</span>
+                <td className={`${ADMIN_TD} whitespace-nowrap text-slate-400`}>{day(invite.createdAt)}</td>
+                <td className={`${ADMIN_TD} text-slate-400`}>
+                  <span className="whitespace-nowrap">{day(invite.linkExpiresAt)}</span>{' '}
+                  <span className="text-xs text-slate-400">({invite.linkExpiryDays} days)</span>
                 </td>
-                <td className="px-3 py-2">
-                  <span data-testid="invite-state" className={`rounded px-2 py-0.5 text-xs ${style.className}`}>
+                <td className={ADMIN_TD}>
+                  <StatusChip tone={style.tone} testId="invite-state">
                     {style.label}
-                  </span>
+                  </StatusChip>
                   {invite.state === 'revoked' && invite.revokeReason && (
-                    <p className="mt-1 text-xs text-slate-500">
+                    <p className="mt-1 text-xs text-slate-400">
                       {day(invite.revokedAt)}: {invite.revokeReason}
                     </p>
                   )}
                   {invite.state === 'revoked' && invite.revokedByInviter && (
-                    <p data-testid="invite-revoked-by-inviter" className="mt-1 text-xs text-slate-500">
+                    <p data-testid="invite-revoked-by-inviter" className="mt-1 text-xs text-slate-400">
                       Revoked by the inviter
                     </p>
                   )}
@@ -132,8 +157,11 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
                     </p>
                   )}
                   {invite.redemptionStoppedHalfway && (
-                    <div data-testid="invite-stopped-halfway" className="mt-1 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
-                      <p className="font-medium">Signup stopped halfway</p>
+                    <div
+                      data-testid="invite-stopped-halfway"
+                      className="mt-1 space-y-1 rounded-lg bg-amber-500/10 px-2 py-1 text-xs text-amber-200"
+                    >
+                      <StatusChip tone="warn">Signup stopped halfway</StatusChip>
                       {invite.redemptionFailure ? (
                         <p>
                           Step {invite.redemptionFailure.step}
@@ -159,26 +187,25 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
                     </p>
                   )}
                 </td>
-                <td className="px-3 py-2">
+                <td className={ADMIN_TD}>
                   {emailStyle ? (
-                    <span
-                      data-testid="invite-email-status"
-                      title={emailStyle.title}
-                      className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${emailStyle.className}`}
-                    >
-                      {emailStyle.label}
+                    // StatusChip takes no title, so the wrapper keeps the hover text (the L-5 pattern).
+                    <span title={emailStyle.title}>
+                      <StatusChip tone={emailStyle.tone} testId="invite-email-status">
+                        {emailStyle.label}
+                      </StatusChip>
                     </span>
                   ) : (
-                    <span className="text-slate-500">—</span>
+                    <span className="text-slate-400">—</span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-slate-400">{day(invite.firstViewedAt)}</td>
-                <td className="px-3 py-2">
+                <td className={`${ADMIN_TD} whitespace-nowrap text-slate-400`}>{day(invite.firstViewedAt)}</td>
+                <td className={ADMIN_TD}>
                   {canRevoke && revoking !== invite.id && (
                     <button
                       type="button"
                       onClick={() => setRevoking(invite.id)}
-                      className="rounded border border-rose-500/50 px-2 py-1 text-xs text-rose-200 hover:bg-rose-500/20"
+                      className={`rounded-lg border border-rose-500/50 px-2 py-1 text-xs text-rose-200 hover:bg-rose-500/20 ${FOCUS_RING}`}
                     >
                       Revoke
                     </button>

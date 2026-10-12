@@ -23,9 +23,11 @@
  *   not a Radix trigger, so focus goes back by hand: `onCloseAutoFocus` stops
  *   Radix's own return and calls the page's `onReturnFocus`.
  *
- * No loading, error or not-found states (D-7) and no fetch: L-1d's drawer
- * renders a row that is already loaded (R-6). They arrive with
- * `useDrawerResource` (L-8).
+ * No loading, error or not-found states (D-7) and no fetch here, and no prop
+ * for them (SA Q-9 on L-8): a drawer that shows a row already loaded needs
+ * none (R-6). A drawer that owns a read keeps its state in `useDrawerResource`
+ * (L-8b) and renders `AdminLoading` / `AdminError` / its body as `children`,
+ * so this shell stays fetch-free and state-free.
  */
 
 import { useId, type ReactNode } from 'react';

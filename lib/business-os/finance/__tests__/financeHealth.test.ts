@@ -17,6 +17,12 @@
  * zero calls), AC-66 (a failed payments read → that block unknown and every
  * other section renders; a failed refunds read → partial), and the counts
  * carry no amount.
+ *
+ * Slice 2b: the client payment problems block through the builder (AC-56,
+ * AC-57, AC-59 by the window and the clock, AC-65 with a business picked,
+ * AC-66 each read failing alone, AC-67 the reminder deadline with fake
+ * timers, SA-WR-23), one names call over both tables (SA-W38), and counts
+ * with no amount, currency, date or name.
  */
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
@@ -51,17 +57,23 @@ jest.mock('@/lib/repositories/BusinessOsCreditLotRepository', () => ({
 import type { BusinessOsAccountPlan } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import type { CreditLedgerRow } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
 import type {
+  FinanceClientDueRow,
   FinanceClientPaymentRow,
+  FinanceClientPlanRow,
   FinanceClientReadResult as ClientRead,
   FinanceClientRefundRow,
 } from '@/lib/repositories/BusinessOsFinanceReadRepository';
+import type { FinanceReminderFiguresInput } from '../paymentProblems';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { stateForCohort } from '@/lib/business-os/entitlements/lifecycle';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
 import { adminCreditPercentDeps } from '@/lib/business-os/credits/adminCreditPercentDeps';
 import type { AdminCreditPercentDeps, AdminTotalsRow } from '@/lib/business-os/credits/adminCreditPercent';
-import { buildFinanceHealth, type FinanceHealthDeps } from '../financeHealth';
+import { buildFinanceHealth, FINANCE_LIMITS, type FinanceHealthDeps } from '../financeHealth';
+import { ADMIN_READ_DEADLINE_MS } from '@/lib/admin/readUnderDeadline';
+import * as fs from 'fs';
+import * as path from 'path';
 import { financeHealthDeps, findPlanWithoutOverrides, toFinanceLot } from '../financeHealthDeps';
 import type { FinanceLot } from '../creditsSection';
 import { resolveFinanceWindow } from '../financeWindow';
@@ -178,6 +190,12 @@ function creditDeps(opts: { unavailable?: string[]; totals?: AdminTotalsRow[]; f
 }
 
 const ADMIN_X = '55555555-5555-4555-8555-555555555555';
+/** The reminder queue's figures as the jobs & queues read returns them (extra fields included). */
+const REMINDERS = {
+  dueNow: 2, later: 4, noDueTime: null, inProgress: 0, stuck: 0, failed24h: 1, failed7d: 3,
+  deadLettered24h: 0, deadLettered7d: 0, skipped7d: 1, guardrailSkips7d: null, unrecognisedStatus: 0,
+  oldestDueAt: '2026-11-09T08:00:00.000Z',
+} as FinanceReminderFiguresInput;
 function giftLot(accountId: string | null, creditsGranted: number, extra: Partial<FinanceLot> = {}): FinanceLot {
   return {
     id: `44444444-4444-4444-8444-${String(Math.round(creditsGranted * 1000)).padStart(12, '0')}`,
@@ -223,7 +241,27 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       listClientRefundsForAccountCreatedInRange: jest.fn<Result<ClientRead<FinanceClientRefundRow>>, unknown[]>(() =>
         ok({ rows: [], reachedCeiling: false })
       ),
+      // Slice 2b: empty by default; the payment problems describes seed their own rows.
+      listOverdueClientInvoicesAllAccounts: jest.fn<Result<ClientRead<FinanceClientDueRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listOverdueClientInvoicesForAccount: jest.fn<Result<ClientRead<FinanceClientDueRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listOverdueClientInstalmentsAllAccounts: jest.fn<Result<ClientRead<FinanceClientDueRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listOverdueClientInstalmentsForAccount: jest.fn<Result<ClientRead<FinanceClientDueRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listClientPlansAllAccounts: jest.fn<Result<ClientRead<FinanceClientPlanRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listClientPlansForAccount: jest.fn<Result<ClientRead<FinanceClientPlanRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
     },
+    readReminderFigures: jest.fn<Result<FinanceReminderFiguresInput>, [Date, AbortSignal]>(() => ok(REMINDERS)),
     findNames: jest.fn((ids: readonly string[]) =>
       ok(ids.filter((id) => id === A).map((id) => ({ user_id: id, company_name: 'Acme Dental' })))
     ),
@@ -1032,16 +1070,345 @@ describe('AC-65 (2a): with a business picked, R-e′ and R-f′ get exactly the 
   });
 });
 
-describe('the wiring (slice 2a)', () => {
-  it('exposes exactly the seven finance reads, the four new ones included', () => {
+describe('the wiring (slices 2a and 2b)', () => {
+  it('exposes exactly the thirteen finance reads: the four of 2a and the six of 2b included', () => {
     expect(Object.keys(financeHealthDeps().finance).sort()).toEqual([
       'countLiveRevenueRows',
       'findLiveBillingStatusForAccount',
       'listClientPaymentsAllAccountsPaidInRange',
       'listClientPaymentsForAccountPaidInRange',
+      'listClientPlansAllAccounts',
+      'listClientPlansForAccount',
       'listClientRefundsAllAccountsCreatedInRange',
       'listClientRefundsForAccountCreatedInRange',
       'listLiveBillingStatusesAllAccounts',
+      'listOverdueClientInstalmentsAllAccounts',
+      'listOverdueClientInstalmentsForAccount',
+      'listOverdueClientInvoicesAllAccounts',
+      'listOverdueClientInvoicesForAccount',
     ]);
+  });
+
+  it('2b: wires neither the names read nor the reminder read: the route injects both', () => {
+    const wired = financeHealthDeps() as Record<string, unknown>;
+    expect(wired).not.toHaveProperty('findNames');
+    expect(wired).not.toHaveProperty('readReminderFigures');
+  });
+});
+
+// ── Slice 2b: client payment problems through the builder ────────────────────
+
+const DUE_AMOUNT = '123.45';
+const TODAY_2B = '2026-11-09';
+function dueRow(user_id: string | null, extra: Partial<FinanceClientDueRow> = {}): FinanceClientDueRow {
+  seq += 1;
+  return {
+    id: `dddddddd-0000-4000-8000-${String(seq).padStart(12, '0')}`,
+    user_id,
+    amount: DUE_AMOUNT,
+    currency: 'USD',
+    status: 'overdue',
+    due_date: '2026-10-01',
+    ...extra,
+  };
+}
+function clientPlan(extra: Partial<FinanceClientPlanRow> = {}): FinanceClientPlanRow {
+  seq += 1;
+  return {
+    id: `eeeeeeee-0000-4000-8000-${String(seq).padStart(12, '0')}`,
+    user_id: A,
+    status: 'active',
+    cancelled_at: null,
+    completed_at: null,
+    next_charge_at: '2026-12-01T00:00:00Z',
+    last_failure_at: null,
+    ...extra,
+  };
+}
+
+/** Overdue invoices for A and the platform, an instalment for B, plans for A. */
+function problemsDeps() {
+  const deps = makeDeps();
+  const invoices = { rows: [dueRow(A), dueRow(PLATFORM, { status: 'sent', due_date: '2026-11-01', currency: 'ILS', amount: '10.00' })], reachedCeiling: false };
+  const instalments = { rows: [dueRow(B, { status: 'pending', due_date: '2026-11-05', currency: 'ILS', amount: '25.50' })], reachedCeiling: false };
+  const plans = {
+    rows: [
+      clientPlan(),
+      clientPlan({ status: 'cancelled', cancelled_at: '2026-11-03T10:00:00Z' }),
+      clientPlan({ status: 'cancelled', cancelled_at: '2026-10-20T10:00:00Z' }),
+    ],
+    reachedCeiling: false,
+  };
+  deps.finance.listOverdueClientInvoicesAllAccounts.mockImplementation(() => ok(invoices));
+  deps.finance.listOverdueClientInvoicesForAccount.mockImplementation(() => ok({ rows: [invoices.rows[0]], reachedCeiling: false }));
+  deps.finance.listOverdueClientInstalmentsAllAccounts.mockImplementation(() => ok(instalments));
+  deps.finance.listOverdueClientInstalmentsForAccount.mockImplementation(() => ok({ rows: [], reachedCeiling: false }));
+  deps.finance.listClientPlansAllAccounts.mockImplementation(() => ok(plans));
+  deps.finance.listClientPlansForAccount.mockImplementation(() => ok(plans));
+  return deps;
+}
+
+describe('client payment problems, all businesses (slice 2b)', () => {
+  it('reads R-g / R-h with today’s UTC date, R-i with no argument, R-j once with the clock and a signal; builds every part', async () => {
+    const { result, deps } = await run(problemsDeps());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(deps.finance.listOverdueClientInvoicesAllAccounts.mock.calls).toEqual([[TODAY_2B]]);
+    expect(deps.finance.listOverdueClientInstalmentsAllAccounts.mock.calls).toEqual([[TODAY_2B]]);
+    expect(deps.finance.listClientPlansAllAccounts.mock.calls).toEqual([[]]);
+    expect(deps.readReminderFigures).toHaveBeenCalledTimes(1);
+    const [clock, signal] = deps.readReminderFigures.mock.calls[0];
+    expect(clock).toBe(NOW);
+    expect(signal).toBeInstanceOf(AbortSignal);
+    for (const fn of [
+      deps.finance.listOverdueClientInvoicesForAccount,
+      deps.finance.listOverdueClientInstalmentsForAccount,
+      deps.finance.listClientPlansForAccount,
+    ]) expect(fn).not.toHaveBeenCalled();
+
+    const p = result.payload.paymentProblems;
+    expect(p.status).toBe('ok');
+    expect(p.scope).toBe('all');
+    expect(p.today).toBe(TODAY_2B);
+    expect(p.failedPayments).toEqual({ state: 'not_stored' });
+    expect(p.overdueInvoices.status).toBe('ok');
+    expect(p.overdueInvoices.figures?.lines).toEqual([
+      { currency: 'ILS', marked: 0, pastDue: 1, amount: 10, amountExact: true, unreadable: 0, businesses: 1, oldestDueDate: '2026-11-01' },
+      { currency: 'USD', marked: 1, pastDue: 0, amount: 123.45, amountExact: true, unreadable: 0, businesses: 1, oldestDueDate: '2026-10-01' },
+    ]);
+    expect(p.overdueInvoices.figures?.rows).toEqual([
+      expect.objectContaining({ accountId: A, name: 'Acme Dental', nameStatus: 'found', dueDate: '2026-10-01', daysPastDue: 39, kind: 'marked' }),
+      expect.objectContaining({ accountId: PLATFORM, name: null, nameStatus: 'platform', dueDate: '2026-11-01', kind: 'past_due' }),
+    ]);
+    expect(p.overdueInstalments.figures?.rows).toEqual([
+      expect.objectContaining({ accountId: B, name: null, nameStatus: 'missing', dueDate: '2026-11-05', daysPastDue: 4, kind: 'past_due' }),
+    ]);
+    expect(p.clientPlans.figures).toMatchObject({ activeNow: 1, cancelledInWindow: 1, total: 3 });
+    expect(p.reminders).toEqual({
+      status: 'ok',
+      state: 'read',
+      figures: { dueNow: 2, inProgress: 0, stuck: 0, failed24h: 1, failed7d: 3, deadLettered24h: 0, deadLettered7d: 0, oldestDueAt: '2026-11-09T08:00:00.000Z' },
+    });
+  });
+
+  it('SA-W38: ONE names call for both tables, ids only from the rows shown, never the platform account', async () => {
+    const without = await run(makeDeps());
+    const withRows = await run(problemsDeps());
+    expect(withRows.deps.findNames.mock.calls.length).toBe(without.deps.findNames.mock.calls.length + 1);
+    expect(withRows.deps.findNames.mock.calls[withRows.deps.findNames.mock.calls.length - 1]).toEqual([[A, B]]);
+  });
+
+  it('the counts: rows, ceilings, state words and timing; no amount, currency, due date or name', async () => {
+    const { result } = await run(problemsDeps());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.counts.paymentProblems).toEqual({
+      invoices: 2,
+      instalments: 1,
+      plans: 3,
+      invoicesCeiling: false,
+      instalmentsCeiling: false,
+      plansCeiling: false,
+      unreadableAmounts: 0,
+      unexpectedRows: 0,
+      overdueRowsShown: 3,
+      reminders: 'read',
+      reminderMs: expect.any(Number),
+      namesFound: 1,
+    });
+    const counts = JSON.stringify(result.counts.paymentProblems);
+    for (const secret of [DUE_AMOUNT, '25.5', 'USD', 'ILS', '2026-10-01', 'Acme Dental', A]) expect(counts).not.toContain(secret);
+  });
+
+  it('AC-56: switching the window leaves the overdue figures and active-now unchanged; AC-59: cancelled follows the window', async () => {
+    const month = await run(problemsDeps());
+    const week = await run(problemsDeps(), null, logger(), NOW, resolveFinanceWindow({ preset: '7d' }, NOW));
+    const custom = await run(problemsDeps(), null, logger(), NOW, resolveFinanceWindow({ preset: 'custom', from: '2026-10-15', to: '2026-11-09' }, NOW));
+    if (month.result.kind !== 'ok' || week.result.kind !== 'ok' || custom.result.kind !== 'ok') throw new Error('expected ok');
+    const m = month.result.payload.paymentProblems;
+    // Each run seeds fresh row ids; everything else must be identical.
+    const withoutIds = (part: typeof m.overdueInvoices) => ({
+      ...part,
+      figures: part.figures && { ...part.figures, rows: part.figures.rows.map((row) => ({ ...row, id: 'x' })) },
+    });
+    for (const other of [week.result.payload.paymentProblems, custom.result.payload.paymentProblems]) {
+      expect(withoutIds(other.overdueInvoices)).toEqual(withoutIds(m.overdueInvoices));
+      expect(withoutIds(other.overdueInstalments)).toEqual(withoutIds(m.overdueInstalments));
+      expect(other.clientPlans.figures?.activeNow).toBe(m.clientPlans.figures?.activeNow);
+    }
+    expect(m.clientPlans.figures?.cancelledInWindow).toBe(1);
+    expect(week.result.payload.paymentProblems.clientPlans.figures?.cancelledInWindow).toBe(1);
+    expect(custom.result.payload.paymentProblems.clientPlans.figures?.cancelledInWindow).toBe(2);
+  });
+
+  it('AC-57: R-g and R-h receive the UTC date of the request’s clock: 2026-09-30 at 23:59 UTC, 2026-10-01 at 00:01 UTC', async () => {
+    for (const [iso, expected] of [
+      ['2026-09-30T23:59:00.000Z', '2026-09-30'],
+      ['2026-10-01T00:01:00.000Z', '2026-10-01'],
+    ] as const) {
+      const now = new Date(iso);
+      const deps = makeDeps();
+      deps.finance.listOverdueClientInstalmentsAllAccounts.mockImplementation(() =>
+        ok({ rows: [dueRow(A, { status: 'pending', due_date: '2026-09-30' })], reachedCeiling: false })
+      );
+      const { result } = await run(deps, null, logger(), now, resolveFinanceWindow({ preset: 'this_month' }, now));
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      expect(deps.finance.listOverdueClientInvoicesAllAccounts.mock.calls).toEqual([[expected]]);
+      expect(deps.finance.listOverdueClientInstalmentsAllAccounts.mock.calls).toEqual([[expected]]);
+      const total = result.payload.paymentProblems.overdueInstalments.figures?.total;
+      expect(total).toBe(expected === '2026-09-30' ? 0 : 1);
+    }
+  });
+});
+
+describe('AC-65 (2b): with a business picked, R-g′, R-h′ and R-i′ get exactly the id; R-g, R-h, R-i and R-j are never called', () => {
+  it('exactly the id (and today’s date); zero all-accounts calls; zero reminder calls; names at most [id]; the platform-wide note', async () => {
+    const deps = problemsDeps();
+    const { result } = await run(deps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(deps.finance.listOverdueClientInvoicesForAccount.mock.calls).toEqual([[A, TODAY_2B]]);
+    expect(deps.finance.listOverdueClientInstalmentsForAccount.mock.calls).toEqual([[A, TODAY_2B]]);
+    expect(deps.finance.listClientPlansForAccount.mock.calls).toEqual([[A]]);
+    for (const fn of [
+      deps.finance.listOverdueClientInvoicesAllAccounts,
+      deps.finance.listOverdueClientInstalmentsAllAccounts,
+      deps.finance.listClientPlansAllAccounts,
+      deps.readReminderFigures,
+      deps.plans.pagePlans,
+      deps.ledger.listRowsOfAllAccountsCreatedInRange,
+      deps.finance.listLiveBillingStatusesAllAccounts,
+      deps.finance.listClientPaymentsAllAccountsPaidInRange,
+      deps.finance.listClientRefundsAllAccountsCreatedInRange,
+      deps.lots.allAccounts,
+    ]) expect(fn).not.toHaveBeenCalled();
+    for (const [ids] of deps.findNames.mock.calls) expect(ids).toEqual([A]);
+    const p = result.payload.paymentProblems;
+    expect(p.scope).toBe('one');
+    expect(p.reminders).toEqual({ status: 'ok', state: 'not_narrowed', figures: null });
+    expect(p.status).toBe('ok');
+    expect(result.counts.paymentProblems).toMatchObject({ reminders: 'not_narrowed', reminderMs: null });
+  });
+});
+
+describe('AC-66 (2b): each read failing alone fails only its part; the block is partial, never unknown', () => {
+  const failing = [
+    ['R-g', 'listOverdueClientInvoicesAllAccounts', 'overdueInvoices', 'client_overdue_invoices'],
+    ['R-h', 'listOverdueClientInstalmentsAllAccounts', 'overdueInstalments', 'client_overdue_instalments'],
+    ['R-i', 'listClientPlansAllAccounts', 'clientPlans', 'client_plans'],
+  ] as const;
+
+  it.each(failing)('%s fails → its part unknown, the others ok, every other section renders, logged by name', async (_n, method, part, readName) => {
+    const deps = problemsDeps();
+    (deps.finance[method] as jest.Mock).mockImplementation(fail);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const p = result.payload.paymentProblems;
+    expect(p.status).toBe('partial');
+    expect(p[part]).toEqual({ status: 'unknown', figures: null });
+    for (const other of (['overdueInvoices', 'overdueInstalments', 'clientPlans'] as const).filter((x) => x !== part)) {
+      expect(p[other].status).toBe('ok');
+    }
+    expect(p.reminders.state).toBe('read');
+    expect(result.payload.accounts.status).toBe('ok');
+    expect(result.payload.aiCost.status).toBe('ok');
+    expect(result.payload.takings.status).toBe('ok');
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: readName }), 'Finance read failed');
+  });
+
+  it('R-j errors → reminders failed (unknown), block partial, the other parts ok', async () => {
+    const deps = problemsDeps();
+    deps.readReminderFigures.mockImplementation(fail);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const p = result.payload.paymentProblems;
+    expect(p.reminders).toEqual({ status: 'unknown', state: 'failed', figures: null });
+    expect(p.status).toBe('partial');
+    expect(p.overdueInvoices.status).toBe('ok');
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'reminders' }), 'Finance read failed');
+    expect(result.counts.paymentProblems.reminders).toBe('failed');
+  });
+
+  it('R-j throws → still a failed part, never a 500', async () => {
+    const deps = problemsDeps();
+    deps.readReminderFigures.mockImplementation(() => {
+      throw new Error('exploded');
+    });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paymentProblems.reminders.state).toBe('failed');
+  });
+
+  it('SA-W35: a malformed R-j result → failed, never a 0', async () => {
+    const deps = problemsDeps();
+    deps.readReminderFigures.mockImplementation(() => ok({ ...REMINDERS, stuck: -1 }));
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paymentProblems.reminders).toEqual({ status: 'unknown', state: 'failed', figures: null });
+  });
+
+  it('the names read fails → "Name unavailable" on the overdue rows, the parts stay ok', async () => {
+    const deps = problemsDeps();
+    deps.findNames.mockImplementation(fail as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const rows = result.payload.paymentProblems.overdueInvoices.figures?.rows ?? [];
+    expect(rows[0]).toMatchObject({ accountId: A, name: null, nameStatus: 'unavailable' });
+    expect(rows[1]).toMatchObject({ accountId: PLATFORM, nameStatus: 'platform' });
+    expect(result.payload.paymentProblems.overdueInvoices.status).toBe('ok');
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'overdue_names' }), 'Finance read failed');
+  });
+});
+
+describe('AC-67 / SA-WR-23: the reminder deadline', () => {
+  it('is written 2 * 1000, equals 2000 and differs from the admin default deadline', () => {
+    expect(FINANCE_LIMITS.REMINDER_DEADLINE_MS).toBe(2000);
+    expect(FINANCE_LIMITS.REMINDER_DEADLINE_MS).not.toBe(ADMIN_READ_DEADLINE_MS);
+    expect(FINANCE_LIMITS.OVERDUE_ROWS_SHOWN).toBe(50);
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/business-os/finance/financeHealth.ts'), 'utf8');
+    expect(code).toMatch(/REMINDER_DEADLINE_MS: 2 \* 1000,/);
+  });
+
+  describe('with fake timers', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('a never-settling reader → still pending at 1,999 ms; at 2,000 ms "failed", and the signal it received is aborted', async () => {
+      const deps = problemsDeps();
+      let received: AbortSignal | null = null;
+      deps.readReminderFigures.mockImplementation(((_now: Date, signal: AbortSignal) => {
+        received = signal;
+        return new Promise(() => undefined);
+      }) as never);
+      let settled = false;
+      const pending = run(deps).then((r) => {
+        settled = true;
+        return r;
+      });
+      await jest.advanceTimersByTimeAsync(FINANCE_LIMITS.REMINDER_DEADLINE_MS - 1);
+      expect(settled).toBe(false);
+      expect((received as AbortSignal | null)?.aborted).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
+      const { result } = await pending;
+      expect(settled).toBe(true);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      expect(result.payload.paymentProblems.reminders).toEqual({ status: 'unknown', state: 'failed', figures: null });
+      expect(result.payload.paymentProblems.overdueInvoices.status).toBe('ok');
+      expect((received as AbortSignal | null)?.aborted).toBe(true);
+    });
+
+    it('the reminder read starts with the other reads, not after them (same Promise.all)', async () => {
+      const deps = problemsDeps();
+      const order: string[] = [];
+      deps.readReminderFigures.mockImplementation((() => {
+        order.push('reminders');
+        return ok(REMINDERS);
+      }) as never);
+      deps.finance.listClientPlansAllAccounts.mockImplementation((() => {
+        order.push('plans');
+        return new Promise(() => undefined);
+      }) as never);
+      void run(deps);
+      await jest.advanceTimersByTimeAsync(0);
+      // The plans read never settles, yet the reminder read has already started beside it.
+      expect(order).toEqual(['plans', 'reminders']);
+    });
   });
 });

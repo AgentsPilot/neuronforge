@@ -9,6 +9,7 @@
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
+import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 import { CostsTab } from '../components/costs/CostsTab';
 import BusinessOsLlmSettingsPage from '../page';
 import {
@@ -107,6 +108,29 @@ function stubReport(respond: Responder) {
 
 const ok = (data: CostReportPayload) => ({ status: 200, body: { success: true, data } });
 
+/** L-9a (E-3, E-6): the shared business picker's list route and its answer. */
+const BUSINESSES_PATH = '/api/admin/business-os/llm-usage/businesses';
+const businessesAnswer = {
+  status: 200,
+  body: {
+    success: true,
+    data: {
+      businesses: [
+        { userId: A, companyName: 'Alpha Studio' },
+        { userId: B, companyName: 'Beta Bakery' },
+      ],
+      limit: 50,
+    },
+  },
+};
+
+/** Opens the shared picker (its one list read) and picks `name` from the list. */
+async function pickBusiness(name: string) {
+  fireEvent.focus(screen.getByTestId('business-picker-input'));
+  const list = await screen.findByTestId('business-picker-options');
+  fireEvent.click(await within(list).findByText(name));
+}
+
 beforeEach(() => jest.clearAllMocks());
 
 describe('states', () => {
@@ -126,12 +150,13 @@ describe('states', () => {
     expect(await screen.findByTestId('costs-error')).toHaveTextContent('The window may be at most 92 days');
   });
 
+  // E-1 (L-9a): the shared words, never the browser's message (§5.10 rules 3 and 4).
   it('a network failure is shown as an error', async () => {
     global.fetch = jest.fn(async () => {
       throw new Error('offline');
     }) as unknown as typeof fetch;
     render(<CostsTab />);
-    expect(await screen.findByTestId('costs-error')).toHaveTextContent('offline');
+    expect(await screen.findByTestId('costs-error')).toHaveTextContent(ADMIN_NETWORK_ERROR);
   });
 
   it('"No charges recorded in this window" when there are no periods', async () => {
@@ -147,7 +172,9 @@ describe('states', () => {
     const banner = await screen.findByTestId('costs-incomplete');
     expect(banner).toHaveTextContent(COSTS_INCOMPLETE.slice(0, 20));
     expect(banner).toHaveTextContent('too many ledger rows');
-    expect(banner.className).toMatch(/amber/);
+    // L-9b (E-9): the test id sits on the shared AdminNotice's text element
+    // (RC-3), so the amber is its container's.
+    expect(banner.closest('div')?.className).toMatch(/amber/);
   });
 
   it('a failed totals read says so instead of claiming there were no charges', async () => {
@@ -252,36 +279,44 @@ describe('controls', () => {
     const fetchMock = stubReport(() => ok(report()));
     render(<CostsTab />);
     await screen.findByTestId('costs-periods');
-    fireEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    // E-2 (L-9a): the standard window label (D-2 (b)), the same window.
+    fireEvent.click(screen.getByRole('button', { name: '7 days' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const url = new URL(String(fetchMock.mock.calls[1][0]), 'http://localhost');
     const days = (Date.parse(url.searchParams.get('to')!) - Date.parse(url.searchParams.get('from')!)) / 86_400_000;
     expect(days).toBe(6);
   });
 
-  it('the account filter is a choice from the report\'s own accounts, and keeps its list when narrowed', async () => {
+  // E-3 (L-9a, SA-R-11): rewritten. The shared picker searches every business
+  // through the businesses route; the account <select> is gone.
+  it('the business picker replaces the account select', async () => {
     const fetchMock = stubReport((url) =>
-      url.includes('accountId=') ? ok(report({ accounts: [{ accountId: B, companyName: 'Beta Bakery' }], accountFilter: B })) : ok(report())
+      url.split('?')[0] === BUSINESSES_PATH
+        ? businessesAnswer
+        : url.includes('accountId=')
+          ? ok(report({ accounts: [{ accountId: B, companyName: 'Beta Bakery' }], accountFilter: B }))
+          : ok(report())
     );
     render(<CostsTab />);
     await screen.findByTestId('costs-periods');
-    const select = screen.getByTestId('costs-account-filter') as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(['All accounts', 'Alpha Studio', 'Beta Bakery']);
+    expect(screen.queryByTestId('costs-account-filter')).not.toBeInTheDocument();
+    const reportCalls = () => fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/credits/report'));
 
-    fireEvent.change(select, { target: { value: B } });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(String(fetchMock.mock.calls[1][0])).toContain(`accountId=${B}`);
-    await waitFor(() => expect(screen.getByTestId('costs-account-filter')).toHaveValue(B));
-    expect([...select.options]).toHaveLength(3);
+    await pickBusiness('Beta Bakery');
+    await waitFor(() => expect(reportCalls()).toHaveLength(2));
+    expect(reportCalls()[1]).toContain(`accountId=${B}`);
+    expect(screen.getByTestId('business-filter-chip')).toHaveTextContent('Business: Beta Bakery');
   });
 
+  // E-4 (L-9a): Custom opens the shared From / To row; its button is the shared "Apply".
   it('custom dates are sent as typed; the route validates them', async () => {
     const fetchMock = stubReport(() => ok(report()));
     render(<CostsTab />);
     await screen.findByTestId('costs-periods');
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
     fireEvent.change(screen.getByLabelText('From (UTC)'), { target: { value: '2026-07-01' } });
     fireEvent.change(screen.getByLabelText('To (UTC)'), { target: { value: '2026-07-31' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply dates' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(String(fetchMock.mock.calls[1][0])).toContain('from=2026-07-01&to=2026-07-31');
   });
@@ -290,7 +325,8 @@ describe('controls', () => {
     const fetchMock = stubReport(() => ok(report()));
     render(<CostsTab />);
     await screen.findByTestId('costs-periods');
-    fireEvent.click(screen.getByRole('button', { name: 'Re-read the cost report' }));
+    // E-5 (L-9a, D-15): the shared Refresh's name.
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh the cost report' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1][0]).toBe(fetchMock.mock.calls[0][0]);
   });
@@ -327,12 +363,16 @@ describe('the page: two tabs, Settings first and unchanged', () => {
     expect(await screen.findByTestId('costs-periods')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/credits/report'))).toBe(true);
     expect(screen.getByTestId('page-standing-note')).not.toBeVisible();
-    expect(screen.queryByTitle('Re-read the settings')).not.toBeVisible();
+    // E-1 (Admin Layout Standard L-10, F-69 / D-15): the Settings Refresh is
+    // "Refresh the settings" in the Settings tab's own bar, rendered only while
+    // Settings is shown (SA M-1), so on Costs it is not in the document at all.
+    expect(screen.queryByRole('button', { name: 'Refresh the settings', hidden: true })).toBeNull();
 
     fireEvent.click(screen.getByTestId('tab-settings'));
     // Kept mounted but hidden (CR-N2), so its window and account survive.
     expect(screen.getByTestId('costs-tab')).not.toBeVisible();
     expect(screen.getByTestId('page-standing-note')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Refresh the settings' })).toBeVisible();
   });
 
   it('each tab controls its own tabpanel (CR-N2)', async () => {
@@ -353,20 +393,29 @@ describe('the page: two tabs, Settings first and unchanged', () => {
     expect(await within(costsPanel).findByTestId('costs-periods')).toBeInTheDocument();
   });
 
+  // E-6 (L-9a): same intent, new controls (the standard "7 days", the picker
+  // and its chip in place of the select).
   it('switching tabs keeps the chosen window and account, and does not re-read (CR-N2)', async () => {
-    const fetchMock = stubBoth();
+    const fetchMock = stubReport((url) =>
+      url.split('?')[0] === BUSINESSES_PATH
+        ? businessesAnswer
+        : url.includes('/credits/report')
+          ? ok(report())
+          : { status: 200, body: { success: true, data: { areas: [], generatedAt: '2026-09-23T09:00:00.000Z' } } }
+    );
     render(<BusinessOsLlmSettingsPage />);
     fireEvent.click(screen.getByTestId('tab-costs'));
     await screen.findByTestId('costs-periods');
-    fireEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
-    fireEvent.change(screen.getByTestId('costs-account-filter'), { target: { value: B } });
+    fireEvent.click(screen.getByRole('button', { name: '7 days' }));
     const reportReads = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/credits/report')).length;
+    await waitFor(() => expect(reportReads()).toBe(2));
+    await pickBusiness('Beta Bakery');
     await waitFor(() => expect(reportReads()).toBe(3));
 
     fireEvent.click(screen.getByTestId('tab-settings'));
     fireEvent.click(screen.getByTestId('tab-costs'));
-    expect(screen.getByRole('button', { name: 'Last 7 days' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByTestId('costs-account-filter')).toHaveValue(B);
+    expect(screen.getByRole('button', { name: '7 days' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('business-filter-chip')).toHaveTextContent('Business: Beta Bakery');
     expect(screen.getByTestId('costs-periods')).toBeVisible();
     expect(reportReads()).toBe(3);
   });
@@ -378,7 +427,7 @@ describe('CR-N2 and QA Low items: which response the screen shows', () => {
     stubReport(() => new Promise((resolve) => releases.push(resolve)));
     render(<CostsTab />);
     // Request 1 (30 days) is still pending when the admin picks 7 days.
-    fireEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    fireEvent.click(screen.getByRole('button', { name: '7 days' })); // E-7 (L-9a): the standard label
     await waitFor(() => expect(releases).toHaveLength(2));
 
     const newer = report({ window: { ...report().window, from: '2026-09-23', to: '2026-09-29' } });
@@ -394,7 +443,7 @@ describe('CR-N2 and QA Low items: which response the screen shows', () => {
     const releases: Array<(v: { status: number; body: unknown }) => void> = [];
     stubReport(() => new Promise((resolve) => releases.push(resolve)));
     render(<CostsTab />);
-    fireEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    fireEvent.click(screen.getByRole('button', { name: '7 days' })); // E-7 (L-9a): the standard label
     await waitFor(() => expect(releases).toHaveLength(2));
     await act(async () => releases[1](ok(report())));
     await screen.findByTestId('costs-periods');
@@ -409,7 +458,7 @@ describe('CR-N2 and QA Low items: which response the screen shows', () => {
     render(<CostsTab />);
     await screen.findByTestId('costs-periods');
     fail = true;
-    fireEvent.click(screen.getByRole('button', { name: 'Re-read the cost report' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh the cost report' })); // E-8 (L-9a, D-15)
     expect(await screen.findByTestId('costs-error')).toHaveTextContent('Internal server error');
     expect(screen.queryByTestId('costs-periods')).not.toBeInTheDocument();
     expect(screen.queryByTestId('costs-window')).not.toBeInTheDocument();

@@ -60,3 +60,33 @@ export const INCOMPLETE_REASON_TEXT: Record<string, string> = {
   rows_ceiling: 'too many ledger rows',
   originals_ceiling: 'too many corrections from other periods',
 };
+
+// ── Admin Layout Standard L-9a ──────────────────────────────────────────
+
+/** The noun phrase for "Refresh …" and the loading state (D-15): "Reading the cost report…". */
+export const COSTS_WHAT = 'the cost report';
+
+/** A failed read with no reason of the route's own (the shared sentence shape, §5.10). */
+export const COSTS_ERROR_FALLBACK = 'Could not read the cost report. Try again in a moment.';
+
+/**
+ * SA M-2: the report and the leak check both refuse a platform account (409
+ * `platform_account`). One sentence for both reads; it does not point at the
+ * leak check below, which follows the picked business and refuses it too.
+ */
+export const COSTS_PLATFORM_ACCOUNT =
+  'That is a platform account, not a business, so it has no charges here. ' +
+  'Clear the business to see every business; a leak check over every business counts platform AI calls.';
+
+// The KPI strip (§2.5, K-1 to K-10).
+export const KPI_CREDITS = 'Credits charged';
+export const KPI_COST_USD = 'Cost (USD)';
+export const KPI_CHARGES = 'Charges';
+export const KPI_FALLBACK = 'Fallback-priced';
+export const KPI_PERIODS = 'Periods not matching';
+export const KPI_UNKNOWN = 'Unknown';
+export const KPI_NOT_CHECKED = 'Not checked';
+/** K-8: a read stopped at its ceiling, so the figure is a lower bound. */
+export const KPI_MAY_BE_INCOMPLETE = 'may be incomplete';
+export const KPI_RECONCILED = (count: string) => `${count} reconciled`;
+export const KPI_OF_CHECKED = (count: string) => `of ${count} checked`;

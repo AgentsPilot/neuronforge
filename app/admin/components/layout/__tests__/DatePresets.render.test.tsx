@@ -227,6 +227,49 @@ describe('extras and requireBothDates (L-2a)', () => {
   });
 });
 
+describe('the four whole-date extras (L-8a, D-2 (b))', () => {
+  const MONTH: AdminWindowValue = { kind: 'preset', preset: 'this_month' };
+  const FOUR = ['yesterday', 'this_week', 'last_week', 'last_month'] as const;
+
+  it('render after Custom, in order, each with aria-pressed; a click applies, a second click goes to the default', () => {
+    const onChange = jest.fn();
+    const { rerender } = render(
+      <DatePresets value={MONTH} defaultValue={MONTH} onChange={onChange} extras={FOUR} requireBothDates />,
+    );
+    const buttons = within(screen.getByRole('group', { name: 'Window' })).getAllByRole('button');
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      'Today',
+      '7 days',
+      '30 days',
+      'This month',
+      'Custom',
+      'Yesterday',
+      'This week',
+      'Last week',
+      'Last month',
+    ]);
+    for (const button of buttons) expect(button.hasAttribute('aria-pressed')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Last week' }));
+    expect(onChange).toHaveBeenLastCalledWith({ kind: 'extra', extra: 'last_week' });
+    rerender(
+      <DatePresets value={{ kind: 'extra', extra: 'last_week' }} defaultValue={MONTH} onChange={onChange} extras={FOUR} requireBothDates />,
+    );
+    expect(pressed()).toEqual(['Last week']);
+    fireEvent.click(screen.getByRole('button', { name: 'Last week' }));
+    expect(onChange).toHaveBeenLastCalledWith(MONTH);
+  });
+
+  it('Custom seeds the inputs from a whole-date extra', () => {
+    render(<DatePresets value={{ kind: 'extra', extra: 'yesterday' }} defaultValue={MONTH} onChange={jest.fn()} extras={FOUR} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+    const from = (screen.getByLabelText('From (UTC)') as HTMLInputElement).value;
+    const to = (screen.getByLabelText('To (UTC)') as HTMLInputElement).value;
+    expect(from).toHaveLength(10);
+    expect(from).toBe(to);
+  });
+});
+
 describe('alignment on one label row (L-4a, user request 2026-10-11; SA Q-4, Q-6)', () => {
   it('shows a visible "Window" label that names the group through aria-labelledby', () => {
     setup(NONE);

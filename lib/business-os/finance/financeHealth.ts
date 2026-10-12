@@ -1,8 +1,9 @@
 /**
- * The admin finance & business health page's builder (slices 1a, 1b and 2a).
- * Workplans docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md,
- * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_WORKPLAN.md and
- * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md.
+ * The admin finance & business health page's builder (slices 1a, 1b, 2a and
+ * 2b). Workplans docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md,
+ * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_WORKPLAN.md,
+ * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md and
+ * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md.
  *
  * ONE ORCHESTRATOR, SETTLED SECTIONS (SA-Q8). Every independent read starts at
  * once through `settle`, so a read that throws becomes `{ error }` and never
@@ -17,19 +18,31 @@
  *      a failed read → `account_check_failed`), before any other read;
  *   2. every account-scoped read then receives exactly that id;
  *   3. NO all-accounts method is called (`pagePlans`, the all-accounts ledger
- *      read, the all-accounts billing read, the all-accounts lot read, and
- *      since slice 2a the all-accounts client payment and refund reads). The
- *      platform-wide revenue head count is the one deliberate exception: it
- *      reads no account and no amount.
+ *      read, the all-accounts billing read, the all-accounts lot read, since
+ *      slice 2a the all-accounts client payment and refund reads, and since
+ *      slice 2b the all-accounts overdue and client plan reads and the
+ *      platform-wide reminder queue read). The platform-wide revenue head
+ *      count is the one deliberate exception: it reads no account and no
+ *      amount.
  * Business names are looked up only for ids taken from rows already read
  * (ledger rows for Section 3, plan rows for Section 4, client payment and
- * refund rows for the takings block).
+ * refund rows for the takings block, overdue rows for the payment problems
+ * block).
  *
  * TAKINGS (slice 2a, Section 2 block B). The client payment and refund reads
  * run beside every other read, settled on their own. The pure `buildTakings`
  * does the money maths (integer hundredths per currency, never across
  * currencies); this file only adds the names of the rows shown. A failed
  * payments read makes the block unknown and touches no other section.
+ *
+ * CLIENT PAYMENT PROBLEMS (slice 2b, Section 6 block B). The overdue invoice,
+ * overdue instalment and client plan reads run beside every other read,
+ * settled on their own, as of today's UTC date (computed once from `now`).
+ * The reminder figures come from the injected `readReminderFigures` (the
+ * route binds the jobs & queues read, SA-Q14) under an explicit 2 s deadline
+ * inside the same `Promise.all`, and only when no business is picked. The
+ * pure `paymentProblems.ts` does the counting; this file adds the names of
+ * the rows shown. Each part has its own status; the block is never unknown.
  *
  * SECTION 4, CREDITS (slice 1b). The credit-position pass starts as soon as the
  * plan walk has its account list, beside the ledger reads; a failed or capped
@@ -61,12 +74,22 @@ import type {
   FinanceRevenueCounts,
 } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 import { cutoverClamp, settle } from '@/lib/business-os/credits/aiActivity';
+import { underDeadline, type DeadlineRead, type ReadTiming } from '@/lib/admin/readUnderDeadline';
+import { todayUtc } from '@/app/admin/components/adminWindowPresets';
 import { CREDIT_REPORT_LIMITS } from '@/lib/business-os/credits/creditReport';
 import { isPayingBillingRow } from '@/lib/business-os/billing/payingSubscriptionStatuses';
 import { missingOriginalIds, sumCostUsd, summariseAiCost } from './aiCost';
 import { readAdminCreditPositions, type AdminCreditPercentDeps, type AdminCreditPositionsPass } from '@/lib/business-os/credits/adminCreditPercent';
 import { buildCreditsSection, type FinanceLot } from './creditsSection';
 import { buildTakings } from './takings';
+import {
+  buildClientPlans,
+  buildOverdue,
+  mapReminderFigures,
+  paymentProblemsStatus,
+  type FinanceReminderFiguresInput,
+  type OverdueBuilt,
+} from './paymentProblems';
 import {
   colourFarOverAllowanceTile,
   colourFinanceTile,
@@ -85,7 +108,10 @@ import type {
   FinanceAiCostSection,
   FinanceCreditRow,
   FinanceCreditsSection,
+  FinanceDuePart,
+  FinanceDueRow,
   FinanceGroupKey,
+  FinancePaymentProblemsSection,
   FinancePayload,
   FinanceRevenueSection,
   FinanceTakingsRow,
@@ -108,6 +134,14 @@ export const FINANCE_LIMITS = {
   CREDIT_ROWS_SHOWN: 200,
   /** Takings rows shown (S2-FR-7): one names request. Every figure above the table covers every row. */
   TAKINGS_ROWS_SHOWN: 200,
+  /** Rows shown per overdue table (slice 2b): both tables share ONE names request (at most 100 ids, SA-W38). */
+  OVERDUE_ROWS_SHOWN: 50,
+  /**
+   * The reminder read's own deadline (S2-F9, SA-WR-23): explicit, and shorter
+   * than the admin default, so a slow queue cannot hold the page. Written as
+   * a product on purpose.
+   */
+  REMINDER_DEADLINE_MS: 2 * 1000,
 } as const;
 
 /** The revenue panel's "none yet" and "recorded" headlines for K-5 (S1-FR-26). */
@@ -141,9 +175,23 @@ export interface FinanceHealthDeps {
     | 'listClientPaymentsForAccountPaidInRange'
     | 'listClientRefundsAllAccountsCreatedInRange'
     | 'listClientRefundsForAccountCreatedInRange'
+    | 'listOverdueClientInvoicesAllAccounts'
+    | 'listOverdueClientInvoicesForAccount'
+    | 'listOverdueClientInstalmentsAllAccounts'
+    | 'listOverdueClientInstalmentsForAccount'
+    | 'listClientPlansAllAccounts'
+    | 'listClientPlansForAccount'
   >;
   /** Business names for display. Injected by the admin route (admin identity reads stay in `app/api/admin/**`). */
   findNames: (accountIds: readonly string[]) => Promise<RepoResult<Array<{ user_id: string; company_name: string | null }>>>;
+  /**
+   * The reminder queue's figures (slice 2b, R-j). Injected by the admin route,
+   * which binds the jobs & queues read to this request's admin context
+   * (SA-Q14): one definition of stuck and dead-lettered, never copied here.
+   * Called only when no business is picked, under `REMINDER_DEADLINE_MS`; the
+   * signal reaches every query.
+   */
+  readReminderFigures: (now: Date, signal: AbortSignal) => Promise<RepoResult<FinanceReminderFiguresInput>>;
   /** The entitlement config, passed to the pure classifier (SA-WR-4). */
   config: ClassifyInput['config'];
   isPlatformAccount: (accountId: string) => boolean;
@@ -211,6 +259,23 @@ export interface FinanceHealthCounts {
     currencies: number;
     rowsShown: number;
     rowsTotal: number;
+    namesFound: number;
+  };
+  /** Client payment problems (slice 2b): counts, booleans and a state word only, never an amount, a currency, a date or a name. */
+  paymentProblems: {
+    /** Rows read; null when that read failed. */
+    invoices: number | null;
+    instalments: number | null;
+    plans: number | null;
+    invoicesCeiling: boolean;
+    instalmentsCeiling: boolean;
+    plansCeiling: boolean;
+    unreadableAmounts: number;
+    unexpectedRows: number;
+    overdueRowsShown: number;
+    reminders: FinancePaymentProblemsSection['reminders']['state'];
+    /** How long the reminder read took; null when it was not called (a business picked). */
+    reminderMs: number | null;
     namesFound: number;
   };
 }
@@ -303,6 +368,10 @@ export async function buildFinanceHealth(
 
   // Takings (slice 2a): the selected window, half-open, like every other window read.
   const takingsRange = { from: window.start, to: window.end };
+  // Payment problems (slice 2b): as of now, by today's UTC date, computed once.
+  const today = todayUtc(now);
+  const reminderTimings: ReadTiming[] = [];
+  const NOT_NARROWED: DeadlineRead<FinanceReminderFiguresInput> | null = null;
 
   const [
     plansResult,
@@ -315,6 +384,10 @@ export async function buildFinanceHealth(
     positionsPass,
     clientPayments,
     clientRefunds,
+    overdueInvoices,
+    overdueInstalments,
+    clientPlans,
+    reminderRead,
   ] = await Promise.all([
     plansPromise,
     accountId !== null
@@ -339,6 +412,27 @@ export async function buildFinanceHealth(
         ? deps.finance.listClientRefundsForAccountCreatedInRange(accountId, takingsRange)
         : deps.finance.listClientRefundsAllAccountsCreatedInRange(takingsRange)
     ),
+    settle(() =>
+      accountId !== null
+        ? deps.finance.listOverdueClientInvoicesForAccount(accountId, today)
+        : deps.finance.listOverdueClientInvoicesAllAccounts(today)
+    ),
+    settle(() =>
+      accountId !== null
+        ? deps.finance.listOverdueClientInstalmentsForAccount(accountId, today)
+        : deps.finance.listOverdueClientInstalmentsAllAccounts(today)
+    ),
+    settle(() => (accountId !== null ? deps.finance.listClientPlansForAccount(accountId) : deps.finance.listClientPlansAllAccounts())),
+    // R-j: platform-wide, so never called with a business picked (AC-65); in
+    // this same Promise.all, under its own explicit deadline (SA-WR-23).
+    accountId !== null
+      ? Promise.resolve(NOT_NARROWED)
+      : underDeadline(
+          'reminders',
+          reminderTimings,
+          (signal) => deps.readReminderFigures(now, signal),
+          FINANCE_LIMITS.REMINDER_DEADLINE_MS
+        ),
   ]);
 
   if (plansResult.error) failed('plans', plansResult.error);
@@ -350,6 +444,15 @@ export async function buildFinanceHealth(
   if (lotsResult.error) failed('credit_lots', lotsResult.error);
   if (clientPayments.error) failed('client_payments', clientPayments.error);
   if (clientRefunds.error) failed('client_refunds', clientRefunds.error);
+  if (overdueInvoices.error) failed('client_overdue_invoices', overdueInvoices.error);
+  if (overdueInstalments.error) failed('client_overdue_instalments', overdueInstalments.error);
+  if (clientPlans.error) failed('client_plans', clientPlans.error);
+  // Logged as `{ err }`, like every other finance read (CLAUDE.md logging standard). It cannot
+  // carry client data: R-j is head counts filtered by fixed statuses and server-computed times,
+  // and its repository wraps a PostgREST error to its message and code only; a deadline is the
+  // fixed ReadDeadlineError. `DeadlineRead`'s "never logged as text" is about showing it to a
+  // user, which this file never does.
+  if (reminderRead !== null && !reminderRead.ok) failed('reminders', reminderRead.error ?? null);
 
   // ── 3. Section 1 ──────────────────────────────────────────────────────────
   const payingIds = payingResult.data
@@ -510,6 +613,76 @@ export async function buildFinanceHealth(
     figures: builtTakings.figures ? { ...builtTakings.figures, rows: takingsRows } : null,
   };
 
+  // ── 6c. Section 6 block B, client payment problems (slice 2b) ─────────────
+  const builtInvoices = buildOverdue({
+    kind: 'invoice',
+    read: overdueInvoices.data,
+    todayUtc: today,
+    isPlatformAccount: deps.isPlatformAccount,
+    displayCap: FINANCE_LIMITS.OVERDUE_ROWS_SHOWN,
+  });
+  const builtInstalments = buildOverdue({
+    kind: 'instalment',
+    read: overdueInstalments.data,
+    todayUtc: today,
+    isPlatformAccount: deps.isPlatformAccount,
+    displayCap: FINANCE_LIMITS.OVERDUE_ROWS_SHOWN,
+  });
+  const builtPlans = buildClientPlans({ read: clientPlans.data, window: { start: window.start, end: window.end }, now });
+  // SA-W35: a malformed result is a failed part, never a 0.
+  const reminderFigures = reminderRead !== null && reminderRead.ok ? mapReminderFigures(reminderRead.value) : null;
+  if (reminderRead !== null && reminderRead.ok && reminderFigures === null) {
+    failed('reminders', new Error('Reminder figures were malformed'));
+  }
+  const reminders: FinancePaymentProblemsSection['reminders'] =
+    reminderRead === null
+      ? { status: 'ok', state: 'not_narrowed', figures: null }
+      : reminderFigures === null
+        ? { status: 'unknown', state: 'failed', figures: null }
+        : { status: 'ok', state: 'read', figures: reminderFigures };
+
+  // ONE names call for the rows shown in both tables (SA-W38), ids taken only
+  // from the overdue rows just read (with a business picked, those came only
+  // from R-g′ / R-h′); never for a platform account or a NULL id.
+  const shownDue = [...(builtInvoices.figures?.rows ?? []), ...(builtInstalments.figures?.rows ?? [])];
+  const dueNameIds = [
+    ...new Set(shownDue.filter((row) => row.accountId !== null && !row.isPlatform).map((row) => row.accountId as string)),
+  ];
+  const dueNames = dueNameIds.length > 0 ? await settle(() => deps.findNames(dueNameIds)) : { data: [], error: null };
+  if (dueNames.error) failed('overdue_names', dueNames.error);
+  const dueNameOf = new Map((dueNames.data ?? []).map((n) => [n.user_id, n.company_name]));
+  const dueNamesFound = dueNameIds.filter((id) => dueNameOf.get(id)).length;
+  const namedPart = (built: OverdueBuilt): FinanceDuePart => ({
+    status: built.status,
+    figures: built.figures
+      ? {
+          ...built.figures,
+          rows: built.figures.rows.map(({ isPlatform, ...row }): FinanceDueRow => ({
+            ...row,
+            ...(row.accountId === null
+              ? { name: null, nameStatus: 'unknown_business' as const }
+              : isPlatform
+                ? { name: null, nameStatus: 'platform' as const }
+                : !dueNames.data
+                  ? { name: null, nameStatus: 'unavailable' as const }
+                  : dueNameOf.get(row.accountId)
+                    ? { name: dueNameOf.get(row.accountId) as string, nameStatus: 'found' as const }
+                    : { name: null, nameStatus: 'missing' as const }),
+          })),
+        }
+      : null,
+  });
+  const paymentProblems: FinancePaymentProblemsSection = {
+    status: paymentProblemsStatus([builtInvoices.status, builtInstalments.status, builtPlans.status, reminders.status]),
+    scope: accountId !== null ? 'one' : 'all',
+    today,
+    failedPayments: { state: 'not_stored' },
+    overdueInvoices: namedPart(builtInvoices),
+    overdueInstalments: namedPart(builtInstalments),
+    clientPlans: { status: builtPlans.status, figures: builtPlans.figures },
+    reminders,
+  };
+
   // ── 7. Tiles ──────────────────────────────────────────────────────────────
   const onRuleError = (problem: { tile: string; ruleId: string | null; reason: string }) =>
     logger.error({ read: 'rules', ...problem }, 'Finance tile rule list is invalid');
@@ -600,6 +773,7 @@ export async function buildFinanceHealth(
     aiCost,
     credits,
     takings,
+    paymentProblems,
   };
 
   // Counts by kind for the route's one line: never a figure.
@@ -642,6 +816,21 @@ export async function buildFinanceHealth(
         rowsShown: takingsRows.length,
         rowsTotal: takings.figures?.rowsTotal ?? 0,
         namesFound: takingsNamesFound,
+      },
+      paymentProblems: {
+        invoices: overdueInvoices.data ? overdueInvoices.data.rows.length : null,
+        instalments: overdueInstalments.data ? overdueInstalments.data.rows.length : null,
+        plans: clientPlans.data ? clientPlans.data.rows.length : null,
+        invoicesCeiling: overdueInvoices.data?.reachedCeiling ?? false,
+        instalmentsCeiling: overdueInstalments.data?.reachedCeiling ?? false,
+        plansCeiling: clientPlans.data?.reachedCeiling ?? false,
+        unreadableAmounts:
+          (builtInvoices.figures?.unreadableAmounts ?? 0) + (builtInstalments.figures?.unreadableAmounts ?? 0),
+        unexpectedRows: builtInvoices.unexpectedRows + builtInstalments.unexpectedRows,
+        overdueRowsShown: shownDue.length,
+        reminders: reminders.state,
+        reminderMs: reminderTimings[0]?.ms ?? null,
+        namesFound: dueNamesFound,
       },
     },
   };
