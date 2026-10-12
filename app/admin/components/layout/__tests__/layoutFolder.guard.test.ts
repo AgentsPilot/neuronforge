@@ -61,6 +61,11 @@
  * rule change. The hook never fetches and never reads a body (the page's own
  * `read` does both, SA Q-9), so L-1e F-1 and S-6 hold for it unchanged. The
  * Business OS AI page does not join the registry yet (deferred to L-10, SA Q-3).
+ *
+ * Amended by L-10: Business OS AI joins the registry as one entry for its
+ * three tabs; no rule change and no shared source change. The parked
+ * `LedgerCheckPanel.tsx` (still `.json(`, F-123) and `Chip.tsx` are left out
+ * by name, with the reason beside the entry.
  */
 
 import * as fs from 'fs';
@@ -603,6 +608,49 @@ const MIGRATED_PAGES = [
       'app/admin/messages/messagesFormat.ts',
       'app/admin/messages/components/MessagesTable.tsx',
       'app/admin/messages/components/MessageDetail.tsx',
+    ],
+  },
+  {
+    // L-8a / L-8b (header, tabs, Activity), L-9a / L-9b (Costs & credits),
+    // L-10 (Settings): one entry for the page's three tabs (SA L-10 Q-10). The
+    // filter-spec modules are listed because they import the shared folder
+    // (SA L-10 M-4). Deliberately NOT listed (the G-6 precedent):
+    // `components/LedgerCheckPanel.tsx`, parked since 2026-09-24 and not
+    // mounted, still reads with `.json(` (F-123, slice 3 re-mounts and
+    // converts it; the page's own source guard G-8 pins that it stays off
+    // screen); `components/Chip.tsx`, now used only by Activity's
+    // `RecordStateMarker` (F-116); and modules with no markup and no read
+    // (`types.ts`, `copy.ts`, the `*Copy.ts` and `*Types.ts` files, `format.ts`,
+    // `costFormat.ts`, `markers.ts`, `areaState.ts`, `activityPresets.ts`).
+    page: '/admin/business-os-llm (Business OS AI)',
+    files: [
+      'app/admin/business-os-llm/page.tsx',
+      'app/admin/business-os-llm/activityFilters.ts',
+      'app/admin/business-os-llm/costsFilters.ts',
+      'app/admin/business-os-llm/tabWindowFilter.ts',
+      'app/admin/business-os-llm/components/SettingsKpis.tsx',
+      'app/admin/business-os-llm/components/AreaCard.tsx',
+      'app/admin/business-os-llm/components/CallRow.tsx',
+      'app/admin/business-os-llm/components/ExcludedCallRow.tsx',
+      'app/admin/business-os-llm/components/StoredRowPanel.tsx',
+      'app/admin/business-os-llm/components/LastChangedLine.tsx',
+      'app/admin/business-os-llm/components/Marker.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityTab.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityKpis.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityFilterBar.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityTable.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityCountLine.tsx',
+      'app/admin/business-os-llm/components/activity/ActivityDrillDown.tsx',
+      'app/admin/business-os-llm/components/activity/DrillDownCharges.tsx',
+      'app/admin/business-os-llm/components/activity/AuditSummaryLine.tsx',
+      'app/admin/business-os-llm/components/activity/CutoverNotice.tsx',
+      'app/admin/business-os-llm/components/activity/DeletedAccountsBucket.tsx',
+      'app/admin/business-os-llm/components/activity/RecordStateMarker.tsx',
+      'app/admin/business-os-llm/components/costs/CostsTab.tsx',
+      'app/admin/business-os-llm/components/costs/CostsKpis.tsx',
+      'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
+      'app/admin/business-os-llm/components/costs/CostsSections.tsx',
+      'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
     ],
   },
 ] as const;
