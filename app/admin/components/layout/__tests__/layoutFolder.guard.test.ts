@@ -56,6 +56,11 @@
  *
  * Amended by L-7: Messages joins the registry; no rule change and no shared
  * source change. Its `messagesTypes.ts` is not listed: no markup and no read.
+ *
+ * Amended by L-8b: `useDrawerResource.ts` joins the expected files (E-10); no
+ * rule change. The hook never fetches and never reads a body (the page's own
+ * `read` does both, SA Q-9), so L-1e F-1 and S-6 hold for it unchanged. The
+ * Business OS AI page does not join the registry yet (deferred to L-10, SA Q-3).
  */
 
 import * as fs from 'fs';
@@ -105,6 +110,7 @@ const EXPECTED_SOURCES = [
   'readAdminResponse.ts',
   'readJsonBody.ts',
   'useAdminFilters.ts',
+  'useDrawerResource.ts',
 ].map((name) => `${LAYOUT_DIR}/${name}`);
 
 // ── Rule helpers (each proved by a self-test below) ─────────────────────────

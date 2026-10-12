@@ -10,6 +10,9 @@
  * `useSearchParams` follows `window.location` here (not a fixed string), as
  * Next does once `replaceState(null, …)` is used: that is what makes a tab
  * click an outside change for the Activity filter hook (T-16).
+ *
+ * Slice L-8b adds T-14: the drill-down drawer's focus fallback to the content
+ * area when the opener's row has left the list.
  */
 
 import '@testing-library/jest-dom';
@@ -24,7 +27,7 @@ import BusinessOsLlmSettingsPage from '../page';
 import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 import { resolvePreset } from '../activityPresets';
-import { ACTIVITY_INTRO, MIN_COST_FORMAT_PROBLEM, PLATFORM_ACCOUNT_ERROR, TIMES_ARE_UTC } from '../activityCopy';
+import { ACTIVITY_INTRO, DRILL_DOWN_NOT_FOUND, MIN_COST_FORMAT_PROBLEM, PLATFORM_ACCOUNT_ERROR, TIMES_ARE_UTC } from '../activityCopy';
 import { PAGE_SUBTITLE } from '../copy';
 import { COSTS_INTRO } from '../costCopy';
 import { formatUsd } from '../costFormat';
@@ -671,5 +674,85 @@ describe('QA-L8a-1: a malformed minimum cost is refused in the bar', () => {
     expect(await screen.findByTestId('activity-error')).toHaveTextContent(message);
     expect(lastListParams(fetchMock).get('minCostUsd')).toBe('1000000');
     expect(screen.queryByTestId('activity-min-cost-problem')).toBeNull();
+  });
+});
+
+describe('T-14 (L-8b, D-6): focus falls back to the content area when the opener is gone', () => {
+  const DRILL_DOWN_PATH = '/api/admin/business-os/ai-activity/drill-down';
+  const FIRST = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
+
+  /** The list from `list`; the drill-down answers 404 (its words are enough to see the drawer is open). */
+  function stubWithDrillDown(list: () => Answer | Promise<Answer>) {
+    const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+      const path = String(input).split('?')[0];
+      const answer: Answer =
+        path === LIST_PATH
+          ? await list()
+          : path === DRILL_DOWN_PATH
+            ? { status: 404, body: { success: false, error: 'not found' } }
+            : { status: 500, body: { success: false, error: 'not under test' } };
+      return { ok: answer.status >= 200 && answer.status < 300, status: answer.status, json: async () => answer.body } as Response;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  it('open a row, a read lands without it, Escape: focus on activity-content, never <body>; nothing reopens later', async () => {
+    let hold: ((value: Answer) => void) | null = null;
+    let holding = false;
+    const fetchMock = stubWithDrillDown(() => (holding ? new Promise<Answer>((resolve) => (hold = resolve)) : ok(payload())));
+
+    openAt('?tab=activity');
+    await screen.findByTestId('activity-table');
+    const content = screen.getByTestId('activity-content');
+    expect(content).toHaveAttribute('tabindex', '-1');
+
+    // A Refresh in flight keeps the table (keep-on-refresh), so a row can be opened meanwhile.
+    holding = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh the AI activity' }));
+    await waitFor(() => expect(listCalls(fetchMock)).toHaveLength(2));
+    const opener = screen.getAllByTestId('activity-open-details')[0];
+    await act(async () => {
+      fireEvent.click(opener);
+    });
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByTestId('drill-down-error')).toHaveTextContent(DRILL_DOWN_NOT_FOUND);
+
+    // The read lands without the opened row: its button leaves the document.
+    const release = hold as unknown as (value: Answer) => void;
+    const [, second] = payload().rows;
+    await act(async () => release(ok(payload({ rows: [second], total: 1 }))));
+    expect(opener.isConnected).toBe(false);
+    // The drawer reads its own action, so it stays open on what it shows.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(content).toHaveFocus();
+    expect(document.body).not.toHaveFocus();
+
+    // L-1d QA B-1: a later read that brings the row back never reopens the drawer.
+    holding = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh the AI activity' }));
+    await waitFor(() => expect(listCalls(fetchMock)).toHaveLength(3));
+    await waitFor(() => expect(screen.getAllByTestId('activity-open-details')).toHaveLength(2));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter((c) => String(c[0]).split('?')[0] === DRILL_DOWN_PATH)).toHaveLength(1);
+    expect(paramsOf(String(fetchMock.mock.calls.find((c) => String(c[0]).startsWith(DRILL_DOWN_PATH))?.[0])).get('actionId')).toBe(FIRST);
+  });
+
+  it('with the row still listed, Escape returns focus to its Open button', async () => {
+    stubWithDrillDown(() => ok(payload()));
+    openAt('?tab=activity');
+    await screen.findByTestId('activity-table');
+    const opener = screen.getAllByTestId('activity-open-details')[0];
+    opener.focus();
+    await act(async () => {
+      fireEvent.click(opener);
+    });
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
   });
 });
