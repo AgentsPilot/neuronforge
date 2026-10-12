@@ -420,3 +420,27 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - When SA and QA run in parallel, QA writes probe copies outside folders that guards walk.
 
 ### Status: MERGED — PR #324 (merge commit 82469a8a) — feature/admin-layout-l10 — b43bce03 (Settings) + 38fae090 (F-120)
+
+---
+
+## L-12: Admin users page — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-12 workplan](/docs/workplans/ADMIN_LAYOUT_L12_WORKPLAN.md)
+
+### What went well
+- The Dev caught that the brief had the wrong page: the delete feature lives on Businesses (/admin/users, done in L-4), and "Admin users" is the read-only /admin/settings. The slice stayed a one-file, one-GET restyle.
+- Characterisation tests written first and run green on the unchanged page, so read-only and the exact request are pinned before and after.
+- Branch cut from main after #324 merged — no stacked PR.
+- SA rejected a "survived by design" mutation claim and named the exact uncovered state (Try again after a failed Refresh); one test closed it.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 1 (workplan conditions M-1..M-5; code review F-1, test only).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- The L-10 docs follow-up commit was pushed after the user merged #324, so it never reached main; its edits ship with this PR instead.
+- Browser checks still owed.
+
+### Conclusions & process improvements
+- A surviving mutation needs a named state that proves the second lock holds; "double lock" is a claim, not evidence.
+- When the user merges fast, RM records the merge in the next slice's branch rather than the merged one.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11). Last slice before the user's halt.
