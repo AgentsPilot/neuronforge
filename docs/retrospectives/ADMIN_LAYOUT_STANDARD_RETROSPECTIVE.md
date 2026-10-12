@@ -216,3 +216,49 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - L-4b carries a user request: the per-business audit section starts collapsed.
 
 ### Status: COMMITTED — feature/admin-layout-l4 — 38c35a37, PR #300
+
+---
+
+## L-4b: Businesses row detail into the drawer — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-4b workplan](/docs/workplans/ADMIN_LAYOUT_L4B_WORKPLAN.md)
+
+### What went well
+- Two user requests landed in the same slice: the per-business audit section starts collapsed (folded mid-flight), and the whole row stays clickable (D-17), built with six explicit safety rules (controls and text selection ignored, opener always the row's Open button).
+- page.tsx went from 1,249 to 662 lines; the destructive-flow source guard was re-expressed with an explicit old→new assertion map instead of being loosened.
+- SA caught at workplan stage that mounting the audit fold on expand would fire the archive-notice request (M-2) — fixed by always mounting it hidden.
+- Nineteen mutation checks bit; QA's 24 probes (disappearing open row in four ways, nine control kinds, cache across accounts, nested dialogs) found no bugs.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-5; code approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- M-5 only partly met: nested credit/boost dialogs open from state with no trigger, so focus falls to the body after their Escape (pre-existing). Fixing needs five money-UI files — recorded as F-108, its own short slice.
+- Browser checks still owed (B-1..B-12 plus earlier slices).
+
+### Conclusions & process improvements
+- When a slice moves destructive-flow code, require an explicit old→new guard assertion map in the workplan; it made the review mechanical.
+
+### Status: COMMITTED — feature/admin-layout-l4b — cae9eea0, PR #309
+
+---
+
+## L-5: Plans & entitlements — 2026-10-11
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-5 workplan](/docs/workplans/ADMIN_LAYOUT_L5_WORKPLAN.md)
+
+### What went well
+- First page migrated with no shared export at all — the building blocks covered everything.
+- Dev caught at planning that the requirement's amber Enforcement tile would contradict the Health page's tile for production's normal state; SA verified against the Health rules and ruled it neutral.
+- SA re-ruled the INACTIVE chip to warn (not danger): FYI, but still unmistakable as the user asked on 2026-09-29.
+- Entitlements rules respected: no import from the entitlements module, no tier or capability literals; the shared contract fixtures untouched.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1, M-2; code approved, three doc nits).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- "Try again" focus loss is now recorded on three pages — worth a single shared fix.
+- Browser checks still owed.
+
+### Conclusions & process improvements
+- Cross-check any new KPI colour rule against the Health page's rule for the same fact before building it.
+
+### Status: COMMITTED — feature/admin-layout-l5 — 0e40bd0c, PR #310

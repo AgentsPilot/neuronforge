@@ -46,6 +46,28 @@ function codeOf(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
+/**
+ * Does an import from `relative` leave the screen?
+ *
+ * Lifted out of the `it.each` below with the same body (Admin Layout Standard
+ * L-5, SA Q-8) so the negative control can call it. One exception, SA Q-3: the
+ * shared admin layout folder, through the alias and with the trailing slash, so
+ * a look-alike folder (`layoutX`) cannot ride it (SA S-3). That folder may not
+ * import the entitlements module either (§6.1 S-4), so it is not a second
+ * source of truth. The relative spelling still escapes: the layout guard wants
+ * the alias (S-1).
+ */
+function escapes(relative: string, specifier: string): boolean {
+  if (specifier.startsWith('@/app/admin/components/layout/')) return false;
+  if (specifier.startsWith('@/')) return !specifier.startsWith(`@/${ROOT}`);
+  if (!specifier.startsWith('.')) return false; // a package, not our code
+  const resolved = path
+    .normalize(path.join(path.dirname(relative), specifier))
+    .split(path.sep)
+    .join('/');
+  return !resolved.startsWith(ROOT);
+}
+
 describe('the screen holds no server module and no rule of its own', () => {
   it('finds the page and its components, so the scan cannot fall behind the code', () => {
     expect(allFiles).toContain(`${ROOT}/page.tsx`);
@@ -68,15 +90,7 @@ describe('the screen holds no server module and no rule of its own', () => {
       (match) => match[1]
     );
 
-    const escaping = imports.filter((specifier) => {
-      if (specifier.startsWith('@/')) return !specifier.startsWith(`@/${ROOT}`);
-      if (!specifier.startsWith('.')) return false; // a package, not our code
-      const resolved = path
-        .normalize(path.join(path.dirname(relative), specifier))
-        .split(path.sep)
-        .join('/');
-      return !resolved.startsWith(ROOT);
-    });
+    const escaping = imports.filter((specifier) => escapes(relative, specifier));
 
     expect({ file: relative, escaping }).toEqual({ file: relative, escaping: [] });
   });
@@ -96,6 +110,17 @@ describe('the screen holds no server module and no rule of its own', () => {
     // …and does not flag the screen's own files.
     expect(resolve(`${ROOT}/page.tsx`, './components/PlanCard').startsWith(ROOT)).toBe(true);
     expect(resolve(`${ROOT}/components/PlanCard.tsx`, '../types').startsWith(ROOT)).toBe(true);
+  });
+
+  it('the alias opens exactly the shared layout folder, and nothing beside it (L-5, SA Q-8, S-3)', () => {
+    const page = `${ROOT}/page.tsx`;
+    expect(escapes(page, '@/app/admin/components/layout/StatusChip')).toBe(false);
+    // A sibling of the shared folder is outside the screen.
+    expect(escapes(page, '@/app/admin/components/AdminHeader')).toBe(true);
+    // The relative spelling of the shared folder still escapes (the alias only, S-1).
+    expect(escapes(page, '../components/layout/StatusChip')).toBe(true);
+    // A look-alike folder name cannot ride the alias.
+    expect(escapes(page, '@/app/admin/components/layoutX/Foo')).toBe(true);
   });
 
   it.each(allFiles)('%s writes down no plan id, price or capability id', (relative) => {

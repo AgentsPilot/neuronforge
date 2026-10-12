@@ -29,9 +29,10 @@ export const dynamic = 'force-dynamic';
  *
  * The catalogue below is data, so it stays in the route; the write loop lives in
  * `aiModelPricingRepository.syncMany` (the repository pattern — CLAUDE.md
- * mandatory rule 1). It is deliberately not an upsert: the unique constraint is
- * `(provider, model_name, effective_date)` and every run re-stamps the date, so
- * an upsert would add a row per model per sync forever.
+ * mandatory rule 1). It is deliberately not an upsert: uniqueness is a partial
+ * unique index on `(provider, model_name, effective_date)` over active rows
+ * (`retired_date IS NULL`) and every run re-stamps the date, so an upsert would
+ * add a row per model per sync forever.
  *
  * ADMIN ONLY, gated here in the route (middleware does not protect `/api`)
  * through `requireAdmin` -> AdminAccessService (the `admin_users` table), never

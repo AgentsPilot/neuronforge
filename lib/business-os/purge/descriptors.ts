@@ -466,7 +466,7 @@ const EXCLUDED: PurgeDescriptor[] = [
   never('agentkit_analytics', U, 'Agent platform.'),
   never('calibration_sessions', U, 'Agent platform.'),
   never('workflow_executions', U, 'Agent platform.'),
-  never('pilot_step_routing_history', U, 'Agent platform. NOTE: carries WITH CHECK (true) INSERT policies granted to public — tracked separately (N17).'),
+  never('pilot_step_routing_history', U, 'Agent platform. Its public policies were removed by migration 20261055 (server-only plus an admin SELECT policy). execution_insights still carries its N17 policy, tracked separately.'),
   never('shadow_failure_snapshots', U, 'Agent platform.'),
   never('shared_agents', U, 'Agent platform.'),
   never('execution_insight_runs', U, 'The OTHER insights system — agent execution quality, not the owner\'s business. The name collision is the most common mistake in this area.'),

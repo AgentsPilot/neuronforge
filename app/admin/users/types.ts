@@ -310,3 +310,77 @@ export interface DeletionCommitRefusalView {
   expectedKind?: 'business name' | 'account email';
   correlationId?: string;
 }
+
+/**
+ * One row of `GET /api/admin/users` (Admin Layout Standard L-4b: moved here
+ * from `page.tsx`, unchanged, so the page and the drawer body share it).
+ */
+export interface AdminUserRow {
+  id: string;
+  full_name: string;
+  company?: string;
+  email: string;
+  email_confirmed: boolean;
+  phone?: string;
+  last_sign_in_at?: string;
+  created_at: string;
+  updated_at?: string;
+  providers: string[];
+  role: string;
+  /**
+   * The login's Business OS business (one login = one business). `null` = it
+   * has none; `undefined` = the lookup failed, so the page says "unknown".
+   */
+  business?: RowBusiness | null;
+  /** Credits left (credit deduction slice 8a): only on rows with a business. */
+  creditsLeft?: RowCreditsLeft;
+}
+
+/** `GET /api/admin/users/[id]/login-stats` (moved from `page.tsx`, L-4b). */
+export interface UserLoginStats {
+  total_logins: number;
+  failed_logins: number;
+  last_login_ip?: string;
+  last_login_at?: string;
+  unique_ips: number;
+}
+
+/**
+ * `GET /api/admin/users/[id]/stats` (ADMIN_BOS_CLEANUP slice 5a). A section is
+ * `null` when its read failed, or when the whole request failed (SA-5a-2); the
+ * card then says it could not be read, never zeros.
+ */
+export interface UserDetailedStats {
+  tokens: {
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_cost_usd: number;
+    total_calls: number;
+    by_model: Array<{ model: string; input: number; output: number; cost: number; calls: number }>;
+  } | null;
+  plugins: {
+    total: number;
+    active: number;
+    list: Array<{ plugin: string; connected_at: string; is_active: boolean }>;
+  } | null;
+}
+
+/**
+ * `GET /api/admin/users/[id]/audit-logs`, one entry. `changes` and `details`
+ * are `unknown`: the screen never reads them (L-4b SA S-5, was `any`).
+ */
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  entity_type: string;
+  resource_name: string | null;
+  changes: unknown;
+  details: unknown;
+  ip_address: string | null;
+  severity: 'info' | 'warning' | 'critical';
+  compliance_flags: string[];
+  created_at: string;
+}
+
+/** The per-account audit event filter of the drawer's audit section (replaces an `as any` cast, L-4b). */
+export type AuditEventFilter = 'all' | 'login' | 'security' | 'settings';
