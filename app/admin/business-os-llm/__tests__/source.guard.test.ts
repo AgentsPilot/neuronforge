@@ -626,3 +626,46 @@ describe('L-8a: the Activity tab on the admin layout standard (G-1 to G-4)', () 
     expect(KEEPS_STATE.test(codeOf(read(`${ROOT}/page.tsx`)))).toBe(false);
   });
 });
+
+/*
+ * L-9a: the Costs & credits tab on the admin layout standard (G-5). The
+ * "no `@/lib/`" rule above is not edited (R-9). G-1, G-2 and G-4 already walk
+ * every file in the folder, so they cover the new Costs files with no edit.
+ */
+describe('L-9a: the Costs & credits tab on the admin layout standard (G-5)', () => {
+  /**
+   * G-5. Reads stay where they are (F-67, Costs half): no `.json(` in the
+   * costs folder, and `fetch(` only in the two readers (the picker's fetch
+   * lives in the shared folder). The leak panel's own body read moves onto
+   * `readJsonBody` in L-9b (workplan §2.8, F-67 leak half); until then it is
+   * the one named exception, and L-9b removes it from this list.
+   */
+  const COSTS_DIR = `${ROOT}/components/costs/`;
+  const COSTS_FETCHERS = [`${COSTS_DIR}CostsTab.tsx`, `${COSTS_DIR}LeakCheckPanel.tsx`];
+  const JSON_UNTIL_L9B = [`${COSTS_DIR}LeakCheckPanel.tsx`];
+  const JSON_CALL = /\.json\s*\(/;
+  const FETCH_CALL = /(^|[^\w.])fetch\s*\(/;
+  const costsFiles = allFiles.filter((relative) => relative.startsWith(COSTS_DIR));
+
+  it('G-5: the rules catch a planted body read and a planted fetch', () => {
+    expect(JSON_CALL.test('const body = await response.json();')).toBe(true);
+    expect(FETCH_CALL.test('const response = await fetch(`${REPORT_URL}?${search}`);')).toBe(true);
+    expect(FETCH_CALL.test('client.fetch(url)')).toBe(false);
+  });
+
+  it('G-5: walks the costs folder, both readers and the new bar and strip included', () => {
+    for (const fetcher of COSTS_FETCHERS) expect(costsFiles).toContain(fetcher);
+    expect(costsFiles).toContain(`${COSTS_DIR}CostsFilterBar.tsx`);
+    expect(costsFiles).toContain(`${COSTS_DIR}CostsKpis.tsx`);
+    expect(costsFiles).toContain(`${COSTS_DIR}CostsSections.tsx`);
+  });
+
+  it.each(costsFiles)('G-5: %s reads no body directly, and fetches only if it is one of the two readers', (relative) => {
+    const code = codeOf(read(relative));
+    expect({ file: relative, json: JSON_CALL.test(code) }).toEqual({ file: relative, json: JSON_UNTIL_L9B.includes(relative) });
+    expect({ file: relative, fetch: FETCH_CALL.test(code) }).toEqual({
+      file: relative,
+      fetch: COSTS_FETCHERS.includes(relative),
+    });
+  });
+});

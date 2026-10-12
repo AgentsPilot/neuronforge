@@ -74,8 +74,9 @@ interface ActivityError {
   message: string;
 }
 
-export function ActivityTab() {
-  const { filters, setFilters, clear, isDefault, hrefFor } = useAdminFilters(ACTIVITY_FILTER_SPEC);
+export function ActivityTab({ active = true }: { active?: boolean } = {}) {
+  // L-9a (F-113): the page passes false while another tab owns the address bar.
+  const { filters, setFilters, clear, isDefault, hrefFor } = useAdminFilters(ACTIVITY_FILTER_SPEC, { active });
   /**
    * The route's query, resolved once per filter change. An object, not the
    * string, so the read effect is keyed on the filters' identity: a change of

@@ -63,9 +63,20 @@
  * mechanism): with a state that already carries Next's own keys, Next 14.2
  * takes its "internal call" branch and never syncs `useSearchParams`, so the
  * Activity KPI tiles (real links built from that string) would carry the old
- * tab. With `null` Next syncs it. The Activity filter hook then sees each tab
- * click as an outside change and re-parses to the same filters, so a tab
- * switch starts no read (SA M-1).
+ * tab. With `null` Next syncs it.
+ *
+ * ── Two filter tabs, one address bar (L-9a, F-113) ──────────────────────
+ * Costs and Activity both own `range`, `from`, `to` and `account` through the
+ * shared `useAdminFilters`, and both stay mounted once opened. The rule: the
+ * address bar describes the VISIBLE tab only. A tab's hook is `active` only
+ * while its tab is shown AND the page's own `useSearchParams` already names it
+ * (Next delivers the page's tab write in a later transition render, so in the
+ * click's own render every hook still sees the leaving tab's string); a hidden
+ * or not-yet-synced tab's hook neither re-reads nor writes. On a tab switch the
+ * page saves the leaving tab's keys, drops every key either tab owns (and the
+ * hash: an anchor belongs to the tab that drew it), sets `tab`, appends the
+ * incoming tab's saved keys, and writes once. The incoming hook then finds its
+ * projection already there: one write per switch, and no read.
  *
  * @see docs/workplans/BUSINESS_OS_LLM_MODEL_SETTINGS_ADMIN_UI_WORKPLAN.md §5
  * @see docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_4_WORKPLAN.md §4.6
@@ -78,10 +89,13 @@ import { useSearchParams } from 'next/navigation';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import type { AdminFilterSpec } from '@/app/admin/components/layout/useAdminFilters';
 
 import { AreaCard } from './components/AreaCard';
 import { ActivityTab } from './components/activity/ActivityTab';
 import { CostsTab } from './components/costs/CostsTab';
+import { ACTIVITY_FILTER_SPEC } from './activityFilters';
+import { COSTS_FILTER_SPEC } from './costsFilters';
 import { ACTIVITY_INTRO, ACTIVITY_TAB_LABEL, TIMES_ARE_UTC } from './activityCopy';
 import { PAGE_STANDING_NOTE, PAGE_SUBTITLE } from './copy';
 import { COSTS_INTRO, COSTS_TAB_LABEL, SETTINGS_TAB_LABEL } from './costCopy';
@@ -113,14 +127,47 @@ function tabFromParam(value: string | null | undefined): PageTab {
   return TABS.some(([id]) => id === value) ? (value as PageTab) : 'settings';
 }
 
+/** Every URL key a filter spec owns: its keys and its alias keys (SA Q-2: derived, never a hand-written list). */
+function ownedKeys<S>(spec: AdminFilterSpec<S>): string[] {
+  return (Object.keys(spec) as Array<keyof S>).flatMap((key) => [
+    ...spec[key].keys,
+    ...Object.keys(spec[key].aliases ?? {}),
+  ]);
+}
+
+/** The keys each tab's filters own in the address bar (L-9a). Settings has no filters. */
+const TAB_KEYS: Readonly<Record<PageTab, readonly string[]>> = {
+  settings: [],
+  costs: ownedKeys(COSTS_FILTER_SPEC),
+  activity: ownedKeys(ACTIVITY_FILTER_SPEC),
+};
+
+/** The union: a stray key of the other tab never survives a switch (the address bar is the visible tab only). */
+const ALL_TAB_KEYS: readonly string[] = [...new Set([...TAB_KEYS.costs, ...TAB_KEYS.activity])];
+
+type SavedKeys = Partial<Record<PageTab, Array<[string, string]>>>;
+
 /**
  * Write the chosen tab into the address bar without navigating (no refetch, no
  * router). `null` as the state, so Next syncs `useSearchParams` (see the header).
+ *
+ * L-9a: on a switch the leaving tab's own keys are saved in `saved`, every
+ * tab-owned key and the hash are dropped, and the incoming tab's saved keys are
+ * appended, in one write. Choosing the tab already shown only sets `tab`.
  */
-function writeTabToUrl(id: PageTab) {
+function writeTabToUrl(from: PageTab, id: PageTab, saved: SavedKeys) {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
+  if (from !== id) {
+    const leaving = TAB_KEYS[from];
+    saved[from] = [...url.searchParams.entries()].filter(([key]) => leaving.includes(key));
+    for (const key of ALL_TAB_KEYS) url.searchParams.delete(key);
+    url.hash = '';
+  }
   url.searchParams.set(TAB_PARAM, id);
+  if (from !== id) {
+    for (const [key, value] of saved[id] ?? []) url.searchParams.append(key, value);
+  }
   window.history.replaceState(null, '', url.toString());
 }
 
@@ -147,12 +194,19 @@ function BusinessOsLlmSettingsContent() {
   // opened with (SA-B1-8) — and once asked, it stays mounted.
   const [costsOpened, setCostsOpened] = useState(initialTab === 'costs');
   const [activityOpened, setActivityOpened] = useState(initialTab === 'activity');
+  // L-9a: each filter tab's keys as it left them, put back when it is shown again.
+  const saved = useRef<SavedKeys>({});
   const chooseTab = (id: PageTab) => {
     if (id === 'costs') setCostsOpened(true);
     if (id === 'activity') setActivityOpened(true);
     setTab(id);
-    writeTabToUrl(id);
+    writeTabToUrl(tab, id, saved.current);
   };
+  // The tab the URL names, by the same rule as the read-once (SA S-1); null
+  // outside the App Router, where the visible tab alone decides.
+  const urlTab = searchParams ? tabFromParam(searchParams.get(TAB_PARAM)) : null;
+  /** A tab's filters own the address bar only while it is shown AND the URL already names it (see the header). */
+  const owns = (id: PageTab) => tab === id && (urlTab === null || urlTab === id);
 
   // Arrow keys move focus only (manual activation, SA Q-5); Enter / Space on
   // the focused tab is the button's own click.
@@ -258,11 +312,11 @@ function BusinessOsLlmSettingsContent() {
       </div>
 
       <div role="tabpanel" id={panelId('costs')} aria-labelledby={tabId('costs')} hidden={tab !== 'costs'}>
-        {costsOpened && <CostsTab />}
+        {costsOpened && <CostsTab active={owns('costs')} />}
       </div>
 
       <div role="tabpanel" id={panelId('activity')} aria-labelledby={tabId('activity')} hidden={tab !== 'activity'}>
-        {activityOpened && <ActivityTab />}
+        {activityOpened && <ActivityTab active={owns('activity')} />}
       </div>
 
       <div

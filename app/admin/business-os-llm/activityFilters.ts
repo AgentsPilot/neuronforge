@@ -19,10 +19,11 @@
  * order the tab always sent them.
  */
 
-import { resolveWindow, windowFilter, type AdminWindowExtra, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
+import { resolveWindow, type AdminWindowExtra, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
 import { textFilter, type AdminFilterField, type AdminFilterSpec } from '@/app/admin/components/layout/useAdminFilters';
 
 import type { ActivityOutcome, ActivitySort, ActivityTrigger } from './activityTypes';
+import { wholeDateWindowFilter } from './tabWindowFilter';
 
 export interface ActivityFilters {
   /** Default This month. Always two whole dates when sent (the route needs both). */
@@ -75,32 +76,10 @@ function choiceFilter<T extends string, D extends T | ''>(key: string, values: r
   };
 }
 
-/**
- * The shared window field with two kinds of value ignored on arrival: a linked
- * window (minute or instant bounds) and a one-sided custom window, because the
- * route takes two whole dates and nothing else.
- *
- * SA M-1: it spreads `windowFilter(...)` and overrides `parse` only, so
- * `keys`, `serialise` and `equals: windowEquals` are kept. A tab click changes
- * the incoming search string, the hook re-parses every field, and only a
- * structural `equals` keeps the filters' identity (no read on a tab switch).
- */
-function activityWindowFilter(): AdminFilterField<AdminWindowValue> {
-  const base = windowFilter({ defaultValue: ACTIVITY_DEFAULT_WINDOW, extras: ACTIVITY_WINDOW_EXTRAS });
-  return {
-    ...base,
-    parse: (get) => {
-      const value = base.parse(get);
-      if (value === undefined || value.kind === 'linked') return undefined;
-      if (value.kind === 'custom' && (value.from === null || value.to === null)) return undefined;
-      return value;
-    },
-  };
-}
-
 /** Module-level, so its identity is stable (the hook requires it). Keys are written in this order. */
 export const ACTIVITY_FILTER_SPEC: AdminFilterSpec<ActivityFilters> = {
-  window: activityWindowFilter(),
+  // The shared two-whole-dates window (moved to tabWindowFilter.ts in L-9a, SA Q-3; same code).
+  window: wholeDateWindowFilter({ defaultValue: ACTIVITY_DEFAULT_WINDOW, extras: ACTIVITY_WINDOW_EXTRAS }),
   account: textFilter({ key: 'account', defaultValue: '', isValid: (raw) => UUID.test(raw) }),
   area: textFilter({ key: 'area', defaultValue: '', isValid: (raw) => AREA.test(raw) }),
   outcome: choiceFilter('outcome', OUTCOMES, ''),
