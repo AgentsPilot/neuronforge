@@ -67,9 +67,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +1 Business OS (BOS_BOOST_PAYMENT_REVERSED): credits boost slice 4b.1, refunds and disputes (2026-10-08).
   // +1 Business OS (BOS_BOOST_RECONCILE_TRIGGERED): credits boost slice 4b.2, the admin reconcile trigger (2026-10-09).
   // +2 Business OS (BOS_BOOST_CAP_OVERRIDE_SET, _ENDED): credits boost slice 6b, the admin spending limit (2026-10-10).
-  it('pins the split: 51 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(196);
-    expect(eventsTagged('bos')).toHaveLength(51);
+  // +1 Business OS (BOS_BILLING_FIRST_PAYMENT_STAMPED): plan payments P-5a.1, the first payment stamp (2026-10-11).
+  it('pins the split: 52 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(197);
+    expect(eventsTagged('bos')).toHaveLength(52);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

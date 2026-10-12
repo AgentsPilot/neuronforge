@@ -86,6 +86,16 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
   // their account with no internal reason; theirs to see (no owner-policy
   // migration change: the hidden set is unchanged).
   business_os_boost_purchase: 'owner',
+  // Plan payments P-5a.1: the stamp of the owner's OWN first payment, with ids
+  // and the lineage source only (no internal reason, no other account). Theirs
+  // to see, and 'owner' keeps the owner-policy NOT IN list unchanged, so no
+  // migration (SA Q-3). SA ruled 'owner' at the P-5a.1 code review (D-3,
+  // 2026-10-11). The rule is by entity type, so EVERY later entry on this
+  // type is owner-readable too: an admin action on the lineage row (the P-13
+  // waiver) or an internal outcome (the P-5b "not notified" entry) must use an
+  // operator entity type, or reclassify this one together with the
+  // owner-policy migration.
+  business_os_account_lineage: 'owner',
 } as const satisfies Record<EntityType, AuditOwnerVisibility>;
 
 /**

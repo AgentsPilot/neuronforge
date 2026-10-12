@@ -110,6 +110,12 @@ export const AUDIT_ENTITY_TYPES = [
   // Written by the owner's boost checkout route (credits boost slice 3); the
   // entity id is the purchase id. Owner-visible: it is the owner's own action.
   'business_os_boost_purchase',
+  // One account's place in the invitation circle (business_os_account_lineage,
+  // one row per account). Written by the webhook plan handler when the apply
+  // function stamps the account's first payment (plan payments P-5a.1,
+  // BOS_BILLING_FIRST_PAYMENT_STAMPED); the entity id is the ACCOUNT id. No
+  // database CHECK constrains audit_trail.entity_type, so no migration (SA Q-3).
+  'business_os_account_lineage',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

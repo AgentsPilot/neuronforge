@@ -376,6 +376,18 @@ export const AUDIT_EVENTS = {
   // actor and entity as BOS_BILLING_INVOICE_PAID. Details: refusal reason and
   // Stripe ids. Registered in P-3b.1; first written in P-3b.2.
   BOS_BILLING_PAYMENT_REFUSED: 'BOS_BILLING_PAYMENT_REFUSED',
+  // Plan payments P-5a.1 (S5-4, P5-C7): business_os_apply_plan_payment stamped
+  // the account's first payment on its lineage row (the paid time and the
+  // invoice id) in the same transaction as a paid invoice above $0. For
+  // a held friend this is what lifts the payment hold. Written ONCE per stamp,
+  // only when the function reports out_first_payment_stamped, by
+  // planPaymentApply through recordPlanChange as a companion of
+  // BOS_BILLING_INVOICE_PAID under the same bounded flush. Platform actor and
+  // details.actor 'stripe_webhook'. Entity type 'business_os_account_lineage',
+  // id = the account. Details: invoice id, money history row id, lineage
+  // source (null when it could not be read), livemode, event id; never an
+  // email. A replay writes none.
+  BOS_BILLING_FIRST_PAYMENT_STAMPED: 'BOS_BILLING_FIRST_PAYMENT_STAMPED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -987,6 +999,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'A Business OS plan payment was refused and recorded in the money history (reason recorded)',
+  },
+  // Plan payments P-5a.1. 'info': a fact about a payment the customer chose;
+  // SOC2 alone, as every Business OS money event (SA W11b-3).
+  [AUDIT_EVENTS.BOS_BILLING_FIRST_PAYMENT_STAMPED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: "An account's first paid Business OS plan invoice was stamped on its invitation record (once; releases a held friend)",
   },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',

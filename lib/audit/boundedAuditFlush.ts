@@ -139,16 +139,21 @@ export interface AuditSink {
 let pending: Promise<void> = Promise.resolve();
 
 /**
- * Queue the entry behind any flush already in flight, then flush.
+ * Queue the entries, in order, behind any flush already in flight, then flush
+ * ONCE.
  *
  * `log()` is awaited, unlike almost every other audit write: it resolves once
  * the entry is QUEUED (it writes nothing unless the batch is full), and a
  * `flush()` called before that would find the entry not yet in the queue.
  *
+ * One entry keeps the exact chain it always had (`log(entry)` then `flush()`).
+ * A list (plan payments P-5a.1, SA Q-1 / W-6) logs every entry in order inside
+ * the SAME chain link, so a companion entry never needs a second serial flush.
+ *
  * The returned promise MAY reject (the caller handles it). `pending` never does.
  */
-function enqueue(entry: AuditLogInput, sink: AuditSink): Promise<void> {
-  const link = pending.then(() => sink.log(entry)).then(() => sink.flush());
+function enqueue(entries: readonly AuditLogInput[], sink: AuditSink): Promise<void> {
+  const link = pending.then(() => logInOrder(entries, sink)).then(() => sink.flush());
   pending = link.then(
     () => undefined,
     () => undefined
@@ -157,31 +162,57 @@ function enqueue(entry: AuditLogInput, sink: AuditSink): Promise<void> {
 }
 
 /**
- * Record one audit entry and write it out before responding, within
- * AUDIT_FLUSH_TIMEOUT_MS. Resolves either way; never rejects.
+ * Not `async` on purpose: for one entry this returns `sink.log(entry)` itself,
+ * so the single-entry chain has exactly the hops it always had.
+ */
+function logInOrder(entries: readonly AuditLogInput[], sink: AuditSink): Promise<void> {
+  if (entries.length === 1) return sink.log(entries[0]);
+  return entries.reduce<Promise<void>>((previous, entry) => previous.then(() => sink.log(entry)), Promise.resolve());
+}
+
+function isEntryList(entry: AuditLogInput | readonly AuditLogInput[]): entry is readonly AuditLogInput[] {
+  return Array.isArray(entry);
+}
+
+/**
+ * Record one audit entry (or a list, P-5a.1) and write it out before
+ * responding, within AUDIT_FLUSH_TIMEOUT_MS. Resolves either way; never
+ * rejects.
+ *
+ * The single-entry form is unchanged, its log fields included. A list is
+ * logged in order (the first entry first) and flushed once; its timeout and
+ * failure logs name every action as `actions`. An empty list does nothing:
+ * no `log()` and no `flush()`.
  */
 export async function logAndFlush(
-  entry: AuditLogInput,
+  entry: AuditLogInput | readonly AuditLogInput[],
   logger: AuditFlushLogger,
   context: AuditFlushContext,
   sink: AuditSink = AuditTrail
 ): Promise<void> {
+  const entries: readonly AuditLogInput[] = isEntryList(entry) ? entry : [entry];
+  if (entries.length === 0) return;
+  // What the two log lines identify: byte-identical to the original for one entry.
+  const identity: Record<string, unknown> = isEntryList(entry)
+    ? { userId: entries[0].userId ?? null, actions: entries.map((item) => item.action) }
+    : { userId: entry.userId ?? null, action: entry.action };
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => resolve('timeout'), AUDIT_FLUSH_TIMEOUT_MS);
   });
 
   try {
-    const outcome = await Promise.race([enqueue(entry, sink).then(() => 'flushed' as const), timeout]);
+    const outcome = await Promise.race([enqueue(entries, sink).then(() => 'flushed' as const), timeout]);
     if (outcome === 'timeout') {
       logger.warn(
-        { userId: entry.userId ?? null, action: entry.action, timeoutMs: AUDIT_FLUSH_TIMEOUT_MS },
+        { ...identity, timeoutMs: AUDIT_FLUSH_TIMEOUT_MS },
         `Audit flush on ${context.reason} timed out; ${context.continues}`
       );
     }
   } catch (err) {
     logger.error(
-      { err, userId: entry.userId ?? null, action: entry.action },
+      { err, ...identity },
       `Audit flush on ${context.reason} failed; ${context.continues}`
     );
   } finally {
