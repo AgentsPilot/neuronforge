@@ -26,6 +26,7 @@ import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { EmbeddedCheckout, EmbeddedCheckoutProvider } from '@stripe/react-stripe-js';
 
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 
 type DebugLogType = 'info' | 'error' | 'success';
 
@@ -137,19 +138,12 @@ export function PlanCheckoutPanel({ onLog, onResponse }: PlanCheckoutPanelProps)
           type="button"
           onClick={start}
           disabled={loading || clientSecret !== null}
-          style={{
-            padding: '8px 16px',
-            backgroundColor: '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '3px',
-            cursor: loading || clientSecret !== null ? 'not-allowed' : 'pointer',
-          }}
+          className={harnessButton('primary', 'md')}
         >
           {loading ? 'Starting...' : 'Start checkout'}
         </button>
         {clientSecret !== null && (
-          <button type="button" onClick={reset} style={{ padding: '8px 16px', cursor: 'pointer' }}>
+          <button type="button" onClick={reset} className={harnessButton('secondary', 'md')}>
             Close checkout
           </button>
         )}

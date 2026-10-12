@@ -10,6 +10,13 @@
  * the wiring's credit reads (SA-WR-10). Every test injects a fake
  * `credits.getSnapshots`, so the real entitlement service is never reached;
  * the snapshots it returns are REAL resolutions of the config's own plans.
+ *
+ * Slice 2a: the takings block through the builder (the window range on the
+ * client reads, names only for shown rows read, platform labelled), AC-65
+ * (with a business picked, R-e′ / R-f′ get exactly the id and R-e / R-f have
+ * zero calls), AC-66 (a failed payments read → that block unknown and every
+ * other section renders; a failed refunds read → partial), and the counts
+ * carry no amount.
  */
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
@@ -43,6 +50,11 @@ jest.mock('@/lib/repositories/BusinessOsCreditLotRepository', () => ({
 
 import type { BusinessOsAccountPlan } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import type { CreditLedgerRow } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
+import type {
+  FinanceClientPaymentRow,
+  FinanceClientReadResult as ClientRead,
+  FinanceClientRefundRow,
+} from '@/lib/repositories/BusinessOsFinanceReadRepository';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { stateForCohort } from '@/lib/business-os/entitlements/lifecycle';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
@@ -198,6 +210,19 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       ),
       findLiveBillingStatusForAccount: jest.fn(() => ok(null)),
       countLiveRevenueRows: jest.fn(() => ok({ planInvoicesPaid: 0, boostsPaid: 0 })),
+      // Slice 2a: empty by default; the takings describes seed their own rows.
+      listClientPaymentsAllAccountsPaidInRange: jest.fn<Result<ClientRead<FinanceClientPaymentRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listClientPaymentsForAccountPaidInRange: jest.fn<Result<ClientRead<FinanceClientPaymentRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listClientRefundsAllAccountsCreatedInRange: jest.fn<Result<ClientRead<FinanceClientRefundRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listClientRefundsForAccountCreatedInRange: jest.fn<Result<ClientRead<FinanceClientRefundRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
     },
     findNames: jest.fn((ids: readonly string[]) =>
       ok(ids.filter((id) => id === A).map((id) => ({ user_id: id, company_name: 'Acme Dental' })))
@@ -805,5 +830,218 @@ describe('the wiring (SA-W13, SA-W14, SA-WR-10)', () => {
     mockLotsAllAccounts.mockResolvedValue({ data: null, error: new Error('down') });
     const result = await financeHealthDeps().lots.allAccounts();
     expect(result).toEqual({ data: null, error: expect.any(Error) });
+  });
+});
+
+// ── Slice 2a: Section 2 block B, takings ─────────────────────────────────────
+
+/** A figure planted on a payment: it must never reach a log line (AC-69). */
+const PLANTED_AMOUNT = '9876.54';
+let clientSeq = 0;
+function clientPayment(user_id: string, amount: string, currency: string, extra: Partial<FinanceClientPaymentRow> = {}): FinanceClientPaymentRow {
+  clientSeq += 1;
+  return {
+    id: `cccccccc-0000-4000-8000-${String(clientSeq).padStart(12, '0')}`,
+    user_id,
+    amount,
+    currency,
+    status: 'succeeded',
+    paid_at: '2026-11-03T10:00:00+00:00',
+    processor_fee: null,
+    fee_currency: null,
+    processor_type: 'stripe',
+    ...extra,
+  };
+}
+function clientRefund(user_id: string, amount: string, currency: string): FinanceClientRefundRow {
+  clientSeq += 1;
+  return {
+    id: `dddddddd-0000-4000-8000-${String(clientSeq).padStart(12, '0')}`,
+    user_id,
+    amount,
+    currency,
+    status: 'succeeded',
+    created_at: '2026-11-04T10:00:00+00:00',
+  };
+}
+function takingsDeps() {
+  const deps = makeDeps();
+  deps.finance.listClientPaymentsAllAccountsPaidInRange.mockImplementation(() =>
+    ok({
+      rows: [
+        clientPayment(A, PLANTED_AMOUNT, 'usd', { processor_fee: '1.10', fee_currency: 'USD' }),
+        clientPayment(B, '200.00', 'ILS', { processor_type: 'manual' }),
+        clientPayment(PLATFORM, '5.00', 'USD'),
+      ],
+      reachedCeiling: false,
+    })
+  );
+  deps.finance.listClientRefundsAllAccountsCreatedInRange.mockImplementation(() =>
+    ok({ rows: [clientRefund(A, '76.54', 'USD')], reachedCeiling: false })
+  );
+  deps.finance.listClientPaymentsForAccountPaidInRange.mockImplementation(() =>
+    ok({ rows: [clientPayment(A, PLANTED_AMOUNT, 'USD')], reachedCeiling: false })
+  );
+  deps.finance.listClientRefundsForAccountCreatedInRange.mockImplementation(() =>
+    ok({ rows: [clientRefund(A, '76.54', 'USD')], reachedCeiling: false })
+  );
+  return deps;
+}
+
+describe('takings, all businesses (slice 2a)', () => {
+  it('reads R-e and R-f over the selected window, builds per-currency lines, and names only the non-platform rows shown', async () => {
+    const { result, deps } = await run(takingsDeps());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const range = { from: WINDOW.start, to: WINDOW.end };
+    expect(deps.finance.listClientPaymentsAllAccountsPaidInRange.mock.calls).toEqual([[range]]);
+    expect(deps.finance.listClientRefundsAllAccountsCreatedInRange.mock.calls).toEqual([[range]]);
+    expect(deps.finance.listClientPaymentsForAccountPaidInRange).not.toHaveBeenCalled();
+    expect(deps.finance.listClientRefundsForAccountCreatedInRange).not.toHaveBeenCalled();
+
+    const t = result.payload.takings;
+    expect(t.status).toBe('ok');
+    expect(t.scope).toBe('all');
+    expect(t.figures?.lines).toEqual([
+      { currency: 'ILS', payments: 1, gross: 200, refunded: 0, net: 200, businesses: 1, unreadable: 0, unreadablePayments: 0 },
+      { currency: 'USD', payments: 2, gross: 9881.54, refunded: 76.54, net: 9805, businesses: 2, unreadable: 0, unreadablePayments: 0 },
+    ]);
+    expect(t.figures?.feeLines).toEqual([{ currency: 'USD', fees: 1.1, payments: 1 }]);
+    expect(t.figures?.rows).toEqual([
+      { accountId: B, currency: 'ILS', payments: 1, gross: 200, refunded: 0, net: 200, name: null, nameStatus: 'missing', unreadablePayments: 0 },
+      { accountId: A, currency: 'USD', payments: 1, gross: 9876.54, refunded: 76.54, net: 9800, name: 'Acme Dental', nameStatus: 'found', unreadablePayments: 0 },
+      { accountId: PLATFORM, currency: 'USD', payments: 1, gross: 5, refunded: 0, net: 5, name: null, nameStatus: 'platform', unreadablePayments: 0 },
+    ]);
+    // Never for the platform account; ids only from the rows read.
+    // The takings call: the shown rows' order (ILS row first), the platform row left out.
+    expect(deps.findNames).toHaveBeenCalledWith([B, A]);
+    for (const [ids] of deps.findNames.mock.calls) expect(ids).not.toContain(PLATFORM);
+
+    expect(result.counts.takings).toEqual({
+      payments: 3,
+      refunds: 1,
+      paymentsCeiling: false,
+      refundsCeiling: false,
+      otherStatusPayments: 0,
+      refundsNotCompleted: 0,
+      unreadableAmounts: 0,
+      unreadableFees: 0,
+      currencies: 2,
+      rowsShown: 3,
+      rowsTotal: 3,
+      namesFound: 1,
+    });
+    // Counts only: no amount, no currency code, no name.
+    const counts = JSON.stringify(result.counts);
+    expect(counts).not.toContain(PLANTED_AMOUNT);
+    expect(counts).not.toMatch(/USD|ILS|Acme/);
+  });
+
+  it('no takings rows → empty, ok; no names call for takings', async () => {
+    const { result } = await run();
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.takings).toMatchObject({ status: 'ok', figures: { empty: true, lines: [], rows: [] } });
+    expect(result.counts.takings).toMatchObject({ payments: 0, refunds: 0, rowsShown: 0, namesFound: 0 });
+  });
+
+  it('the payments read at its ceiling → takings partial; every other section unchanged', async () => {
+    const deps = takingsDeps();
+    deps.finance.listClientPaymentsAllAccountsPaidInRange.mockImplementation(() =>
+      ok({ rows: [clientPayment(A, '1.00', 'USD')], reachedCeiling: true })
+    );
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.takings.status).toBe('partial');
+    expect(result.payload.takings.figures?.lines[0].net).toBeNull();
+    expect(result.counts.takings.paymentsCeiling).toBe(true);
+    expect(result.payload.aiCost.status).toBe('ok');
+  });
+
+  it('names fail → the rows still show, "unavailable"; the block stays ok', async () => {
+    const deps = takingsDeps();
+    deps.findNames.mockImplementation(fail as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.takings.status).toBe('ok');
+    expect(result.payload.takings.figures?.rows.map((r) => r.nameStatus)).toEqual(['unavailable', 'unavailable', 'platform']);
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'takings_names' }), 'Finance read failed');
+  });
+});
+
+describe('AC-66 (2a): a failed takings read stays in its block', () => {
+  it('R-e fails → takings unknown with no figures; every slice-1 section still renders', async () => {
+    const deps = takingsDeps();
+    deps.finance.listClientPaymentsAllAccountsPaidInRange.mockImplementation(fail as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.takings).toEqual({ status: 'unknown', scope: 'all', figures: null });
+    expect(result.payload.accounts.status).toBe('ok');
+    expect(result.payload.aiCost.status).toBe('ok');
+    expect(result.payload.credits.status).toBe('ok');
+    expect(result.payload.revenue.status).toBe('ok');
+    expect(result.counts.takings).toMatchObject({ payments: null, rowsShown: 0 });
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'client_payments' }), 'Finance read failed');
+  });
+
+  it('R-e THROWS → the same unknown block, never a throw out of the builder', async () => {
+    const deps = takingsDeps();
+    deps.finance.listClientPaymentsAllAccountsPaidInRange.mockImplementation(() => {
+      throw new Error('exploded');
+    });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.takings.status).toBe('unknown');
+  });
+
+  it('R-f fails → refunded and net Unknown, gross shown, partial', async () => {
+    const deps = takingsDeps();
+    deps.finance.listClientRefundsAllAccountsCreatedInRange.mockImplementation(fail as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const t = result.payload.takings;
+    expect(t.status).toBe('partial');
+    expect(t.figures?.refundsState).toBe('unknown');
+    expect(t.figures?.lines.find((l) => l.currency === 'USD')).toMatchObject({ gross: 9881.54, refunded: null, net: null });
+    expect(result.counts.takings.refunds).toBeNull();
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'client_refunds' }), 'Finance read failed');
+  });
+});
+
+describe('AC-65 (2a): with a business picked, R-e′ and R-f′ get exactly the id; R-e and R-f are never called', () => {
+  it('exactly the id and the window range; zero all-accounts calls; names at most [id]; scope one; businesses 1', async () => {
+    const deps = takingsDeps();
+    const { result } = await run(deps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const range = { from: WINDOW.start, to: WINDOW.end };
+    expect(deps.finance.listClientPaymentsForAccountPaidInRange.mock.calls).toEqual([[A, range]]);
+    expect(deps.finance.listClientRefundsForAccountCreatedInRange.mock.calls).toEqual([[A, range]]);
+    expect(deps.finance.listClientPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(deps.finance.listClientRefundsAllAccountsCreatedInRange).not.toHaveBeenCalled();
+    for (const [ids] of deps.findNames.mock.calls) expect(ids).toEqual([A]);
+    const t = result.payload.takings;
+    expect(t.scope).toBe('one');
+    expect(t.figures?.businesses).toBe(1);
+    expect(t.figures?.rows.map((r) => r.accountId)).toEqual([A]);
+  });
+
+  it('a picked business with no takings → businesses 0, empty', async () => {
+    const deps = makeDeps();
+    const { result } = await run(deps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.takings.figures).toMatchObject({ businesses: 0, empty: true });
+    expect(deps.finance.listClientPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+  });
+});
+
+describe('the wiring (slice 2a)', () => {
+  it('exposes exactly the seven finance reads, the four new ones included', () => {
+    expect(Object.keys(financeHealthDeps().finance).sort()).toEqual([
+      'countLiveRevenueRows',
+      'findLiveBillingStatusForAccount',
+      'listClientPaymentsAllAccountsPaidInRange',
+      'listClientPaymentsForAccountPaidInRange',
+      'listClientRefundsAllAccountsCreatedInRange',
+      'listClientRefundsForAccountCreatedInRange',
+      'listLiveBillingStatusesAllAccounts',
+    ]);
   });
 });

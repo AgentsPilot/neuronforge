@@ -1,5 +1,5 @@
 /**
- * Every user-facing string of the admin finance page (slices 1a and 1b). The render
+ * Every user-facing string of the admin finance page (slices 1a, 1b and 2a). The render
  * test asserts against these constants, so a wording change is one edit.
  *
  * Tile states reuse Health's `STATUS_STYLES` labels as they are (SA-W7); the
@@ -9,7 +9,8 @@
 import type { FinanceGroupKey, FinanceTriggerKey, FinanceWindowChoice } from '@/lib/business-os/finance/financeTypes';
 
 export const PAGE_TITLE = 'Finance & business health';
-export const PAGE_PURPOSE = 'How is Business OS doing this month: accounts, AI cost and credits.';
+export const PAGE_PURPOSE =
+  'How is Business OS doing this month: accounts, AI cost, credits, and what clients paid the businesses through the platform.';
 
 export const PRESET_LABELS: Record<FinanceWindowChoice, string> = {
   today: 'Today',
@@ -156,3 +157,74 @@ export const CREDITS_NOT_LISTED_NOTE = (count: number) =>
 export const CREDITS_INCONSISTENT_NOTE = (count: number) =>
   `${count} ${count === 1 ? 'account has' : 'accounts have'} a lot that gave back more than it granted (shown as 0).`;
 export const CREDITS_GIFTED_UNKNOWN = 'Gifted credits could not be read.';
+
+// ── Section 2 block B, takings through the platform (slice 2a) ─────────────
+// The businesses' client payments: NOT our revenue (BD-1). No test-mode
+// wording anywhere (BD-13): test and real client payments are shown together.
+export const TAKINGS_TITLE = 'Takings through the platform';
+export const TAKINGS_CHIP = 'Not our revenue';
+export const TAKINGS_SUBTITLE = (windowLabel: string) =>
+  `Client payments recorded by the businesses · ${windowLabel} · Covers businesses that still exist`;
+export const TAKINGS_PER_CURRENCY = 'Takings per currency';
+export const TAKINGS_CURRENCY = 'Currency';
+export const TAKINGS_PAYMENTS = 'Payments';
+export const TAKINGS_GROSS = 'Gross';
+export const TAKINGS_REFUNDED = 'Refunded';
+export const TAKINGS_NET = 'Net of refunds (fees not deducted)';
+export const TAKINGS_NET_SHORT = 'Net of refunds';
+export const TAKINGS_BUSINESSES_COLUMN = 'Businesses';
+export const TAKINGS_UNKNOWN_CURRENCY = 'Unknown currency';
+export const TAKINGS_UNKNOWN = 'Unknown';
+/** Net when a read stopped at its limit: a lower bound minus a figure is not a bound (S2-FR-8). */
+export const TAKINGS_NET_CUT_OFF = 'Unknown (a read was cut off)';
+export const TAKINGS_EXCLUDES_UNREADABLE = (count: number) => `excludes ${count} unreadable`;
+export const TAKINGS_NO_PAYMENTS = 'No client payments recorded in this window';
+export const TAKINGS_OTHER_STATUS = (count: number) =>
+  `${count} ${count === 1 ? 'payment' : 'payments'} with another status not counted`;
+
+export const TAKINGS_REFUNDS = 'Refunds';
+export const TAKINGS_REFUNDS_COUNT = 'Refunds';
+export const TAKINGS_AMOUNT_REFUNDED = 'Amount refunded';
+export const TAKINGS_NO_REFUNDS = 'No refunds in this window';
+export const TAKINGS_REFUNDS_NOT_COMPLETED = (count: number) =>
+  `${count} ${count === 1 ? 'refund' : 'refunds'} not completed; ${count === 1 ? 'its amount is' : 'their amounts are'} not counted`;
+export const TAKINGS_REFUND_NOTE = 'A refund counts in the month it was made, which may differ from the month of its payment.';
+export const TAKINGS_REFUNDS_FAILED = 'Refunds could not be read';
+
+export const TAKINGS_FEES = 'Recorded processor fees';
+export const TAKINGS_FEE_CURRENCY = 'Fee currency';
+export const TAKINGS_FEES_COLUMN = 'Fees';
+export const TAKINGS_FEES_RECORDED_ON = (recorded: number, of: number) => `Fees recorded on ${recorded} of ${of} payments in this window`;
+export const TAKINGS_FEE_NOTE = 'A fee can be charged in another currency than its payment, so fees are never deducted from takings.';
+export const TAKINGS_NO_FEES = 'No processor fees recorded in this window';
+
+export const TAKINGS_PROCESSORS = 'Payments by processor';
+export const TAKINGS_PROCESSOR = 'Processor';
+/** SA-W21: labels by the stored value (trimmed, lower-cased). Any other value is shown as stored. */
+export const PROCESSOR_LABELS: Readonly<Record<string, string>> = {
+  stripe: 'Stripe',
+  manual: 'Manual: recorded by the business; no processor fee',
+};
+export const PROCESSOR_NOT_RECORDED = 'Not recorded';
+
+export const TAKINGS_BUSINESSES = 'Businesses with takings';
+export const TAKINGS_BY_BUSINESS = 'Takings by business';
+export const TAKINGS_BUSINESS = 'Business';
+export const NAME_UNKNOWN_BUSINESS = 'Unknown business';
+export const TAKINGS_SHOWING = (shown: number, total: number) => `Showing ${shown} of ${total}`;
+
+export const TAKINGS_CANNOT_TITLE = 'Not shown here';
+export const TAKINGS_CANNOT: readonly string[] = [
+  'Failed client payments: not stored; shown in a later update',
+  'Refund fees: not recorded',
+  'Net after fees: a fee can be in another currency than its payment',
+  'One total across currencies: currencies are never added together',
+];
+
+export const TAKINGS_NOTICE_PAYMENTS_CUT =
+  'The client payments were read only up to their limit: payments, gross and businesses are "at least", and net is unknown.';
+export const TAKINGS_NOTICE_REFUNDS_CUT = 'The refunds were read only up to their limit: refunded is "at least", and net is unknown.';
+export const TAKINGS_NOTICE_UNREADABLE = (count: number) =>
+  `${count} ${count === 1 ? 'amount' : 'amounts'} could not be read and ${count === 1 ? 'is' : 'are'} not counted; net is unknown where ${count === 1 ? 'it' : 'they'} fell.`;
+export const TAKINGS_NOTICE_UNREADABLE_FEES = (count: number) =>
+  `${count} recorded ${count === 1 ? 'fee' : 'fees'} could not be read and ${count === 1 ? 'is' : 'are'} not counted in the fee lines.`;

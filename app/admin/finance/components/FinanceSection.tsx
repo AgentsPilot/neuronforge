@@ -4,12 +4,18 @@
  * One section's frame (L-5): a heading, a subtitle naming the source and the
  * window, and the section's own status. A section that could not load says so
  * with a Retry, and the others still render (S1-FR-6).
+ *
+ * Slice 2a (SA-W24): an optional `badge`, a shared `StatusChip` beside the
+ * heading in EVERY state, `unknown` included (the takings block's "Not our
+ * revenue" must not vanish when the block fails). A section that passes no
+ * badge renders exactly the DOM it rendered before.
  */
 
 import type { ReactNode } from 'react';
 import { RefreshCw } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
 import type { FinanceSectionStatus } from '@/lib/business-os/finance/financeTypes';
 import { RETRY, SECTION_COULD_NOT_LOAD, SECTION_OK, SECTION_PARTIAL } from '../financeCopy';
 
@@ -26,10 +32,17 @@ interface Props {
   status: FinanceSectionStatus;
   onRetry: () => void;
   children?: ReactNode;
+  /** A chip in words beside the heading, shown in every state (SA-W24). */
+  badge?: { tone: StatusTone; label: string };
 }
 
-export function FinanceSection({ id, title, subtitle, status, onRetry, children }: Props) {
+export function FinanceSection({ id, title, subtitle, status, onRetry, children, badge }: Props) {
   const headingId = `${id}-heading`;
+  const heading = (
+    <h2 id={headingId} className="text-base font-semibold text-white">
+      {title}
+    </h2>
+  );
   return (
     <section
       aria-labelledby={headingId}
@@ -39,9 +52,16 @@ export function FinanceSection({ id, title, subtitle, status, onRetry, children 
     >
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 id={headingId} className="text-base font-semibold text-white">
-            {title}
-          </h2>
+          {badge ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {heading}
+              <StatusChip tone={badge.tone} testId={`section-${id}-badge`}>
+                {badge.label}
+              </StatusChip>
+            </div>
+          ) : (
+            heading
+          )}
           <p className="text-xs text-slate-400">{subtitle}</p>
         </div>
         <span className={cn('rounded border px-2 py-0.5 text-[11px]', BADGE[status].className)} data-testid={`section-${id}-status`}>

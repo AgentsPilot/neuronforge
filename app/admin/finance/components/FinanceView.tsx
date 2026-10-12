@@ -9,8 +9,9 @@
  * `push`. A reload or a shared link reproduces the view. An invalid value falls
  * back to the default with a small notice. Only ids and enums reach the URL.
  *
- * Order (S1-FR-5): KPI strip, our revenue, Section 1, Section 3, Section 4
- * (credits, slice 1b). No Section 2, 5 or 6 heading in slice 1.
+ * Order (S1-FR-5, §11A.0): KPI strip, our revenue, takings through the
+ * platform (Section 2 block B, slice 2a, directly under our revenue),
+ * Section 1, Section 3, Section 4 (credits, slice 1b).
  */
 
 import { useCallback, useMemo } from 'react';
@@ -26,6 +27,7 @@ import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
 import { FinanceKpiStrip } from './FinanceKpiStrip';
 import { RevenuePanel } from './RevenuePanel';
+import { TakingsSection } from './TakingsSection';
 
 export function FinanceView() {
   const searchParams = useSearchParams();
@@ -91,6 +93,7 @@ export function FinanceView() {
         <div className="space-y-4">
           <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} />
           <RevenuePanel revenue={data.revenue} />
+          <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
           <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
           <AiCostSection aiCost={data.aiCost} accountId={data.accountId} windowLabel={windowLabel} onRetry={reload} />
           <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
