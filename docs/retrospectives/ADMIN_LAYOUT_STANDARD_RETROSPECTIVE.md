@@ -419,4 +419,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 ### Conclusions & process improvements
 - When SA and QA run in parallel, QA writes probe copies outside folders that guards walk.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: MERGED — PR #324 (merge commit 82469a8a) — feature/admin-layout-l10 — b43bce03 (Settings) + 38fae090 (F-120)
