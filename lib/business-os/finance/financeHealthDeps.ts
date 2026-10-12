@@ -12,9 +12,10 @@
  *   - the ledger read repository: the all-accounts and one-account reads by
  *     time, and the charges by action id (declared on its importer guard);
  *   - the finance read repository: live billing status and revenue head counts,
- *     and the client payments and refunds (layer B, slice 2a): the named
- *     all-accounts reads only when no business is picked, the account-scoped
- *     ones with exactly the picked id (the builder chooses);
+ *     the client payments and refunds (layer B, slice 2a), and the overdue
+ *     invoices and instalments, and client plans (layer B, slice 2b): the
+ *     named all-accounts reads only when no business is picked, the
+ *     account-scoped ones with exactly the picked id (the builder chooses);
  *   - slice 1b, the credit-position pass: `adminCreditPercentDeps()`, the
  *     Businesses list's own wiring (SA-W13), so this file names neither of the
  *     pass's repository methods. It sets no `getSnapshots`: in production the
@@ -32,6 +33,9 @@
  *
  * The admin-pinned name read (`findAdminIdentitiesByUserIds`) is NOT wired
  * here: it may be called only from `app/api/admin/**`, so the route injects it.
+ * Nor is the reminder queue read (slice 2b, R-j): the jobs & queues admin read
+ * may be named only under `app/api/admin/**`, so the route binds it to the
+ * request's admin context and injects it too.
  *
  * Server-only: the repositories hold the service-role client. The one caller is
  * the admin route, which runs `requireAdmin` first.
@@ -91,8 +95,8 @@ export async function findPlanWithoutOverrides(
   return { data: { plan: result.data.plan }, error: null };
 }
 
-/** Everything but the admin-pinned name read, which the route supplies. */
-export function financeHealthDeps(): Omit<FinanceHealthDeps, 'findNames'> {
+/** Everything but the two admin-route reads (names and reminder figures), which the route supplies. */
+export function financeHealthDeps(): Omit<FinanceHealthDeps, 'findNames' | 'readReminderFigures'> {
   return {
     plans: {
       pagePlans: (options) => businessOsAccountPlanRepository.pagePlans(options),
@@ -117,6 +121,16 @@ export function financeHealthDeps(): Omit<FinanceHealthDeps, 'findNames'> {
         businessOsFinanceReadRepository.listClientRefundsAllAccountsCreatedInRange(range, opts),
       listClientRefundsForAccountCreatedInRange: (accountId, range, opts) =>
         businessOsFinanceReadRepository.listClientRefundsForAccountCreatedInRange(accountId, range, opts),
+      listOverdueClientInvoicesAllAccounts: (todayUtc, opts) =>
+        businessOsFinanceReadRepository.listOverdueClientInvoicesAllAccounts(todayUtc, opts),
+      listOverdueClientInvoicesForAccount: (accountId, todayUtc, opts) =>
+        businessOsFinanceReadRepository.listOverdueClientInvoicesForAccount(accountId, todayUtc, opts),
+      listOverdueClientInstalmentsAllAccounts: (todayUtc, opts) =>
+        businessOsFinanceReadRepository.listOverdueClientInstalmentsAllAccounts(todayUtc, opts),
+      listOverdueClientInstalmentsForAccount: (accountId, todayUtc, opts) =>
+        businessOsFinanceReadRepository.listOverdueClientInstalmentsForAccount(accountId, todayUtc, opts),
+      listClientPlansAllAccounts: (opts) => businessOsFinanceReadRepository.listClientPlansAllAccounts(opts),
+      listClientPlansForAccount: (accountId, opts) => businessOsFinanceReadRepository.listClientPlansForAccount(accountId, opts),
     },
     // SA-WR-4: the classifier takes the config as a parameter; this is where it is read.
     config: getEntitlementConfig(),

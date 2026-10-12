@@ -27,6 +27,14 @@
  * parameter: the strict schema still refuses any other key, `currency`
  * included (AC-46).
  *
+ * Slice 2b adds the client payment problems block. Its reminder figures are
+ * the jobs & queues admin read, bound here to this request's admin context
+ * and the reminder queue, and injected (SA-Q14): this is the one finance file
+ * allowed to name that read. The builder calls it only when no business is
+ * picked, under a 2 s deadline. The block's status, its five part states and
+ * its counts join the same line: never an amount, a currency, a due date or
+ * a name. Still no new query parameter.
+ *
  * Every response, success or error, is `Cache-Control: no-store` (SEC-9).
  *
  * @module app/api/admin/business-os/finance
@@ -42,6 +50,7 @@ import { financeHealthDeps } from '@/lib/business-os/finance/financeHealthDeps';
 import { resolveFinanceWindow } from '@/lib/business-os/finance/financeWindow';
 import { ADMIN_WINDOW_CHOICES, customRangeProblem, isRealDate } from '@/app/admin/components/adminWindowPresets';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { adminJobsQueuesRepository } from '@/lib/repositories/AdminJobsQueuesRepository';
 
 const logger = createLogger({ module: 'AdminBosFinanceAPI' });
 
@@ -105,6 +114,8 @@ export async function GET(request: NextRequest) {
   if (gate instanceof NextResponse) return noStore(gate);
 
   const requestLogger = baseLogger.child({ adminId: gate.user.id });
+  // R-j's admin context (slice 2b): the jobs & queues read refuses to run without it.
+  const reminderContext = { correlationId, adminId: gate.user.id };
   const startedAt = Date.now();
 
   try {
@@ -142,6 +153,9 @@ export async function GET(request: NextRequest) {
       ...financeHealthDeps(),
       // Admin identity reads are called only from app/api/admin/** (repository guard, SEC-5).
       findNames: (ids) => businessProfileRepository.findAdminIdentitiesByUserIds(ids),
+      // R-j (SA-Q14): the jobs & queues admin read, its one definition of stuck and dead-lettered.
+      readReminderFigures: (readAt, signal) =>
+        adminJobsQueuesRepository.readQueueFiguresAllAccounts(reminderContext, 'payment_reminders', readAt, { signal }),
     });
 
     if (result.kind === 'account_not_found') return errorResponse(404, 'Business not found');
@@ -153,8 +167,9 @@ export async function GET(request: NextRequest) {
     // Ids, filters, statuses and counts only: never a business name, never a
     // figure (no credit figure either). `counts.creditAccounts` and
     // `counts.creditsPass` make the credit pass's scale trigger visible from
-    // this route too (SA-WR-13). `counts.takings` (slice 2a) is counts and
-    // booleans only (S2-FR-12).
+    // this route too (SA-WR-13). `counts.takings` (slice 2a) and
+    // `counts.paymentProblems` (slice 2b) are counts, booleans and state
+    // words only (S2-FR-12).
     requestLogger.info(
       {
         window: { preset: window.preset, from: window.from, to: window.to },
@@ -165,6 +180,14 @@ export async function GET(request: NextRequest) {
           aiCost: payload.aiCost.status,
           credits: payload.credits.status,
           takings: payload.takings.status,
+          paymentProblems: {
+            block: payload.paymentProblems.status,
+            overdueInvoices: payload.paymentProblems.overdueInvoices.status,
+            overdueInstalments: payload.paymentProblems.overdueInstalments.status,
+            clientPlans: payload.paymentProblems.clientPlans.status,
+            reminders: payload.paymentProblems.reminders.state,
+            failedPayments: payload.paymentProblems.failedPayments.state,
+          },
         },
         tiles: {
           k1: payload.tiles.k1.status,
