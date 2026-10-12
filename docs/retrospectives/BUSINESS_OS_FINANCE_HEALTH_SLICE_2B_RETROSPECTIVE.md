@@ -29,7 +29,7 @@ The cycle ran in this order:
 7. Fix round 1 (SA-CR-1, QA-1, QA-2).
 8. The user's diff review.
 
-The user read the full diff and approved it on 2026-10-12. The work is uncommitted on `feature/bos-finance-health-2b` in worktree `neuronforge-finance-health`; RM commits next.
+The user read the full diff and approved it on 2026-10-12. The work was committed on `feature/bos-finance-health-2b` in worktree `neuronforge-finance-health` as `b4e0fa2b` (origin/main merged in `a6caf75e`), PR [#318](https://github.com/AgentsPilot/neuronforge/pull/318).
 
 **MD links:** [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) | [BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md) | [Slice 2 live check](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_SLICE2_LIVE_CHECK.md) | [Slice 2a retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_RETROSPECTIVE.md)
 
@@ -98,7 +98,7 @@ The user read the full diff and approved it on 2026-10-12. The work is uncommitt
 | # | Item | Owner | Status |
 |---|---|---|---|
 | FU-2b-1 | Manual QA L-32 to L-41 (workplan QA report), closing AC-73 (2b) and running §13 SQL checks 10 to 13; record `durationMs` (All businesses and one business) and `reminderMs` (well under 2,000). Plus the owed L-1 to L-31 from 1a, 1b and 2a | User | ⬜ Owed |
-| FU-2b-2 | RM: commit, push and open the PR for `feature/bos-finance-health-2b`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ⬜ Next (user approved 2026-10-12) |
+| FU-2b-2 | RM: commit, push and open the PR for `feature/bos-finance-health-2b`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ✅ Committed `b4e0fa2b`, PR #318 opened 2026-10-12 |
 | FU-2b-3 | The same backspace-byte defect in `app/admin/business-os-llm/__tests__/ledgerPanel.render.test.tsx` and `app/admin/components/__tests__/AdminSidebar.nav.test.ts` | Separate task | 🟡 Started by the user |
 | FU-2b-4 | **AI-cost overlap review: five business questions (BQ-1 to BQ-5)**, carried from FU-2a-4. **Urgent:** layout step L-8 deletes the audit-trail `BusinessAccountPicker` that `FinanceFilterBar.tsx` imports, so overlap slice **OV-2** (move Finance to the shared picker) must land before L-8 | User → BA → SA | ⬜ Open, time-sensitive |
 | FU-2b-5 | `qa-slice5-pr2.route.test.ts` asserts wall-clock time with real timers (`:113-115`) and flakes under parallel load. Pre-existing and unrelated to 2b | Dev (separate item) | ⬜ Open |
@@ -110,7 +110,7 @@ The user read the full diff and approved it on 2026-10-12. The work is uncommitt
 | FU-2a-5, FU-2a-6, FU-2a-7, FU-2a-8 | Carried: DF-3 test-data filtering; DF-4 page shell migration; layer-B `livemode` and failed charges never stored; BA Edit tool (workaround now standard) | As before | ⬜ Unchanged |
 | FU-1b-3, FU-1b-4, FU-4 | Carried from slice 1 (zero allowance wording, `metricParams` typing, shared ledger read) | As before | ⬜ Unchanged |
 
-### Status: APPROVED BY USER — commit pending (RM) — `feature/bos-finance-health-2b`
+### Status: APPROVED BY USER — committed `b4e0fa2b`, PR #318 — `feature/bos-finance-health-2b`
 
 ---
 
