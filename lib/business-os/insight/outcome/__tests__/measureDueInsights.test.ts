@@ -23,7 +23,13 @@ jest.mock('@/lib/logger', () => ({
 }));
 
 const DAY = 86_400_000;
-const ago = (days: number) => new Date(Date.now() - days * DAY).toISOString();
+/*
+ * One clock for the whole file. Reading `Date.now()` per call let two series
+ * built "at offset 0" land a millisecond apart whenever the clock ticked
+ * between them, which silently decided which one counted as newest.
+ */
+const NOW = Date.now();
+const ago = (days: number) => new Date(NOW - days * DAY).toISOString();
 const USER = '08456106-aa50-4810-b12c-7ca84102da31';
 
 interface Row {
@@ -88,7 +94,7 @@ function metricsChain(rows: Row[]) {
   const f: Record<string, string> = {};
   let from: string | null = null;
   let to: string | null = null;
-  let single = false;
+  let limit: number | null = null;
 
   const chain: Record<string, unknown> = {
     then: (resolve: (v: { data: unknown; error: null }) => unknown) => {
@@ -98,11 +104,11 @@ function metricsChain(rows: Row[]) {
       if (from) out = out.filter(r => String(r.period_start) >= from!);
       if (to) out = out.filter(r => String(r.period_start) <= to!);
       if (f.metric_key && f.period_type) seriesRead.push(`${f.metric_key}:${f.period_type}`);
-      if (single) {
+      if (limit !== null) {
         out = [...out].sort((a, b) =>
           String(b.period_start).localeCompare(String(a.period_start))
         );
-        out = out.slice(0, 1);
+        out = out.slice(0, limit);
       }
       return resolve({ data: out, error: null });
     },
@@ -121,8 +127,8 @@ function metricsChain(rows: Row[]) {
     return chain;
   };
   chain.order = () => chain;
-  chain.limit = () => {
-    single = true;
+  chain.limit = (n: number) => {
+    limit = n;
     return chain;
   };
   return chain;
@@ -203,6 +209,45 @@ describe('measuring a card that was acted on', () => {
 
     const distinct = [...new Set(seriesRead)];
     expect(distinct).toEqual(['retention.no_show_rate:daily']);
+  });
+
+  it('prefers the daily series when a monthly one starts on the same day, whatever the row order', async () => {
+    /*
+     * On the 1st of a month the monthly row and the daily row share their
+     * `period_start`. Postgres returns tied rows in no promised order, so the
+     * pick must not depend on it — the monthly rows come first here on purpose.
+     */
+    await measureDueInsights(
+      mockSupabase({
+        insights: [insight()],
+        metrics: [
+          ...series('retention.no_show_rate', 0, 999, 'monthly'),
+          ...series('retention.no_show_rate', 0, 999, 'weekly'),
+          ...series('retention.no_show_rate', 40, 20),
+          ...series('retention.no_show_rate', 0, 10),
+        ],
+      }) as never,
+      { horizons: [30] }
+    );
+
+    expect([...new Set(seriesRead)]).toEqual(['retention.no_show_rate:daily']);
+    expect(inserted[0]).toMatchObject({ value_before: 20, value_after: 10 });
+  });
+
+  it('still takes a coarser series when it is genuinely the newest', async () => {
+    // Daily stopped a week ago; the tie-break must not override recency.
+    await measureDueInsights(
+      mockSupabase({
+        insights: [insight()],
+        metrics: [
+          ...series('retention.no_show_rate', 7, 10),
+          ...series('retention.no_show_rate', 0, 10, 'monthly'),
+        ],
+      }) as never,
+      { horizons: [30] }
+    );
+
+    expect([...new Set(seriesRead)]).toEqual(['retention.no_show_rate:monthly']);
   });
 });
 
