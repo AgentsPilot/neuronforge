@@ -13,7 +13,9 @@
  *   4  price switch off            → refuse: never sell what the webhook cannot recognise
  *   5  Stripe key mode unknown     → refuse
  *   6  payment hold → eligibility  → refuse when unreadable (fail closed), a held
- *                                    friend asking another tier, or a held admin invitee
+ *                                    account while a held-payment switch is off
+ *                                    (P-5a.2, D5-3), a held friend asking another
+ *                                    tier, or a held admin invitee
  *   7  plan row (snapshot)         → refuse when unreadable, or when there is none (Q-4)
  *   8  billing row                 → refuse when unreadable
  *   9  layer 1, record             → refuse a live subscription or an unexpired lock
@@ -52,7 +54,11 @@ import {
   ensureBusinessOsStripeCustomer,
   replaceBusinessOsStripeCustomer,
 } from '@/lib/business-os/billing/businessOsStripeCustomer';
-import { planCheckoutEligibility } from '@/lib/business-os/billing/planCheckoutEligibility';
+import {
+  planCheckoutEligibility,
+  readHeldPaymentSwitches,
+  type HeldPaymentSwitches,
+} from '@/lib/business-os/billing/planCheckoutEligibility';
 import { createPlanCheckoutPriceResolver, type PlanCheckoutPriceResolver } from '@/lib/business-os/billing/planCheckoutPrice';
 import { isPlanPriceRecognitionEnabled } from '@/lib/business-os/billing/planPricesFlag';
 import { currentStripeMode, isLiveMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
@@ -107,6 +113,7 @@ export type PlanCheckoutRefusalCode =
   | 'hold_unreadable'
   | 'held_tier_not_allowed'
   | 'held_tier_unresolved'
+  | 'held_payment_unavailable'
   | 'plan_unreadable'
   | 'no_plan_row'
   | 'billing_row_unreadable'
@@ -128,6 +135,8 @@ export const PLAN_CHECKOUT_REFUSALS: Readonly<Record<PlanCheckoutRefusalCode, { 
   hold_unreadable: { status: 503, message: 'We could not check your account right now. Please try again.' },
   held_tier_not_allowed: { status: 409, message: 'Your invitation is for a different plan.' },
   held_tier_unresolved: { status: 409, message: 'Your invitation cannot be paid for yet.' },
+  // P-5a.2 (S5-1, D5-3): a held account while a held-payment switch is off.
+  held_payment_unavailable: { status: 409, message: 'Payment for your invitation is not open yet.' },
   plan_unreadable: { status: 503, message: 'We could not check your plan right now. Please try again.' },
   no_plan_row: { status: 409, message: 'Your account is not ready for a plan yet.' },
   billing_row_unreadable: { status: 503, message: 'We could not check your billing right now. Please try again.' },
@@ -190,6 +199,12 @@ export interface PlanCheckoutDeps {
   stripe?: CheckoutStripe;
   prices?: PlanCheckoutPriceResolver;
   pricesEnabled?: () => boolean;
+  /**
+   * The held-payment switches (P-5a.2, S5-1). Default `readHeldPaymentSwitches`,
+   * the same reader the holding screen uses. Read at step 6; it changes the
+   * answer for a HELD account only.
+   */
+  heldPaymentSwitches?: () => HeldPaymentSwitches;
   mode?: () => StripeMode;
   now?: () => Date;
   attemptId?: () => string;
@@ -288,7 +303,9 @@ export async function startPlanCheckout(input: PlanCheckoutInput, deps: PlanChec
     log.error({ err, userId }, 'Payment hold read threw during plan checkout');
     hold = { ok: false };
   }
-  const eligibility = planCheckoutEligibility(hold);
+  // The held branch delegates to the shared predicate `heldPaymentOffer`
+  // (P5-C5); `held_payment_unavailable` is a warn with no alert (S5-1).
+  const eligibility = planCheckoutEligibility(hold, (deps.heldPaymentSwitches ?? readHeldPaymentSwitches)());
   if (!eligibility.ok) return refuse(eligibility.code, eligibility.code === 'hold_unreadable' ? 'error' : 'warn');
   if (!eligibility.tiers.includes(tier)) {
     return eligibility.held ? refuse('held_tier_not_allowed', 'warn') : refuse('price_unavailable', 'error', { reason: 'tier_not_sold' });
