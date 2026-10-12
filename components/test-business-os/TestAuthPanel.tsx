@@ -23,6 +23,7 @@ import {
   sendPasswordResetEmail,
   signOutUser,
 } from '@/lib/client/auth-actions';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 
 interface Props {
   user: User | null;
@@ -113,16 +114,6 @@ export function TestAuthPanel({ user, authLoading, onLog, panelStyle }: Props) {
     minWidth: '220px',
   };
 
-  const buttonStyle = (bg: string): React.CSSProperties => ({
-    padding: '8px 16px',
-    fontSize: '14px',
-    backgroundColor: busy ? '#9aa0a6' : bg,
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: busy ? 'not-allowed' : 'pointer',
-  });
-
   return (
     <div style={panelStyle}>
       <h2 style={{ marginTop: 0 }}>Session</h2>
@@ -145,7 +136,7 @@ export function TestAuthPanel({ user, authLoading, onLog, panelStyle }: Props) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <button onClick={handleSignOut} disabled={busy} style={buttonStyle('#dc3545')}>
+            <button onClick={handleSignOut} disabled={busy} className={harnessButton('danger', 'md')}>
               Sign out
             </button>
             <label style={{ fontSize: '13px', color: '#666' }}>
@@ -199,14 +190,14 @@ export function TestAuthPanel({ user, authLoading, onLog, panelStyle }: Props) {
                 style={inputStyle}
               />
             </div>
-            <button type="submit" disabled={busy} style={buttonStyle('#007bff')}>
+            <button type="submit" disabled={busy} className={harnessButton('primary', 'md')}>
               Sign in
             </button>
             <button
               type="button"
               onClick={handleGoogleLogin}
               disabled={busy}
-              style={buttonStyle('#444')}
+              className={harnessButton('secondary', 'md')}
             >
               Sign in with Google
             </button>
@@ -214,11 +205,16 @@ export function TestAuthPanel({ user, authLoading, onLog, panelStyle }: Props) {
               type="button"
               onClick={handleResetEmail}
               disabled={busy}
+              // A link-styled secondary action, deliberately not a filled button.
+              className="disabled:cursor-not-allowed disabled:opacity-50"
               style={{
-                ...buttonStyle('transparent'),
+                padding: '8px 4px',
+                fontSize: '14px',
+                background: 'none',
+                border: 'none',
                 color: '#007bff',
                 textDecoration: 'underline',
-                padding: '8px 4px',
+                cursor: busy ? 'not-allowed' : 'pointer',
               }}
             >
               Send reset email

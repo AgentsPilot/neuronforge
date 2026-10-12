@@ -14,12 +14,20 @@
  * (AC-16, SA-W12), the gifted figures Unknown on a failed lots read (AC-38),
  * one Unknown row (AC-17), the display cap, "<0.1%" (SA-W17), K-2's line from
  * the payload (SA-W10), and no currency anywhere in Section 4 or on K-4.
+ *
+ * Slice 2a: the takings block directly under "Our revenue" with its "Not our
+ * revenue" chip in every state (SA-WR-17), a currency on every money cell and
+ * no total across currencies (AC-48), the fee line and note (AC-49), "At
+ * least" and a cut-off net (AC-51), the empty states (AC-52), unreadable and
+ * other-status counts in words (AC-53), the table's cap and labels (AC-54), no
+ * test-mode wording (AC-55), a failed block alone (AC-66), the layout parts
+ * (AC-68), and formatMoney's fixed two decimals (SA-WR-18).
  */
 
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-import type { FinanceCreditRow, FinancePayload } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceCreditRow, FinancePayload, FinanceTakingsSection } from '@/lib/business-os/finance/financeTypes';
 
 const mockReplace = jest.fn();
 let mockSearch = '';
@@ -45,8 +53,16 @@ import {
   REVENUE_COULD_NOT_CHECK,
   REVENUE_NONE_YET,
   SECTION_COULD_NOT_LOAD,
+  TAKINGS_CHIP,
+  TAKINGS_FEE_NOTE,
+  TAKINGS_NET_CUT_OFF,
+  TAKINGS_NO_PAYMENTS,
+  TAKINGS_NO_REFUNDS,
+  TAKINGS_REFUNDS_FAILED,
+  TAKINGS_TITLE,
   TILE_LABELS,
 } from '../financeCopy';
+import { formatMoney } from '../financeFormat';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
@@ -94,6 +110,49 @@ function creditsSection(extra: Partial<FinancePayload['credits']> = {}): Finance
       deletedAccountsOutstanding: 30,
       inconsistentAccounts: 0,
       window: { granted: 50, takenBack: 40, grants: 2, grantingAdmins: 2 },
+    },
+    ...extra,
+  };
+}
+
+const PLATFORM_ID = '00000000-0000-0000-0000-000000000000';
+
+/** Two currencies; a fee in USD on an ILS payment; one platform row. Totals across currencies would be 380.80 / 345.80. */
+function takingsSection(extra: Partial<FinanceTakingsSection> = {}): FinanceTakingsSection {
+  return {
+    status: 'ok',
+    scope: 'all',
+    figures: {
+      empty: false,
+      paymentsExact: true,
+      refundsState: 'ok',
+      lines: [
+        { currency: 'ILS', payments: 4, gross: 230.3, refunded: 15, net: 215.3, businesses: 2, unreadable: 0, unreadablePayments: 0 },
+        { currency: 'USD', payments: 2, gross: 150.5, refunded: 20, net: 130.5, businesses: 1, unreadable: 0, unreadablePayments: 0 },
+      ],
+      refundLines: [
+        { currency: 'ILS', refunds: 1, refunded: 15 },
+        { currency: 'USD', refunds: 1, refunded: 20 },
+      ],
+      refundsNotCompleted: 0,
+      feeLines: [{ currency: 'USD', fees: 5.85, payments: 3 }],
+      feesRecordedOn: 3,
+      countedPayments: 6,
+      unreadableFees: 0,
+      processors: [
+        { processorType: 'manual', payments: 1 },
+        { processorType: 'stripe', payments: 4 },
+        { processorType: null, payments: 1 },
+      ],
+      businesses: 3,
+      otherStatusPayments: 0,
+      unreadableAmounts: 0,
+      rows: [
+        { accountId: B, name: 'Beta Clinic', nameStatus: 'found', currency: 'ILS', payments: 2, gross: 230, refunded: 15, net: 215, unreadablePayments: 0 },
+        { accountId: A, name: 'Acme Dental', nameStatus: 'found', currency: 'USD', payments: 1, gross: 150, refunded: 20, net: 130, unreadablePayments: 0 },
+        { accountId: PLATFORM_ID, name: null, nameStatus: 'platform', currency: 'USD', payments: 1, gross: 0.5, refunded: 0, net: 0.5, unreadablePayments: 0 },
+      ],
+      rowsTotal: 3,
     },
     ...extra,
   };
@@ -158,6 +217,7 @@ function payload(extra: Partial<FinancePayload> = {}): FinancePayload {
       },
     },
     credits: creditsSection(),
+    takings: takingsSection(),
     ...extra,
   };
 }
@@ -389,5 +449,268 @@ describe('the URL is the state (AC-24)', () => {
     await screen.findByTestId('kpi-strip');
     fireEvent.click(screen.getByRole('button', { name: '7d' }));
     expect(mockReplace).toHaveBeenCalledWith(`/admin/finance?preset=7d&accountId=${A}`, { scroll: false });
+  });
+});
+
+describe('Section 2 block B, takings (slice 2a)', () => {
+  const renderWith = async (takings: FinanceTakingsSection) => {
+    serve({ success: true, data: payload({ takings }) });
+    render(<FinanceView />);
+    return screen.findByTestId('section-takings');
+  };
+  const figures = () => takingsSection().figures!;
+
+  it('sits directly under "Our revenue", before Section 1, with its title, subtitle and the "Not our revenue" chip', async () => {
+    const section = await renderWith(takingsSection());
+    expect(within(section).getByRole('heading', { name: TAKINGS_TITLE })).toBeInTheDocument();
+    expect(section).toHaveTextContent('Covers businesses that still exist');
+    expect(section).toHaveTextContent('UTC');
+    const order = ['section-revenue', 'section-takings', 'section-accounts'].map((id) => screen.getByTestId(id));
+    for (let i = 1; i < order.length; i += 1) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(screen.getByTestId('section-takings-badge')).toHaveTextContent(TAKINGS_CHIP);
+  });
+
+  it.each([['ok'], ['partial'], ['unknown']] as const)('SA-WR-17: the chip shows in the %s state', async (status) => {
+    const base = takingsSection();
+    await renderWith({ ...base, status, figures: status === 'unknown' ? null : base.figures });
+    const chip = screen.getByTestId('section-takings-badge');
+    expect(chip).toHaveTextContent(TAKINGS_CHIP);
+    expect(chip).toHaveAttribute('data-tone', 'neutral');
+  });
+
+  it('SA-WR-17: the Accounts, AI cost and Credits sections render no chip', async () => {
+    await renderWith(takingsSection());
+    for (const id of ['accounts', 'ai-cost', 'credits']) {
+      expect(screen.queryByTestId(`section-${id}-badge`)).not.toBeInTheDocument();
+      expect(screen.getByTestId(`section-${id}`).querySelector('[data-tone]')).toBeNull();
+    }
+  });
+
+  it('AC-48: every money cell names its currency; nothing adds two currencies', async () => {
+    const section = await renderWith(takingsSection());
+    const cells = section.querySelectorAll('[data-money]');
+    expect(cells.length).toBeGreaterThanOrEqual(12);
+    for (const cell of Array.from(cells)) expect(cell.textContent).toMatch(/^(At least )?(USD|ILS|EUR|Unknown currency) -?[\d,]+\.\d\d$/);
+    expect(within(screen.getByTestId('takings-line-ILS')).getByText('ILS 230.30')).toBeInTheDocument();
+    expect(within(screen.getByTestId('takings-line-USD')).getByText('USD 150.50')).toBeInTheDocument();
+    // No cross-currency total anywhere in the block (gross 380.80, net 345.80, refunded 35.00).
+    expect(section.textContent).not.toMatch(/380\.80|345\.80|35\.00/);
+  });
+
+  it('AC-49: fees on their FEE currency line, with "recorded on N of M" and the never-deducted note', async () => {
+    const section = await renderWith(takingsSection());
+    expect(within(screen.getByTestId('takings-fee-USD')).getByText('USD 5.85')).toBeInTheDocument();
+    expect(screen.getByTestId('takings-fees-recorded')).toHaveTextContent('Fees recorded on 3 of 6 payments in this window');
+    expect(section).toHaveTextContent(TAKINGS_FEE_NOTE);
+    // Net is the server's gross minus refunded, untouched by any fee.
+    expect(within(screen.getByTestId('takings-line-USD')).getByText('USD 130.50')).toBeInTheDocument();
+  });
+
+  it('SA-W21: processor labels from the copy; NULL reads "Not recorded"', async () => {
+    const section = await renderWith(takingsSection());
+    const processors = within(section).getByTestId('takings-processors');
+    expect(processors).toHaveTextContent('Stripe');
+    expect(processors).toHaveTextContent('Manual: recorded by the business; no processor fee');
+    expect(processors).toHaveTextContent('Not recorded');
+  });
+
+  it('AC-51: payments cut off → "At least" on gross and counts, net "Unknown (a read was cut off)", a notice; status partial', async () => {
+    const f = figures();
+    await renderWith({
+      ...takingsSection(),
+      status: 'partial',
+      figures: { ...f, paymentsExact: false, lines: f.lines.map((l) => ({ ...l, net: null })), rows: f.rows.map((r) => ({ ...r, net: null })) },
+    });
+    const usd = screen.getByTestId('takings-line-USD');
+    expect(usd).toHaveTextContent('At least USD 150.50');
+    expect(usd).toHaveTextContent('At least 2');
+    expect(within(usd).getByText(TAKINGS_NET_CUT_OFF)).toBeInTheDocument();
+    expect(screen.getByTestId('takings-notice-payments-cut')).toBeInTheDocument();
+    expect(screen.getByTestId('section-takings')).toHaveAttribute('data-status', 'partial');
+  });
+
+  it('AC-51: refunds cut off → refunded "At least", net cut off, its own notice', async () => {
+    const f = figures();
+    await renderWith({ ...takingsSection(), status: 'partial', figures: { ...f, refundsState: 'partial', lines: f.lines.map((l) => ({ ...l, net: null })) } });
+    const usd = screen.getByTestId('takings-line-USD');
+    expect(usd).toHaveTextContent('At least USD 20.00');
+    expect(within(usd).getByText(TAKINGS_NET_CUT_OFF)).toBeInTheDocument();
+    expect(screen.getByTestId('takings-notice-refunds-cut')).toBeInTheDocument();
+  });
+
+  it('AC-52: an empty window → both sentences; no currency line and no 0.00', async () => {
+    const section = await renderWith({
+      status: 'ok',
+      scope: 'all',
+      figures: {
+        ...figures(),
+        empty: true,
+        lines: [],
+        refundLines: [],
+        feeLines: [],
+        feesRecordedOn: 0,
+        countedPayments: 0,
+        processors: [],
+        businesses: 0,
+        rows: [],
+        rowsTotal: 0,
+      },
+    });
+    expect(screen.getByTestId('takings-no-payments')).toHaveTextContent(TAKINGS_NO_PAYMENTS);
+    expect(screen.getByTestId('takings-no-refunds')).toHaveTextContent(TAKINGS_NO_REFUNDS);
+    expect(screen.queryByTestId('takings-lines')).not.toBeInTheDocument();
+    expect(section.textContent).not.toMatch(/0\.00|USD|ILS/);
+  });
+
+  it('AC-53: unreadable amounts, unreadable fees and other statuses are counted in words; net Unknown on that line', async () => {
+    const f = figures();
+    await renderWith({
+      ...takingsSection(),
+      status: 'partial',
+      figures: {
+        ...f,
+        unreadableAmounts: 2,
+        unreadableFees: 1,
+        otherStatusPayments: 3,
+        lines: f.lines.map((l) => (l.currency === 'USD' ? { ...l, net: null, unreadable: 2, unreadablePayments: 2 } : l)),
+      },
+    });
+    expect(screen.getByTestId('takings-notice-unreadable')).toHaveTextContent('2 amounts could not be read and are not counted');
+    expect(screen.getByTestId('takings-notice-unreadable-fees')).toHaveTextContent('1 recorded fee could not be read');
+    expect(screen.getByTestId('takings-other-status')).toHaveTextContent('3 payments with another status not counted');
+    const usd = screen.getByTestId('takings-line-USD');
+    expect(usd).toHaveTextContent('excludes 2 unreadable');
+    expect(within(usd).getByText('Unknown')).toBeInTheDocument();
+    // The other currency's net is untouched.
+    expect(within(screen.getByTestId('takings-line-ILS')).getByText('ILS 215.30')).toBeInTheDocument();
+  });
+
+  it('AC-54: "Showing N of M", Platform account and Unknown business in words; never "Deleted business"', async () => {
+    const f = figures();
+    const section = await renderWith({
+      ...takingsSection(),
+      figures: {
+        ...f,
+        rows: [...f.rows, { accountId: null, name: null, nameStatus: 'unknown_business', currency: null, payments: 1, gross: 3, refunded: 0, net: 3, unreadablePayments: 0 }],
+        rowsTotal: 201,
+      },
+    });
+    expect(screen.getByTestId('takings-showing')).toHaveTextContent('Showing 4 of 201');
+    const table = screen.getByTestId('takings-table');
+    expect(within(table).getByText(NAME_PLATFORM)).toBeInTheDocument();
+    expect(within(table).getByText('Unknown business')).toBeInTheDocument();
+    expect(within(table).getAllByText('Unknown currency 3.00')).toHaveLength(2);
+    expect(section.textContent).not.toMatch(/Deleted business/);
+  });
+
+  it('AC-55: no test-mode label, note or switch anywhere in the block', async () => {
+    const section = await renderWith(takingsSection());
+    expect(section.textContent).not.toMatch(/test.?mode|livemode|live mode/i);
+    expect(within(section).queryByRole('switch')).not.toBeInTheDocument();
+    expect(within(section).queryByRole('checkbox')).not.toBeInTheDocument();
+  });
+
+  it('AC-66: the block could not load → its own Retry; every other section and tile renders', async () => {
+    const section = await renderWith({ status: 'unknown', scope: 'all', figures: null });
+    expect(within(section).getAllByText(SECTION_COULD_NOT_LOAD).length).toBeGreaterThan(0);
+    expect(within(section).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByTestId('ai-total')).toBeInTheDocument();
+    expect(screen.getByTestId('section-credits')).toBeInTheDocument();
+  });
+
+  it('AC-66: refunds failed → "Refunds could not be read", refunded and net Unknown, gross shown', async () => {
+    const f = figures();
+    await renderWith({
+      ...takingsSection(),
+      status: 'partial',
+      figures: {
+        ...f,
+        refundsState: 'unknown',
+        refundLines: null,
+        refundsNotCompleted: null,
+        lines: f.lines.map((l) => ({ ...l, refunded: null, net: null })),
+        rows: f.rows.map((r) => ({ ...r, refunded: null, net: null })),
+      },
+    });
+    expect(screen.getByTestId('takings-notice-refunds-failed')).toHaveTextContent(TAKINGS_REFUNDS_FAILED);
+    const usd = screen.getByTestId('takings-line-USD');
+    expect(usd).toHaveTextContent('USD 150.50');
+    expect(usd).not.toHaveTextContent('At least');
+    // SA-1: a FAILED refunds read is not a cut-off read: refunded AND net say plain "Unknown".
+    expect(within(usd).getAllByText('Unknown')).toHaveLength(2);
+    expect(within(usd).queryByText(TAKINGS_NET_CUT_OFF)).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('section-takings')).queryByText(TAKINGS_NET_CUT_OFF)).not.toBeInTheDocument();
+  });
+
+  it('QA-2: an unreadable PAYMENT amount on a line or row → gross "At least", net plain "Unknown"; the other line stays plain', async () => {
+    const f = figures();
+    await renderWith({
+      ...takingsSection(),
+      status: 'partial',
+      figures: {
+        ...f,
+        unreadableAmounts: 1,
+        lines: f.lines.map((l) => (l.currency === 'USD' ? { ...l, net: null, unreadable: 1, unreadablePayments: 1 } : l)),
+        rows: f.rows.map((r) => (r.accountId === A ? { ...r, net: null, unreadablePayments: 1 } : r)),
+      },
+    });
+    const usd = screen.getByTestId('takings-line-USD');
+    expect(within(usd).getByText('At least USD 150.50')).toBeInTheDocument();
+    expect(within(usd).getByText('Unknown')).toBeInTheDocument();
+    expect(within(usd).queryByText(TAKINGS_NET_CUT_OFF)).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('takings-line-ILS')).getByText('ILS 230.30')).toBeInTheDocument();
+    const row = screen.getByTestId(`takings-row-${A}-USD`);
+    expect(within(row).getByText('At least USD 150.00')).toBeInTheDocument();
+    expect(within(row).getByText('Unknown')).toBeInTheDocument();
+    expect(within(screen.getByTestId(`takings-row-${B}-ILS`)).getByText('ILS 230.00')).toBeInTheDocument();
+  });
+
+  it('QA-2: an unreadable REFUND amount only → gross stays a plain figure (it left nothing out); net Unknown', async () => {
+    const f = figures();
+    await renderWith({
+      ...takingsSection(),
+      status: 'partial',
+      figures: {
+        ...f,
+        unreadableAmounts: 1,
+        lines: f.lines.map((l) => (l.currency === 'USD' ? { ...l, net: null, unreadable: 1, unreadablePayments: 0 } : l)),
+      },
+    });
+    const usd = screen.getByTestId('takings-line-USD');
+    expect(within(usd).getByText('USD 150.50')).toBeInTheDocument();
+    expect(usd).not.toHaveTextContent('At least USD 150.50');
+    expect(within(usd).getByText('Unknown')).toBeInTheDocument();
+  });
+
+  it('AC-68: labelled tables with column headers, number cells right-aligned and tabular; the KPI strip still has exactly five tiles', async () => {
+    const section = await renderWith(takingsSection());
+    for (const name of ['Takings per currency', 'Refunds', 'Recorded processor fees', 'Payments by processor', 'Takings by business']) {
+      const table = within(section).getByRole('table', { name });
+      const headers = table.querySelectorAll('thead th');
+      expect(headers.length).toBeGreaterThan(1);
+      for (const th of Array.from(headers)) expect(th).toHaveAttribute('scope', 'col');
+    }
+    for (const cell of Array.from(section.querySelectorAll('[data-money]'))) expect(cell.className).toMatch(/tabular-nums/);
+    const tiles = screen.getByTestId('kpi-strip').querySelectorAll('[data-testid^="tile-"][data-status]');
+    expect(tiles).toHaveLength(5);
+  });
+});
+
+describe('formatMoney (SA-WR-18): fixed two decimals, the code always shown', () => {
+  it('0.10 + 0.20 summed in hundredths and divided once renders "USD 0.30"', () => {
+    expect(formatMoney((10 + 20) / 100, 'USD')).toBe('USD 0.30');
+  });
+
+  it('12,345,678,901.23 renders exactly', () => {
+    expect(formatMoney(1_234_567_890_123 / 100, 'USD')).toBe('USD 12,345,678,901.23');
+  });
+
+  it('a negative net keeps its minus sign and its code; a whole amount keeps two decimals; Unknown currency named', () => {
+    expect(formatMoney(-5, 'EUR')).toBe('EUR -5.00');
+    expect(formatMoney(-1234.5, 'ILS')).toBe('ILS -1,234.50');
+    expect(formatMoney(200, 'ILS')).toBe('ILS 200.00');
+    expect(formatMoney(12, null)).toBe('Unknown currency 12.00');
   });
 });

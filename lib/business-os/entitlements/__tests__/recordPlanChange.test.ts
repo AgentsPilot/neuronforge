@@ -188,3 +188,63 @@ describe('never throws (the plan row is already written)', () => {
     }
   });
 });
+
+describe('companion entries (plan payments P-5a.1, SA Q-1 / W-6)', () => {
+  const STAMP = {
+    action: 'BOS_BILLING_FIRST_PAYMENT_STAMPED',
+    entityType: 'business_os_account_lineage' as const,
+    entityId: ACCOUNT,
+    details: { invoiceId: 'in_1', source: 'account_invite' },
+    severity: 'info' as const,
+  };
+
+  it('a companion is logged after the main entry and both are flushed ONCE', async () => {
+    await recordPlanChange(
+      input({
+        action: 'BOS_BILLING_INVOICE_PAID',
+        actor: { kind: 'system', source: 'stripe_webhook' },
+        details: { invoiceId: 'in_1' },
+        severity: 'info',
+        companionEntries: [STAMP],
+      })
+    );
+    expect(events).toEqual([`invalidate:${ACCOUNT}`, 'log', 'log', 'flush']);
+    expect(logged.map((entry) => entry.action)).toEqual(['BOS_BILLING_INVOICE_PAID', 'BOS_BILLING_FIRST_PAYMENT_STAMPED']);
+  });
+
+  it('the companion takes the account, the platform actor and details.actor from the main rule; a caller value cannot override them', async () => {
+    await recordPlanChange(
+      input({
+        actor: { kind: 'system', source: 'stripe_webhook' },
+        companionEntries: [{ ...STAMP, details: { ...STAMP.details, actor: 'owner' } }],
+      })
+    );
+    expect(logged[1]).toStrictEqual({
+      action: 'BOS_BILLING_FIRST_PAYMENT_STAMPED',
+      entityType: 'business_os_account_lineage',
+      entityId: ACCOUNT,
+      userId: ACCOUNT,
+      actorId: PLATFORM,
+      details: { invoiceId: 'in_1', source: 'account_invite', actor: 'stripe_webhook' },
+      severity: 'info',
+    });
+  });
+
+  it('an admin companion carries the admin as actor and no actor detail', async () => {
+    await recordPlanChange(input({ companionEntries: [STAMP] }));
+    expect(logged[1].actorId).toBe(ADMIN);
+    expect(logged[1].details).toEqual({ invoiceId: 'in_1', source: 'account_invite' });
+  });
+
+  it('an empty companion list writes exactly what no list writes', async () => {
+    await recordPlanChange(input({ companionEntries: [] }));
+    expect(events).toEqual([`invalidate:${ACCOUNT}`, 'log', 'flush']);
+    expect(logged).toHaveLength(1);
+  });
+
+  it('a failing companion never throws: the failure is logged at error and the call resolves', async () => {
+    sink.logFails = true;
+    await expect(recordPlanChange(input({ companionEntries: [STAMP] }))).resolves.toBeUndefined();
+    expect(logLines.some((line) => line.level === 'error')).toBe(true);
+  });
+});

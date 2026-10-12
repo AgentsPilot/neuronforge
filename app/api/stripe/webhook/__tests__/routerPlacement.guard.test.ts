@@ -43,13 +43,17 @@ function walk(node: ts.Node, visit: (n: ts.Node) => void): void {
 // P-3b.2 (workplan BUSINESS_OS_PLAN_PAYMENTS_P3B_WORKPLAN.md §3.1): the plan
 // webhook handler wires the two billing repositories; its three use cases name
 // them as port TYPES only. Each file lists EXACTLY the repositories it imports.
+// P-5a.1 (workplan BUSINESS_OS_PLAN_PAYMENTS_P5A_WORKPLAN.md §3.2, SA Q-2): the
+// handler also wires the lineage repository, read once for the source of a
+// first payment stamp; the apply use case names it as a port TYPE only.
 const BILLING_ACCOUNTS = '@/lib/repositories/BusinessOsBillingAccountRepository';
 const BILLING_EVENTS = '@/lib/repositories/BusinessOsBillingEventRepository';
+const ACCOUNT_LINEAGE = '@/lib/repositories/BusinessOsAccountLineageRepository';
 const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   'businessOsStripeCustomer.ts': [BILLING_ACCOUNTS],
   'planCheckout.ts': [BILLING_ACCOUNTS],
-  'planBillingHandler.ts': [BILLING_ACCOUNTS, BILLING_EVENTS],
-  'planPaymentApply.ts': [BILLING_ACCOUNTS, BILLING_EVENTS],
+  'planBillingHandler.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE],
+  'planPaymentApply.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE],
   'planCheckoutSessionEvents.ts': [BILLING_ACCOUNTS],
   'planSubscriptionMirror.ts': [BILLING_ACCOUNTS],
 };

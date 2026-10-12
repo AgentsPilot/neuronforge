@@ -11,7 +11,9 @@
 //     the same order; its route suite pins the audit entry byte for byte and
 //     runs unedited except the one SA-approved billing-repository mock
 //     (SA C-8 ruling), which is the proof of no behaviour change;
-//   - the webhook plan handler (P-3b.2), a system actor.
+//   - the webhook plan handler (P-3b.2), a system actor. From P-5a.1 it may
+//     pass ONE companion entry, the first payment stamp, which is logged after
+//     the main entry and flushed with it once (`companionEntries`, SA Q-1).
 //
 // ── ORDER ───────────────────────────────────────────────────────────────────
 //   1. invalidate (local instance; other instances follow within the 30 s TTL)
@@ -45,6 +47,19 @@ import { getEntitlementService } from './EntitlementService';
 /** Who changed the plan. A system change names its source; it never passes a null actor. */
 export type PlanChangeActor = { kind: 'admin'; adminId: string } | { kind: 'system'; source: 'stripe_webhook' };
 
+/**
+ * One more audit entry written WITH the plan change, under the same bounded
+ * flush (plan payments P-5a.1, SA Q-1 / W-6): the webhook's first payment
+ * stamp entry. The caller names only what the entry is about. The account
+ * (`userId`), the actor and `details.actor` are set here by the same rule as
+ * the main entry, so a caller can never write a companion against another
+ * account or with another actor.
+ */
+export type PlanChangeCompanionEntry = Pick<AuditLogInput, 'action' | 'entityType' | 'entityId'> & {
+  details: Record<string, unknown>;
+  severity: AuditSeverity;
+};
+
 export interface RecordPlanChangeInput {
   accountId: AccountId;
   /** An `AUDIT_EVENTS` key. An unregistered one is still written, under its own name. */
@@ -60,6 +75,12 @@ export interface RecordPlanChangeInput {
   invalidatesEntitlements: boolean;
   /** The caller's request logger: failures are logged where the request is. */
   log: AuditFlushLogger;
+  /**
+   * Further entries logged after the main one, in order, and flushed with it
+   * ONCE (P-5a.1). Omitted or empty: the main entry is written exactly as
+   * before, through the single-entry form.
+   */
+  companionEntries?: readonly PlanChangeCompanionEntry[];
 }
 
 /** Invalidate, then audit and flush within 2 s. Resolves in every case; never rejects. */
@@ -90,10 +111,28 @@ export async function recordPlanChange(input: RecordPlanChangeInput): Promise<vo
     ...(input.request ? { request: input.request } : {}),
   };
 
+  // W-6: a companion takes the account, the actor and `details.actor` by the
+  // same rule as the main entry, and the same AUDIT_EVENTS lookup.
+  const companions: AuditLogInput[] = (input.companionEntries ?? []).map((companion) => ({
+    action: AUDIT_EVENTS[companion.action as keyof typeof AUDIT_EVENTS] ?? companion.action,
+    entityType: companion.entityType,
+    entityId: companion.entityId,
+    userId: accountId,
+    actorId: entry.actorId,
+    details: actor.kind === 'admin' ? companion.details : { ...companion.details, actor: actor.source },
+    severity: companion.severity,
+  }));
+
   try {
     // The instance the admin route has always written through (SA C-8); in
-    // production it is the same singleton `logAndFlush` uses by default.
-    await logAndFlush(entry, log, { reason: 'plan change', continues: 'the plan change stands' }, AuditTrailService.getInstance());
+    // production it is the same singleton `logAndFlush` uses by default. With
+    // no companion the single-entry form is used, exactly as before.
+    await logAndFlush(
+      companions.length > 0 ? [entry, ...companions] : entry,
+      log,
+      { reason: 'plan change', continues: 'the plan change stands' },
+      AuditTrailService.getInstance()
+    );
   } catch (err) {
     // `logAndFlush` never rejects; this is defence in depth for the contract above.
     log.error({ err, accountId, action: entry.action }, 'Plan change audit failed');

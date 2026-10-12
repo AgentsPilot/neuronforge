@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 import type { ApiEnvelope, BusinessListResponse } from '@/lib/business-os/usage/llmUsageReportTypes';
 import type { AdminCreditPosition } from '@/lib/business-os/credits/adminCreditPositionTypes';
 import { BusinessPicker } from './llm-usage/BusinessPicker';
@@ -292,7 +293,7 @@ export function TestCreditsPanel({ sessionUserId, authLoading, onLog, onResponse
               type="button"
               disabled={!amountOk || !reasonOk || busy}
               onClick={() => setConfirming(true)}
-              style={{ padding: '6px 12px', fontSize: '13px', cursor: 'pointer' }}
+              className={harnessButton('primary')}
             >
               Take credits
             </button>
@@ -315,10 +316,10 @@ export function TestCreditsPanel({ sessionUserId, authLoading, onLog, onResponse
                 </div>
               )}
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="button" disabled={busy} onClick={() => void take()} style={{ padding: '4px 10px' }}>
+                <button type="button" disabled={busy} onClick={() => void take()} className={harnessButton('danger')}>
                   {busy ? 'Taking…' : 'Yes, take credits'}
                 </button>
-                <button type="button" disabled={busy} onClick={() => setConfirming(false)} style={{ padding: '4px 10px' }}>
+                <button type="button" disabled={busy} onClick={() => setConfirming(false)} className={harnessButton()}>
                   Cancel
                 </button>
               </div>

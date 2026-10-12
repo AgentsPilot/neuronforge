@@ -212,6 +212,8 @@ class FakeWorld {
       tierAfter: planWritten ? input.tier : tierBefore,
       planWritten,
       anchorSet,
+      // P-5a.1: this fake has no lineage table; the stamp is modelled in planPaymentApply.firstPayment.test.ts.
+      firstPaymentStamped: false,
     };
   }
 
