@@ -22,12 +22,22 @@
  * other-status counts in words (AC-53), the table's cap and labels (AC-54), no
  * test-mode wording (AC-55), a failed block alone (AC-66), the layout parts
  * (AC-68), and formatMoney's fixed two decimals (SA-WR-18).
+ *
+ * Slice 2b: the client payment problems block last, after Credits, with its
+ * chip and five parts each in words (L-32, SA-W31); the failed-payments panel
+ * never a 0 (AC-60); the full-amount labels and note (AC-56, AC-58); date
+ * order with unknown dates last (SA-W30, SA-W36); a due date that never moves
+ * a day in two process time zones (AC-74); plans by status (AC-59, SA-W39);
+ * plain reminder figures and the link (AC-61); the platform-wide note
+ * (AC-65); a failed part alone (AC-66, AC-67); "At least" (AC-62); empty
+ * parts (AC-63); the layout parts (AC-68); no test-mode wording (BD-13).
  */
 
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import type { FinanceCreditRow, FinancePayload, FinanceTakingsSection } from '@/lib/business-os/finance/financeTypes';
+import type { FinancePaymentProblemsSection } from '@/lib/business-os/finance/financeTypes';
 
 const mockReplace = jest.fn();
 let mockSearch = '';
@@ -63,6 +73,23 @@ import {
   TILE_LABELS,
 } from '../financeCopy';
 import { formatMoney } from '../financeFormat';
+import {
+  PART_COULD_NOT_LOAD,
+  PART_OK,
+  PART_PARTIAL,
+  PLANS_EMPTY,
+  PROBLEMS_CHIP,
+  PROBLEMS_FAILED_COULD_NOT_CHECK,
+  PROBLEMS_FAILED_NONE_IN_READ,
+  PROBLEMS_FAILED_NOT_RECORDED,
+  PROBLEMS_FAILED_NOT_STORED,
+  PROBLEMS_INSTALMENT_RETRIES,
+  PROBLEMS_INSTALMENTS,
+  PROBLEMS_INVOICES,
+  PROBLEMS_TITLE,
+  REMINDERS_FAILED,
+  REMINDERS_NOT_NARROWED,
+} from '../financeCopy';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
@@ -158,6 +185,83 @@ function takingsSection(extra: Partial<FinanceTakingsSection> = {}): FinanceTaki
   };
 }
 
+/**
+ * Slice 2b: two currencies of overdue invoices (a platform row and a row with
+ * an unknown due date), one past-due instalment, plans, reminder figures.
+ * Totals across currencies would be 1,234.50 + 99.00 = 1,333.50.
+ */
+function paymentProblemsSection(extra: Partial<FinancePaymentProblemsSection> = {}): FinancePaymentProblemsSection {
+  return {
+    status: 'ok',
+    scope: 'all',
+    today: '2026-10-09',
+    failedPayments: { state: 'not_stored' },
+    overdueInvoices: {
+      status: 'ok',
+      figures: {
+        empty: false,
+        exact: true,
+        lines: [
+          { currency: 'EUR', marked: 1, pastDue: 0, amount: 99, amountExact: true, unreadable: 0, businesses: 1, oldestDueDate: null },
+          { currency: 'USD', marked: 1, pastDue: 1, amount: 1234.5, amountExact: true, unreadable: 0, businesses: 2, oldestDueDate: '2026-09-30' },
+        ],
+        businesses: 3,
+        total: 3,
+        unreadableAmounts: 0,
+        rows: [
+          { id: 'aaaaaaaa-1111-4000-8000-000000000001', accountId: A, name: 'Acme Dental', nameStatus: 'found', kind: 'marked', dueDate: '2026-09-30', daysPastDue: 9, amount: 1000, currency: 'USD' },
+          { id: 'aaaaaaaa-1111-4000-8000-000000000002', accountId: PLATFORM_ID, name: null, nameStatus: 'platform', kind: 'past_due', dueDate: '2026-10-05', daysPastDue: 4, amount: 234.5, currency: 'USD' },
+          { id: 'aaaaaaaa-1111-4000-8000-000000000003', accountId: B, name: null, nameStatus: 'missing', kind: 'marked', dueDate: null, daysPastDue: null, amount: 99, currency: 'EUR' },
+        ],
+        rowsTotal: 3,
+      },
+    },
+    overdueInstalments: {
+      status: 'ok',
+      figures: {
+        empty: false,
+        exact: true,
+        lines: [{ currency: 'ILS', marked: 0, pastDue: 1, amount: 25.5, amountExact: true, unreadable: 0, businesses: 1, oldestDueDate: '2026-10-05' }],
+        businesses: 1,
+        total: 1,
+        unreadableAmounts: 0,
+        rows: [
+          { id: 'bbbbbbbb-1111-4000-8000-000000000001', accountId: C, name: 'Gamma Gym', nameStatus: 'found', kind: 'past_due', dueDate: '2026-10-05', daysPastDue: 4, amount: 25.5, currency: 'ILS' },
+        ],
+        rowsTotal: 1,
+      },
+    },
+    clientPlans: {
+      status: 'ok',
+      figures: {
+        exact: true,
+        total: 6,
+        byStatus: [
+          { status: 'pending', plans: 0, recognised: true },
+          { status: 'active', plans: 5, recognised: true },
+          { status: 'past_due', plans: 0, recognised: true },
+          { status: 'paused', plans: 0, recognised: true },
+          { status: 'completed', plans: 0, recognised: true },
+          { status: 'cancelled', plans: 1, recognised: true },
+        ],
+        unrecognised: 0,
+        activeNow: 5,
+        cancelledInWindow: 1,
+        completedInWindow: 0,
+        nextChargeOverdue: 0,
+        unreadableTimes: 0,
+        failedCharges: { everRecorded: false, inWindow: 0 },
+      },
+    },
+    reminders: {
+      status: 'ok',
+      state: 'read',
+      figures: { dueNow: 7, inProgress: 0, stuck: 3, failed24h: 2, failed7d: 11, deadLettered24h: 0, deadLettered7d: 4, oldestDueAt: '2026-10-09T08:15:00.000Z' },
+    },
+    ...extra,
+  };
+}
+
 function payload(extra: Partial<FinancePayload> = {}): FinancePayload {
   return {
     generatedAt: '2026-10-09T10:00:00.000Z',
@@ -218,6 +322,7 @@ function payload(extra: Partial<FinancePayload> = {}): FinancePayload {
     },
     credits: creditsSection(),
     takings: takingsSection(),
+    paymentProblems: paymentProblemsSection(),
     ...extra,
   };
 }
@@ -695,6 +800,242 @@ describe('Section 2 block B, takings (slice 2a)', () => {
     for (const cell of Array.from(section.querySelectorAll('[data-money]'))) expect(cell.className).toMatch(/tabular-nums/);
     const tiles = screen.getByTestId('kpi-strip').querySelectorAll('[data-testid^="tile-"][data-status]');
     expect(tiles).toHaveLength(5);
+  });
+});
+
+describe('Section 6 block B, client payment problems (slice 2b)', () => {
+  const renderWith = async (problems: FinancePaymentProblemsSection, extra: Partial<FinancePayload> = {}) => {
+    serve({ success: true, data: payload({ paymentProblems: problems, ...extra }) });
+    render(<FinanceView />);
+    return screen.findByTestId('section-payment-problems');
+  };
+  const base = () => paymentProblemsSection();
+
+  it('L-32: the last block, after Credits; its title, chip, "As of now, UTC" subtitle and five parts, four with a status in words', async () => {
+    const section = await renderWith(base());
+    expect(within(section).getByRole('heading', { name: PROBLEMS_TITLE })).toBeInTheDocument();
+    expect(screen.getByTestId('section-payment-problems-badge')).toHaveTextContent(PROBLEMS_CHIP);
+    expect(screen.getByTestId('section-payment-problems-badge')).toHaveAttribute('data-tone', 'neutral');
+    expect(section).toHaveTextContent('As of now, UTC (2026-10-09)');
+    expect(section).toHaveTextContent('Covers businesses that still exist');
+    const order = ['section-credits', 'section-payment-problems'].map((id) => screen.getByTestId(id));
+    expect(order[0].compareDocumentPosition(order[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(section.parentElement?.lastElementChild).toBe(section);
+    for (const id of ['failed', 'invoices', 'instalments', 'plans', 'reminders']) {
+      expect(within(section).getByTestId(`problems-${id}`)).toBeInTheDocument();
+    }
+    for (const id of ['invoices', 'instalments', 'plans', 'reminders']) {
+      expect(screen.getByTestId(`problems-${id}-status`)).toHaveTextContent(PART_OK);
+    }
+    expect(screen.queryByTestId('problems-failed-status')).not.toBeInTheDocument();
+  });
+
+  it('AC-60: failed client payments say "not available" with a reason, never a 0; plan charges "Not recorded"; retries "not recorded"', async () => {
+    await renderWith(base());
+    const part = screen.getByTestId('problems-failed');
+    expect(part).toHaveTextContent(PROBLEMS_FAILED_NOT_STORED);
+    expect(screen.getByTestId('problems-failed-plan-charges')).toHaveTextContent(PROBLEMS_FAILED_NOT_RECORDED);
+    expect(part).toHaveTextContent(PROBLEMS_INSTALMENT_RETRIES);
+    expect(part.textContent).not.toMatch(/\d/);
+  });
+
+  it('AC-60: once a failure is stored, the plan charges line counts those in the window; a failed plans read says "Could not check"', async () => {
+    const withFailure = base();
+    withFailure.clientPlans.figures!.failedCharges = { everRecorded: true, inWindow: 2 };
+    await renderWith(withFailure);
+    expect(screen.getByTestId('problems-failed-plan-charges')).toHaveTextContent('2 with a failure time in this window');
+  });
+
+  it.each([
+    ['at its ceiling', { exact: false }, 'partial'],
+    ['partial (an unreadable time)', { unreadableTimes: 1 }, 'partial'],
+  ] as const)('QA-1: plans read %s with no failure → "No failure found in the rows read", never "never stored"', async (_n, change, status) => {
+    const capped = base();
+    capped.status = 'partial';
+    capped.clientPlans = { status, figures: { ...capped.clientPlans.figures!, ...change } };
+    await renderWith(capped);
+    const line = screen.getByTestId('problems-failed-plan-charges');
+    expect(line).toHaveTextContent(PROBLEMS_FAILED_NONE_IN_READ);
+    expect(line).not.toHaveTextContent(PROBLEMS_FAILED_NOT_RECORDED);
+  });
+
+  it('QA-1: a complete plans read with no failure → "Not recorded: no failure has ever been stored"', async () => {
+    await renderWith(base());
+    expect(screen.getByTestId('problems-failed-plan-charges')).toHaveTextContent(PROBLEMS_FAILED_NOT_RECORDED);
+    expect(screen.getByTestId('problems-failed-plan-charges')).not.toHaveTextContent(PROBLEMS_FAILED_NONE_IN_READ);
+  });
+
+  it('AC-60: a failed plans read → the plan charges line says "Could not check"', async () => {
+    await renderWith({ ...base(), status: 'partial', clientPlans: { status: 'unknown', figures: null } });
+    expect(screen.getByTestId('problems-failed-plan-charges')).toHaveTextContent(PROBLEMS_FAILED_COULD_NOT_CHECK);
+  });
+
+  it('AC-56 / AC-58: "Invoice amount" and "Instalment amount", the not-the-amount-owed note, the chips in words; every money cell names its currency; no total across currencies', async () => {
+    const section = await renderWith(base());
+    const invoices = screen.getByTestId('problems-invoices');
+    const instalments = screen.getByTestId('problems-instalments');
+    expect(within(invoices).getByRole('table', { name: PROBLEMS_INVOICES.perCurrency })).toHaveTextContent('Invoice amount');
+    expect(within(instalments).getByRole('table', { name: PROBLEMS_INSTALMENTS.perCurrency })).toHaveTextContent('Instalment amount');
+    expect(invoices).toHaveTextContent(PROBLEMS_INVOICES.amountNote);
+    expect(instalments).toHaveTextContent(PROBLEMS_INSTALMENTS.amountNote);
+    expect(within(invoices).getAllByText('Overdue').length).toBeGreaterThanOrEqual(2);
+    expect(within(invoices).getByText('Past due, not marked')).toBeInTheDocument();
+    expect(within(instalments).getByText('Past due, still pending')).toBeInTheDocument();
+    const cells = section.querySelectorAll('[data-money]');
+    expect(cells.length).toBe(7);
+    for (const cell of Array.from(cells)) expect(cell.textContent).toMatch(/^(At least )?(USD|ILS|EUR|Unknown currency) -?[\d,]+\.\d\d$/);
+    expect(within(screen.getByTestId('problems-invoices-line-USD')).getByText('USD 1,234.50')).toBeInTheDocument();
+    expect(section.textContent).not.toMatch(/1,333\.50|1333\.5/);
+  });
+
+  it('SA-W30 / SA-W36: the rows keep date order, the unknown due date last and shown as "Unknown"; the platform row labelled; ids short with the full id in title', async () => {
+    await renderWith(base());
+    const rows = within(screen.getByTestId('problems-invoices-rows')).getAllByRole('row').slice(1);
+    expect(rows.map((r) => r.querySelector('[data-due-date]')?.textContent)).toEqual(['2026-09-30', '2026-10-05', 'Unknown']);
+    expect(rows[1]).toHaveTextContent(NAME_PLATFORM);
+    expect(rows[2]).toHaveTextContent('No business name');
+    expect(within(rows[0]).getByTitle('aaaaaaaa-1111-4000-8000-000000000001')).toHaveTextContent('aaaaaaaa…');
+    expect(screen.getByTestId('problems-invoices-line-EUR').querySelector('[data-due-date]')).toHaveTextContent('Unknown');
+    expect(screen.getByTestId('problems-invoices-showing')).toHaveTextContent('Showing 3 of 3');
+  });
+
+  it.each(['America/New_York', 'Pacific/Auckland'])('AC-74: with the process in %s, the due date 2026-09-30 renders as 2026-09-30', async (zone) => {
+    const original = process.env.TZ;
+    process.env.TZ = zone;
+    try {
+      await renderWith(base());
+      const first = within(screen.getByTestId('problems-invoices-rows')).getAllByRole('row')[1];
+      expect(first.querySelector('[data-due-date]')).toHaveTextContent(/^2026-09-30$/);
+      expect(screen.getByTestId('problems-invoices-line-USD')).toHaveTextContent('2026-09-30');
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+  });
+
+  it('AC-59: client plans by status (every status), active now, cancelled and completed in the window, next charge overdue', async () => {
+    await renderWith(base());
+    const table = within(screen.getByTestId('problems-plans')).getByRole('table', { name: 'Client plans by status' });
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows.map((r) => r.textContent)).toEqual(['Pending0', 'Active5', 'Past due0', 'Paused0', 'Completed0', 'Cancelled1']);
+    expect(screen.getByTestId('problems-plans-active-now')).toHaveTextContent('Active now5');
+    expect(screen.getByTestId('problems-plans-cancelled')).toHaveTextContent('Cancelled in this window1');
+    expect(screen.getByTestId('problems-plans-next-charge-overdue')).toHaveTextContent('Next charge overdue0');
+  });
+
+  it('SA-W39: an unrecognised or missing status is shown as stored and marked unrecognised', async () => {
+    const odd = base();
+    odd.clientPlans.figures!.byStatus.push({ status: 'weird', plans: 1, recognised: false }, { status: null, plans: 2, recognised: false });
+    await renderWith(odd);
+    expect(screen.getByTestId('problems-plans')).toHaveTextContent('weird (unrecognised)');
+    expect(screen.getByTestId('problems-plans')).toHaveTextContent('(none) (unrecognised)');
+  });
+
+  it('AC-61: the reminder figures are plain (no tone, no colour) with the oldest due time in UTC, and the link opens the Queues section', async () => {
+    await renderWith(base());
+    const figures = screen.getByTestId('problems-reminders-figures');
+    expect(screen.getByTestId('problems-reminders-stuck')).toHaveTextContent('Stuck3');
+    expect(screen.getByTestId('problems-reminders-deadlettered-7d')).toHaveTextContent('Dead-lettered (7 d)4');
+    expect(screen.getByTestId('problems-reminders-oldest')).toHaveTextContent('2026-10-09 08:15 UTC');
+    expect(figures.querySelector('[data-tone]')).toBeNull();
+    const classes = [figures, ...Array.from(figures.querySelectorAll('*'))].map((el) => el.getAttribute('class') ?? '').join(' ');
+    expect(classes).not.toMatch(/(?:text|bg|border)-(?:red|amber|emerald|green|sky)-\d/);
+    // Planted negative control: a coloured class would be seen.
+    expect('text-red-300').toMatch(/(?:text|bg|border)-(?:red|amber|emerald|green|sky)-\d/);
+    const link = screen.getByTestId('problems-reminders-link');
+    expect(link).toHaveAttribute('href', '/admin/jobs-queues#queues');
+    expect(link).toHaveAccessibleName(/Jobs & queues/);
+  });
+
+  it('AC-65: a business picked → the reminder part says it is platform-wide, with the link, and no figure', async () => {
+    await renderWith({ ...base(), scope: 'one', reminders: { status: 'ok', state: 'not_narrowed', figures: null } });
+    expect(screen.getByTestId('problems-reminders-not-narrowed')).toHaveTextContent(REMINDERS_NOT_NARROWED);
+    expect(screen.getByTestId('problems-reminders-link')).toHaveAttribute('href', '/admin/jobs-queues#queues');
+    expect(screen.queryByTestId('problems-reminders-figures')).not.toBeInTheDocument();
+  });
+
+  it('AC-66 / AC-67: reminders failed → "Could not check reminders" with the link; the part chip says so; the block is partial and every other part renders', async () => {
+    await renderWith({ ...base(), status: 'partial', reminders: { status: 'unknown', state: 'failed', figures: null } });
+    expect(screen.getByTestId('problems-reminders-failed')).toHaveTextContent(REMINDERS_FAILED);
+    expect(screen.getByTestId('problems-reminders-link')).toHaveAttribute('href', '/admin/jobs-queues#queues');
+    expect(screen.getByTestId('problems-reminders-status')).toHaveTextContent(PART_COULD_NOT_LOAD);
+    expect(screen.getByTestId('section-payment-problems')).toHaveAttribute('data-status', 'partial');
+    expect(screen.getByTestId('problems-invoices-rows')).toBeInTheDocument();
+    expect(screen.getByTestId('problems-plans-body')).toBeInTheDocument();
+  });
+
+  it('AC-66 (SA-W31): overdue invoices failed → that part alone says "Could not load this part"; the frame never says "Could not load this section"', async () => {
+    const section = await renderWith({ ...base(), status: 'partial', overdueInvoices: { status: 'unknown', figures: null } });
+    expect(screen.getByTestId('problems-invoices-could-not-load')).toHaveTextContent(PART_COULD_NOT_LOAD);
+    expect(screen.getByTestId('problems-invoices-status')).toHaveTextContent(PART_COULD_NOT_LOAD);
+    expect(within(section).queryByText(SECTION_COULD_NOT_LOAD)).not.toBeInTheDocument();
+    expect(screen.getByTestId('problems-instalments-rows')).toBeInTheDocument();
+    expect(screen.getByTestId('problems-failed')).toHaveTextContent(PROBLEMS_FAILED_NOT_STORED);
+    for (const id of ['section-takings', 'section-accounts', 'section-ai-cost', 'section-credits']) {
+      expect(screen.getByTestId(id)).toBeInTheDocument();
+    }
+  });
+
+  it('AC-62: a read at its ceiling → "At least" on counts and amounts, a notice, "among the rows read", and the part chip "Partial"', async () => {
+    const capped = base();
+    capped.status = 'partial';
+    capped.overdueInvoices.status = 'partial';
+    const f = capped.overdueInvoices.figures!;
+    f.exact = false;
+    f.lines = f.lines.map((line) => ({ ...line, amountExact: false }));
+    await renderWith(capped);
+    expect(screen.getByTestId('problems-invoices-notice-ceiling')).toHaveTextContent(PROBLEMS_INVOICES.ceilingNotice);
+    expect(screen.getByTestId('problems-invoices-line-USD')).toHaveTextContent('At least USD 1,234.50');
+    expect(screen.getByTestId('problems-invoices-total')).toHaveTextContent('At least 3');
+    expect(screen.getByTestId('problems-invoices-showing')).toHaveTextContent('Lists the oldest among the rows read');
+    expect(screen.getByTestId('problems-invoices-status')).toHaveTextContent(PART_PARTIAL);
+  });
+
+  it('an unreadable amount → its line "At least", a notice, the row amount "Unknown"', async () => {
+    const odd = base();
+    const f = odd.overdueInvoices.figures!;
+    f.unreadableAmounts = 1;
+    f.lines[1] = { ...f.lines[1], amountExact: false, unreadable: 1 };
+    f.rows[1] = { ...f.rows[1], amount: null };
+    await renderWith(odd);
+    expect(screen.getByTestId('problems-invoices-notice-unreadable')).toBeInTheDocument();
+    expect(screen.getByTestId('problems-invoices-line-USD')).toHaveTextContent('At least USD 1,234.50');
+    const row = within(screen.getByTestId('problems-invoices-rows')).getAllByRole('row')[2];
+    expect(row).toHaveTextContent('Unknown');
+  });
+
+  it('AC-63: empty parts say so in words, with no 0.00', async () => {
+    const empty = (): FinancePaymentProblemsSection['overdueInvoices'] => ({
+      status: 'ok',
+      figures: { empty: true, exact: true, lines: [], businesses: 0, total: 0, unreadableAmounts: 0, rows: [], rowsTotal: 0 },
+    });
+    const plans = base().clientPlans;
+    plans.figures = { ...plans.figures!, total: 0, byStatus: plans.figures!.byStatus.map((s) => ({ ...s, plans: 0 })), activeNow: 0, cancelledInWindow: 0 };
+    const section = await renderWith({ ...base(), overdueInvoices: empty(), overdueInstalments: empty(), clientPlans: plans });
+    expect(screen.getByTestId('problems-invoices-empty')).toHaveTextContent(PROBLEMS_INVOICES.empty);
+    expect(screen.getByTestId('problems-instalments-empty')).toHaveTextContent(PROBLEMS_INSTALMENTS.empty);
+    expect(screen.getByTestId('problems-plans-empty')).toHaveTextContent(PLANS_EMPTY);
+    expect(section.textContent).not.toMatch(/0\.00/);
+  });
+
+  it('AC-68: labelled tables with column headers, number cells tabular; every part chip has words; the KPI strip still has exactly five tiles', async () => {
+    const section = await renderWith(base());
+    for (const name of [PROBLEMS_INVOICES.perCurrency, PROBLEMS_INVOICES.oldest, PROBLEMS_INSTALMENTS.perCurrency, PROBLEMS_INSTALMENTS.oldest, 'Client plans by status']) {
+      const table = within(section).getByRole('table', { name });
+      const headers = table.querySelectorAll('thead th');
+      expect(headers.length).toBeGreaterThan(1);
+      for (const th of Array.from(headers)) expect(th).toHaveAttribute('scope', 'col');
+    }
+    for (const cell of Array.from(section.querySelectorAll('[data-money]'))) expect(cell.className).toMatch(/tabular-nums/);
+    for (const chip of Array.from(section.querySelectorAll('[data-tone]'))) expect(chip.textContent?.trim().length).toBeGreaterThan(0);
+    const tiles = screen.getByTestId('kpi-strip').querySelectorAll('[data-testid^="tile-"][data-status]');
+    expect(tiles).toHaveLength(5);
+  });
+
+  it('BD-13 / S2-F6: no test-mode wording and no "Deleted business" anywhere in the block', async () => {
+    const section = await renderWith(base());
+    expect(section.textContent).not.toMatch(/test.?mode|live.?mode|livemode/i);
+    expect(section.textContent).not.toMatch(/Deleted business/);
   });
 });
 
