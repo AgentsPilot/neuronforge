@@ -58,6 +58,18 @@ export const READING_WINDOW_DAYS = 14;
 
 const DAY_MS = 86_400_000;
 
+/**
+ * Finest first: the tie-break when two series share their newest
+ * `period_start`.
+ *
+ * Ties are routine, not rare. A monthly row starts on the 1st and a weekly one
+ * on a Monday, so on those days the daily row has the same `period_start`.
+ * Ordering by `period_start` alone then leaves the pick to Postgres, which
+ * returns tied rows in no promised order. Daily wins because a 14-day reading
+ * window holds about fourteen daily rows but at most one monthly row.
+ */
+const PERIOD_PREFERENCE = ['daily', 'weekly', 'monthly'] as const;
+
 /** One insight waiting to be re-measured. */
 export interface DueInsight {
   id: string;
@@ -218,23 +230,39 @@ export class MeasurementRepository {
   /**
    * Which series this metric actually has, so both readings use one.
    *
-   * The newest row's `period_type` wins. Null when the metric has no series at
-   * all, which is the common case for detectors that compute straight from
-   * module tables — and the reason `unmeasurable` is a stored verdict.
+   * The newest row's `period_type` wins, and a tie on `period_start` goes to
+   * the finest series (`PERIOD_PREFERENCE`). Null when the metric has no
+   * series at all, which is the common case for detectors that compute
+   * straight from module tables — and the reason `unmeasurable` is a stored
+   * verdict.
+   *
+   * `UNIQUE(user_id, metric_key, period_type, period_start)` means at most one
+   * row per period type can share the newest start, so fetching that many rows
+   * is enough to see every tied candidate.
    */
   async resolvePeriodType(userId: string, metricKey: string): Promise<string | null> {
     const { data, error } = await this.supabase
       .from('derived_metrics')
-      .select('period_type')
+      .select('period_type, period_start')
       .eq('user_id', userId)
       .eq('metric_key', metricKey)
       .order('period_start', { ascending: false })
-      .limit(1);
+      .limit(PERIOD_PREFERENCE.length);
 
     if (error) throw error;
 
-    const row = ((data ?? []) as Array<{ period_type: string | null }>)[0];
-    return row?.period_type ?? null;
+    const rows = (data ?? []) as Array<{ period_type: string | null; period_start: string }>;
+    if (rows.length === 0) return null;
+
+    const newest = rows[0].period_start;
+    const tied = rows.filter(r => r.period_start === newest && r.period_type);
+    const rank = (t: string) => {
+      const i = (PERIOD_PREFERENCE as readonly string[]).indexOf(t);
+      return i === -1 ? PERIOD_PREFERENCE.length : i;
+    };
+    tied.sort((a, b) => rank(a.period_type!) - rank(b.period_type!));
+
+    return tied[0]?.period_type ?? null;
   }
 
   /**
