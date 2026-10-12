@@ -44,6 +44,16 @@ function reading(kind: LedgerReadingKind, counts?: { after: number; before: numb
   };
 }
 
+/** Every text node under `root`, one string each — no cross-element gluing. */
+function textNodesOf(root: Element): string[] {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const texts: string[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    texts.push(node.textContent ?? '');
+  }
+  return texts;
+}
+
 describe('S2-T9: all three readings render as text, with equal weight', () => {
   it.each([
     ['still_arriving', { after: 12, before: 30 }],
@@ -158,7 +168,14 @@ describe('S2-T9: all three readings render as text, with equal weight', () => {
       await waitFor(() => expect(screen.getByTestId(branch.settled)).toBeInTheDocument());
 
       const panel = screen.getByTestId('ledger-panel');
-      expect(panel.textContent).not.toMatch(/\b(confirmed|verified|success|proven)\b/i);
+      // `textContent` glues adjacent elements with no separator, so
+      // `<span>Ledger verified</span><h4>Ledger check</h4>` reads
+      // "Ledger verifiedLedger check" and `\bverified\b` misses it. Each text
+      // node is therefore checked on its own as well; the whole-panel check
+      // stays for a word split across nodes (`succ<b>ess</b>`).
+      const OVERCLAIM = /\b(confirmed|verified|success|proven)\b/i;
+      expect(panel.textContent).not.toMatch(OVERCLAIM);
+      expect(textNodesOf(panel).filter((text) => OVERCLAIM.test(text))).toEqual([]);
       // A green chip reads as proof from across the room; this panel can only
       // ever corroborate.
       expect(panel.innerHTML).not.toMatch(/text-(green|emerald)-|bg-(green|emerald)-/);
