@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { BusinessListEntry } from '@/lib/business-os/usage/llmUsageReportTypes';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 import { UUID_PATTERN, shortId } from './formatters';
 
 interface BusinessPickerProps {
@@ -65,7 +66,7 @@ export function BusinessPicker({
         <button
           type="button"
           onClick={() => onSelect(sessionUserId)}
-          style={{ padding: '6px 12px', fontSize: '13px', cursor: 'pointer' }}
+          className={harnessButton()}
         >
           My account
         </button>
@@ -100,13 +101,16 @@ export function BusinessPicker({
                 type="button"
                 onClick={() => onSelect(b.userId)}
                 aria-pressed={selected}
+                // A list row, not an action button: only a hover shade, so it reads as clickable.
+                className={selected ? undefined : 'hover:bg-gray-100'}
                 style={{
                   display: 'block',
                   width: '100%',
                   textAlign: 'left',
                   padding: '4px 10px',
                   border: 'none',
-                  background: selected ? '#cce5ff' : 'transparent',
+                  // undefined, not 'transparent': an inline background would mask the hover shade.
+                  background: selected ? '#cce5ff' : undefined,
                   cursor: 'pointer',
                   fontFamily: 'monospace',
                 }}
@@ -133,7 +137,7 @@ export function BusinessPicker({
           placeholder="00000000-0000-0000-0000-000000000000"
           style={{ ...inputStyle, width: '320px' }}
         />
-        <button type="button" onClick={usePasted} style={{ padding: '6px 12px', fontSize: '13px', cursor: 'pointer' }}>
+        <button type="button" onClick={usePasted} className={harnessButton()}>
           Use this id
         </button>
       </div>

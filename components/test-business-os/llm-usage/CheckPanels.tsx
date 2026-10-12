@@ -12,6 +12,7 @@ import type {
   RowFlag,
   UsageCardCheck,
 } from '@/lib/business-os/usage/llmUsageReportTypes';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 import { StatusBadge } from './StatusBadge';
 import { formatCostUsd, formatLocalTime, formatNumber, shortId, type DisplayStatus } from './formatters';
 
@@ -65,7 +66,9 @@ function CopyId({ id }: { id: string | null }) {
         onClick={() => {
           void navigator.clipboard?.writeText(id).then(() => setCopied(true));
         }}
-        style={{ fontSize: '10px', padding: '0 4px', cursor: 'pointer' }}
+        className={harnessButton()}
+        // Inline next to an id: smaller than the standard small button.
+        style={{ fontSize: '10px', padding: '0 6px' }}
       >
         {copied ? 'copied' : 'copy'}
       </button>
