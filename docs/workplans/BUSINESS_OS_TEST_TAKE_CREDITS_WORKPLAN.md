@@ -140,7 +140,7 @@ No other changes requested. The scope is proportionate to the requirement.
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-10-11 | Committed + PR (RM) | `4bf75291` + merge `1d1f2051`, PR #302 opened |
-| 2026-10-11 | Follow-up: harness buttons look like buttons | New `components/test-business-os/harnessButton.ts` (one Tailwind class helper: primary / secondary / success / danger, hover, dimmed disabled) applied to every action button on `/test-business-os`; "Yes, take credits" is now the red danger variant. Business-list email NOT added: no bulk email lookup exists without a new pattern (options reported to TL). |
+| 2026-10-11 | Follow-up: harness buttons look like buttons | New `components/test-business-os/harnessButton.ts` (one Tailwind class helper: primary / secondary / success / danger, hover, dimmed disabled) applied to every action button on `/test-business-os`; "Yes, take credits" is now the red danger variant. Business-list email NOT added: no bulk email lookup exists without a new pattern (options reported to TL). PR #311. |
 | 2026-10-11 | Created and implemented (Dev) | Compact workplan; implemented directly per the user's short-path instruction |
 
 ### SF-1 fix — 2026-10-11
