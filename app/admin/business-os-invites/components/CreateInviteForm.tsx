@@ -15,10 +15,17 @@
  * Slice 2a (FR-14): "Send the invitation email" is ticked by default. Unticked,
  * nothing is sent and the admin copies the link from the panel, as before. The
  * language arrives pre-selected to the admin's own saved language (D-8).
+ *
+ * Admin Layout Standard L-6: styling only, plus the reply read through the
+ * shared `readJsonBody` (C-4); the fields, defaults, request body and error map
+ * are unchanged. This form never touches the URL or the shared URL hook (SA-R-5
+ * (2)): the link it produces is shown once and must not survive a reload.
  */
 
 import { useMemo, useState, type FormEvent } from 'react';
 import { Loader2 } from 'lucide-react';
+
+import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 
 import type { CreateInviteRequest, CreatedInvite, InviteFormOptions } from '../types';
 
@@ -38,6 +45,8 @@ const ERROR_TEXT: Record<string, string> = {
 };
 
 const REASON_MIN = 3;
+
+const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
 
 export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
   const firstAvailable = options.inviteTypes.find((type) => type.available) ?? null;
@@ -96,8 +105,8 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(request),
       });
-      const body = await response.json().catch(() => null);
-      if (!response.ok || !body?.success) {
+      const body = await readJsonBody(response);
+      if (!response.ok || !body || !body.success) {
         const code = typeof body?.error === 'string' ? body.error : 'could_not_create_invite';
         setError(ERROR_TEXT[code] ?? ERROR_TEXT.could_not_create_invite);
         return;
@@ -110,14 +119,14 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
     }
   };
 
-  const field = 'w-full rounded border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-white';
+  const field = `w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-white ${FOCUS_RING}`;
   const label = 'mb-1 block text-xs font-medium text-slate-300';
 
   return (
     <form
       data-testid="create-invite-form"
       onSubmit={(event) => void submit(event)}
-      className="space-y-4 rounded-lg border border-slate-700 bg-slate-800/40 p-4"
+      className="space-y-4 rounded-xl border border-slate-700 bg-slate-800/40 p-4"
     >
       <h2 className="text-sm font-semibold text-white">New invite</h2>
 
@@ -139,7 +148,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
         <legend className={label}>Invite type</legend>
         <div className="space-y-1">
           {options.inviteTypes.map((type) => (
-            <label key={type.type} className={`flex items-center gap-2 text-sm ${type.available ? 'text-slate-200' : 'text-slate-500'}`}>
+            <label key={type.type} className={`flex items-center gap-2 text-sm ${type.available ? 'text-slate-200' : 'text-slate-400'}`}>
               <input
                 type="radio"
                 name="invite-type"
@@ -153,7 +162,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
               />
               {type.label}
               {!type.available && type.unavailableReason && (
-                <span className="text-xs text-slate-500">({type.unavailableReason})</span>
+                <span className="text-xs text-slate-400">({type.unavailableReason})</span>
               )}
             </label>
           ))}
@@ -297,12 +306,16 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
         <button
           type="submit"
           disabled={!canSubmit}
-          className="flex items-center gap-2 rounded bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-40"
+          className={`flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-40 ${FOCUS_RING}`}
         >
           {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
           Create
         </button>
-        <button type="button" onClick={onCancel} className="rounded border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700/50">
+        <button
+          type="button"
+          onClick={onCancel}
+          className={`rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700/50 ${FOCUS_RING}`}
+        >
           Cancel
         </button>
       </div>

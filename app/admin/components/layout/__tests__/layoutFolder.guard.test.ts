@@ -49,6 +49,10 @@
  *
  * Amended by L-5: Plans & entitlements joins the registry; no rule change and
  * no shared source change.
+ *
+ * Amended by L-6: Signup Invites joins the registry; no rule change and no
+ * shared source change. Its `EnforcementNote.tsx` is not listed: the user
+ * removed the note (D-18), so the file no longer exists.
  */
 
 import * as fs from 'fs';
@@ -558,6 +562,23 @@ const MIGRATED_PAGES = [
       'app/admin/business-os-tiers/components/PlanCard.tsx',
       'app/admin/business-os-tiers/components/NotBuiltPanel.tsx',
       'app/admin/business-os-tiers/components/EnforcementBanner.tsx',
+    ],
+  },
+  {
+    // L-6: header with "New invite" and the plan-enforcement badge, the KPI
+    // strip (no-target tiles), the filter bar with page-held filters (never the
+    // URL, D-7 (a)), states, the standard table and chips; the create and
+    // revoke reads on `readJsonBody`. `types.ts` and `inviteFilter.ts` are not
+    // listed: no markup and no read (the L-5 precedent).
+    page: '/admin/business-os-invites (Signup Invites)',
+    files: [
+      'app/admin/business-os-invites/page.tsx',
+      'app/admin/business-os-invites/components/InviteKpis.tsx',
+      'app/admin/business-os-invites/components/InviteFilters.tsx',
+      'app/admin/business-os-invites/components/InviteList.tsx',
+      'app/admin/business-os-invites/components/RevokeDialog.tsx',
+      'app/admin/business-os-invites/components/CreateInviteForm.tsx',
+      'app/admin/business-os-invites/components/CreatedLinkPanel.tsx',
     ],
   },
 ] as const;

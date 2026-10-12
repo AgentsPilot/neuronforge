@@ -10,8 +10,10 @@
  */
 
 import '@testing-library/jest-dom';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+
+import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 
 import BusinessOsInvitesPage from '../page';
 import type { InviteRow, InvitesPayload } from '../types';
@@ -112,10 +114,12 @@ afterEach(() => {
 });
 
 describe('the list', () => {
-  it('is headed "Business OS Signup Invites" (Slice 1a label)', async () => {
+  // Edited by Admin Layout Standard L-6 (D-3 (a)): the h1 is the sidebar label.
+  // Exact text: a substring match would also pass on the old title.
+  it('is headed "Signup Invites", the sidebar label (D-3 (a))', async () => {
     render(<BusinessOsInvitesPage />);
     await screen.findByTestId('invite-list');
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Business OS Signup Invites');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Signup Invites');
   });
 
   it('Slice 1a: shows when an invite was opened by an email that already has an account', async () => {
@@ -230,16 +234,48 @@ describe('the list', () => {
     expect(within(list).queryByTestId('invite-existing-account')).not.toBeInTheDocument();
   });
 
-  it('loads the invites with their state, and the enforcement note', async () => {
+  // Edited by Admin Layout Standard L-6 (user decision D-18, SA M-1): the note
+  // is gone, its stale words with it; the live plan-enforcement fact (GR-5) is
+  // the header's badge.
+  it('loads the invites with their state, and the plan-enforcement badge', async () => {
     render(<BusinessOsInvitesPage />);
     const list = await screen.findByTestId('invite-list');
     expect(within(list).getByText('first@example.com')).toBeInTheDocument();
     expect(within(list).getByTestId('invite-state')).toHaveTextContent('Pending');
-    expect(screen.getByTestId('enforcement-note')).toHaveTextContent('Nothing is enforced yet');
-    expect(screen.getByTestId('enforcement-note')).toHaveTextContent('internal demos only');
+    expect(screen.getByTestId('enforcement-mode-badge').textContent).toBe('Plans not enforced');
+    expect(screen.queryByTestId('enforcement-note')).not.toBeInTheDocument();
+    for (const stale of ['internal demos only', 'real invitees', 'not built yet']) {
+      expect(document.body.textContent).not.toContain(stale);
+    }
     // Slice 1c: the filter and search controls are present over a non-empty list.
     expect(screen.getByRole('searchbox')).toBeInTheDocument();
   });
+
+  it.each([
+    ['enforce', 'Plans enforced'],
+    ['shadow', 'Plans not enforced'],
+    ['off', 'Plans not enforced'],
+  ] as const)('L-6 T-17: enforcement mode %s reads "%s" in the header badge', async (mode, label) => {
+    responder = () => ({ status: 200, body: { success: true, data: payload({ enforcementMode: mode }) } });
+    render(<BusinessOsInvitesPage />);
+    await screen.findByTestId('invite-list');
+    expect(screen.getByTestId('enforcement-mode-badge').textContent).toBe(label);
+  });
+
+  // QA-1: a mode that names an Object.prototype member is unknown, not a lookup hit.
+  it.each(['__proto__', 'constructor', 'toString'])(
+    'L-6 QA-1: an unknown enforcement mode %s shows no badge and the page still renders',
+    async (mode) => {
+      responder = () => ({
+        status: 200,
+        body: { success: true, data: payload({ enforcementMode: mode as unknown as InvitesPayload['enforcementMode'] }) },
+      });
+      render(<BusinessOsInvitesPage />);
+      await screen.findByTestId('invite-list');
+      expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Signup Invites');
+      expect(screen.queryByTestId('enforcement-mode-badge')).not.toBeInTheDocument();
+    }
+  );
 
   it('says so when there are no invites, and shows an error when the read fails', async () => {
     responder = () => ({ status: 200, body: { success: true, data: payload({ invites: [] }) } });
@@ -391,11 +427,17 @@ describe('Slice 1c: filters and email search', () => {
     expect(screen.queryByTestId('invite-list-truncated')).not.toBeInTheDocument();
   });
 
+  // Edited by Admin Layout Standard L-6 (SA Q-11): the bar is shared now and
+  // takes no testid, so the same behaviour is pinned by role: no filter bar and
+  // no search box, only Refresh.
   it('shows no filter controls over an empty list', async () => {
     responder = () => ({ status: 200, body: { success: true, data: payload({ invites: [] }) } });
     render(<BusinessOsInvitesPage />);
     expect(await screen.findByTestId('invite-list-empty')).toHaveTextContent('No invites yet.');
-    expect(screen.queryByTestId('invite-filters')).not.toBeInTheDocument();
+    expect(screen.queryByRole('search', { name: 'Filters' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh invites' })).toBeInTheDocument();
   });
 });
 
@@ -777,5 +819,420 @@ describe('Slice 5a (F5a-11): a champion friend invite in the admin list', () => 
     await waitFor(() => expect(within(list).getByTestId('invite-state')).toHaveTextContent('Revoked'));
     expect(calls.find((call) => call.init?.method === 'POST')?.url).toBe('/api/admin/business-os/invites/f/revoke');
     expect(within(list).queryByTestId('invite-revoked-by-inviter')).not.toBeInTheDocument();
+  });
+});
+
+// ── Admin Layout Standard L-6: header, strip, bar, states, table ────────────
+
+describe('Admin Layout Standard L-6', () => {
+  // The Slice 1c fixture: 3 pending, 1 accepted, 2 expired, 1 revoked; one
+  // stopped halfway (an expired row) and one opened by an existing account.
+  const SEVEN = [
+    row({ id: 'p', email: 'pending.person@example.com', state: 'pending' }),
+    row({ id: 'a', email: 'accepted@example.com', state: 'accepted', inviteType: 'fixture-paid', redeemedAt: '2026-10-03T09:00:00.000Z' }),
+    row({ id: 'e', email: 'expired@other.org', state: 'expired' }),
+    row({ id: 'r', email: 'revoked@example.com', state: 'revoked', revokedAt: '2026-10-02T09:00:00.000Z', revokeReason: 'typo' }),
+    row({ id: 'o', email: 'existing@example.com', state: 'pending', openedByExistingAccountAt: '2026-10-02T09:00:00.000Z' }),
+    row({ id: 's', email: 'halfway@other.org', state: 'expired', redemptionStoppedHalfway: true }),
+    row({ id: 'pct', email: 'a%b_c@example.com', state: 'pending' }),
+  ];
+  const sevenPayload = (overrides: Partial<InvitesPayload> = {}) =>
+    payload({ invites: SEVEN, stoppedHalfway: { count: 1, inviteIds: ['s'] }, ...overrides });
+
+  const TILE_IDS = ['kpi-pending', 'kpi-accepted', 'kpi-stopped-halfway', 'kpi-expired', 'kpi-revoked'];
+  const READ_FAILED = 'Could not read invites. Try again in a moment.';
+  const SESSION_ENDED = 'Your admin session has ended. Sign in again.';
+
+  async function renderWith(data: InvitesPayload) {
+    responder = () => ({ status: 200, body: { success: true, data } });
+    render(<BusinessOsInvitesPage />);
+    await screen.findByTestId('invite-list');
+  }
+
+  /** The list reads: the page's GET carries no method. */
+  const listReads = () => calls.filter((call) => !call.init?.method);
+
+  const follows = (first: Element, second: Element) =>
+    (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+  /** Holds the next fetch open until `settle`, then puts the usual fetch back. */
+  function holdNextFetch() {
+    const held: { resolve: (response: Response) => void } = { resolve: () => undefined };
+    const previous = global.fetch;
+    global.fetch = jest.fn((url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      global.fetch = previous;
+      return new Promise<Response>((resolve) => {
+        held.resolve = resolve;
+      });
+    }) as unknown as typeof fetch;
+    return {
+      async settle(status: number, body: unknown) {
+        await act(async () => {
+          held.resolve({ ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) } as Response);
+        });
+      },
+    };
+  }
+
+  async function createInvite(user: ReturnType<typeof userEvent.setup>, email: string) {
+    await user.click(screen.getByRole('button', { name: /new invite/i }));
+    const form = screen.getByTestId('create-invite-form');
+    fireEvent.change(within(form).getByLabelText('Email'), { target: { value: email } });
+    await user.click(within(form).getByRole('radio', { name: 'No end date' }));
+    fireEvent.change(within(form).getByLabelText(/internal reason/i), { target: { value: 'QA L-6 check' } });
+    await user.click(within(form).getByRole('button', { name: 'Create' }));
+    return screen.findByTestId('created-link-panel');
+  }
+
+  it('T-1: the header holds the one h1, New invite and the badge; Refresh is not in it', async () => {
+    const held = holdNextFetch();
+    render(<BusinessOsInvitesPage />);
+    // No badge until the payload is read: the mode comes only from the server.
+    expect(screen.queryByTestId('enforcement-mode-badge')).not.toBeInTheDocument();
+    await held.settle(200, { success: true, data: payload() });
+    await screen.findByTestId('invite-list');
+
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0].textContent).toBe('Signup Invites');
+    expect(document.body.textContent).not.toContain('Business OS Signup Invites');
+    const header = document.querySelector('header') as HTMLElement;
+    expect(within(header).getByRole('button', { name: /new invite/i })).toBeInTheDocument();
+    expect(within(header).getByTestId('enforcement-mode-badge')).toBeInTheDocument();
+    expect(within(header).queryByRole('button', { name: /refresh/i })).not.toBeInTheDocument();
+  });
+
+  it('T-2: five tiles in order, each a named group with no link or button inside', async () => {
+    await renderWith(sevenPayload());
+    const values = ['3', '1', '1', '2', '1'];
+    const tiles = TILE_IDS.map((id) => screen.getByTestId(id));
+    tiles.forEach((tile, index) => {
+      expect(within(tile).getByText(values[index])).toBeInTheDocument();
+      expect(tile.tagName).toBe('DIV');
+      expect(tile).toHaveAttribute('role', 'group');
+      expect(tile).not.toHaveAttribute('href');
+      expect(tile.querySelector('a, button')).toBeNull();
+      if (index > 0) expect(follows(tiles[index - 1], tile)).toBe(true);
+    });
+    expect(screen.getByRole('group', { name: 'Pending, 3' })).toBe(tiles[0]);
+    expect(screen.getByRole('group', { name: 'Stopped halfway, 1, needs a look' })).toBe(tiles[2]);
+  });
+
+  it.each([
+    ['1 stopped halfway', 'amber', { count: 1, inviteIds: ['s'] }],
+    ['none stopped halfway', 'neutral', { count: 0, inviteIds: [] }],
+    ['an older server with no summary', 'neutral', undefined],
+  ] as const)('T-3: with %s the Stopped halfway tile is %s; the four state tiles stay neutral', async (_case, status, summary) => {
+    await renderWith(payload({ invites: SEVEN, stoppedHalfway: summary ? { ...summary, inviteIds: [...summary.inviteIds] } : undefined }));
+    expect(screen.getByTestId('kpi-stopped-halfway')).toHaveAttribute('data-status', status);
+    for (const id of ['kpi-pending', 'kpi-accepted', 'kpi-expired', 'kpi-revoked']) {
+      expect(screen.getByTestId(id)).toHaveAttribute('data-status', 'neutral');
+    }
+  });
+
+  it('T-4: when the ceiling was reached every tile says "at least"; otherwise none does', async () => {
+    await renderWith(sevenPayload({ truncated: true }));
+    expect(within(screen.getByTestId('kpi-pending')).getByText('at least: the newest 7 only')).toBeInTheDocument();
+    for (const id of TILE_IDS) expect(screen.getByTestId(id)).toHaveTextContent('at least:');
+    cleanup();
+
+    await renderWith(sevenPayload({ truncated: false }));
+    for (const id of TILE_IDS) expect(screen.getByTestId(id)).not.toHaveTextContent('at least');
+    cleanup();
+
+    await renderWith(sevenPayload());
+    for (const id of TILE_IDS) expect(screen.getByTestId(id)).not.toHaveTextContent('at least');
+  });
+
+  it('T-5: a create moves Pending from 1 to 2 with no new read', async () => {
+    const user = userEvent.setup();
+    await renderWith(payload());
+    expect(screen.getByTestId('kpi-pending')).toHaveAttribute('aria-label', 'Pending, 1');
+    const reads = listReads().length;
+    responder = (call) =>
+      call.init?.method === 'POST'
+        ? { status: 201, body: { success: true, data: { invite: row({ id: 'invite-2', email: 'x@example.com' }), link: LINK } } }
+        : { status: 200, body: { success: true, data: payload() } };
+    await createInvite(user, 'x@example.com');
+    await waitFor(() => expect(screen.getByTestId('kpi-pending')).toHaveAttribute('aria-label', 'Pending, 2'));
+    expect(listReads()).toHaveLength(reads);
+  });
+
+  it('T-5: a revoke moves the row from Pending to Revoked with no new read', async () => {
+    const user = userEvent.setup();
+    await renderWith(payload());
+    const reads = listReads().length;
+    responder = (call) =>
+      call.init?.method === 'POST'
+        ? {
+            status: 200,
+            body: { success: true, data: { invite: row({ state: 'revoked', revokedAt: '2026-10-02T00:00:00.000Z', revokeReason: 'QA L-6 check' }) } },
+          }
+        : { status: 200, body: { success: true, data: payload() } };
+    await user.click(within(screen.getByTestId('invite-list')).getByRole('button', { name: 'Revoke' }));
+    const dialog = screen.getByTestId('revoke-dialog');
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'QA L-6 check' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Revoke invite' }));
+    await waitFor(() => expect(screen.getByTestId('kpi-pending')).toHaveAttribute('aria-label', 'Pending, 0'));
+    expect(screen.getByTestId('kpi-revoked')).toHaveAttribute('aria-label', 'Revoked, 1');
+    expect(listReads()).toHaveLength(reads);
+  });
+
+  it('T-6 (K-10): placeholders, Refresh and the loading line while the first read is pending; nothing on a first-load error', async () => {
+    holdNextFetch();
+    render(<BusinessOsInvitesPage />);
+    expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(5);
+    expect(screen.getByRole('button', { name: 'Refresh invites' })).toBeInTheDocument();
+    expect(screen.getByText('Reading invites…')).toBeInTheDocument();
+    cleanup();
+
+    responder = () => ({ status: 500, body: { success: false, error: 'could_not_read_invites' } });
+    render(<BusinessOsInvitesPage />);
+    await screen.findByTestId('page-error');
+    expect(screen.queryByTestId('kpi-placeholder')).not.toBeInTheDocument();
+    for (const id of TILE_IDS) expect(screen.queryByTestId(id)).not.toBeInTheDocument();
+    // T-17: no badge on a first-load error either.
+    expect(screen.queryByTestId('enforcement-mode-badge')).not.toBeInTheDocument();
+  });
+
+  describe('T-7: what a failed read says (SA M-2)', () => {
+    it('a rejected fetch shows the network sentence, never the browser message', async () => {
+      global.fetch = jest.fn(() => Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch;
+      render(<BusinessOsInvitesPage />);
+      expect((await screen.findByTestId('page-error')).textContent).toBe(ADMIN_NETWORK_ERROR);
+      expect(document.body.textContent).not.toContain('Failed to fetch');
+    });
+
+    it.each([401, 403])('a %i says the admin session ended', async (status) => {
+      responder = () => ({ status, body: { success: false, error: 'unauthorized' } });
+      render(<BusinessOsInvitesPage />);
+      expect((await screen.findByTestId('page-error')).textContent).toBe(SESSION_ENDED);
+    });
+
+    it('a 500 with the route code, or a reply that is not JSON, shows the page sentence and never a code or parser message', async () => {
+      responder = () => ({ status: 500, body: { success: false, error: 'could_not_read_invites' } });
+      render(<BusinessOsInvitesPage />);
+      expect((await screen.findByTestId('page-error')).textContent).toBe(READ_FAILED);
+      for (const leak of ['could_not_read_invites', 'installed yet', 'Unexpected token']) {
+        expect(document.body.textContent).not.toContain(leak);
+      }
+      cleanup();
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 502,
+          json: () => Promise.reject(new SyntaxError("Unexpected token '<' in JSON")),
+        } as unknown as Response)
+      ) as unknown as typeof fetch;
+      render(<BusinessOsInvitesPage />);
+      expect((await screen.findByTestId('page-error')).textContent).toBe(READ_FAILED);
+      for (const leak of ['could_not_read_invites', 'installed yet', 'Unexpected token']) {
+        expect(document.body.textContent).not.toContain(leak);
+      }
+    });
+
+    it('Try again reads once more and shows the list', async () => {
+      responder = () => ({ status: 500, body: { success: false, error: 'could_not_read_invites' } });
+      render(<BusinessOsInvitesPage />);
+      await screen.findByTestId('page-error');
+      responder = () => ({ status: 200, body: { success: true, data: payload() } });
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      await screen.findByTestId('invite-list');
+      expect(listReads()).toHaveLength(2);
+      expect(screen.queryByTestId('page-error')).not.toBeInTheDocument();
+    });
+  });
+
+  it('T-8: Refresh sits in the bar, keeps the list while it reads; a failed Refresh keeps the list and hides the strip', async () => {
+    await renderWith(payload());
+    const bar = screen.getByRole('search', { name: 'Filters' });
+    const refresh = within(bar).getByRole('button', { name: 'Refresh invites' });
+    expect(within(bar).getByText(/^Read at \d{2}:\d{2} UTC$/)).toBeInTheDocument();
+
+    const held = holdNextFetch();
+    fireEvent.click(refresh);
+    expect(refresh).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('invite-row-invite-1')).toBeInTheDocument();
+    expect(screen.getByTestId('invites-content')).toHaveAttribute('aria-busy', 'true');
+
+    await held.settle(500, { success: false, error: 'could_not_read_invites' });
+    expect(await screen.findByTestId('page-error')).toBeInTheDocument();
+    expect(screen.getByTestId('invite-row-invite-1')).toBeInTheDocument();
+    for (const id of TILE_IDS) expect(screen.queryByTestId(id)).not.toBeInTheDocument();
+  });
+
+  it('T-9: visible labels name each control; Clear is always there and disabled at the defaults; the bar is in §5.5 order', async () => {
+    await renderWith(sevenPayload());
+    const bar = screen.getByRole('search', { name: 'Filters' });
+    const search = within(bar).getByLabelText('Search');
+    const state = within(bar).getByLabelText('State');
+    const type = within(bar).getByLabelText('Invite type');
+    const issuer = within(bar).getByLabelText('Issuer');
+    expect(search).toBe(screen.getByTestId('invite-search'));
+    expect(state).toBe(screen.getByTestId('invite-state-filter'));
+    expect(type).toBe(screen.getByTestId('invite-type-filter'));
+    expect(issuer).toBe(screen.getByTestId('invite-issuer-filter'));
+    for (const text of ['Search', 'State', 'Invite type', 'Issuer']) {
+      expect(within(bar).getByText(text, { selector: 'label' })).not.toHaveClass('sr-only');
+    }
+
+    const clear = within(bar).getByRole('button', { name: 'Clear' });
+    expect(clear).toBeDisabled();
+    fireEvent.change(state, { target: { value: 'revoked' } });
+    expect(clear).toBeEnabled();
+    fireEvent.click(clear);
+    expect(clear).toBeDisabled();
+
+    const refresh = within(bar).getByRole('button', { name: 'Refresh invites' });
+    const order = [search, state, type, issuer, clear, refresh];
+    for (let index = 1; index < order.length; index += 1) expect(follows(order[index - 1], order[index])).toBe(true);
+  });
+
+  it('T-10: nothing on the page writes the URL, history or storage, and the link lives only in the panel text', async () => {
+    const push = jest.spyOn(window.history, 'pushState');
+    const replace = jest.spyOn(window.history, 'replaceState');
+    sessionStorage.clear();
+    localStorage.clear();
+    const before = { href: window.location.href, search: window.location.search, hash: window.location.hash };
+    const user = userEvent.setup();
+    try {
+      await renderWith(sevenPayload());
+      fireEvent.change(screen.getByTestId('invite-search'), { target: { value: 'pending' } });
+      fireEvent.change(screen.getByTestId('invite-state-filter'), { target: { value: 'pending' } });
+      fireEvent.change(screen.getByTestId('invite-type-filter'), { target: { value: 'fixture-free' } });
+      fireEvent.change(screen.getByTestId('invite-issuer-filter'), { target: { value: 'admin' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+
+      // Refresh, then a failed Refresh and Try again (SA S-2).
+      const refresh = screen.getByRole('button', { name: 'Refresh invites' });
+      fireEvent.click(refresh);
+      await waitFor(() => expect(refresh).toBeEnabled());
+      responder = () => ({ status: 500, body: { success: false, error: 'could_not_read_invites' } });
+      fireEvent.click(refresh);
+      await screen.findByTestId('page-error');
+      responder = () => ({ status: 200, body: { success: true, data: sevenPayload() } });
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(screen.queryByTestId('page-error')).not.toBeInTheDocument());
+
+      responder = (call) =>
+        call.init?.method === 'POST'
+          ? { status: 201, body: { success: true, data: { invite: row({ id: 'invite-2', email: 'x@example.com' }), link: LINK } } }
+          : { status: 200, body: { success: true, data: sevenPayload() } };
+      await createInvite(user, 'x@example.com');
+
+      expect(push).not.toHaveBeenCalled();
+      expect(replace).not.toHaveBeenCalled();
+      expect({ href: window.location.href, search: window.location.search, hash: window.location.hash }).toEqual(before);
+      expect(sessionStorage.length).toBe(0);
+      expect(localStorage.length).toBe(0);
+      for (const element of Array.from(document.querySelectorAll('*'))) {
+        for (const attribute of Array.from(element.attributes)) expect(attribute.value).not.toContain(LINK);
+      }
+      expect(screen.getByTestId('created-link').textContent).toBe(LINK);
+    } finally {
+      push.mockRestore();
+      replace.mockRestore();
+    }
+  });
+
+  it('T-11: the table is named, its headers unique and in order, each scoped to its column', async () => {
+    await renderWith(payload());
+    const table = screen.getByRole('table', { name: 'Invites' });
+    const headers = within(table).getAllByRole('columnheader');
+    const texts = headers.map((header) => header.textContent);
+    expect(texts).toEqual([
+      'Email',
+      'Plan',
+      'Access',
+      'Invited by',
+      'Created (UTC)',
+      'Link expires (UTC)',
+      'State',
+      'Email status',
+      'First opened (UTC)',
+      'Actions',
+    ]);
+    expect(new Set(texts).size).toBe(texts.length);
+    for (const header of headers) expect(header).toHaveAttribute('scope', 'col');
+    expect(headers[9].querySelector('.sr-only')?.textContent).toBe('Actions');
+  });
+
+  it('T-12: state and email status are chips with their ruled tones; every meaning tone has an icon', async () => {
+    await renderWith(
+      payload({
+        invites: [
+          row({ id: 'p', state: 'pending', emailStatus: 'sent' }),
+          row({ id: 'a', state: 'accepted', emailStatus: 'sent_untracked' }),
+          row({ id: 'e', state: 'expired', emailStatus: 'not_emailed' }),
+          row({ id: 'r', state: 'revoked', emailStatus: 'not_sent' }),
+          row({ id: 's', state: 'pending', emailStatus: 'unknown', redemptionStoppedHalfway: true }),
+        ],
+      })
+    );
+    const chip = (id: string, testId: string) => within(screen.getByTestId(`invite-row-${id}`)).getByTestId(testId);
+    const expected: Array<[string, string, string]> = [
+      ['p', 'info', 'ok'],
+      ['a', 'ok', 'info'],
+      ['e', 'neutral', 'neutral'],
+      ['r', 'neutral', 'danger'],
+      ['s', 'info', 'warn'],
+    ];
+    for (const [id, stateTone, emailTone] of expected) {
+      for (const [testId, tone] of [
+        ['invite-state', stateTone],
+        ['invite-email-status', emailTone],
+      ]) {
+        const element = chip(id, testId);
+        expect(element).toHaveAttribute('data-tone', tone);
+        expect(element.querySelector('svg') !== null).toBe(tone !== 'neutral');
+      }
+      // StatusChip takes no title: the wrapper keeps the hover text.
+      expect(chip(id, 'invite-email-status').parentElement?.getAttribute('title')).toBeTruthy();
+    }
+    expect(chip('p', 'invite-email-status').parentElement).toHaveAttribute('title', 'Accepted by the email provider');
+
+    const block = within(screen.getByTestId('invite-row-s')).getByTestId('invite-stopped-halfway');
+    expect(within(block).getByText('Signup stopped halfway')).toHaveAttribute('data-tone', 'warn');
+    expect(block).toHaveTextContent('The signup timed out before it could record why.');
+  });
+
+  it('T-13: an empty filtered list offers Clear filters, which brings every row back; an empty read does not', async () => {
+    await renderWith(sevenPayload());
+    fireEvent.change(screen.getByTestId('invite-search'), { target: { value: 'nobody-here' } });
+    const empty = screen.getByTestId('invite-list-empty');
+    expect(empty).toHaveTextContent('No invites match these filters.');
+    fireEvent.click(within(empty).getByRole('button', { name: 'Clear filters' }));
+    expect(screen.queryAllByTestId(/^invite-row-/)).toHaveLength(7);
+    cleanup();
+
+    responder = () => ({ status: 200, body: { success: true, data: payload({ invites: [] }) } });
+    render(<BusinessOsInvitesPage />);
+    expect(await screen.findByTestId('invite-list-empty')).toHaveTextContent('No invites yet.');
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
+  });
+
+  it('T-14: header, strip, bar, then the banner, the created link, the form and the list; no note', async () => {
+    const user = userEvent.setup();
+    await renderWith(sevenPayload());
+    responder = (call) =>
+      call.init?.method === 'POST'
+        ? { status: 201, body: { success: true, data: { invite: row({ id: 'invite-2', email: 'x@example.com' }), link: LINK } } }
+        : { status: 200, body: { success: true, data: sevenPayload() } };
+    const panel = await createInvite(user, 'x@example.com');
+    await user.click(screen.getByRole('button', { name: /new invite/i }));
+
+    const order = [
+      document.querySelector('header') as Element,
+      screen.getByTestId('kpi-pending'),
+      screen.getByRole('search', { name: 'Filters' }),
+      screen.getByTestId('stopped-halfway-banner'),
+      panel,
+      screen.getByTestId('create-invite-form'),
+      screen.getByTestId('invite-list'),
+    ];
+    for (let index = 1; index < order.length; index += 1) expect(follows(order[index - 1], order[index])).toBe(true);
+    expect(screen.queryByTestId('enforcement-note')).not.toBeInTheDocument();
   });
 });

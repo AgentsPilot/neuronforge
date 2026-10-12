@@ -1,112 +1,149 @@
 'use client';
 
 /**
- * Slice 1c (FR-5): the controls above the invite list — state, invite type and
- * an email search. They only describe the filter; `inviteFilter.ts` applies it.
- * The type options come from the GET payload, so this names no invite type.
+ * Slice 1c (FR-5): the controls above the invite list — an email search, state,
+ * invite type and issuer. They only describe the filter; `inviteFilter.ts`
+ * applies it. The type options come from the GET payload, so this names no
+ * invite type.
+ *
+ * ── The shared filter bar (Admin Layout Standard L-6, §5.5) ─────────────────
+ * Since L-6 this is the page's bar: the four controls with visible labels, a
+ * Clear that is always there (disabled at the defaults), "Read at" and Refresh.
+ * No Window and no business slot: invites have no date filter (C-11) and are
+ * not per business.
+ *
+ * ── Never the URL (D-7 (a)) ─────────────────────────────────────────────────
+ * The filter lives in the page's own state and is never written to the URL,
+ * history or storage: this page shows a once-only invite link, and nothing on
+ * it may survive a reload. That is why this file uses the bar but not the
+ * shared URL hook; the source guard proves it, transitively.
+ *
+ * ── Nothing to filter (SA L-6 M-3) ──────────────────────────────────────────
+ * Before the first read and over an empty list the bar is Refresh-only. The bar
+ * counts as "has controls" when its children OR its `onClear` is set, so the
+ * three come from one conditional object, all undefined together.
  */
 
-import { Search, X } from 'lucide-react';
+import { useId } from 'react';
+
+import { ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL, AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';
 
 import {
   INVITE_ISSUER_FILTERS,
   INVITE_STATE_FILTERS,
+  isFilterActive,
   type InviteIssuerFilter,
   type InviteListFilter,
   type InviteStateFilter,
 } from '../inviteFilter';
 
+/** Noun phrase: Refresh is named "Refresh invites", the loading line "Reading invites…". */
+export const INVITES_WHAT = 'invites';
+
 interface Props {
   filter: InviteListFilter;
   inviteTypes: Array<{ type: string; label: string }>;
-  shown: number;
-  total: number;
-  isActive: boolean;
+  /** False before the first read and when the read returned no invites: Refresh only. */
+  hasInvites: boolean;
   onChange: (filter: InviteListFilter) => void;
   onClear: () => void;
+  onRefresh: () => void;
+  busy: boolean;
+  /** ISO time of the last successful read. */
+  readAt: string | null;
 }
 
-export function InviteFilters({ filter, inviteTypes, shown, total, isActive, onChange, onClear }: Props) {
-  return (
-    <div data-testid="invite-filters" className="mb-3 flex flex-wrap items-center gap-2">
-      <label className="relative flex items-center">
-        <span className="sr-only">Search by email</span>
-        <Search className="pointer-events-none absolute left-2 h-4 w-4 text-slate-500" aria-hidden="true" />
-        <input
-          type="search"
-          data-testid="invite-search"
-          value={filter.query}
-          onChange={(event) => onChange({ ...filter, query: event.target.value })}
-          placeholder="Search email"
-          maxLength={320}
-          autoComplete="off"
-          className="w-56 rounded border border-slate-600 bg-slate-900 py-1.5 pl-8 pr-2 text-sm text-slate-200 placeholder:text-slate-500"
-        />
-      </label>
+export function InviteFilters({ filter, inviteTypes, hasInvites, onChange, onClear, onRefresh, busy, readAt }: Props) {
+  const searchId = useId();
+  const stateId = useId();
+  const typeId = useId();
+  const issuerId = useId();
 
-      <label className="flex items-center gap-1 text-sm text-slate-400">
-        <span className="sr-only">Filter by state</span>
-        <select
-          data-testid="invite-state-filter"
-          value={filter.state}
-          onChange={(event) => onChange({ ...filter, state: event.target.value as InviteStateFilter })}
-          className="rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-slate-200"
-        >
-          {INVITE_STATE_FILTERS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+  // One object, so the three can never disagree about whether there are controls.
+  const controls = hasInvites
+    ? {
+        children: (
+          <>
+            <div>
+              <label htmlFor={searchId} className={ADMIN_FIELD_LABEL}>
+                Search
+              </label>
+              <input
+                id={searchId}
+                type="search"
+                data-testid="invite-search"
+                value={filter.query}
+                onChange={(event) => onChange({ ...filter, query: event.target.value })}
+                placeholder="Search email"
+                maxLength={320}
+                autoComplete="off"
+                className={`${ADMIN_FIELD_CONTROL} w-56`}
+              />
+            </div>
 
-      <label className="flex items-center gap-1 text-sm text-slate-400">
-        <span className="sr-only">Filter by invite type</span>
-        <select
-          data-testid="invite-type-filter"
-          value={filter.inviteType}
-          onChange={(event) => onChange({ ...filter, inviteType: event.target.value })}
-          className="rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-slate-200"
-        >
-          <option value="all">All types</option>
-          {inviteTypes.map((option) => (
-            <option key={option.type} value={option.type}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+            <div>
+              <label htmlFor={stateId} className={ADMIN_FIELD_LABEL}>
+                State
+              </label>
+              <select
+                id={stateId}
+                data-testid="invite-state-filter"
+                value={filter.state}
+                onChange={(event) => onChange({ ...filter, state: event.target.value as InviteStateFilter })}
+                className={ADMIN_FIELD_CONTROL}
+              >
+                {INVITE_STATE_FILTERS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-      <label className="flex items-center gap-1 text-sm text-slate-400">
-        <span className="sr-only">Filter by issuer</span>
-        <select
-          data-testid="invite-issuer-filter"
-          value={filter.issuer}
-          onChange={(event) => onChange({ ...filter, issuer: event.target.value as InviteIssuerFilter })}
-          className="rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-slate-200"
-        >
-          {INVITE_ISSUER_FILTERS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+            <div>
+              <label htmlFor={typeId} className={ADMIN_FIELD_LABEL}>
+                Invite type
+              </label>
+              <select
+                id={typeId}
+                data-testid="invite-type-filter"
+                value={filter.inviteType}
+                onChange={(event) => onChange({ ...filter, inviteType: event.target.value })}
+                className={ADMIN_FIELD_CONTROL}
+              >
+                <option value="all">All types</option>
+                {inviteTypes.map((option) => (
+                  <option key={option.type} value={option.type}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-      {isActive && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="flex items-center gap-1 rounded border border-slate-600 px-2 py-1.5 text-xs text-slate-300 hover:bg-slate-700/50"
-        >
-          <X className="h-3 w-3" aria-hidden="true" />
-          Clear
-        </button>
-      )}
+            <div>
+              <label htmlFor={issuerId} className={ADMIN_FIELD_LABEL}>
+                Issuer
+              </label>
+              <select
+                id={issuerId}
+                data-testid="invite-issuer-filter"
+                value={filter.issuer}
+                onChange={(event) => onChange({ ...filter, issuer: event.target.value as InviteIssuerFilter })}
+                className={ADMIN_FIELD_CONTROL}
+              >
+                {INVITE_ISSUER_FILTERS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        ),
+        onClear,
+        canClear: isFilterActive(filter),
+      }
+    : { children: undefined, onClear: undefined, canClear: undefined };
 
-      <span data-testid="invite-filter-count" className="text-xs text-slate-500">
-        {isActive ? `${shown} of ${total} shown` : `${total} ${total === 1 ? 'invite' : 'invites'}`}
-      </span>
-    </div>
-  );
+  return <AdminFilterBar what={INVITES_WHAT} busy={busy} readAt={readAt} onRefresh={onRefresh} {...controls} />;
 }

@@ -20,6 +20,13 @@ import { Check, Copy, X } from 'lucide-react';
 
 import type { InviteEmailStatus } from '../types';
 
+/**
+ * A-1 focus ring (Admin Layout Standard L-6, styling only). Written out here
+ * rather than imported: this panel keeps its imports to React, lucide and its
+ * own types, so nothing it pulls in can reach the URL or storage (SA-R-5 (2)).
+ */
+const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
+
 interface Props {
   link: string;
   email: string;
@@ -62,7 +69,7 @@ export function CreatedLinkPanel({ link, email, emailStatus, onDismiss }: Props)
   };
 
   return (
-    <section data-testid="created-link-panel" className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4">
+    <section data-testid="created-link-panel" className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 space-y-2">
           <h2 className="text-sm font-semibold text-emerald-100">Invite created for {email}</h2>
@@ -87,7 +94,7 @@ export function CreatedLinkPanel({ link, email, emailStatus, onDismiss }: Props)
             <button
               type="button"
               onClick={() => void copy()}
-              className="flex shrink-0 items-center gap-1 rounded border border-emerald-500/50 px-3 py-1 text-sm text-emerald-100 hover:bg-emerald-500/20"
+              className={`flex shrink-0 items-center gap-1 rounded-lg border border-emerald-500/50 px-3 py-1 text-sm text-emerald-100 hover:bg-emerald-500/20 ${FOCUS_RING}`}
             >
               {copied ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
               {copied ? 'Copied' : 'Copy'}
@@ -99,7 +106,7 @@ export function CreatedLinkPanel({ link, email, emailStatus, onDismiss }: Props)
           type="button"
           onClick={onDismiss}
           aria-label="Close"
-          className="rounded p-1 text-emerald-200 hover:bg-emerald-500/20"
+          className={`rounded-lg p-1 text-emerald-200 hover:bg-emerald-500/20 ${FOCUS_RING}`}
         >
           <X className="h-4 w-4" aria-hidden="true" />
         </button>
