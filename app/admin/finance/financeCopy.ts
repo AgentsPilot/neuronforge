@@ -1,5 +1,5 @@
 /**
- * Every user-facing string of the admin finance page (slices 1a, 1b and 2a). The render
+ * Every user-facing string of the admin finance page (slices 1a, 1b, 2a and 2b). The render
  * test asserts against these constants, so a wording change is one edit.
  *
  * Tile states reuse Health's `STATUS_STYLES` labels as they are (SA-W7); the
@@ -228,3 +228,128 @@ export const TAKINGS_NOTICE_UNREADABLE = (count: number) =>
   `${count} ${count === 1 ? 'amount' : 'amounts'} could not be read and ${count === 1 ? 'is' : 'are'} not counted; net is unknown where ${count === 1 ? 'it' : 'they'} fell.`;
 export const TAKINGS_NOTICE_UNREADABLE_FEES = (count: number) =>
   `${count} recorded ${count === 1 ? 'fee' : 'fees'} could not be read and ${count === 1 ? 'is' : 'are'} not counted in the fee lines.`;
+
+// ── Section 6 block B, client payment problems (slice 2b) ──────────────────
+// Where the businesses' clients are not paying: the businesses' problem, not
+// ours (BD-2). No test-mode wording (BD-13). Every amount is the FULL invoice
+// or instalment amount, never what is still owed (S2-F7).
+export const PROBLEMS_TITLE = 'Client payment problems';
+export const PROBLEMS_CHIP = "The businesses' problem, not ours";
+export const PROBLEMS_SUBTITLE = (today: string, windowLabel: string) =>
+  `Problems with clients paying the businesses · As of now, UTC (${today}); plans cancelled or completed: ${windowLabel} · Covers businesses that still exist`;
+
+/** A part's own status, in words (SA-W31): the block frame is never "Could not load". */
+export const PART_OK = 'OK';
+export const PART_PARTIAL = 'Partial';
+export const PART_COULD_NOT_LOAD = 'Could not load this part';
+export const PROBLEMS_UNKNOWN = 'Unknown';
+export const PROBLEMS_UNKNOWN_CURRENCY = 'Unknown currency';
+
+export const PROBLEMS_FAILED_TITLE = 'Failed client payments';
+export const PROBLEMS_FAILED_NOT_STORED =
+  'Not available: a failed client payment is not stored anywhere, so it cannot be counted here.';
+export const PROBLEMS_FAILED_PLAN_CHARGES = 'Failed client plan charges';
+export const PROBLEMS_FAILED_NOT_RECORDED = 'Not recorded: no failure has ever been stored';
+/** QA-1: the read stopped at its limit or was partial, so "never" cannot be claimed. */
+export const PROBLEMS_FAILED_NONE_IN_READ = 'No failure found in the rows read (not every plan was read)';
+export const PROBLEMS_FAILED_IN_WINDOW = (count: string) => `${count} with a failure time in this window`;
+export const PROBLEMS_FAILED_COULD_NOT_CHECK = 'Could not check';
+export const PROBLEMS_INSTALMENT_RETRIES = 'Instalment retries: not recorded (no retry time is stored)';
+
+export interface OverdueCopy {
+  title: string;
+  perCurrency: string;
+  pastDueColumn: string;
+  amountColumn: string;
+  idColumn: string;
+  oldest: string;
+  pastDueChip: string;
+  empty: string;
+  amountNote: string;
+  ceilingNotice: string;
+}
+
+export const PROBLEMS_INVOICES: OverdueCopy = {
+  title: 'Overdue invoices',
+  perCurrency: 'Overdue invoices per currency',
+  pastDueColumn: 'Past due date, not marked',
+  amountColumn: 'Invoice amount',
+  idColumn: 'Invoice',
+  oldest: 'Oldest overdue invoices',
+  pastDueChip: 'Past due, not marked',
+  empty: 'No overdue invoices',
+  amountNote: 'This is the full amount of each invoice, not the amount still owed: part payments and refunds are not deducted.',
+  ceilingNotice: 'The overdue invoices were read only up to their limit: every count and amount is "at least".',
+};
+
+export const PROBLEMS_INSTALMENTS: OverdueCopy = {
+  title: 'Overdue instalments',
+  perCurrency: 'Overdue instalments per currency',
+  pastDueColumn: 'Past due date, still pending',
+  amountColumn: 'Instalment amount',
+  idColumn: 'Instalment',
+  oldest: 'Oldest overdue instalments',
+  pastDueChip: 'Past due, still pending',
+  empty: 'No overdue instalments',
+  amountNote: 'This is the full amount of each instalment, not the amount still owed: part payments are not deducted.',
+  ceilingNotice: 'The overdue instalments were read only up to their limit: every count and amount is "at least".',
+};
+
+export const OVERDUE_CURRENCY = 'Currency';
+export const OVERDUE_MARKED = 'Marked overdue';
+export const OVERDUE_BUSINESSES = 'Businesses';
+export const OVERDUE_OLDEST_DUE = 'Oldest due date (UTC)';
+export const OVERDUE_BUSINESS = 'Business';
+export const OVERDUE_DUE_DATE = 'Due date (UTC)';
+export const OVERDUE_DAYS = 'Days past due';
+export const OVERDUE_AMOUNT = 'Amount';
+export const OVERDUE_STATUS = 'Status';
+export const OVERDUE_MARKED_CHIP = 'Overdue';
+export const OVERDUE_SHOWING = (shown: number, total: number) => `Showing ${shown} of ${total}`;
+export const OVERDUE_AMONG_READ = 'Lists the oldest among the rows read';
+export const OVERDUE_TOTAL = (count: string, businesses: string) => `${count} overdue in total, at ${businesses} businesses`;
+export const OVERDUE_UNREADABLE = (count: number) =>
+  `${count} ${count === 1 ? 'amount' : 'amounts'} could not be read and ${count === 1 ? 'is' : 'are'} not counted; that line's amount is "at least".`;
+export const OVERDUE_EXCLUDES_UNREADABLE = (count: number) => `excludes ${count} unreadable`;
+
+export const PROBLEMS_PLANS_TITLE = 'Client plans';
+export const PLANS_BY_STATUS = 'Client plans by status';
+export const PLANS_STATUS = 'Status';
+export const PLANS_COUNT = 'Plans';
+/** By the stored status (S2-FR-19). Any other value is shown as stored and marked unrecognised. */
+export const PLAN_STATUS_LABELS: Readonly<Record<string, string>> = {
+  pending: 'Pending',
+  active: 'Active',
+  past_due: 'Past due',
+  paused: 'Paused',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
+export const PLAN_STATUS_NONE = '(none)';
+export const PLAN_STATUS_UNRECOGNISED = 'unrecognised';
+export const PLANS_ACTIVE_NOW = 'Active now';
+export const PLANS_CANCELLED = 'Cancelled in this window';
+export const PLANS_COMPLETED = 'Completed in this window';
+export const PLANS_NEXT_CHARGE_OVERDUE = 'Next charge overdue';
+export const PLANS_EMPTY = 'No client payment plans';
+export const PLANS_CEILING_NOTICE = 'The client plans were read only up to their limit: every count is "at least".';
+export const PLANS_UNREADABLE_TIMES = (count: number) =>
+  `${count} stored ${count === 1 ? 'time' : 'times'} could not be read and ${count === 1 ? 'is' : 'are'} left out of the counts.`;
+
+export const PROBLEMS_REMINDERS_TITLE = 'Reminder health';
+export const REMINDERS_LABELS = {
+  dueNow: 'Due now',
+  inProgress: 'In progress',
+  stuck: 'Stuck',
+  failed24h: 'Failed (24 h)',
+  failed7d: 'Failed (7 d)',
+  deadLettered24h: 'Dead-lettered (24 h)',
+  deadLettered7d: 'Dead-lettered (7 d)',
+  oldestDueAt: 'Oldest due time',
+} as const;
+export const REMINDERS_SOURCE = 'The payment reminder queue, all businesses, as Jobs & queues counts it.';
+export const REMINDERS_FAILED = 'Could not check reminders';
+export const REMINDERS_NOT_NARROWED = 'Reminder health is platform-wide and is not narrowed to one business';
+export const REMINDERS_LINK = 'Open Jobs & queues';
+export const REMINDERS_LINK_LABEL = 'Open Jobs & queues, the Queues section, for the payment reminder queue';
+export const JOBS_QUEUES_HREF = '/admin/jobs-queues#queues';

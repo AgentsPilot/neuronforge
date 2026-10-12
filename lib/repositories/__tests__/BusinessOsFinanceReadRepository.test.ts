@@ -14,6 +14,14 @@
  * `reachedCeiling` (never an error), `.eq('user_id')` on every page of the
  * account-scoped reads, refusal before querying, and the payment writers'
  * class names absent from the source (SA-WR-19).
+ *
+ * Slice 2b (R-g, R-g′, R-h, R-h′, R-i, R-i′): the exact columns (no client
+ * data, AC-64), the exact `.or()` string from fixed status literals and a
+ * strict UTC date (SA-WR-25), no other filter, the same keyset and ceiling,
+ * `.eq('user_id')` on every page of the account-scoped reads, refusal before
+ * any query, and the plan and reminder writers absent from the source
+ * (SA-W40). The pager was generalised (SA-W28): the 2a describes above are
+ * unedited and still pass (SA-WR-20).
  */
 
 import * as fs from 'fs';
@@ -45,6 +53,12 @@ import {
   FinanceReadCeilingError,
   type FinanceBillingStatusRow,
 } from '../BusinessOsFinanceReadRepository';
+// Slice 2b: a separate import, so the 2a import above stays byte-identical (SA-WR-20).
+import {
+  FINANCE_CLIENT_INSTALMENT_DUE_COLUMNS,
+  FINANCE_CLIENT_INVOICE_DUE_COLUMNS,
+  FINANCE_CLIENT_PLAN_COLUMNS,
+} from '../BusinessOsFinanceReadRepository';
 
 type Call = { method: string; args: unknown[] };
 type Response = { data?: unknown; error: unknown; count?: number | null };
@@ -58,7 +72,7 @@ function recordingClient(respond: (calls: Call[], index: number) => Response) {
       const index = queries.length;
       queries.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'not', 'gt', 'gte', 'lt', 'order', 'limit', 'maybeSingle']) {
+      for (const method of ['select', 'eq', 'not', 'gt', 'gte', 'lt', 'or', 'order', 'limit', 'maybeSingle']) {
         builder[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return builder;
@@ -506,5 +520,254 @@ describe('slice 2a: the payment writers are named in words only (SA-WR-19)', () 
 
   it.each(NAMES)('the source does not contain %s, even in a comment', (name) => {
     expect(raw).not.toContain(name);
+  });
+});
+
+// ── Slice 2b: overdue invoices and instalments, client plans (R-g to R-i′) ───
+
+const TODAY = '2026-10-01';
+const INVOICE_OR = 'status.eq.overdue,and(status.eq.sent,due_date.lt.2026-10-01)';
+const INSTALMENT_OR = 'status.eq.overdue,and(status.eq.pending,due_date.lt.2026-10-01)';
+const dueRow = (id: string) => ({ id, user_id: A, amount: '12.34', currency: 'usd', status: 'overdue', due_date: '2026-09-30' });
+
+type Args2b = { opts?: { pageSize?: number; ceiling?: number }; id?: string; today?: string };
+const LAYER_B_2B = [
+  {
+    name: 'R-g listOverdueClientInvoicesAllAccounts',
+    table: 'payment_invoices',
+    columns: () => FINANCE_CLIENT_INVOICE_DUE_COLUMNS,
+    or: INVOICE_OR,
+    noun: 'Overdue client invoice rows',
+    scoped: false,
+    call: (repo: Repo, a: Args2b = {}) => repo.listOverdueClientInvoicesAllAccounts(a.today ?? TODAY, a.opts),
+  },
+  {
+    name: 'R-g′ listOverdueClientInvoicesForAccount',
+    table: 'payment_invoices',
+    columns: () => FINANCE_CLIENT_INVOICE_DUE_COLUMNS,
+    or: INVOICE_OR,
+    noun: 'Overdue client invoice rows',
+    scoped: true,
+    call: (repo: Repo, a: Args2b = {}) => repo.listOverdueClientInvoicesForAccount(a.id ?? A, a.today ?? TODAY, a.opts),
+  },
+  {
+    name: 'R-h listOverdueClientInstalmentsAllAccounts',
+    table: 'payment_plan_installments',
+    columns: () => FINANCE_CLIENT_INSTALMENT_DUE_COLUMNS,
+    or: INSTALMENT_OR,
+    noun: 'Overdue client instalment rows',
+    scoped: false,
+    call: (repo: Repo, a: Args2b = {}) => repo.listOverdueClientInstalmentsAllAccounts(a.today ?? TODAY, a.opts),
+  },
+  {
+    name: 'R-h′ listOverdueClientInstalmentsForAccount',
+    table: 'payment_plan_installments',
+    columns: () => FINANCE_CLIENT_INSTALMENT_DUE_COLUMNS,
+    or: INSTALMENT_OR,
+    noun: 'Overdue client instalment rows',
+    scoped: true,
+    call: (repo: Repo, a: Args2b = {}) => repo.listOverdueClientInstalmentsForAccount(a.id ?? A, a.today ?? TODAY, a.opts),
+  },
+  {
+    name: 'R-i listClientPlansAllAccounts',
+    table: 'payment_plan_subscriptions',
+    columns: () => FINANCE_CLIENT_PLAN_COLUMNS,
+    or: null,
+    noun: 'Client plan rows',
+    scoped: false,
+    call: (repo: Repo, a: Args2b = {}) => repo.listClientPlansAllAccounts(a.opts),
+  },
+  {
+    name: 'R-i′ listClientPlansForAccount',
+    table: 'payment_plan_subscriptions',
+    columns: () => FINANCE_CLIENT_PLAN_COLUMNS,
+    or: null,
+    noun: 'Client plan rows',
+    scoped: true,
+    call: (repo: Repo, a: Args2b = {}) => repo.listClientPlansForAccount(a.id ?? A, a.opts),
+  },
+] as const;
+
+describe('slice 2b column allow-lists (AC-64, SA-W34)', () => {
+  const cols = (list: string) => list.split(',').map((c) => c.trim());
+
+  it('invoices: exactly who, how much, in which currency, which status and the due date', () => {
+    expect(cols(FINANCE_CLIENT_INVOICE_DUE_COLUMNS)).toEqual(['id', 'user_id', 'amount', 'currency', 'status', 'due_date']);
+  });
+
+  it('instalments: the same six, and no subscription_id (SA-W34)', () => {
+    expect(cols(FINANCE_CLIENT_INSTALMENT_DUE_COLUMNS)).toEqual(['id', 'user_id', 'amount', 'currency', 'status', 'due_date']);
+  });
+
+  it('client plans: no amount and no currency (SA-W34)', () => {
+    expect(cols(FINANCE_CLIENT_PLAN_COLUMNS)).toEqual([
+      'id', 'user_id', 'status', 'cancelled_at', 'completed_at', 'next_charge_at', 'last_failure_at',
+    ]);
+  });
+
+  it.each([FINANCE_CLIENT_INVOICE_DUE_COLUMNS, FINANCE_CLIENT_INSTALMENT_DUE_COLUMNS, FINANCE_CLIENT_PLAN_COLUMNS])(
+    '%s: no client data, no livemode',
+    (list) => {
+      for (const banned of ['contact_id', 'metadata', 'notes', 'internal_notes', 'invoice_number', 'line_items', 'livemode', 'subscription_id']) {
+        expect(cols(list)).not.toContain(banned);
+      }
+      for (const column of cols(list)) expect(column).not.toMatch(/name|email|phone/);
+    }
+  );
+});
+
+describe.each(LAYER_B_2B)('$name', ({ table, columns, or, noun, scoped, call }) => {
+  it('one page: the exact table and columns, the exact filter, keyset order, page 1000; no livemode, no other filter', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [dueRow(P1)], error: null }));
+    const result = await call(new BusinessOsFinanceReadRepository(client));
+
+    expect(result).toEqual({ data: { rows: [dueRow(P1)], reachedCeiling: false }, error: null });
+    expect(queries).toHaveLength(1);
+    const [q] = queries;
+    expect(q[0].args).toEqual([table]);
+    expect(argsOf(q, 'select')).toEqual([[columns()]]);
+    // SA-WR-25: exactly one .or() with exactly this text; R-i has none.
+    expect(argsOf(q, 'or')).toEqual(or === null ? [] : [[or]]);
+    expect(argsOf(q, 'order')).toEqual([['id', { ascending: true }]]);
+    expect(argsOf(q, 'limit')).toEqual([[1000]]);
+    expect(argsOf(q, 'gt')).toEqual([]);
+    expect(argsOf(q, 'gte')).toEqual([]);
+    expect(argsOf(q, 'lt')).toEqual([]);
+    expect(argsOf(q, 'not')).toEqual([]);
+    // No status `eq` (statuses live only in the .or()); the account scope only on the scoped read.
+    expect(argsOf(q, 'eq')).toEqual(scoped ? [['user_id', A]] : []);
+    expect(JSON.stringify(q)).not.toContain('livemode');
+    const filters = or === null ? [] : ['or'];
+    expect(q.map((c) => c.method)).toEqual(['from', 'select', ...filters, ...(scoped ? ['eq'] : []), 'order', 'limit']);
+  });
+
+  it('pages by keyset (gt the last id) and stops on a short page; the filter and the scope are on every page', async () => {
+    const { client, queries } = recordingClient((_c, i) =>
+      i === 0 ? { data: [dueRow(P1), dueRow(P2)], error: null } : { data: [dueRow(P3)], error: null }
+    );
+    const result = await call(new BusinessOsFinanceReadRepository(client), { opts: { pageSize: 2, ceiling: 10 } });
+    expect(result.data?.rows.map((r) => r.id)).toEqual([P1, P2, P3]);
+    expect(result.data?.reachedCeiling).toBe(false);
+    expect(queries).toHaveLength(2);
+    expect(argsOf(queries[0], 'gt')).toEqual([]);
+    expect(argsOf(queries[1], 'gt')).toEqual([['id', P2]]);
+    for (const q of queries) {
+      expect(argsOf(q, 'eq')).toEqual(scoped ? [['user_id', A]] : []);
+      expect(argsOf(q, 'or')).toEqual(or === null ? [] : [[or]]);
+    }
+  });
+
+  it('the ceiling (>=) returns the rows read with reachedCeiling, never an error; 3 rows at ceiling 3 is true; 2 rows is false', async () => {
+    const plenty = recordingClient((calls) => {
+      const [[size]] = argsOf(calls, 'limit') as number[][];
+      return { data: [P1, P2, P3, P4].slice(0, size).map(dueRow), error: null };
+    });
+    const capped = await call(new BusinessOsFinanceReadRepository(plenty.client), { opts: { ceiling: 3, pageSize: 2 } });
+    expect(capped.error).toBeNull();
+    expect(capped.data?.rows).toHaveLength(3);
+    expect(capped.data?.reachedCeiling).toBe(true);
+    expect(plenty.queries.map((q) => argsOf(q, 'limit')[0][0])).toEqual([2, 1]);
+
+    const onlyTwo = recordingClient((_c, i) => (i === 0 ? { data: [dueRow(P1), dueRow(P2)], error: null } : { data: [], error: null }));
+    const two = await call(new BusinessOsFinanceReadRepository(onlyTwo.client), { opts: { ceiling: 3, pageSize: 2 } });
+    expect(two.data).toEqual({ rows: [P1, P2].map(dueRow), reachedCeiling: false });
+  });
+
+  it.each([
+    ['a zero page', { pageSize: 0 }],
+    ['a page over 1000', { pageSize: 1001 }],
+    ['a zero ceiling', { ceiling: 0 }],
+    ['a ceiling over 5,000', { ceiling: 5001 }],
+  ])('refuses %s before querying', async (_n, opts) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await call(new BusinessOsFinanceReadRepository(client), { opts });
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+    expect(mockLog.warn).toHaveBeenCalled();
+  });
+
+  it('a read error is { data: null, error }, logged at error, never throws', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: new Error('boom') }));
+    const result = await call(new BusinessOsFinanceReadRepository(client));
+    expect(result).toEqual({ data: null, error: expect.objectContaining({ message: 'boom' }) });
+    expect(mockLog.error).toHaveBeenCalled();
+  });
+
+  it(scoped ? 'logs at debug with counts only; never the id, an amount, a currency or a date' : 'logs one info line with counts and timing only', async () => {
+    const { client } = recordingClient(() => ({ data: [dueRow(P1)], error: null }));
+    await call(new BusinessOsFinanceReadRepository(client));
+    const level = scoped ? mockLog.debug : mockLog.info;
+    expect(level).toHaveBeenCalledTimes(1);
+    const [ctx, message] = level.mock.calls[0];
+    expect(message).toBe(`${noun} of ${scoped ? 'one account' : 'all accounts'} read`);
+    expect(Object.keys(ctx).sort()).toEqual(scoped ? ['method', 'reachedCeiling', 'rows'] : ['durationMs', 'method', 'reachedCeiling', 'rows']);
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.debug.mock.calls]);
+    for (const secret of [A, '12.34', 'usd', '2026-09-30', TODAY]) expect(logged).not.toContain(secret);
+    if (scoped) expect(mockLog.info).not.toHaveBeenCalled();
+  });
+});
+
+describe.each(LAYER_B_2B.filter((r) => r.or !== null))('$name: the UTC date (SA-WR-25)', ({ call }) => {
+  it.each([
+    ['an empty string', ''],
+    ['a date that does not exist', '2026-02-30'],
+    ['a timestamp', '2026-10-01T00:00:00Z'],
+    ['a filter injection', '2026-10-01,status.eq.paid'],
+    ['a short year', '26-10-01'],
+    ['a Date object', new Date('2026-10-01T00:00:00Z') as unknown as string],
+  ])('refuses %s before from is called, at warn', async (_n, today) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await call(new BusinessOsFinanceReadRepository(client), { today });
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+    expect(mockLog.warn).toHaveBeenCalled();
+    expect(mockLog.error).not.toHaveBeenCalled();
+  });
+
+  it('builds the filter from the date it is given, and nothing else (the date is the only variable part)', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    await call(new BusinessOsFinanceReadRepository(client), { today: '2024-02-29' });
+    const [[text]] = argsOf(queries[0], 'or') as string[][];
+    expect(text).toMatch(/^status\.eq\.overdue,and\(status\.eq\.(sent|pending),due_date\.lt\.2024-02-29\)$/);
+  });
+});
+
+describe.each(LAYER_B_2B.filter((r) => r.scoped))('$name: the account id (SA-W1, AC-65)', ({ call }) => {
+  it.each([[''], ['not-a-uuid'], ["11111111-1111-4111-8111-111111111111' or 1=1"]])(
+    'refuses %p before any query, at warn',
+    async (id) => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+      const result = await call(new BusinessOsFinanceReadRepository(client), { id });
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+      expect(queries).toHaveLength(0);
+      expect(mockLog.warn).toHaveBeenCalled();
+      expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain(id || 'never-empty');
+    }
+  );
+});
+
+describe('slice 2b: the plan and reminder writers are named in words only (SA-W40)', () => {
+  const raw = fs.readFileSync(path.join(process.cwd(), 'lib/repositories/BusinessOsFinanceReadRepository.ts'), 'utf8');
+  // Built from parts so this test file does not name them either.
+  const NAMES = ['PaymentPlan', 'PaymentReminder'].map((part) => part + 'Repository');
+
+  it('the check bites (planted negative control)', () => {
+    const planted = `// see ${NAMES[1]}\nimport { x } from './${NAMES[0]}';`;
+    expect(NAMES.filter((name) => planted.includes(name))).toEqual(NAMES);
+    // A near miss is not a match: the client plan repository's name does not contain the plan one.
+    expect(['PaymentPlanSubscription' + 'Repository'].filter((n) => n.includes(NAMES[0]))).toEqual([]);
+  });
+
+  it.each(NAMES)('the source does not contain %s, even in a comment', (name) => {
+    expect(raw).not.toContain(name);
+  });
+
+  it('the header names them in words, and says the reminder queue is never read here', () => {
+    expect(raw).toMatch(/payment plan repository/);
+    expect(raw).toMatch(/payment reminder repository/);
+    expect(raw).toMatch(/THIS FILE NEVER READS THE REMINDER QUEUE/);
   });
 });
