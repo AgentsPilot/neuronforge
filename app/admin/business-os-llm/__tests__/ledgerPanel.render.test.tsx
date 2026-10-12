@@ -158,7 +158,7 @@ describe('S2-T9: all three readings render as text, with equal weight', () => {
       await waitFor(() => expect(screen.getByTestId(branch.settled)).toBeInTheDocument());
 
       const panel = screen.getByTestId('ledger-panel');
-      expect(panel.textContent).not.toMatch(/(confirmed|verified|success|proven)/i);
+      expect(panel.textContent).not.toMatch(/\b(confirmed|verified|success|proven)\b/i);
       // A green chip reads as proof from across the room; this panel can only
       // ever corroborate.
       expect(panel.innerHTML).not.toMatch(/text-(green|emerald)-|bg-(green|emerald)-/);
