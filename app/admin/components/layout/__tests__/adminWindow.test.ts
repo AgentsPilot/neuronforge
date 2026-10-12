@@ -197,9 +197,18 @@ describe('linkedWindowLabel', () => {
 describe('window extras (L-2a, D-2 (b))', () => {
   const withExtras = (query: string) => parseWindow(getter(query), ['24h', '90d']);
 
-  it('are 24 hours and 90 days, labelled in words', () => {
-    expect(ADMIN_WINDOW_EXTRAS).toEqual(['24h', '90d']);
-    expect(ADMIN_WINDOW_EXTRA_LABELS).toEqual({ '24h': '24 hours', '90d': '90 days' });
+  // E-9 (L-8a): retitled and widened from "24 hours and 90 days" when Business
+  // OS AI Activity's four existing windows joined the extras (D-2 (b)).
+  it("are 24 hours, 90 days and Activity's four whole-date windows, labelled in words", () => {
+    expect(ADMIN_WINDOW_EXTRAS).toEqual(['24h', '90d', 'yesterday', 'this_week', 'last_week', 'last_month']);
+    expect(ADMIN_WINDOW_EXTRA_LABELS).toEqual({
+      '24h': '24 hours',
+      '90d': '90 days',
+      yesterday: 'Yesterday',
+      this_week: 'This week',
+      last_week: 'Last week',
+      last_month: 'Last month',
+    });
   });
 
   it('range=24h / range=90d parse only when the page lists them (U-4 for every other page)', () => {
@@ -223,7 +232,10 @@ describe('window extras (L-2a, D-2 (b))', () => {
     expect(windowEquals({ kind: 'extra', extra: '90d' }, { kind: 'extra', extra: '90d' })).toBe(true);
     expect(windowEquals({ kind: 'extra', extra: '90d' }, { kind: 'extra', extra: '24h' })).toBe(false);
     expect(windowEquals({ kind: 'extra', extra: '90d' }, { kind: 'preset', preset: '30d' })).toBe(false);
-    for (const extra of ADMIN_WINDOW_EXTRAS) {
+    // E-9b (L-8a): the loop walked every extra but parses with this page's two
+    // listed ones, so it names those two now; the four whole-date extras round
+    // trip in their own block below.
+    for (const extra of ['24h', '90d'] as const) {
       const params = new URLSearchParams(serialiseWindow({ kind: 'extra', extra }) as Record<string, string>);
       expect(withExtras(params.toString())).toEqual({ kind: 'extra', extra });
     }
@@ -252,5 +264,38 @@ describe('window extras (L-2a, D-2 (b))', () => {
       from: '2025-10-04',
       to: '2026-01-01',
     });
+  });
+});
+
+describe('the four whole-date extras (L-8a, D-2 (b))', () => {
+  const ACTIVITY_EXTRAS = ['yesterday', 'this_week', 'last_week', 'last_month'] as const;
+
+  it('parse only when the page lists them: AI cost & usage (24h, 90d) still ignores range=yesterday', () => {
+    for (const extra of ACTIVITY_EXTRAS) {
+      expect(parseWindow(getter(`range=${extra}`), ACTIVITY_EXTRAS)).toEqual({ kind: 'extra', extra });
+      expect(parseWindow(getter(`range=${extra}`), ['24h', '90d'])).toBeUndefined();
+      expect(parse(`range=${extra}`)).toBeUndefined();
+    }
+  });
+
+  it('serialise to range=… and round trip', () => {
+    for (const extra of ACTIVITY_EXTRAS) {
+      expect(serialiseWindow({ kind: 'extra', extra })).toEqual({ range: extra });
+      const params = new URLSearchParams(serialiseWindow({ kind: 'extra', extra }) as Record<string, string>);
+      expect(parseWindow(getter(params.toString()), ACTIVITY_EXTRAS)).toEqual({ kind: 'extra', extra });
+    }
+  });
+
+  it('resolve to whole UTC dates, weeks Monday to Sunday', () => {
+    // A Wednesday.
+    const now = new Date('2026-10-14T23:30:00.000Z');
+    expect(resolveWindow({ kind: 'extra', extra: 'yesterday' }, now)).toEqual({ kind: 'dates', from: '2026-10-13', to: '2026-10-13' });
+    expect(resolveWindow({ kind: 'extra', extra: 'this_week' }, now)).toEqual({ kind: 'dates', from: '2026-10-12', to: '2026-10-14' });
+    expect(resolveWindow({ kind: 'extra', extra: 'last_week' }, now)).toEqual({ kind: 'dates', from: '2026-10-05', to: '2026-10-11' });
+    expect(resolveWindow({ kind: 'extra', extra: 'last_month' }, now)).toEqual({ kind: 'dates', from: '2026-09-01', to: '2026-09-30' });
+    // 1 January: last month is December of the previous year; yesterday is 31 December.
+    const newYear = new Date('2027-01-01T00:10:00.000Z');
+    expect(resolveWindow({ kind: 'extra', extra: 'last_month' }, newYear)).toEqual({ kind: 'dates', from: '2026-12-01', to: '2026-12-31' });
+    expect(resolveWindow({ kind: 'extra', extra: 'yesterday' }, newYear)).toEqual({ kind: 'dates', from: '2026-12-31', to: '2026-12-31' });
   });
 });

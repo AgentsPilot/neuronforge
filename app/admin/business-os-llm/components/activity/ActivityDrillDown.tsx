@@ -57,7 +57,7 @@ import {
   UNRESOLVED_ADJUSTMENTS,
 } from '../../activityCopy';
 import type { ActivityDrillDownCharge, ActivityDrillDownPayload } from '../../activityDrillDownTypes';
-import { readJsonBody } from '../../readJsonBody';
+import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import type { ActivityEntryState } from '../../activityTypes';
 import { Amount, OutcomeLabel } from './ActivityTable';
 import { DrillDownCharges } from './DrillDownCharges';

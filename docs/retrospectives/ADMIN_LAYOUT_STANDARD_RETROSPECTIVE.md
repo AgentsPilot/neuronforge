@@ -308,3 +308,25 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Pages with no tests get a characterisation suite before any layout change; it made the review of a 780-line rewrite mechanical.
 
 ### Status: COMMITTED — feature/admin-layout-l7 — 07198656, PR #316
+
+---
+
+## L-8a: Business OS AI header, tabs and Activity tab (without the drawer) — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-8 workplan](/docs/workplans/ADMIN_LAYOUT_L8_WORKPLAN.md)
+
+### What went well
+- The planned deletion of the original business picker was stopped at planning: the finance page (another session) still imports it, so it moves to the finance adoption slice instead of breaking that page.
+- SA caught that switching tabs would look like an outside URL change to the Activity filters and start a read; fixed by keeping value equality on the window field and pinned by a test that bites only with a window key in the URL (M-1).
+- The page's own ?tab= writer moved to the same history mechanism as the shared hook, so tile links built from the URL stay correct.
+- QA's tab-switch probes (nine clicks, both directions, mouse and keyboard, every filter applied) sent zero extra reads; one Low edge (a malformed minimum cost) was fixed in the bar before commit.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 1 small (QA-L8a-1) — fixed before commit; the SA code-review assumption it contradicted is recorded as superseded.
+- The slice ran to about 4.8 days planned, so it was split (L-8a / L-8b).
+
+### Conclusions & process improvements
+- When a page holds several tabs with their own filters, design the URL coexistence rule before the second tab adopts the hook (SA direction recorded for L-9).
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)

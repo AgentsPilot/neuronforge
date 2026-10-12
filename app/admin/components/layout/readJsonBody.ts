@@ -2,8 +2,8 @@
  * Reads a route's JSON body without ever throwing (Gap B slice B2a, QA-B2a-2).
  *
  * Moved here from `app/admin/business-os-llm/readJsonBody.ts` by Admin Layout
- * Standard L-1a (C-4); that file is now a one-line re-export until L-8 points
- * its importers here and deletes it. This is the only `.json(` call in the
+ * Standard L-1a (C-4). That one-line re-export is gone: L-8a pointed its two
+ * importers here and deleted it (R-10). This is the only `.json(` call in the
  * shared folder (§6.1 S-6).
  *
  * A proxy or platform error page (an HTML 502, an HTML 404) is not JSON. Parsing

@@ -522,3 +522,107 @@ describe('S2-T1: the page adds no guard of its own, and offers no lesser tier', 
     expect(adminLayoutGuardVerdict(importOnly, codeOf).guarded).toBe(false);
   });
 });
+
+/**
+ * Admin Layout Standard L-8a (workplan §5): the Activity tab's end state on the
+ * standard, as source rules. Each rule is proved on a planted string it must
+ * reject (this file's own rule: no dead regex). The `@/lib/` rule above is not
+ * edited (R-9).
+ */
+describe('L-8a: the Activity tab on the admin layout standard (G-1 to G-4)', () => {
+  const importsOf = (source: string) =>
+    [...codeOf(source).matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
+
+  /**
+   * G-1. The page no longer imports the ORIGINAL business picker, and the
+   * one-line `readJsonBody.ts` re-export is gone. It never asserts that the
+   * picker file itself is gone: Finance still imports it until the finance
+   * adoption slice deletes it (SA M-2).
+   */
+  const ORIGINAL_PICKER = /^@\/app\/admin\/audit-trail\/BusinessAccountPicker$/;
+
+  it('G-1: the rule catches a planted import of the original picker', () => {
+    const planted = "import { BusinessAccountPicker } from '@/app/admin/audit-trail/BusinessAccountPicker';\n";
+    expect(importsOf(planted).some((i) => ORIGINAL_PICKER.test(i))).toBe(true);
+  });
+
+  it.each(allFiles)('G-1: %s does not import the original business picker', (relative) => {
+    expect({ file: relative, original: importsOf(read(relative)).filter((i) => ORIGINAL_PICKER.test(i)) }).toEqual({
+      file: relative,
+      original: [],
+    });
+  });
+
+  it('G-1: the page folder has no readJsonBody.ts re-export any more', () => {
+    expect(fs.existsSync(path.join(process.cwd(), `${ROOT}/readJsonBody.ts`))).toBe(false);
+    expect(allFiles).not.toContain(`${ROOT}/readJsonBody.ts`);
+  });
+
+  /** G-2. Every import of the shared layout folder goes through the alias (S-1). */
+  const isSharedLayoutImport = (specifier: string) => /(^|\/)components\/layout(\/|$)/.test(specifier);
+  const isAliased = (specifier: string) => specifier.startsWith('@/app/admin/components/layout/');
+
+  it('G-2: the rule catches a planted relative import into the shared folder', () => {
+    const planted = "import { StatusChip } from '../../../components/layout/StatusChip';\n";
+    const offending = importsOf(planted).filter((i) => isSharedLayoutImport(i) && !isAliased(i));
+    expect(offending).toEqual(['../../../components/layout/StatusChip']);
+  });
+
+  it.each(allFiles)('G-2: %s imports the shared folder through the alias only', (relative) => {
+    const offending = importsOf(read(relative)).filter((i) => isSharedLayoutImport(i) && !isAliased(i));
+    expect({ file: relative, offending }).toEqual({ file: relative, offending: [] });
+  });
+
+  /** G-3. Reads stay where they are: no `.json(` in the tab's folder, and `fetch(` only in the two readers. */
+  const ACTIVITY_DIR = `${ROOT}/components/activity/`;
+  const FETCHERS = [`${ACTIVITY_DIR}ActivityTab.tsx`, `${ACTIVITY_DIR}ActivityDrillDown.tsx`];
+  const JSON_CALL = /\.json\s*\(/;
+  const FETCH_CALL = /(^|[^\w.])fetch\s*\(/;
+  const activityFiles = allFiles.filter((relative) => relative.startsWith(ACTIVITY_DIR));
+
+  it('G-3: the rules catch a planted body read and a planted fetch', () => {
+    expect(JSON_CALL.test('const body = await response.json();')).toBe(true);
+    expect(FETCH_CALL.test('const response = await fetch(url);')).toBe(true);
+    // A method merely named like it is not a call of the global.
+    expect(FETCH_CALL.test('client.fetch(url)')).toBe(false);
+  });
+
+  it('G-3: walks the tab folder, both readers included', () => {
+    for (const fetcher of FETCHERS) expect(activityFiles).toContain(fetcher);
+    expect(activityFiles).toContain(`${ACTIVITY_DIR}ActivityFilterBar.tsx`);
+    expect(activityFiles).toContain(`${ACTIVITY_DIR}ActivityKpis.tsx`);
+  });
+
+  it.each(activityFiles)('G-3: %s reads no body directly, and fetches only if it is one of the two readers', (relative) => {
+    const code = codeOf(read(relative));
+    expect({ file: relative, json: JSON_CALL.test(code) }).toEqual({ file: relative, json: false });
+    expect({ file: relative, fetch: FETCH_CALL.test(code) }).toEqual({ file: relative, fetch: FETCHERS.includes(relative) });
+  });
+
+  /**
+   * G-4. `page.tsx` is the folder's only history writer (the filters write
+   * through the shared hook), and it never passes `window.history.state`, the
+   * first argument with which Next 14.2 never syncs `useSearchParams` (SA Q-2).
+   */
+  const HISTORY_WRITE = /history\s*\.\s*(replaceState|pushState)\s*\(/;
+  const KEEPS_STATE = /window\s*\.\s*history\s*\.\s*state\b/;
+
+  it('G-4: the rules catch a planted write that keeps history.state', () => {
+    const planted = "window.history.replaceState(window.history.state, '', url.toString());";
+    expect(HISTORY_WRITE.test(planted)).toBe(true);
+    expect(KEEPS_STATE.test(planted)).toBe(true);
+    expect(KEEPS_STATE.test("window.history.replaceState(null, '', url.toString());")).toBe(false);
+  });
+
+  it.each(allFiles)('G-4: %s writes history only if it is page.tsx', (relative) => {
+    const code = codeOf(read(relative));
+    expect({ file: relative, writes: HISTORY_WRITE.test(code) }).toEqual({
+      file: relative,
+      writes: relative === `${ROOT}/page.tsx`,
+    });
+  });
+
+  it('G-4: page.tsx never passes window.history.state', () => {
+    expect(KEEPS_STATE.test(codeOf(read(`${ROOT}/page.tsx`)))).toBe(false);
+  });
+});
