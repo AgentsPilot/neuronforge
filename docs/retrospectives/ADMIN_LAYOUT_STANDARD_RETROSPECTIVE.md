@@ -262,3 +262,49 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Cross-check any new KPI colour rule against the Health page's rule for the same fact before building it.
 
 ### Status: COMMITTED — feature/admin-layout-l5 — 0e40bd0c, PR #310
+
+---
+
+## L-6: Signup Invites — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-6 workplan](/docs/workplans/ADMIN_LAYOUT_L6_WORKPLAN.md)
+
+### What went well
+- The user removed the outdated "internal demos only" note (D-18); SA found the note also carried one true, live fact (plans not enforced) required by the invite-signup GR-5 rule, and kept it as a neutral header chip — nothing true was lost.
+- The shown-once invite link is protected by a new transitive import walker (G-7) that proves no Invites file can reach URL, history or storage code; SA cross-checked it with an independent TypeScript-based walker.
+- QA's create → filter → refresh → four failure kinds → retry → remount sequence confirmed the link never leaves memory.
+- Twenty-five mutation checks bit, including four added for the pre-commit fixes.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-5; code approved with two Low guard hardenings, folded in).
+- Number of Dev ↔ QA bug fix cycles: 1 small (QA-1: a plain-object lookup of the server's mode word could crash the badge on a prototype key) — fixed with Object.hasOwn before commit.
+- Focus after "Try again" / "Clear filters" still falls to the page body on every migrated page (shared states) — the shared follow-up keeps growing.
+
+### Conclusions & process improvements
+- Any lookup keyed by a server-supplied string uses Object.hasOwn — add to the standard's coding notes.
+- Do the shared "Try again" focus fix soon; it now affects every page.
+
+### Status: COMMITTED — feature/admin-layout-l6 — 4d241b1e, PR #315
+
+---
+
+## L-7: Messages — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-7 workplan](/docs/workplans/ADMIN_LAYOUT_L7_WORKPLAN.md)
+
+### What went well
+- Characterisation first: the page had no tests, so Dev pinned today's behaviour (B-1..B-15) green on the unchanged page before migrating, and the final diff against that baseline contains only the four planned flips.
+- The broken Reply (D-14 b) is gone entirely — no dead code, no reply route call; routes untouched.
+- User decision D-19: failed saves, read changes and deletes now say so in plain words, without ever reading the route's error body.
+- The six console.error calls in the page were converted to the client logger with facts-only context (CLAUDE.md logging rule).
+- Dev caught that the list route answers without a success flag, so the shared helper would have shown every good read as a failure; handled in the page and recorded (F-111).
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 0.
+- Focus after an action removes its own button (Delete, Mark All Read, Try again) still falls to the page body — part of the shared focus follow-up.
+
+### Conclusions & process improvements
+- Pages with no tests get a characterisation suite before any layout change; it made the review of a 780-line rewrite mechanical.
+
+### Status: COMMITTED — feature/admin-layout-l7 — 07198656, PR #316

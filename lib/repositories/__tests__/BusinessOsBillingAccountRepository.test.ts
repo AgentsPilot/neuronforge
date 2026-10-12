@@ -743,6 +743,8 @@ describe('source guards', () => {
       'lib/business-os/billing/__tests__/planCheckout.test.ts',
       // P-3b.2: the webhook use-case tests import the billing row TYPE to build fakes.
       'lib/business-os/billing/__tests__/planCheckoutSessionEvents.test.ts',
+      // P-5a.1: the first payment stamp test imports the same TYPE for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       'lib/business-os/billing/__tests__/planSubscriptionMirror.test.ts',
       'lib/business-os/billing/businessOsStripeCustomer.ts',

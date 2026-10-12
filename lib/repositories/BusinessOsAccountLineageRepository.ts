@@ -9,12 +9,23 @@
 // `requireAdmin` (the admin Signup Invites list).
 //
 // Slice 5b adds ONE account-scoped read, for the payment hold (T-13 layer 2):
-// `findHoldFactsForAccount(accountId)` reads the signed-in account's OWN row
-// by primary key. The caller passes the id it resolved from the session
-// (`getUser()` → `resolveAccountId`), never a value from a request, and the
-// method selects nothing about the parent or the tree.
+// `findHoldFactsForAccount(accountId)` reads ONE account's own row by primary
+// key, and selects nothing about the parent or the tree. It has two kinds of
+// caller, and neither takes the id from a request:
+//   - the hold readers, with the id resolved from the session
+//     (`getUser()` → `resolveAccountId`);
+//   - plan payments P-5a.1 (SA W-5): the webhook apply
+//     (`lib/business-os/billing/planPaymentApply.ts`, wired in
+//     `planBillingHandler.ts`), right after the apply function reported that
+//     it stamped the first payment, to name the lineage `source` in the audit
+//     entry. There the id is the account resolved from OUR billing record by
+//     the invoice's Stripe ids (SR-8), never from Stripe metadata.
 //
-// There is deliberately NO write method. The writers are the SQL functions
+// There is deliberately NO write method. The first payment stamp
+// (`first_paid_at`, `first_payment_ref`) is written only inside the SQL
+// function `business_os_apply_plan_payment` (migration 20261028), and a source
+// guard (`lib/business-os/billing/__tests__/firstPaymentStamp.guard.test.ts`)
+// keeps every TypeScript writer out (P5-C4). The writers are the SQL functions
 // `business_os_finalise_invite_redemption` (champions, L1) and, from Slice 5b,
 // `business_os_finalise_friend_invite_redemption` (friends, L2+), each inserting
 // the row in the same transaction as the redemption and the plan row, reached
@@ -76,10 +87,11 @@ export class BusinessOsAccountLineageRepository {
   }
 
   /**
-   * HOLD (Slice 5b, T-13 layer 2): the signed-in account's OWN lineage facts,
-   * or `null` when it has no row (every account created before invites, and
-   * every organic one). `accountId` is the session's, resolved by the caller;
-   * never a request value.
+   * HOLD (Slice 5b, T-13 layer 2): ONE account's own lineage facts, or `null`
+   * when it has no row (every account created before invites, and every
+   * organic one). `accountId` is resolved by the caller and is never a request
+   * value: the session's for the hold readers, and for the webhook apply
+   * (P-5a.1, SA W-5) the account resolved from our billing record (SR-8).
    */
   async findHoldFactsForAccount(accountId: string): Promise<RepositoryResult<BusinessOsAccountHoldFacts>> {
     const methodLogger = this.logger.child({ method: 'findHoldFactsForAccount', accountId });

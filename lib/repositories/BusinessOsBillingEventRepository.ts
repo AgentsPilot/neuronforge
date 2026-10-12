@@ -4,8 +4,11 @@
 // and the plan payment apply function `business_os_apply_plan_payment`.
 //
 // Schema:   supabase/migrations/20261027_business_os_billing_events.sql
+//           supabase/migrations/20261028_business_os_first_payment_stamp.sql
+//           (replaces the apply function: one more output, the first payment flag)
 // Workplan: docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P3B_WORKPLAN.md §3.2, §4
 //           (SA review: Q-10, Q-11, C-1 to C-4)
+//           docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P5A_WORKPLAN.md §3.2 (P5-C2)
 //
 // ── SCOPE ───────────────────────────────────────────────────────────────────
 // P-3b.1 ships two methods and no caller: `applyPlanPayment` (the RPC, with a
@@ -123,6 +126,13 @@ export type BusinessOsApplyPlanPaymentResult =
       tierAfter: string | null;
       planWritten: boolean;
       anchorSet: boolean;
+      /**
+       * P-5a.1 (20261028): THIS call stamped the account's first payment on its
+       * lineage row (a fresh paid invoice above $0, lineage row present and not
+       * yet stamped). Read leniently (P5-C2): a missing or non-boolean value is
+       * `false`, logged at warn, so a 20261027 function answers "not stamped".
+       */
+      firstPaymentStamped: boolean;
     }
   /** The invoice was applied before (any event); `eventRowId` is that row. */
   | { status: 'already_applied'; eventRowId: string }
@@ -353,7 +363,7 @@ export class BusinessOsBillingEventRepository {
       if (error) throw asError(error);
 
       const row = singleRow(data);
-      const result = mapApplyResult(row);
+      const result = mapApplyResult(row, methodLogger);
       methodLogger.info({ status: result.status }, 'Business OS plan payment apply answered');
       return { data: result, error: null };
     } catch (err) {
@@ -423,8 +433,28 @@ export class BusinessOsBillingEventRepository {
   }
 }
 
-/** Strict mapping of the function's one row: an unreadable answer is an error, never a guess. */
-function mapApplyResult(row: Record<string, unknown>): BusinessOsApplyPlanPaymentResult {
+/**
+ * P5-C2: the first payment flag is the one LENIENT output. Before 20261028 is
+ * applied (or after its rollback) the function has no such column, and a
+ * NULL would be a broken contract; both read as "not stamped", with a warn,
+ * and never fail the apply that already committed. Only `true` means stamped.
+ */
+function stampedOf(row: Record<string, unknown>, log: Logger): boolean {
+  const value = row.out_first_payment_stamped;
+  if (typeof value === 'boolean') return value;
+  log.warn(
+    {
+      event: 'bos_billing_first_payment_flag_unreadable',
+      present: Object.prototype.hasOwnProperty.call(row, 'out_first_payment_stamped'),
+      valueType: value === null ? 'null' : typeof value,
+    },
+    'Apply function answered without a readable first payment flag; read as not stamped'
+  );
+  return false;
+}
+
+/** Strict mapping of the function's one row: an unreadable answer is an error, never a guess (except the P5-C2 flag). */
+function mapApplyResult(row: Record<string, unknown>, log: Logger): BusinessOsApplyPlanPaymentResult {
   switch (row.out_status) {
     case 'applied':
     case 'recorded':
@@ -435,6 +465,7 @@ function mapApplyResult(row: Record<string, unknown>): BusinessOsApplyPlanPaymen
         tierAfter: nullableTier(row.out_tier_after),
         planWritten: boolOf(row.out_plan_written),
         anchorSet: boolOf(row.out_anchor_set),
+        firstPaymentStamped: stampedOf(row, log),
       };
     case 'already_applied':
     case 'already_recorded':
