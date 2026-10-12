@@ -13,6 +13,12 @@
  * with no credit figure (AC-30, SA-WR-13). The wiring is faked whole, and its
  * `credits.getSnapshots` is a fake (SA-WR-10): the real entitlement service is
  * never reached.
+ *
+ * Slice 2a: the takings block in the payload (every money key beside its
+ * currency, AC-48), `?currency=` refused (AC-46), the picked business through
+ * the route (AC-65), a failed takings read is 200 with that block alone
+ * unknown (AC-66), and the info line's takings status and counts with no
+ * amount, currency code or name (AC-69).
  */
 
 import * as fs from 'fs';
@@ -66,6 +72,10 @@ const mockDeps = {
     listLiveBillingStatusesAllAccounts: jest.fn(),
     findLiveBillingStatusForAccount: jest.fn(),
     countLiveRevenueRows: jest.fn(),
+    listClientPaymentsAllAccountsPaidInRange: jest.fn(),
+    listClientPaymentsForAccountPaidInRange: jest.fn(),
+    listClientRefundsAllAccountsCreatedInRange: jest.fn(),
+    listClientRefundsForAccountCreatedInRange: jest.fn(),
   },
   credits: {
     getSnapshots: jest.fn(),
@@ -159,6 +169,18 @@ function snapshot() {
   return { resolution: resolveEntitlements({ config, account: previewAccountFor(config, planId, now), overrides: [], addons: [], now }), unavailable: false, stale: false };
 }
 
+/** A client payment figure that must never reach a log line (AC-69). */
+const TAKINGS_FIGURE = '9876.54';
+function clientPayment(user_id: string, amount: string, currency: string) {
+  return {
+    id: 'cccccccc-0000-4000-8000-000000000001', user_id, amount, currency, status: 'succeeded',
+    paid_at: '2026-10-02T10:00:00+00:00', processor_fee: '1.10', fee_currency: 'USD', processor_type: 'stripe',
+  };
+}
+function clientRefund(user_id: string, amount: string, currency: string) {
+  return { id: 'dddddddd-0000-4000-8000-000000000001', user_id, amount, currency, status: 'succeeded', created_at: '2026-10-03T10:00:00+00:00' };
+}
+
 /** Credit figures that must never reach a log line (AC-30). */
 const USED_FIGURE = '7.123456';
 const GIFTED_FIGURE = 13.5;
@@ -188,6 +210,12 @@ function seed() {
   mockDeps.finance.listLiveBillingStatusesAllAccounts.mockResolvedValue({ data: [], error: null });
   mockDeps.finance.findLiveBillingStatusForAccount.mockResolvedValue({ data: null, error: null });
   mockDeps.finance.countLiveRevenueRows.mockResolvedValue({ data: { planInvoicesPaid: 0, boostsPaid: 0 }, error: null });
+  const payments = { data: { rows: [clientPayment(ACCOUNT, TAKINGS_FIGURE, 'ils')], reachedCeiling: false }, error: null };
+  const refunds = { data: { rows: [clientRefund(ACCOUNT, '76.54', 'ILS')], reachedCeiling: false }, error: null };
+  mockDeps.finance.listClientPaymentsAllAccountsPaidInRange.mockResolvedValue(payments);
+  mockDeps.finance.listClientPaymentsForAccountPaidInRange.mockResolvedValue(payments);
+  mockDeps.finance.listClientRefundsAllAccountsCreatedInRange.mockResolvedValue(refunds);
+  mockDeps.finance.listClientRefundsForAccountCreatedInRange.mockResolvedValue(refunds);
   mockFindNames.mockResolvedValue({ data: [{ user_id: ACCOUNT, company_name: NAME }], error: null });
 }
 
@@ -339,7 +367,7 @@ describe('200', () => {
     expect(body.success).toBe(true);
     expect(body.data.window.preset).toBe('this_month');
     expect(body.data.window.to).toBe(todayUtc());
-    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'revenue', 'tiles', 'window']);
+    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'revenue', 'takings', 'tiles', 'window']);
     expect(Object.keys(body.data.tiles).sort()).toEqual(['k1', 'k2', 'k3', 'k4', 'k5']);
     expect(body.data.credits.status).toBe('ok');
     expect(body.data.tiles.k4.value).toEqual({ value: GIFTED_FIGURE, exact: true });
@@ -453,6 +481,106 @@ describe('200', () => {
     expect(logged).not.toContain(NAME);
     expect(logged).not.toContain(ADMIN.email);
     expect(logged).not.toContain('1.2345');
+  });
+});
+
+describe('slice 2a: takings through the route', () => {
+  beforeEach(asAdmin);
+
+  it('AC-46: ?currency=USD → 400, no read (no new query parameter)', async () => {
+    const res = await call('?preset=this_month&currency=USD');
+    expect(res.status).toBe(400);
+    expectNoStore(res);
+    expect(await res.json()).toEqual({ success: false, error: INVALID_QUERY });
+    noReadHappened();
+  });
+
+  it('AC-45: the four takings reads are in allReads(), so every 401 / 403 / 400 case proves zero calls on them', () => {
+    for (const fn of Object.values(mockDeps.finance)) expect(allReads()).toContain(fn);
+    expect(Object.keys(mockDeps.finance)).toHaveLength(7);
+  });
+
+  it('the payload carries takings; AC-48: every money key sits beside a currency, and no money key is top-level', async () => {
+    const body = await (await call()).json();
+    const takings = body.data.takings;
+    expect(takings.status).toBe('ok');
+    expect(takings.scope).toBe('all');
+    expect(takings.figures.lines).toEqual([
+      { currency: 'ILS', payments: 1, gross: 9876.54, refunded: 76.54, net: 9800, businesses: 1, unreadable: 0, unreadablePayments: 0 },
+    ]);
+    expect(takings.figures.feeLines).toEqual([{ currency: 'USD', fees: 1.1, payments: 1 }]);
+    expect(takings.figures.rows[0]).toMatchObject({ accountId: ACCOUNT, name: NAME, nameStatus: 'found', currency: 'ILS' });
+
+    const MONEY = new Set(['gross', 'refunded', 'net', 'fees']);
+    let moneyKeys = 0;
+    const walk = (node: unknown, depth: number) => {
+      if (Array.isArray(node)) return node.forEach((child) => walk(child, depth + 1));
+      if (node === null || typeof node !== 'object') return;
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (MONEY.has(key)) {
+          moneyKeys += 1;
+          expect({ key, hasCurrency: 'currency' in (node as object) }).toEqual({ key, hasCurrency: true });
+          expect(depth).toBeGreaterThan(1);
+        }
+        walk(value, depth + 1);
+      }
+    };
+    walk(takings, 0);
+    // lines (3) + refund line (1) + fee line (1) + row (3).
+    expect(moneyKeys).toBe(8);
+  });
+
+  it('AC-65 through the route: R-e′ and R-f′ get exactly the id; R-e and R-f are never called; names only [id]', async () => {
+    const res = await call(`?accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    expect(mockDeps.finance.listClientPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listClientRefundsAllAccountsCreatedInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listClientPaymentsForAccountPaidInRange).toHaveBeenCalledTimes(1);
+    expect(mockDeps.finance.listClientRefundsForAccountCreatedInRange).toHaveBeenCalledTimes(1);
+    expect(mockDeps.finance.listClientPaymentsForAccountPaidInRange.mock.calls[0][0]).toBe(ACCOUNT);
+    expect(mockDeps.finance.listClientRefundsForAccountCreatedInRange.mock.calls[0][0]).toBe(ACCOUNT);
+    for (const [ids] of mockFindNames.mock.calls) expect(ids).toEqual([ACCOUNT]);
+    const body = await res.json();
+    expect(body.data.takings.scope).toBe('one');
+    expect(body.data.takings.figures.businesses).toBe(1);
+  });
+
+  it('AC-66 through the route: R-e fails → 200, takings unknown, every other section renders', async () => {
+    mockDeps.finance.listClientPaymentsAllAccountsPaidInRange.mockResolvedValue({ data: null, error: new Error('down') });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.takings).toEqual({ status: 'unknown', scope: 'all', figures: null });
+    expect(body.data.accounts.status).toBe('ok');
+    expect(body.data.aiCost.status).toBe('ok');
+    expect(body.data.credits.status).toBe('ok');
+  });
+
+  it('AC-66 through the route: R-f fails → 200, takings partial, refunded and net null, gross shown', async () => {
+    mockDeps.finance.listClientRefundsAllAccountsCreatedInRange.mockResolvedValue({ data: null, error: new Error('down') });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.takings.status).toBe('partial');
+    expect(body.data.takings.figures.lines[0]).toMatchObject({ gross: 9876.54, refunded: null, net: null });
+  });
+
+  it('AC-69: the one info line carries sections.takings and counts.takings (counts and booleans only); no amount, currency code or name in any log call', async () => {
+    await call();
+    const lines = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(lines).toHaveLength(1);
+    const [ctx] = lines[0];
+    expect(ctx.sections.takings).toBe('ok');
+    expect(ctx.counts.takings).toEqual({
+      payments: 1, refunds: 1, paymentsCeiling: false, refundsCeiling: false, otherStatusPayments: 0, refundsNotCompleted: 0,
+      unreadableAmounts: 0, unreadableFees: 0, currencies: 1, rowsShown: 1, rowsTotal: 1, namesFound: 1,
+    });
+    for (const value of Object.values(ctx.counts.takings)) expect(['number', 'boolean']).toContain(typeof value);
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
+    expect(logged).not.toContain(TAKINGS_FIGURE);
+    expect(logged).not.toContain('9800');
+    expect(logged).not.toMatch(/\bILS\b|\bils\b/);
+    expect(logged).not.toContain(NAME);
   });
 });
 

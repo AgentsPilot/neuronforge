@@ -84,15 +84,26 @@ export type {
   ChargeListPage,
 } from './BusinessOsCreditLedgerReadRepository';
 // Admin finance & business health page (slice 1a): read-only, service role,
-// live-mode billing status and revenue head counts. No write method.
+// live-mode billing status and revenue head counts; slice 2a adds the
+// businesses' client payments and refunds (layer B). No write method.
 export {
   BusinessOsFinanceReadRepository,
   businessOsFinanceReadRepository,
   FINANCE_BILLING_STATUS_COLUMNS,
+  FINANCE_CLIENT_PAYMENT_COLUMNS,
+  FINANCE_CLIENT_REFUND_COLUMNS,
   FINANCE_READ_LIMITS,
   FinanceReadCeilingError,
 } from './BusinessOsFinanceReadRepository';
-export type { FinanceBillingStatusRow, FinanceRevenueCounts } from './BusinessOsFinanceReadRepository';
+export type {
+  FinanceBillingStatusRow,
+  FinanceClientPaymentRow,
+  FinanceClientRange,
+  FinanceClientReadOptions,
+  FinanceClientReadResult,
+  FinanceClientRefundRow,
+  FinanceRevenueCounts,
+} from './BusinessOsFinanceReadRepository';
 // Business OS credit ledger, the OWNER'S OWN read (credit deduction slice 6a):
 // the dashboard card. Takes the caller's RLS client (required, so no singleton);
 // owner-granted columns only; no write method.
