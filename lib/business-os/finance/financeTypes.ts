@@ -12,6 +12,10 @@
  * (credits 6 dp, cost 10 dp); the page formats them. Ledger cost is USD by
  * construction (AC-14): it is never summed with any other currency.
  *
+ * Slice 2a (takings, layer B): every money figure sits in an object that also
+ * carries its `currency`, and was divided by 100 once from an exact sum of
+ * integer hundredths (SA-W26). No field is a total across currencies.
+ *
  * @module lib/business-os/finance/financeTypes
  */
 
@@ -170,6 +174,100 @@ export interface FinancePayload {
   accounts: FinanceAccountsSection;
   aiCost: FinanceAiCostSection;
   credits: FinanceCreditsSection;
+  /** Section 2 block B, "Takings through the platform" (slice 2a). Not our revenue (BD-1). */
+  takings: FinanceTakingsSection;
+}
+
+// ── Section 2 block B, takings through the platform (slice 2a, S2-FR-1 to S2-FR-14) ──
+// The businesses' client payments: NOT our revenue (BD-1). Each money figure
+// is in the currency named beside it; none is ever added across currencies.
+
+/** One currency's takings. `currency` null = "Unknown currency". */
+export interface FinanceTakingsLine {
+  currency: string | null;
+  /** Counted payments (succeeded or refunded) in this currency, unreadable amounts included. */
+  payments: number;
+  /** Σ readable amounts of the counted payments. "At least" when `paymentsExact` is false. */
+  gross: number;
+  /** Σ readable succeeded refunds. Null when the refunds read failed. */
+  refunded: number | null;
+  /** gross − refunded, only when both are exact and every amount was read; otherwise null ("Unknown"). */
+  net: number | null;
+  /** Distinct businesses with a counted payment in this currency. */
+  businesses: number;
+  /** Payment and refund amounts on this line that could not be read (excluded, never 0). */
+  unreadable: number;
+  /** Of those, PAYMENT amounts: when above 0, gross is a lower bound ("At least", QA-2). */
+  unreadablePayments: number;
+}
+
+/** One refund currency (S2-FR-3): succeeded refunds created in the window. */
+export interface FinanceRefundLine {
+  currency: string | null;
+  refunds: number;
+  refunded: number;
+}
+
+/** One FEE currency (S2-FR-4): `currency` is the fee's own currency, never the payment's. */
+export interface FinanceFeeLine {
+  currency: string | null;
+  fees: number;
+  /** Counted payments whose readable fee is in this fee currency. */
+  payments: number;
+}
+
+export interface FinanceTakingsRow {
+  /** Null only defensively: `user_id` is NOT NULL on the payment tables ("Unknown business"). */
+  accountId: string | null;
+  name: string | null;
+  nameStatus: 'found' | 'missing' | 'unavailable' | 'platform' | 'unknown_business';
+  currency: string | null;
+  payments: number;
+  gross: number;
+  refunded: number | null;
+  net: number | null;
+  /** Unreadable payment amounts in this row: when above 0, gross is a lower bound ("At least", QA-2). */
+  unreadablePayments: number;
+}
+
+export interface FinanceTakingsFigures {
+  /** No counted payment and no succeeded refund in the window. */
+  empty: boolean;
+  /** False when the payments read reached its ceiling: gross and every count are "At least". */
+  paymentsExact: boolean;
+  /** `partial`: the refunds read reached its ceiling ("At least"); `unknown`: it failed. */
+  refundsState: FinanceSectionStatus;
+  lines: FinanceTakingsLine[];
+  /** Null when the refunds read failed. */
+  refundLines: FinanceRefundLine[] | null;
+  /** Refunds in any state other than succeeded (amounts left out). Null when the refunds read failed. */
+  refundsNotCompleted: number | null;
+  feeLines: FinanceFeeLine[];
+  /** Counted payments with a readable recorded fee ("Fees recorded on N of M"). */
+  feesRecordedOn: number;
+  /** M in "Fees recorded on N of M": every counted payment. */
+  countedPayments: number;
+  /** Recorded fees that could not be read: left out of the fee lines, counted (the block is partial). */
+  unreadableFees: number;
+  /** Counts per stored processor (trimmed, lower-cased); null = not recorded. */
+  processors: Array<{ processorType: string | null; payments: number }>;
+  /** Distinct businesses with a counted payment, any currency. */
+  businesses: number;
+  /** Payments with a status other than succeeded or refunded: counted, left out of every figure. */
+  otherStatusPayments: number;
+  /** Payment and refund amounts that could not be read (excluded, never 0). */
+  unreadableAmounts: number;
+  /** At most the display cap (S2-FR-7), sorted by currency, then gross highest first. */
+  rows: FinanceTakingsRow[];
+  /** Every (business, currency) row before the cap. */
+  rowsTotal: number;
+}
+
+export interface FinanceTakingsSection {
+  status: FinanceSectionStatus;
+  scope: 'all' | 'one';
+  /** Null only when `status` is `unknown` (the payments read failed). */
+  figures: FinanceTakingsFigures | null;
 }
 
 // ── Section 4, credits (slice 1b, S1-FR-21 to S1-FR-24) ─────────────────────
