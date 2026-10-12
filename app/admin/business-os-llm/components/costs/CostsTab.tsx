@@ -28,7 +28,6 @@ import {
   COSTS_EMPTY,
   COSTS_EMPTY_HINT,
   COSTS_INCOMPLETE,
-  COSTS_INTRO,
   COSTS_PERIOD_RULE,
   INCOMPLETE_REASON_TEXT,
   NAMES_FAILED,
@@ -126,8 +125,6 @@ export function CostsTab() {
 
   return (
     <div className="space-y-4" data-testid="costs-tab">
-      <p className="max-w-3xl text-sm text-slate-400">{COSTS_INTRO}</p>
-
       <div className="flex flex-wrap items-end gap-3" data-testid="costs-controls">
         <div className="flex rounded-lg border border-slate-700 p-0.5" role="group" aria-label="Window">
           {PRESETS.map((days) => (

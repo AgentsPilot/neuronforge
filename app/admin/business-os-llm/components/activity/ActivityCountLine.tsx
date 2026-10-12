@@ -3,7 +3,11 @@
  * as the rows. When it could not be read, no number is shown: no count beats
  * a wrong one. A capped list names its order, because "the top 100" means
  * nothing without it.
+ *
+ * L-8a: the shared count-line class (§5.7; the same classes as before).
  */
+
+import { ADMIN_COUNT_LINE } from '@/app/admin/components/layout/adminTable';
 
 import { formatCount } from '../../costFormat';
 import { COUNT_LINE, COUNT_LINE_CAPPED, COUNT_LINE_UNKNOWN_CAPPED } from '../../activityCopy';
@@ -21,7 +25,7 @@ export function ActivityCountLine({ payload }: { payload: ActivityPayload }) {
   }
   if (text === null) return null;
   return (
-    <p className="text-xs text-slate-400" data-testid="activity-count">
+    <p className={ADMIN_COUNT_LINE} data-testid="activity-count">
       {text}
     </p>
   );
