@@ -307,4 +307,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 ### Conclusions & process improvements
 - Pages with no tests get a characterisation suite before any layout change; it made the review of a 780-line rewrite mechanical.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
+### Status: COMMITTED — feature/admin-layout-l7 — 07198656, PR #316

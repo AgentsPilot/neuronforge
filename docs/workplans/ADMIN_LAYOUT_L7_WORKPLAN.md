@@ -7,7 +7,7 @@
 **Skills applied:** none of the domain skills is triggered: no service-role write is added or changed (the routes are not touched), no AI call, no queue, no DB claim beyond the fields the page already reads, and no import from `lib/business-os/entitlements/`
 **Branch:** `feature/admin-layout-l7`, cut from `feature/admin-layout-l6` (PR #315 open). The L-7 PR targets `main` and carries L-6 until #315 merges. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-12
-**Status:** Code Complete (2026-10-12, uncommitted; awaiting SA code review + QA). SA workplan review 2026-10-12: APPROVED WITH CONDITIONS (M-1 to M-4 applied to this file by Dev before coding; no second SA pass). User decision D-19 (2026-10-12): show a short message when an action fails
+**Status:** Committed (2026-10-12) — commit 07198656 on `feature/admin-layout-l7`, PR #316 open under the fast-track; awaiting checks + user merge. SA code review approved; QA PASS WITH NOTES. SA workplan review 2026-10-12: APPROVED WITH CONDITIONS (M-1 to M-4 applied to this file by Dev before coding; no second SA pass). User decision D-19 (2026-10-12): show a short message when an action fails
 **Path:** **UI short path by classification** (R-7): L-7 builds **no** shared export. Every shared part it uses exists on the branch: `AdminPageHeader` with `actions`, `AdminFilterBar` with page controls, Clear, `canClear` and `readAt`, `ADMIN_FIELD_LABEL` / `ADMIN_FIELD_CONTROL`, `useAdminFilters` + `textFilter`, `AdminLoading` / `AdminError` / `AdminEmpty`, `readAdminResponse` (with `sessionEndedCopy`) / `readJsonBody` / `ADMIN_NETWORK_ERROR`, `StatusChip` tones `info` / `ok` / `neutral` / `warn` / `danger`, the `adminTable` constants and `ADMIN_BUTTON`, `formatUtc` / `formatCount`, `AdminDrawer` + `DrawerSection` / `DrawerFields` / `DrawerField` + `OpenRowButton`. The only shared-folder edit is the migrated-pages registry entry in its guard test (the L-3 to L-6 precedent). Run under the user's fast-track: SA workplan review → Dev → SA code review + QA → RM commits and opens the PR (no user diff review)
 
 ## Overview
@@ -387,7 +387,7 @@ B-5, B-12, B-13, B-14 as flipped above; the two query helpers in B-3 and B-10 sw
 - [x] ✅ 9. Registry entry
 - [x] ✅ 10. V-1 to V-7; real output in Implementation Notes
 - [x] ✅ 11. Requirement: §1 row 12, §7.10 as built, §9 dispositions and F-111, Change History
-- [ ] 12. Hand to SA code review + QA (nothing committed by Dev)
+- [x] ✅ 12. Hand to SA code review + QA (nothing committed by Dev); RM committed 07198656, PR #316
 
 ---
 
@@ -745,3 +745,13 @@ If no read message exists, skip M-B6 and M-B7 and say so. Jest T-11 to T-13 and 
 ### Final Status
 - [x] **PASS WITH NOTES.** Every acceptance criterion passes in Jest and the probes, with no bugs. Four Low edge cases (E-1 to E-4) are listed; E-1 is pre-existing and E-2 is the same as SA C-1. Ready for RM under the fast-track: SA code review is approved, and TL runs the read-only browser checklist.
 - [ ] Issues found: Dev must address before commit
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|---|---|---|
+| 2026-10-12 | Workplan written; SA review | Dev wrote the workplan; SA APPROVED WITH CONDITIONS (M-1 to M-4 applied before coding) |
+| 2026-10-12 | Implemented; SA code review; QA | Dev code complete; SA code review approved; QA PASS WITH NOTES |
+| 2026-10-12 | Committed; PR #316 | RM: commit 07198656 on `feature/admin-layout-l7`, merged with origin/main (07069374, clean), PR #316 open; awaiting checks + user merge |
