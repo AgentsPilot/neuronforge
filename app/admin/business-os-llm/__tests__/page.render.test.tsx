@@ -937,9 +937,14 @@ describe('R-T14 / AC-20: the other seven areas are untouched', () => {
 // ---------------------------------------------------------------------------
 
 describe('R-T15 / AC-21: the page says what it now is', () => {
+  // E-8 (Admin Layout Standard L-8a, F-68): the hand-built header and its
+  // `page-subtitle` testid are gone; the Settings purpose line is the shared
+  // header's paragraph, found by its text on the Settings tab. Content kept.
   it('pins the subtitle — unasserted until this round, which is why it would have shipped stale', async () => {
     await renderPage([area()]);
-    const subtitle = screen.getByTestId('page-subtitle');
+    const subtitle = screen.getByText(PAGE_SUBTITLE);
+    expect(subtitle.tagName).toBe('P');
+    expect(subtitle.closest('header')).not.toBeNull();
     expect(subtitle).toHaveTextContent(PAGE_SUBTITLE);
     expect(subtitle).toHaveTextContent('Provider is shown per area');
     expect(subtitle).toHaveTextContent('changed with the runbook, not here');

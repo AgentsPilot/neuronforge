@@ -56,6 +56,11 @@
  *
  * Amended by L-7: Messages joins the registry; no rule change and no shared
  * source change. Its `messagesTypes.ts` is not listed: no markup and no read.
+ *
+ * Amended by L-8b: `useDrawerResource.ts` joins the expected files (E-10); no
+ * rule change. The hook never fetches and never reads a body (the page's own
+ * `read` does both, SA Q-9), so L-1e F-1 and S-6 hold for it unchanged. The
+ * Business OS AI page does not join the registry yet (deferred to L-10, SA Q-3).
  */
 
 import * as fs from 'fs';
@@ -105,6 +110,7 @@ const EXPECTED_SOURCES = [
   'readAdminResponse.ts',
   'readJsonBody.ts',
   'useAdminFilters.ts',
+  'useDrawerResource.ts',
 ].map((name) => `${LAYOUT_DIR}/${name}`);
 
 // ── Rule helpers (each proved by a self-test below) ─────────────────────────
@@ -501,7 +507,8 @@ const MIGRATED_PAGES = [
     // G-6. The original `BusinessAccountPicker.tsx` is deliberately not listed:
     // it is unmigrated (it still calls `.json(`), and since L-1e it is no longer
     // on this page (the shared `AdminBusinessPicker` replaced it). It stays in
-    // the folder for Activity and Finance until L-8 deletes it (R-11).
+    // the folder for Finance only (Activity left it in L-8a); the finance
+    // adoption slice deletes it (SA M-2 on L-8).
     page: '/admin/audit-trail (Audit trail)',
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },

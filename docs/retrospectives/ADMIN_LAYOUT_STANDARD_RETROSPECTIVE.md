@@ -308,3 +308,47 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Pages with no tests get a characterisation suite before any layout change; it made the review of a 780-line rewrite mechanical.
 
 ### Status: COMMITTED — feature/admin-layout-l7 — 07198656, PR #316
+
+---
+
+## L-8a: Business OS AI header, tabs and Activity tab (without the drawer) — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-8 workplan](/docs/workplans/ADMIN_LAYOUT_L8_WORKPLAN.md)
+
+### What went well
+- The planned deletion of the original business picker was stopped at planning: the finance page (another session) still imports it, so it moves to the finance adoption slice instead of breaking that page.
+- SA caught that switching tabs would look like an outside URL change to the Activity filters and start a read; fixed by keeping value equality on the window field and pinned by a test that bites only with a window key in the URL (M-1).
+- The page's own ?tab= writer moved to the same history mechanism as the shared hook, so tile links built from the URL stay correct.
+- QA's tab-switch probes (nine clicks, both directions, mouse and keyboard, every filter applied) sent zero extra reads; one Low edge (a malformed minimum cost) was fixed in the bar before commit.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-4; code approved).
+- Number of Dev ↔ QA bug fix cycles: 1 small (QA-L8a-1) — fixed before commit; the SA code-review assumption it contradicted is recorded as superseded.
+- The slice ran to about 4.8 days planned, so it was split (L-8a / L-8b).
+
+### Conclusions & process improvements
+- When a page holds several tabs with their own filters, design the URL coexistence rule before the second tab adopts the hook (SA direction recorded for L-9).
+
+### Status: COMMITTED — feature/admin-layout-l8 — f67ece30, PR #319
+
+---
+
+## L-8b: Business OS AI Activity drawer on the shared drawer + useDrawerResource — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-8 workplan](/docs/workplans/ADMIN_LAYOUT_L8_WORKPLAN.md)
+
+### What went well
+- The original template drawer now runs on the shared one; every section, heading and test id kept, and the light-mode title and close-button fixes (F-65, F-66) now apply to Activity too.
+- The new shared hook for drawers that fetch their own data was specified tightly at workplan stage (SA M-4: answers carry their key, so a stale frame can never show under a new title); QA's frame recorder confirmed it.
+- Dev questioned the close-when-gone rule instead of applying it blindly; SA agreed and wrote the distinction into the standard (§5.8 D-7): a drawer showing a loaded row closes when the row goes, a self-fetching drawer stays on its own data.
+- TL folded in QA's E-2 before commit: a read that throws synchronously now shows the network sentence instead of unmounting the page (test H-4b; mutation confirmed it bites).
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (approved; one deviation accepted and recorded).
+- Number of Dev ↔ QA bug fix cycles: 0 (E-2 hardening done by TL).
+- TL's first attempt at the E-2 guard delayed the read by one tick and broke 12 hook tests; caught immediately by the suite and replaced with a same-tick try/catch.
+
+### Conclusions & process improvements
+- Shared hooks get defensive handling of caller mistakes from their first consumer, since later pages reuse them without review of the hook itself.
+
+### Status: COMMITTED — feature/admin-layout-l8b — 597ad7b6, PR #320

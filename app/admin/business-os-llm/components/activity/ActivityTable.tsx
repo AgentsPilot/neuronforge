@@ -10,9 +10,29 @@
  * figure struck beside it. When corrections could not be read the figure is
  * the charged one and the tab says so above the table: a gross figure is
  * never presented as net.
+ *
+ * Admin Layout Standard L-8a (§5.7, F-71, F-72): the shared table classes
+ * (`text-sm`, tabular figures on the four number columns), ids and "Unknown"
+ * in slate-400 (T-5), the shared Open button, and the outcome as the shared
+ * `StatusChip` (`ok` / `danger` with the chip's own icons, SA Q-11 / S-2): the
+ * page's own `text-emerald-300` was a second green (T-6). `OutcomeLabel` keeps
+ * its name, so the drawer and `DrillDownCharges` show the same chip.
  */
 
-import { CheckCircle2, PanelRightOpen, XCircle } from 'lucide-react';
+import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
+import { StatusChip } from '@/app/admin/components/layout/StatusChip';
+import {
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TD_ID,
+  ADMIN_TD_NUM,
+  ADMIN_TH,
+  ADMIN_TH_NUM,
+  ADMIN_THEAD,
+  formatShortId,
+} from '@/app/admin/components/layout/adminTable';
 
 import { formatCount, formatCredits, formatUsd } from '../../costFormat';
 import { formatInstant } from '../../format';
@@ -23,15 +43,12 @@ import {
   ENTRY_FIELD_UNKNOWN,
   ENTRY_MODELS_NONE,
   NAME_UNAVAILABLE,
-  OPEN_DETAILS,
   OPEN_DETAILS_LABEL,
   OUTCOME_LABELS,
   TRIGGER_LABELS,
 } from '../../activityCopy';
 import type { ActivityAmount, ActivityEntryState, ActivityOutcome, ActivityRow } from '../../activityTypes';
 import { RecordStateMarker } from './RecordStateMarker';
-
-const shortId = (id: string) => `${id.slice(0, 8)}…`;
 
 /** Net, with the charged figure struck beside it when corrected. Exported for the drill-down (B2a). */
 export function Amount({ amount, format, testId }: { amount: ActivityAmount; format: (n: number) => string; testId: string }) {
@@ -41,31 +58,25 @@ export function Amount({ amount, format, testId }: { amount: ActivityAmount; for
   return (
     <span data-testid={testId}>
       {format(amount.net)}{' '}
-      <s className="text-slate-500" aria-label={`charged ${format(amount.gross)} before correction`}>
+      <s className="text-slate-400" aria-label={`charged ${format(amount.gross)} before correction`}>
         {format(amount.gross)}
       </s>
     </span>
   );
 }
 
-/** The outcome as text with an icon (AC-B17). Exported for the drill-down (B2a). */
+/** The outcome as words with the chip's icon (AC-B17, A-7). Exported for the drill-down (B2a). */
 export function OutcomeLabel({ outcome }: { outcome: ActivityOutcome }) {
   return outcome === 'failed' ? (
-    <span className="inline-flex items-center gap-1 text-red-300">
-      <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
-      {OUTCOME_LABELS.failed}
-    </span>
+    <StatusChip tone="danger">{OUTCOME_LABELS.failed}</StatusChip>
   ) : (
-    <span className="inline-flex items-center gap-1 text-emerald-300">
-      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-      {OUTCOME_LABELS.succeeded}
-    </span>
+    <StatusChip tone="ok">{OUTCOME_LABELS.succeeded}</StatusChip>
   );
 }
 
 type FoundEntry = Extract<ActivityEntryState, { state: 'found' }>;
 
-const unknownCell = <span className="text-slate-500">{ENTRY_FIELD_UNKNOWN}</span>;
+const unknownCell = <span className="text-slate-400">{ENTRY_FIELD_UNKNOWN}</span>;
 const countOrUnknown = (value: number | null) => (value === null ? unknownCell : formatCount(value));
 
 /** The four entry cells. Anything but a found entry reads "Unknown" in each. */
@@ -73,7 +84,7 @@ function EntryCells({ entry }: { entry: ActivityEntryState }) {
   const found: FoundEntry | null = entry.state === 'found' ? entry : null;
   return (
     <>
-      <td className="whitespace-nowrap px-3 py-2 text-right" data-testid="activity-calls">
+      <td className={ADMIN_TD_NUM} data-testid="activity-calls">
         {found ? (
           <>
             {countOrUnknown(found.callCount)} / {countOrUnknown(found.failedCallCount)}
@@ -83,7 +94,7 @@ function EntryCells({ entry }: { entry: ActivityEntryState }) {
         )}
       </td>
       <td
-        className="whitespace-nowrap px-3 py-2 text-right"
+        className={ADMIN_TD_NUM}
         data-testid="activity-tokens"
         title={
           found && found.inputTokens !== null && found.outputTokens !== null
@@ -93,14 +104,14 @@ function EntryCells({ entry }: { entry: ActivityEntryState }) {
       >
         {found ? countOrUnknown(found.totalTokens) : unknownCell}
       </td>
-      <td className="px-3 py-2 font-mono text-[11px]" data-testid="activity-models">
+      <td className={`${ADMIN_TD} font-mono text-[11px]`} data-testid="activity-models">
         {found && found.models !== null
           ? found.models.length > 0
             ? found.models.join(', ')
             : ENTRY_MODELS_NONE
           : unknownCell}
       </td>
-      <td className="px-3 py-2 font-mono text-[11px]" data-testid="activity-error-code">
+      <td className={`${ADMIN_TD} font-mono text-[11px]`} data-testid="activity-error-code">
         {found ? found.errorCode ?? ENTRY_ERROR_NONE : unknownCell}
       </td>
     </>
@@ -118,66 +129,61 @@ export function ActivityTable({
   onOpen: (actionId: string, opener: HTMLElement) => void;
 }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-700">
-      <table className="min-w-full text-left text-xs text-slate-300" data-testid="activity-table">
-        <thead className="bg-slate-800/60 text-[11px] uppercase tracking-wide text-slate-400">
+    <div className={ADMIN_TABLE_WRAP}>
+      <table className={ADMIN_TABLE} data-testid="activity-table" aria-label="AI actions">
+        <thead className={ADMIN_THEAD}>
           <tr>
-            <th scope="col" className="px-3 py-2">{COLUMNS.details}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.when}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.business}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.area}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.actionType}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.trigger}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.outcome}</th>
-            <th scope="col" className="px-3 py-2 text-right">{COLUMNS.cost}</th>
-            <th scope="col" className="px-3 py-2 text-right">{COLUMNS.credits}</th>
-            <th scope="col" className="px-3 py-2 text-right">{COLUMNS.calls}</th>
-            <th scope="col" className="px-3 py-2 text-right">{COLUMNS.tokens}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.models}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.errorCode}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.groupId}</th>
-            <th scope="col" className="px-3 py-2">{COLUMNS.state}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.details}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.when}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.business}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.area}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.actionType}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.trigger}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.outcome}</th>
+            <th scope="col" className={ADMIN_TH_NUM}>{COLUMNS.cost}</th>
+            <th scope="col" className={ADMIN_TH_NUM}>{COLUMNS.credits}</th>
+            <th scope="col" className={ADMIN_TH_NUM}>{COLUMNS.calls}</th>
+            <th scope="col" className={ADMIN_TH_NUM}>{COLUMNS.tokens}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.models}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.errorCode}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.groupId}</th>
+            <th scope="col" className={ADMIN_TH}>{COLUMNS.state}</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-800">
+        <tbody className={ADMIN_TBODY}>
           {rows.map((row) => (
-            <tr key={row.actionId} data-testid="activity-row" className="align-top">
-              <td className="px-3 py-2">
-                <button
-                  type="button"
-                  data-testid="activity-open-details"
-                  aria-label={OPEN_DETAILS_LABEL(row.actionType, formatInstant(row.createdAt))}
-                  onClick={(event) => onOpen(row.actionId, event.currentTarget)}
-                  className="inline-flex items-center gap-1 rounded border border-slate-600 px-2 py-0.5 text-[11px] text-slate-200 transition-colors hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  <PanelRightOpen className="h-3 w-3" aria-hidden="true" />
-                  {OPEN_DETAILS}
-                </button>
+            <tr key={row.actionId} data-testid="activity-row">
+              <td className={ADMIN_TD}>
+                <OpenRowButton
+                  testId="activity-open-details"
+                  label={OPEN_DETAILS_LABEL(row.actionType, formatInstant(row.createdAt))}
+                  onOpen={(opener) => onOpen(row.actionId, opener)}
+                />
               </td>
-              <td className="whitespace-nowrap px-3 py-2">{formatInstant(row.createdAt)}</td>
-              <td className="px-3 py-2">
+              <td className={`${ADMIN_TD} whitespace-nowrap`}>{formatInstant(row.createdAt)}</td>
+              <td className={ADMIN_TD}>
                 <div className="text-slate-200">{row.companyName ?? NAME_UNAVAILABLE}</div>
-                <div className="font-mono text-[11px] text-slate-500" title={row.accountId}>
-                  {shortId(row.accountId)}
+                <div className={ADMIN_TD_ID} title={row.accountId}>
+                  {formatShortId(row.accountId)}
                 </div>
               </td>
-              <td className="px-3 py-2">{row.area ?? AREA_NOT_DECLARED}</td>
-              <td className="px-3 py-2 font-mono">{row.actionType}</td>
-              <td className="px-3 py-2">{TRIGGER_LABELS[row.trigger] ?? row.trigger}</td>
-              <td className="whitespace-nowrap px-3 py-2" data-testid="activity-outcome">
+              <td className={ADMIN_TD}>{row.area ?? AREA_NOT_DECLARED}</td>
+              <td className={`${ADMIN_TD} font-mono`}>{row.actionType}</td>
+              <td className={ADMIN_TD}>{TRIGGER_LABELS[row.trigger] ?? row.trigger}</td>
+              <td className={`${ADMIN_TD} whitespace-nowrap`} data-testid="activity-outcome">
                 <OutcomeLabel outcome={row.outcome} />
               </td>
-              <td className="whitespace-nowrap px-3 py-2 text-right">
+              <td className={ADMIN_TD_NUM}>
                 <Amount amount={row.costUsd} format={formatUsd} testId="activity-cost" />
               </td>
-              <td className="whitespace-nowrap px-3 py-2 text-right">
+              <td className={ADMIN_TD_NUM}>
                 <Amount amount={row.credits} format={formatCredits} testId="activity-credits" />
               </td>
               <EntryCells entry={row.entry} />
-              <td className="px-3 py-2 font-mono text-[11px] text-slate-400" title={row.groupId}>
-                {shortId(row.groupId)}
+              <td className={ADMIN_TD} title={row.groupId}>
+                <span className={ADMIN_TD_ID}>{formatShortId(row.groupId)}</span>
               </td>
-              <td className="px-3 py-2">
+              <td className={ADMIN_TD}>
                 <RecordStateMarker row={row} settleMinutes={settleMinutes} />
               </td>
             </tr>

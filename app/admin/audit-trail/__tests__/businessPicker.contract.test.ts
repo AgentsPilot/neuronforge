@@ -21,10 +21,12 @@
  *
  * Source-text assertions, so they survive any refactor of the code they describe.
  *
- * Admin Layout Standard L-1e (RC-7): there are two pickers until L-8. The shared
- * `AdminBusinessPicker.tsx` (now on the Audit trail page) and the original
- * `BusinessAccountPicker.tsx` (still used by Activity and Finance; L-8 deletes
- * it, R-11) are both held to the path and logging checks, and the shared file
+ * Admin Layout Standard L-1e (RC-7): there are two pickers until the finance
+ * adoption slice. The shared `AdminBusinessPicker.tsx` (Audit trail, and since
+ * L-8a the Business OS AI Activity tab) and the original
+ * `BusinessAccountPicker.tsx` (Finance keeps it until the finance adoption
+ * slice, which deletes it; SA M-2 on L-8) are both held to the path and
+ * logging checks, and the shared file
  * joins the audit surface (one file, not the whole shared folder: SA Q-7).
  */
 

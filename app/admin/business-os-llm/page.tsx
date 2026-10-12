@@ -42,25 +42,49 @@
  * kept mounted, exactly like Costs & credits. The chosen tab is in the URL as
  * `?tab=settings|costs|activity` (SA-RC-13): read once on first render — which
  * also opens that tab's lazy panel (SA-B1-8) — and written back with
- * `history.replaceState`, keeping `history.state` as the analytics page does,
- * so there is no navigation and no refetch. An unknown value means Settings;
- * any other parameter (a future `actionId`, B3) is left alone and ignored.
+ * `history.replaceState`, so there is no navigation and no refetch. An unknown
+ * value means Settings; any other parameter (a future `actionId`, B3) is left
+ * alone and ignored.
+ *
+ * ── The standard header and tabs (Admin Layout Standard L-8a) ────────────
+ * The header is the shared `AdminPageHeader`: the page's only h1, the
+ * "Read-only" badge as the neutral chip, and a purpose line that follows the
+ * tab (F-68: the Settings words no longer stand over the other two tabs; each
+ * tab's intro moved up here and out of its body). The Settings refresh stays in
+ * the header's action slot, shown on Settings only, unchanged until L-10.
+ *
+ * The tabs follow the APG tablist with MANUAL activation (SA Q-5): Left / Right
+ * move focus (wrapping), Home / End go to the first / last, Enter or Space
+ * selects; only the selected tab is in the Tab order (roving `tabIndex`).
+ * Focus alone never selects, because selecting Costs or Activity for the first
+ * time starts a read.
+ *
+ * `?tab=` is written with `replaceState(null, …)` (SA Q-2, the L-1c M-1
+ * mechanism): with a state that already carries Next's own keys, Next 14.2
+ * takes its "internal call" branch and never syncs `useSearchParams`, so the
+ * Activity KPI tiles (real links built from that string) would carry the old
+ * tab. With `null` Next syncs it. The Activity filter hook then sees each tab
+ * click as an outside change and re-parses to the same filters, so a tab
+ * switch starts no read (SA M-1).
  *
  * @see docs/workplans/BUSINESS_OS_LLM_MODEL_SETTINGS_ADMIN_UI_WORKPLAN.md §5
  * @see docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_4_WORKPLAN.md §4.6
  * @see docs/workplans/BUSINESS_OS_ADMIN_AI_ACTIVITY_SLICE_B1_WORKPLAN.md § F
  */
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AlertCircle, RefreshCw } from 'lucide-react';
+
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 
 import { AreaCard } from './components/AreaCard';
 import { ActivityTab } from './components/activity/ActivityTab';
 import { CostsTab } from './components/costs/CostsTab';
-import { ACTIVITY_TAB_LABEL } from './activityCopy';
+import { ACTIVITY_INTRO, ACTIVITY_TAB_LABEL, TIMES_ARE_UTC } from './activityCopy';
 import { PAGE_STANDING_NOTE, PAGE_SUBTITLE } from './copy';
-import { COSTS_TAB_LABEL, SETTINGS_TAB_LABEL } from './costCopy';
+import { COSTS_INTRO, COSTS_TAB_LABEL, SETTINGS_TAB_LABEL } from './costCopy';
 import { formatInstant } from './format';
 import type { SettingsPayload } from './types';
 
@@ -77,17 +101,27 @@ const TABS: readonly (readonly [PageTab, string])[] = [
 
 const TAB_PARAM = 'tab';
 
+/** The header's purpose line follows the tab (F-68). The words moved here from each tab; none is new. */
+const PURPOSE: Readonly<Record<PageTab, string>> = {
+  settings: PAGE_SUBTITLE,
+  costs: COSTS_INTRO,
+  activity: `${ACTIVITY_INTRO} ${TIMES_ARE_UTC}`,
+};
+
 /** The tab a `?tab=` value names; anything else is Settings. */
 function tabFromParam(value: string | null | undefined): PageTab {
   return TABS.some(([id]) => id === value) ? (value as PageTab) : 'settings';
 }
 
-/** Write the chosen tab into the address bar without navigating (no refetch, no router). */
+/**
+ * Write the chosen tab into the address bar without navigating (no refetch, no
+ * router). `null` as the state, so Next syncs `useSearchParams` (see the header).
+ */
 function writeTabToUrl(id: PageTab) {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
   url.searchParams.set(TAB_PARAM, id);
-  window.history.replaceState(window.history.state, '', url.toString());
+  window.history.replaceState(null, '', url.toString());
 }
 
 // useSearchParams needs a Suspense boundary in Next 14.
@@ -120,6 +154,26 @@ function BusinessOsLlmSettingsContent() {
     writeTabToUrl(id);
   };
 
+  // Arrow keys move focus only (manual activation, SA Q-5); Enter / Space on
+  // the focused tab is the button's own click.
+  const tabButtons = useRef<(HTMLButtonElement | null)[]>([]);
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const last = TABS.length - 1;
+    const target =
+      event.key === 'ArrowRight'
+        ? (index + 1) % TABS.length
+        : event.key === 'ArrowLeft'
+          ? (index + last) % TABS.length
+          : event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? last
+              : null;
+    if (target === null) return;
+    event.preventDefault();
+    tabButtons.current[target]?.focus();
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -145,54 +199,53 @@ function BusinessOsLlmSettingsContent() {
 
   return (
     <div className="space-y-6">
-      <header className="border-b border-slate-700">
-        <div className="flex flex-wrap items-start justify-between gap-4 pb-4">
-          <div>
-            <div className="mb-1 flex items-center gap-3">
-              <h1 className="text-xl font-semibold text-white">Business OS AI</h1>
-              <span className="rounded bg-purple-500/20 px-2 py-1 text-xs text-purple-400">
-                Read-only
-              </span>
+      <div>
+        <AdminPageHeader
+          title="Business OS AI"
+          purpose={PURPOSE[tab]}
+          badge={{ label: 'Read-only' }}
+          actions={
+            <div className="flex items-center gap-3" hidden={!onSettings}>
+              {/* The label is not rendered without its value: `formatInstant`
+                  returns null for an unreadable instant, and "read at " alone
+                  would read as a missing fact rather than an absent one. */}
+              {payload && formatInstant(payload.generatedAt) && (
+                <span className="text-xs text-slate-500">
+                  read at {formatInstant(payload.generatedAt)}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => void load()}
+                disabled={loading}
+                title="Re-read the settings"
+                className="rounded-lg border border-slate-700 p-2 transition-colors hover:bg-slate-800 disabled:opacity-40"
+              >
+                <RefreshCw
+                  className={`h-5 w-5 text-slate-400 ${loading ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+              </button>
             </div>
-            <p data-testid="page-subtitle" className="max-w-3xl text-sm text-slate-400">
-              {PAGE_SUBTITLE}
-            </p>
-          </div>
-          <div className="flex items-center gap-3" hidden={!onSettings}>
-            {/* The label is not rendered without its value: `formatInstant`
-                returns null for an unreadable instant, and "read at " alone
-                would read as a missing fact rather than an absent one. */}
-            {payload && formatInstant(payload.generatedAt) && (
-              <span className="text-xs text-slate-500">
-                read at {formatInstant(payload.generatedAt)}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => void load()}
-              disabled={loading}
-              title="Re-read the settings"
-              className="rounded-lg border border-slate-700 p-2 transition-colors hover:bg-slate-800 disabled:opacity-40"
-            >
-              <RefreshCw
-                className={`h-5 w-5 text-slate-400 ${loading ? 'animate-spin' : ''}`}
-                aria-hidden="true"
-              />
-            </button>
-          </div>
-        </div>
-        <nav className="flex gap-1" role="tablist" aria-label="Business OS AI">
-          {TABS.map(([id, label]) => (
+          }
+        />
+        <nav className="flex gap-1 border-b border-slate-700" role="tablist" aria-label="Business OS AI">
+          {TABS.map(([id, label], index) => (
             <button
               key={id}
+              ref={(element) => {
+                tabButtons.current[index] = element;
+              }}
               type="button"
               role="tab"
               id={tabId(id)}
               aria-selected={tab === id}
               aria-controls={panelId(id)}
+              tabIndex={tab === id ? 0 : -1}
               data-testid={`tab-${id}`}
               onClick={() => chooseTab(id)}
-              className={`-mb-px border-b-2 px-4 py-2 text-sm transition-colors ${
+              onKeyDown={(event) => onTabKeyDown(event, index)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${
                 tab === id
                   ? 'border-purple-500 text-white'
                   : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -202,7 +255,7 @@ function BusinessOsLlmSettingsContent() {
             </button>
           ))}
         </nav>
-      </header>
+      </div>
 
       <div role="tabpanel" id={panelId('costs')} aria-labelledby={tabId('costs')} hidden={tab !== 'costs'}>
         {costsOpened && <CostsTab />}

@@ -25,6 +25,17 @@
  * (AC-54, AC-55); no processor literal in the finance lib (SA-W21); and no
  * page file adds or subtracts two money fields (SA-WR-18). Every new rule has
  * a planted negative control.
+ *
+ * Slice 2b (S2-F1, §12.1, AC-61, AC-64, AC-74): the positive table pin grows to
+ * EIGHT tables (the client invoices, plan instalments and client plans join
+ * it; the reminder queue never does); `payment_invoices` joins the layer-B
+ * rule; the six 2b method bodies name no `livemode`; no finance file holds
+ * the reminder queue's own vocabulary, and only the route names the jobs &
+ * queues read (SA-W29); the invoice and instalment status literals live only
+ * in the repository and the pure builder; `dueDates.ts` never builds a Date
+ * and no due date is parsed as an instant (SA-W33); the 2b files name no
+ * client column; and no 2b page file or builder adds two amounts. Every new
+ * rule has a planted negative control.
  */
 
 import * as fs from 'fs';
@@ -99,8 +110,18 @@ describe('finance slice 1a source guards', () => {
 
   // Slice 2a (S2-F1): the finance read repository is the one file allowed to
   // name a layer-B table; it is pinned positively below instead.
+  // Slice 2b: `payment_invoices` joins the rule (the `payment_plan_` prefix already covers the other two).
+  const LAYER_B_TABLE = /payment_transactions|payment_refunds|payment_plan_|payment_invoices/;
+
+  it('the layer-B rule bites on each 2b table (planted)', () => {
+    for (const planted of ["from('payment_invoices')", "from('payment_plan_installments')", "from('payment_plan_subscriptions')"]) {
+      expect(LAYER_B_TABLE.test(planted)).toBe(true);
+    }
+    expect(LAYER_B_TABLE.test("from('payment_reminders')")).toBe(false);
+  });
+
   it.each(LAYER_B_FREE)('%s: no layer-B payment table (only the finance read repository reads them)', (file) => {
-    expect(codeOf(file)).not.toMatch(/payment_transactions|payment_refunds|payment_plan_/);
+    expect(codeOf(file)).not.toMatch(LAYER_B_TABLE);
   });
 
   it.each(FILES)('%s: never the capped Activity list reads (SA-F1)', (file) => {
@@ -121,7 +142,15 @@ describe('finance slice 1a source guards', () => {
   it.each(FILES)('%s: never compares a cohort with a literal id (SA-F6, SA-W3: through stateForCohort only)', (file) => {
     // A lifecycle STATE compared through its typed union is fine; a cohort id is not.
     expect(codeOf(file)).not.toMatch(/cohort\w*\s*(===|!==|==|!=)\s*['"`]/);
-    expect(codeOf(file)).not.toMatch(/['"`]\s*(===|!==)\s*\w*\.cohort/);
+    expect(codeOf(file)).not.toMatch(/['"`]\s*(===|!==)\s*\w*\.cohort\b/);
+  });
+
+  it('the cohort-literal rules bite (planted negative control, SA-CR-1)', () => {
+    // The same pattern as the rule above (with \b, so cohortExpiresAt is not a cohort).
+    const LITERAL_FIRST = /['"`]\s*(===|!==)\s*\w*\.cohort\b/;
+    expect(LITERAL_FIRST.test("if ('champion' === row.cohort) n += 1;")).toBe(true);
+    expect(LITERAL_FIRST.test("if ('x' === row.cohortExpiresAt) n += 1;")).toBe(false);
+    expect(/cohort\w*\s*(===|!==|==|!=)\s*['"`]/.test("row.cohort === 'champion'")).toBe(true);
   });
 
   it('only planGroups.ts and the wiring import from the entitlements module', () => {
@@ -229,32 +258,38 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
     expect(fromCallsOf(planted)).not.toBe(tablesOf(planted).length);
   });
 
-  it('the repository reads exactly its five tables, and every .from( names its table as a literal', () => {
+  /** Slice 2b (S2-F1): the five of 1a / 2a plus the client invoices, plan instalments and client plans. */
+  const REPOSITORY_TABLES = [
+    'business_os_billing_accounts',
+    'business_os_billing_events',
+    'business_os_boost_purchases',
+    'payment_invoices',
+    'payment_plan_installments',
+    'payment_plan_subscriptions',
+    'payment_refunds',
+    'payment_transactions',
+  ];
+
+  it('the repository reads exactly its eight tables, and every .from( names its table as a literal', () => {
     const code = codeOf(REPOSITORY);
     const tables = tablesOf(code);
-    expect(tables.length).toBeGreaterThanOrEqual(5);
+    expect(tables.length).toBeGreaterThanOrEqual(8);
     // SA-WR-16: a .from(TABLE) with a non-literal argument cannot escape the set below.
     expect(fromCallsOf(code)).toBe(tables.length);
-    expect([...new Set(tables)].sort()).toEqual([
-      'business_os_billing_accounts',
-      'business_os_billing_events',
-      'business_os_boost_purchases',
-      'payment_refunds',
-      'payment_transactions',
-    ]);
+    expect([...new Set(tables)].sort()).toEqual(REPOSITORY_TABLES);
     // R-j owns the reminder queue (slice 2b, reused read): never here.
     expect(tables).not.toContain('payment_reminders');
   });
 
   it('the set check fails on a planted extra table', () => {
     const planted = `${codeOf(REPOSITORY)}\nthis.supabase.from('payment_reminders').select('id');`;
-    expect([...new Set(tablesOf(planted))].sort()).not.toEqual([
-      'business_os_billing_accounts',
-      'business_os_billing_events',
-      'business_os_boost_purchases',
-      'payment_refunds',
-      'payment_transactions',
-    ]);
+    expect([...new Set(tablesOf(planted))].sort()).not.toEqual(REPOSITORY_TABLES);
+  });
+
+  it('the set check fails on a planted near miss (payment_plans for payment_plan_installments)', () => {
+    const planted = codeOf(REPOSITORY).replace("from('payment_plan_installments')", "from('payment_plans')");
+    expect(planted).not.toBe(codeOf(REPOSITORY));
+    expect([...new Set(tablesOf(planted))].sort()).not.toEqual(REPOSITORY_TABLES);
   });
 
   // ── No livemode in a layer-B method body (BD-13, AC-55) ──
@@ -263,6 +298,13 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
     'listClientPaymentsForAccountPaidInRange',
     'listClientRefundsAllAccountsCreatedInRange',
     'listClientRefundsForAccountCreatedInRange',
+    // Slice 2b.
+    'listOverdueClientInvoicesAllAccounts',
+    'listOverdueClientInvoicesForAccount',
+    'listOverdueClientInstalmentsAllAccounts',
+    'listOverdueClientInstalmentsForAccount',
+    'listClientPlansAllAccounts',
+    'listClientPlansForAccount',
     // The shared paging every one of them delegates to.
     'pageClientRows',
   ];
@@ -346,5 +388,157 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
 
   it.each(FILES.filter((file) => file.startsWith('app/admin/finance/')))('%s: adds or subtracts no two money fields', (file) => {
     expect(codeOf(file)).not.toMatch(MONEY_ARITHMETIC);
+  });
+});
+
+describe('finance slice 2b source guards (client payment problems, §12.1, AC-61, AC-64, AC-74)', () => {
+  const ROUTE = 'app/api/admin/business-os/finance/route.ts';
+  const DUE_DATES = 'lib/business-os/finance/dueDates.ts';
+  const PROBLEMS = 'lib/business-os/finance/paymentProblems.ts';
+  const NEW_FILES = [
+    DUE_DATES,
+    PROBLEMS,
+    'app/admin/finance/components/PaymentProblemsSection.tsx',
+    'app/admin/finance/components/OverdueTable.tsx',
+  ];
+  /** Every file 2b adds or changes in the finance tree. */
+  const FILES_2B = [
+    ...NEW_FILES,
+    REPOSITORY,
+    ROUTE,
+    'lib/business-os/finance/financeHealth.ts',
+    'lib/business-os/finance/financeHealthDeps.ts',
+    'lib/business-os/finance/financeTypes.ts',
+    'app/admin/finance/financeCopy.ts',
+    'app/admin/finance/components/FinanceView.tsx',
+  ];
+
+  it('scans the slice 2b files (non-vacuity)', () => {
+    expect(FILES).toEqual(expect.arrayContaining(FILES_2B));
+    expect(LAYER_B_FREE).toEqual(expect.arrayContaining(NEW_FILES));
+  });
+
+  // ── AC-61 / SA-W29: the reminder queue's own vocabulary stays in Jobs & queues ──
+  const REMINDER_VOCABULARY = /STUCK_AFTER_SECONDS|DEAD_LETTER_MARKER|ADMIN_QUEUE_SPECS|dead-letter|'processing'|claimed_at|error_message|\b690\b|90\s*\+\s*10/;
+
+  it('the reminder-vocabulary rule bites on each term (planted)', () => {
+    for (const planted of [
+      'const s = STUCK_AFTER_SECONDS;',
+      "if (msg === DEAD_LETTER_MARKER) n += 1;",
+      'ADMIN_QUEUE_SPECS.payment_reminders',
+      "q.like('error_message', 'dead-letter: max attempts')",
+      "q.eq('status', 'processing')",
+      "q.lt('claimed_at', before)",
+      'const STUCK = 690;',
+      'const STUCK = 90 + 10 * 60;',
+    ]) {
+      expect({ planted, caught: REMINDER_VOCABULARY.test(planted) }).toEqual({ planted, caught: true });
+    }
+    // The page's own words are not the vocabulary: "Dead-lettered (24 h)", "In progress".
+    expect(REMINDER_VOCABULARY.test("deadLettered24h: 'Dead-lettered (24 h)', inProgress: 'In progress'")).toBe(false);
+  });
+
+  it.each(FILES)('%s: none of the reminder queue’s own vocabulary (AC-61)', (file) => {
+    expect(codeOf(file)).not.toMatch(REMINDER_VOCABULARY);
+  });
+
+  const JOBS_READ = /AdminJobsQueuesRepository|adminJobsQueuesRepository|readQueueFiguresAllAccounts/;
+
+  it('only the route names the jobs & queues read, comments included (a positive pin)', () => {
+    const namers = FILES.filter((file) => JOBS_READ.test(read(file)));
+    expect(namers).toEqual([ROUTE]);
+  });
+
+  it('the namers pin bites (planted): a builder naming the read would join the list', () => {
+    const planted = "import type { RawQueueFigures } from '@/lib/repositories/AdminJobsQueuesRepository';";
+    expect(JOBS_READ.test(planted)).toBe(true);
+    expect(JOBS_READ.test('readReminderFigures: (now, signal) => deps.read(now, signal)')).toBe(false);
+  });
+
+  const STATUS_LITERAL = /['"`](?:sent|pending)['"`]|\.eq\.(?:sent|pending)\b/;
+
+  it('the invoice and instalment status literals live only in the repository and the pure builder (a positive pin)', () => {
+    const holders = FILES.filter((file) => STATUS_LITERAL.test(codeOf(file)));
+    expect(holders.sort()).toEqual([REPOSITORY, PROBLEMS].sort());
+  });
+
+  it('the status-literal pin bites (planted), and copy words are not literals', () => {
+    expect(STATUS_LITERAL.test("row.status === 'sent'")).toBe(true);
+    expect(STATUS_LITERAL.test('`status.eq.overdue,and(status.eq.pending,due_date.lt.${t})`')).toBe(true);
+    expect(STATUS_LITERAL.test("pastDueColumn: 'Past due date, still pending',")).toBe(false);
+    expect(STATUS_LITERAL.test("pending: 'Pending',")).toBe(false);
+  });
+
+  // ── SA-W33 / AC-74: a due date never goes through a Date ──
+  const BUILDS_DATE = /new Date\(|Date\.parse\(/;
+  const DUE_INTO_DATE = /(?:new Date|Date\.parse)\(\s*[^)]*\bdue_?[dD]ate/;
+
+  it('the date rules bite (planted)', () => {
+    expect(BUILDS_DATE.test('return new Date(value);')).toBe(true);
+    expect(BUILDS_DATE.test('Date.parse(`${due}T00:00:00Z`)')).toBe(true);
+    expect(DUE_INTO_DATE.test('const d = new Date(row.due_date);')).toBe(true);
+    expect(DUE_INTO_DATE.test('Date.parse(row.dueDate)')).toBe(true);
+    expect(DUE_INTO_DATE.test('Date.parse(row.next_charge_at)')).toBe(false);
+  });
+
+  it('dueDates.ts builds no Date at all (it works on the text and the presets helper)', () => {
+    const code = codeOf(DUE_DATES);
+    expect(code.length).toBeGreaterThan(200);
+    expect(code).not.toMatch(BUILDS_DATE);
+  });
+
+  it.each(FILES)('%s: never passes a due date through a Date', (file) => {
+    expect(codeOf(file)).not.toMatch(DUE_INTO_DATE);
+  });
+
+  // ── AC-64: no client data in the 2b files ──
+  const CLIENT_COLUMN = /contact_id|client_name|client_email|client_phone|line_items|invoice_number|internal_notes/;
+
+  it('the client-column rule bites (planted)', () => {
+    expect(CLIENT_COLUMN.test("'id, user_id, contact_id, amount'")).toBe(true);
+    expect(CLIENT_COLUMN.test('row.client_email')).toBe(true);
+  });
+
+  it.each(FILES_2B)('%s: names no client column (AC-64)', (file) => {
+    expect(codeOf(file)).not.toMatch(CLIENT_COLUMN);
+  });
+
+  // ── BD-13 / S2-F6: no test-mode wording, no "Deleted business" in the new files ──
+  it.each(NEW_FILES)('%s: no livemode, no test-mode wording, no "Deleted business"', (file) => {
+    const code = codeOf(file);
+    expect(code).not.toMatch(/livemode|test.?mode/i);
+    expect(code).not.toMatch(/Deleted business/);
+  });
+
+  it('the copy file holds no test-mode wording in the 2b strings', () => {
+    const copy = read('app/admin/finance/financeCopy.ts');
+    // The 2b strings, their comments removed (a comment may say what the copy must not).
+    const block = copy.slice(copy.indexOf('client payment problems (slice 2b)')).replace(/(^|[^:])\/\/.*$/gm, '$1');
+    expect(block.length).toBeGreaterThan(500);
+    expect(block).toMatch(/PROBLEMS_TITLE/);
+    expect(block).not.toMatch(/livemode|test.?mode|Deleted business/i);
+  });
+
+  // ── CUR: no two amounts added or subtracted (the SA-WR-18 rule, extended to `amount`) ──
+  const MONEY_2B = '(?:gross|refunded|net|fees|amount)';
+  const AMOUNT_ARITHMETIC = new RegExp(`\\b${MONEY_2B}\\b\\s*(?:[-+]=|[-+]\\s*[\\w.?!()]*\\b${MONEY_2B}\\b)`);
+
+  it('the amount-arithmetic rule bites (planted)', () => {
+    expect(AMOUNT_ARITHMETIC.test('const total = a.amount + b.amount;')).toBe(true);
+    expect(AMOUNT_ARITHMETIC.test('line.amount += row.amount')).toBe(true);
+    expect(AMOUNT_ARITHMETIC.test('formatMoney(line.amount, line.currency)')).toBe(false);
+    expect(AMOUNT_ARITHMETIC.test('amount: toMoney(line.sums.amount)')).toBe(false);
+  });
+
+  it.each([PROBLEMS, ...FILES.filter((file) => file.startsWith('app/admin/finance/'))])(
+    '%s: adds or subtracts no two amounts',
+    (file) => {
+      expect(codeOf(file)).not.toMatch(AMOUNT_ARITHMETIC);
+    }
+  );
+
+  // ── SA-W22 / SA-W35: the pure modules import no repository ──
+  it.each([DUE_DATES, PROBLEMS])('%s: imports no repository and no Supabase client', (file) => {
+    expect(read(file)).not.toMatch(/@\/lib\/repositories|supabase/i);
   });
 });

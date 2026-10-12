@@ -16,6 +16,9 @@
  * carries its `currency`, and was divided by 100 once from an exact sum of
  * integer hundredths (SA-W26). No field is a total across currencies.
  *
+ * Slice 2b (client payment problems, layer B): the same money rule. A due
+ * date is a date-only `YYYY-MM-DD` string, never an instant.
+ *
  * @module lib/business-os/finance/financeTypes
  */
 
@@ -176,6 +179,8 @@ export interface FinancePayload {
   credits: FinanceCreditsSection;
   /** Section 2 block B, "Takings through the platform" (slice 2a). Not our revenue (BD-1). */
   takings: FinanceTakingsSection;
+  /** Section 6 block B, "Client payment problems" (slice 2b). The businesses' problem, not ours (BD-2). */
+  paymentProblems: FinancePaymentProblemsSection;
 }
 
 // ── Section 2 block B, takings through the platform (slice 2a, S2-FR-1 to S2-FR-14) ──
@@ -338,4 +343,116 @@ export interface FinanceCreditsSection {
   figures: FinanceCreditsFigures | null;
   /** Null when the lots read failed or reached its ceiling (AC-38). */
   gifted: FinanceGiftedFigures | null;
+}
+
+// ── Section 6 block B, client payment problems (slice 2b, S2-FR-15 to S2-FR-26) ──
+// Where the businesses' clients are not paying: the businesses' problem, not
+// ours (BD-2). Every amount is the FULL invoice or instalment amount, never
+// what is still owed (S2-F7), in the currency named beside it; none is ever
+// added across currencies. A due date is a date-only `YYYY-MM-DD` string.
+
+/** One currency's overdue invoices (or instalments). `currency` null = "Unknown currency". */
+export interface FinanceDueLine {
+  currency: string | null;
+  /** Rows marked `overdue`. */
+  marked: number;
+  /** Rows still `sent` (invoices) or `pending` (instalments) whose due date is before today, UTC. */
+  pastDue: number;
+  /** Σ the readable full amounts of both kinds. "At least" when `amountExact` is false. */
+  amount: number;
+  /** False when the read reached its ceiling or an amount on this line could not be read. */
+  amountExact: boolean;
+  /** Amounts on this line that could not be read (left out, never 0). */
+  unreadable: number;
+  /** Distinct businesses with a row in this currency. */
+  businesses: number;
+  /** The earliest real due date on this line (`YYYY-MM-DD`); null when none is known. */
+  oldestDueDate: string | null;
+}
+
+/** One overdue invoice or instalment, as the table shows it. */
+export interface FinanceDueRow {
+  id: string;
+  /** Null only defensively ("Unknown business"). */
+  accountId: string | null;
+  name: string | null;
+  nameStatus: 'found' | 'missing' | 'unavailable' | 'platform' | 'unknown_business';
+  /** `marked`: stored as overdue. `past_due`: still sent / pending, due before today. */
+  kind: 'marked' | 'past_due';
+  /** `YYYY-MM-DD`, or null when unknown (an overdue invoice with no due date, SA-W36). */
+  dueDate: string | null;
+  daysPastDue: number | null;
+  /** The full amount; null when it could not be read. */
+  amount: number | null;
+  currency: string | null;
+}
+
+export interface FinanceDueFigures {
+  /** No overdue row at all. */
+  empty: boolean;
+  /** False when the read reached its ceiling: every count and amount is "At least". */
+  exact: boolean;
+  lines: FinanceDueLine[];
+  /** Distinct businesses with an overdue row, any currency (a count, not money). */
+  businesses: number;
+  /** Overdue rows counted. */
+  total: number;
+  unreadableAmounts: number;
+  /** At most the display cap, oldest due date first, unknown dates last (SA-W30, SA-W36). */
+  rows: FinanceDueRow[];
+  /** Every counted row before the cap. */
+  rowsTotal: number;
+}
+
+export interface FinanceDuePart {
+  status: FinanceSectionStatus;
+  /** Null only when `status` is `unknown` (the read failed). */
+  figures: FinanceDueFigures | null;
+}
+
+export interface FinanceClientPlansFigures {
+  /** False when the read reached its ceiling ("At least"). */
+  exact: boolean;
+  total: number;
+  /** Every known status in the stored vocabulary's order (zeros included), then any other stored value. */
+  byStatus: Array<{ status: string | null; plans: number; recognised: boolean }>;
+  unrecognised: number;
+  /** Exactly `active`, now. */
+  activeNow: number;
+  cancelledInWindow: number;
+  completedInWindow: number;
+  /** `active` with a next charge time before now. */
+  nextChargeOverdue: number;
+  /** Stored times that could not be read (left out of the counts above, never guessed). */
+  unreadableTimes: number;
+  /** Failed plan charges: `everRecorded` false = "Not recorded: no failure has ever been stored". */
+  failedCharges: { everRecorded: boolean; inWindow: number };
+}
+
+/** The Jobs & queues figures for the reminder queue, shown plain (no colour). */
+export interface FinanceReminderFigures {
+  dueNow: number;
+  inProgress: number;
+  stuck: number;
+  failed24h: number;
+  failed7d: number;
+  deadLettered24h: number;
+  deadLettered7d: number;
+  /** ISO instant, or null. */
+  oldestDueAt: string | null;
+}
+
+export interface FinancePaymentProblemsSection {
+  /** Never `unknown` (SA-W31): `partial` when any part is partial or unknown, else `ok`. */
+  status: FinanceSectionStatus;
+  scope: 'all' | 'one';
+  /** The UTC date the as-of-now rule used, `YYYY-MM-DD`. */
+  today: string;
+  /** Fixed: failed client payments are not stored. Never a count (S2-FR-16). */
+  failedPayments: { state: 'not_stored' };
+  overdueInvoices: FinanceDuePart;
+  overdueInstalments: FinanceDuePart;
+  clientPlans: { status: FinanceSectionStatus; figures: FinanceClientPlansFigures | null };
+  /** `not_narrowed`: a business is picked, so the platform-wide queue was not read. */
+  reminders: { status: FinanceSectionStatus; state: 'read' | 'failed' | 'not_narrowed'; figures: FinanceReminderFigures | null };
 }
