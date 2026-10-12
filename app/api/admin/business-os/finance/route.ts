@@ -21,6 +21,12 @@
  * never a name), the section statuses, counts and timing. Never a business
  * name, an email or a per-account figure.
  *
+ * Slice 2a adds the takings block (the businesses' client payments, not our
+ * revenue) to the payload, and its status and counts to the same line: never
+ * an amount, a currency total or a name (S2-FR-12, SEC-8). No new query
+ * parameter: the strict schema still refuses any other key, `currency`
+ * included (AC-46).
+ *
  * Every response, success or error, is `Cache-Control: no-store` (SEC-9).
  *
  * @module app/api/admin/business-os/finance
@@ -147,7 +153,8 @@ export async function GET(request: NextRequest) {
     // Ids, filters, statuses and counts only: never a business name, never a
     // figure (no credit figure either). `counts.creditAccounts` and
     // `counts.creditsPass` make the credit pass's scale trigger visible from
-    // this route too (SA-WR-13).
+    // this route too (SA-WR-13). `counts.takings` (slice 2a) is counts and
+    // booleans only (S2-FR-12).
     requestLogger.info(
       {
         window: { preset: window.preset, from: window.from, to: window.to },
@@ -157,6 +164,7 @@ export async function GET(request: NextRequest) {
           accounts: payload.accounts.status,
           aiCost: payload.aiCost.status,
           credits: payload.credits.status,
+          takings: payload.takings.status,
         },
         tiles: {
           k1: payload.tiles.k1.status,
