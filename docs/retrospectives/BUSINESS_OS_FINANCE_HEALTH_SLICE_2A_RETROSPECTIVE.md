@@ -29,7 +29,7 @@ The cycle ran in this order:
 11. TL wording alignment.
 12. The user's diff review.
 
-The user approved the diff on 2026-10-12. Commit and PR are next (RM).
+The user approved the diff on 2026-10-12. RM committed it as `502e5d5d` on `feature/bos-finance-health-2` and opened PR [#312](https://github.com/AgentsPilot/neuronforge/pull/312) on 2026-10-12.
 
 **MD links:** [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) | [BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md) | [Slice 2 live check](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_SLICE2_LIVE_CHECK.md) | [Slice 1b retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_RETROSPECTIVE.md)
 
