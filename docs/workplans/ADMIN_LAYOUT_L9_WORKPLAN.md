@@ -7,7 +7,7 @@
 **Skills applied:** `bos-llm-call-standards` read for scope only: no AI call, no model setting, no route change (the tab stays two read-only `GET`s plus the picker's). `business-os-entitlements`: not triggered (no import from `lib/business-os/entitlements/`, no tier or capability literal). `business-os-schema-check`: not triggered (no DB claim beyond the payload fields the tab already reads, `costTypes.ts` / `leakTypes.ts`). `tenant-isolation-guard`: not triggered (no write, no service-role path). No queue
 **Branch:** `feature/admin-layout-l9`, cut from `feature/admin-layout-l8b` at d5990480 (PR #320 open, contains #319). The L-9 PR targets `main` and carries L-8a / L-8b until they merge. Worktree `neuronforge-admin-layout`
 **Date:** 2026-10-12
-**Status:** L-9a Code Complete 2026-10-12 (uncommitted; awaiting SA code review + QA). SA workplan review 2026-10-12: APPROVED WITH CONDITIONS (M-1 to M-3 applied before coding; see SA Workplan Review). L-9b not started
+**Status:** L-9a COMMITTED 2026-10-12 — 57132b85, PR #321 open (fast-track; SA code review approved, QA PASS WITH NOTES); awaiting checks + user merge; browser checks L9-B4 / L9-B5 owed. SA workplan review 2026-10-12: APPROVED WITH CONDITIONS (M-1 to M-3 applied before coding; see SA Workplan Review). L-9b not started
 **Path:** **Full cycle** (SA L-8 workplan review Q-8, R-7): L-9 builds the `active` option on the shared `useAdminFilters` (F-113). Run under the user's fast-track: SA workplan review → Dev → SA code review + QA → RM commits and opens the PR (no user diff review). Recommended as **two PRs, L-9a then L-9b** (§9)
 
 ## Overview
@@ -814,7 +814,14 @@ None. No extra reads on any tab switch, in any order (Q-1).
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Slice | L-9a |
+| Branch | `feature/admin-layout-l9` |
+| Commit | 57132b85 `feat(admin): admin layout standard L-9a — Costs filters, KPI strip, tab/URL coexistence` |
+| Merge with origin/main | b32f119d (clean; one docs workplan came in, nothing under `app/admin/**`) |
+| PR | #321 (base `main`; contains #319 and #320 while they are open) |
+| Tests at merge | admin Jest 83 suites / 2501 tests; `test:bos-llm` 23 / 625; `typecheck:bos-llm`, `test:bos-entitlements` (7062), `lint:hooks` green |
 
 ---
 
@@ -827,3 +834,4 @@ None. No extra reads on any tab switch, in any order (Q-1).
 | 2026-10-12 | M-1 to M-3 applied; L-9a implemented | Dev: M-1 (§2.5, §2.10, C-12, L9-B6, V-6 (o)), M-2 (§2.6, §2.8, Q-4, C-7, L-3), M-3 (X-5 extension, X-10 to X-12, §2.10 item 8) written in; S-3, S-5, S-6 too. L-9a code complete, uncommitted; Implementation Notes (L-9a) added |
 | 2026-10-12 | SA code review (L-9a) | SA: Code Approved, no must-fix. Shared hook default path verified identical; page coordination, the `CostsTab.tsx` rewrite (checked line by line against HEAD), M-1 to M-3 and deviations 1 to 7 accepted. 78 admin suites / 2310 tests and `test:bos-llm` 23 / 625 green. Two Low notes (F-121, `picked` not reset); line endings confirmed |
 | 2026-10-12 | QA report (L-9a) | QA: PASS WITH NOTES. 83 suites / 2501 tests, `test:bos-llm` 23 / 625, `typecheck:bos-llm` 0 new, `test:bos-entitlements` 242 / 7062, scoped `tsc` canary proven then clean. 35 throwaway probes (tab walk in three harnesses, deep links, states, KPI rules, anchors, a11y) all green, then deleted. No bugs. QA had no browser, so L9-B4 / L9-B5 were not run and are owed by TL |
+| 2026-10-12 | L-9a committed, PR opened | RM: commit 57132b85, merged origin/main (b32f119d, clean), PR #321 open (fast-track); awaiting checks + user merge |
