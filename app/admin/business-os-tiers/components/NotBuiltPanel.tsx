@@ -27,8 +27,10 @@ interface Props {
 export function NotBuiltPanel({ capabilities }: Props) {
   return (
     <section
+      // The Cannot be sold tile's anchor (Admin Layout Standard L-5, K-6).
+      id="not-built"
       data-testid="not-built-panel"
-      className="rounded-lg border border-slate-700 bg-slate-800/40 p-4"
+      className="rounded-xl border border-slate-700 bg-slate-800/40 p-4"
     >
       <header className="mb-3 border-b border-slate-700 pb-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -47,7 +49,7 @@ export function NotBuiltPanel({ capabilities }: Props) {
           <li key={capability.capability} data-testid={`not-built-${capability.capability}`}>
             <div className="flex flex-wrap items-baseline gap-2">
               <span className="text-sm font-medium text-slate-200">{capability.label}</span>
-              <span className="font-mono text-xs text-slate-500">{capability.capability}</span>
+              <span className="font-mono text-xs text-slate-400">{capability.capability}</span>
               <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-xs text-slate-400">
                 {capability.category}
               </span>
