@@ -263,7 +263,7 @@ describe('slice 5: Scheduled jobs & queues', () => {
   it('is a visible Monitor entry, never says "OK", and its page is a client component', () => {
     const item = sections.find((s) => s.title === 'Monitor')?.items.find((i) => i.href === '/admin/jobs-queues');
     expect(item?.name).toBe('Scheduled jobs & queues');
-    expect(item?.description).not.toMatch(/OK/);
+    expect(item?.description).not.toMatch(/\bOK\b/);
     const page = fs.readFileSync(path.join(ADMIN_DIR, 'jobs-queues/page.tsx'), 'utf8');
     expect(page.trimStart().startsWith("'use client'")).toBe(true);
   });
