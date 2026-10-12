@@ -10,6 +10,8 @@
  * copy of its own: every Jobs file prints time through this one (CR-4).
  */
 
+import { isRealDate } from '@/app/admin/components/adminWindowPresets';
+
 /**
  * "YYYY-MM-DD HH:mm UTC" for any ISO timestamp, whatever its offset. The value
  * is converted to UTC through Date, never sliced as text, so a database that
@@ -41,4 +43,17 @@ export function formatCount(value: number): string {
 export function formatUtcTime(iso: string | null): string {
   const full = formatUtc(iso);
   return full === '—' ? full : full.slice(11);
+}
+
+/**
+ * A date-only value ("YYYY-MM-DD", a SQL DATE such as a due date) shown as that
+ * same calendar date in any process time zone (§5.11; INV-00013). Arrived with
+ * its first pilot, finance slice 2b (AC-74). It is never passed through a Date:
+ * a real date is returned as its own text, so no time zone can move it a day.
+ * Em dash for null, a date that does not exist, or anything that is not
+ * date-only (a timestamp goes through `formatUtc`).
+ */
+export function formatUtcDate(value: string | null): string {
+  if (value === null || !isRealDate(value)) return '—';
+  return value;
 }
