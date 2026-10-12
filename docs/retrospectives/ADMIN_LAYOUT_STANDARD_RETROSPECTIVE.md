@@ -443,4 +443,4 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - A surviving mutation needs a named state that proves the second lock holds; "double lock" is a claim, not evidence.
 - When the user merges fast, RM records the merge in the next slice's branch rather than the merged one.
 
-### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11). Last slice before the user's halt.
+### Status: COMMITTED — PR #328 open (fast-track, user rule 2026-10-11) — feature/admin-layout-l12 — 621224eb (L-10 records) + f95031da (L-12), merged with origin/main 8a5ef71c. Last slice before the user's halt.

@@ -7,7 +7,7 @@
 **Skills applied:** `tenant-isolation-guard`: not triggered (no write, no service-role path, no caller-supplied id; the route is a cross-account admin list behind `requireAdmin` and is not touched). `business-os-entitlements`: not triggered (no import from `lib/business-os/entitlements/`, no tier or capability literal). `business-os-schema-check`: not triggered (no DB claim; only the payload fields the page already reads, `lib/admin/adminList-types.ts`). `bos-llm-call-standards`, `durable-queue-drain`: not applicable
 **Branch:** `feature/admin-layout-l12`, cut by RM from `origin/main` at 82469a8a, the merge commit of the L-10 PR #324, so L-10 had already merged. Confirmed by Dev with `git branch --show-current`. **M-4 resolved:** not a stacked PR; the L-12 PR targets `main` and carries nothing from an open branch. The branch also carries three doc edits that record the L-10 merge (requirement, retrospective, L-10 workplan); they are kept
 **Date:** 2026-10-12
-**Status:** Built, awaiting SA code review + QA (2026-10-12, uncommitted). SA workplan review 2026-10-12: APPROVED WITH CONDITIONS; M-1 to M-5 and S-1 to S-5 applied to this file before coding (task 1)
+**Status:** Committed — PR #328 open (fast-track; SA code review APPROVED WITH FIXES, F-1 applied; QA PASS WITH NOTES); awaiting checks + user merge. Commits 621224eb (L-10 merge records) and f95031da (L-12), merged with origin/main (8a5ef71c; clean). Built 2026-10-12. SA workplan review 2026-10-12: APPROVED WITH CONDITIONS; M-1 to M-5 and S-1 to S-5 applied to this file before coding (task 1)
 **Path:** **UI short path** by classification: no shared source file changes. The only shared-folder edit is the registry entry in the shared guard's test file (the L-5, L-6, L-7, L-10 precedent). Under the user's fast-track for this standard: SA workplan review → Dev → SA code review + QA → RM
 
 ## Overview
@@ -630,7 +630,15 @@ QB-1 to QB-11 are **owed** (no browser tools in this session). All are read-only
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-l12` |
+| Commit A | 621224eb `docs(admin): record L-10 merged (PR #324)` |
+| Commit B | f95031da `feat(admin): admin layout standard L-12 — Admin users page` |
+| Merge with origin/main | 8a5ef71c (origin/main 600bd753; clean) |
+| PR | #328 (https://github.com/AgentsPilot/neuronforge/pull/328), open, awaiting checks + user merge |
+| Tests after merge | scoped jest 27 suites / 876; test:bos-llm 625; typecheck:bos-llm 0 new; test:bos-entitlements 242 suites / 7,167; lint:hooks clean |
+| Owed | Browser checks QB-1 to QB-11 (read-only) |
 
 ---
 
@@ -644,3 +652,4 @@ QB-1 to QB-11 are **owed** (no browser tools in this session). All are read-only
 | 2026-10-12 | SA code review | SA: APPROVED WITH FIXES. All M-1 to M-5 and S-1 to S-5 met; request call byte-identical (the `const` moved before the `try`, accepted); authz, shared source, routes and lib untouched; Q-7 copy, `formatUtc`, colours, registry and test edits verified; scripted `page.render` edits have no collateral damage; 524 tests green on SA's run. F-1 (test-only, Medium): mutation (c) is a real gap, because after a failed refresh a Try again puts the status back to loading and an uncleared list would reappear; add A-7b (failed refresh, then a held Try again shows no list) and re-record mutation (c) |
 | 2026-10-12 | QA | QA: PASS WITH NOTES. settings + components jest 24 suites / 735; authz guard 119; tailwind guard 6; admins route 15; test:bos-llm 625; typecheck:bos-llm 0 new; lint:hooks clean. 24 throwaway probes green and deleted (happy path, error-copy matrix incl. 401 / 403 / non-JSON / malformed, failed Refresh clears lists and Read at, held Try again shows no list, empty lists, read-only and one GET in every state, stale answer never wins, colours). Fetch call identical to HEAD; git status = Dev's 8 entries. Open: SA F-1 (A-7b) not yet in the suite (Medium, test-only). Known shared follow-up: focus to body after Try again. QB-1 to QB-11 owed |
 | 2026-10-12 | SA F-1 applied | Dev: A-7b added to `adminUsersLayout.render.test.tsx` (good load, failed Refresh, held Try again: no list, no Read at, loading text; then the lists return). Mutation (c) re-run: A-7b fails (1 failed, 53 passed), restored, checksum matched; the "survived by design" note replaced. The `notJson` helper's escaped quotes rewritten as a template literal, so the test file holds no backslash. No page change. Settings folder 54 tests |
+| 2026-10-12 | Committed + PR (RM) | Commit A 621224eb (L-10 merge records) and commit B f95031da (L-12) on `feature/admin-layout-l12`; origin/main merged (8a5ef71c; clean). Scoped jest 27 suites / 876, test:bos-llm 625, typecheck:bos-llm 0 new, test:bos-entitlements 7,167, lint:hooks clean. PR #328 open, awaiting checks + user merge |
