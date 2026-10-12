@@ -262,3 +262,26 @@ One section per slice of the Admin Layout Standard. Requirement: [ADMIN_LAYOUT_S
 - Cross-check any new KPI colour rule against the Health page's rule for the same fact before building it.
 
 ### Status: COMMITTED — feature/admin-layout-l5 — 0e40bd0c, PR #310
+
+---
+
+## L-6: Signup Invites — 2026-10-12
+
+**MD links:** [Requirement](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) | [L-6 workplan](/docs/workplans/ADMIN_LAYOUT_L6_WORKPLAN.md)
+
+### What went well
+- The user removed the outdated "internal demos only" note (D-18); SA found the note also carried one true, live fact (plans not enforced) required by the invite-signup GR-5 rule, and kept it as a neutral header chip — nothing true was lost.
+- The shown-once invite link is protected by a new transitive import walker (G-7) that proves no Invites file can reach URL, history or storage code; SA cross-checked it with an independent TypeScript-based walker.
+- QA's create → filter → refresh → four failure kinds → retry → remount sequence confirmed the link never leaves memory.
+- Twenty-five mutation checks bit, including four added for the pre-commit fixes.
+
+### What did not go well
+- Number of Dev ↔ SA back-and-forths: 0 on code (workplan approved with conditions M-1..M-5; code approved with two Low guard hardenings, folded in).
+- Number of Dev ↔ QA bug fix cycles: 1 small (QA-1: a plain-object lookup of the server's mode word could crash the badge on a prototype key) — fixed with Object.hasOwn before commit.
+- Focus after "Try again" / "Clear filters" still falls to the page body on every migrated page (shared states) — the shared follow-up keeps growing.
+
+### Conclusions & process improvements
+- Any lookup keyed by a server-supplied string uses Object.hasOwn — add to the standard's coding notes.
+- Do the shared "Try again" focus fix soon; it now affects every page.
+
+### Status: fast-track — committed by RM after SA + QA (user rule 2026-10-11)
