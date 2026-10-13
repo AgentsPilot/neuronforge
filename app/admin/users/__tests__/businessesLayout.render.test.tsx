@@ -38,7 +38,7 @@ import { rowToggleName } from '../userName';
 // As the pin files (SA F2 on LF-4a.2; SA ruling on LF-4c, check 8): the whole
 // page under a parallel Jest run can take more than RTL's 1 s default to
 // settle. Both limits are raised, so the longer wait does not just hit Jest's
-// 5 s test timeout. A longer wait can only turn a pass into a fail.
+// 5 s test timeout. A longer wait cannot make a wrong result pass; it only stops a slow machine failing a correct one.
 jest.setTimeout(30_000);
 configure({ asyncUtilTimeout: 5000 });
 
