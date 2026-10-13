@@ -615,8 +615,12 @@ describe('revoking', () => {
           }
         : { status: 200, body: { success: true, data: payload() } };
 
-    await user.click(within(list).getByRole('button', { name: 'Revoke' }));
+    // LF-3a F-110: the opener names its invite; the question is a dialog (portalled, so `screen`).
+    await user.click(
+      within(list).getByRole('button', { name: 'Revoke invite for first@example.com (created 2026-10-01 12:00:00 UTC)' })
+    );
     const dialog = screen.getByTestId('revoke-dialog');
+    expect(screen.getByRole('dialog', { name: 'Revoke the invite for first@example.com?' })).toBe(dialog);
     const confirm = within(dialog).getByRole('button', { name: 'Revoke invite' });
     await user.type(within(dialog).getByRole('textbox'), 'no');
     expect(confirm).toBeDisabled();
@@ -634,12 +638,20 @@ describe('revoking', () => {
       status: 200,
       body: {
         success: true,
-        data: payload({ invites: [row({ id: 'a', state: 'accepted' }), row({ id: 'b', state: 'revoked' })] }),
+        data: payload({
+          invites: [row({ id: 'p', state: 'pending' }), row({ id: 'a', state: 'accepted' }), row({ id: 'b', state: 'revoked' })],
+        }),
       },
     });
     render(<BusinessOsInvitesPage />);
     const list = await screen.findByTestId('invite-list');
-    expect(within(list).queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+    // LF-3a C2: the pending row is the positive control that keeps the matcher live.
+    const revokes = within(list).getAllByRole('button', { name: /^Revoke/ });
+    expect(revokes).toHaveLength(1);
+    expect(within(screen.getByTestId('invite-row-p')).getByRole('button', { name: /^Revoke/ })).toBe(revokes[0]);
+    for (const id of ['a', 'b']) {
+      expect(within(screen.getByTestId(`invite-row-${id}`)).queryByRole('button', { name: /^Revoke/ })).not.toBeInTheDocument();
+    }
   });
 });
 
@@ -811,7 +823,9 @@ describe('Slice 5a (F5a-11): a champion friend invite in the admin list', () => 
           }
         : { status: 200, body: { success: true, data: payload({ invites: [friend] }) } };
 
-    await user.click(within(list).getByRole('button', { name: 'Revoke' }));
+    await user.click(
+      within(list).getByRole('button', { name: 'Revoke invite for friend@example.com (created 2026-10-01 12:00:00 UTC)' })
+    );
     const dialog = screen.getByTestId('revoke-dialog');
     await user.type(within(dialog).getByRole('textbox'), 'Admin clean-up');
     await user.click(within(dialog).getByRole('button', { name: 'Revoke invite' }));
@@ -970,7 +984,11 @@ describe('Admin Layout Standard L-6', () => {
             body: { success: true, data: { invite: row({ state: 'revoked', revokedAt: '2026-10-02T00:00:00.000Z', revokeReason: 'QA L-6 check' }) } },
           }
         : { status: 200, body: { success: true, data: payload() } };
-    await user.click(within(screen.getByTestId('invite-list')).getByRole('button', { name: 'Revoke' }));
+    await user.click(
+      within(screen.getByTestId('invite-list')).getByRole('button', {
+        name: 'Revoke invite for first@example.com (created 2026-10-01 12:00:00 UTC)',
+      })
+    );
     const dialog = screen.getByTestId('revoke-dialog');
     fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'QA L-6 check' } });
     await user.click(within(dialog).getByRole('button', { name: 'Revoke invite' }));
@@ -1213,7 +1231,7 @@ describe('Admin Layout Standard L-6', () => {
     expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
   });
 
-  it('T-14: header, strip, bar, then the banner, the created link, the form and the list; no note', async () => {
+  it('T-14: header, strip, bar, then the banner, the created link and the list; the form is in the drawer (LF-3a); no note', async () => {
     const user = userEvent.setup();
     await renderWith(sevenPayload());
     responder = (call) =>
@@ -1221,18 +1239,24 @@ describe('Admin Layout Standard L-6', () => {
         ? { status: 201, body: { success: true, data: { invite: row({ id: 'invite-2', email: 'x@example.com' }), link: LINK } } }
         : { status: 200, body: { success: true, data: sevenPayload() } };
     const panel = await createInvite(user, 'x@example.com');
-    await user.click(screen.getByRole('button', { name: /new invite/i }));
+    await waitFor(() => expect(screen.queryByTestId('create-invite-drawer')).not.toBeInTheDocument());
 
+    // Collected before the drawer opens: an open drawer hides the page from role queries.
     const order = [
       document.querySelector('header') as Element,
       screen.getByTestId('kpi-pending'),
       screen.getByRole('search', { name: 'Filters' }),
       screen.getByTestId('stopped-halfway-banner'),
       panel,
-      screen.getByTestId('create-invite-form'),
       screen.getByTestId('invite-list'),
     ];
     for (let index = 1; index < order.length; index += 1) expect(follows(order[index - 1], order[index])).toBe(true);
     expect(screen.queryByTestId('enforcement-note')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /new invite/i }));
+    const form = await screen.findByTestId('create-invite-form');
+    expect(screen.getByTestId('create-invite-drawer')).toContainElement(form);
+    expect(screen.getByTestId('invites-content')).not.toContainElement(form);
+    expect(screen.getByTestId('invites-content')).toContainElement(panel);
   });
 });

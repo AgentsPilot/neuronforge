@@ -13,9 +13,15 @@
  * that it was delivered. When it was not sent, or the result is unknown, the
  * panel says so plainly and the link is right here to copy. With no email
  * requested it says nothing about delivery: the admin sends the link by hand.
+ *
+ * Admin Layout Follow-ups LF-3a (SA-C9): the panel stays on the page, outside
+ * the New invite drawer, so closing the drawer can never lose the link. After a
+ * create the page moves focus to the panel's heading (`headingRef`, focusable
+ * by script only), so the link is announced and Copy is one Tab away. The
+ * heading, not the section: a named section would be a landmark region (A-9).
  */
 
-import { useState } from 'react';
+import { useState, type Ref } from 'react';
 import { Check, Copy, X } from 'lucide-react';
 
 import type { InviteEmailStatus } from '../types';
@@ -33,6 +39,8 @@ interface Props {
   /** Slice 2a: from the create response. Absent (older server) reads as "not emailed". */
   emailStatus?: InviteEmailStatus;
   onDismiss: () => void;
+  /** LF-3a: the page focuses this heading once the New invite drawer has closed. */
+  headingRef?: Ref<HTMLHeadingElement>;
 }
 
 /** The line under the heading for each email status. */
@@ -53,7 +61,7 @@ function emailLine(status: InviteEmailStatus | undefined, email: string): { text
   }
 }
 
-export function CreatedLinkPanel({ link, email, emailStatus, onDismiss }: Props) {
+export function CreatedLinkPanel({ link, email, emailStatus, onDismiss, headingRef }: Props) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
 
@@ -72,7 +80,9 @@ export function CreatedLinkPanel({ link, email, emailStatus, onDismiss }: Props)
     <section data-testid="created-link-panel" className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 space-y-2">
-          <h2 className="text-sm font-semibold text-emerald-100">Invite created for {email}</h2>
+          <h2 ref={headingRef} tabIndex={-1} className={`rounded text-sm font-semibold text-emerald-100 ${FOCUS_RING}`}>
+            Invite created for {email}
+          </h2>
           {(() => {
             const line = emailLine(emailStatus, email);
             return line ? (
