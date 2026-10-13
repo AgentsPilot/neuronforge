@@ -760,6 +760,7 @@ export const he = {
     'crm.drawer.uploading': 'מעלה...',
     'crm.drawer.upload_success': 'המסמך הועלה בהצלחה',
     'crm.drawer.upload_error': 'שגיאה בהעלאת המסמך',
+    'crm.drawer.upload_too_large': 'הקובץ גדול מדי. המגבלה היא {max}MB.',
     'crm.drawer.delete_document': 'מחק מסמך',
     'crm.drawer.delete_document_confirm': 'האם אתה בטוח שברצונך למחוק מסמך זה?',
     'crm.drawer.document_deleted': 'המסמך נמחק',

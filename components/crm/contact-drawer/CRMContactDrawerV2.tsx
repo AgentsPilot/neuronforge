@@ -18,12 +18,22 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
+  AlertCircle,
   User, FolderOpen, Trash2, UserX, UserCheck, Check, Calendar, X, Upload, File, FileText, MessageSquare, Receipt, EyeOff
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
 import { createLogger } from '@/lib/logger';
+/* The BROWSER client, for uploading a file straight to Storage on a signed
+   URL — see `handleFileUpload`. Anon key, RLS respected; the permission comes
+   from the one-time token, not from this client. */
+import { supabase } from '@/lib/supabaseClient';
+import {
+  ATTACHABLE_DOCUMENT_TYPES,
+  MAX_DOCUMENT_BYTES,
+  MAX_DOCUMENT_MB,
+} from '@/lib/crm/attachableDocumentTypes';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { transactionMoneyArrived } from '@/lib/payments/bookingPaymentState';
 import type { EmailSendStatus } from '@/lib/business-os/emailSendStatus';
@@ -1422,6 +1432,42 @@ function DocumentUploadModal({ isOpen, onClose, onUpload, uploading, t }: Docume
   const [docType, setDocType] = useState('other');
   const [description, setDescription] = useState('');
   const [dragActive, setDragActive] = useState(false);
+  /* Said at the picker, where the file was chosen — not after a failed send. */
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  /**
+   * Take the file, or say why not, BEFORE anything is uploaded.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Both answers used to come from the server, and the size one could not:
+   * an oversized upload was refused by the platform at the edge, so the reply
+   * was not JSON and the owner got a generic failure with no reason in it. A
+   * limit the picker knows is a limit the picker can state.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const take = (candidate: File) => {
+    if (candidate.size > MAX_DOCUMENT_BYTES) {
+      setFileError(
+        (t('crm.drawer.upload_too_large') || 'That file is too large. The limit is {max}MB.')
+          .replace('{max}', String(MAX_DOCUMENT_MB))
+      );
+      return;
+    }
+
+    if (candidate.type && !ATTACHABLE_DOCUMENT_TYPES.includes(candidate.type)) {
+      setFileError(
+        (t('proposal.error_file_type') || 'That kind of file cannot be attached ({type}).')
+          .replace('{type}', candidate.type)
+      );
+      return;
+    }
+
+    setFileError(null);
+    setFile(candidate);
+    if (!docName) {
+      setDocName(candidate.name.replace(/\.[^/.]+$/, ''));
+    }
+  };
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -1438,21 +1484,13 @@ function DocumentUploadModal({ isOpen, onClose, onUpload, uploading, t }: Docume
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const droppedFile = e.dataTransfer.files[0];
-      setFile(droppedFile);
-      if (!docName) {
-        setDocName(droppedFile.name.replace(/\.[^/.]+$/, ''));
-      }
+      take(e.dataTransfer.files[0]);
     }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const selectedFile = e.target.files[0];
-      setFile(selectedFile);
-      if (!docName) {
-        setDocName(selectedFile.name.replace(/\.[^/.]+$/, ''));
-      }
+      take(e.target.files[0]);
     }
   };
 
@@ -1476,6 +1514,7 @@ function DocumentUploadModal({ isOpen, onClose, onUpload, uploading, t }: Docume
   const handleClose = () => {
     // Reset form state when closing
     setFile(null);
+    setFileError(null);
     setDocName('');
     setDocType('other');
     setDescription('');
@@ -1496,6 +1535,20 @@ function DocumentUploadModal({ isOpen, onClose, onUpload, uploading, t }: Docume
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Why the file was not taken, beside the control that would have
+              taken it. Previously the only way to learn this was to send the
+              file and read a failure, and the one that mattered most — too
+              large — never produced a readable one at all. */}
+          {fileError && (
+            <p
+              role="alert"
+              className="flex items-start gap-1.5 rounded-lg bg-red-500/10 px-3 py-2 text-[12.5px] text-red-600 dark:text-red-400"
+            >
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {fileError}
+            </p>
+          )}
+
           {/* Drag & Drop Zone */}
           <div
             onDragEnter={handleDrag}
@@ -3378,25 +3431,64 @@ export function CRMContactDrawerV2({
   };
 
   // File upload handler
+  /**
+   * Put a file on a contact, without the file passing through our own server.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE FILE USED TO BE BASE64'D INTO A JSON BODY AND POSTED HERE.
+   *
+   * A serverless request body is capped at 4.5MB by the platform, and base64
+   * adds a third — so the real ceiling was about 3.3MB while the picker, the
+   * route's schema and the bucket all said 50MB. A 4.47MB PDF was refused at
+   * the EDGE, before any handler ran, so the reply was not JSON at all:
+   * `response.json()` threw, the catch below ran, and the owner was shown "the
+   * document could not be uploaded" with nothing in it to act on.
+   *
+   * Now the server only issues a signed URL — a few hundred bytes — and the
+   * browser uploads to Storage directly. The platform is out of the file's
+   * path, so the 50MB is real, and base64's 33% is gone with it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const handleFileUpload = async (file: File, docName: string, docType: string, description: string) => {
     try {
       setUploadingDocument(true);
       setErrorMessage('');
 
-      // Convert file to base64
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve, reject) => {
-        reader.onload = () => {
-          const result = reader.result as string;
-          // Remove the data:mime;base64, prefix
-          const base64 = result.split(',')[1];
-          resolve(base64);
-        };
-        reader.onerror = reject;
-      });
-      reader.readAsDataURL(file);
-      const base64Content = await base64Promise;
+      /* 1. Permission to write one object, at one path this account owns. */
+      const ticketResponse = await fetch(
+        `/api/crm/contacts/${contact.id}/documents/upload-url`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            file_name: file.name,
+            mime_type: file.type,
+            file_size: file.size,
+          }),
+        }
+      );
 
+      const ticket = await ticketResponse.json();
+
+      if (!ticketResponse.ok || !ticket.success) {
+        setErrorMessage(ticket.error || t('crm.drawer.upload_error') || 'Failed to upload document');
+        return;
+      }
+
+      /* 2. The file itself, browser to Storage. Nothing of ours in between. */
+      const { error: storageError } = await supabase.storage
+        .from(ticket.data.bucket)
+        .uploadToSignedUrl(ticket.data.path, ticket.data.token, file, {
+          contentType: file.type,
+        });
+
+      if (storageError) {
+        logger.error({ err: storageError }, 'Direct upload to storage failed');
+        setErrorMessage(t('crm.drawer.upload_error') || 'Failed to upload document');
+        return;
+      }
+
+      /* 3. And the row, naming where it landed. */
       const response = await fetch(`/api/crm/contacts/${contact.id}/documents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3407,7 +3499,7 @@ export function CRMContactDrawerV2({
           file_name: file.name,
           file_size: file.size,
           mime_type: file.type,
-          file_content: base64Content
+          storage_path: ticket.data.path
         })
       });
 
