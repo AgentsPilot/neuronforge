@@ -358,36 +358,53 @@ export class NotificationService {
     }
   ): string {
     // Simple template rendering
+    /*
+     * EVERY RULE INLINE, because a phone throws the others away.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This was styled by a stylesheet in the head — `.container`, `.header`,
+     * `.button`, `.approve`, `.reject`. Gmail's mobile apps STRIP that
+     * element, and only that element: the markup arrives intact and every
+     * rule meant to lay it out is gone. So the same email that looks right on
+     * a laptop arrives on a phone as a bare column of text, with Approve and
+     * Reject as two indistinguishable blue links.
+     *
+     * An approval request is the worst email to lose its buttons in: the two
+     * actions are opposites, one click each, and unstyled they look the same.
+     *
+     * Inline `style` attributes survive everywhere, which is why
+     * `lib/email/templates/base-template.ts` uses nothing else and why the
+     * client-facing mail was never affected. `emailIsInlineStyled.guard.test.ts`
+     * holds the line.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const button =
+      'display: inline-block; padding: 12px 24px; margin: 10px 5px; text-decoration: none;' +
+      ' border-radius: 4px; font-weight: bold; font-family: Arial, sans-serif; font-size: 15px;';
+
     return `
+      <!DOCTYPE html>
       <html>
         <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: #FF6D00; color: white; padding: 20px; text-align: center; }
-            .content { padding: 20px; background: #f9f9f9; }
-            .button { display: inline-block; padding: 12px 24px; margin: 10px 5px; text-decoration: none; border-radius: 4px; font-weight: bold; }
-            .approve { background: #4CAF50; color: white; }
-            .reject { background: #f44336; color: white; }
-            .footer { text-align: center; padding: 20px; font-size: 12px; color: #666; }
-          </style>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
         </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>✋ Approval Required</h1>
+        <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; line-height: 1.6; color: #333333; background: #ffffff;">
+          <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: #FF6D00; color: #ffffff; padding: 20px; text-align: center;">
+              <h1 style="margin: 0; font-size: 22px; color: #ffffff;">&#9995; Approval Required</h1>
             </div>
-            <div class="content">
-              <h2>${data.title}</h2>
+            <div style="padding: 20px; background: #f9f9f9;">
+              <h2 style="margin-top: 0; color: #333333;">${data.title}</h2>
               <p>${data.message || 'An approval is required to continue this workflow.'}</p>
               ${data.expiresAt ? `<p><strong>Expires:</strong> ${new Date(data.expiresAt).toLocaleString()}</p>` : ''}
               <div style="text-align: center; margin-top: 30px;">
-                <a href="${data.approvalUrl}?action=approve" class="button approve">Approve ✅</a>
-                <a href="${data.approvalUrl}?action=reject" class="button reject">Reject ❌</a>
+                <a href="${data.approvalUrl}?action=approve" style="${button} background: #4CAF50; color: #ffffff;">Approve &#9989;</a>
+                <a href="${data.approvalUrl}?action=reject" style="${button} background: #f44336; color: #ffffff;">Reject &#10060;</a>
               </div>
             </div>
-            <div class="footer">
-              <p>This is an automated notification from your workflow system.</p>
+            <div style="text-align: center; padding: 20px; font-size: 12px; color: #666666;">
+              <p style="margin: 0;">This is an automated notification from your workflow system.</p>
             </div>
           </div>
         </body>
