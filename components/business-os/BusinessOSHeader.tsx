@@ -10,7 +10,8 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 import { PlanBadgePill, type PlanBadgeProps } from '@/components/business-os/PlanBadgePill';
 
-import { SchedulingDialog } from '@/components/business-os/SchedulingDialog';
+// Lazy (PERF-1): the dialog's chunk loads after the page paints, not with it.
+import { LazySchedulingDialog } from '@/components/business-os/lazyDialogs';
 
 /**
  * `planBadge` is read by the layout, server-side, and passed down.
@@ -216,7 +217,7 @@ export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgePr
       </div>
 
       {/* Scheduling Dialog */}
-      <SchedulingDialog
+      <LazySchedulingDialog
         isOpen={isSchedulingDialogOpen}
         onClose={() => setIsSchedulingDialogOpen(false)}
       />

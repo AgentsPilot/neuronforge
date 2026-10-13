@@ -22,10 +22,13 @@ import { V2Logo } from '@/components/v2/V2Header';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SetupFactCard, SetupFactDeck } from '@/components/business-os/setup/SetupFactCard';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
-import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
+import { LazyConfigurationDialog } from '@/components/business-os/lazyDialogs';
 import { StripeConnectWizard } from '@/components/payments/StripeConnectWizard';
 import { InvoiceSettingsSection } from '@/components/business-os/settings/InvoiceSettingsSection';
 import { cn } from '@/lib/utils';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'OnboardingBuildPage' });
 
 interface PreviewData {
   businessProfile?: {
@@ -435,7 +438,7 @@ function OnboardingBuildContent() {
       // so the screen stays and the remaining work becomes actionable.
 
     } catch (error) {
-      console.error('Build error:', error);
+      logger.error({ err: error }, 'Build error');
       setBuildError(
         selectedLanguage === 'he'
           ? 'אירעה שגיאה בבניית המערכת. אנא נסה שוב.'
@@ -488,7 +491,7 @@ function OnboardingBuildContent() {
           router.push('/onboarding-chat');
         }
       } catch (error) {
-        console.error('Error loading preview data:', error);
+        logger.error({ err: error }, 'Error loading preview data');
         if (!cancelled) {
           router.push('/onboarding-chat');
         }
@@ -917,8 +920,16 @@ function OnboardingBuildContent() {
           These are the dialogs the dashboard uses — self-contained, fetching
           their own data — so mounting one here costs nothing and keeps the
           user on the screen that is telling them why it matters. */}
+      {/* PERF-1: the dialog is lazy, and this page sits outside the Business OS
+          layout whose closed instance warms it everywhere else. This closed
+          instance does the same here: it draws nothing and fetches nothing
+          (every effect inside is gated on `isOpen`), but mounting it loads the
+          chunk after first paint, so the dialogs below open in their first
+          frame, exactly as when the dialog shipped with the page. */}
+      <LazyConfigurationDialog isOpen={false} onClose={() => undefined} />
+
       {openStep === 'availability' && (
-        <ConfigurationDialog
+        <LazyConfigurationDialog
           isOpen
           initialTab="availability"
           visibleTabs={['availability']}
@@ -927,7 +938,7 @@ function OnboardingBuildContent() {
       )}
 
       {openStep === 'intake' && (
-        <ConfigurationDialog
+        <LazyConfigurationDialog
           isOpen
           initialTab="intake"
           visibleTabs={['intake']}
