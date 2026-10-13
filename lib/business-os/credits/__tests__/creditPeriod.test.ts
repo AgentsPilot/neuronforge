@@ -7,13 +7,9 @@
  * key to milliseconds, match no row, and the card would read zero.
  */
 
-// The leak check's module graph names the service-role client; nothing here uses it.
-jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
-
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { creditPeriodStartAt } from '../creditLeakCheck';
 import {
   calendarMonthStartUtc,
   currentPeriodStartMs,
@@ -193,6 +189,36 @@ describe('source guard: period keys never pass through Date (SQ-20, R-1)', () =>
       expect(withoutDisplayMaths(code)).not.toMatch(new RegExp(`export function ${name}`));
     }
   });
+
+  describe('the leak check (creditLeakCheck.ts): anchors and period keys never pass through Date', () => {
+    // KEY_TO_DATE without created_at/createdAt: the leak check parses usage and
+    // ledger ROW INSTANTS (`Date.parse(row.created_at)`) for window matching, at
+    // millisecond precision by design, never a key. No display-maths cut here.
+    const LEAK_KEY_TO_DATE = /(new Date|Date\.parse)\(\s*[\w.?]*(anchor|periodStart|period_start)/i;
+    const LEAK_CHECK = 'lib/business-os/credits/creditLeakCheck.ts';
+
+    it('the rule matches planted violations, and its carve-outs are deliberate', () => {
+      // The pre-fold body's own line.
+      expect(LEAK_KEY_TO_DATE.test('const anchorMs = Date.parse(anchorIso);')).toBe(true);
+      expect(LEAK_KEY_TO_DATE.test('new Date(row.period_start)')).toBe(true);
+      // Row instants for the window.
+      expect(LEAK_KEY_TO_DATE.test('const t = Date.parse(row.created_at);')).toBe(false);
+      // The label dedupe/sort key: labels stay verbatim, never a DB key.
+      expect(LEAK_KEY_TO_DATE.test('const key = Date.parse(period);')).toBe(false);
+    });
+
+    it('builds no Date from an anchor or a period key', () => {
+      const code = codeOf(LEAK_CHECK);
+      expect(code).toMatch(/export function creditPeriodStartAt/);
+      expect(LEAK_KEY_TO_DATE.test(code)).toBe(false);
+    });
+
+    it('one mirror only: no month-add maths of its own, it calls currentPeriodStartMs', () => {
+      const code = codeOf(LEAK_CHECK);
+      expect(code).not.toMatch(/addMonths/);
+      expect(code).toMatch(/currentPeriodStartMs\(/);
+    });
+  });
 });
 
 describe('displayInstantIso (slice 7a, display only)', () => {
@@ -300,26 +326,6 @@ describe('currentPeriodStartMs — the TS mirror of business_os_credit_period_st
       expect(iso('2026-01-31T23:30:00.000500-02:00', '2026-03-01T01:30:00.000Z')).toBe('2026-02-01T01:30:00.000Z');
       expect(iso('2026-01-31T23:30:00-02:00', '2026-03-01T01:30:00.000Z')).toBe('2026-03-01T01:30:00.000Z');
     });
-  });
-});
-
-describe('W-1: the leak check twin and the mirror agree (until the follow-up folds one onto the other)', () => {
-  // Shared non-tie vectors, millisecond-precision anchors only.
-  it.each([
-    ['unmoved', '2026-09-14T09:31:07.123Z', '2026-09-30T12:00:00Z'],
-    ['the reproduction', '2026-10-12T18:21:50Z', '2026-10-12T19:00:00Z'],
-    ['case a', '2026-11-04T15:14:00Z', '2026-11-04T15:20:00Z'],
-    ['case b', '2026-10-20T08:00:00Z', '2026-10-12T19:00:00Z'],
-    ['31st across February', '2026-01-31T08:00:00Z', '2026-02-28T09:00:00Z'],
-    ['31st, end of March', '2026-01-31T08:00:00Z', '2026-03-30T23:59:59Z'],
-    ['December → January year roll', '2025-12-15T00:00:00Z', '2026-01-10T00:00:00Z'],
-    ['December → January year roll, forward', '2025-12-28T08:00:00Z', '2026-01-29T00:00:00Z'],
-    ['non-UTC offset', '2026-01-31T23:30:00-02:00', '2026-03-15T00:00:00Z'],
-  ])('%s', (_name, anchor, at) => {
-    const atMs = Date.parse(at);
-    const mirror = currentPeriodStartMs(anchor, new Date(atMs));
-    expect(mirror).not.toBeNull();
-    expect(creditPeriodStartAt(anchor, atMs)).toBe(new Date(mirror as number).toISOString());
   });
 });
 

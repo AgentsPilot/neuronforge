@@ -58,6 +58,12 @@ export interface FinanceGroupCount {
   grace: number;
   /** Accounts of this group past due, shown beside it. */
   pastDue: number;
+  /**
+   * Slice 1c (BD-15, SA-Q24): accounts in this TIER group that hold the
+   * Founding Partner cohort (paying, so grouped by their paid tier). Shown as a
+   * note on the group row; 0 for every non-tier group.
+   */
+  foundingPartners: number;
 }
 
 export interface FinanceAccountsFigures {

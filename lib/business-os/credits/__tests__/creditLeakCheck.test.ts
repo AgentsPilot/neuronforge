@@ -382,6 +382,25 @@ describe('the period (S-4): the RPC’s own rule', () => {
   it('an unreadable anchor gives no period rather than a wrong one', () => {
     expect(creditPeriodStartAt('not-a-date', Date.parse('2026-09-28T10:00:00Z'))).toBeNull();
   });
+
+  // Since the fold onto `currentPeriodStartMs` (re-anchor fix follow-up, SA F-5):
+  // the SQL `candidate > now` compares microseconds, so on a millisecond tie a
+  // microsecond anchor's candidate is still ahead and the period steps back.
+  it('the sub-millisecond tie follows the SQL: a µs anchor on the tie steps back a month', () => {
+    expect(creditPeriodStartAt('2026-09-14T09:31:07.123456+00:00', Date.parse('2026-10-14T09:31:07.123Z'))).toBe(
+      '2026-09-14T09:31:07.123Z'
+    );
+  });
+
+  it('the sub-millisecond tie follows the SQL: a whole-millisecond anchor on the tie keeps the candidate', () => {
+    expect(creditPeriodStartAt('2026-09-14T09:31:07.123+00:00', Date.parse('2026-10-14T09:31:07.123Z'))).toBe(
+      '2026-10-14T09:31:07.123Z'
+    );
+  });
+
+  it('an anchor without a zone gives no period (never read as server-local time)', () => {
+    expect(creditPeriodStartAt('2026-08-23T19:55:01.286', Date.parse('2026-09-28T10:00:00Z'))).toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -10,8 +10,9 @@
  * on the key path takes a `Date`, and a source guard pins that nothing here
  * builds a `Date` from an anchor or a period key outside the named DISPLAY
  * MATHS: `nextPeriodStartUtc` (the card's reset date, millisecond-truncated,
- * display only), `currentPeriodStartMs` and the admin row selectors. None of
- * their answers is ever sent to the database.
+ * display only), `currentPeriodStartMs` (the admin row selector's key and
+ * the leak check's period labels, `creditLeakCheck.creditPeriodStartAt`) and
+ * the admin row selectors. None of their answers is ever sent to the database.
  *
  * ── THE THREE CASES ──────────────────────────────────────────────────────────
  *   - a plan row: the period that contains now, from the database's own rule
@@ -115,7 +116,10 @@ function subMillisecondPart(iso: string): number {
  *   3. if candidate > now, step back one month.
  *
  * DISPLAY MATHS / ROW SELECTION ONLY: never a key, a filter or a value sent to
- * the database (keys travel as strings, see the header).
+ * the database (keys travel as strings, see the header). Consumers: the admin
+ * row selector (`isCurrentPeriodRow`) and the nightly leak check's period
+ * LABELS (`creditLeakCheck.creditPeriodStartAt`, the one place it is reused —
+ * there is no second TS copy of the period rule).
  *
  * Exact to the SQL, sub-millisecond tie included (SA C-3): `now` is a `Date`,
  * so its microseconds are zero, and the SQL's `candidate > now` is true when

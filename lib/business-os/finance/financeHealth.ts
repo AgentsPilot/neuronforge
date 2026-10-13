@@ -24,6 +24,10 @@
  *      platform-wide reminder queue read). The platform-wide revenue head
  *      count is the one deliberate exception: it reads no account and no
  *      amount.
+ * Slice 1c (BD-14, BD-15, BD-16): the billing and revenue reads count test
+ * and real rows together; a paying Founding Partner is grouped by its paid
+ * tier; one billing row per account is assumed, and two make the paying read
+ * fail (Section 1 then shows "Tier set"), never a guessed group.
  * Business names are looked up only for ids taken from rows already read
  * (ledger rows for Section 3, plan rows for Section 4, client payment and
  * refund rows for the takings block, overdue rows for the payment problems
@@ -168,9 +172,9 @@ export interface FinanceHealthDeps {
   >;
   finance: Pick<
     BusinessOsFinanceReadRepository,
-    | 'listLiveBillingStatusesAllAccounts'
-    | 'findLiveBillingStatusForAccount'
-    | 'countLiveRevenueRows'
+    | 'listBillingStatusesAllAccounts'
+    | 'findBillingStatusForAccount'
+    | 'countRevenueRows'
     | 'listClientPaymentsAllAccountsPaidInRange'
     | 'listClientPaymentsForAccountPaidInRange'
     | 'listClientRefundsAllAccountsCreatedInRange'
@@ -392,11 +396,11 @@ export async function buildFinanceHealth(
     plansPromise,
     accountId !== null
       ? settle<FinanceBillingStatusRow[]>(async () => {
-          const one = await deps.finance.findLiveBillingStatusForAccount(accountId);
+          const one = await deps.finance.findBillingStatusForAccount(accountId);
           return one.error ? { data: null, error: one.error } : { data: one.data ? [one.data] : [], error: null };
         })
-      : settle(() => deps.finance.listLiveBillingStatusesAllAccounts()),
-    settle<FinanceRevenueCounts>(() => deps.finance.countLiveRevenueRows()),
+      : settle(() => deps.finance.listBillingStatusesAllAccounts()),
+    settle<FinanceRevenueCounts>(() => deps.finance.countRevenueRows()),
     clamp.readFrom === null ? Promise.resolve(EMPTY_LEDGER) : readLedger({ from: clamp.readFrom, to: window.end }),
     readSpan(spans.current),
     spans.previousBeforeCutover ? Promise.resolve(null) : readSpan(spans.previous),
@@ -455,11 +459,19 @@ export async function buildFinanceHealth(
   if (reminderRead !== null && !reminderRead.ok) failed('reminders', reminderRead.error ?? null);
 
   // ── 3. Section 1 ──────────────────────────────────────────────────────────
-  const payingIds = payingResult.data
-    ? new Set(payingResult.data.filter(isPayingBillingRow).map((row) => row.user_id))
-    : null;
+  // Test and real billing rows count together (BD-14); one row per account
+  // (BD-16): two rows make the read itself fail, so they never reach here.
+  const payingRows = payingResult.data ? payingResult.data.filter(isPayingBillingRow) : null;
+  const payingIds = payingRows ? new Set(payingRows.map((row) => row.user_id)) : null;
+  // SA-Q20 fallback for a paying Founding Partner with no plan tier: the
+  // bought tier of the PAYING row only, validated by the classifier against
+  // config.tierOrder. Never logged.
+  const paidTierHints = new Map<string, string>();
+  for (const row of payingRows ?? []) {
+    if (row.bought_tier) paidTierHints.set(row.user_id, row.bought_tier);
+  }
   const classified = plansResult.data
-    ? classifyAccounts({ rows: plansResult.data.rows, payingIds, window, now, config: deps.config })
+    ? classifyAccounts({ rows: plansResult.data.rows, payingIds, paidTierHints, window, now, config: deps.config })
     : null;
   const accounts: FinanceAccountsSection = {
     status: !classified ? 'unknown' : plansResult.data?.capped ? 'partial' : 'ok',

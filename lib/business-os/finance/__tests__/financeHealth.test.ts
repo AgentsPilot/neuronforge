@@ -4,6 +4,12 @@
  * strip (SA-WR-1), the revenue panel's branches (AC-22, AC-23), the cut-over
  * (AC-40) and the ceiling (AC-15).
  *
+ * Slice 1c (BD-14, BD-15, BD-16): the renamed billing and revenue reads; the
+ * revenue panel from test and real counts alike (AC-75 to AC-77); a paying
+ * Founding Partner in its paid tier's group with the note (AC-78, AC-80,
+ * AC-86); the picked business (AC-82) and two billing rows making the paying
+ * read fail, so "Tier set" and never a guessed group (AC-85, SA-WR-28).
+ *
  * Slice 1b: Section 4, K-2 and K-4 through the builder (AC-16, AC-17, AC-19,
  * AC-37, AC-38, SA-W11, SA-W12, SA-WR-8), the picked-business scope of every
  * credit and lot read (AC-42), the lot narrowing in the wiring (SA-W14) and
@@ -63,6 +69,8 @@ import type {
   FinanceClientReadResult as ClientRead,
   FinanceClientRefundRow,
 } from '@/lib/repositories/BusinessOsFinanceReadRepository';
+// Slice 1c: a separate import, so the list above stays unedited.
+import type { FinanceBillingStatusRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 import type { FinanceReminderFiguresInput } from '../paymentProblems';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { stateForCohort } from '@/lib/business-os/entitlements/lifecycle';
@@ -223,11 +231,11 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       findChargesByActionIds: jest.fn(() => ok<CreditLedgerRow[]>([])),
     },
     finance: {
-      listLiveBillingStatusesAllAccounts: jest.fn(() =>
-        ok([{ user_id: B, subscription_status: 'active', ended_at: null }])
+      listBillingStatusesAllAccounts: jest.fn(() =>
+        ok<FinanceBillingStatusRow[]>([{ user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null }])
       ),
-      findLiveBillingStatusForAccount: jest.fn(() => ok(null)),
-      countLiveRevenueRows: jest.fn(() => ok({ planInvoicesPaid: 0, boostsPaid: 0 })),
+      findBillingStatusForAccount: jest.fn(() => ok(null)),
+      countRevenueRows: jest.fn(() => ok({ planInvoicesPaid: 0, boostsPaid: 0 })),
       // Slice 2a: empty by default; the takings describes seed their own rows.
       listClientPaymentsAllAccountsPaidInRange: jest.fn<Result<ClientRead<FinanceClientPaymentRow>>, unknown[]>(() =>
         ok({ rows: [], reachedCeiling: false })
@@ -370,7 +378,7 @@ describe('all businesses', () => {
 
   it('the paying read fails → Section 1 ok with the "Tier set" group (SA-Q5)', async () => {
     const deps = makeDeps();
-    deps.finance.listLiveBillingStatusesAllAccounts.mockImplementation(fail);
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(fail);
     const { result } = await run(deps);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.accounts.status).toBe('ok');
@@ -413,19 +421,37 @@ describe('all businesses', () => {
   });
 });
 
-describe('the revenue panel (S1-FR-25..27)', () => {
-  it('AC-23: a live paid invoice → recorded, K-5 "Revenue recorded, not yet shown"', async () => {
+describe('the revenue panel (S1-FR-25..27; slice 1c S1C-FR-1)', () => {
+  // The builder receives counts only; that test-mode rows are counted at all is
+  // pinned in the repository test (no mode filter on either head count).
+  it('AC-75: a paid plan invoice (test or real) → recorded, K-5 "Revenue recorded, not yet shown"', async () => {
     const deps = makeDeps();
-    deps.finance.countLiveRevenueRows.mockImplementation(() => ok({ planInvoicesPaid: 1, boostsPaid: 0 }));
+    deps.finance.countRevenueRows.mockImplementation(() => ok({ planInvoicesPaid: 1, boostsPaid: 0 }));
     const { result } = await run(deps);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.revenue.state).toBe('recorded');
     expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'Revenue recorded, not yet shown' });
   });
 
+  it('AC-76: a paid boost alone → recorded', async () => {
+    const deps = makeDeps();
+    deps.finance.countRevenueRows.mockImplementation(() => ok({ planInvoicesPaid: 0, boostsPaid: 1 }));
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue).toEqual({ status: 'ok', state: 'recorded' });
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'Revenue recorded, not yet shown' });
+  });
+
+  it('AC-77: no paid invoice and no paid boost → none_yet, K-5 "None yet"', async () => {
+    const { result } = await run(makeDeps());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue).toEqual({ status: 'ok', state: 'none_yet' });
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'None yet' });
+  });
+
   it('AC-39: the check fails → panel unknown, K-5 unavailable "Could not check"', async () => {
     const deps = makeDeps();
-    deps.finance.countLiveRevenueRows.mockImplementation(fail);
+    deps.finance.countRevenueRows.mockImplementation(fail);
     const { result } = await run(deps);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.revenue).toEqual({ status: 'unknown', state: 'unknown' });
@@ -490,13 +516,57 @@ describe('K-1 and the cut-over', () => {
   });
 });
 
+describe('slice 1c: a paying Founding Partner, all businesses (BD-15, AC-78, AC-80, AC-86)', () => {
+  const TIER_2 = config.tierOrder[1];
+  const groupOf = (figures: { groups: Array<{ key: string; count: number; foundingPartners: number }> } | null | undefined, key: string) =>
+    figures?.groups.find((g) => g.key === key);
+
+  it('AC-78 (a): champion with its tier in force and a paying row → its tier group, note 1; Comped 0', async () => {
+    const deps = makeDeps({ plans: { pagePlans: jest.fn(() => ok([plan(A, { tier: TIER })])) } });
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(() =>
+      ok([{ user_id: A, subscription_status: 'active', ended_at: null, bought_tier: null }])
+    );
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const figures = result.payload.accounts.figures;
+    expect(groupOf(figures, `tier:${TIER}`)).toMatchObject({ count: 1, foundingPartners: 1 });
+    expect(groupOf(figures, 'comped')?.count).toBe(0);
+  });
+
+  it('AC-78 (b) / AC-80 / AC-86: champion with no tier, paying row with a bought tier → that tier, note 1, K-3 does not count it', async () => {
+    const deps = makeDeps({ plans: { pagePlans: jest.fn(() => ok([plan(A), plan(B)])) } });
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(() =>
+      ok([{ user_id: A, subscription_status: 'active', ended_at: null, bought_tier: TIER_2 }])
+    );
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const figures = result.payload.accounts.figures;
+    expect(groupOf(figures, `tier:${TIER_2}`)).toMatchObject({ count: 1, foundingPartners: 1 });
+    expect(groupOf(figures, 'founding_partner')?.count).toBe(1);
+    expect(figures?.foundingNoEndDate).toBe(1);
+    expect(result.payload.tiles.k3.value).toEqual({ value: 1, exact: true });
+  });
+
+  it('AC-79: a bought tier on a row that is not paying is ignored; the champion stays in Founding Partner', async () => {
+    const deps = makeDeps({ plans: { pagePlans: jest.fn(() => ok([plan(A)])) } });
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(() =>
+      ok([{ user_id: A, subscription_status: 'active', ended_at: '2026-10-01T00:00:00Z', bought_tier: TIER }])
+    );
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const figures = result.payload.accounts.figures;
+    expect(groupOf(figures, 'founding_partner')?.count).toBe(1);
+    expect(figures?.groups.every((g) => g.foundingPartners === 0)).toBe(true);
+  });
+});
+
 describe('one business picked (SEC-3, AC-26, AC-41, AC-42 / SA-WR-3)', () => {
   it('checks the plan table first; no row → account_not_found, and nothing else is read', async () => {
     const deps = makeDeps({ findPlanForAccount: jest.fn(() => ok({ plan: null })) });
     const { result } = await run(deps, A);
     expect(result).toEqual({ kind: 'account_not_found' });
     expect(deps.ledger.listRowsForAccountCreatedInRange).not.toHaveBeenCalled();
-    expect(deps.finance.countLiveRevenueRows).not.toHaveBeenCalled();
+    expect(deps.finance.countRevenueRows).not.toHaveBeenCalled();
   });
 
   it('a failed check → account_check_failed', async () => {
@@ -519,11 +589,11 @@ describe('one business picked (SEC-3, AC-26, AC-41, AC-42 / SA-WR-3)', () => {
     // Zero calls on every all-accounts method.
     expect(deps.plans.pagePlans).not.toHaveBeenCalled();
     expect(deps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
-    expect(deps.finance.listLiveBillingStatusesAllAccounts).not.toHaveBeenCalled();
+    expect(deps.finance.listBillingStatusesAllAccounts).not.toHaveBeenCalled();
 
     // Exactly the validated id, on every account-scoped read.
     expect(deps.findPlanForAccount).toHaveBeenCalledWith(A);
-    expect(deps.finance.findLiveBillingStatusForAccount).toHaveBeenCalledWith(A);
+    expect(deps.finance.findBillingStatusForAccount).toHaveBeenCalledWith(A);
     const accountArgs = (deps.ledger.listRowsForAccountCreatedInRange.mock.calls as unknown as unknown[][]).map((c) => c[0]);
     expect(accountArgs.length).toBe(3);
     expect(new Set(accountArgs)).toEqual(new Set([A]));
@@ -531,7 +601,7 @@ describe('one business picked (SEC-3, AC-26, AC-41, AC-42 / SA-WR-3)', () => {
     expect(deps.ledger.findChargesByActionIds).toHaveBeenCalledWith([original.action_id]);
 
     // R-d: the one platform-wide read, called with NO argument.
-    expect(deps.finance.countLiveRevenueRows).toHaveBeenCalledWith();
+    expect(deps.finance.countRevenueRows).toHaveBeenCalledWith();
 
     // Names: only ids from the rows read.
     expect(deps.findNames).toHaveBeenCalledWith([A]);
@@ -555,11 +625,42 @@ describe('one business picked (SEC-3, AC-26, AC-41, AC-42 / SA-WR-3)', () => {
 
   it('the picked account pays: its tier group, via R-c′', async () => {
     const deps = makeDeps({ findPlanForAccount: jest.fn(() => ok({ plan: plan(A, { tier: TIER, cohort: null }) })) });
-    deps.finance.findLiveBillingStatusForAccount.mockImplementation((() =>
-      ok({ user_id: A, subscription_status: 'past_due', ended_at: null })) as never);
+    deps.finance.findBillingStatusForAccount.mockImplementation((() =>
+      ok({ user_id: A, subscription_status: 'past_due', ended_at: null, bought_tier: null })) as never);
     const { result } = await run(deps, A);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.accounts.figures?.groups.find((g) => g.key === `tier:${TIER}`)?.count).toBe(1);
+  });
+
+  it('AC-82: a paying Founding Partner with its tier in force → its tier group, note 1, K-3 0; account-scoped reads only', async () => {
+    const deps = makeDeps({ findPlanForAccount: jest.fn(() => ok({ plan: plan(A, { tier: TIER }) })) });
+    deps.finance.findBillingStatusForAccount.mockImplementation((() =>
+      ok({ user_id: A, subscription_status: 'active', ended_at: null, bought_tier: null })) as never);
+    const { result } = await run(deps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const figures = result.payload.accounts.figures;
+    expect(figures?.groups.find((g) => g.key === `tier:${TIER}`)).toMatchObject({ count: 1, foundingPartners: 1 });
+    expect(figures?.groups.find((g) => g.key === 'founding_partner')?.count).toBe(0);
+    expect(result.payload.tiles.k3.value).toEqual({ value: 0, exact: true });
+    expect(deps.finance.findBillingStatusForAccount).toHaveBeenCalledWith(A);
+    expect(deps.finance.listBillingStatusesAllAccounts).not.toHaveBeenCalled();
+    expect(deps.plans.pagePlans).not.toHaveBeenCalled();
+    expect(deps.finance.countRevenueRows).toHaveBeenCalledWith();
+  });
+
+  it('AC-82 / AC-85 / SA-WR-28: two billing rows make R-c′ fail → the champion stays in Founding Partner, "Tier set", no note', async () => {
+    const deps = makeDeps({ findPlanForAccount: jest.fn(() => ok({ plan: plan(A) })) });
+    deps.finance.findBillingStatusForAccount.mockImplementation((() =>
+      ({ data: null, error: new Error('JSON object requested, multiple (or no) rows returned') })) as never);
+    const { result, log } = await run(deps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const figures = result.payload.accounts.figures;
+    expect(result.payload.accounts.status).toBe('ok');
+    expect(figures?.payingKnown).toBe(false);
+    expect(figures?.groups.map((g) => g.key)).toEqual(['trial', 'founding_partner', 'tier_set', 'unknown_held']);
+    expect(figures?.groups.find((g) => g.key === 'founding_partner')?.count).toBe(1);
+    expect(figures?.groups.every((g) => g.foundingPartners === 0)).toBe(true);
+    expect(log.error).toHaveBeenCalled();
   });
 });
 
@@ -1073,15 +1174,15 @@ describe('AC-65 (2a): with a business picked, R-e′ and R-f′ get exactly the 
 describe('the wiring (slices 2a and 2b)', () => {
   it('exposes exactly the thirteen finance reads: the four of 2a and the six of 2b included', () => {
     expect(Object.keys(financeHealthDeps().finance).sort()).toEqual([
-      'countLiveRevenueRows',
-      'findLiveBillingStatusForAccount',
+      'countRevenueRows',
+      'findBillingStatusForAccount',
+      'listBillingStatusesAllAccounts',
       'listClientPaymentsAllAccountsPaidInRange',
       'listClientPaymentsForAccountPaidInRange',
       'listClientPlansAllAccounts',
       'listClientPlansForAccount',
       'listClientRefundsAllAccountsCreatedInRange',
       'listClientRefundsForAccountCreatedInRange',
-      'listLiveBillingStatusesAllAccounts',
       'listOverdueClientInstalmentsAllAccounts',
       'listOverdueClientInstalmentsForAccount',
       'listOverdueClientInvoicesAllAccounts',
@@ -1274,7 +1375,7 @@ describe('AC-65 (2b): with a business picked, R-g′, R-h′ and R-i′ get exac
       deps.readReminderFigures,
       deps.plans.pagePlans,
       deps.ledger.listRowsOfAllAccountsCreatedInRange,
-      deps.finance.listLiveBillingStatusesAllAccounts,
+      deps.finance.listBillingStatusesAllAccounts,
       deps.finance.listClientPaymentsAllAccountsPaidInRange,
       deps.finance.listClientRefundsAllAccountsCreatedInRange,
       deps.lots.allAccounts,
