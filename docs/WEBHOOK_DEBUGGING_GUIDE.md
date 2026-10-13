@@ -1,5 +1,7 @@
 # Webhook Debugging Guide
 
+> **Last Updated**: 2026-10-12
+
 ## Current Status
 
 ✅ **FIXED**: Multiplier bug - Stripe now receives correct Pilot Credits (1,000 instead of 10,000)
@@ -29,13 +31,15 @@ ps aux | grep "stripe listen"
 
 **Expected output**:
 ```
-stripe listen --forward-to localhost:3000/api/stripe/webhook
+stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook
 ```
 
 **If not running**, start it:
 ```bash
-stripe listen --forward-to localhost:3000/api/stripe/webhook
+stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook
 ```
+
+> **Stripe CLI 1.53+:** a bare `stripe listen --forward-to …` is refused — the CLI now needs an explicit `--events` list or `--all-snapshot`. The list above is every event `app/api/stripe/webhook/route.ts` and its Business OS plan and boost handlers act on; `stripe listen --all-snapshot --forward-to localhost:3000/api/stripe/webhook` forwards everything instead. The CLI prints a `whsec_…` signing secret: put it in `STRIPE_WEBHOOK_SECRET` in `.env.local` (never committed).
 
 ### Step 2: Check if Dev Server is Running
 
@@ -155,7 +159,7 @@ Check your Stripe webhook logs:
 
 ### Issue: "No webhook logs"
 **Cause**: Stripe CLI not forwarding
-**Fix**: `stripe listen --forward-to localhost:3000/api/stripe/webhook`
+**Fix**: `stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook`
 
 ### Issue: "Port 3000 already in use"
 **Cause**: Multiple dev servers running
@@ -164,3 +168,11 @@ Check your Stripe webhook logs:
 ## Summary
 
 The **code is correct** - the multiplier bug is fixed and webhook handler works properly. The issue is that webhook events aren't reaching your dev server. Follow the debugging steps above to verify your local webhook infrastructure is set up correctly.
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |

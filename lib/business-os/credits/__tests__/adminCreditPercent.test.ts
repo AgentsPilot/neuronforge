@@ -22,7 +22,7 @@ jest.mock('@/lib/business-os/entitlements/creditAllowanceView', () => ({
 
 const mockOwnerSnapshot = jest.fn();
 
-import { readAdminCreditsLeft, type AdminCreditPercentDeps, type AdminTotalsRow } from '../adminCreditPercent';
+import { readAdminCreditPositions, readAdminCreditsLeft, type AdminCreditPercentDeps, type AdminTotalsRow } from '../adminCreditPercent';
 import { creditPercentLeft } from '../creditBands';
 import { readOwnerCreditUsage, type OwnerCreditCardDeps } from '../ownerCreditUsage';
 import type { OwnerCreditAllowance } from '../ownerCreditUsageTypes';
@@ -349,6 +349,47 @@ describe('readAdminCreditsLeft — calls grow per chunk, never per row (SA Q-6, 
   });
 });
 
+/** The owner card's own read over the same rows: its period key comes from `ownerKey` (the DB function's answer). */
+async function ownerCardPercent(anchor: string, ownerKey: string, allowance: OwnerCreditAllowance, totals: AdminTotalsRow[], now: Date) {
+  const ownerDeps: OwnerCreditCardDeps = {
+    findPeriodAnchor: async () => ({ data: anchor, error: null }),
+    periodStartFor: async () => ({ data: ownerKey, error: null }),
+    readAllowance: async () => allowance,
+    now: () => now,
+    owner: {
+      findTotalsForPeriod: async (_account: string, key: string) => {
+        const row = totals.find((t) => t.period_start === key);
+        return {
+          data: row
+            ? { period_start: row.period_start, credits_total: row.credits_total, credits_owner: row.credits_total, credits_scheduled: 0, credits_external: 0, credits_adjustment: 0 }
+            : null,
+          error: null,
+        };
+      },
+      listTotalsFrom: async () => ({
+        data: {
+          rows: totals.map((row) => ({
+            period_start: row.period_start,
+            credits_total: row.credits_total,
+            credits_owner: row.credits_total,
+            credits_scheduled: 0,
+            credits_external: 0,
+            credits_adjustment: 0,
+          })),
+          reachedCeiling: false,
+        },
+        error: null,
+      }),
+      listAdjustmentsForPeriods: async () => ({ data: { rows: [], reachedCeiling: false }, error: null }),
+      findChargesByActionIds: async () => ({ data: [], error: null }),
+      // Slice 11d: the card also reads the owner's credit lots (none here).
+      listOwnCreditLots: async () => ({ data: [], error: null }),
+    } as unknown as OwnerCreditCardDeps['owner'],
+  };
+  const card = await readOwnerCreditUsage(A, ownerDeps, { warn: jest.fn(), error: jest.fn() });
+  return creditPercentLeft(card.data!.used, card.data!.allowance!.amount)!;
+}
+
 describe('the admin % equals the owner card % (R-3, AC-43)', () => {
   it.each([
     ['monthly', MONTHLY, ANCHOR, PERIOD, '20640.123456'],
@@ -359,43 +400,7 @@ describe('the admin % equals the owner card % (R-3, AC-43)', () => {
     const totals: AdminTotalsRow[] = total === null ? [] : [{ user_id: A, period_start: period, credits_total: total }];
 
     // The owner card's own read, with the same rows.
-    const ownerDeps: OwnerCreditCardDeps = {
-      findPeriodAnchor: async () => ({ data: anchor, error: null }),
-      periodStartFor: async () => ({ data: period, error: null }),
-      readAllowance: async () => allowance,
-      now: () => NOW,
-      owner: {
-        findTotalsForPeriod: async (_account: string, key: string) => {
-          const row = totals.find((t) => t.period_start === key);
-          return {
-            data: row
-              ? { period_start: row.period_start, credits_total: row.credits_total, credits_owner: row.credits_total, credits_scheduled: 0, credits_external: 0, credits_adjustment: 0 }
-              : null,
-            error: null,
-          };
-        },
-        listTotalsFrom: async () => ({
-          data: {
-            rows: totals.map((row) => ({
-              period_start: row.period_start,
-              credits_total: row.credits_total,
-              credits_owner: row.credits_total,
-              credits_scheduled: 0,
-              credits_external: 0,
-              credits_adjustment: 0,
-            })),
-            reachedCeiling: false,
-          },
-          error: null,
-        }),
-        listAdjustmentsForPeriods: async () => ({ data: { rows: [], reachedCeiling: false }, error: null }),
-        findChargesByActionIds: async () => ({ data: [], error: null }),
-        // Slice 11d: the card also reads the owner's credit lots (none here).
-        listOwnCreditLots: async () => ({ data: [], error: null }),
-      } as unknown as OwnerCreditCardDeps['owner'],
-    };
-    const card = await readOwnerCreditUsage(A, ownerDeps, { warn: jest.fn(), error: jest.fn() });
-    const cardPercent = creditPercentLeft(card.data!.used, card.data!.allowance!.amount)!;
+    const cardPercent = await ownerCardPercent(anchor, period, allowance, totals, NOW);
 
     const { deps } = fixtureDeps({
       snapshots: { [A]: { unavailable: false, allowance } },
@@ -410,5 +415,67 @@ describe('the admin % equals the owner card % (R-3, AC-43)', () => {
     } else {
       expect(admin).toEqual(expect.objectContaining({ kind: 'less_than_one' }));
     }
+  });
+});
+
+describe('a restarted period (re-anchor fix, SA C-1, W-5)', () => {
+  // Test figure, not the price list: below the old row's usage, so the pre-fix
+  // selector (which counted the old row) showed 0%.
+  const ALLOWANCE: OwnerCreditAllowance = { amount: 20000, per: 'month' };
+  const pass = (anchor: string, totals: AdminTotalsRow[], now: Date) =>
+    readAdminCreditsLeft([A], fixtureDeps({ snapshots: { [A]: { unavailable: false, allowance: ALLOWANCE } }, anchors: { [A]: anchor }, totals }).deps, log(), { now }).then(
+      (p) => p.byUserId.get(A)
+    );
+
+  // The reproduction (2026-10-12): Essentials paid, P-3b.2 moved the anchor.
+  const REPRO_ANCHOR = '2026-10-12T18:21:50Z';
+  const REPRO_ROWS: AdminTotalsRow[] = [{ user_id: A, period_start: '2026-10-04 15:15:01+00', credits_total: 20276 }];
+  const REPRO_NOW = new Date('2026-10-12T19:00:00Z');
+
+  it('the reproduction: the old period does not count — 100% left, as on the owner card', async () => {
+    expect(await pass(REPRO_ANCHOR, REPRO_ROWS, REPRO_NOW)).toEqual({ kind: 'percent', value: 100, trial: false });
+    // The owner card reads the DB function's key (the new anchor) and finds no row.
+    const card = await ownerCardPercent(REPRO_ANCHOR, '2026-10-12 18:21:50+00', ALLOWANCE, REPRO_ROWS, REPRO_NOW);
+    expect(card.shown).toEqual({ kind: 'percent', value: 100 });
+  });
+
+  it('the reproduction, finance projection: used 0, not over the allowance', async () => {
+    const { deps } = fixtureDeps({ snapshots: { [A]: { unavailable: false, allowance: ALLOWANCE } }, anchors: { [A]: REPRO_ANCHOR }, totals: REPRO_ROWS });
+    const positions = await readAdminCreditPositions([A], deps, log(), { now: REPRO_NOW });
+    expect(positions.byUserId.get(A)).toEqual({ kind: 'position', allowance: 20000, used: 0, trial: false });
+  });
+
+  it('case a: an old-anchor row keyed AFTER a backdated new anchor is excluded (SA finding a)', async () => {
+    // Old boundary 11-04 15:15; Stripe anchor 11-04 15:14; a charge at 15:16 landed under the old anchor.
+    const rows: AdminTotalsRow[] = [{ user_id: A, period_start: '2026-11-04T15:15:00+00:00', credits_total: '5000' }];
+    expect(await pass('2026-11-04T15:14:00+00:00', rows, new Date('2026-11-04T15:20:00Z'))).toEqual({ kind: 'percent', value: 100, trial: false });
+  });
+
+  it('case b: now before the anchor selects the anchor − 1 month row, as the DB function does (SA finding b)', async () => {
+    const rows: AdminTotalsRow[] = [
+      { user_id: A, period_start: '2026-09-20T08:00:00+00:00', credits_total: '2000' },
+      { user_id: A, period_start: '2026-08-20T08:00:00+00:00', credits_total: '9000' },
+    ];
+    expect(await pass('2026-10-20T08:00:00+00:00', rows, new Date('2026-10-12T19:00:00Z'))).toEqual({ kind: 'percent', value: 90, trial: false });
+  });
+
+  it('re-anchored onto the 31st: the clamped February key counts, the old anchor’s February row does not', async () => {
+    const rows: AdminTotalsRow[] = [
+      { user_id: A, period_start: '2026-02-10T12:00:00+00:00', credits_total: '15000' }, // old anchor (the 10th)
+      { user_id: A, period_start: '2026-02-28T08:00:00+00:00', credits_total: '2000' },
+    ];
+    expect(await pass('2026-01-31T08:00:00+00:00', rows, new Date('2026-02-28T09:00:00Z'))).toEqual({ kind: 'percent', value: 90, trial: false });
+  });
+
+  it('an unmoved anchor still selects its current row (FR-4)', async () => {
+    const rows: AdminTotalsRow[] = [
+      { user_id: A, period_start: PREVIOUS, credits_total: '19000' },
+      { user_id: A, period_start: PERIOD, credits_total: '2000' },
+    ];
+    expect(await pass(ANCHOR, rows, NOW)).toEqual({ kind: 'percent', value: 90, trial: false });
+  });
+
+  it('W-5: an unreadable monthly anchor is unknown, never "nothing used"', async () => {
+    expect(await pass('not-a-timestamp', [{ user_id: A, period_start: PERIOD, credits_total: '2000' }], NOW)).toEqual({ kind: 'unknown' });
   });
 });

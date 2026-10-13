@@ -8,8 +8,10 @@
  * plan row to the period function as the string PostgREST returned, and the
  * period start comes back and goes to the ledger read the same way. No function
  * on the key path takes a `Date`, and a source guard pins that nothing here
- * builds a `Date` from an anchor or a period key except `nextPeriodStartUtc`,
- * whose answer is display only.
+ * builds a `Date` from an anchor or a period key outside the named DISPLAY
+ * MATHS: `nextPeriodStartUtc` (the card's reset date, millisecond-truncated,
+ * display only), `currentPeriodStartMs` and the admin row selectors. None of
+ * their answers is ever sent to the database.
  *
  * ── THE THREE CASES ──────────────────────────────────────────────────────────
  *   - a plan row: the period that contains now, from the database's own rule
@@ -95,8 +97,53 @@ function addMonthsClampedUtc(base: Date, months: number): Date {
 }
 
 /**
- * When the current period ends — the next period's start — as an ISO instant.
- * DISPLAY ONLY: never a key or a filter, which is why it may go through `Date`.
+ * The anchor's digits past the millisecond (0 to 999 microseconds), which a
+ * `Date` drops. A missing fraction is zero. `NaN` when the string does not parse.
+ */
+function subMillisecondPart(iso: string): number {
+  const match = TIMESTAMP_PARTS.exec(iso);
+  if (!match) return Number.NaN;
+  return Number((match[7] ?? '').padEnd(6, '0').slice(3));
+}
+
+/**
+ * The start of the period that contains `now`, in epoch milliseconds: a TS
+ * mirror of `business_os_credit_period_start(anchor, now)` (migration 20261015),
+ * step for step, pinned to the SQL body by a source test (re-anchor fix, SA C-2):
+ *   1. months = whole calendar months from the anchor to now, in UTC;
+ *   2. candidate = anchor + months, clamped like Postgres (`addMonthsClampedUtc`);
+ *   3. if candidate > now, step back one month.
+ *
+ * DISPLAY MATHS / ROW SELECTION ONLY: never a key, a filter or a value sent to
+ * the database (keys travel as strings, see the header).
+ *
+ * Exact to the SQL, sub-millisecond tie included (SA C-3): `now` is a `Date`,
+ * so its microseconds are zero, and the SQL's `candidate > now` is true when
+ * the candidate's millisecond is later, OR equal while the anchor (whose time
+ * of day every candidate keeps) has non-zero microseconds.
+ *
+ * `null` when the anchor does not parse.
+ */
+export function currentPeriodStartMs(anchorIso: string, now: Date): number | null {
+  const anchorMs = displayInstantMs(anchorIso);
+  const anchorMicros = subMillisecondPart(anchorIso);
+  const nowMs = now.getTime();
+  if (Number.isNaN(anchorMs) || Number.isNaN(anchorMicros) || Number.isNaN(nowMs)) return null;
+
+  const anchorInstant = new Date(anchorMs);
+  const months =
+    (now.getUTCFullYear() - anchorInstant.getUTCFullYear()) * 12 + (now.getUTCMonth() - anchorInstant.getUTCMonth());
+  const candidateMs = addMonthsClampedUtc(anchorInstant, months).getTime();
+  const isAfterNow = candidateMs > nowMs || (candidateMs === nowMs && anchorMicros > 0);
+  return isAfterNow ? addMonthsClampedUtc(anchorInstant, months - 1).getTime() : candidateMs;
+}
+
+/**
+ * When the current period ends — the next period's start — as an ISO instant:
+ * the owner card's reset date. DISPLAY ONLY: never a key or a filter, which is
+ * why it may go through `Date`. Millisecond-truncated (the anchor's
+ * microseconds are dropped), which a displayed date cannot show anyway. It is
+ * NOT the admin row selector: that is `isCurrentPeriodRow`, exact to the SQL tie.
  *
  * Counted FROM THE ANCHOR, the way the database counts: k = whole months from
  * the anchor to the period start, answer = anchor + (k + 1) months, clamped.
@@ -121,19 +168,32 @@ export function nextPeriodStartUtc(anchorIso: string, periodStartIso: string): s
 
 /**
  * Whether a totals row read by range is the CURRENT period's row (admin
- * Businesses column, credit deduction slice 8a, SA SQ-42):
- * `period start ≤ now < next period start`, with the next start from
- * `nextPeriodStartUtc` — the same display mirror the card's reset date uses.
+ * Businesses column and finance positions, credit deduction slice 8a, SA
+ * SQ-42; re-anchor fix): its key equals, to the millisecond, the period start
+ * the database would give now (`currentPeriodStartMs`, the TS mirror of
+ * `business_os_credit_period_start`) — the same key the owner card reads.
+ *
+ * Exact-key equality, never a range: after a re-anchor (a plan payment or an
+ * admin tier change) old-anchor rows are not on the new anchor's boundaries,
+ * and a range would count one as current. Millisecond equality is safe: every
+ * key under an anchor keeps that anchor's sub-millisecond digits, and two keys
+ * of one account are months apart.
+ *
+ * Pass `expectedStartMs` when it was already computed for the account (the
+ * batched pass does, once per account); otherwise it is computed here.
  *
  * A ROW SELECTOR among rows already read, DISPLAY maths only: never a filter
  * key, never sent to the database. `false` when either string does not parse.
  */
-export function isCurrentPeriodRow(anchorIso: string, periodStartIso: string, now: Date): boolean {
+export function isCurrentPeriodRow(
+  anchorIso: string,
+  periodStartIso: string,
+  now: Date,
+  expectedStartMs: number | null = currentPeriodStartMs(anchorIso, now)
+): boolean {
   const startMs = displayInstantMs(periodStartIso);
-  const next = nextPeriodStartUtc(anchorIso, periodStartIso);
-  if (Number.isNaN(startMs) || next === null) return false;
-  const nowMs = now.getTime();
-  return startMs <= nowMs && nowMs < Date.parse(next);
+  if (Number.isNaN(startMs) || expectedStartMs === null) return false;
+  return startMs === expectedStartMs;
 }
 
 /**
