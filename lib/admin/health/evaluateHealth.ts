@@ -723,7 +723,7 @@ export const MODE_WORDS: Record<EntitlementFacts['effective'], { word: string; m
 /** Where the entitlements tile leads, in words that say so (RC-5.2, FR-E2). */
 export const ENTITLEMENTS_PAGE_LINK: HealthPageLink = {
   href: '/admin/business-os-tiers',
-  text: 'Open Plans & entitlements (plans and account lookup)',
+  text: 'Open Plans & entitlements',
 };
 
 /**

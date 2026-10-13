@@ -173,7 +173,7 @@ describe('QA S5: the entitlements tile is never green, in any mode', () => {
     expect(t.headline).toBe(headline);
     expect(t.figures).toHaveLength(1);
     expect(t.figures[0].label).toBe('Mode in effect');
-    expect(t.pageLink).toEqual({ href: '/admin/business-os-tiers', text: 'Open Plans & entitlements (plans and account lookup)' });
+    expect(t.pageLink).toEqual({ href: '/admin/business-os-tiers', text: 'Open Plans & entitlements' });
     expect(t.otherwise).toMatch(/never green/);
   });
 

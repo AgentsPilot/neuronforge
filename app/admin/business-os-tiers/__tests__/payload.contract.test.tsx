@@ -16,11 +16,12 @@
  * builder and nothing here declares a shape.
  *
  * ── The same gap, found elsewhere on this screen ────────────────────────────
- * `AccountLookup` consumes a different payload — the accounts route — and had
- * the same class of defect twice over: `basis` typed `string` when the route
- * sends an object (it threw on every successful lookup), and a locally computed
- * `value !== false` where the server now sends `granting`. That seam is covered
- * by `accountLookup.contract.test.tsx`, built the same way.
+ * `EntitlementSnapshot` (once this screen's account lookup, removed in LF-2,
+ * now the Businesses drawer's) consumes a different payload — the accounts
+ * route — and had the same class of defect twice over: `basis` typed `string`
+ * when the route sends an object (it threw on every successful lookup), and a
+ * locally computed `value !== false` where the server now sends `granting`.
+ * That seam is covered by `accountLookup.contract.test.tsx`, built the same way.
  */
 
 import '@testing-library/jest-dom';

@@ -255,7 +255,7 @@ export function QueueItemsPanel({
       {!failure && items.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="uppercase tracking-wide text-slate-500">
+            <thead className="uppercase tracking-wide text-slate-400">
               <tr>
                 <th className="pb-1 pr-3 font-normal">Business</th>
                 <th className="pb-1 pr-3 font-normal">Item</th>

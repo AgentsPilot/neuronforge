@@ -36,7 +36,7 @@ export function DeletedAccountsBucket({ bucket }: { bucket: ActivityDeletedBucke
         {' — '}
         {formatCount(bucket.count)} actions, {prefix}
         {formatUsd(bucket.costUsd)}, {prefix}
-        {formatCredits(bucket.credits)} credits <span className="text-slate-500">({DELETED_BUCKET_NOTE})</span>
+        {formatCredits(bucket.credits)} credits <span className="text-slate-400">({DELETED_BUCKET_NOTE})</span>
       </span>
     </p>
   );

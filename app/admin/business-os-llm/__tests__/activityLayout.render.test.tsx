@@ -577,12 +577,12 @@ describe('T-13: the table (§5.7, F-71, F-72, T-5, T-6)', () => {
     );
     reference.unmount();
 
-    // The only green is the shared chip's (T-6); slate-500 survives only in the
-    // record-state marker, recorded for a later tidy-up (§9 finding).
+    // The only green is the shared chip's (T-6). LF-1 (F-116 Activity half) moved
+    // the record-state marker, the last slate-500 in the table, to slate-400, so
+    // the old "markers only" exception is now "none at all" (a stronger check).
     const greens = [...table.querySelectorAll('[class*="text-emerald-"]')];
     expect(greens.every((el) => el.closest('[data-tone="ok"]') !== null)).toBe(true);
-    const dim = [...table.querySelectorAll('[class*="text-slate-500"]')];
-    expect(dim.every((el) => (el.getAttribute('data-testid') ?? '').startsWith('marker-'))).toBe(true);
+    expect(table.querySelectorAll('[class*="text-slate-500"]')).toHaveLength(0);
   });
 });
 

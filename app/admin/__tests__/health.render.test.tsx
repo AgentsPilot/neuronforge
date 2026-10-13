@@ -105,7 +105,7 @@ const SUMMARY: HealthSummary = {
       status: 'neutral',
       headline: 'Shadow mode: Plans are checked and logged; nothing is blocked.',
       figures: [{ label: 'Mode in effect', value: 'Shadow', exact: true, href: null, linkLabel: null, note: null }],
-      pageLink: { href: '/admin/business-os-tiers', text: 'Open Plans & entitlements (plans and account lookup)' },
+      pageLink: { href: '/admin/business-os-tiers', text: 'Open Plans & entitlements' },
     }),
     tile({ id: 'bos_ai_settings', status: 'unavailable', headline: 'Could not check just now' }),
     tile({ id: 'scheduled_jobs', status: 'not_measured', headline: 'Not measured yet', footnote: 'No page yet.' }),
@@ -180,7 +180,7 @@ describe('the Health page', () => {
     render(<AdminHealthPage />);
     const ent = await screen.findByTestId('health-tile-entitlements_mode');
     const link = within(ent).getByTestId('page-link');
-    expect(link.textContent).toBe('Open Plans & entitlements (plans and account lookup)');
+    expect(link.textContent).toBe('Open Plans & entitlements');
     expect(link.getAttribute('href')).toBe('/admin/business-os-tiers');
     expect(within(ent).getByText('Mode in effect')).toBeTruthy();
     expect(ent.textContent).not.toMatch(/\d/);

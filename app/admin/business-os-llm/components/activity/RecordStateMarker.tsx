@@ -107,7 +107,7 @@ export function RecordStateMarker({ row, settleMinutes }: { row: MarkedRecord; s
   }
   if (markers.length === 0) {
     return (
-      <span className="text-xs text-slate-500" data-testid="marker-none">
+      <span className="text-xs text-slate-400" data-testid="marker-none">
         {MARKER_NONE}
       </span>
     );

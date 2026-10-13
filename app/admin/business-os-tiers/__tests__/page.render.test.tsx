@@ -281,14 +281,24 @@ describe('withheld is not the same as refused (SA R-1)', () => {
   });
 });
 
-describe('the account lookup says why it wants an id', () => {
-  it('names the reason and points at the screen that does search people', async () => {
+describe('one account is looked at on Businesses, not here (LF-2)', () => {
+  it('has no lookup, and one line pointing at Businesses with the search it really has (SA-C1)', async () => {
     await renderPage();
 
-    const lookup = screen.getByTestId('account-lookup');
-    expect(lookup).toHaveTextContent(/not an email/i);
-    expect(lookup).toHaveTextContent(/look people up/i);
-    expect(within(lookup).getByRole('link', { name: /Businesses/ })).toHaveAttribute('href', '/admin/users');
+    expect(screen.queryByTestId('account-lookup')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Look up an account/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Account id')).not.toBeInTheDocument();
+
+    const pointer = screen.getByTestId('businesses-pointer');
+    expect(pointer).toHaveTextContent(
+      "To see one account's plan and which layer decided each capability, open the account on Businesses (Plan & entitlements). Search Businesses by name, business name or account id."
+    );
+    // Businesses search does not match email on the server (SA V-3).
+    expect(pointer).not.toHaveTextContent(/email/i);
+    expect(within(pointer).getByRole('link', { name: 'Businesses' })).toHaveAttribute('href', '/admin/users');
+
+    // The last thing in the content (§2.2).
+    expect(screen.getByTestId('plans-content').lastElementChild).toBe(pointer);
   });
 });
 
@@ -313,13 +323,17 @@ describe('read-only', () => {
 
     expect(screen.getByText('assign_tier')).toBeInTheDocument();
     expect(screen.getByText('launch_champion_existing')).toBeInTheDocument();
-    expect(screen.getByText(/Changing any of this/i)).toBeInTheDocument();
+    // LF-2: one footnote line, not a box with a heading.
+    expect(screen.getByTestId('write-ops-footnote')).toHaveTextContent(
+      'This page only reads. Per-account changes are audited API operations, not buttons:'
+    );
+    expect(screen.queryByText(/Changing any of this/i)).not.toBeInTheDocument();
   });
 
-  it('has no control that submits a change — only the lookup and the disclosures', async () => {
+  it('has no control that submits a change — only Refresh and the disclosures', async () => {
     await renderPage();
 
-    // The only button that posts anywhere is the account lookup, which reads.
+    // Nothing here posts anywhere: the plans read is the page's only request.
     const buttons = screen.getAllByRole('button').map((button) => button.textContent ?? '');
     for (const label of buttons) {
       expect(label).not.toMatch(/save|assign|apply|reset|launch|grant|revoke/i);
@@ -609,7 +623,7 @@ describe('L-5 T-9: region order, one alert, no new landmark (SA S-5, S-6)', () =
   });
 });
 
-describe('L-5 SA S-2: no submit control in the error state or while a lookup reads', () => {
+describe('L-5 SA S-2: no submit control in the error state', () => {
   it('the error state offers only Refresh and Try again', async () => {
     fetchSequence(new TypeError('Failed to fetch'));
     render(<BusinessOsTiersPage />);
@@ -617,22 +631,6 @@ describe('L-5 SA S-2: no submit control in the error state or while a lookup rea
 
     const labels = screen.getAllByRole('button').map((button) => button.textContent ?? '');
     expect(labels).toContain('Try again');
-    for (const label of labels) expect(label).not.toMatch(SUBMIT_WORDS);
-  });
-
-  it('a pending lookup shows "Reading…", and no button offers a change', async () => {
-    const mock = fetchSequence(okBody(payload()), 'pending');
-    render(<BusinessOsTiersPage />);
-    await waitFor(() => expect(screen.getByTestId('enforcement-banner')).toBeInTheDocument());
-
-    fireEvent.change(screen.getByLabelText('Account id'), {
-      target: { value: '11111111-1111-4111-8111-111111111111' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /Look up/ }));
-
-    await waitFor(() => expect(mock).toHaveBeenCalledTimes(2));
-    const labels = screen.getAllByRole('button').map((button) => button.textContent ?? '');
-    expect(labels).toContain('Reading…');
     for (const label of labels) expect(label).not.toMatch(SUBMIT_WORDS);
   });
 });
