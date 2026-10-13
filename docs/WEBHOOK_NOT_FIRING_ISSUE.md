@@ -1,5 +1,7 @@
 # Webhook Not Firing Issue
 
+> **Last Updated**: 2026-10-12
+
 ## Problem
 
 Subscriptions are being created successfully in Stripe with correct metadata, but webhooks are not being received/processed automatically. Manual sync script works correctly.
@@ -53,7 +55,7 @@ Subscriptions are being created successfully in Stripe with correct metadata, bu
 ### Possible Causes
 
 1. **Stripe CLI Not Forwarding**:
-   - Stripe CLI is running: `stripe listen --forward-to localhost:3000/api/stripe/webhook`
+   - Stripe CLI is running: `stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook`
    - But events may not be reaching the dev server
    - Check: Are events visible in Stripe CLI output?
 
@@ -170,3 +172,11 @@ Based on the answers above, we can determine:
 🟡 **INVESTIGATING**: Webhook code is correct, but events not being received
 ✅ **WORKING**: Manual sync as workaround
 ✅ **FIXED**: Multiplier bug (1,000 vs 10,000)
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |

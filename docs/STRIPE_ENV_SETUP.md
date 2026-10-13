@@ -1,5 +1,7 @@
 # Stripe Environment Variables Setup
 
+> **Last Updated**: 2026-10-12
+
 ## Required Environment Variables
 
 Add these to your `.env.local` file:
@@ -45,8 +47,10 @@ This will open your browser to authenticate with Stripe.
 
 **Step 3: Start Webhook Forwarding**
 ```bash
-stripe listen --forward-to localhost:3000/api/stripe/webhook
+stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook
 ```
+
+> **Stripe CLI 1.53+:** a bare `stripe listen --forward-to …` is refused — the CLI now needs an explicit `--events` list or `--all-snapshot`. The list above is every event `app/api/stripe/webhook/route.ts` and its Business OS plan and boost handlers act on; `stripe listen --all-snapshot --forward-to localhost:3000/api/stripe/webhook` forwards everything instead. The CLI prints a `whsec_…` signing secret: put it in `STRIPE_WEBHOOK_SECRET` in `.env.local` (never committed).
 
 **Step 4: Copy the Webhook Secret**
 
@@ -166,7 +170,7 @@ After setting up webhook forwarding, test it:
 
 2. **In another terminal**: Run Stripe webhook forwarding
    ```bash
-   stripe listen --forward-to localhost:3000/api/stripe/webhook
+   stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook
    ```
 
 3. **Trigger a test event**:
@@ -226,7 +230,7 @@ If a key is exposed:
 ### Issue: Webhook events not reaching local server
 
 **Solution**:
-1. Check Stripe CLI is running: `stripe listen --forward-to localhost:3000/api/stripe/webhook`
+1. Check Stripe CLI is running: `stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook`
 2. Check dev server is running on port 3000
 3. Check firewall isn't blocking the connection
 
@@ -251,7 +255,7 @@ Changes take effect immediately on next payment failure.
 
 - [ ] Install Stripe CLI
 - [ ] Run `stripe login`
-- [ ] Run `stripe listen --forward-to localhost:3000/api/stripe/webhook`
+- [ ] Run `stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook`
 - [ ] Copy webhook secret to `.env.local`
 - [ ] Add `STRIPE_SECRET_KEY` and `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` from Stripe Dashboard
 - [ ] Add `SUPABASE_SERVICE_ROLE_KEY` from Supabase Dashboard
@@ -261,4 +265,12 @@ Changes take effect immediately on next payment failure.
 
 ---
 
-**Documentation Updated**: 2025-01-05
+**Originally written**: 2025-01-05
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |

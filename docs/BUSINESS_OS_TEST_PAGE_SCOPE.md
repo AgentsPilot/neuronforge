@@ -1,6 +1,6 @@
 # Business OS Test Page — Scope & Functionality
 
-> **Last Updated**: 2026-10-11
+> **Last Updated**: 2026-10-12
 
 **Location:** `app/test-business-os/page.tsx`
 **Route:** `/test-business-os`
@@ -281,7 +281,7 @@ The tab imports only types from server modules. All labels and statuses are comp
 **API Endpoints Used:** `POST /api/business-os/billing/plan/checkout`.
 
 **Use cases:**
-- Pay with `4242 4242 4242 4242` with the Stripe CLI forwarding to the local webhook (`stripe listen --forward-to localhost:3000/api/stripe/webhook`): `checkout.session.completed` links the subscription and clears the lock (log `bos_billing_checkout_linked`), `invoice.paid` applies the plan (log `bos_billing_invoice_applied`). The admin Tiers page then shows the bought tier, paid-through = Stripe's period end, and the credit period starting on the billing date. Full runbook: the P-3b workplan §9.
+- Pay with `4242 4242 4242 4242` with the Stripe CLI forwarding to the local webhook (`stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook`): `checkout.session.completed` links the subscription and clears the lock (log `bos_billing_checkout_linked`), `invoice.paid` applies the plan (log `bos_billing_invoice_applied`). The admin Tiers page then shows the bought tier, paid-through = Stripe's period end, and the credit period starting on the billing date. Full runbook: the P-3b workplan §9.
 - Press Start again after paying: `409 subscription_live` (the billing record now holds the subscription). Before paying, with a session still open: `409 checkout_open`.
 - Cancel the test subscription in the Stripe sandbox dashboard the same day: `customer.subscription.deleted` mirrors `canceled` and `ended_at` (log `bos_billing_subscription_mirrored`); the plan keeps its tier until the paid-through date.
 - Writes go to the shared database (PF-15): use a designated test account only; every row is `livemode = false`.
@@ -439,3 +439,4 @@ Could not run a live session/DB. The following need a manual pass on `/test-busi
 | 2026-10-11 | Billing tab copy corrected (plan payments P-3b.2) | `PlanCheckoutPanel.tsx` no longer says paying changes no plan until P-3b: its description and completion message now say paying switches the account's plan (test mode, shared database, test accounts only; cancel the sandbox subscription after). Text only. Purpose paragraph updated to match. |
 | 2026-10-11 | Test credits tab (slice TC-1, TEST ONLY) | Added the **Tab: Test credits** section: admin-only take-plan-credits on any account behind `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED`, the reused business picker, position before/after, the confirm step with company name and account id, and where a test charge shows (credit report `test_harness`, Finance health credits not USD, owner history "Other activity", AI Activity "Not an AI action"). New component `components/test-business-os/TestCreditsPanel.tsx`. |
 | 2026-10-11 | Harness buttons styled (TC-1 follow-up) | Every action button on the harness (Overview, Modules, Billing, LLM Usage, Test credits, Session panel, shared viewer and logs) now takes one shared look from `components/test-business-os/harnessButton.ts`: border, background, rounded corners, pointer, hover shade, dimmed disabled state; destructive actions (Yes, take credits, Clear Debug Logs, Sign out) are red. Tabs and the Danger Zone panel keep their own styling. No behaviour change. |
+| 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |

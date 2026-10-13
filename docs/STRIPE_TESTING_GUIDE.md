@@ -1,5 +1,7 @@
 # Stripe Testing Guide - End-to-End Flow
 
+> **Last Updated**: 2026-10-12
+
 ## Overview
 
 This guide shows how to test the complete billing flow including transactions, invoices, and credit allocation without deleting your existing subscription.
@@ -125,8 +127,10 @@ brew install stripe/stripe-cli/stripe
 stripe login
 
 # Forward webhooks to local server
-stripe listen --forward-to localhost:3000/api/stripe/webhook
+stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook
 ```
+
+> **Stripe CLI 1.53+:** a bare `stripe listen --forward-to …` is refused — the CLI now needs an explicit `--events` list or `--all-snapshot`. The list above is every event `app/api/stripe/webhook/route.ts` and its Business OS plan and boost handlers act on; `stripe listen --all-snapshot --forward-to localhost:3000/api/stripe/webhook` forwards everything instead. The CLI prints a `whsec_…` signing secret: put it in `STRIPE_WEBHOOK_SECRET` in `.env.local` (never committed).
 
 ### Trigger Events
 
@@ -410,3 +414,11 @@ WHERE user_id = 'YOUR_USER_ID';
 8. ✅ Test payment failure scenario
 
 This gives you confidence that the entire flow works correctly!
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |
