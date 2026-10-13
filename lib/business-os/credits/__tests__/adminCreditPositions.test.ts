@@ -238,6 +238,27 @@ describe('readAdminCreditPositions — the second projection (SA-Q7)', () => {
     expect(finance.listTotalsForAccountsInRange).toHaveBeenCalledTimes(1);
   });
 
+  it('a restarted period (re-anchor fix): finance agrees with the list, and the account is not over its allowance', async () => {
+    // Test figure: below the old period's usage, so counting the old row would read "over".
+    const allowance = { amount: 400, per: 'month' };
+    const fixture: Fixture = {
+      snapshots: { [MONTHLY_ID]: { unavailable: false, allowance } },
+      anchors: { [MONTHLY_ID]: '2026-10-12T18:21:50Z' },
+      totals: [{ user_id: MONTHLY_ID, period_start: '2026-10-04 15:15:01+00', credits_total: '20276' }],
+    };
+    const now = new Date('2026-10-12T19:00:00Z');
+    const positions = await readAdminCreditPositions([MONTHLY_ID], fixtureDeps(fixture).deps, log(), { now });
+    const list = await readAdminCreditsLeft([MONTHLY_ID], fixtureDeps(fixture).deps, log(), { now });
+
+    const position = positions.byUserId.get(MONTHLY_ID);
+    expect(position).toEqual({ kind: 'position', allowance: 400, used: 0, trial: false });
+    if (position?.kind !== 'position') throw new Error('expected a position');
+    expect(position.used).toBeLessThanOrEqual(position.allowance);
+    const percent = creditPercentLeft(position.used, position.allowance);
+    expect(list.byUserId.get(MONTHLY_ID)).toEqual({ kind: 'percent', value: percent?.shown.kind === 'percent' ? percent.shown.value : -1, trial: false });
+    expect(list.byUserId.get(MONTHLY_ID)).toEqual({ kind: 'percent', value: 100, trial: false });
+  });
+
   it('nobody to read: zero reads, an empty ok pass', async () => {
     const { deps, getSnapshots, findPeriodAnchorsBatch } = fixtureDeps(TWELVE);
     const pass = await readAdminCreditPositions([], deps, log(), { now: NOW });

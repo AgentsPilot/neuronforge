@@ -177,6 +177,29 @@ describe('readCreditPosition gives the owner card\'s figures for the same deps',
     expect(trial.data!.used).toBeCloseTo(monthly.data!.used + 5, 6);
   });
 
+  it('a restarted period (re-anchor fix, SA finding d): the per-account block reads the new key, so nothing is used', async () => {
+    const OLD_KEY = '2026-10-04 15:15:01+00';
+    const NEW_KEY = '2026-10-12 18:21:50+00';
+    const base = deps();
+    const periodStartFor = jest.fn(async () => ({ data: NEW_KEY, error: null }));
+    const findTotalsForPeriod = jest.fn(async (_a: string, key: string) => ({
+      data: key === OLD_KEY ? asOwnerTotals(totalsFor([row('charge', 20276, { period_start: OLD_KEY })], OLD_KEY)) : null,
+      error: null,
+    }));
+    const d: OwnerCreditCardDeps = {
+      ...base,
+      findPeriodAnchor: async () => ({ data: '2026-10-12T18:21:50Z', error: null }),
+      periodStartFor,
+      now: () => new Date('2026-10-12T19:00:00Z'),
+      owner: { ...base.owner, findTotalsForPeriod },
+    };
+    const [position, card] = await Promise.all([readCreditPosition(A, d, makeLog()), readOwnerCreditUsage(A, d, makeLog())]);
+    expect(position.data!.used).toBe(0);
+    expect(position.data!.used).toBe(card.data!.used);
+    // The key read is the DB function's answer, verbatim — never the old row's.
+    expect(findTotalsForPeriod.mock.calls.map(([, key]) => key)).toEqual([NEW_KEY, NEW_KEY]);
+  });
+
   it('corrections are attributed under their charge\'s trigger', async () => {
     const position = await readCreditPosition(A, deps(), makeLog());
     expect(position.data!.usedByOwner).toBeCloseTo(2.4 - 0.4, 6);
