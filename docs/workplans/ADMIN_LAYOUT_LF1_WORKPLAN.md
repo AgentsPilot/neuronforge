@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-layout-lf1` (cut from `feature/admin-layout-followups`, PR #336)
 **Path:** UI short path (Dev, then SA code review and QA in parallel, then user diff, then RM)
 **Date:** 2026-10-13
-**Status:** Code Complete (uncommitted, awaiting SA code review + QA)
+**Status:** PR #338 open — fast-track (SA + QA passed); the user merges
 
 ## Overview
 
@@ -134,7 +134,13 @@ No fixes required. The browser checks QB-1 to QB-8 are still owed by QA.
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf1` |
+| Code commit | `b5939019` |
+| Merge of `origin/main` | `d4741aa2` (clean) |
+| PR | [#338](https://github.com/AgentsPilot/neuronforge/pull/338), open, fast-track; not merged by RM |
+| Re-run after merge | Jest 68 suites / 2200 tests green; `lint:hooks` clean; `typecheck:bos-llm` passed (0 new) |
 
 ## Change History
 
@@ -142,6 +148,8 @@ No fixes required. The browser checks QB-1 to QB-8 are still owed by QA.
 |---|---|---|
 | 2026-10-13 | Created and built (Dev) | UI short path: 34 classes in 11 files, one tightened assertion, one new guard |
 | 2026-10-13 | SA code review | Code approved, no fixes required |
+| 2026-10-13 | QA (TL, browser) | PASS: 0 elements below 4.5:1 on all four pages |
+| 2026-10-13 | Committed, PR opened (RM) | `b5939019`, merged `origin/main` (`d4741aa2`), PR #338 open under the admin-layout fast-track |
 
 ## QA Report (TL, browser) — 2026-10-13
 
