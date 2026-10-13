@@ -113,6 +113,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     }
   }, []);
 
+  // Closed instances are mounted as warm-ups (the provider, `/onboarding-build`, PERF-1): keep every side effect gated on `isOpen`.
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
