@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { CLIENT_STAGE_TYPES, ACTIVE_PIPELINE_TYPES } from '@/lib/crm/StageTypeUtils';
 import { publicSiteUrl } from '@/lib/utils/origins';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { z } from 'zod';
@@ -275,6 +276,15 @@ interface CapabilityStats {
     }[];
     revenue_paid_30d: number;
     revenue_owed_30d: number;
+    /**
+     * Money quoted and still undecided: proposals at 'sent' or 'viewed'.
+     *
+     * Drafts are excluded — never shown to a client, so nothing is waiting on
+     * one. All time, like the write-off figures, because a quote does not stop
+     * being open on day 31.
+     */
+    open_proposals_amount: number;
+    open_proposals_count: number;
     /** Unpaid plan installments — owed money that is not an invoice. */
     plan_owed_amount: number;
     plan_pending_count: number;
@@ -428,9 +438,52 @@ export async function GET(request: NextRequest) {
     // 5. Fetch pipeline stages for the user
     const { data: pipelineStages } = await supabaseServer
       .from('crm_pipeline_stages')
-      .select('stage_key, stage_label, color, position')
+      .select('stage_key, stage_label, color, position, stage_type')
       .eq('user_id', user.id)
       .order('position', { ascending: true });
+
+    /*
+     * WHICH STAGES MEAN "CLIENT" AND "STILL IN THE PIPELINE" — FROM THE
+     * BUSINESS'S OWN PIPELINE, NOT FROM A LIST OF ENGLISH WORDS.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * These two counts matched hardcoded stage KEYS: `stage ilike '%client%'`
+     * for clients, and a list of eight English words for leads. Pipeline stages
+     * are configured per vertical and the keys are not English nouns, so on a
+     * real account the counts were simply wrong:
+     *
+     *     inquiry              lead         פנייה
+     *     initial_consultation prospect     ייעוץ ראשוני
+     *     family_enrolled      client       לקוח
+     *     completed            past_client  הושלם
+     *
+     * `family_enrolled` does not contain "client", so a business with three
+     * enrolled families reported ZERO clients while collecting money from them.
+     * `initial_consultation` was not in the lead list either, so half the
+     * pipeline was invisible too.
+     *
+     * `crm_pipeline_stages.stage_type` is the semantic column that exists for
+     * exactly this, and `lib/crm/StageTypeUtils` is built on it. Deriving from
+     * the rows already fetched above costs no extra query.
+     *
+     * THE FALLBACK IS LOAD-BEARING. `.in('stage', [])` matches nothing, so an
+     * account whose `stage_type` is not populated would go from a wrong number
+     * to zero. Where the column is empty the old keys are used, which is no
+     * worse than today for those accounts and correct for everyone else.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const stageRows = (pipelineStages ?? []) as { stage_key: string; stage_type: string | null }[];
+    const keysForTypes = (types: readonly string[]) =>
+      stageRows.filter(r => r.stage_type && types.includes(r.stage_type)).map(r => r.stage_key);
+
+    const typedClientKeys = keysForTypes(CLIENT_STAGE_TYPES);
+    const typedActiveKeys = keysForTypes(ACTIVE_PIPELINE_TYPES);
+
+    const LEGACY_LEAD_KEYS = ['lead', 'inquiry', 'contacted', 'meeting', 'proposal', 'negotiation', 'discovery', 'qualified'];
+    const LEGACY_CLIENT_KEYS = ['client', 'active', 'closed_won'];
+
+    const clientStageKeys = typedClientKeys.length > 0 ? typedClientKeys : LEGACY_CLIENT_KEYS;
+    const activeStageKeys = typedActiveKeys.length > 0 ? typedActiveKeys : LEGACY_LEAD_KEYS;
 
     // 6. Fetch all stats in parallel
     const [
@@ -508,16 +561,23 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .gte('created_at', sevenDaysAgo),
       // CRM: contacts that became clients this week
-      // Match stages that indicate client status across different verticals:
-      // - 'active_client', 'client' (therapist/default)
-      // - 'active' (coach/consultant - Active Client / Active Project)
-      // - 'closed_won' (sales)
-      // We check updated_at as a proxy for when they moved to this stage
+      /*
+       * Became a client in the last seven days.
+       *
+       * The same pipeline-derived keys as the active-client count above, for the
+       * same reason: the English-word match this used ('%client%', 'active',
+       * 'closed_won') misses every vertical whose stage key is not an English
+       * noun — `family_enrolled`, labelled לקוח, among them.
+       *
+       * `updated_at` remains a proxy for when the contact moved to the stage,
+       * which is the pre-existing approximation here and not something this
+       * change alters.
+       */
       supabaseServer
         .from('crm_contacts')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .or('stage.ilike.%client%,stage.eq.active,stage.eq.closed_won')
+        .in('stage', clientStageKeys)
         .gte('updated_at', sevenDaysAgo),
       // CRM: contacts with recent activity (to calculate "went quiet")
       supabaseServer
@@ -742,18 +802,18 @@ export async function GET(request: NextRequest) {
         .from('crm_contacts')
         .select('source')
         .eq('user_id', user.id),
-      // CRM: active leads (contacts in lead-type stages)
+      // CRM: still in the pipeline — this business's own lead and prospect stages
       supabaseServer
         .from('crm_contacts')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .in('stage', ['lead', 'inquiry', 'contacted', 'meeting', 'proposal', 'negotiation', 'discovery', 'qualified']),
-      // CRM: active clients
+        .in('stage', activeStageKeys),
+      // CRM: active clients — this business's own client stages
       supabaseServer
         .from('crm_contacts')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .or('stage.ilike.%client%,stage.eq.active,stage.eq.closed_won'),
+        .in('stage', clientStageKeys),
       // Payments: all transactions in 30 days (for breakdown by status)
       supabaseServer
         .from('payment_transactions')
@@ -1382,19 +1442,41 @@ export async function GET(request: NextRequest) {
      * all-time too despite the `_30d` in the names they feed. The reader is told
      * which it is in the card's own subtitle.
      */
-    const [cancelledInvoicesResult, cancelledStagesResult] = await Promise.all([
+    const [cancelledInvoicesResult, cancelledStagesResult, openProposalsResult] = await Promise.all([
       supabaseServer
         .from('payment_invoices')
         .select('status, amount, refunded_amount, currency')
         .eq('user_id', user.id)
         .eq('status', 'cancelled')
         /*
-         * Sent only. A binned draft lost nobody anything — the client was never
-         * told a number, so no number was ever coming. `voidInvoice` cancels
-         * drafts alongside sent invoices, so this filter is load-bearing, not
-         * defensive. Mirrors why `OUTSTANDING_STATUSES` excludes drafts.
+         * SENT, OR RAISED AGAINST A BOOKING.
+         *
+         * ───────────────────────────────────────────────────────────────────
+         * This was `sent only`, on the reasoning that a binned draft lost
+         * nobody anything: the client was never told a number, so no number was
+         * ever coming. That holds for an owner's abandoned scratch invoice and
+         * it is why drafts are excluded from owed money too.
+         *
+         * It does NOT hold for an invoice raised against a booking. Found on a
+         * live account, 2026-10-09: two cancelled invoices with no `sent_at`,
+         * INV-00033 for 5,000 and INV-00034 for 4,000, both carrying a
+         * `booking_id` whose booking status was COMPLETED, both with a real
+         * contact. That is finished work, invoiced and then written off — 9,000
+         * of it — and the figure reported 10,700 while the orders page, which
+         * applies no `sent_at` filter at all, reported 19,700. An owner saw the
+         * two pages disagree and was right to.
+         *
+         * A `booking_id` is the signal that something real sits behind the
+         * invoice. Keeping `sent_at` as the other arm preserves the original
+         * protection for an invoice typed, binned, and attached to nothing.
+         *
+         * Residual difference from the orders page: a cancelled scratch draft
+         * with no booking still counts there and not here. That is a genuine
+         * disagreement about what "lost" means and wants ONE shared definition
+         * rather than a second filter bolted on here.
+         * ───────────────────────────────────────────────────────────────────
          */
-        .not('sent_at', 'is', null),
+        .or('sent_at.not.is.null,booking_id.not.is.null'),
       supabaseServer
         .from('payment_plan_installments')
         .select('status, amount')
@@ -1406,6 +1488,27 @@ export async function GET(request: NextRequest) {
          * identical trap `.is('invoice_id', null)` avoids for owed money.
          */
         .is('invoice_id', null),
+      /*
+       * Money QUOTED and still waiting for an answer.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * The fourth state money can be in, and the only one this endpoint did
+       * not report: arrived, agreed-but-unpaid and written-off were all here,
+       * while a business with a quote out for 20,000 read the same as one with
+       * none. It is the top of the money funnel and belongs in an overview.
+       *
+       * 'sent' and 'viewed' ONLY — never 'draft'. The same reasoning as the
+       * cancelled-invoice filter above: a draft was never shown to anybody, so
+       * no number is waiting on anybody, and counting it would report the
+       * owner's own unfinished writing as pipeline. 'accepted' and 'declined'
+       * are decided and belong to invoices or to nothing.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      supabaseServer
+        .from('proposals')
+        .select('total')
+        .eq('user_id', user.id)
+        .in('status', ['sent', 'viewed']),
     ]);
 
     if (cancelledInvoicesResult.error || cancelledStagesResult.error) {
@@ -1443,6 +1546,17 @@ export async function GET(request: NextRequest) {
 
     /** Everything a client still owes, however it was arranged. */
     const totalOwedAmount = pendingInvoicesAmount + planOwedAmount;
+
+    /*
+     * Quoted and undecided. Summed across currencies like every other flat
+     * total on this endpoint; `revenue_by_currency` and the page's mixed-
+     * currency notice are how that is made honest.
+     */
+    const openProposalsAmount = (openProposalsResult.data || []).reduce(
+      (sum: number, p: { total: number | string | null }) => sum + (Number(p.total) || 0),
+      0
+    );
+    const openProposalsCount = openProposalsResult.data?.length || 0;
 
     /**
      * Where the money came from, counted once each.
@@ -2149,6 +2263,9 @@ export async function GET(request: NextRequest) {
         // installment is owed money that is not an invoice, and counting only
         // invoices reported a live payment plan as nothing outstanding.
         revenue_owed_30d: totalOwedAmount,
+        /** Quoted, sent, and not yet accepted or declined. All time. */
+        open_proposals_amount: Math.round(openProposalsAmount * 100) / 100,
+        open_proposals_count: openProposalsCount,
         /** The plan half of what is owed, so a caller can name it separately. */
         plan_owed_amount: planOwedAmount,
         plan_pending_count: planPendingCount,
@@ -2161,7 +2278,7 @@ export async function GET(request: NextRequest) {
         source_invoices_outstanding: pendingInvoicesAmount,
         source_plans_paid: planCollected,
         source_plans_outstanding: planOwedAmount,
-        // Revenue breakdown by source (for RevenueSourcesSection)
+        // Revenue breakdown by source. Read by the reports page's financial detail.
         transactions_revenue_30d: paymentTransactionsRevenue30d,
         invoices_paid_amount_30d: invoiceRevenue30d,
         pending_invoices: pendingInvoices || 0,

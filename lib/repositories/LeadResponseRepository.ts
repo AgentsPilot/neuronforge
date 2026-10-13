@@ -41,7 +41,19 @@ export type LeadResponseKind =
    * otherwise have clicked is exactly that -- so it belongs here, with the same
    * consent, the same dedupe and the same visibility as a send.
    */
-  | 'meeting_complete';
+  | 'meeting_complete'
+  /**
+   * One reminder on a quote the client has not answered.
+   *
+   * Asks whether they need more time or more information rather than pressing
+   * for a decision — it writes to a PROSPECT, which no other kind here does.
+   *
+   * One per proposal, ever: `hasRowFor` matches on (kind, contact, entity)
+   * with no status filter, so once a row exists for a quote the sweep never
+   * queues a second. A sequence would be a sales cadence, which is a different
+   * product and a different consent.
+   */
+  | 'quote_chase';
 export type LeadResponseStatus = 'pending' | 'processing' | 'sent' | 'skipped' | 'failed';
 
 export interface LeadResponse {
@@ -161,6 +173,83 @@ export class LeadResponseRepository {
       return 0;
     }
     return ((data as unknown[]) || []).length;
+  }
+
+  /**
+   * Record that the OWNER did this themselves, so the automation does not.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * THE DUPLICATE THIS CLOSES
+   *
+   * An owner chasing an intake form by hand and the `chase_intake` automation
+   * call the same function with the same arguments. Nothing connected them: the
+   * sweep's dedup reads this table and a manual send wrote nothing to it, and
+   * the gap only clears when the client RETURNS the form — chasing does not
+   * clear it. So the owner chased on Tuesday morning, the sweep came due that
+   * night, found the form still outstanding, and sent the same reminder again.
+   *
+   * It is the shape the registry already documents for invoices: "two invoice
+   * chasers... neither path aware of the other, because they dedupe in
+   * different tables."
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * WHY A ROW RATHER THAN A CHECK
+   *
+   * `lead_responses_one_per_thing` is a real UNIQUE (kind, contact_id,
+   * entity_id) in the database, so a row written here makes the sweep's enqueue
+   * a no-op whether or not anybody remembers to call `hasRowFor` first. The
+   * guarantee is the constraint, not the caller.
+   *
+   * WRITTEN ALREADY CLOSED, which is the part a two-step would get wrong.
+   * `enqueue` writes `status: 'pending'`, and a drain between that and
+   * `markSent` would claim the row and send the very email this exists to
+   * prevent. One insert, `sent` from birth, no window.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  async recordManualSend(params: {
+    userId: string;
+    contactId: string;
+    kind: LeadResponseKind;
+    /** The booking or invoice. Falls back to the contact, as `enqueue` does. */
+    entityId?: string | null;
+  }): Promise<void> {
+    const { error } = await this.supabase.from('lead_responses').upsert(
+      {
+        contact_id: params.contactId,
+        kind: params.kind,
+        entity_id: params.entityId ?? params.contactId,
+        /*
+         * Closed on arrival. `next_attempt_at` is in the past so no scan that
+         * orders by it can treat this as upcoming work.
+         */
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+        next_attempt_at: new Date().toISOString(),
+        /* Set explicitly and last: never spread a caller's object into a row
+           that carries the tenant key. */
+        user_id: params.userId,
+      },
+      /*
+       * Matches the constraint column for column. `ignoreDuplicates` because an
+       * owner chasing twice is not an error, and because the automation may
+       * legitimately have gone first — in which case its row is the record and
+       * this one has nothing to add.
+       */
+      { onConflict: 'kind,contact_id,entity_id', ignoreDuplicates: true }
+    );
+
+    if (error) {
+      /*
+       * Logged, never thrown. The email has already gone out by the time this
+       * runs, so failing the owner's request would report a send that happened
+       * as a failure. The cost of this error is one duplicate reminder, which
+       * is strictly better than telling an owner their chase did not send.
+       */
+      this.logger.error(
+        { err: error, ...params },
+        'Could not record a manual send; the automation may repeat it'
+      );
+    }
   }
 
   async markSent(id: string): Promise<void> {

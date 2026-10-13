@@ -35,6 +35,26 @@ export interface CreateInvoiceParams {
   description?: string;
   footer?: string;
   metadata?: Record<string, string>;
+  /**
+   * Whether Stripe may collect on this invoice by itself.
+   *
+   * Unset means Stripe's default, which for `send_invoice` is TRUE: once
+   * finalised, Stripe emails the customer and runs its own dunning schedule.
+   * Right for the invoice-email path, which is asking Stripe to do the sending.
+   *
+   * Pass `false` when raising an invoice only so it can be paid on our own
+   * page. The client is already looking at the bill, and a second copy from
+   * Stripe plus a chasing sequence on top of our reminders is noise.
+   */
+  autoAdvance?: boolean;
+  /**
+   * Stripe's idempotency key.
+   *
+   * Two clients opening the same unpaid bill at the same moment must not raise
+   * two invoices for one debt. With a key, Stripe returns the first invoice
+   * for every repeat within 24 hours instead of creating another.
+   */
+  idempotencyKey?: string;
 }
 
 export interface StripeInvoiceResult {
@@ -149,6 +169,7 @@ export class StripeInvoiceService {
         {
           customer: customerId,
           collection_method: 'send_invoice',
+          ...(params.autoAdvance === undefined ? {} : { auto_advance: params.autoAdvance }),
           days_until_due: Math.max(1, Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
           currency, // Set invoice currency to match line items
           description,
@@ -159,7 +180,8 @@ export class StripeInvoiceService {
           }
         },
         {
-          stripeAccount: connectAccountId
+          stripeAccount: connectAccountId,
+          ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {})
         }
       );
 
@@ -294,6 +316,60 @@ export class StripeInvoiceService {
     }
   }
 
+  /**
+   * Finalise an invoice so it can be paid on OUR page, without Stripe sending
+   * anything.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * HOW THIS DIFFERS FROM `sendInvoice`
+   *
+   * `sendInvoice` finalises AND calls Stripe's `invoices.sendInvoice`, which
+   * emails the customer. That is the right thing when Stripe is doing the
+   * delivering. It is the wrong thing when the client is already looking at
+   * the bill in their portal.
+   *
+   * Finalising alone is what creates the PaymentIntent, and therefore the
+   * `confirmation_secret` the embedded card confirms. It charges nobody.
+   *
+   * `auto_advance: false` is the load-bearing argument. Left at Stripe's
+   * default for `send_invoice` — which is TRUE — finalising would hand the
+   * invoice to Stripe's own collection: an email to the customer and a dunning
+   * schedule running alongside our reminders. The client would get two bills
+   * and two chasers for one debt.
+   *
+   * Already-finalised invoices are returned as they are rather than treated as
+   * an error, so a second opener of the same bill is harmless.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async finalizeForPayment(
+    invoiceId: string,
+    connectAccountId: string
+  ): Promise<{ invoiceId: string; status: string; hostedInvoiceUrl: string | null; invoicePdf: string | null }> {
+    const existing = await this.stripe.invoices.retrieve(invoiceId, {
+      stripeAccount: connectAccountId
+    });
+
+    const invoice =
+      existing.status === 'draft'
+        ? await this.stripe.invoices.finalizeInvoice(
+            invoiceId,
+            { auto_advance: false },
+            { stripeAccount: connectAccountId }
+          )
+        : existing;
+
+    logger.info(
+      { invoiceId, connectAccountId, status: invoice.status, wasDraft: existing.status === 'draft' },
+      'Invoice finalised for in-portal payment'
+    );
+
+    return {
+      invoiceId: invoice.id as string,
+      status: invoice.status || 'open',
+      hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+      invoicePdf: invoice.invoice_pdf ?? null
+    };
+  }
   /**
    * Get the hosted invoice URL where client can pay
    */

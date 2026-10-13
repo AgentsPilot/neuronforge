@@ -146,6 +146,11 @@ describe('B-1: fixed kind labels (C7-13)', () => {
       // Added by 20261006d_auto_complete_meetings.sql.
       'meeting_complete',
       'meeting_reminder',
+      // Added by 20261048_chase_quotes.sql: one reminder on an unanswered
+      // quote. Listed here deliberately — a kind the queue accepts and the
+      // admin view cannot name shows as "Other", which is how an operator
+      // loses track of what a row is.
+      'quote_chase',
     ]);
     const labels = QUEUE_ITEM_KIND_LABELS.lead_responses;
     expect(typeof labels).toBe('object');

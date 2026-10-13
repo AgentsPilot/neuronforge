@@ -62,9 +62,23 @@ export interface NotifyRefundInput {
  * Never throws. A refund that succeeded must not be reported as failed because
  * an email did not go out — the money has already moved, and the caller's job
  * is to record that faithfully.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * RETURNS WHETHER IT ACTUALLY SENT.
+ *
+ * Added for the owner-driven RESEND, which is a person pressing a button and
+ * waiting for an answer. Every refund path before it called this and moved on,
+ * so `void` was honest for them — but a resend that reports success while the
+ * client has no email on file is the UI telling the owner a lie they will only
+ * discover when the client rings.
+ *
+ * The automatic callers ignore the value and are unaffected. Still never
+ * throws: `false` means "nothing went out", for every reason, and the reason
+ * is in the log.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-export async function notifyRefund(input: NotifyRefundInput): Promise<void> {
-  if (!input.notifyContact) return;
+export async function notifyRefund(input: NotifyRefundInput): Promise<boolean> {
+  if (!input.notifyContact) return false;
 
   try {
     const { data: transaction } = await supabaseServer
@@ -76,7 +90,7 @@ export async function notifyRefund(input: NotifyRefundInput): Promise<void> {
 
     if (!transaction) {
       logger.warn({ transactionId: input.transactionId }, 'No transaction to notify a refund against');
-      return;
+      return false;
     }
 
     /*
@@ -124,8 +138,7 @@ export async function notifyRefund(input: NotifyRefundInput): Promise<void> {
        * goes out without them: what came back, against which invoice, and where
        * to expect it. Nothing about an appointment that does not exist.
        */
-      await notifyInvoiceRefund(input, transaction);
-      return;
+      return await notifyInvoiceRefund(input, transaction);
     }
 
     const original = Number(transaction.amount);
@@ -148,9 +161,12 @@ export async function notifyRefund(input: NotifyRefundInput): Promise<void> {
       { transactionId: transaction.id, bookingId, refundId: input.refundId },
       'Refund confirmation sent'
     );
+
+    return true;
   } catch (err) {
     // Deliberately swallowed. The money moved; the email is best effort.
     logger.error({ err, transactionId: input.transactionId }, 'Refund confirmation failed to send');
+    return false;
   }
 }
 
@@ -167,13 +183,13 @@ export async function notifyRefund(input: NotifyRefundInput): Promise<void> {
 async function notifyInvoiceRefund(
   input: NotifyRefundInput,
   transaction: { id: string; invoice_id: string | null; amount: number; currency: string; processor_type?: string | null }
-): Promise<void> {
+): Promise<boolean> {
   if (!transaction.invoice_id) {
     logger.info(
       { transactionId: transaction.id },
       'Refund notification skipped: no booking and no invoice to name the client'
     );
-    return;
+    return false;
   }
 
   const { data: invoice } = await supabaseServer
@@ -188,7 +204,7 @@ async function notifyInvoiceRefund(
       { transactionId: transaction.id, invoiceId: transaction.invoice_id },
       'Refund notification skipped: the invoice has no client email'
     );
-    return;
+    return false;
   }
 
   const { data: profile } = await supabaseServer
@@ -246,4 +262,6 @@ async function notifyInvoiceRefund(
       ? 'Refund confirmation sent for an invoice with no booking'
       : 'Refund confirmation could not be sent for an invoice with no booking'
   );
+
+  return result.sent;
 }

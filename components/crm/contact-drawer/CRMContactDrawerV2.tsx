@@ -399,13 +399,61 @@ function quotedPayment(
     // shape, the object returned here is the component's.
     invoiceId: subject?.invoice_id ?? proposal.created_invoice_id ?? undefined,
     /*
+     * And the STATE of that invoice, which this object never carried.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The booking-built payment above sets `invoiceStatus`; this one did not,
+     * so for a QUOTED job the field was always undefined and every reader that
+     * asks whether the invoice is still live silently got "no idea".
+     *
+     * What that cost: a quote stopped before payment, its invoice voided both
+     * here and at Stripe, went on showing "outstanding ₪5,000" with a Manage
+     * payment button and an offer to resend the invoice that had just been
+     * cancelled. The card could not see the cancellation because nothing put it
+     * in front of the card.
+     *
+     * Only for a quote with no stages. A staged quote's money is read from the
+     * stages, which carry their own statuses and are already set to `cancelled`
+     * when a job is stopped; naming the quote's own invoice there would
+     * describe the wrong thing.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    invoiceStatus: stages.length
+      ? undefined
+      : (proposal.invoice.status as SessionPayment['invoiceStatus']),
+    /*
      * What is owed right now: the earliest unpaid stage that has actually been
      * billed. A milestone nobody has marked done has no invoice to resend, and
      * offering to resend one would be offering to send nothing.
      */
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A REFUNDED INVOICE IS NOT AN OUTSTANDING ONE.
+     *
+     * The fallback asked "is this invoice not `paid`", and a refunded invoice's
+     * status is `refunded` — which is not `paid`, so money that had been
+     * collected and handed back read as money still to collect. Downstream,
+     * `PaymentManagementModal` turns that into a settleable invoice and offers
+     * "Mark as paid" on a job the owner had just refunded.
+     *
+     * `refunded_amount` rather than `status`, and the repo's own
+     * `hasBeenRefunded` says why with a live row: a refund can land on an
+     * invoice that was never marked paid, leaving `status` reading `sent` while
+     * the money has genuinely gone back. A PARTIAL refund also deliberately
+     * leaves the status at `paid`, and that invoice is no more collectable for
+     * it.
+     *
+     * The first clause is untouched on purpose: a stage that is genuinely
+     * unpaid and has been billed IS outstanding, which is what keeps the
+     * record-payment button alive on a job whose deposit was refunded while its
+     * final milestone is still owed.
+     * ───────────────────────────────────────────────────────────────────────
+     */
     outstandingInvoiceId:
       stages.find(s => s.status !== 'paid' && s.invoice_id)?.invoice_id ??
-      (proposal.invoice.status !== 'paid' ? proposal.created_invoice_id ?? undefined : undefined),
+      (proposal.invoice.status !== 'paid' && Number(proposal.invoice.refunded_amount ?? 0) <= 0
+        ? proposal.created_invoice_id ?? undefined
+        : undefined),
     invoiceDueDate: proposal.invoice.due_date ?? undefined,
     plan: stages.length > 1
       ? {
@@ -566,6 +614,42 @@ function pickProposal(bookingId: string, proposals: DrawerProposal[]): DrawerPro
 
 // Build journey steps based on booking data
 // This determines which steps to show and their status for each booking type
+/**
+ * Is there anything left for "Stop this job" to stop?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The button cancels the UNBILLED phases and marks the work ended. It was gated
+ * on `proposalStatus === 'accepted'` alone, and an accepted quote stays accepted
+ * for ever — so it sat on a ₪2,000 job with both stages paid and both invoices
+ * settled, inviting an owner to press it and discover it does nothing nameable.
+ *
+ * A stage is still stoppable while `pending` or `billed`: billed-but-unpaid
+ * money can be called off, which is most of the point. `paid`, `cancelled` and
+ * `refunded` are finished either way.
+ *
+ * No plan means a single-payment quote, where the payment's own status is the
+ * whole answer. Note that `status` here means "has money been collected", not
+ * "is the plan finished" — see `quotedPayment`.
+ *
+ * Exported so it can be tested. It lives on a journey step inside a
+ * four-thousand-line component, and the cost of that being unreachable from a
+ * test is a button that either never leaves or leaves too early, on a surface
+ * that ends someone's job.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const FINISHED_STAGE = ['paid', 'cancelled', 'refunded'];
+const SETTLED_PAYMENT = ['paid', 'refunded', 'free'];
+
+export function hasStoppableWork(payment: SessionPayment | null | undefined): boolean {
+  const stages = payment?.plan?.stages;
+
+  if (stages?.length) {
+    return stages.some(stage => !FINISHED_STAGE.includes(String(stage.status)));
+  }
+
+  return !SETTLED_PAYMENT.includes(String(payment?.status ?? ''));
+}
+
 function buildJourneySteps(
   data: ExtendedBookingData,
   language: string = 'en',
@@ -843,6 +927,30 @@ function buildJourneySteps(
         proposalId: proposal?.id ?? null,
         proposalStatus: proposal?.status ?? 'none',
         /*
+         * ─────────────────────────────────────────────────────────────────
+         * IS THERE ANYTHING LEFT TO STOP?
+         *
+         * "Stop this job" cancels the UNBILLED phases and marks the work
+         * ended. On a quote whose every stage is paid there are no unbilled
+         * phases, so the button does nothing it can describe — and offering
+         * it on a finished, fully-collected job invites an owner to press it
+         * and find out.
+         *
+         * It was gated on `proposalStatus === 'accepted'` alone, and an
+         * accepted quote stays accepted forever. Reported on a ₪2,000 job
+         * with both stages paid and both invoices settled.
+         *
+         * A stage still counts as stoppable while it is `pending` or
+         * `billed` — billed but unpaid money can still be called off, which
+         * is most of the point. `paid`, `cancelled` and `refunded` are
+         * finished either way.
+         *
+         * No plan means a single-payment quote, where the payment's own
+         * status is the whole answer.
+         * ─────────────────────────────────────────────────────────────────
+         */
+        hasStoppableWork: hasStoppableWork(data.payment),
+        /*
          * The quote's own title, so a confirmation dialog can name the job
          * instead of showing a uuid. Flattened here like every other field: the
          * step's metadata crosses into a presentational component.
@@ -1041,7 +1149,15 @@ function buildJourneySteps(
        */
       status: payment.status === 'paid' && planIncomplete ? 'active' :
               payment.status === 'paid' ? 'completed' :
-              payment.status === 'refunded' ? 'completed' :  // Refunded is also "completed" (transaction done)
+              /*
+               * NOT `completed`, which is green.
+               *
+               * It was mapped there as "transaction done" — true of the
+               * transaction, and the wrong thing to say about the job. The node
+               * is the first mark an owner reads on the card, and it told them
+               * a fully refunded sale had completed.
+               */
+              payment.status === 'refunded' ? 'refunded' :
               isOverdue ? 'failed' :  // Overdue payments show as failed (red)
               payment.status === 'pending' ? 'active' :
               payment.status === 'failed' ? 'failed' : 'pending',
@@ -1081,9 +1197,23 @@ function buildJourneySteps(
          * leaves the status at `paid`, and the invoice is no more sendable for
          * that.
          */
+        /*
+         * Nor once it has been called off, for the same reason.
+         *
+         * `InvoiceDeliveryService` refuses a cancelled invoice outright --
+         * `InvoiceNotSendableError` with reason `'cancelled'` -- so the button
+         * was drawn beside the words "the payment request was cancelled",
+         * offering to send the very document the line above says is void, and
+         * answering with a 400 when pressed.
+         *
+         * Decided here rather than on the button, because `canResend` feeds
+         * four controls and patching the one that was reported would leave the
+         * other three offering the same impossible action.
+         */
         canResend:
           Boolean(payment.outstandingInvoiceId || payment.invoiceId) &&
-          (payment.refundedAmount ?? 0) <= 0,
+          (payment.refundedAmount ?? 0) <= 0 &&
+          payment.invoiceStatus !== 'cancelled',
         // Which document the button will send, so it can say so.
         invoiceSettled: !payment.outstandingInvoiceId && payment.status === 'paid'
       } : undefined
@@ -1874,6 +2004,15 @@ export function CRMContactDrawerV2({
     label: string;
   } | null>(null);
   const [sendingIntake, setSendingIntake] = useState(false);
+  /*
+   * Resending the refund confirmation — the same shape as the invoice send
+   * beneath it, because it is the same gesture on a different document and an
+   * email to a client is confirmed before it leaves, every time.
+   */
+  const [showRefundEmailConfirm, setShowRefundEmailConfirm] = useState(false);
+  const [pendingRefundInvoiceId, setPendingRefundInvoiceId] = useState<string | null>(null);
+  const [sendingRefundEmail, setSendingRefundEmail] = useState(false);
+
   // Invoice resend confirmation dialog state
   const [showInvoiceConfirm, setShowInvoiceConfirm] = useState(false);
   const [pendingInvoiceId, setPendingInvoiceId] = useState<string | null>(null);
@@ -3580,6 +3719,11 @@ export function CRMContactDrawerV2({
                   setPendingInvoiceBookingId(bookingId);
                   setShowInvoiceConfirm(true);
                 }}
+                onResendRefundEmail={invoiceId => {
+                  // Confirm first — the same as every other send from here.
+                  setPendingRefundInvoiceId(invoiceId);
+                  setShowRefundEmailConfirm(true);
+                }}
                 isLoading={loadingSessions}
                 isOpen={openSection === 'bookings'}
                 onToggle={handleSectionToggle('bookings')}
@@ -4123,7 +4267,6 @@ export function CRMContactDrawerV2({
         }}
         t={t}
         isRTL={isRTL}
-        startInRefundView={true}
       />
 
       {/*
@@ -4454,6 +4597,85 @@ export function CRMContactDrawerV2({
               ) : (
                 t('crm.intake.send') || 'Send'
               )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Refund confirmation resend */}
+      <Dialog open={showRefundEmailConfirm} onOpenChange={setShowRefundEmailConfirm}>
+        <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
+          <DialogHeader>
+            <DialogTitle>
+              {t('crm.refund.resend_confirmation_title') || 'Resend refund confirmation'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-[var(--v2-text-secondary)]">
+              {(
+                t('crm.refund.resend_confirmation_message') ||
+                'Send {name} the refund confirmation again? It says how much came back and when, and carries no payment link.'
+              ).replace('{name}', contact.first_name || '')}
+            </p>
+          </div>
+          <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowRefundEmailConfirm(false);
+                setPendingRefundInvoiceId(null);
+              }}
+              disabled={sendingRefundEmail}
+            >
+              {t('common.cancel') || 'Cancel'}
+            </Button>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={async () => {
+                if (!pendingRefundInvoiceId) return;
+                setSendingRefundEmail(true);
+                try {
+                  const response = await fetch(
+                    `/api/payments/invoices/${pendingRefundInvoiceId}/resend-refund-confirmation`,
+                    { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+                  );
+                  const data = await response.json();
+                  if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Failed to send the refund confirmation');
+                  }
+
+                  /*
+                   * "Nothing was sent" is not a failure, and must not be shown
+                   * as one. The client simply has no address on file — a fact
+                   * about their record, not a fault in the send — and a red
+                   * toast there would send the owner looking for a broken
+                   * system that is working.
+                   */
+                  if (data.data?.sent) {
+                    toast.success(t('crm.refund.email_sent') || 'Refund confirmation sent');
+                  } else {
+                    toast.warning(
+                      t('crm.refund.email_no_address') ||
+                        'No email address on file for this client, so nothing was sent.'
+                    );
+                  }
+
+                  fetchActivities(contact.id, { silent: true });
+                  setShowRefundEmailConfirm(false);
+                  setPendingRefundInvoiceId(null);
+                } catch (err) {
+                  toast.error(
+                    err instanceof Error ? err.message : 'Failed to send the refund confirmation'
+                  );
+                } finally {
+                  setSendingRefundEmail(false);
+                }
+              }}
+              disabled={sendingRefundEmail}
+            >
+              {sendingRefundEmail
+                ? t('common.sending') || 'Sending...'
+                : t('crm.intake.send') || 'Send'}
             </Button>
           </div>
         </DialogContent>

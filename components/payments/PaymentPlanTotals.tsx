@@ -29,6 +29,8 @@
  * @module components/payments/PaymentPlanTotals
  */
 
+import { REFUND_HEX, refundExtent } from './refundTone';
+
 interface PlanStage {
   status: string;
   amount: number;
@@ -162,7 +164,25 @@ export function PaymentPlanTotals({
   const cells = showsRefund
     ? [
         { label: labels.total, value: total, tone: 'var(--v2-text-primary)' },
-        { label: labels.refunded!, value: refunded, tone: '#F79009' },
+        {
+          label: labels.refunded!,
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * THE FIGURE THAT HAS TO BE SEEN.
+           *
+           * Amber read as a note beside the total rather than as the headline
+           * of the card: a job showing "₪2,000 agreed · ₪2,000 returned · ₪0
+           * kept" is a job that earned nothing, and that has to register before
+           * anything else on it does.
+           *
+           * Red only when ALL of it went back. A partial refund keeps amber —
+           * the business is still holding money, and the three cells beside it
+           * say how much.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          value: refunded,
+          tone: REFUND_HEX[refundExtent(refunded, total)],
+        },
         {
           /*
            * What the business actually keeps. Floored at zero: a refund larger

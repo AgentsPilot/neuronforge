@@ -1,9 +1,12 @@
 // app/api/public/invoice/[id]/intent/route.ts
 
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 
 import { createLogger } from '@/lib/logger';
+import { mayViewInvoice } from '@/lib/payments/invoiceAccessToken';
+import { raiseInvoiceForPayment } from '@/lib/payments/raiseInvoiceForPayment';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { supabaseServer } from '@/lib/supabaseServer';
 
@@ -49,6 +52,12 @@ export async function GET(
 ) {
   const { id: invoiceId } = await params;
   const correlationId = request.headers.get('x-correlation-id') ?? crypto.randomUUID();
+
+  /*
+   * This hands out a Stripe client secret, so it is throttled even though the id in front of it is unguessable.
+   */
+  const throttle = await rateLimit(request, 'invoice-intent', RATE_LIMITS.read);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.read.windowSeconds);
   const log = logger.child({ correlationId, invoiceId });
 
   try {
@@ -60,12 +69,55 @@ export async function GET(
      */
     const { data: invoice } = await supabaseServer
       .from('payment_invoices')
-      .select('id, user_id, status, amount, currency, stripe_invoice_id, paid_at, refund_status')
+      .select(
+        'id, user_id, status, amount, currency, stripe_invoice_id, paid_at, refund_status, sent_at, created_at'
+      )
       .eq('id', invoiceId)
       .maybeSingle();
 
     if (!invoice) {
       return NextResponse.json({ success: false, error: 'not_found' }, { status: 404 });
+    }
+
+    /*
+     * THE SAME DOOR AS THE PAGE.
+     *
+     * This endpoint hands out a Stripe client secret and states the amount and
+     * the connected account, so it must not be reachable on terms the page
+     * would refuse. An endpoint that is more permissive than the document it
+     * serves is the way in, whatever the page does.
+     *
+     * `not_found`, matching the page's `notFound()`: an expired link should not
+     * confirm that an invoice with this id exists.
+     */
+    const access = await mayViewInvoice({
+      invoiceId,
+      token: request.nextUrl.searchParams.get('t'),
+      issuedAt: (invoice.sent_at as string | null) ?? (invoice.created_at as string | null),
+    });
+
+    if (!access.allowed) {
+      log.info({ reason: access.reason }, 'Refused an invoice payment secret');
+      return NextResponse.json({ success: false, error: 'not_found' }, { status: 404 });
+    }
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE NUMBER THAT DECIDES WHEN BARE URLS STOP BEING HONOURED.
+     *
+     * `fresh` means this caller presented no token and was admitted only
+     * because the invoice is younger than the grace window. Every link minted
+     * since this shipped carries a token, so this count is made entirely of
+     * links sent BEFORE it — and it should fall to zero within one window.
+     *
+     * When it does, `INVOICE_BARE_URL_GRACE_DAYS=0` collapses the rule to
+     * "signed links only". Logged so that decision comes from a measurement
+     * rather than from a guess at a date, which is also what an auditor asks
+     * for: evidence of why a control was tightened when it was.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (access.reason === 'fresh') {
+      log.info({ reason: 'fresh' }, 'Invoice payment secret served to a bare URL');
     }
 
     // Nothing to collect. Said plainly rather than returning a secret that
@@ -76,10 +128,34 @@ export async function GET(
     if (invoice.refund_status && invoice.refund_status !== 'none') {
       return NextResponse.json({ success: false, error: 'refunded' }, { status: 409 });
     }
-    if (!invoice.stripe_invoice_id) {
-      // Agreed but never billed — a quote stage waiting on the business. There
-      // is nothing at Stripe to pay against yet, and that is not an error.
-      return NextResponse.json({ success: false, error: 'not_billed_yet' }, { status: 409 });
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * RAISE IT IF IT IS NOT THERE YET.
+     *
+     * Accepting a quote raises the invoice at Stripe now, so most arrivals
+     * already have one. Two kinds do not: invoices accepted before that
+     * changed, and invoices a business wrote by hand.
+     *
+     * Without this they show bank details and no card — which is what broke
+     * when the portal replaced the Pay LINK (which built a Checkout Session on
+     * demand) with an embedded form (which needs the invoice to exist).
+     *
+     * Idempotent and silent: one invoice per debt, and Stripe emails nobody.
+     * It never throws; a business with no processor gets `cannot_collect` and
+     * keeps its bank details.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    let stripeInvoiceId = invoice.stripe_invoice_id as string | null;
+
+    if (!stripeInvoiceId) {
+      const raised = await raiseInvoiceForPayment(invoice.id as string, invoice.user_id as string);
+
+      if (!raised.ok) {
+        log.info({ reason: raised.reason }, 'Invoice cannot be raised for card payment');
+        return NextResponse.json({ success: false, error: 'not_billed_yet' }, { status: 409 });
+      }
+
+      stripeInvoiceId = raised.stripeInvoiceId;
     }
 
     const capability = await resolvePaymentCollectionCapability(supabaseServer, invoice.user_id);
@@ -104,10 +180,43 @@ export async function GET(
      * secret for the intent Stripe raised when this invoice was finalised.
      */
     const stripeInvoice = await stripe.invoices.retrieve(
-      invoice.stripe_invoice_id,
+      stripeInvoiceId,
       { expand: ['confirmation_secret'] },
       { stripeAccount: capability.accountId }
     );
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * STRIPE DECIDES WHETHER MONEY HAS MOVED. WE DO NOT.
+     *
+     * The check above reads OUR invoice row, and that row can be wrong: a
+     * payment recorded by `payment_intent.succeeded` under its own key, then
+     * `invoice.paid` failing to insert a second row for the same money, leaves
+     * the money taken and `payment_invoices.status` still `overdue`. Ten
+     * invoices on this database are in exactly that state.
+     *
+     * For those, everything above passes, a confirmation secret comes back —
+     * Stripe keeps one on a settled invoice — and the Payment Element mounts
+     * against a PaymentIntent that has already succeeded. It renders NOTHING,
+     * which is Stripe refusing to charge a client twice, and the client sees
+     * an empty box under a Pay button for a bill they have already paid.
+     *
+     * So the processor's own answer wins. This fixes the double-charge
+     * attempt, not the stale row: reconciling that is a money write and
+     * belongs nowhere near a public GET.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (stripeInvoice.status === 'paid' || Number(stripeInvoice.amount_due ?? 0) === 0) {
+      log.warn(
+        {
+          stripeInvoiceId: invoice.stripe_invoice_id,
+          ourStatus: invoice.status,
+          stripeStatus: stripeInvoice.status,
+        },
+        'Invoice is settled at Stripe but not in our records; refusing to collect again'
+      );
+      return NextResponse.json({ success: false, error: 'already_paid' }, { status: 409 });
+    }
 
     const clientSecret = stripeInvoice.confirmation_secret?.client_secret ?? null;
 

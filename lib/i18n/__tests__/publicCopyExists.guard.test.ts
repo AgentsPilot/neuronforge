@@ -55,13 +55,16 @@ const PAGES = [
   /*
    * The quote's words live in the COMPONENT, not in either route that shows it.
    *
-   * `/proposal/[token]` is now a thin wrapper and `/book/manage/[token]/quote`
-   * is the same thing inside the portal; both mount `ProposalAnswer`, which is
-   * where every `t()` went. Listing a wrapper here would assert over an empty
-   * set — which this file's own sanity check catches, and did.
+   * `/proposal/[token]` is a thin wrapper, and `/book/manage/[token]/quote` is
+   * now a pure redirect into the portal index — the quote opens there as a
+   * card under the booking. Neither says a word of its own; every `t()` went
+   * to `ProposalAnswer`.
+   *
+   * So neither is listed. Listing a wrapper asserts over an empty set, which
+   * this file's own sanity check catches — and did, twice: once when the quote
+   * moved into the component, and again when the route became a redirect.
    */
   ['components', 'public', 'ProposalAnswer.tsx'],
-  ['app', 'book', 'manage', '[token]', 'quote', 'page.tsx'],
   /*
    * The intake form went the same way, and for the same reason. Its words are
    * in `IntakePanel`, which the portal index shows in place and `/intake`
@@ -70,9 +73,15 @@ const PAGES = [
    * by the sanity check below.
    */
   ['components', 'public', 'IntakePanel.tsx'],
+  /*
+   * Cancel and reschedule went the same way. Their words are in the panels,
+   * which the booking card opens in place and which `/cancel` and
+   * `/reschedule` mount for clients arriving from an email. The routes are
+   * under thirty lines each and ask for nothing.
+   */
+  ['components', 'public', 'CancelPanel.tsx'],
+  ['components', 'public', 'ReschedulePanel.tsx'],
   ['app', 'book', 'manage', '[token]', 'page.tsx'],
-  ['app', 'book', 'manage', '[token]', 'cancel', 'page.tsx'],
-  ['app', 'reschedule', '[token]', 'page.tsx'],
   ['components', 'public', 'AppointmentCard.tsx'],
 ];
 

@@ -186,6 +186,19 @@ export interface MoneyPeriod {
   trigger?: 'date' | 'manual' | null;
   /** The invoice raised for this period, once one has been. */
   invoiceId?: string | null;
+  /**
+   * How much of THIS period came back.
+   *
+   * The installment row does not carry it: `refunded_amount` is derived by
+   * trigger onto the INVOICE the period raised, so it is joined on `invoiceId`
+   * from invoices the caller has already read.
+   *
+   * Without it the schedule under a credited order read "paid ₪400" on every
+   * line while the row above showed the whole sum returned, and nothing on
+   * screen said which period the money had come off. Optional so a caller that
+   * has not been updated still type-checks; absent reads as no refund.
+   */
+  refundedAmount?: number | null;
 }
 
 export interface MoneyPlan {
@@ -269,6 +282,14 @@ export interface MoneyEntry {
    * plan period is not asked for until an invoice is raised for it.
    */
   sentAt?: string | null;
+  /**
+   * Whether a real job sits behind this invoice.
+   *
+   * A booking, which a quote's invoice also carries. It is what separates an
+   * invoice for agreed work from a draft somebody binned, and it is the signal
+   * `cancelledMoneyOf` reaches for when `sent_at` cannot answer.
+   */
+  backedByBooking?: boolean;
   /** The payment intent or charge, for support and reconciliation. */
   processorRef: string | null;
   /**
@@ -485,6 +506,7 @@ function buildEntries(
       paidAt: invoice.paid_at ?? null,
       paymentMethod: settlement?.payment_method ?? null,
       sentAt: invoice.sent_at ?? null,
+      backedByBooking: Boolean(invoice.booking_id),
       stripeInvoiceId: invoice.stripe_invoice_id ?? null,
       stripeHostedUrl: invoice.stripe_hosted_invoice_url ?? null,
       processorRef:
@@ -1048,24 +1070,48 @@ export function outstandingOf(item: MoneyItem): number {
  *    predate this field pass nothing, and silently writing their money down to
  *    zero would be a worse default than counting it.
  *
- *    KNOWN LIMIT, recorded because it is not obvious: `sent_at` is NULL on any
+ *    THAT LIMIT IS NOW CLOSED, by the signal this note pointed at rather than
+ *    by a looser reading of `sent_at`. It used to say: `sent_at` is NULL on any
  *    invoice that never went through `sendInvoice`, and that includes real ones
  *    — a paid invoice on the live account carries NULL because the owner created
- *    it and recorded the payment by hand. So an invoice DELIVERED outside this
- *    app and then cancelled will not be counted here. That is the deliberate
- *    direction to err: understating a loss disappoints, overstating one invents
- *    a debt that never existed and teaches the owner to distrust the figure. If
- *    this needs to get smarter, the signal to reach for is whether a booking or
- *    an accepted quote sits behind the invoice, not a looser reading of sent_at.
+ *    it and recorded the payment by hand — so an invoice delivered outside this
+ *    app and then cancelled went uncounted.
+ *
+ *    It was reported from exactly that case: a ₪5,000 quote, accepted and then
+ *    stopped, its invoice voided here and at Stripe, reading `cancelled` in the
+ *    list and absent from the summary directly above it.
+ *
+ *    So a BOOKING behind the invoice now counts as well as a send date. A
+ *    binned draft has neither and is still worth nothing, which is the whole
+ *    protection; a quote's invoice carries a booking, so the accepted-quote
+ *    case comes with it. The direction to err is unchanged — understating a
+ *    loss disappoints, overstating one invents a debt and teaches the owner to
+ *    distrust the figure — this just stops a real loss being read as an
+ *    invented one.
  */
 export function cancelledMoneyOf(row: {
   status: string;
   amount: number | string;
   refunded?: number | string | null;
   sentAt?: string | null;
+  backedByBooking?: boolean;
 }): number {
   if (row.status !== 'cancelled') return 0;
-  if (row.sentAt === null) return 0;
+  /*
+   * The KNOWN LIMIT above, closed by the signal it pointed at.
+   *
+   * `sent_at` is NULL on any invoice that never went through `sendInvoice`, and
+   * that includes real ones: a ₪5,000 quote, accepted and then stopped, whose
+   * invoice was voided both here and at Stripe. It read `בוטל` in the list and
+   * was missing from the summary beside it, because this returned 0.
+   *
+   * A BOOKING behind the invoice is what the note said to reach for, and it is
+   * the thing a binned draft does not have. A quote's invoice carries one too,
+   * so the accepted-quote case comes free. An invoice with neither a send date
+   * nor a job behind it is still worth nothing, which is the protection this
+   * rule existed for.
+   */
+  if (row.sentAt === null && !row.backedByBooking) return 0;
 
   /*
    * `Math.max` because a refund can exceed what this platform recorded as

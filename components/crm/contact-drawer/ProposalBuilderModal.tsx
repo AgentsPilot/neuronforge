@@ -73,6 +73,32 @@ type PackagePay = 'upfront' | 'per_session';
  */
 const MEETINGS_COLOR = '#14B8A6';
 
+/**
+ * The mark that a field cannot be left empty.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * One component rather than the same span written four times, so every required
+ * field in this dialog is marked identically and a fifth cannot drift.
+ *
+ * `aria-hidden`, because an asterisk read aloud is the word "asterisk". What a
+ * screen reader should announce is `required` on the input, which is where that
+ * fact belongs; this is the sighted half of the same statement.
+ *
+ * WHICH fields carry it is decided by `canSend`, not by taste: the title and
+ * the total always, the expiry since it became mandatory, and the stage names
+ * only for a milestone split, which is the only shape that has any. The
+ * document and the package dates are gates on their own toggles rather than
+ * fields, so they are left to the messages those sections already show.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function RequiredMark() {
+  return (
+    <span className="text-red-500 ms-0.5" aria-hidden="true">
+      *
+    </span>
+  );
+}
+
 interface Stage {
   label: string;
   /** Held as a string so a half-typed "1" is not read as 1%. */
@@ -233,6 +259,19 @@ export function ProposalBuilderModal({
   const [description, setDescription] = useState('');
   const [total, setTotal] = useState('');
   const [validUntil, setValidUntil] = useState('');
+  /*
+   * Today in the OWNER's calendar, not in UTC.
+   *
+   * `toISOString().slice(0,10)` is the obvious one-liner and is wrong here: it
+   * is the UTC day, so west of Greenwich it names yesterday for most of the
+   * working day and would refuse the owner's own today.
+   */
+  const localToday = () => {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${now.getFullYear()}-${month}-${day}`;
+  };
   const [kind, setKind] = useState<ShapeKind>('single');
   const [stages, setStages] = useState<Stage[]>([]);
   const [installmentCount, setInstallmentCount] = useState(3);
@@ -870,9 +909,26 @@ export function ProposalBuilderModal({
     };
   }, []);
 
+  /**
+   * A quote has to say when it stops standing.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * It was optional, and thirteen of the thirty-three live quotes have no
+   * expiry at all — which is a price the business is bound to indefinitely, and
+   * throws away the one thing that gets an answer out of a client.
+   *
+   * Checked here as well as on the server, because `min` on a date input is
+   * advisory: it marks the control invalid and styles it, and a browser will
+   * still submit the form. The server refuses it either way; this is what stops
+   * the owner finding that out after writing the whole quote.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const expiryValid = validUntil.length > 0 && validUntil >= localToday();
+
   const canSend =
     totalValid &&
     title.trim().length > 0 &&
+    expiryValid &&
     splitComplete &&
     stagesNamed &&
     documentReady &&
@@ -1184,6 +1240,7 @@ export function ProposalBuilderModal({
           <div>
             <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
               {t('proposal.field.title')}
+              <RequiredMark />
             </label>
             <Input value={title} onChange={e => setTitle(e.target.value)} maxLength={200} />
           </div>
@@ -1215,6 +1272,7 @@ export function ProposalBuilderModal({
                 className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2"
               >
                 {t('proposal.field.total')}
+                <RequiredMark />
               </label>
               <Input
                 id="proposal-total"
@@ -1226,8 +1284,22 @@ export function ProposalBuilderModal({
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+              {/*
+                Marked required, and told why when it is wrong.
+
+                The field became mandatory without saying so, and `min` on a
+                date input is advisory — a typed date is accepted by the control
+                and simply marks it invalid. So an owner could type last month,
+                see nothing, and find Send quietly disabled with no reason given
+                anywhere on the screen. A disabled button with no explanation is
+                the worst of both: it refuses and it will not say what for.
+              */}
+              <label
+                htmlFor="proposal-valid-until"
+                className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2"
+              >
                 {t('proposal.field.valid_until')}
+                <RequiredMark />
               </label>
               {/*
                 `max` is not decoration.
@@ -1239,12 +1311,48 @@ export function ProposalBuilderModal({
                 refuses it now too; this stops it a step earlier, where the
                 person can still see what they typed.
               */}
+              {/*
+                And `min` is not decoration either.
+
+                The ceiling above was added without a floor, so the field took
+                any past date. Expiry is COMPUTED from this rather than stored,
+                so a quote dated yesterday is expired the moment it is sent: the
+                client opens the link and reads that it is no longer available,
+                having never seen it. One live quote is exactly that — valid
+                until the 11th, sent on the 12th.
+
+                Local date, not UTC: the browser compares `min` against what the
+                owner sees in their own calendar, and a UTC floor would grey out
+                their own today west of Greenwich.
+              */}
               <Input
+                id="proposal-valid-until"
                 type="date"
+                required
                 value={validUntil}
+                min={localToday()}
                 max={`${new Date().getFullYear() + 10}-12-31`}
                 onChange={e => setValidUntil(e.target.value)}
+                aria-invalid={!expiryValid}
+                aria-describedby={!expiryValid ? 'proposal-valid-until-error' : undefined}
+                className={!expiryValid ? 'border-red-400 focus-visible:ring-red-400' : undefined}
               />
+              {/*
+                Said only once the owner has typed something. An empty field on
+                a form they have just opened is not an error yet, and colouring
+                it red before they have touched it is nagging rather than
+                helping — the asterisk already says it will be needed.
+              */}
+              {validUntil.length > 0 && !expiryValid && (
+                <p
+                  id="proposal-valid-until-error"
+                  role="alert"
+                  className="mt-1.5 text-[12px] text-red-600"
+                >
+                  {t('proposal.field.valid_until_past') ||
+                    'That date has already passed. A quote has to stay open until at least today.'}
+                </p>
+              )}
             </div>
           </div>
 
@@ -1715,6 +1823,7 @@ export function ProposalBuilderModal({
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-[var(--v2-text-primary)]">
                   {t('proposal.field.stages')}
+                  {kind === 'milestones' && <RequiredMark />}
                 </label>
                 {/*
                   The same segmented control as the two above.

@@ -31,6 +31,9 @@ import { supabaseServer } from '@/lib/supabaseServer';
 // direct rather than as a referral from a stranger's website.
 import { platformOrigin, publicSiteHost } from '@/lib/utils/origins';
 
+/** Every contact, for channel attribution. The window applies to outcomes. */
+const EPOCH = new Date(0).toISOString();
+
 const logger = createLogger({ service: 'ChannelPerformanceService' });
 
 /**
@@ -103,6 +106,30 @@ export interface ChannelPerformanceRow {
    * with it: seeing a post and visiting a site are different acts.
    */
   visits: number | null;
+  /**
+   * People who acted on the listing without ever loading a page: taps on the
+   * phone number, and direction requests.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * KEPT APART FROM `visits` AND FROM `leads`, and it is worth being exact
+   * about why, because folding it into either would be easy and wrong.
+   *
+   * Not a visit: nothing was visited. Someone saw the listing on Maps and
+   * tapped call, so the website tracker never ran and there is no page view to
+   * count.
+   *
+   * Not a lead either, however much it looks like one. A lead in this platform
+   * is a CRM contact, with a name and a history. A call tap is an anonymous
+   * count from Google: the same person may have called three times, or called
+   * and then booked online and been counted again as a real lead. Adding these
+   * to `leads` would double-count the ones who converted and invent contacts
+   * for the ones who did not.
+   *
+   * So it is its own number, reported as what it is: demand that reached the
+   * business off-site, which nothing else here can see.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  offSiteActions: number | null;
 }
 
 export interface ChannelPerformance {
@@ -158,6 +185,8 @@ export class ChannelPerformanceService {
     };
 
     const sinceDate = since.slice(0, 10);
+    // Attribution needs every contact; `leads` still needs the window.
+    const sinceMs = new Date(since).getTime();
 
     const [
       { data: contacts },
@@ -168,7 +197,17 @@ export class ChannelPerformanceService {
       { data: connections },
       { data: smartLinkClicks },
     ] = await Promise.all([
-      this.repository.findAttributedContacts(userId, since),
+      /*
+       * EVERY contact, not only those acquired in the window.
+       *
+       * The channel of a payment is a property of the CLIENT, and a client who
+       * arrived in September is still the reason September's channel produced
+       * October's money. Fetching only the window's contacts made the revenue
+       * column a cohort figure — "of the people who arrived this week, how much
+       * have they ever paid" — which is reliably zero, because nobody pays the
+       * week they arrive. `leads` is still counted on the window; see below.
+       */
+      this.repository.findAttributedContacts(userId, EPOCH),
       // Reach from connected accounts. Fetched independently of leads: a newly
       // connected account with reach but no leads yet is exactly the case worth
       // showing, so this must not be gated on there being contacts.
@@ -183,10 +222,19 @@ export class ChannelPerformanceService {
     ]);
 
     const reachByChannel = new Map<Channel, number>();
+    /* Calls plus direction requests. Summed across days without reservation:
+       unlike `reach`, an action is an event rather than a daily unique. */
+    const actionsByChannel = new Map<Channel, number>();
+
     for (const totals of channelTotals || []) {
       const channel = PLATFORM_TO_CHANNEL[totals.platform];
       if (!channel) continue;
       reachByChannel.set(channel, (reachByChannel.get(channel) || 0) + totals.reach);
+
+      const acted = (totals.actions_calls || 0) + (totals.actions_directions || 0);
+      if (acted > 0) {
+        actionsByChannel.set(channel, (actionsByChannel.get(channel) || 0) + acted);
+      }
     }
 
     // Channels the user has connected, whether or not a single number has
@@ -256,8 +304,12 @@ export class ChannelPerformanceService {
       return empty;
     }
 
+    /*
+     * Outcomes are scoped to the window; the people are not. This is the half
+     * that makes the table read "what happened in this period, by channel".
+     */
     const { data: outcomes } = contacts?.length
-      ? await this.repository.findOutcomesForContacts(userId, contacts.map(c => c.id))
+      ? await this.repository.findOutcomesForContacts(userId, contacts.map(c => c.id), since)
       : { data: null };
     const bookingsByContact = outcomes?.bookingsByContact ?? new Map();
     const revenueByContact = outcomes?.revenueByContact ?? new Map();
@@ -301,11 +353,22 @@ export class ChannelPerformanceService {
       );
       const bucket = buckets.get(channel) ?? { leads: 0, bookings: 0, revenue: 0, billed: 0, taggedLeads: 0 };
 
-      bucket.leads += 1;
+      /*
+       * `leads` is ACQUISITION and keeps the window: how many new contacts this
+       * channel brought in the period. The money columns are what ARRIVED in
+       * the period from anyone that channel ever brought. Both are "in this
+       * period"; they differ only in which event the period is applied to, and
+       * the band's caption says so.
+       */
+      const acquiredInWindow = new Date(contact.created_at).getTime() >= sinceMs;
+      if (acquiredInWindow) {
+        bucket.leads += 1;
+        if (basis === 'utm') bucket.taggedLeads += 1;
+      }
+
       bucket.bookings += bookingsByContact.get(contact.id) || 0;
       bucket.revenue += revenueByContact.get(contact.id) || 0;
       bucket.billed += billedByContact.get(contact.id) || 0;
-      if (basis === 'utm') bucket.taggedLeads += 1;
 
       buckets.set(channel, bucket);
     }
@@ -341,6 +404,9 @@ export class ChannelPerformanceService {
 
       return {
         channel,
+        /* Null, not zero, where the platform cannot report it at all — the
+           same distinction `reach` draws, for the same reason. */
+        offSiteActions: actionsByChannel.has(channel) ? actionsByChannel.get(channel)! : null,
         leads: bucket.leads,
         bookings: bucket.bookings,
         revenue: bucket.revenue,

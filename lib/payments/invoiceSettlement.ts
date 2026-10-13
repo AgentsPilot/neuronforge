@@ -143,19 +143,31 @@ export interface SettlementDb {
         };
         limit?: (n: number) => { maybeSingle: () => Promise<{ data: unknown }> };
         /*
-         * NOT declared here, deliberately.
+         * DECLARED, REQUIRED, AND WITH A ROW SHAPE — which is what the comment
+         * that used to sit here called "the actual fix" and deferred.
          *
-         * The receipt-email read ends in `.maybeSingle()` on this shape, so the
-         * obvious fix is to add it. Adding it as OPTIONAL is worse than leaving
-         * it out: one error becomes nine. Absent, TypeScript infers `any` for
-         * the call and the seven property reads after it go unchecked; present
-         * but optional, the call is "possibly undefined" and the result is
-         * `unknown`, so every one of those reads fails instead.
+         * The receipt-email read ends in `.maybeSingle()` on this shape. Left
+         * undeclared, the call inferred `any` and the seven property reads
+         * after it went unchecked — so this file carried a standing `tsc`
+         * error and no type safety at exactly the point it emails a client.
+         * Declared OPTIONAL it would be worse: "possibly undefined", result
+         * `unknown`, and all seven reads fail instead of one.
          *
-         * Declaring it required with the real row shape is the actual fix. That
-         * is a change to what every implementor of this interface must provide,
-         * which is a wider edit than the bug being chased here.
+         * Required costs nothing in practice. There are two implementors: the
+         * real Supabase client, which is cast in (its builder generics are too
+         * deep for structural comparison), and the test fake, which already
+         * provides it.
          */
+        maybeSingle: () => Promise<{
+          data: {
+            user_id: string;
+            client_email: string | null;
+            client_name: string | null;
+            invoice_number: string | null;
+            currency: string | null;
+            booking_id: string | null;
+          } | null;
+        }>;
       };
     };
     insert: (row: Record<string, unknown>) => {
@@ -282,9 +294,69 @@ export async function settleInvoicePaid(
    */
   const { error: stageError } = await db
     .from('payment_plan_installments')
-    .update({ status: 'paid', paid_at: paidAt })
-    .eq('invoice_id', input.invoiceId)
-    .neq('status', 'paid');
+    .update({
+      status: 'paid',
+      paid_at: paidAt,
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * HOW THIS STAGE WAS PAID, WHICH THE STAGE COULD NOT PREVIOUSLY SAY.
+       *
+       * Only `status` and `paid_at` were written here, so every stage looked
+       * identical however its money arrived. That breaks the case this whole
+       * path exists for: a quoted job where the deposit went through the card
+       * and the final milestone came in cash. Both stages read "paid", and
+       * nothing on the row could tell an owner — or a report — which was which.
+       *
+       * These are the same columns `PaymentPlanRepository.markInstallmentPaid`
+       * writes on the owner-driven path and the Stripe webhook writes on the
+       * plan path, so a stage settled through here is no longer a second-class
+       * row with three of its fields empty.
+       *
+       * `transaction_id` is the one that matters beyond display: it is the link
+       * a refund follows to find the charge behind a period. The webhook's own
+       * comment says so, and stages settled through this function had it NULL.
+       *
+       * `stripe_invoice_id` is deliberately NOT written. It is the dedupe key
+       * for `recordPlanPeriodPaid` (`.eq('stripe_invoice_id', invoice.id)`), and
+       * filling it from here would make that path read a settled period as one
+       * it had already recorded — a silent skip on a different plan's money.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      payment_method: input.paymentMethod ?? 'card',
+      processor_type: input.processorType ?? 'stripe',
+      transaction_id: transaction.id,
+      /* No trigger on this table, so the row would still claim it had not been
+         touched since it was projected. */
+      updated_at: paidAt,
+    })
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * NOT FILTERED ON STATUS, AND THAT IS THE WHOLE POINT.
+     *
+     * This carried `.neq('status', 'paid')` to avoid restamping a stage that
+     * was already settled. Harmless when this update wrote only `status` and
+     * `paid_at` — and fatal once it started carrying the attribution above,
+     * because by the time it runs the row is ALWAYS already paid.
+     *
+     * `move_plan_stage_with_invoice` (migration 20260916) fires on
+     * `payment_invoices` the moment the line above flips it to `paid`, and
+     * marks every stage on that invoice paid. So the trigger wins the race by
+     * construction, the guard then matched zero rows, and `payment_method`,
+     * `processor_type` and `transaction_id` were silently never written. Live
+     * proof: a cash payment recorded at 21:06:40 left its stage `paid` with
+     * all three NULL, while the transaction beside it said `cash/manual`.
+     *
+     * Safe to drop the guard. `settleInvoicePaid` returns `alreadySettled`
+     * before reaching here whenever a transaction already exists for this
+     * invoice, so arriving at this line means THIS call is the payment — and
+     * re-writing the same `paid_at` it just set is a no-op.
+     *
+     * The migration's own note says the two halves are idempotent because
+     * "whichever runs second changes nothing". That is no longer the goal: the
+     * second one has something to add.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    .eq('invoice_id', input.invoiceId);
 
   if (stageError) {
     logger.error(
@@ -358,7 +430,11 @@ export async function settleInvoicePaid(
         customerName: invoice.client_name || '',
         amount: input.amount,
         currency: invoice.currency || 'USD',
-        receiptNumber: invoice.invoice_number,
+        /* `?? undefined`, because the column is nullable and the parameter is
+           not. The mismatch was invisible while this read inferred `any`: a
+           null invoice number went in as a null the receipt template would
+           have printed. */
+        receiptNumber: invoice.invoice_number ?? undefined,
         paymentMethod: input.paymentMethod ?? undefined,
         bookingId: invoice.booking_id ?? undefined,
       });

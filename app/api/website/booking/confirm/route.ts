@@ -19,6 +19,7 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { z } from 'zod';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 const logger = createLogger({ module: 'WebsiteBookingConfirmAPI' });
 
@@ -59,11 +60,7 @@ export async function POST(request: NextRequest) {
     // If subdomain is provided, look up website owner (public access)
     // Otherwise, use authenticated user (preview mode)
     if (data.subdomain && data.subdomain.trim()) {
-      const { data: websitePage, error: pageError } = await supabaseServer
-        .from('website_pages')
-        .select('user_id')
-        .eq('subdomain', data.subdomain)
-        .single();
+      const { data: websitePage, error: pageError } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(data.subdomain);
 
       if (pageError || !websitePage) {
         requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');

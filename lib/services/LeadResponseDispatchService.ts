@@ -35,6 +35,8 @@
 
 import { randomUUID } from 'crypto';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
 import { createLogger, type Logger } from '@/lib/logger';
 import { leadResponseRepository, type LeadResponse } from '@/lib/repositories/LeadResponseRepository';
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
@@ -44,7 +46,8 @@ import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
 import { automationApplies } from '@/lib/business-os/gaps/automationApplies';
 import { findGaps } from '@/lib/business-os/gaps/findGaps';
 import { sendInvoice } from '@/lib/services/InvoiceDeliveryService';
-import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { sendQuoteReminder } from '@/lib/services/ProposalSendService';
+import { BookingEmailService, getBusinessLocale } from '@/lib/services/BookingEmailService';
 
 const logger = createLogger({ service: 'LeadResponseDispatchService' });
 
@@ -189,6 +192,7 @@ async function dispatchOne(row: LeadResponse): Promise<DispatchOutcome> {
   if (row.kind === 'intake_chase') return chaseIntake(row, log);
   if (row.kind === 'meeting_reminder') return remindAboutMeeting(row, log);
   if (row.kind === 'meeting_complete') return completeMeeting(row, log);
+  if (row.kind === 'quote_chase') return chaseQuote(row, log);
   return inviteOrChaseLead(row, log);
 }
 
@@ -217,6 +221,77 @@ async function dispatchOne(row: LeadResponse): Promise<DispatchOutcome> {
  *      automation was switched on.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * One reminder on a quote the client has not answered.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EVERYTHING IS RE-CHECKED, and the window here is the widest of any kind in
+ * this file: the gap waits 72 hours before it reports a quote at all, so three
+ * days have already passed when this runs. In that time the client can have
+ * accepted, declined, or let it expire, and the owner can have withdrawn it or
+ * sent a revision.
+ *
+ * A nudge about a decision somebody has already made is the worst outcome
+ * available here — worse than silence, because it tells them nobody was
+ * paying attention.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function chaseQuote(
+  row: LeadResponse,
+  log: Logger
+): Promise<DispatchOutcome> {
+  if (!row.entity_id) return { sent: false, reason: 'no_proposal' };
+
+  const { data: proposal } = await supabaseServer
+    .from('proposals')
+    .select('id, status, valid_until')
+    .eq('id', row.entity_id)
+    .eq('user_id', row.user_id)
+    .maybeSingle();
+
+  if (!proposal) return { sent: false, reason: 'proposal_gone' };
+
+  /*
+   * Only a quote still waiting. Every other status is an answer: `accepted`
+   * and `declined` are the client's, `withdrawn` and `superseded` are the
+   * owner's, `expired` is the calendar's.
+   */
+  const status = (proposal.status ?? '').toLowerCase();
+  if (status !== 'sent' && status !== 'viewed') {
+    return { sent: false, reason: 'already_answered' };
+  }
+
+  /*
+   * And one that is still open.
+   *
+   * `expired` is written by whatever sweeps for it, which may not have run —
+   * so the DATE is checked here rather than trusting the status to have caught
+   * up. Reminding somebody about a quote that lapsed yesterday invites them to
+   * act on a price the business is no longer offering.
+   */
+  if (proposal.valid_until) {
+    const until = Date.parse(`${proposal.valid_until}T23:59:59Z`);
+    if (Number.isFinite(until) && until < Date.now()) {
+      return { sent: false, reason: 'quote_expired' };
+    }
+  }
+
+  const outcome = await sendQuoteReminder(row.entity_id, row.user_id);
+
+  if (!outcome.ok) {
+    /* Two different things. The guards above are reasons NOT to send and are
+       ordinary; a refusal from the sender is a send that was meant to happen
+       and did not, and the reason travels with the row. */
+    if (outcome.reason === 'already_answered' || outcome.reason === 'no_email') {
+      return { sent: false, reason: outcome.reason };
+    }
+    log.error({ error: outcome.reason, proposalId: row.entity_id }, 'Quote reminder not sent');
+    return { sent: false, reason: 'send_failed', detail: outcome.reason };
+  }
+
+  return { sent: true };
+}
+
 async function completeMeeting(
   row: LeadResponse,
   log: Logger
@@ -225,7 +300,9 @@ async function completeMeeting(
 
   const { data: booking } = await supabaseServer
     .from('scheduling_bookings')
-    .select('id, status, start_time')
+    /* `contact_id` and `timezone` are for the marker written below, which a
+       completion is not allowed to go ahead without. */
+    .select('id, status, start_time, contact_id, timezone')
     .eq('id', row.entity_id)
     .eq('user_id', row.user_id)
     .maybeSingle();
@@ -255,6 +332,54 @@ async function completeMeeting(
   const startedAt = booking.start_time ? Date.parse(booking.start_time) : NaN;
   if (Number.isNaN(startedAt) || startedAt > Date.now()) {
     return { sent: false, reason: 'not_yet_past' };
+  }
+
+  /*
+   * The marker goes down BEFORE the status, and the order is the whole safety.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `completed` is one of three answers — the others are no-show and cancelled
+   * — and this can only ever give the first. So every completion it writes has
+   * to stay answerable: the triage row on the dashboard reads this activity and
+   * offers "was this a no-show?" for a week afterwards.
+   *
+   * Written first because of what the two failures cost. A marker with no
+   * completion is harmless — the triage row requires the booking to actually
+   * BE completed, so a stray one is never shown, and the meeting simply stays
+   * on the Needs You card as it was. A completion with no marker is the thing
+   * worth avoiding: the booking leaves `meeting_unmarked` (it is no longer
+   * confirmed or pending), nothing is sent to anyone, and a no-show is silently
+   * recorded as attendance with no surface left to correct it on.
+   *
+   * So a marker that cannot be written stops the completion. The owner keeps
+   * the prompt they already had, which is exactly the behaviour before this
+   * automation existed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (booking.contact_id) {
+    /* The owner's own language: this sentence is read in their CRM timeline,
+       not by the client, and an English line in a Hebrew timeline is the kind
+       of seam `activitySentence` exists to remove. */
+    const locale = await getBusinessLocale(row.user_id);
+    const when = activityMoment(booking.start_time, locale, booking.timezone || undefined) || '';
+    const marker = await crmActivityRepository.create({
+      user_id: row.user_id,
+      contact_id: booking.contact_id as string,
+      activity_type: 'booking_auto_completed',
+      title: activitySentence('booking_auto_completed', { date: when }, locale),
+      auto_logged: true,
+      source_capability: 'scheduling',
+      /* The booking this answers for — what the triage row matches on. */
+      source_entity_id: booking.id,
+    });
+
+    if (marker.error) {
+      log.warn(
+        { err: marker.error, bookingId: booking.id },
+        'Could not record the auto-completion; leaving the meeting for the owner to mark'
+      );
+      return { sent: false, reason: 'marker_failed' };
+    }
   }
 
   const { data, error } = await schedulingBookingRepository.complete(
@@ -658,6 +783,37 @@ async function enqueueApprovedChases(): Promise<number> {
           if (automation.timing === 'before_event') {
             const eventAt = item.eventAt ? Date.parse(item.eventAt) : NaN;
             if (Number.isNaN(eventAt) || eventAt < Date.now()) continue;
+          }
+
+          /*
+           * AND SOME WORK IS TOO OLD TO TAKE OVER AT ALL.
+           *
+           * ───────────────────────────────────────────────────────────────────
+           * The comment above says a chase is still worth sending a week late,
+           * and that is true of a chase. It is not true of
+           * `auto_complete_meetings`, which does not send anything — it records
+           * an answer. Recording that a meeting from two months ago went ahead
+           * is not catching up, it is writing history the owner was never asked
+           * about, and it includes every no-show nobody marked.
+           *
+           * That is exactly what used to happen the FIRST time the switch was
+           * turned on: the gap behind it looks back ninety days, so saying yes
+           * swept up to two hundred past meetings and closed every one.
+           *
+           * In steady state this changes nothing — the automation becomes due
+           * twelve hours after a meeting and the sweep runs every five minutes,
+           * so what it sees is always hours old, never days. All this excludes
+           * is the backlog, which is the part nobody agreed to.
+           *
+           * A bound here rather than a column recording when the switch flipped:
+           * the two answer the same question for this automation, and one of
+           * them needs no migration and has no "enabled before we started
+           * recording that" case to get wrong.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          if (automation.actsWithinHours !== undefined) {
+            const lateBy = Date.now() - dueAt.getTime();
+            if (lateBy > automation.actsWithinHours * 60 * 60 * 1000) continue;
           }
 
           // From the registry, which is also where the consent check reads it.

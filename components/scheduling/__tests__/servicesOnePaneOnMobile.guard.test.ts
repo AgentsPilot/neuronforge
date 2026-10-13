@@ -31,12 +31,13 @@
 
 import fs from 'fs';
 import path from 'path';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
 const FILE = 'components/scheduling/SchedulingServicesList.tsx';
 const source = fs.readFileSync(path.join(process.cwd(), FILE), 'utf8');
 const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
-const CONTEXT = fs.readFileSync(path.join(process.cwd(), 'lib/business-os/LanguageContext.tsx'), 'utf8');
+const CONTEXT = dictionarySource();
 
 describe('the desktop layout is untouched', () => {
   it('still puts the list beside the panel from md up', () => {
@@ -82,16 +83,33 @@ describe('the phone shows one pane', () => {
     expect(code).toContain("'hidden md:flex'");
   });
 
-  it('takes the catalogue action away with the list', () => {
+  it('takes the list away on a phone, and whatever travels with it', () => {
     /*
-     * "Add a service" sits above both panes. On a desktop that reads as an
-     * action on the catalogue; on a phone, where the editor is the whole
-     * screen, it floats above the service being edited and offers to start a
-     * different one. Three rules now share the same condition, which is what
-     * makes the two screens coherent rather than one screen with a hole in it.
+     * This counted TWO uses of the rule, because "Add a service" sat above both
+     * panes and had to step aside with the list — on a phone it floated above
+     * the service being edited and offered to start a different one.
+     *
+     * That button is gone: there were three ways to start the same thing, two
+     * of them on screen at once, above a panel whose own heading already said
+     * what it was for. The rule it shared is still what makes the phone show
+     * one pane rather than one pane with a hole in it, so the rule is still
+     * pinned — just once, by the thing that still exists.
      */
     const occurrences = code.match(/detailOpen \? 'hidden md:flex' : 'flex'/g) ?? [];
-    expect(occurrences.length).toBe(2);
+    expect(occurrences.length).toBe(1);
+  });
+
+  it('and there are two ways to add a service, not three', () => {
+    /*
+     * There were three entry points to one action, two of them on screen at
+     * once, above a panel whose own heading already said what it was for. The
+     * two that remain each have a reason: one sits with the list it adds to,
+     * and one is the only way to make a FIRST service.
+     *
+     * Counted rather than named, because the comment explaining the removal is
+     * stripped before this runs.
+     */
+    expect((code.match(/scheduling\.new_service/g) ?? []).length).toBe(2);
   });
 
   it('still shows the panel to callers that have no list', () => {
@@ -133,5 +151,61 @@ describe('the way back', () => {
     expect(CONTEXT.match(/'config\.services\.all':/g) ?? []).toHaveLength(3);
     expect(CONTEXT).toContain("'config.services.all': 'All services'");
     expect(CONTEXT).toContain("'config.services.all': 'כל השירותים'");
+  });
+});
+
+/**
+ * The flow runs down the inside of the editor, with the stacked account kept
+ * underneath for a panel too narrow to carry it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The account of what a service does used to sit at the FOOT of the panel, so
+ * an owner changing a control had to scroll to learn what they had just done --
+ * and by then the control was off screen and the connection was theirs to make.
+ *
+ * Each consequence now sits level with the section that causes it. The stacked
+ * version is kept and shown below `md:`, where there is one column and no room
+ * for a spine, so nothing is lost on a phone.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('the flow along the card', () => {
+  it('pairs every section with its own stop', () => {
+    // Three sections, three stops: what they read, what it does to the diary,
+    // how the money arrives.
+    expect((code.match(/<FlowPair/g) ?? []).length).toBe(3);
+    expect((code.match(/<\/FlowPair>/g) ?? []).length).toBe(3);
+  });
+
+  it('each stop is fed from the resolvers, not from prose', () => {
+    expect(code).toContain('lines={identityStop}');
+    expect(code).toContain('lines={diaryStop}');
+    expect(code).toContain('lines={moneyStop}');
+    // The diary stop IS the journey, rendered through the same translator.
+    expect(code).toContain('const diaryStop = journeySteps.map(journeyText)');
+  });
+
+  it('a stop with nothing to say renders nothing', () => {
+    // An empty stop is a finding, not a blank box: it says that part of the
+    // service has not been answered yet.
+    expect(code).toContain('if (!lines.length) return');
+  });
+
+  it('the spine is desktop only', () => {
+    // Below `md:` the panel is one column; a second would have nowhere to go.
+    const stop = code.slice(code.indexOf('function FlowStop'), code.indexOf('function FlowPair'));
+    expect(stop).toContain('hidden md:block');
+  });
+
+  it('and the stacked account is kept for exactly that case', () => {
+    // Deleting it would leave a phone with no account at all.
+    expect(code).toContain("md:hidden border-t border-[var(--v2-border)] pt-2.5");
+    expect(code).toContain("t('scheduling.modal.how_it_works')");
+  });
+
+  it('only one of the two is ever on screen', () => {
+    // Said twice at once, an owner learns to read neither.
+    const stop = code.slice(code.indexOf('function FlowStop'), code.indexOf('function FlowPair'));
+    expect(stop).toContain('hidden md:block');
+    expect(code).toContain('md:hidden');
   });
 });

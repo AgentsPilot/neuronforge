@@ -13,6 +13,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 import Stripe from 'stripe';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 // Initialize Stripe (will fail gracefully if key not set)
 const stripe = process.env.STRIPE_SECRET_KEY
@@ -61,11 +62,7 @@ export async function POST(request: NextRequest) {
     const data = validationResult.data;
 
     // Look up website and owner
-    const { data: websitePage, error: pageError } = await supabaseServer
-      .from('website_pages')
-      .select('user_id')
-      .eq('subdomain', data.subdomain)
-      .single();
+    const { data: websitePage, error: pageError } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(data.subdomain);
 
     if (pageError || !websitePage) {
       requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');

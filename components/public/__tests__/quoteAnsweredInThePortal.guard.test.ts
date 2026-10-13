@@ -39,9 +39,23 @@ const portal = read('app/book/manage/[token]/page.tsx');
 describe('both surfaces mount one component', () => {
   it.each([
     ['the quote email route', emailRoute],
-    ['the portal route', portalRoute],
+    ['the portal index', portal],
   ])('%s renders ProposalAnswer', (_name, source) => {
     expect(source).toMatch(/<ProposalAnswer/);
+  });
+
+  it('the portal task route is a redirect, not a second screen', () => {
+    /*
+     * It was a mount point: the quote, then the portal's other cards, inside
+     * the shell but with no booking card above — so answering a quote looked
+     * like a different page depending on whether the client came from their
+     * email or from the portal. It sends them to the index with the card open
+     * instead.
+     *
+     * The route STAYS, because the quote email links to it.
+     */
+    expect(portalRoute).toMatch(/redirect\(`\/book\/manage\/\$\{token\}\?task=quote`\)/);
+    expect(portalRoute).not.toMatch(/<ProposalAnswer/);
   });
 
   it('neither route carries the flow itself', () => {
@@ -49,7 +63,7 @@ describe('both surfaces mount one component', () => {
      * The accept POST, the decline reasons and the document gate belong to the
      * component. A route that grows any of them has started a second copy.
      */
-    for (const source of [emailRoute, portalRoute]) {
+    for (const source of [emailRoute, portalRoute, portal]) {
       expect(source).not.toMatch(/DECLINE_REASONS/);
       expect(source).not.toMatch(/answer: 'accept'/);
       expect(source).not.toMatch(/documentOpened/);
@@ -98,8 +112,9 @@ describe('both surfaces mount one component', () => {
 });
 
 describe('the embedded copy does not frame itself twice', () => {
-  it('the portal route asks for the embedded form', () => {
-    expect(portalRoute).toMatch(/<ProposalAnswer token=\{proposalToken\} embedded \/>/);
+  it('the portal index asks for the embedded form', () => {
+    // The shell is the layout's; a second one inside it draws the header twice.
+    expect(portal).toMatch(/<ProposalAnswer token=\{quote\.token\} embedded \/>/);
   });
 
   it('the component skips its shell when embedded', () => {
@@ -117,29 +132,49 @@ describe('the embedded copy does not frame itself twice', () => {
 });
 
 describe('the portal sends the client inward', () => {
-  it('links to the embedded route, not out to /proposal', () => {
-    expect(portal).toMatch(/href=\{`\/book\/manage\/\$\{token\}\/quote`\}/);
-    expect(portal).not.toMatch(/href=\{`\/proposal\/\$\{quote\.token\}`\}/);
+  it('answers the quote in place, never out at /proposal', () => {
+    /*
+     * This asserted a link to `/book/manage/${token}/quote` — one step inward
+     * from `/proposal`, and still a navigation: the booking the quote prices
+     * scrolled off, so accepting meant leaving the page that explains what is
+     * being accepted.
+     *
+     * The index mounts `ProposalAnswer` itself now, under the booking card,
+     * from a button beside reschedule and cancel. No link is the strongest
+     * form of "inward"; what must never come back is the one out of the
+     * portal.
+     */
+    expect(portal).toMatch(/<ProposalAnswer token=\{quote\.token\} embedded \/>/);
+    expect(portal).not.toMatch(/href=\{`\/proposal\//);
   });
 
-  it('the embedded route asks the portal API for the quote’s own token', () => {
+  it('keeps the standalone route for the links already in inboxes', () => {
+    // The quote email points at `/book/manage/[token]/quote`. Moving the
+    // answer into the index must not take that route away.
+    expect(
+      fs.existsSync(path.join(process.cwd(), 'app/book/manage/[token]/quote/page.tsx'))
+    ).toBe(true);
+  });
+
+  it('the index uses the quote token the portal API signed', () => {
     /*
      * Two different credentials: the URL carries the BOOKING token, and the
      * quote is addressed by a PROPOSAL token signed against the client's email.
      *
-     * Fetched rather than minted here, because that endpoint already proves the
-     * caller holds a valid booking token, already takes the newest
-     * non-superseded quote, and already refuses to sign a DRAFT — rules a second
-     * signing path would have to remember and would eventually forget.
+     * Read off the portal payload rather than minted here, because that
+     * endpoint already proves the caller holds a valid booking token, already
+     * takes the newest non-superseded quote, and already refuses to sign a
+     * DRAFT — rules a second signing path would have to remember and would
+     * eventually forget.
      */
-    expect(portalRoute).toMatch(/\/api\/book\/manage\/\$\{token\}/);
-    expect(portalRoute).toMatch(/data\?\.quote\?\.token/);
-    expect(portalRoute).not.toMatch(/generateProposalToken/);
+    expect(portal).toMatch(/quote\?\.token/);
+    expect(portal).not.toMatch(/generateProposalToken/);
   });
 
-  it('says so plainly when there is no quote to answer', () => {
-    // A draft, or a client with no address to sign a token against. Better than
-    // an empty frame.
-    expect(portalRoute).toMatch(/if \(!proposalToken\)/);
+  it('draws no quote card when there is none to answer', () => {
+    // A draft, or a client with no address to sign a token against: the card
+    // and its button are both conditional on the token existing.
+    expect(portal).toMatch(/quoteOpen && quote\?\.token/);
+    expect(portal).toMatch(/quote\?\.token && QUOTE_STATE\[quote\.status\]\?\.open !== false/);
   });
 });

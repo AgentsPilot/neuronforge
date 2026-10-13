@@ -55,6 +55,47 @@ interface RefundModalProps {
   isRTL?: boolean;
 }
 
+/**
+ * Which sentence a booking-level refund should show, if any.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A PURE FUNCTION BECAUSE THIS DECISION HAS BEEN WRONG TWICE.
+ *
+ * First it said "all {count} payments will be refunded in full" while naming
+ * the figure for one of them, because money it could not return was left out of
+ * the total but not out of the sentence. Then, once blocked money was counted,
+ * a payment ALREADY refunded counted as blocked and it offered to return "the
+ * remaining ₪0.00".
+ *
+ * Both were decisions about which of three sentences to use, made inline in
+ * JSX where only a human reading the whole expression could check them. Here
+ * they can be enumerated — and a proposal may carry ten stages, so "every N"
+ * means every N, not two.
+ *
+ * THE RULES
+ *
+ *   · money still held that cannot be returned here  → `manual` when it all
+ *     arrived one way and we can name it, `partial` otherwise
+ *   · several payments coming back, nothing held     → `plain`, which is the
+ *     only variant carrying a count, and therefore the only one that must
+ *     never see 1
+ *   · one coming back and the rest already settled   → nothing: the ordinary
+ *     single-payment dialog is already accurate
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function groupNoticeVariant(input: {
+  /** How many payments this refund will actually return. */
+  refundableCount: number;
+  /** Money still held that this refund cannot return. Zero when there is none. */
+  blockedAmount: number;
+  /** The single method it all arrived by, when there is one. */
+  blockedMethod: string | null;
+}): 'manual' | 'partial' | 'plain' | null {
+  if (input.blockedAmount > 0) return input.blockedMethod ? 'manual' : 'partial';
+
+  return input.refundableCount > 1 ? 'plain' : null;
+}
+
 export function RefundModal({
   isOpen,
   onClose,
@@ -173,6 +214,15 @@ export function RefundModal({
    * left transfer-based businesses unable to record a refund at all.
    */
   const [recordable, setRecordable] = useState(false);
+  /** How many payments this refund will actually return. */
+  const [refundableCount, setRefundableCount] = useState<number | null>(null);
+  /** Payments this refund cannot return, and how much they come to. */
+  const [blocked, setBlocked] = useState<{
+    count: number;
+    amount: number;
+    /** `'cash'` when every blocked payment came that way; null otherwise. */
+    method: string | null;
+  } | null>(null);
   const [blockedProcessor, setBlockedProcessor] = useState<string | null>(null);
 
   const requestId = useRef<string>('');
@@ -251,6 +301,40 @@ export function RefundModal({
         // Not refundable by us, but the business can record one it made itself.
         if (data.recordable === true) setRecordable(true);
         if (typeof data.payment_count === 'number') setPaymentCount(data.payment_count);
+        /* How many will actually come back, which differs from how many exist
+           the moment one has been refunded already. */
+        if (typeof data.refundable_count === 'number') setRefundableCount(data.refundable_count);
+        /*
+         * What will NOT come back, which this dialog used to drop on the floor.
+         *
+         * The endpoint has reported `blocked_count` all along. Ignoring it is
+         * how a booking paid half by card and half in cash announced "2
+         * payments, all of them will be refunded in full — ₪400 in total":
+         * each half true, together a claim that ₪800 was on its way.
+         */
+        if (typeof data.blocked_count === 'number' && data.blocked_count > 0) {
+          const methods: string[] = Array.isArray(data.blocked_methods)
+            ? data.blocked_methods
+            : [];
+
+          setBlocked({
+            count: data.blocked_count,
+            amount: Number(data.blocked_remaining ?? 0),
+            /*
+             * Named only when there is ONE method and all the blocked money
+             * arrived that way. "Paid in cash" is worth saying; "paid outside
+             * Stripe — cash, a transfer or a cheque" asks the owner to work out
+             * which of three it was about their own booking, and two blocked
+             * payments by different methods have no single honest answer.
+             */
+            method:
+              methods.length === 1 &&
+              Number(data.blocked_manual_remaining ?? 0) > 0 &&
+              Number(data.blocked_manual_remaining ?? 0) === Number(data.blocked_remaining ?? 0)
+                ? methods[0]
+                : null,
+          });
+        }
         if (data.plan?.id) {
           setLivePlan({
             id: data.plan.id,
@@ -404,6 +488,13 @@ export function RefundModal({
    * the owner refunds a specific period from the payments list instead.
    */
   const isGroup = paymentCount > 1;
+
+  /* Decided in one place, by rules that can be enumerated — see the helper. */
+  const noticeVariant = groupNoticeVariant({
+    refundableCount: refundableCount ?? paymentCount,
+    blockedAmount: blocked?.amount ?? 0,
+    blockedMethod: blocked?.method ?? null,
+  });
 
   const maxRefundable = serverRemaining ?? originalAmount - alreadyRefunded;
   const effectiveType = isGroup ? 'full' : refundType;
@@ -626,7 +717,7 @@ export function RefundModal({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="scrollbar-thin flex-1 overflow-y-auto px-5 py-4">
         <form id="refund-form" onSubmit={handleSubmit} className="space-y-4">
           {/* The server says this cannot be refunded.
               Shown before the form rather than after a failed submit — a payment
@@ -698,14 +789,45 @@ export function RefundModal({
           {/* Several payments, so there is no choice to offer — it is all of
               them or nothing. Stated rather than presented as a decision, and
               with the count, so "full refund" is not read as one payment. */}
-          {isGroup && (
+          {/*
+            Said only when there is something to say.
+            ─────────────────────────────────────────────────────────────────
+            Three states, and the third used to be told the second's sentence:
+
+              · money is held back        → name it, and how it arrived
+              · several payments returning → "all of them", with the count
+              · ONE returning, the rest already settled → nothing
+
+            The last is the ordinary shape of a job half refunded already, and
+            describing it as a group refund of "2 payments" counted history
+            rather than what is about to happen.
+          */}
+          {isGroup && noticeVariant && (
             <div
               className="bg-[var(--v2-surface-hover)] px-3 py-2.5 text-[12.5px] text-[var(--v2-text-secondary)]"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
-              {t('payments.refund.group_notice')
-                .replace('{count}', String(paymentCount))
-                .replace('{amount}', formatCurrency(maxRefundable))}
+              {t(
+                noticeVariant === 'manual'
+                  ? 'payments.refund.group_notice_manual'
+                  : noticeVariant === 'partial'
+                    ? 'payments.refund.group_notice_partial'
+                    : 'payments.refund.group_notice'
+              )
+                /*
+                  The payments COMING BACK, not every one ever taken — and the
+                  only placeholder any of these three sentences carries.
+
+                  The figures used to be in here too: what is returned, what is
+                  held back, and the method it arrived by. All three were
+                  removed deliberately. The amount being returned is already
+                  the largest thing on the dialog and sits on the button that
+                  does it, so repeating it in prose gave an owner two numbers
+                  to reconcile instead of one fact to read. What the sentence
+                  is actually for is the part they cannot see: that some of
+                  this money has to be handed back by hand.
+                */
+                .replace('{count}', String(refundableCount ?? paymentCount))}
             </div>
           )}
 

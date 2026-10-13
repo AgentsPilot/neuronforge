@@ -31,6 +31,8 @@ import { schedulingServiceRepository } from '@/lib/repositories/SchedulingReposi
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { intakeFormRepository } from '@/lib/repositories/IntakeFormRepository';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
+import { auditTrailRepository } from '@/lib/repositories/AuditTrailRepository';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import type { OperationalAutomation } from './automations';
 
@@ -70,6 +72,45 @@ export async function applicableAutomations(
   return automations.filter((_, index) => verdicts[index]);
 }
 
+/**
+ * How often this owner has lately done the work each automation would take.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The database half of `offerOnEvidence`, kept here for the same reason
+ * `requires` is: the registry is pure data and must not import a repository.
+ *
+ * Counted once per distinct ACTION rather than once per automation, so two
+ * entries earning themselves on the same owner action cost one read. Returns a
+ * count for every automation, zero for the ones that declare no evidence rule
+ * — `offerIsEarned` ignores the number in that case, and a map with a hole in
+ * it is a worse thing for a caller to hold.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function automationEvidence(
+  userId: string,
+  automations: OperationalAutomation[]
+): Promise<Map<string, number>> {
+  const wanted = new Map<string, { action: string; windowDays: number }>();
+  for (const automation of automations) {
+    if (automation.offerOnEvidence) wanted.set(automation.offerOnEvidence.action, automation.offerOnEvidence);
+  }
+
+  const counts = new Map<string, number>();
+  await Promise.all(
+    [...wanted.values()].map(async rule => {
+      const since = new Date(Date.now() - rule.windowDays * 24 * 60 * 60 * 1000).toISOString();
+      counts.set(rule.action, await auditTrailRepository.countActionSince(userId, rule.action, since));
+    })
+  );
+
+  return new Map(
+    automations.map(automation => [
+      automation.id,
+      automation.offerOnEvidence ? counts.get(automation.offerOnEvidence.action) ?? 0 : 0,
+    ])
+  );
+}
+
 async function resolve(
   userId: string,
   requirement: NonNullable<OperationalAutomation['requires']>
@@ -79,6 +120,8 @@ async function resolve(
       return intakeReaches(userId);
     case 'takes_bookings':
       return takesBookings(userId);
+    case 'sends_quotes':
+      return sendsQuotes(userId);
     default:
       return true;
   }
@@ -129,6 +172,37 @@ async function intakeReaches(userId: string): Promise<boolean> {
     });
   } catch (err) {
     logger.warn({ err, userId }, 'Could not resolve intake reach; not offering the intake chase');
+    return false;
+  }
+}
+
+/**
+ * Has this business ever put a price in front of anybody?
+ *
+ * Asked of the proposals themselves rather than of the services, and the
+ * difference matters: `sale_mode: 'proposal'` says a service COULD be quoted,
+ * while a quote that was actually sent is the only proof the business works
+ * that way. A practice that priced one service as "on request" two years ago
+ * and has never sent a quote has nothing for this automation to follow up.
+ *
+ * Any status counts, including declined and expired. The question is whether
+ * quoting is something they do, not whether the last one went well.
+ *
+ * Unreadable counts as no, which hides the offer — the same direction the two
+ * gates above fail in, and for the same reason.
+ */
+async function sendsQuotes(userId: string): Promise<boolean> {
+  try {
+    const { count, error } = await supabaseServer
+      .from('proposals')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .not('sent_at', 'is', null);
+
+    if (error) throw error;
+    return (count ?? 0) > 0;
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not resolve whether this business sends quotes; not offering the quote chase');
     return false;
   }
 }

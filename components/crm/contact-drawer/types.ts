@@ -316,7 +316,14 @@ export interface BookingJourneyData {
 export interface BookingJourneyStep {
   id: string;
   key: string;  // Step key for translations: 'booked', 'payment', 'intake', 'confirmation', 'session', etc.
-  status: 'completed' | 'active' | 'pending' | 'failed' | 'skipped';
+  /**
+   * `refunded` is its own state, not a flavour of `completed`.
+   *
+   * It was mapped to `completed` with the note "transaction done", and
+   * `completed` is GREEN — so a job whose every shekel had gone back wore the
+   * same node as a sale collected in full.
+   */
+  status: 'completed' | 'active' | 'pending' | 'failed' | 'skipped' | 'refunded';
   label?: string;  // Optional override label (if not using translation key)
   details?: string;
   timestamp?: string;

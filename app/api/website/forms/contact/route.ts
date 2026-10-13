@@ -22,6 +22,7 @@ import { ConsentInputSchema } from '@/lib/validation/consent';
 import { recordConsent } from '@/lib/consent/recordConsent';
 import { beginDoubleOptIn } from '@/lib/consent/doubleOptIn';
 import { businessSubscriberRepository } from '@/lib/repositories/BusinessSubscriberRepository';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 
 const logger = createLogger({ module: 'WebsiteContactFormAPI' });
@@ -99,11 +100,7 @@ export async function POST(request: NextRequest) {
 
     // Look up owner by subdomain (website) or userCode (standalone conversion page)
     if (data.subdomain) {
-      const { data: websitePage, error: pageError } = await supabaseServer
-        .from('website_pages')
-        .select('user_id')
-        .eq('subdomain', data.subdomain)
-        .single();
+      const { data: websitePage, error: pageError } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(data.subdomain);
 
       if (pageError || !websitePage) {
         requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');

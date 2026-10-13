@@ -8,6 +8,7 @@ import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { describeRefundReason } from '@/lib/payments/refundReasons';
 import { RefundModal } from './RefundModal';
+import { REFUND_CLASS } from './refundTone';
 import {
   Loader2, RotateCcw, Copy, Check, Wallet, Search, ChevronDown, ChevronRight,
   ArrowUpDown, ArrowUp, ArrowDown, Download, X, ChevronLeft
@@ -70,8 +71,13 @@ const STATUS_COLORS: Record<string, string> = {
   succeeded: 'bg-green-500/20 text-green-600 dark:text-green-400',
   pending: 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400',
   failed: 'bg-red-500/20 text-red-600 dark:text-red-400',
-  refunded: 'bg-gray-500/20 text-gray-600 dark:text-gray-400',
-  partial_refund: 'bg-orange-500/20 text-orange-600 dark:text-orange-400'
+  /*
+   * Grey said nothing. A returned payment sat in the list looking like a
+   * disabled row, while the same event was orange on the invoice list and
+   * slate in the payment dialog. One tone now, from `refundTone`.
+   */
+  refunded: `${REFUND_CLASS.full.bg} ${REFUND_CLASS.full.text}`,
+  partial_refund: `${REFUND_CLASS.partial.bg} ${REFUND_CLASS.partial.text}`
 };
 
 export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', hideInternalSearch = false, highlightId }: PaymentTransactionListProps) {
