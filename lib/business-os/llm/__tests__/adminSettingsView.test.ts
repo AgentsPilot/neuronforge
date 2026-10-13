@@ -14,6 +14,9 @@
  */
 
 import type { SystemSettingsConfig } from '@/lib/repositories/types';
+import { forbidRealNetwork } from '@/tests/helpers/noRealNetwork';
+
+forbidRealNetwork();
 
 const getByKeys = jest.fn();
 const getImageGenerationConfig = jest.fn();
@@ -31,6 +34,17 @@ jest.mock('@/lib/repositories/SystemConfigRepository', () => ({
 const listActive = jest.fn();
 jest.mock('@/lib/repositories/AdminUserRepository', () => ({
   adminUserRepository: { listActive: () => listActive() },
+}));
+
+// `validateAreaRow`'s guardrails price every configured model. Unstubbed, that
+// reached `aiModelPricingRepository.listActive()` over the real network and
+// timed out in CI (PR #340). Priced here: the one model these cases configure;
+// anything else is unpriced, which is what the refused-fallthrough case needs.
+const mockPricedModels = new Set(['openai:gpt-4o']);
+jest.mock('@/lib/ai/pricing', () => ({
+  ...jest.requireActual('@/lib/ai/pricing'),
+  getPricing: async (provider: string, model: string) =>
+    mockPricedModels.has(`${provider}:${model}`) ? { input: 0.0025, output: 0.01 } : null,
 }));
 
 jest.mock('@/lib/business-os/llm/modelOptions', () => ({
