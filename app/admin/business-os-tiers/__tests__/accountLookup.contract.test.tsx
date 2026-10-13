@@ -1,8 +1,17 @@
 /**
  * @jest-environment jsdom
  *
- * The lookup, rendered against the bodies the accounts route actually returns
- * (QA-7, the second instance of the same gap).
+ * The entitlement snapshot, rendered against the bodies the accounts route
+ * actually returns (QA-7, the second instance of the same gap).
+ *
+ * ── After LF-2 ──────────────────────────────────────────────────────────────
+ * The name is kept on purpose (follow-ups §2.2): this file was written for the
+ * account lookup on Plans & entitlements, which LF-2 removed. Its two halves
+ * still guard the Businesses drawer, which reads the same route and renders
+ * the same `EntitlementSnapshot` and the same `ENTITLEMENT_ERROR_COPY`. So the
+ * recorded bodies now go straight into the snapshot (the drawer passes the
+ * body's `data`, exactly as the lookup did), and the refusal half checks the
+ * copy table itself: every code the route can return has a sentence there.
  *
  * ── Why this file exists ────────────────────────────────────────────────────
  * The screen consumes two payloads, and both had the same defect: a component
@@ -36,31 +45,24 @@
  * Recording rather than running the route in here is deliberate: `next/server`
  * needs `Request`, `ReadableStream`, `MessagePort` and more at import, none of
  * which jsdom has. Polyfilling them made the suite hang.
- *
- * ── Budget (QA NEW-4) ───────────────────────────────────────────────────────
- * The id is pasted rather than typed. 36 awaited keystrokes per test is a lot
- * of event loop for no extra coverage, and it is what made this suite flake
- * under a concurrent typecheck.
  */
 
 import '@testing-library/jest-dom';
 import { render, screen, waitFor, within } from '@testing-library/react';
-import { fireEvent } from '@testing-library/dom';
 import * as fs from 'fs';
 import * as path from 'path';
 
 import { isGrantingValue } from '@/lib/business-os/entitlements/schema';
 import { CAPABILITIES } from '@/lib/business-os/entitlements/config/catalog';
 import type { CapabilityDef, CapabilityValue } from '@/lib/business-os/entitlements/types';
+import { ADMIN_TH } from '@/app/admin/components/layout/adminTable';
 
-import { AccountLookup } from '../components/AccountLookup';
-import type { AccountPayload } from '../types';
+import { ENTITLEMENT_ERROR_COPY, EntitlementSnapshot } from '../components/EntitlementSnapshot';
+import type { AccountPayload, AccountPlanRow } from '../types';
 import recordedOnATier from './__fixtures__/recordedAccountBody.json';
 import recordedNoPlanRow from './__fixtures__/recordedAccountBodyNoPlanRow.json';
 
 jest.setTimeout(20000);
-
-const ACCOUNT = '11111111-1111-4111-8111-111111111111';
 
 /**
  * The recorded bodies, typed as the component's own contract.
@@ -72,20 +74,13 @@ const ACCOUNT = '11111111-1111-4111-8111-111111111111';
 const onATier = recordedOnATier as { success: boolean; data: AccountPayload };
 const noPlanRow = recordedNoPlanRow as { success: boolean; data: AccountPayload };
 
-function stubFetch(status: number, payload: unknown) {
-  global.fetch = jest.fn(async () => ({
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => payload,
-  })) as unknown as typeof fetch;
-}
-
-async function lookUp(payload: unknown = onATier, status = 200) {
-  stubFetch(status, payload);
-  render(<AccountLookup />);
-  // Pasted, not typed: one event instead of 36 (QA NEW-4).
-  fireEvent.change(screen.getByLabelText('Account id'), { target: { value: ACCOUNT } });
-  fireEvent.click(screen.getByRole('button', { name: /Look up/ }));
+/**
+ * Render a recorded body's `data`, as the Businesses drawer does once its read
+ * succeeds (`BusinessOsPanel`, `body.data as AccountPayload`). Kept async with
+ * the callers' `waitFor` unchanged, so each case reads as it did for the lookup.
+ */
+async function lookUp(body: { success: boolean; data: AccountPayload } = onATier) {
+  render(<EntitlementSnapshot payload={body.data} />);
 }
 
 describe('an account on a tier', () => {
@@ -223,15 +218,50 @@ describe('every refusal the route can return has copy (QA NEW-3)', () => {
     expect(codes).toContain('not_a_business_os_account');
   });
 
-  it.each(codes)('%s is shown as a sentence, not as a code', async (code) => {
-    await lookUp({ success: false, error: code }, code === 'not_a_business_os_account' ? 404 : 500);
+  it.each(codes)('%s is shown as a sentence, not as a code', (code) => {
+    // Checked on the table rather than through a rendered lookup (LF-2): the
+    // drawer words a failed plan read as `ENTITLEMENT_ERROR_COPY[code]`, with a
+    // generic fallback. A code missing here would reach the admin as that
+    // fallback, so a missing entry fails, which is stricter than the old path.
+    const message = ENTITLEMENT_ERROR_COPY[code];
 
-    await waitFor(() => expect(screen.getByTestId('account-error')).toBeInTheDocument());
-    const message = screen.getByTestId('account-error').textContent ?? '';
-
-    // The failure mode this catches: the fallback renders `Could not read that
-    // account (tenant_check_failed).` — the code, on the screen.
+    expect(message).toEqual(expect.any(String));
     expect(message).not.toContain(code);
     expect(message.length).toBeGreaterThan(30);
+  });
+});
+
+/**
+ * T-12, ported from `accountLookup.render` when LF-2 deleted it (SA C-1): the
+ * snapshot table, which the Businesses drawer renders, is the standard admin
+ * table. Same assertions; the recording now goes straight into the snapshot.
+ */
+describe('T-12: the snapshot table is the standard admin table', () => {
+  it('is named, and every header is a column header with the standard classes', async () => {
+    await lookUp();
+    await waitFor(() => expect(screen.getByTestId('account-result')).toBeInTheDocument());
+
+    const table = screen.getByRole('table', { name: 'Capabilities in force' });
+    const headers = within(table).getAllByRole('columnheader');
+    expect(headers.map((th) => th.textContent)).toEqual(['Capability', 'Value', 'Decided by']);
+    for (const th of headers) {
+      expect(th).toHaveAttribute('scope', 'col');
+      expect(th.className).toBe(ADMIN_TH);
+    }
+  });
+
+  it('prints a set end date in UTC, and a missing one in words', async () => {
+    const plan = onATier.data.plan as AccountPlanRow;
+    const withEnd = {
+      ...onATier,
+      data: { ...onATier.data, plan: { ...plan, tier_expires_at: '2026-12-31T23:30:00.000Z', cohort_expires_at: null } },
+    };
+    await lookUp(withEnd);
+    await waitFor(() => expect(screen.getByTestId('account-result')).toBeInTheDocument());
+
+    const result = screen.getByTestId('account-result');
+    expect(within(result).getByText('2026-12-31 23:30 UTC')).toBeInTheDocument();
+    expect(within(result).getAllByText('no end date')).toHaveLength(1);
+    expect(result).not.toHaveTextContent('2026-12-31T23:30');
   });
 });

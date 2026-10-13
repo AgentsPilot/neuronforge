@@ -181,7 +181,7 @@ describe('happy path', () => {
     expect(tile(body, 'entitlements_mode').status).toBe('neutral');
     expect(tile(body, 'entitlements_mode').pageLink).toEqual({
       href: '/admin/business-os-tiers',
-      text: 'Open Plans & entitlements (plans and account lookup)',
+      text: 'Open Plans & entitlements',
     });
     // Slice 5: all 12 jobs recorded a Vercel cron run and all five queues were read.
     expect(tile(body, 'scheduled_jobs').status).toBe('green');

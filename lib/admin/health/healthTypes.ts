@@ -84,7 +84,7 @@ export interface HealthTile {
 
 export interface HealthPageLink {
   href: string;
-  /** Visible text, e.g. "Open Plans & entitlements (plans and account lookup)". */
+  /** Visible text, e.g. "Open Plans & entitlements". */
   text: string;
 }
 

@@ -108,7 +108,7 @@ describe('QA S5 render: the entitlements tile', () => {
     expect(within(region).getByTestId('headline').textContent).toBe(headline);
     expect(within(region).getByTestId('status-label').textContent).toBe(label);
     expect(within(region).getByText('Mode in effect')).toBeTruthy();
-    const link = within(region).getByRole('link', { name: 'Open Plans & entitlements (plans and account lookup)' });
+    const link = within(region).getByRole('link', { name: 'Open Plans & entitlements' });
     expect(link.getAttribute('href')).toBe('/admin/business-os-tiers');
     // Only one link on the tile: the mode word is no longer itself a link.
     expect(within(region).getAllByRole('link')).toHaveLength(1);

@@ -568,14 +568,14 @@ const MIGRATED_PAGES = [
   },
   {
     // L-5: header with the Read-only badge, KPI strip, Refresh-only bar, states,
-    // the plan-card chips, the account lookup (both reads through
-    // readAdminResponse) and the snapshot table. `types.ts` is not listed: it
-    // is untouched and has no markup.
+    // the plan-card chips (the plans read through readAdminResponse) and the
+    // snapshot table, which the Businesses drawer renders. The account lookup
+    // was removed in follow-ups LF-2. `types.ts` is not listed: it is
+    // untouched and has no markup.
     page: '/admin/business-os-tiers (Plans & entitlements)',
     files: [
       'app/admin/business-os-tiers/page.tsx',
       'app/admin/business-os-tiers/components/PlansKpis.tsx',
-      'app/admin/business-os-tiers/components/AccountLookup.tsx',
       'app/admin/business-os-tiers/components/EntitlementSnapshot.tsx',
       'app/admin/business-os-tiers/components/PlanCard.tsx',
       'app/admin/business-os-tiers/components/NotBuiltPanel.tsx',
