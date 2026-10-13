@@ -34,7 +34,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, CheckCheck, MoreHorizontal, UserX, XCircle } from 'lucide-react';
+import { CalendarClock, CheckCheck, MoreHorizontal, RotateCcw, UserX, XCircle } from 'lucide-react';
 
 import { shouldOpenUpward } from './menuPlacement';
 
@@ -49,6 +49,31 @@ interface MeetingRowActionsProps {
   onSetStatus?: (status: 'completed' | 'no_show' | 'cancelled') => void;
   /** Opens the reschedule flow. */
   onReschedule?: () => void;
+  /**
+   * Returns the money taken for THIS meeting.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * On a package billed per meeting, marking one held raises its own invoice —
+   * so each meeting can hold money of its own, and undoing that was reachable
+   * only from the payments list several levels away, where six meetings of the
+   * same package look like six near-identical rows.
+   *
+   * Passed up like every other write in this drawer: the parent owns the refund
+   * dialog, and the row only says which money is meant. Absent when there is
+   * nothing to return, which is also how the item stays off the menu — see
+   * `refundable` below for why that is a prop and not a calculation here.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  onRefund?: () => void;
+  /**
+   * Whether anything is actually left to return.
+   *
+   * Decided by the caller, which is the only place that holds the payment: this
+   * component is given a meeting's STATUS, not its money. A meeting that was
+   * paid and then fully refunded must stop offering it, or the owner is invited
+   * to return money that has already gone back.
+   */
+  refundable?: boolean;
   t: (key: string) => string;
 }
 
@@ -57,6 +82,8 @@ export function MeetingRowActions({
   startTime,
   onSetStatus,
   onReschedule,
+  onRefund,
+  refundable,
   t,
 }: MeetingRowActionsProps) {
   const [open, setOpen] = useState(false);
@@ -128,9 +155,45 @@ export function MeetingRowActions({
     });
   }
 
-  /* A meeting can be moved whatever its state — including one already marked,
-     which is how a mistaken outcome gets corrected by rebooking. */
-  if (onReschedule) {
+  /*
+   * Only while something is left to return, which is the same rule the payment
+   * stages use — a fully refunded meeting stops offering it, and the row's own
+   * amount already says the money went back.
+   *
+   * Placed before "reschedule" and after the outcomes on purpose: it belongs
+   * with the things that undo, and it must not sit next to the trigger where
+   * `no_show` and `cancelled` live, because those three are a mis-tap away from
+   * each other and only one of them moves real money.
+   */
+  if (refundable && onRefund) {
+    items.push({
+      key: 'refund',
+      label: t('payments.refund') || 'Refund',
+      icon: RotateCcw,
+      run: onRefund,
+    });
+  }
+
+  /*
+   * A meeting can be moved until it has HAPPENED.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * It used to be offered whatever the state, on the reasoning that rebooking
+   * is how a mistaken outcome gets corrected. That holds for a meeting called
+   * off or missed — the client reschedules, which is the ordinary flow — and
+   * not for one already held.
+   *
+   * On a package billed per meeting, marking one held is what RAISES AND EMAILS
+   * ITS INVOICE. Moving the date afterwards leaves the booking and the invoice
+   * the client is holding on two different days, and the invoice is the
+   * document that settles it.
+   *
+   * Nor did it achieve what it was there for: nothing in this menu undoes
+   * "held", so changing the date never un-held anything. A make-up session is
+   * what that need actually wants, and the package adds one of those.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (onReschedule && status !== 'completed') {
     items.push({
       key: 'reschedule',
       label: t('crm.booking.reschedule') || 'Reschedule',

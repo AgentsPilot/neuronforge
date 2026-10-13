@@ -245,12 +245,12 @@ describe('stamped: one stamp entry with the invoice-paid entry, under ONE flush 
     ]);
   });
 
-  it('the invoice-paid entry is unchanged by the stamp (same fields as P-3b.2), and comes first', async () => {
+  it('the invoice-paid entry is unchanged by the stamp (same fields as P-3b.2, plus billingReason from P-7b.1a U-9), and comes first', async () => {
     const h = setup();
     await applyPaidPlanInvoice(paidEvent(), h.log, h.deps);
     expect(auditEntries[0]).toMatchObject({ action: 'BOS_BILLING_INVOICE_PAID', entityType: 'business_os_account_plan', entityId: ACCOUNT, actorId: PLATFORM });
     expect(Object.keys(auditEntries[0].details as Record<string, unknown>).sort()).toEqual(
-      ['actor', 'amountMinor', 'anchorSet', 'eventRowId', 'invoiceId', 'livemode', 'planWritten', 'stripeEventId', 'subscriptionId', 'tier'].sort()
+      ['actor', 'amountMinor', 'anchorSet', 'billingReason', 'eventRowId', 'invoiceId', 'livemode', 'planWritten', 'stripeEventId', 'subscriptionId', 'tier'].sort()
     );
   });
 });

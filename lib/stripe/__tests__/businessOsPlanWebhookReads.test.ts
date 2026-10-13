@@ -72,6 +72,10 @@ describe('retrieveBusinessOsSubscription', () => {
       livemode: false,
       metadata: { product: 'business_os_plan' },
       priceIds: ['price_a'],
+      // P-7b.1a (§3.3 a): additive fields; the fixture's item carries no period.
+      items: [{ id: 'si_1', priceId: 'price_a', currentPeriodStart: null, currentPeriodEnd: null }],
+      pendingUpdate: null,
+      latestInvoiceId: null,
     });
     expect(mockSubscriptionsRetrieve).toHaveBeenCalledWith('sub_1');
     expect(mockSubscriptionItemsList).not.toHaveBeenCalled();
@@ -96,6 +100,8 @@ describe('retrieveBusinessOsSubscription', () => {
       .mockResolvedValueOnce({ data: [{ id: 'si_3', price: { id: 'price_c' } }], has_more: false });
     const out = await service().retrieveBusinessOsSubscription('sub_1');
     expect(out.priceIds).toEqual(['price_a', 'price_b', 'price_c']);
+    // P-7b.1a: `items` is the paged list itself, the embedded page not counted twice.
+    expect(out.items.map((item) => item.id)).toEqual(['si_1', 'si_2', 'si_3']);
     expect(mockSubscriptionItemsList.mock.calls).toEqual([
       [{ subscription: 'sub_1', limit: 100 }],
       [{ subscription: 'sub_1', limit: 100, starting_after: 'si_2' }],

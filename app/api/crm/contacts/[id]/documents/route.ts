@@ -9,6 +9,11 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { contactDocumentsRepository, DocumentType } from '@/lib/repositories/ContactDocumentsRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+/* The one list of what may be stored in `contact-documents`. Shared with
+   `ContactDocumentService`, which writes to the same bucket from the intake
+   upload: two copies is how a scanned TIFF came to be accepted by one path and
+   refused by the other. */
+import { ALLOWED_MIME_TYPES } from '@/lib/services/ContactDocumentService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
@@ -168,6 +173,52 @@ export async function POST(
       'Uploading contact document'
     );
 
+    /*
+     * 3b. THE FILE TYPE, CHECKED HERE RATHER THAN BY THE STORAGE BUCKET.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The bucket carries its own `allowedMimeTypes`, so an unaccepted file was
+     * already being refused — but by Supabase, several steps later, as an
+     * upload error. That became a 500 reading "Failed to upload file", which
+     * tells the owner nothing: it reads as the system being broken rather than
+     * as this particular file being unsuitable, and there is no hint that
+     * choosing a different one would work. A real report of this said only
+     * "can't save proposal if loading a proposal file".
+     *
+     * Checked explicitly instead of in the Zod schema above, because a
+     * `ZodError` on this route answers with a flat "Invalid input" and hides
+     * its details outside development — so the owner would have traded one
+     * unhelpful message for another. This one names the type it refused.
+     *
+     * Against ALLOWED_MIME_TYPES, the same list `ContactDocumentService`
+     * validates against, so the two routes that write to this bucket cannot
+     * drift. The bucket's own list below is now built from it for the same
+     * reason: it was a second copy, and it is what silently rejected a scan.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (!ALLOWED_MIME_TYPES.includes(validated.mime_type)) {
+      requestLogger.warn(
+        { userId: user.id, mimeType: validated.mime_type },
+        'Document upload refused: unsupported file type'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          /*
+           * A CODE as well as a sentence. The sentence is a fallback for any
+           * caller that just prints `error`; the code is what a caller with a
+           * phrasebook keys off, so a Hebrew owner is not shown an English
+           * refusal. `mime_type` comes back so the message can name the thing
+           * that was actually refused.
+           */
+          code: 'unsupported_file_type',
+          mime_type: validated.mime_type,
+          error: `That file type (${validated.mime_type}) cannot be attached. Use a PDF, a Word or Excel document, a scan, or a photo.`,
+        },
+        { status: 400 }
+      );
+    }
+
     // 4. Decode base64 file content
     const fileBuffer = Buffer.from(validated.file_content, 'base64');
 
@@ -187,19 +238,12 @@ export async function POST(
       const { error: createBucketError } = await supabaseServer.storage.createBucket(bucketName, {
         public: false,
         fileSizeLimit: 52428800, // 50MB
-        allowedMimeTypes: [
-          'application/pdf',
-          'application/msword',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          'application/vnd.ms-excel',
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'image/jpeg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-          'text/plain',
-          'text/csv'
-        ]
+        /* One list, shared. This was a second copy of it, and the copy is what
+           refused a scan while the service that writes to the same bucket
+           would have taken one. Note this applies at CREATION only — an
+           existing bucket keeps whatever it was made with, which is why
+           widening the list also needs the migration that updates it. */
+        allowedMimeTypes: ALLOWED_MIME_TYPES
       });
 
       if (createBucketError) {

@@ -894,7 +894,12 @@ export function ChannelsCard({
                   }}
                   aria-label={t('manage')}
                   aria-expanded={open}
-                  className="opacity-0 group-hover:opacity-100 focus:opacity-100"
+                  /* Hidden until hover only where hovering is possible. The
+                     `focus:` escape hatch covers a keyboard; it does nothing
+                     for a finger, so on a phone this button did not exist.
+                     `opacity` does not affect layout, so revealing it shifts
+                     nothing. */
+                  className="[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus:opacity-100"
                   style={{
                     flexShrink: 0,
                     background: 'none',

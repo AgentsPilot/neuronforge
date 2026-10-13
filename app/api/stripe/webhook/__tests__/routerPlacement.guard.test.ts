@@ -62,6 +62,9 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // P-4.2 (workplan BUSINESS_OS_PLAN_PAYMENTS_P4_WORKPLAN.md §3.4; SA W-8): the
   // Settings → Plan purchase view reads the session user's billing row (findByUser).
   'planPurchaseView.ts': [BILLING_ACCOUNTS],
+  // P-7b.1a (workplan BUSINESS_OS_PLAN_PAYMENTS_P7B1_WORKPLAN.md §3.9): the
+  // upgrade orchestration reads the session user's billing row (findByUser).
+  'planUpgrade.ts': [BILLING_ACCOUNTS],
 };
 const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 

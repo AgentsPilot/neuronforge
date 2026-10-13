@@ -735,6 +735,9 @@ describe('source guards', () => {
       // Plan payments P-3a: the checkout route's integration test fakes the
       // repository module by name. The route itself does not name it.
       'app/api/business-os/billing/plan/checkout/__tests__/route.test.ts',
+      // Plan payments P-7b.1a: the upgrade routes' integration test fakes the
+      // repository module by name. The routes themselves do not name it.
+      'app/api/business-os/billing/plan/upgrade/__tests__/route.test.ts',
       // Plan payments P-4.2: the my-plan route suite fakes the repository module
       // by name for the purchase view's billing read. The route does not name it.
       'app/api/business-os/entitlements/my-plan/__tests__/route.test.ts',
@@ -753,6 +756,8 @@ describe('source guards', () => {
       'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       'lib/business-os/billing/__tests__/planSubscriptionMirror.test.ts',
+      // P-7b.1a: the upgrade orchestration test imports the billing row TYPE to build fakes.
+      'lib/business-os/billing/__tests__/planUpgrade.test.ts',
       'lib/business-os/billing/businessOsStripeCustomer.ts',
       // Plan payments P-5a.2 (workplan §3.3): the holding screen's model reads
       // the SESSION user's billing row for the current mode (findByUser only).
@@ -772,6 +777,9 @@ describe('source guards', () => {
       // the SESSION user's billing row for the current mode (findByUser only).
       'lib/business-os/billing/planPurchaseView.ts',
       'lib/business-os/billing/planSubscriptionMirror.ts',
+      // Plan payments P-7b.1a (workplan §3.4, §3.8): the upgrade orchestration
+      // reads the SESSION user's billing row for the current mode (findByUser only).
+      'lib/business-os/billing/planUpgrade.ts',
       // Admin delete AD-1b (SC-5): R-3 reads BOTH livemode rows of the target's
       // plan billing account (findByUser only); the evaluator imports the status
       // type. Their tests name it to fake it. No entitlements import.
