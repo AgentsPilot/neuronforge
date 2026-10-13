@@ -855,6 +855,102 @@ export async function GET(request: NextRequest) {
     const refundable = verdicts.filter(v => v.refundable);
     const remaining = Math.round(refundable.reduce((sum, v) => sum + v.remaining, 0) * 100) / 100;
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE MONEY THIS CANNOT RETURN, AND HOW MUCH OF IT.
+     *
+     * `blocked_count` was already sent and the dialog ignored it, so a booking
+     * paid half by card and half in cash announced "2 payments, all of them
+     * will be refunded in full — ₪400 in total". Both halves of that sentence
+     * were true separately and together they were a lie: ₪400 is one payment,
+     * not all of them, and the owner reads it as the whole ₪800 coming back.
+     *
+     * The amount is needed as well as the count, because "one payment is
+     * excluded" does not tell anyone how much is still with them.
+     *
+     * `manual` is tracked apart because the two blocked cases need different
+     * words. Cash or a transfer has to be returned the same way it arrived and
+     * can then be recorded here. A Stripe payment whose charge reference was
+     * never written is a different problem, and telling that owner to go and
+     * hand back cash sends them looking for money that does not exist.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * Blocked means MONEY STILL HELD that cannot be returned here — not merely
+     * "this leg will be skipped".
+     *
+     * `remaining > 0` is the whole difference. A payment already refunded in
+     * full is unrefundable and has nothing left, and counting it produced the
+     * sentence "only ₪400 will be returned here, the remaining ₪0.00 must be
+     * refunded from their payment row" — pointing an owner at money that does
+     * not exist, about a refund they had just made themselves.
+     *
+     * `refundGroup` takes the same view: a leg whose remaining is zero is
+     * skipped rather than failed.
+     */
+    const blocked = verdicts.filter(v => !v.refundable && (v.remaining ?? 0) > 0);
+    const sumRemaining = (rows: typeof blocked) =>
+      Math.round(rows.reduce((sum, v) => sum + (v.remaining ?? 0), 0) * 100) / 100;
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE FEE, ON A GROUP REFUND TOO.
+     *
+     * The single-payment branch above has always said what a refund costs —
+     * Stripe keeps the processing fee when money goes back, so returning ₪400
+     * leaves the business ₪5.40 down. Refunding the same payment from the
+     * BOOKING said nothing, because this branch never asked for the fee. Same
+     * money, same cost, and whether the owner was warned depended only on
+     * which button they happened to open it from.
+     *
+     * Only the fees of the payments actually being returned. A blocked one
+     * costs nothing because nothing is going back through it.
+     *
+     * Summed ONLY when every fee shares a currency. Stripe charges the fee in
+     * the settlement currency, which need not match the payment's, and adding
+     * $5.40 to €3.10 would produce a number that is true of nothing. Mixed
+     * currencies send null, and the dialog then says nothing rather than
+     * something wrong.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const refundableIds = resolved.transactionIds.filter((_, index) => verdicts[index].refundable);
+
+    /*
+     * HOW the blocked money arrived, so the dialog can name it.
+     *
+     * "Paid outside Stripe — cash, a transfer or a cheque" asks the owner to
+     * work out which of three it was about their own booking. The transaction
+     * knows: it is `cash`, and saying `cash` is both shorter and certain.
+     *
+     * A list, because several blocked payments need not share a method. The
+     * dialog names one only when there is exactly one.
+     */
+    const blockedIds = resolved.transactionIds.filter((_, index) => !verdicts[index].refundable);
+
+    const { data: methodRows } = await supabaseServer
+      .from('payment_transactions')
+      .select('payment_method')
+      .in('id', blockedIds)
+      .eq('user_id', user.id);
+
+    const blockedMethods = [
+      ...new Set((methodRows ?? []).map(row => String(row.payment_method ?? '')).filter(Boolean)),
+    ];
+
+    const { data: feeRows } = await supabaseServer
+      .from('payment_transactions')
+      .select('processor_fee, fee_currency')
+      .in('id', refundableIds)
+      .eq('user_id', user.id);
+
+    const fees = (feeRows ?? []).filter(row => Number(row.processor_fee ?? 0) > 0);
+    const feeCurrencies = new Set(fees.map(row => String(row.fee_currency ?? '')));
+
+    const groupFee =
+      fees.length && feeCurrencies.size === 1
+        ? Math.round(fees.reduce((sum, row) => sum + Number(row.processor_fee), 0) * 100) / 100
+        : null;
+
     const groupBooking = bookingId ?? (await bookingBehind(user.id, resolved.transactionIds[0]));
 
     return NextResponse.json({
@@ -867,10 +963,34 @@ export async function GET(request: NextRequest) {
         refundable: refundable.length > 0,
         remaining,
         currency: refundable[0]?.currency ?? null,
+        /*
+         * Every payment found, which is what makes this a GROUP at all — the
+         * dialog needs to know there is more than one even when only one of
+         * them is being returned.
+         */
         payment_count: resolved.transactionIds.length,
+        /*
+         * And how many will ACTUALLY come back, which is a different number
+         * the moment one has been refunded already. "2 payments, all of them
+         * will be refunded in full — ₪400 in total" counted history and
+         * reported today's money, so the two halves disagreed.
+         */
+        refundable_count: refundable.length,
+        /* Same two fields the single-payment branch sends, so the dialog's
+           existing warning renders without knowing which branch answered. */
+        processor_fee: groupFee,
+        fee_currency: groupFee === null ? null : [...feeCurrencies][0] || null,
         // What is NOT refundable, and why — so a dialog offering "everything"
         // can say honestly that some of it will not come back.
-        blocked_count: verdicts.length - refundable.length,
+        blocked_count: blocked.length,
+        /** What is held back, so the dialog can name the figure rather than hint. */
+        blocked_remaining: sumRemaining(blocked),
+        /** The part of it that arrived outside Stripe and can be recorded by hand. */
+        blocked_manual_remaining: sumRemaining(
+          blocked.filter(v => (v as { recordable?: boolean }).recordable === true)
+        ),
+        /** `['cash']`, so the dialog can say the word instead of listing three. */
+        blocked_methods: blockedMethods,
         reason: refundable.length === 0 ? verdicts[0]?.reason : undefined,
       },
     });

@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { supabaseFetch } from '@/lib/supabaseFetch'
 
 const url = process.env.SUPABASE_URL
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -31,5 +32,9 @@ export const supabaseAdmin = createClient(url, serviceRoleKey, {
   auth: {
     autoRefreshToken: false,
     persistSession: false
-  }
+  },
+  /* Under the same connection cap as `supabaseServer`. A client that opts out
+     of the bound re-opens the hole for its own traffic, and ECONNRESET does
+     not care which client opened the socket. */
+  global: { fetch: supabaseFetch }
 })

@@ -113,8 +113,21 @@ export interface BriefingFacts {
      * transaction is one payment, not two.
      */
     receivedToday: number;
-    /** How many separate payments that was. */
+    /** How many separate payments that was, across every currency. */
     receivedCount: number;
+    /**
+     * The currency `receivedToday` is denominated in, which is not necessarily
+     * `currency` above: that one follows what is OWED.
+     */
+    receivedCurrency?: string;
+    /**
+     * True when today's takings span more than one currency.
+     *
+     * `receivedToday` is then the DOMINANT currency's total, not the day's, and
+     * nothing may present it as the day's — there is no FX rate anywhere in
+     * this platform to make one number out of two.
+     */
+    receivedMixedCurrency: boolean;
     /**
      * Instalments on a payment plan that have fallen due and are unpaid.
      *
@@ -937,7 +950,7 @@ interface SettledRow {
 function takingsFor(
   transactions: SettledRow[],
   invoices: SettledRow[]
-): { total: number; count: number; currency?: string } {
+): { total: number; count: number; currency?: string; mixedCurrency: boolean } {
   const settledByTransaction = new Set(
     transactions.map(t => (t.invoice_id ? String(t.invoice_id) : '')).filter(Boolean)
   );
@@ -947,19 +960,50 @@ function takingsFor(
     ...invoices.filter(i => !settledByTransaction.has(String(i.id))),
   ];
 
-  let total = 0;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * GROUPED BY CURRENCY, LIKE EVERY OTHER FIGURE IN THIS FILE.
+   *
+   * This summed every payment into one number and then labelled it with
+   * whichever row happened to carry a currency first. A day with ₪300 and $150
+   * reported 450, and the narrator rendered it as "₪450 came in today, across 2
+   * payments" — both halves false, on the figure this function's own header
+   * calls the one an owner most wants.
+   *
+   * `owed` above has always grouped and reported the dominant currency, and the
+   * quote total refuses to publish any figure when more than one is present:
+   * "This dashboard has shipped that bug once already, printing a ₪ symbol over
+   * USD amounts." There is no FX rate anywhere in this platform, so there is no
+   * honest single number to print.
+   *
+   * The COUNT still covers everything — "3 payments" is true whatever they were
+   * denominated in, and an owner who took money in two currencies did take
+   * three payments. Only the total is confined to one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const byCurrency = new Map<string, number>();
   let count = 0;
+
   for (const row of counted) {
     const net = toNumber(row.amount) - toNumber(row.refunded_amount);
     if (net <= 0) continue;
-    total += net;
+
+    const currency = (row.currency || '').toUpperCase();
+    byCurrency.set(currency, (byCurrency.get(currency) ?? 0) + net);
     count += 1;
   }
 
+  const dominant = [...byCurrency.entries()].sort((a, b) => b[1] - a[1])[0];
+
   return {
-    total: Math.round(total * 100) / 100,
+    total: dominant ? Math.round(dominant[1] * 100) / 100 : 0,
     count,
-    currency: counted.find(r => r.currency)?.currency ?? undefined,
+    currency: dominant?.[0] || undefined,
+    /*
+     * True when today's takings span more than one currency, so the narrator
+     * can say so rather than presenting one currency's total as the day's.
+     */
+    mixedCurrency: byCurrency.size > 1,
   };
 }
 
@@ -1077,6 +1121,16 @@ export function summariseMoney(
     mixedCurrency: byCurrency.size > 1,
     receivedToday: takings.total,
     receivedCount: takings.count,
+    /*
+     * The takings' OWN currency, which is not always `currency` above.
+     *
+     * That one prefers the dominant currency of what is OWED, because the owed
+     * list is usually the longer one. A business owed in ILS that took a USD
+     * payment today would otherwise have the dollars printed with a shekel
+     * sign — the exact bug this grouping exists to stop, one field along.
+     */
+    receivedCurrency: takings.currency,
+    receivedMixedCurrency: takings.mixedCurrency,
     /*
      * Instalments are money owed too, and on a different clock.
      *

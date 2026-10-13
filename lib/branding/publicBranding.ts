@@ -33,7 +33,9 @@ import { createLogger } from '@/lib/logger';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { verifyBookingToken } from '@/lib/services/BookingEmailService';
+import { verifyBookingToken } from '@/lib/services/bookingToken';
+import { PORTAL_GRANT_COOKIE, grantFor, readGrants } from '@/lib/security/portalGrant';
+import { cookieValue, looksLikeBookingId } from '@/lib/security/portalAccess';
 import { verifyProposalToken } from '@/lib/business-os/proposalToken';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { resolveBusinessTheme } from '@/lib/branding/resolveTheme';
@@ -57,7 +59,7 @@ export type PublicBrandRef =
   | { by: 'userCode'; userCode: string }
   | { by: 'subdomain'; subdomain: string }
   /** A signed booking-management link, as sent to a client by email. */
-  | { by: 'bookingToken'; token: string }
+  | { by: 'bookingToken'; token: string; grantCookie?: string | null }
   /** A public invoice link. The id is the unguessable part. */
   | { by: 'invoiceId'; invoiceId: string }
   /** A signed quote link, as sent to a client by email. */
@@ -201,7 +203,35 @@ async function resolveUserId(ref: PublicBrandRef): Promise<{ userId: string; pro
   }
 
   if (ref.by === 'bookingToken') {
-    const decoded = verifyBookingToken(ref.token);
+    /*
+     * The segment carries either a signed token or a booking id — see
+     * `resolvePortalAccess`. The id form is reachable only with a grant cookie
+     * naming that booking, and the caller has already been through that check
+     * before asking for branding.
+     *
+     * Resolving branding from an id WITHOUT a credential would be fine on its
+     * own terms (this returns a business's public identity and nothing about
+     * the booking) but it is still gated, because a branding lookup that
+     * accepts a bare id is a confirmation that the id is real.
+     */
+    const decoded = looksLikeBookingId(ref.token)
+      ? grantFor(
+          /*
+           * The cookie VALUE, pulled out of the raw `Cookie` header.
+           *
+           * This handed the whole header to `readGrants`, which tried to
+           * verify `ap_portal_grant=eyJ...` as a JWT, threw, and returned no
+           * grants — so branding came back null, the layout rendered its
+           * unbranded fallback, and the portal said "booking not found" for a
+           * client whose grant was perfectly valid. The API route never had
+           * the bug because it goes through `resolvePortalAccess`, which does
+           * this extraction itself.
+           */
+          readGrants(cookieValue(ref.grantCookie, PORTAL_GRANT_COOKIE)),
+          ref.token
+        )
+      : verifyBookingToken(ref.token);
+
     if (!decoded) return null;
 
     /*

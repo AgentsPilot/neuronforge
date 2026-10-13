@@ -74,6 +74,23 @@ jest.mock('@/lib/business-os/invites/redemptionDeps', () => {
   };
 });
 
+/*
+ * The throttle these routes now put in front of themselves.
+ *
+ * Mocked, not exercised: without it the limiter reaches for a Supabase that
+ * does not exist in this suite, and the failed round trip logs a stack that
+ * lands in the very assertions below — the ones checking that nothing about a
+ * rejected body is logged. `lib/security/__tests__/rateLimit.test.ts` covers
+ * the limiter's own behaviour.
+ */
+jest.mock('@/lib/security/rateLimit', () => {
+  const actual = jest.requireActual('@/lib/security/rateLimit');
+  return {
+    ...actual,
+    rateLimit: jest.fn(async () => ({ allowed: true, hits: 1, degraded: false })),
+  };
+});
+
 jest.mock('server-only', () => ({}));
 
 import * as codeRoute from '../code/route';

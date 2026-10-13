@@ -431,6 +431,12 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
     .split('{rest}').join(String(moneyLine.rest ?? ''))
     .split('{freq}').join(
       moneyLine.freqKey ? t(`scheduling.modal.installment_${moneyLine.freqKey}`) : ''
+    )
+    /* When the one remaining payment falls. A different word from `{freq}`:
+       those are adjectives for a plural ("weekly payments") and read wrong
+       about a single one -- in Hebrew they are not even grammatical. */
+    .split('{after}').join(
+      moneyLine.freqKey ? t(`scheduling.modal.after_${moneyLine.freqKey}`) : ''
     );
 
   return (
@@ -745,7 +751,7 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
 
               <p className="text-[12px] leading-relaxed text-[var(--v2-text-primary)]">
                 <span className="font-semibold text-[var(--v2-text-muted)]">
-                  {t('scheduling.modal.you_get_paid')}{' '}
+                  {t('scheduling.modal.how_it_works')}{' '}
                 </span>
                 {moneyText}
               </p>

@@ -323,7 +323,13 @@ const quoteAwaitingClient: GapDefinition = {
   id: 'quote_awaiting_client',
   blocksOn: 'client',
   staleAfterHours: 72,
-  action: null,
+  /*
+   * It had none, and it was the only client-blocked gap without one: an unpaid
+   * invoice is chased, an outstanding form is chased, an upcoming meeting is
+   * reminded about, and an unanswered quote reached nobody. The action is what
+   * lets `chase_quotes` hang off it.
+   */
+  action: 'chase_quote',
   find: (userId, now) =>
     safely('quote_awaiting_client', async () => {
       const { data } = await supabaseServer
@@ -1092,6 +1098,184 @@ const meetingUnmarked: GapDefinition = {
     }),
 };
 
+/**
+ * A meeting the platform closed off, while it can still be corrected.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SECOND CHANCE, AND WHY IT IS A GAP RATHER THAN A NOTICE.
+ *
+ * `auto_complete_meetings` marks every past meeting `completed`, because that
+ * is the only one of the three answers it can give. For the meetings that were
+ * actually no-shows it is wrong, and wrong in a way that pays: a no-show is the
+ * basis for a fee, and it feeds `retention.no_show_rate` and its baseline.
+ *
+ * Completing the booking also takes it out of `meeting_unmarked` — that gap
+ * matches `confirmed` and `pending` — so the owner's prompt disappears at the
+ * same moment the assumption is recorded. This puts it back, for a week, with
+ * the automation's answer shown rather than hidden.
+ *
+ * `blocksOn: 'owner'` because only the owner knows, and `staleAfterHours: 0`
+ * because the question is live the moment the platform answers it for them.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const MEETING_TRIAGE_DAYS = 7;
+
+const meetingAutoCompleted: GapDefinition = {
+  id: 'meeting_auto_completed',
+  blocksOn: 'owner',
+  staleAfterHours: 0,
+  /*
+   * The SAME action the unmarked gap uses. It navigates to the booking, where
+   * all three marks already are — which is exactly right here, because the
+   * correction this row invites is "no-show", and no single button can offer a
+   * choice of three.
+   */
+  action: 'mark_meeting',
+  find: userId =>
+    safely('meeting_auto_completed', async () => {
+      const since = new Date(
+        Date.now() - MEETING_TRIAGE_DAYS * 24 * 60 * 60 * 1000
+      ).toISOString();
+
+      const { data: marks } = await supabaseServer
+        .from('crm_activities')
+        .select('source_entity_id, created_at')
+        .eq('user_id', userId)
+        .eq('activity_type', 'booking_auto_completed')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(UNMARKED_SCAN_LIMIT);
+
+      const markedAt = new Map<string, string>();
+      for (const row of marks || []) {
+        const id = row.source_entity_id as string | null;
+        /* First wins: the list is newest-first and a booking is only marked
+           once, so a duplicate could only come from a replayed queue row. */
+        if (id && !markedAt.has(id)) markedAt.set(id, row.created_at as string);
+      }
+
+      if (markedAt.size === 0) return [];
+
+      /*
+       * Only the ones STILL carrying the automation's answer.
+       *
+       * An owner who has already corrected one to `no_show` — or cancelled it,
+       * or re-opened it — has answered, and the row must go. The marker stays
+       * in the timeline as the record of what the platform did; this filter is
+       * what stops it also being a standing question.
+       */
+      const { data: bookings } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('id, contact_id, start_time, status, service:scheduling_services(service_name)')
+        .eq('user_id', userId)
+        .eq('status', 'completed')
+        .in('id', [...markedAt.keys()]);
+
+      const rows = (bookings || []).filter(row => row.contact_id);
+      if (rows.length === 0) return [];
+
+      const { data: contacts } = await supabaseServer
+        .from('crm_contacts')
+        .select('id, first_name, last_name, email')
+        .eq('user_id', userId)
+        .in('id', rows.map(row => row.contact_id as string));
+
+      const nameById = new Map((contacts || []).map(c => [c.id as string, personName(c)]));
+
+      return rows.map(row => {
+        const service = Array.isArray(row.service) ? row.service[0] : row.service;
+        return {
+          contactId: row.contact_id as string,
+          name: nameById.get(row.contact_id as string) || 'Someone',
+          note: str((service as { service_name?: string } | null)?.service_name),
+          /* The MEETING's own time, not the moment it was marked: "the 10am on
+             Tuesday" is what the owner recognises, here as everywhere else. */
+          since: row.start_time as string,
+          entityId: row.id as string,
+        };
+      });
+    }),
+};
+
+/**
+ * A quote with a deadline on it that nobody has answered.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SAME PROPOSALS AS `quote_awaiting_client`, NARROWED TO THE DATED ONES —
+ * and a different answer to "whose move is it".
+ *
+ * An undated quote sitting unanswered is the client's move: they have it, they
+ * will reply or they will not, and telling the owner every morning is the
+ * nagging this registry's header warns about. A quote with a date is not that.
+ * It is an offer the business made that expires, and the thing that expires is
+ * the owner's — once the date passes, the sale is gone and no amount of
+ * chasing brings that price back.
+ *
+ * So the two differ in exactly the way `blocksOn` exists to express, which is
+ * why this is a second definition rather than a flag on the first. The
+ * chaser still hangs off `quote_awaiting_client` and follows up on BOTH; this
+ * is only about which ones the owner is shown.
+ *
+ * Ordered by the deadline, nearest first: the list is about time running out,
+ * so the one running out soonest belongs at the top.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const quoteDeadlineUnanswered: GapDefinition = {
+  id: 'quote_deadline_unanswered',
+  blocksOn: 'owner',
+  /* The same three days the client gets before anybody is told to act. */
+  staleAfterHours: 72,
+  action: 'chase_quote',
+  find: (userId, now) =>
+    safely('quote_deadline_unanswered', async () => {
+      const { data } = await supabaseServer
+        .from('proposals')
+        .select('id, contact_id, title, total, currency, sent_at, valid_until, contact:crm_contacts(first_name, last_name, email)')
+        .eq('user_id', userId)
+        .in('status', ['sent', 'viewed'])
+        .lt('sent_at', hoursAgo(now, 72))
+        /* The whole point of this gap. An undated quote stays with
+           `quote_awaiting_client`, where it is the client's move. */
+        .not('valid_until', 'is', null)
+        /*
+         * And still open. A lapsed quote is a different conversation — the
+         * price is withdrawn by its own terms — and "follow up" is the wrong
+         * thing to offer for it.
+         */
+        .gte('valid_until', now.toISOString().slice(0, 10))
+        .order('valid_until', { ascending: true })
+        .limit(50);
+
+      return (data || []).map(row => {
+        const contact = (Array.isArray(row.contact) ? row.contact[0] : row.contact) || {};
+        return {
+          contactId: row.contact_id as string,
+          name: personName(contact),
+          note: str(row.title),
+          /* Still the day it was SENT: "how long have they had it" is the
+             question the row answers, and the deadline is shown separately. */
+          since: (row.sent_at as string) || new Date().toISOString(),
+          /*
+           * The day the price is withdrawn by its own terms.
+           *
+           * Selected and sorted on since this gap existed, and never carried to
+           * the card — so the row could say "9 days since you sent it" and not
+           * "open until the 14th", which is the half that decides what to do
+           * first. `mostUrgent` reads it to promote a quote about to lapse.
+           *
+           * `eventAt` rather than a field of its own: it already means "when
+           * this one's moment is", which is exactly what a deadline is. The
+           * meeting reminder uses it the same way.
+           */
+          eventAt: str(row.valid_until) || undefined,
+          entityId: row.id as string,
+          value: Number(row.total) || undefined,
+          currency: str(row.currency) || undefined,
+        };
+      });
+    }),
+};
+
 export const GAP_DEFINITIONS: GapDefinition[] = [
   enquiryUnanswered,
   quoteUnwritten,
@@ -1104,6 +1288,8 @@ export const GAP_DEFINITIONS: GapDefinition[] = [
   bookingCancelled,
   bookingRefunded,
   meetingUnmarked,
+  meetingAutoCompleted,
+  quoteDeadlineUnanswered,
 ];
 
 /* ------------------------------------------------------------------ helpers */

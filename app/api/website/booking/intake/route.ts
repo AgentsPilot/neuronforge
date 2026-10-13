@@ -10,6 +10,7 @@ import { createLogger } from '@/lib/logger';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 const logger = createLogger({ module: 'PublicIntakeAPI' });
 
@@ -82,11 +83,7 @@ export async function GET(request: NextRequest) {
     // 2. Check if intake is enabled in the client journey flow
     // Look up the process block to see if "intake" is in client_flow
     if (subdomain) {
-      const { data: pageData } = await supabaseServer
-        .from('website_pages')
-        .select('id')
-        .eq('subdomain', subdomain)
-        .single();
+      const { data: pageData } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(subdomain);
 
       if (pageData) {
         const { data: processBlock } = await supabaseServer
@@ -189,11 +186,7 @@ export async function POST(request: NextRequest) {
 
     // Resolve userId from subdomain if needed
     if (subdomain && !userId) {
-      const { data: websitePage, error: pageError } = await supabaseServer
-        .from('website_pages')
-        .select('user_id')
-        .eq('subdomain', subdomain)
-        .single();
+      const { data: websitePage, error: pageError } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(subdomain);
 
       if (pageError || !websitePage) {
         return NextResponse.json(

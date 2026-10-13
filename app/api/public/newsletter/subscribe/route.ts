@@ -11,6 +11,7 @@
  * Public and unauthenticated, like the other website form routes.
  */
 
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -21,6 +22,7 @@ import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentR
 import { beginDoubleOptIn } from '@/lib/consent/doubleOptIn';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 const logger = createLogger({ module: 'PublicNewsletterSubscribeAPI' });
 
@@ -41,12 +43,11 @@ const SubscribeSchema = z
 /** Same resolution the other public form routes use. */
 async function resolveOwner(subdomain?: string, userCode?: string): Promise<string | null> {
   if (subdomain) {
-    const { data } = await supabaseServer
-      .from('website_pages')
-      .select('user_id')
-      .eq('subdomain', subdomain)
-      .limit(1)
-      .maybeSingle();
+    // This route already took the first of many rather than failing on them,
+    // which is why it was the one public form that kept working once a business
+    // had a second page. Through the shared resolver now, so "same resolution
+    // as the other routes" is true rather than aspirational.
+    const { data } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(subdomain);
     return data?.user_id ?? null;
   }
 
@@ -65,6 +66,14 @@ async function resolveOwner(subdomain?: string, userCode?: string): Promise<stri
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
+
+  /*
+   * Throttled: this route is reachable with no session and it creates a subscriber.
+   * `ok` bucket here — the credential check, where there is one, counts its own
+   * failures under the tighter budget.
+   */
+  const throttle = await rateLimit(request, 'newsletter-subscribe', RATE_LIMITS.create);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.create.windowSeconds);
 
   try {
     const body = await request.json().catch(() => ({}));

@@ -39,6 +39,7 @@
  * nothing Google-derived can reach the catch-all below.
  */
 
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { googleSignInClientId } from '@/lib/business-os/invites/googleSignInConfig';
@@ -66,6 +67,14 @@ const logger = createLogger({ module: 'PublicInviteSignupGoogleAPI' });
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
+
+  /*
+   * Throttled before anything else: no session stands in front of this route.
+   * The `ok` bucket counts volume; a rejected credential counts under the much
+   * tighter failure budget below, which is the one that detects probing.
+   */
+  const throttle = await rateLimit(request, 'invite-signup-google', RATE_LIMITS.create);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.create.windowSeconds);
 
   // D-9: switched off entirely until the dedicated client id is configured.
   if (!googleSignInClientId()) {

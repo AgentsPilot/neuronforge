@@ -79,6 +79,7 @@ export const publicMessages: Catalogue = {
     'portal.billed': 'Invoiced',
     'portal.book_another': 'Book another',
     'portal.close': 'Close',
+    'portal.nothing_due': 'Nothing to pay',
     'portal.intake_todo': 'There is a short form to fill in.',
     'portal.intake_done': 'Form completed — thank you.',
     'portal.intake_open': 'Fill it in',
@@ -95,6 +96,8 @@ export const publicMessages: Catalogue = {
     'portal.held': 'Took place',
     'portal.missed': 'Did not take place',
     'portal.no_date': 'No date set',
+    /* The row in "my bookings" that stands for a whole package. */
+    'portal.package_of': 'package of {count}',
     'portal.all_meetings': 'All appointments',
     'portal.fewer_meetings': 'Show less',
     'portal.open_today': 'Open today',
@@ -152,6 +155,8 @@ export const publicMessages: Catalogue = {
     'proposal.state.withdrawn.body': 'Please contact us if you would still like to go ahead.',
     'proposal.state.superseded.title': 'This quote was updated',
     'proposal.state.superseded.body': 'A newer version was sent to you — please open the most recent email.',
+    'proposal.state.unreachable.title': 'We could not load this quote just now',
+    'proposal.state.unreachable.body': 'The connection dropped on the way. Refresh the page to try again — your quote has not changed.',
     'proposal.state.not_found.title': 'We could not find this quote',
     'proposal.state.not_found.body': 'Please open the link from your email, or contact the business directly.',
     // ── Booking management ────────────────────────────────────────────────
@@ -282,6 +287,13 @@ export const publicMessages: Catalogue = {
     total: 'Total',
     includesTax: 'Includes',
     paymentOptions: 'Payment Options',
+    /* Said out loud while the card form is being fetched: on a pale brand an
+       unlabelled skeleton is indistinguishable from no payment option. */
+    payByCardLoading: 'Loading card payment\u2026',
+    /* Shown when the processor reports this bill as settled. Deliberately says
+       to check with the business rather than asserting our own record, which
+       is the record that may be wrong. */
+    payAlreadySettled: 'Our payment provider shows this as already paid. Please check with the business before paying again.',
     payOnline: 'Pay Online with Card',
     bankTransfer: 'Bank Transfer',
     bank: 'Bank',
@@ -330,6 +342,10 @@ export const publicMessages: Catalogue = {
     notFoundDesc: 'We could not find what you were looking for. Please check the link.',
     expiredTitle: 'This Link Is No Longer Active',
     expiredDesc: 'The business may have replaced or turned off this link.',
+    /* An invoice link specifically: the business can always re-send an unpaid
+       invoice, so this names the way back rather than ending the road. */
+    invoiceLinkExpiredDesc:
+      'Ask the business to send the invoice again and you will get a fresh link.',
     errorTitle: 'Something Went Wrong',
     errorDesc: 'Please try again in a moment.',
     unavailableTitle: 'This Booking Link Is Incomplete',
@@ -374,6 +390,7 @@ export const publicMessages: Catalogue = {
     'portal.billed': 'Facturado',
     'portal.book_another': 'Reservar otra cita',
     'portal.close': 'Cerrar',
+    'portal.nothing_due': 'Nada que pagar',
     'portal.intake_todo': 'Queda un breve formulario por completar.',
     'portal.intake_done': 'Formulario completado. Gracias.',
     'portal.intake_open': 'Completar',
@@ -390,6 +407,7 @@ export const publicMessages: Catalogue = {
     'portal.held': 'Se realizó',
     'portal.missed': 'No se realizó',
     'portal.no_date': 'Sin fecha',
+    'portal.package_of': 'paquete de {count}',
     'portal.all_meetings': 'Todas las citas',
     'portal.fewer_meetings': 'Ver menos',
     'portal.open_today': 'Abierto hoy',
@@ -441,6 +459,8 @@ export const publicMessages: Catalogue = {
     'proposal.state.withdrawn.body': 'Contáctanos si todavía quieres seguir adelante.',
     'proposal.state.superseded.title': 'Este presupuesto se actualizó',
     'proposal.state.superseded.body': 'Te enviamos una versión más reciente — abre el último correo.',
+    'proposal.state.unreachable.title': 'No pudimos cargar el presupuesto ahora',
+    'proposal.state.unreachable.body': 'Se interrumpió la conexión. Actualiza la página para reintentar: tu presupuesto no ha cambiado.',
     'proposal.state.not_found.title': 'No encontramos este presupuesto',
     'proposal.state.not_found.body': 'Abre el enlace desde tu correo o contacta con el negocio.',
     manageBooking: 'Gestiona tu reserva',
@@ -556,6 +576,8 @@ export const publicMessages: Catalogue = {
     total: 'Total',
     includesTax: 'Incluye',
     paymentOptions: 'Opciones de Pago',
+    payByCardLoading: 'Cargando pago con tarjeta\u2026',
+    payAlreadySettled: 'Nuestro proveedor de pagos indica que ya está pagada. Consulta con el negocio antes de volver a pagar.',
     payOnline: 'Pagar en Línea con Tarjeta',
     bankTransfer: 'Transferencia Bancaria',
     bank: 'Banco',
@@ -601,6 +623,8 @@ export const publicMessages: Catalogue = {
     notFoundDesc: 'No encontramos lo que buscabas. Revisa el enlace.',
     expiredTitle: 'Este enlace ya no está activo',
     expiredDesc: 'Es posible que el negocio lo haya reemplazado o desactivado.',
+    invoiceLinkExpiredDesc:
+      'Pide al negocio que vuelva a enviar la factura y recibirás un enlace nuevo.',
     errorTitle: 'Algo salió mal',
     errorDesc: 'Inténtalo de nuevo en un momento.',
     unavailableTitle: 'Este enlace de reserva está incompleto',
@@ -644,7 +668,10 @@ export const publicMessages: Catalogue = {
     'portal.plan': 'תוכנית תשלומים',
     'portal.billed': 'נשלחה חשבונית',
     'portal.book_another': 'קביעת פגישה נוספת',
-    'portal.close': 'סגירה',
+    /* Imperative, not the noun `סגירה` ("closure"). It labels a button, and on
+       the payment tile the noun reads as closing or settling the bill. */
+    'portal.close': 'סגור',
+    'portal.nothing_due': 'אין תשלום',
     'portal.intake_todo': 'נשאר טופס קצר למילוי.',
     'portal.intake_done': 'הטופס מולא. תודה!',
     'portal.intake_open': 'מילוי הטופס',
@@ -661,6 +688,7 @@ export const publicMessages: Catalogue = {
     'portal.held': 'התקיימה',
     'portal.missed': 'לא התקיימה',
     'portal.no_date': 'ללא תאריך',
+    'portal.package_of': 'חבילה של {count}',
     'portal.all_meetings': 'כל הפגישות',
     'portal.fewer_meetings': 'הצגה מצומצמת',
     'portal.open_today': 'פתוח היום',
@@ -712,6 +740,8 @@ export const publicMessages: Catalogue = {
     'proposal.state.withdrawn.body': 'צרו קשר אם עדיין תרצו להתקדם.',
     'proposal.state.superseded.title': 'ההצעה עודכנה',
     'proposal.state.superseded.body': 'נשלחה אליכם גרסה חדשה יותר — פתחו את המייל האחרון.',
+    'proposal.state.unreachable.title': 'לא הצלחנו לטעון את ההצעה כרגע',
+    'proposal.state.unreachable.body': 'החיבור נקטע בדרך. רעננו את הדף כדי לנסות שוב — ההצעה שלכם לא השתנתה.',
     'proposal.state.not_found.title': 'לא מצאנו את ההצעה',
     'proposal.state.not_found.body': 'פתחו את הקישור מהמייל, או צרו קשר עם העסק.',
     manageBooking: 'ניהול ההזמנה שלך',
@@ -823,6 +853,8 @@ export const publicMessages: Catalogue = {
     total: 'סה"כ לתשלום',
     includesTax: 'כולל',
     paymentOptions: 'אפשרויות תשלום',
+    payByCardLoading: 'טוען תשלום בכרטיס אשראי\u2026',
+    payAlreadySettled: 'ספק הסליקה שלנו מראה שהתשלום כבר בוצע. בדקו מול העסק לפני תשלום נוסף.',
     payOnline: 'שלם בכרטיס אשראי',
     bankTransfer: 'העברה בנקאית',
     bank: 'בנק',
@@ -867,6 +899,7 @@ export const publicMessages: Catalogue = {
     notFoundDesc: 'לא הצלחנו למצוא את מה שחיפשת. בדקו את הקישור.',
     expiredTitle: 'הקישור כבר לא פעיל',
     expiredDesc: 'ייתכן שהעסק החליף או כיבה את הקישור הזה.',
+    invoiceLinkExpiredDesc: 'בקשו מהעסק לשלוח את החשבונית שוב ותקבלו קישור חדש.',
     errorTitle: 'משהו השתבש',
     errorDesc: 'נסו שוב בעוד רגע.',
     unavailableTitle: 'קישור ההזמנה חלקי',
@@ -957,6 +990,55 @@ export function formatPublicDate(
     ...options,
     ...(timeZone ? { timeZone } : {}),
   });
+}
+
+/**
+ * A calendar DAY, formatted from its own parts.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS, AND WHY IT TAKES NO ZONE
+ *
+ * A `due_date` is a SQL DATE: a day, with no time and no zone in it. Four call
+ * sites pushed one through `new Date(...)`, which invents midnight UTC, and
+ * then handed `formatPublicDate` the string `'UTC'` to undo the invention.
+ *
+ * That worked, but only by coincidence — UTC is not the day's clock, it is an
+ * artefact of the parse — and it put UTC into surfaces whose rule is that every
+ * date and time a client reads is the BUSINESS's. The zone also had to be
+ * repeated at every call site, so one omission silently moved a payment
+ * deadline by a day.
+ *
+ * Reading the parts directly removes the question. `2026-11-23` is the 23rd of
+ * November on every clock on earth, because no instant is ever constructed.
+ *
+ * For an INSTANT — when a payment actually landed, when a meeting starts — use
+ * `formatPublicDate` with the business's zone. That is a different question and
+ * it genuinely needs a clock.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function formatPublicDay(
+  value: string | null | undefined,
+  locale: Locale,
+  options: Intl.DateTimeFormatOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }
+): string {
+  if (!value) return '';
+
+  /* Tolerates a full timestamp by taking its date half: some rows carry
+     `2026-11-23` and some `2026-11-23T00:00:00+00:00`, and both mean the day. */
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return '';
+
+  const [, year, month, day] = match;
+
+  /*
+   * Built with LOCAL parts, then formatted with no `timeZone`. Both halves use
+   * the same clock, whichever it is, so the parts come back out exactly as they
+   * went in. Passing a zone here would reintroduce the shift.
+   */
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (Number.isNaN(date.getTime())) return '';
+
+  return date.toLocaleDateString(localeCode(locale), options);
 }
 
 /**

@@ -11,6 +11,7 @@ import { MoneyRow } from './MoneyRow';
 import type { MoneyCurrencyTotals, MoneyEntry, MoneyItem, MoneyTotals } from '@/lib/payments/moneyItems';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { buildEntryActions } from '@/lib/payments/entryActions';
+import { toCsvFile } from '@/lib/payments/csv';
 import { MoneyDetailDrawer } from './MoneyDetailDrawer';
 import { RefundModal } from './RefundModal';
 
@@ -45,6 +46,16 @@ const logger = createLogger({ module: 'MoneyList' });
  */
 const PAGE_SIZE = 10;
 
+/**
+ * How many rows one export may carry.
+ *
+ * The same ceiling the route enforces on its own reads, so asking for more
+ * would not return more. A business past this has outgrown a spreadsheet of
+ * every order and wants the ledger export, which is built server-side for a
+ * period.
+ */
+const EXPORT_CAP = 2000;
+
 /*
  * The API's filter values, not the UI's.
  *
@@ -72,6 +83,14 @@ const SORTS: MoneySort[] = ['date', 'amount', 'client', 'status'];
 
 interface MoneyListProps {
   searchQuery?: string;
+  /**
+   * Open a row's client in the CRM contact drawer.
+   *
+   * Passed down to the row, which hangs it off the client's name. Omitted by
+   * the CRM drawer's own embedded list, where it would link back to the panel
+   * the user is already in.
+   */
+  onOpenContact?: (contactId: string, bookingId: string | null) => void;
   /** Scroll to and mark a row, for deep links out of the CRM drawer. */
   highlightId?: string | null;
   /** Bumped by the caller to force a refetch after creating an invoice. */
@@ -81,7 +100,8 @@ interface MoneyListProps {
    * the page header — where it was — while the data it exports stays here.
    */
   onReady?: (api: {
-    exportCsv: () => void;
+    /** Resolves once the file has been handed to the browser. */
+    exportCsv: () => Promise<void>;
     /**
      * Whether the CURRENT VIEW has anything to put in a file.
      *
@@ -109,6 +129,7 @@ interface MoneyListProps {
 
 export function MoneyList({
   searchQuery = '',
+  onOpenContact,
   highlightId,
   refreshKey,
   onReady,
@@ -179,7 +200,7 @@ export function MoneyList({
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const exportRef = useRef<() => void>(() => undefined);
+  const exportRef = useRef<() => Promise<void>>(async () => undefined);
 
   /*
    * Keep the open drawer pointed at the CURRENT row.
@@ -409,14 +430,64 @@ export function MoneyList({
    * export adds up to the same figure the page shows. The two old exports could
    * not be combined without double-counting every settled invoice.
    */
-  const exportCsv = () => {
+  const exportCsv = async () => {
+    /*
+     * EVERY ROW THE FILTER MATCHES, not the page on screen.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This exported `items`, which is one page — ten rows — while the button's
+     * own tooltip read "Export all orders" and the footer underneath said
+     * "1-10 of 73". The file was simply wrong, and silently: it opened, it had
+     * the right columns, and the owner had no reason to count.
+     *
+     * The route already holds the whole filtered set (it slices a page out of
+     * `sorted`), so this re-asks the same question without the page window.
+     * Nothing about the filter is recomputed here — a second implementation of
+     * "what is on screen" is how an export comes to disagree with the screen.
+     *
+     * A PICKED set is different and still exported as picked: those rows were
+     * chosen by hand, and they are all on this page by definition.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    let chosen: MoneyItem[];
+
+    if (selected.size > 0) {
+      chosen = items.filter(i => selected.has(i.key));
+    } else {
+      try {
+        const params = new URLSearchParams({
+          limit: String(EXPORT_CAP),
+          offset: '0',
+          filter,
+          sort,
+          kind: kindView === 'bookings' ? 'booking' : 'standalone',
+        });
+        if (searchQuery.trim()) params.set('search', searchQuery.trim());
+
+        const response = await fetch(`/api/payments/money?${params}`, { cache: 'no-store' });
+        const result = await response.json();
+        if (!result.success) throw new Error(result.error || 'Failed to load');
+
+        chosen = result.data.items as MoneyItem[];
+      } catch (err) {
+        logger.error({ err }, 'Could not build the export');
+        /* Said out loud. A download that silently does not happen reads as a
+           broken button, and the owner's next move is to click it again. */
+        setError(t('payments.export.failed') || 'Could not build the export');
+        return;
+      }
+    }
+
     // Belt and braces for the button state below: a file containing nothing but
     // column headings is indistinguishable from a failed download.
-    const chosen = selected.size > 0 ? items.filter(i => selected.has(i.key)) : items;
     if (chosen.length === 0) return;
 
-    const rows = [
+    const rows: (string | number | null)[][] = [
       [
+        /* The client leads, as the row on screen does. The old file opened with
+           the service name and never named the person at all, which is the
+           column an owner reconciling a bank statement actually needs. */
+        t('payments.export.client') || 'Client',
         t('payments.export.item') || 'Item',
         t('payments.export.method') || 'How',
         t('payments.export.status') || 'Status',
@@ -425,24 +496,28 @@ export function MoneyList({
         t('payments.export.currency') || 'Currency',
         t('payments.export.date') || 'Date',
       ],
-      // The picked rows, or all of them when nothing is picked. "Export"
-      // meaning "export everything" stays true if you never enter select mode.
       ...chosen.map(item => [
+        item.contactName ?? '',
         item.title,
         item.method,
         item.status,
         item.amount.toFixed(2),
         item.refunded ? item.refunded.toFixed(2) : '',
         item.currency,
-        item.date,
+        /* The date the ROW shows, not the raw instant. This exported
+           `item.date` whole, so a cell read `2026-10-14T09:00:00.000Z` — a
+           timestamp in UTC, for a row whose date on screen is the business's
+           own and may be the day before or after. */
+        item.date ? formatDate(item.date) : '',
       ]),
     ];
 
-    const csv = rows
-      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
-
-    const url = URL.createObjectURL(new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8;' }));
+    const url = URL.createObjectURL(
+      /* `toCsvFile` quotes, keeps the BOM Excel needs for Hebrew, and
+         neutralises a cell a spreadsheet would EVALUATE — every name in here
+         was typed into a public form. See `lib/payments/csv`. */
+      new Blob([toCsvFile(rows)], { type: 'text/csv;charset=utf-8;' })
+    );
     const link = document.createElement('a');
     link.href = url;
     link.download = `money-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -752,6 +827,7 @@ export function MoneyList({
                   onSelect={() => rowClicked(item)}
                   selected={selected.has(item.key)}
                   selectable={selectMode}
+                  onOpenContact={onOpenContact}
                 />
               </div>
             ))

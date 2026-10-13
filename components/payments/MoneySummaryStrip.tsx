@@ -33,6 +33,7 @@
  */
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { shareOfTotal } from '@/lib/payments/shareOfTotal';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
 import type { MoneyCurrencyTotals, MoneyTotals } from '@/lib/payments/moneyItems';
 
@@ -197,7 +198,24 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
       color: REPORTS_COLORS.PRIMARY,
     },
     {
-      label: t('payments.awaiting_collection') || 'Still to collect',
+      /*
+       * `not_yet_due`, NOT `awaiting_collection`.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * The cell above is the whole of what is owed, ₪4,250, and its subtitle
+       * is "still to collect". This segment is that figure MINUS the late part,
+       * ₪2,650, because the bar splits them as neighbours. Both carried the
+       * same words, so one screen showed "still to collect" twice against two
+       * different amounts, and nothing on it explained that the difference was
+       * precisely the overdue cell.
+       *
+       * The cell is right to contain the late money and the bar is right to
+       * separate it. What was wrong was calling two different quantities by one
+       * name, so this segment now says what is true of it alone: owed, and not
+       * late yet.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      label: t('payments.not_yet_due') || 'Not yet due',
       value: waiting,
       formatted: money(c => Math.max(0, c.outstanding - c.overdue)),
       color: REPORTS_COLORS.WARNING,
@@ -209,6 +227,12 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
       color: REPORTS_COLORS.DANGER,
     },
   ].filter(segment => segment.value > 0);
+
+  /*
+   * Rounded as a SET, so the column adds up to 100. Independently rounded,
+   * these read 75 / 16 / 10 against one whole. See `shareOfTotal`.
+   */
+  const shares = shareOfTotal(bookSegments.map(segment => segment.value));
 
   return (
     <div className="mb-3">
@@ -325,7 +349,7 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
           </div>
 
           <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--v2-text-secondary)]">
-            {bookSegments.map(segment => (
+            {bookSegments.map((segment, index) => (
               <span key={segment.label} className="inline-flex items-center gap-1.5">
                 <span
                   className="h-2 w-2 shrink-0 rounded-[2px]"
@@ -337,7 +361,7 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
                   {segment.formatted}
                 </b>
                 <span className="text-[var(--v2-text-muted)] tabular-nums">
-                  {Math.round((segment.value / total) * 100)}%
+                  {shares[index]}%
                 </span>
               </span>
             ))}

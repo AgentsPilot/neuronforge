@@ -14,6 +14,7 @@ import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
+import { leadResponseRepository } from '@/lib/repositories/LeadResponseRepository';
 
 const logger = createLogger({ module: 'IntakeEditAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -255,6 +256,36 @@ export async function POST(
         { success: false, error: emailResult.error || 'Failed to send intake form email' },
         { status: ownerFixable ? 400 : 500 }
       );
+    }
+
+    /*
+     * Tell the automation this one is done.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * `chase_intake` calls the very function above with the very same
+     * arguments, and nothing connected the two: the sweep's dedup reads
+     * `lead_responses` and this path wrote nothing there, while the gap only
+     * clears when the client RETURNS the form. So an owner who chased by hand
+     * had the platform chase again that night, and the client got the same
+     * reminder twice from one business.
+     *
+     * Recorded as a CLOSED row, so `lead_responses_one_per_thing` — a real
+     * UNIQUE (kind, contact_id, entity_id) — makes the sweep's enqueue a no-op
+     * by construction rather than by a check anybody has to remember.
+     *
+     * AFTER the send, and only on a confirmed one: a failed chase must not
+     * suppress the automation that would have covered for it. Awaited rather
+     * than fired and forgotten, because the sweep runs every five minutes and
+     * a race with it is the whole thing being prevented.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (booking.contact_id) {
+      await leadResponseRepository.recordManualSend({
+        userId: user.id,
+        contactId: booking.contact_id,
+        kind: 'intake_chase',
+        entityId: bookingId,
+      });
     }
 
     // 6. Audit log (non-blocking)

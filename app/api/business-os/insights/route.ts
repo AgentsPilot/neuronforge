@@ -19,6 +19,9 @@ import { enqueueInsightActions } from '@/lib/business-os/insight/automation/Insi
 import { TRIGGERABLE_PROCESSES } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
 import { ImpactProjector } from '@/lib/business-os/insight/projection';
 import { AutonomousWorkFeed } from '@/lib/business-os/insight/reporting';
+/* NOT `z.coerce.boolean()`: it calls `Boolean(value)`, and `Boolean('false')`
+   is true — so every flag below read `=false` as ON. See the module. */
+import { booleanParam } from '@/lib/validation/booleanParam';
 
 const logger = createLogger({ module: 'InsightsAPI' });
 
@@ -29,10 +32,22 @@ const logger = createLogger({ module: 'InsightsAPI' });
 const getInsightsSchema = z.object({
   status: z.enum(['new', 'viewed', 'snoozed', 'dismissed', 'acted', 'automated']).optional(),
   limit: z.coerce.number().min(1).max(50).optional().default(10),
-  includeProjection: z.coerce.boolean().optional().default(false),
-  includeCorrelated: z.coerce.boolean().optional().default(true),
-  includeHealthSummary: z.coerce.boolean().optional().default(true),
-  includeVectorMaturity: z.coerce.boolean().optional().default(true),
+  includeProjection: booleanParam(false),
+  includeCorrelated: booleanParam(true),
+  includeHealthSummary: booleanParam(true),
+  includeVectorMaturity: booleanParam(true),
+  /*
+   * The My Day feed, which used to be the one piece a caller could not decline.
+   *
+   * Every other section here is behind a flag, and the dashboard turns three of
+   * them off when it wants a single insight cheaply — then got the whole work
+   * feed anyway, because this ran unconditionally at the end of the handler. A
+   * request that says "one insight, nothing else" should cost one insight.
+   *
+   * Defaults TRUE so no existing caller changes: the dashboard reads
+   * `myDayData` from this response today and would lose it silently otherwise.
+   */
+  includeMyDay: booleanParam(true),
 });
 
 const actionSchema = z.object({
@@ -115,9 +130,18 @@ export async function GET(request: NextRequest) {
       await repository.markManySurfaced(insights, user.id);
     }
 
-    // Also get autonomous work feed
-    const workFeed = new AutonomousWorkFeed(supabaseServer);
-    const myDayData = await workFeed.getMyDayData(user.id);
+    /*
+     * The autonomous work feed, now declinable like everything else above it.
+     *
+     * Two bounded queries (20 action-log rows, 5 pending insights), so this is
+     * not where a slow response comes from — but it is work a caller explicitly
+     * asked not to do, and it ran anyway.
+     */
+    let myDayData: Awaited<ReturnType<AutonomousWorkFeed['getMyDayData']>> | null = null;
+    if (params.includeMyDay) {
+      const workFeed = new AutonomousWorkFeed(supabaseServer);
+      myDayData = await workFeed.getMyDayData(user.id);
+    }
 
     requestLogger.info(
       {
@@ -142,9 +166,21 @@ export async function GET(request: NextRequest) {
         healthSummary,
         // Individual insights (non-correlated)
         insights: insightsWithProjections,
-        // Autonomous work done by the system
-        autonomousWork: myDayData.completedWork,
-        stats: myDayData.stats,
+        /*
+         * Autonomous work done by the system.
+         *
+         * An EMPTY feed rather than an absent key when `includeMyDay` is off:
+         * the dashboard reads `autonomousWork` and `stats` without checking,
+         * and a caller that declined the work should get "nothing to show"
+         * rather than a crash in a component that never asked about the flag.
+         */
+        autonomousWork: myDayData?.completedWork ?? [],
+        stats: myDayData?.stats ?? {
+          totalActionsToday: 0,
+          totalValueImpact: 0,
+          pendingInsightCount: 0,
+          criticalInsightCount: 0,
+        },
       },
     });
 

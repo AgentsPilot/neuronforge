@@ -144,8 +144,17 @@ export async function cancelQuoteStages(input: {
    * is the only thing withheld.
    */
   shareNoteWithClient?: boolean;
+  /**
+   * Also call off an invoice this quote raised OUTSIDE its stages.
+   *
+   * Off by default, and that default is the point: stopping is not refunding,
+   * and the owner may still want paying for what was done. Only ever acts on an
+   * invoice that is `draft`, `sent` or `overdue` — never one that has been paid
+   * or refunded, which `voidInvoice` refuses in any case.
+   */
+  cancelUnpaidInvoice?: boolean;
 }): Promise<CancelQuoteStagesResult> {
-  const { proposalId, userId } = input;
+  const { proposalId, userId, cancelUnpaidInvoice = false } = input;
 
   /*
    * Confirm the quote is this user's BEFORE touching anything.
@@ -283,6 +292,53 @@ export async function cancelQuoteStages(input: {
     }
 
     invoicesVoided += 1;
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE INVOICE NO STAGE POINTS AT, when the owner asks for it to go.
+   *
+   * The loop above reaches invoices THROUGH stages, and a single-payment quote
+   * has none: one invoice raised straight against the booking, and nothing
+   * linking it back here — `payment_invoices` has no `proposal_id`. So stopping
+   * such a quote left the invoice `sent`: owed, chased by the overdue pass, and
+   * still PAYABLE, because the public page refuses only invoices already
+   * settled. Two live quotes are in that state, one of them ₪5,000.
+   *
+   * Opt-in, and off by default, because stopping is not refunding. The owner
+   * may well still want paying for work done before the job ended, and voiding
+   * the invoice for them would decide that nothing is owed. The toggle in the
+   * stop dialog is where that decision is made; this only carries it out.
+   *
+   * Scoped to the quote's OWN booking and to invoices still asking for money.
+   * `voidInvoice` refuses a settled one, and the stage ids are excluded so an
+   * invoice already handled above is not counted twice.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (cancelUnpaidInvoice && proposal.booking_id) {
+    const { data: loose, error: looseError } = await supabaseServer
+      .from('payment_invoices')
+      .select('id, status')
+      .eq('user_id', userId)
+      .eq('booking_id', proposal.booking_id)
+      .in('status', LIVE_INVOICE_STATUSES);
+
+    if (looseError) {
+      logger.warn({ err: looseError, proposalId }, 'Could not read the booking invoices of this quote');
+    }
+
+    for (const invoice of loose ?? []) {
+      if (stageInvoiceIds.includes(invoice.id)) continue;
+
+      const { error: voidError } = await voidInvoice({ invoiceId: invoice.id, userId });
+
+      if (voidError) {
+        logger.warn({ err: voidError, proposalId, invoiceId: invoice.id }, 'Could not void a booking invoice');
+        continue;
+      }
+
+      invoicesVoided += 1;
+    }
   }
 
   /*

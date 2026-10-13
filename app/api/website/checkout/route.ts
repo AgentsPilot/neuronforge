@@ -19,6 +19,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 import Stripe from 'stripe';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 const logger = createLogger({ module: 'WebsiteCheckoutAPI' });
 
@@ -95,11 +96,7 @@ export async function POST(request: NextRequest) {
     // If subdomain is provided, look up website owner (public access)
     // Otherwise, use authenticated user (preview mode)
     if (data.subdomain) {
-      const { data: websitePage, error: pageError } = await supabaseServer
-        .from('website_pages')
-        .select('user_id, subdomain')
-        .eq('subdomain', data.subdomain)
-        .single();
+      const { data: websitePage, error: pageError } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(data.subdomain);
 
       if (pageError || !websitePage) {
         requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');
@@ -138,13 +135,21 @@ export async function POST(request: NextRequest) {
       }
       ownerId = user.id;
 
-      // Try to get subdomain from user's homepage for URL building
+      /*
+       * Try to get subdomain from user's homepage for URL building.
+       *
+       * `maybeSingle`, because a user with no homepage is ordinary -- a landing
+       * page alone is a whole account's website. `.single()` made that case
+       * throw, and the error was discarded, so this only ever worked by
+       * accident of the throw being swallowed.
+       */
       const { data: homepage } = await supabaseServer
         .from('website_pages')
         .select('subdomain')
         .eq('user_id', user.id)
         .eq('page_type', 'homepage')
-        .single();
+        .limit(1)
+        .maybeSingle();
 
       effectiveSubdomain = homepage?.subdomain || undefined;
     }

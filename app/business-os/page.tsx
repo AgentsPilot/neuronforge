@@ -237,11 +237,31 @@ function BusinessOSContent() {
       // held here rather than read off state — setChannelPerformance won't have
       // applied by the time the funnel is built in this same pass.
       let channelVisits: number | undefined;
+      let offSiteActions = 0;
       try {
         const channelsData = await channelsResponse.json();
         const performance = channelsData.success ? channelsData.data : undefined;
         setChannelPerformance(performance);
         channelVisits = performance?.visits?.total;
+
+        /*
+         * Calls and direction requests, summed across channels.
+         *
+         * Held alongside the visit total for the same reason: the funnel is
+         * built in this same pass, before `setChannelPerformance` has applied.
+         *
+         * NOT added to `channelVisits`. The first station counts people who
+         * arrived at something the business owns; a tap on a listing's phone
+         * number is somebody who found them and never arrived anywhere, so the
+         * two measure different acts and the station reports them on separate
+         * lines. Folding them together would inflate the top of the funnel and
+         * quietly deflate every conversion rate below it.
+         */
+        offSiteActions = (performance?.rows ?? []).reduce(
+          (sum: number, row: { offSiteActions?: number | null }) =>
+            sum + (row.offSiteActions ?? 0),
+          0
+        );
       } catch {
         setChannelPerformance(undefined);
       }
@@ -605,9 +625,11 @@ function BusinessOSContent() {
           // `s.channels` is already on this response, per platform, so no extra
           // request. A platform is null when it is not connected.
           const metaConnected = Boolean(s.channels?.meta || s.channels?.instagram);
-          const googleConnected = Boolean(
-            s.channels?.google_analytics || s.channels?.google_business_profile
-          );
+          /* The LISTING only. This accepted an Analytics property too, so an
+             account with GA and no listing read as "Google connected" while
+             having nothing in search. Analytics is no longer offered, so no new
+             account can reach that state, and the step now means one thing. */
+          const googleConnected = Boolean(s.channels?.google_business_profile);
 
           computedSetupItems.push({
             id: 'meta_insights',
@@ -619,7 +641,15 @@ function BusinessOSContent() {
           });
 
           computedSetupItems.push({
-            id: 'google_analytics',
+            /*
+             * `google_business`, because that is what this row offers. It was
+             * `google_analytics` while its own copy read "see who finds you
+             * through search and your listing" — the Business Profile, not
+             * Analytics — and `googleConnected` below has always accepted
+             * either. Analytics is no longer offered at all, so the id now
+             * matches the one thing the step is about.
+             */
+            id: 'google_business',
             title: googleConnected ? t('setup.google.done') : t('setup.google.todo'),
             description: googleConnected ? '' : t('setup.google.why'),
             completed: googleConnected,
@@ -664,6 +694,7 @@ function BusinessOSContent() {
             // Falls back to the website figure when the channels call failed,
             // rather than showing nothing.
             found: channelVisits ?? s.website?.visitors_30d ?? 0,
+            offSiteActions,
             touch: s.crm?.total_contacts || 0,
             booked: s.scheduling?.bookings_30d || 0,
             // Payments received: card transactions plus invoices settled

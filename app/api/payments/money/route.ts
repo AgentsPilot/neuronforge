@@ -32,6 +32,8 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { businessDayFor, resolveBusinessTimezone } from '@/lib/business-os/businessDay';
+import { parseMoneySearch, matchesTerms } from '@/lib/payments/moneySearchTerms';
 import {
   buildMoneyItems,
   isLateEntry,
@@ -59,7 +61,16 @@ const logger = createLogger({ module: 'MoneyListAPI' });
 const GROUPING_CAP = 2000;
 
 const QuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+  /*
+   * Raised from 100 for the EXPORT.
+   *
+   * The whole filtered set already exists in memory here — the response slices
+   * a page out of `sorted` — and the underlying reads are bounded by
+   * GROUPING_CAP regardless, so this cannot return more than that whatever is
+   * asked for. The old ceiling meant the orders page's "Export all orders"
+   * could only ever save one page, and said nothing about the rest.
+   */
+  limit: z.coerce.number().int().min(1).max(GROUPING_CAP).default(20),
   offset: z.coerce.number().int().min(0).default(0),
   contact_id: z.string().uuid().optional(),
   filter: z
@@ -239,10 +250,19 @@ export async function GET(request: NextRequest) {
       .order('start_time', { ascending: false })
       .limit(GROUPING_CAP);
 
-    const [invoices, transactions, bookings] = await Promise.all([
+    const [invoices, transactions, bookings, preferences] = await Promise.all([
       contact_id ? invoiceQuery.eq('contact_id', contact_id) : invoiceQuery,
       contact_id ? transactionQuery.eq('contact_id', contact_id) : transactionQuery,
       contact_id ? bookingQuery.eq('contact_id', contact_id) : bookingQuery,
+      /*
+       * The clock, read ALONGSIDE the data rather than before it.
+       *
+       * It is only needed to turn "october" into a span, which happens after
+       * all of this is in hand — so a sequential read here added a round trip
+       * to every load of the page, including the ones with nothing typed in the
+       * search at all.
+       */
+      supabaseServer.from('user_preferences').select('timezone').eq('user_id', user.id).maybeSingle(),
     ]);
 
     if (invoices.error || transactions.error || bookings.error) {
@@ -265,6 +285,20 @@ export async function GET(request: NextRequest) {
     // never 'plan', and the plans filter could only ever return nothing.
     const plansByBookingId: Record<string, MoneyPlan> = {};
     const bookingIds = (bookings.data ?? []).map(b => b.id);
+
+    /*
+     * What came back, per invoice, from the invoices ALREADY READ above.
+     *
+     * A refund is derived onto the invoice a period raised, never onto the
+     * installment row, so the schedule cannot show it without this join. No
+     * extra query: `refunded_amount` is already in the invoice select, because
+     * the list rows need it too.
+     */
+    const refundByInvoice = new Map<string, number>();
+    for (const invoice of invoices.data ?? []) {
+      const amount = Number(invoice.refunded_amount ?? 0);
+      if (amount > 0) refundByInvoice.set(String(invoice.id), amount);
+    }
 
     if (bookingIds.length > 0) {
       const { data: installments, error: installmentError } = await supabaseServer
@@ -310,6 +344,12 @@ export async function GET(request: NextRequest) {
            */
           trigger: row.trigger,
           invoiceId: row.invoice_id,
+          /* So the schedule can say WHICH period a refund came off, which a
+             single total on the row above can never answer. */
+          refundedAmount:
+            typeof row.invoice_id === 'string'
+              ? refundByInvoice.get(row.invoice_id) ?? null
+              : null,
         });
         plan.installmentCount = plan.periods.length;
         // Counted from the periods themselves rather than a stored figure, so
@@ -376,7 +416,45 @@ export async function GET(request: NextRequest) {
       }),
     });
 
-    const needle = search?.trim().toLowerCase();
+    /*
+     * THE SEARCH, READ AS TERMS.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `>500` and `october` are questions about numbers and dates, and the old
+     * search could answer neither: it joined every field into one string and
+     * asked whether the typed text was a substring of it. "800" matched ₪1,800
+     * and invoice 0800, and no date was in the string at all, so the question a
+     * money list is asked most often — what came in last month — had no answer.
+     *
+     * `parseMoneySearch` is the SAME call the search field uses to draw its
+     * chips, so a chip on screen and the rows beneath it cannot disagree about
+     * what is being filtered.
+     *
+     * Periods are calendar spans on the BUSINESS's clock, not the server's. A
+     * row at 22:00 on 31 October in Jerusalem is 20:00 UTC the same day, but one
+     * at 01:00 on 1 November is 23:00 on the 31st in UTC — so a UTC comparison
+     * puts it in October for a business that has already turned the page.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * A failed clock read is NOT fatal: `resolveBusinessTimezone` falls back to
+     * UTC, which can move a period boundary by hours but still answers. Failing
+     * the whole money list because a preferences row would not load would be
+     * the wrong trade.
+     */
+    const { timezone } = resolveBusinessTimezone({
+      preferencesTimezone: preferences.data?.timezone,
+    });
+    const terms = parseMoneySearch(search ?? '', businessDayFor(new Date(), timezone).date);
+
+    /** An instant as the business writes the date, 'YYYY-MM-DD'. */
+    const businessDate = (iso: string | null | undefined): string | null => {
+      if (!iso) return null;
+      const at = new Date(iso);
+      if (Number.isNaN(at.getTime())) return null;
+      // 'en-CA' renders ISO order, which is what makes a string compare work.
+      return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(at);
+    };
 
     /*
      * SEARCH FIRST, FILTER SECOND — and they are kept apart on purpose.
@@ -400,7 +478,7 @@ export async function GET(request: NextRequest) {
      * ─────────────────────────────────────────────────────────────────────────
      */
     const searched = allItems.filter(item => {
-      if (!needle) return true;
+      if (terms.length === 0) return true;
       // Client name, email, invoice number and amount — what the old lists
       // matched. Searching only the title meant an invoice could not be found
       // by the person it was sent to.
@@ -413,7 +491,12 @@ export async function GET(request: NextRequest) {
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
-      return haystack.includes(needle);
+
+      return matchesTerms(terms, {
+        amount: item.amount,
+        day: businessDate(item.date),
+        haystack,
+      });
     });
 
     /*

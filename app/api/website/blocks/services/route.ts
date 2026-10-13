@@ -17,6 +17,7 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { SchedulingServiceRepository, type SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { toServiceCard } from '@/lib/website-builder/serviceCard';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 const logger = createLogger({ module: 'WebsiteBlockServicesAPI' });
 
@@ -92,11 +93,7 @@ export async function GET(request: NextRequest) {
 
     // If subdomain is provided, look up the website owner (public access)
     if (subdomain) {
-      const { data: websitePage, error: pageError } = await supabaseServer
-        .from('website_pages')
-        .select('id, user_id')
-        .eq('subdomain', subdomain)
-        .single();
+      const { data: websitePage, error: pageError } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(subdomain);
 
       if (pageError || !websitePage) {
         return NextResponse.json({ success: false, error: 'Website not found' }, { status: 404 });

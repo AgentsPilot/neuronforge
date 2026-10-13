@@ -150,8 +150,9 @@ export class ChannelMetricsSyncService {
         return this.fetchInstagram(connection, since, until);
       case 'ga4':
         return this.fetchGa4(connection, since, until);
+      case 'google_business_profile':
+        return this.fetchGoogleBusinessProfile(connection, since, until);
       default:
-        // google_business_profile arrives with its plugin.
         logger.warn({ platform: connection.platform }, 'No fetcher for platform yet');
         return [];
     }
@@ -187,6 +188,71 @@ export class ChannelMetricsSyncService {
         profile_views: day.profile_views,
         website_clicks: day.website_clicks,
         followers_count: result.followers_count ?? null,
+        raw: day,
+      })
+    );
+  }
+
+  /**
+   * A Business Profile location's daily performance.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE ONE CHANNEL THAT REPORTS REACH.
+   *
+   * `ChannelPerformanceService` is built around `reach` and carries a
+   * `reachUnavailable` flag for platforms that cannot supply it. Meta retired
+   * page impressions, and GA4 is excluded by definition — `resolveVisits` puts
+   * it plainly: a GA4 session is a visit, "not reach. GA4 cannot say how many
+   * people saw the business elsewhere." A listing's impressions are exactly
+   * that number, and nothing else in the platform can produce it.
+   *
+   * So impressions land in BOTH columns. `impressions` is how many times the
+   * listing was shown; `reach` is the same figure, because for this platform
+   * being shown IS the reach being measured and leaving it null would make the
+   * one channel that has the number read as the ones that do not.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT A VISIT.
+   *
+   * `sessions` and `visitors` stay absent. An impression is not an arrival, and
+   * `resolveVisits` would otherwise add listing views to website visits and
+   * report a total that is neither. `website_clicks` is the overlap, and it is
+   * recorded as a click, not as a visit — our own tracker counts the arrival.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async fetchGoogleBusinessProfile(
+    connection: ChannelConnection,
+    since: string,
+    until: string
+  ): Promise<ChannelMetricRow[]> {
+    const result = await this.callChannelAction(
+      connection.user_id,
+      connection.plugin_key,
+      'get_location_metrics',
+      {
+        // The location chosen at connect time, which is what `account_id` holds
+        // for this platform.
+        location_id: connection.account_id,
+        since,
+        until,
+      }
+    );
+
+    return (result.days || []).map((day: any) =>
+      this.toRow(connection, day.date, {
+        impressions: day.impressions,
+        reach: day.impressions,
+        /* A listing has no followers and no engagement metric, and no profile
+           views distinct from being shown. Zero rather than invented. */
+        engagements: 0,
+        profile_views: 0,
+        website_clicks: day.website_clicks,
+        actions_calls: day.actions_calls,
+        actions_directions: day.actions_directions,
+        followers_count: null,
+        /* The whole day, so the Search/Maps and mobile/desktop split the
+           executor now keeps is stored from the first sync rather than needing a
+           migration and a backfill to recover later. */
         raw: day,
       })
     );
@@ -380,6 +446,17 @@ export class ChannelMetricsSyncService {
       engagements?: number;
       profile_views?: number;
       website_clicks?: number;
+      /**
+       * Taps on the phone number, and direction requests.
+       *
+       * Business Profile only, and the whole reason that connector is worth
+       * having: both happen entirely on Google, so a client who finds a clinic
+       * on Maps and taps call never touches the website, never appears in
+       * `website_page_views`, and never becomes a `website_booking`. These were
+       * hardcoded to 0 below — the columns existed and nothing could fill them.
+       */
+      actions_calls?: number;
+      actions_directions?: number;
       followers_count?: number | null;
       sessions?: number;
       visitors?: number;
@@ -399,8 +476,8 @@ export class ChannelMetricsSyncService {
       engagements: Number(values.engagements) || 0,
       profile_views: Number(values.profile_views) || 0,
       website_clicks: Number(values.website_clicks) || 0,
-      actions_calls: 0,
-      actions_directions: 0,
+      actions_calls: Number(values.actions_calls) || 0,
+      actions_directions: Number(values.actions_directions) || 0,
       followers_count:
         values.followers_count === null || values.followers_count === undefined
           ? null

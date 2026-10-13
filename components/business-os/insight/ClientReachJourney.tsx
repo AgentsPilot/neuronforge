@@ -46,7 +46,7 @@ type StationId = 'find' | 'book' | 'pay';
  * (if the business takes appointments), and `payments` / `profile` / `invoicing`
  * (once money moves). Everything else is here for tidiness and cannot block.
  *
- * `meta_insights` and `google_analytics` are deliberately in no station: they
+ * `meta_insights` and `google_business` are deliberately in no station: they
  * are about the owner seeing their own numbers, not about a client arriving.
  *
  * The one real judgement call is `services`. They are what the page displays,

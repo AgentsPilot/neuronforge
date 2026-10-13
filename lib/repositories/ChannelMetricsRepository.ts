@@ -58,6 +58,19 @@ export interface ChannelTotals {
   engagements: number;
   profile_views: number;
   website_clicks: number;
+  /**
+   * Taps on the phone number, and direction requests.
+   *
+   * Business Profile only, and unlike everything above them these are not
+   * views: they are somebody deciding to act. Both happen entirely on Google,
+   * so neither ever reaches the website and no other source in the platform
+   * can see them.
+   *
+   * Safe to sum across days, unlike `reach`: an action is an event, not a
+   * distinct-people count.
+   */
+  actions_calls: number;
+  actions_directions: number;
   /** Most recent non-null snapshot in the window, not a sum. */
   followers_count: number | null;
 }
@@ -113,7 +126,7 @@ export class ChannelMetricsRepository {
       const { data, error } = await this.supabase
         .from('channel_metrics_daily')
         .select(
-          'platform, account_id, channel, metric_date, impressions, reach, engagements, profile_views, website_clicks, followers_count'
+          'platform, account_id, channel, metric_date, impressions, reach, engagements, profile_views, website_clicks, actions_calls, actions_directions, followers_count'
         )
         .eq('user_id', userId)
         .gte('metric_date', since)
@@ -137,6 +150,8 @@ export class ChannelMetricsRepository {
           engagements: 0,
           profile_views: 0,
           website_clicks: 0,
+          actions_calls: 0,
+          actions_directions: 0,
           followers_count: null,
         };
 
@@ -149,6 +164,8 @@ export class ChannelMetricsRepository {
         totals.engagements += Number(row.engagements) || 0;
         totals.profile_views += Number(row.profile_views) || 0;
         totals.website_clicks += Number(row.website_clicks) || 0;
+        totals.actions_calls += Number(row.actions_calls) || 0;
+        totals.actions_directions += Number(row.actions_directions) || 0;
 
         // Rows arrive oldest first, so the last non-null wins: the latest snapshot.
         if (row.followers_count !== null && row.followers_count !== undefined) {
