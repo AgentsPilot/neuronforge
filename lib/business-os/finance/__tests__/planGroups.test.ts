@@ -21,6 +21,8 @@ import { buildShadowReport } from '@/lib/business-os/entitlements/report';
 import type { LifecycleState } from '@/lib/business-os/entitlements/types';
 import { classifyAccounts, groupFor } from '../planGroups';
 import type { FinanceGroupKey } from '../financeTypes';
+// Slice 1c: a separate import, so the lines above stay unedited.
+import { paidTierOf } from '../planGroups';
 
 const config = getEntitlementConfig();
 const TIER = config.tierOrder[0];
@@ -222,5 +224,176 @@ describe('one definition, two callers (SA-Q3): no end date and dormant agree wit
     expect(figures.foundingNoEndDate).toBe(3);
     expect(figures.dormantFounding).toBe(report.static.dormantChampions.accounts);
     expect(figures.dormantFounding).toBe(2);
+  });
+});
+
+// ── Slice 1c (BD-15, SA-Q20, SA-Q23, SA-Q24, SA-W42, SA-W44, SA-WR-29) ───────
+// Appended: everything above runs unedited. Tiers come from config only.
+
+describe('slice 1c: paidTierOf (SA-Q20, SA-WR-29, AC-86)', () => {
+  const TIER_2 = config.tierOrder[1];
+
+  it('has two distinct config tiers to work with (non-vacuity)', () => {
+    expect(TIER_2).toBeDefined();
+    expect(TIER_2).not.toBe(TIER);
+  });
+
+  it.each([
+    ['plan tier valid → the plan tier', () => paidTierOf(TIER, null, config.tierOrder), () => TIER],
+    ['plan tier valid and the bought tier differs → the plan tier wins', () => paidTierOf(TIER, TIER_2, config.tierOrder), () => TIER],
+    ['no plan tier, valid bought tier → the bought tier', () => paidTierOf(null, TIER_2, config.tierOrder), () => TIER_2],
+    ['invalid plan tier, valid bought tier → the bought tier', () => paidTierOf('not-a-tier', TIER_2, config.tierOrder), () => TIER_2],
+    ['no plan tier, invalid bought tier → null (Unknown/held)', () => paidTierOf(null, 'not-a-tier', config.tierOrder), () => null],
+    ['both absent → null', () => paidTierOf(null, undefined, config.tierOrder), () => null],
+    ['blank bought tier → null', () => paidTierOf(null, '', config.tierOrder), () => null],
+  ])('%s', (_name, actual, expected) => {
+    expect(actual()).toBe(expected());
+  });
+});
+
+describe('slice 1c: a paying Founding Partner is grouped by its paid tier (BD-15, S1C-FR-3)', () => {
+  const TIER_2 = config.tierOrder[1];
+  const group = (groups: Array<{ key: string; count: number; foundingPartners: number }>, key: string) =>
+    groups.find((g) => g.key === key);
+  const run = (
+    rows: BusinessOsAccountPlan[],
+    payingIds: ReadonlySet<string> | null,
+    paidTierHints?: ReadonlyMap<string, string>
+  ) => classifyAccounts({ rows, payingIds, paidTierHints, window: WINDOW, now: NOW, config }).figures;
+
+  it('(a) AC-78: champion with its tier in force and paying → its tier group with the note; Comped 0', () => {
+    const owner = planRow({ tier: TIER, cohort: CHAMPION });
+    const figures = run([owner], new Set([owner.user_id]));
+    expect(group(figures.groups, `tier:${TIER}`)).toMatchObject({ count: 1, foundingPartners: 1 });
+    expect(group(figures.groups, 'comped')).toMatchObject({ count: 0, foundingPartners: 0 });
+    expect(group(figures.groups, 'founding_partner')?.count).toBe(0);
+  });
+
+  it('(a2) the same account not paying → Comped, no note anywhere (BD-4 unchanged)', () => {
+    const owner = planRow({ tier: TIER, cohort: CHAMPION });
+    const figures = run([owner], new Set());
+    expect(group(figures.groups, 'comped')?.count).toBe(1);
+    expect(figures.groups.every((g) => g.foundingPartners === 0)).toBe(true);
+  });
+
+  it('(b) AC-78: champion with no tier, paying, bought tier from its billing row → that tier group with the note', () => {
+    const champ = planRow({ cohort: CHAMPION });
+    const figures = run([champ], new Set([champ.user_id]), new Map([[champ.user_id, TIER_2]]));
+    expect(group(figures.groups, `tier:${TIER_2}`)).toMatchObject({ count: 1, foundingPartners: 1 });
+    expect(group(figures.groups, 'founding_partner')?.count).toBe(0);
+  });
+
+  it('(b2) AC-86: champion with an EXPIRED plan tier and a live cohort, paying, bought tier differs → the plan tier wins', () => {
+    const champ = planRow({ tier: TIER, tier_expires_at: daysFromNow(-30), cohort: CHAMPION });
+    const figures = run([champ], new Set([champ.user_id]), new Map([[champ.user_id, TIER_2]]));
+    expect(group(figures.groups, `tier:${TIER}`)).toMatchObject({ count: 1, foundingPartners: 1 });
+    expect(group(figures.groups, `tier:${TIER_2}`)?.count).toBe(0);
+  });
+
+  it('(b3) AC-86: champion with no tier, paying, no valid bought tier → Unknown/held, never dropped, no note', () => {
+    const none = planRow({ cohort: CHAMPION });
+    const invalid = planRow({ cohort: CHAMPION });
+    const figures = run([none, invalid], new Set([none.user_id, invalid.user_id]), new Map([[invalid.user_id, 'not-a-tier']]));
+    expect(group(figures.groups, 'unknown_held')?.count).toBe(2);
+    expect(figures.groups.every((g) => g.foundingPartners === 0)).toBe(true);
+    expect(figures.total).toBe(2);
+  });
+
+  it('grace on the champion cohort, paying → its paid tier (S1C-FR-3); its FP period has ended, so no note (QA-1)', () => {
+    const lapsed = planRow({ cohort: CHAMPION, cohort_expires_at: daysFromNow(-10) });
+    const figures = run([lapsed], new Set([lapsed.user_id]), new Map([[lapsed.user_id, TIER]]));
+    expect(group(figures.groups, `tier:${TIER}`)).toMatchObject({ count: 1, foundingPartners: 0 });
+    expect(group(figures.groups, 'founding_partner')?.count).toBe(0);
+  });
+
+  it('QA-1: a paying champion with a tier in force and a FUTURE Founding Partner end date → the note', () => {
+    const current = planRow({ tier: TIER, cohort: CHAMPION, cohort_expires_at: daysFromNow(30) });
+    const figures = run([current], new Set([current.user_id]));
+    expect(group(figures.groups, `tier:${TIER}`)).toMatchObject({ count: 1, foundingPartners: 1 });
+  });
+
+  it('QA-1: a paying champion with a tier in force whose Founding Partner period has ENDED → its tier group, no note', () => {
+    const ended = planRow({ tier: TIER, cohort: CHAMPION, cohort_expires_at: daysFromNow(-1) });
+    const figures = run([ended], new Set([ended.user_id]));
+    expect(group(figures.groups, `tier:${TIER}`)).toMatchObject({ count: 1, foundingPartners: 0 });
+    expect(figures.groups.every((g) => g.foundingPartners === 0)).toBe(true);
+  });
+
+  it('QA-1: the end is compared with the same now as the rest of the classifier (an end exactly at now has ended)', () => {
+    const atNow = planRow({ tier: TIER, cohort: CHAMPION, cohort_expires_at: NOW.toISOString() });
+    const figures = run([atNow], new Set([atNow.user_id]));
+    expect(group(figures.groups, `tier:${TIER}`)?.foundingPartners).toBe(0);
+  });
+
+  it('AC-79: a champion that is not paying stays in Founding Partner, even with a bought tier, and no note', () => {
+    const champ = planRow({ cohort: CHAMPION });
+    const figures = run([champ], new Set(), new Map([[champ.user_id, TIER]]));
+    expect(group(figures.groups, 'founding_partner')?.count).toBe(1);
+    expect(figures.groups.every((g) => g.foundingPartners === 0)).toBe(true);
+  });
+
+  it('S1C-FR-6: the paying read failed → champions stay in Founding Partner, tiers fold into "Tier set"', () => {
+    const champ = planRow({ cohort: CHAMPION });
+    const owner = planRow({ tier: TIER, cohort: CHAMPION });
+    const figures = run([champ, owner], null, new Map([[champ.user_id, TIER]]));
+    expect(figures.payingKnown).toBe(false);
+    expect(group(figures.groups, 'founding_partner')?.count).toBe(1);
+    expect(group(figures.groups, 'tier_set')?.count).toBe(1);
+    expect(figures.groups.every((g) => g.foundingPartners === 0)).toBe(true);
+  });
+
+  it('AC-80: K-3 ("no end date") counts only the champions left in Founding Partner', () => {
+    const open1 = planRow({ cohort: CHAMPION });
+    const open2 = planRow({ cohort: CHAMPION });
+    const openPaying = planRow({ cohort: CHAMPION });
+    const figures = run([open1, open2, openPaying], new Set([openPaying.user_id]), new Map([[openPaying.user_id, TIER]]));
+    expect(figures.foundingNoEndDate).toBe(2);
+  });
+
+  it('AC-12 / AC-84: a mixed fixture with every new case still sums to Total', () => {
+    const rows = [
+      planRow({ tier: TIER, cohort: CHAMPION }),
+      planRow({ tier: TIER, cohort: CHAMPION }),
+      planRow({ cohort: CHAMPION }),
+      planRow({ cohort: CHAMPION }),
+      planRow({ cohort: CHAMPION, cohort_expires_at: daysFromNow(-10) }),
+      planRow({ tier: TIER }),
+      planRow({ cohort: TRIAL, onboarding_started_at: daysFromNow(-1) }),
+    ];
+    const payingIds = new Set([rows[0].user_id, rows[2].user_id, rows[4].user_id]);
+    const hints = new Map([
+      [rows[2].user_id, TIER_2],
+      [rows[4].user_id, 'not-a-tier'],
+    ]);
+    const figures = run(rows, payingIds, hints);
+    expect(figures.groups.reduce((sum, g) => sum + g.count, 0)).toBe(rows.length);
+    expect(group(figures.groups, `tier:${TIER}`)).toMatchObject({ count: 1, foundingPartners: 1 });
+    expect(group(figures.groups, `tier:${TIER_2}`)).toMatchObject({ count: 1, foundingPartners: 1 });
+    expect(group(figures.groups, 'comped')?.count).toBe(2);
+    expect(group(figures.groups, 'unknown_held')?.count).toBe(1);
+    expect(group(figures.groups, 'founding_partner')?.count).toBe(1);
+    expect(group(figures.groups, 'trial')?.count).toBe(1);
+  });
+});
+
+describe('slice 1c: dormant Founding Partners counts the Founding Partner group only (SA-Q23, SA-W42, S1C-F3)', () => {
+  // A separate fixture with paying champions: the parity test above keeps its
+  // own, which has no paying champion and no tier, and is not edited.
+  it('a paying dormant champion and a Comped dormant champion are not counted; a plain dormant one is', () => {
+    const payingDormant = planRow({ cohort: CHAMPION, profile_created_at: null });
+    const compedDormant = planRow({ tier: TIER, cohort: CHAMPION, profile_created_at: null });
+    const plainDormant = planRow({ cohort: CHAMPION, profile_created_at: null });
+    const { figures, groupByAccount } = classifyAccounts({
+      rows: [payingDormant, compedDormant, plainDormant],
+      payingIds: new Set([payingDormant.user_id]),
+      paidTierHints: new Map([[payingDormant.user_id, TIER]]),
+      window: WINDOW,
+      now: NOW,
+      config,
+    });
+    expect(groupByAccount.get(payingDormant.user_id)).toBe(`tier:${TIER}`);
+    expect(groupByAccount.get(compedDormant.user_id)).toBe('comped');
+    expect(groupByAccount.get(plainDormant.user_id)).toBe('founding_partner');
+    expect(figures.dormantFounding).toBe(1);
   });
 });

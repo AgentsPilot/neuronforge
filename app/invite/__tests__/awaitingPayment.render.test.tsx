@@ -259,7 +259,29 @@ describe('P-5a.2 held: Pay (FR-35, BQ-P5, AC-F2.7)', () => {
     }
   );
 
-  it('checkout_open shows the local time from expiresAt', async () => {
+  // P-4.1 M-3 (rewritten on purpose): the checkout now replaces the account's
+  // own open window, so `checkout_open` reaches this screen only when that
+  // window could not be checked or closed; it keeps its line. A window that
+  // was already paid answers `checkout_processing`.
+  it.each(['en', 'he', 'es'] as const)('P-4.1 M-3 %s: checkout_processing → the localized "already being processed" line, never the server message', async (locale) => {
+    hold.value = held(locale);
+    view.value = PAY_VIEW;
+    fetchReply = { status: 409, body: { success: false, error: 'Your payment is being processed.', code: 'checkout_processing' } };
+    await renderPage();
+    await userEvent.setup().click(screen.getByTestId('awaiting-payment-checkout-start'));
+    const alert = await screen.findByTestId('awaiting-payment-refused');
+    expect(alert).toHaveTextContent(AWAITING_PAYMENT_COPY[locale].refusalProcessing);
+    if (locale !== 'en') expect(alert.textContent).not.toContain('Your payment is being processed.');
+    expect(screen.getByRole('main')).toHaveAttribute('dir', locale === 'he' ? 'rtl' : 'ltr');
+  });
+
+  it('P-4.1: the two new refusal codes have their own lines', () => {
+    expect(HELD_PAYMENT_REFUSAL_COPY.checkout_processing).toBe('refusalProcessing');
+    expect(HELD_PAYMENT_REFUSAL_COPY.free_access_no_end_date).toBe('refusalNotReady');
+    expect(HELD_PAYMENT_REFUSAL_COPY.checkout_open).toBe('refusalCheckoutOpen');
+  });
+
+  it('checkout_open (the open window could not be checked) shows the local time from expiresAt', async () => {
     hold.value = held('en');
     view.value = PAY_VIEW;
     const expiresAt = '2026-10-12T10:31:00.000Z';

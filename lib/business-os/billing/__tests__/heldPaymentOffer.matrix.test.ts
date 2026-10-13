@@ -87,7 +87,10 @@ jest.mock('@/lib/repositories/BusinessOsBillingAccountRepository', () => ({
   },
 }));
 jest.mock('@/lib/business-os/entitlements/EntitlementService', () => ({
-  getEntitlementService: () => ({ getSnapshot: async () => ({ unavailable: false, resolution: {} }) }),
+  // P-4.1: a resolution with a tier basis, which BQ-P10 (W-3: every account) does not catch.
+  getEntitlementService: () => ({
+    getSnapshot: async () => ({ unavailable: false, resolution: { basis: { kind: 'tier', tier: 'held_fixture_tier' }, lifecycle: { accessEndsAt: null } } }),
+  }),
 }));
 jest.mock('@/lib/stripe/StripeService', () => ({
   getStripeService: () => ({

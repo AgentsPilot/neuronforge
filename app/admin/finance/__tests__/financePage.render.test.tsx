@@ -31,6 +31,11 @@
  * plain reminder figures and the link (AC-61); the platform-wide note
  * (AC-65); a failed part alone (AC-66, AC-67); "At least" (AC-62); empty
  * parts (AC-63); the layout parts (AC-68); no test-mode wording (BD-13).
+ *
+ * Slice 1c: the new revenue panel copy in every state with no mode or webhook
+ * wording (AC-75 to AC-77, AC-81), the Founding Partner note on a tier group
+ * with all businesses (AC-78) and the neutral chip with words only for a
+ * picked business (AC-82, SA-Q24, SA-W43; the SA-WR-17 test is unedited).
  */
 
 import '@testing-library/jest-dom';
@@ -71,6 +76,13 @@ import {
   TAKINGS_REFUNDS_FAILED,
   TAKINGS_TITLE,
   TILE_LABELS,
+} from '../financeCopy';
+// Slice 1c: a separate import, so the lists above stay unedited.
+import {
+  ACCOUNTS_FOUNDING_CHIP,
+  REVENUE_RECORDED,
+  REVENUE_SUBTITLE,
+  accountsFoundingNote,
 } from '../financeCopy';
 import { formatMoney } from '../financeFormat';
 import {
@@ -281,11 +293,11 @@ function payload(extra: Partial<FinancePayload> = {}): FinancePayload {
       figures: {
         total: 8,
         groups: [
-          { key: 'trial', tierLabel: null, count: 0, grace: 0, pastDue: 0 },
-          { key: 'founding_partner', tierLabel: null, count: 8, grace: 0, pastDue: 0 },
-          { key: 'comped', tierLabel: null, count: 0, grace: 0, pastDue: 0 },
-          { key: 'tier:x', tierLabel: 'Essentials-ish', count: 0, grace: 0, pastDue: 0 },
-          { key: 'unknown_held', tierLabel: null, count: 0, grace: 0, pastDue: 0 },
+          { key: 'trial', tierLabel: null, count: 0, grace: 0, pastDue: 0, foundingPartners: 0 },
+          { key: 'founding_partner', tierLabel: null, count: 8, grace: 0, pastDue: 0, foundingPartners: 0 },
+          { key: 'comped', tierLabel: null, count: 0, grace: 0, pastDue: 0, foundingPartners: 0 },
+          { key: 'tier:x', tierLabel: 'Essentials-ish', count: 0, grace: 0, pastDue: 0, foundingPartners: 0 },
+          { key: 'unknown_held', tierLabel: null, count: 0, grace: 0, pastDue: 0, foundingPartners: 0 },
         ],
         payingKnown: true,
         byState: { champion: 8 },
@@ -368,7 +380,7 @@ describe('the finance page', () => {
     expect(within(screen.getByTestId('ai-top')).getByText('Acme Dental')).toBeInTheDocument();
   });
 
-  it('AC-22: the revenue panel says none yet, and shows no $0 anywhere in it or on K-5', async () => {
+  it('AC-22 / AC-77: the revenue panel says none yet, and shows no $0 anywhere in it or on K-5', async () => {
     serve({ success: true, data: payload() });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
@@ -381,6 +393,77 @@ describe('the finance page', () => {
     serve({ success: true, data: payload({ revenue: { status: 'unknown', state: 'unknown' } }) });
     render(<FinanceView />);
     expect(await screen.findByTestId('revenue-text')).toHaveTextContent(REVENUE_COULD_NOT_CHECK);
+  });
+
+  it('AC-75 / AC-76: revenue recorded → "Revenue has been recorded", K-5 headline as served, still no amount', async () => {
+    const p = payload({ revenue: { status: 'ok', state: 'recorded' } });
+    p.tiles.k5 = { ...p.tiles.k5, headline: 'Revenue recorded, not yet shown' };
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    expect(within(panel).getByTestId('revenue-text')).toHaveTextContent(REVENUE_RECORDED);
+    expect(panel).toHaveTextContent(REVENUE_SUBTITLE);
+    expect(panel.textContent).not.toMatch(/\$|USD|0\.00/);
+    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('Revenue recorded, not yet shown');
+  });
+
+  it.each([
+    ['none_yet', { status: 'ok', state: 'none_yet' }],
+    ['recorded', { status: 'ok', state: 'recorded' }],
+    ['unknown', { status: 'unknown', state: 'unknown' }],
+  ] as const)('AC-81: in the %s state the panel names no mode and no webhook', async (_name, revenue) => {
+    serve({ success: true, data: payload({ revenue }) });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    expect(panel.textContent).not.toMatch(/webhook|not in place|test accounts only|live mode|test mode|livemode/i);
+  });
+
+  it('AC-78: all businesses, a tier group with a paying Founding Partner shows the note as text, no chip in Section 1', async () => {
+    const p = payload();
+    p.accounts.figures!.groups = p.accounts.figures!.groups.map((g) =>
+      g.key === 'tier:x' ? { ...g, count: 1, foundingPartners: 1 } : g
+    );
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-accounts');
+    expect(within(section).getByTestId('accounts-founding-note-tier:x')).toHaveTextContent(accountsFoundingNote(1));
+    expect(accountsFoundingNote(1)).toBe('including 1 Founding Partner');
+    expect(accountsFoundingNote(2)).toBe('including 2 Founding Partners');
+    expect(within(section).queryByTestId('accounts-founding-chip-tier:x')).not.toBeInTheDocument();
+    expect(section.querySelector('[data-tone]')).toBeNull();
+  });
+
+  it('AC-82 / SA-Q24: a picked business shows the neutral "Founding Partner" chip with words, and no note sentence', async () => {
+    const p = payload();
+    p.accounts = {
+      ...p.accounts,
+      scope: 'one',
+      figures: {
+        ...p.accounts.figures!,
+        total: 1,
+        groups: p.accounts.figures!.groups.map((g) =>
+          g.key === 'tier:x' ? { ...g, count: 1, foundingPartners: 1 } : { ...g, count: 0 }
+        ),
+      },
+    };
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-accounts');
+    const chip = within(section).getByTestId('accounts-founding-chip-tier:x');
+    expect(chip).toHaveTextContent(ACCOUNTS_FOUNDING_CHIP);
+    expect(chip).toHaveAttribute('data-tone', 'neutral');
+    expect(within(section).queryByTestId('accounts-founding-note-tier:x')).not.toBeInTheDocument();
+    expect(section.textContent).not.toMatch(/including \d+ Founding Partner/);
+  });
+
+  it('SA-W43: no group with a Founding Partner → no note and no chip, in either view', async () => {
+    const p = payload();
+    p.accounts = { ...p.accounts, scope: 'one' };
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-accounts');
+    expect(section.querySelector('[data-tone]')).toBeNull();
+    expect(section.textContent).not.toMatch(/including \d+ Founding Partner/);
   });
 
   it('AC-27: a failed section says so with a Retry; the others still render; Retry refetches', async () => {

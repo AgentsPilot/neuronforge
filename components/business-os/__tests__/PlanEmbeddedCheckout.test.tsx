@@ -135,12 +135,17 @@ describe('PlanEmbeddedCheckout', () => {
     expect(callbacks.onRequestFailed).toHaveBeenCalledWith('offline');
   });
 
-  it('no publishable key → the "not configured" line instead of a frame', async () => {
+  // Rewritten on purpose for P-4.1 M-2: the key is checked BEFORE the POST, so
+  // there is no start button to click and no session (or lock) is ever opened.
+  it('M-2: no usable publishable key → the "not configured" line, NO start button, and the route is never called', () => {
     stripe.promise = null;
-    setup();
-    await userEvent.setup().click(screen.getByTestId('shared-start'));
-    expect(await screen.findByTestId('shared-not-configured')).toHaveTextContent('Not configured');
+    const callbacks = setup();
+    expect(screen.getByTestId('shared-not-configured')).toHaveTextContent('Not configured');
+    expect(screen.queryByTestId('shared-start')).not.toBeInTheDocument();
     expect(screen.queryByTestId('fake-checkout')).not.toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+    expect(callbacks.onRequest).not.toHaveBeenCalled();
   });
 
   it('disabled keeps the start button disabled', () => {

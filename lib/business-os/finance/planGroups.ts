@@ -17,6 +17,12 @@
  * `config.tierOrder` and labelled from `config.matrix.presentation`; a cohort
  * maps to a group only through `stateForCohort` (SA-W3).
  *
+ * Slice 1c (BD-15, SA-Q20, SA-Q23, SA-Q24): a PAYING account the §8.1 mapping
+ * places in Founding Partner goes to its paid tier's group instead
+ * (`paidTierOf`, applied right after `groupFor`, which is unchanged, SA-W44);
+ * each tier group counts its Founding Partner cohort accounts for a note; "no
+ * end date" and "dormant" count the Founding Partner group only (SA-W42).
+ *
  * @module lib/business-os/finance/planGroups
  */
 
@@ -65,6 +71,42 @@ export function groupFor(lifecycle: LifecycleResult, isPaying: boolean | null): 
   return 'unknown_held';
 }
 
+/**
+ * SA-Q20 / SA-WR-29: the tier a PAYING champion is grouped under. The plan
+ * row's tier first (the entitlement truth, written by the webhook), when it is
+ * in `tierOrder`; otherwise the tier its billing row bought, when that is in
+ * `tierOrder`; otherwise null (Unknown/held, never dropped). Values are only
+ * compared with `tierOrder`: no tier is written here.
+ */
+export function paidTierOf(
+  planTier: string | null | undefined,
+  boughtTier: string | null | undefined,
+  tierOrder: readonly string[]
+): string | null {
+  if (planTier && tierOrder.includes(planTier)) return planTier;
+  if (boughtTier && tierOrder.includes(boughtTier)) return boughtTier;
+  return null;
+}
+
+/**
+ * Whether a cohort id is the Founding Partner cohort, through the module's one
+ * cohort → state function (no cohort literal). Written `!!cohort`, never as a
+ * comparison with an empty string: the cohort-literal guard matches that form.
+ */
+const isChampionCohort = (cohort: string | null | undefined): boolean =>
+  !!cohort && stateForCohort(cohort) === 'champion';
+
+/**
+ * QA-1: whether a cohort period is current at `nowMs`: no end date, or an end
+ * strictly after now. An unparseable end is treated as ended (no note, never a
+ * claim the data cannot back).
+ */
+const isCohortCurrent = (expiresAt: string | null | undefined, nowMs: number): boolean => {
+  if (!expiresAt) return true;
+  const end = new Date(expiresAt).getTime();
+  return Number.isFinite(end) && end > nowMs;
+};
+
 /** The tier label from config, the only place a tier's display name lives. */
 function tierLabelOf(config: EntitlementConfig, tier: string): string {
   const presentation = config.matrix.presentation as Readonly<Record<string, { labels: { en: string } } | undefined>>;
@@ -79,6 +121,7 @@ function seedGroups(config: EntitlementConfig, payingKnown: boolean): FinanceGro
     count: 0,
     grace: 0,
     pastDue: 0,
+    foundingPartners: 0,
   });
   const groups = [zero('trial'), zero('founding_partner')];
   if (payingKnown) {
@@ -101,6 +144,12 @@ export interface ClassifyInput {
   rows: readonly BusinessOsAccountPlan[];
   /** Accounts paying now; null when the paying read failed. */
   payingIds: ReadonlySet<string> | null;
+  /**
+   * Slice 1c (SA-Q20): each paying account's `bought_tier`, from its paying
+   * billing row only. Optional: absent means none known. Validated here
+   * against `config.tierOrder`, never trusted as is.
+   */
+  paidTierHints?: ReadonlyMap<string, string>;
   window: { start: Date; end: Date };
   now: Date;
   config: EntitlementConfig;
@@ -136,6 +185,13 @@ export function classifyAccounts(input: ClassifyInput): ClassifiedAccounts {
     const lifecycle = deriveLifecycle(fromPlanRow(row), inputs, now);
     const isPaying = payingIds === null ? null : payingIds.has(row.user_id);
     let key = groupFor(lifecycle, isPaying);
+    // BD-15 (SA-W44): a PAYING account the §8.1 table places in Founding
+    // Partner (champion, or grace on the champion cohort) goes to its paid
+    // tier. Never when the paying read failed (`null`): champions then stay.
+    if (key === 'founding_partner' && isPaying === true) {
+      const paidTier = paidTierOf(row.tier, input.paidTierHints?.get(row.user_id), config.tierOrder);
+      key = paidTier ? tierKey(paidTier) : 'unknown_held';
+    }
     // A tier group outside the seeded set cannot occur (deriveLifecycle refuses
     // an unknown tier), but if it ever did it is held, never dropped.
     if (!groupIndex.has(key)) key = 'unknown_held';
@@ -146,9 +202,15 @@ export function classifyAccounts(input: ClassifyInput): ClassifiedAccounts {
     if (lifecycle.state === 'past_due') group.pastDue += 1;
     byState[lifecycle.state] = (byState[lifecycle.state] ?? 0) + 1;
     groupByAccount.set(row.user_id, key);
+    // SA-Q24: a tier group holds paying accounts only; count its Founding Partners for the note.
+    // QA-1: only while the Founding Partner period is current (no end, or an end after `now`).
+    if (key.startsWith('tier:') && isChampionCohort(row.cohort) && isCohortCurrent(row.cohort_expires_at, nowMs)) {
+      group.foundingPartners += 1;
+    }
 
     if (key === 'founding_partner' && isOpenEndedCohort(row)) foundingNoEndDate += 1;
-    if (isDormantChampion(row)) dormantFounding += 1;
+    // SA-Q23 / SA-W42: the Founding Partner group only, like K-3 above.
+    if (key === 'founding_partner' && isDormantChampion(row)) dormantFounding += 1;
 
     if (within(row.created_at, startMs, endMs)) {
       newTotal += 1;

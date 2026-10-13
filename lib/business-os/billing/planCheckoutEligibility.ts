@@ -8,8 +8,9 @@
  * not a capability or a plan decision, and calls nothing in the entitlements
  * service. So it is a recorded non-gate, not an enforcement point (SA Q-10).
  *
- * - not held → every tier that has a Stripe price (`PLAN_STRIPE_PRICES`),
- *   whatever the held-payment switches say;
+ * - not held → no tier list here. What a non-held account may buy is decided
+ *   by `planPurchaseOffer` (P-4.1, M-1), evaluated by the checkout ONCE, after
+ *   every database read and before any Stripe call (SA W-1);
  * - held → `heldPaymentOffer` decides (P-5a.2, SA S5-1, S5-2, P5-C5):
  *   - any of the three switches off (checkout, price recognition,
  *     `INVITE_ISSUANCE_POLICY.paidInvitesAvailable`) → refused,
@@ -25,6 +26,15 @@
  * button (`heldPaymentView.ts`) and the held checkout, so the screen can never
  * offer a payment the server would refuse. Neither re-derives any part of it.
  *
+ * `planPurchaseOffer` (P-4.1) is its twin for an account that is NOT held: the
+ * checkout uses it now, and the Settings → Plan view (P-4.2) will use the same
+ * function, so Choose is offered exactly when the server would sell. It reads
+ * our own data only (SA W-2): the switches, `availableToBuy` from the tier
+ * matrix's presentation block, the free-access fact (BQ-P10,
+ * `hasOpenEndedFreeAccess`) and whether our billing record shows a live
+ * subscription. It refuses a SALE, never a capability: nothing here calls
+ * `check()` / `decide()` or withholds a feature by plan.
+ *
  * No tier name is written in this file: tiers come from the config.
  *
  * @module lib/business-os/billing/planCheckoutEligibility
@@ -32,7 +42,7 @@
 
 import { INVITE_ISSUANCE_POLICY } from '@/lib/business-os/entitlements/config/invites';
 import { PLAN_STRIPE_PRICES } from '@/lib/business-os/entitlements/config/planPrices';
-import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
+import { TIER_MATRIX, TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import type { TierId } from '@/lib/business-os/entitlements/config/tierMatrix';
 import type { PaymentHold } from '@/lib/business-os/invites/paymentHold';
 import { isPlanCheckoutEnabled } from '@/lib/business-os/billing/planCheckoutFlag';
@@ -55,13 +65,76 @@ export type HeldPaymentUnavailableCode = 'held_payment_unavailable' | 'held_tier
 
 export type HeldPaymentOffer = { kind: 'pay'; tier: TierId } | { kind: 'unavailable'; code: HeldPaymentUnavailableCode };
 
+/**
+ * The hold's answer. A held account gets its tier list here (step 6); a
+ * non-held account gets none, because `planPurchaseOffer` decides its tiers
+ * after every database read (SA W-1).
+ */
 export type PlanCheckoutEligibility =
-  | { ok: true; held: boolean; tiers: readonly TierId[] }
+  | { ok: true; held: true; tiers: readonly TierId[] }
+  | { ok: true; held: false }
   | { ok: false; code: 'hold_unreadable' | HeldPaymentUnavailableCode };
 
 /** Every tier with a configured Stripe price, in tier order. */
 export function sellableTiers(): readonly TierId[] {
   return TIER_ORDER.filter((tier) => Object.prototype.hasOwnProperty.call(PLAN_STRIPE_PRICES, tier));
+}
+
+/**
+ * Every tier a customer may buy (M-1): it has a Stripe price AND its
+ * `presentation.availableToBuy` is on, in tier order. From config only.
+ */
+export function buyableTiers(): readonly TierId[] {
+  return sellableTiers().filter((tier) => TIER_MATRIX.presentation[tier].availableToBuy);
+}
+
+/**
+ * The facts `planPurchaseOffer` decides from: our own data only (SA W-2), never
+ * a Stripe call, so the my-plan view (which may make none, SR-11) can supply
+ * every one of them.
+ */
+export interface PlanPurchaseFacts {
+  /** BQ-P10: `hasOpenEndedFreeAccess(snapshot.resolution)`. */
+  openEndedFreeAccess: boolean;
+  /**
+   * Our billing record shows a live subscription: its status is in
+   * `LIVE_SUBSCRIPTION_STATUSES` (planCheckout.ts, the set step 9 refuses on).
+   * Passed as a fact rather than a status so this file need not import
+   * planCheckout.ts, which imports this one.
+   */
+  subscriptionLive: boolean;
+}
+
+/** The two switches a non-held purchase needs; `paidInvitesAvailable` is ignored (held only). */
+export type PlanPurchaseSwitches = Pick<HeldPaymentSwitches, 'checkoutEnabled' | 'pricesEnabled'>;
+
+export type PlanPurchaseNoneReason = 'switches_off' | 'free_access_no_end_date' | 'paying' | 'not_on_sale';
+
+export type PlanPurchaseOffer = { kind: 'choose'; tiers: readonly TierId[] } | { kind: 'none'; reason: PlanPurchaseNoneReason };
+
+/**
+ * What an account that is NOT held may buy (P-4.1, M-1, BQ-P10). Pure. The
+ * checkout admits a non-held account for tier X exactly when this says
+ * `choose` with X; the Settings view (P-4.2) offers Choose on exactly the same
+ * answer. First reason wins, in this order:
+ *
+ *   switches_off             checkout or price recognition off: nothing is sold
+ *   free_access_no_end_date  BQ-P10: refuse until an admin sets an end date
+ *   paying                   a live subscription on our record (SR-5 layer 1)
+ *   not_on_sale              no tier has a Stripe price and `availableToBuy` on
+ *
+ * `buyable` is injectable for tests; production reads `buyableTiers()`.
+ */
+export function planPurchaseOffer(
+  facts: PlanPurchaseFacts,
+  switches: PlanPurchaseSwitches,
+  buyable: readonly TierId[] = buyableTiers()
+): PlanPurchaseOffer {
+  if (!switches.checkoutEnabled || !switches.pricesEnabled) return { kind: 'none', reason: 'switches_off' };
+  if (facts.openEndedFreeAccess) return { kind: 'none', reason: 'free_access_no_end_date' };
+  if (facts.subscriptionLive) return { kind: 'none', reason: 'paying' };
+  if (buyable.length === 0) return { kind: 'none', reason: 'not_on_sale' };
+  return { kind: 'choose', tiers: buyable };
 }
 
 /**
@@ -101,10 +174,14 @@ export function heldPaymentOffer(hold: HeldPaymentHold, switches: HeldPaymentSwi
   return { kind: 'unavailable', code: 'held_tier_unresolved' };
 }
 
-/** The tiers this account may buy, from its payment hold and the held-payment switches. */
+/**
+ * Step 6: the payment hold's answer. A held account's tiers come from
+ * `heldPaymentOffer`; a non-held account is passed on to `planPurchaseOffer`
+ * after every read (SA W-1).
+ */
 export function planCheckoutEligibility(hold: PaymentHold, switches: HeldPaymentSwitches): PlanCheckoutEligibility {
   if (!hold.ok) return { ok: false, code: 'hold_unreadable' };
-  if (!hold.held) return { ok: true, held: false, tiers: sellableTiers() };
+  if (!hold.held) return { ok: true, held: false };
 
   const offer = heldPaymentOffer(hold, switches);
   return offer.kind === 'pay' ? { ok: true, held: true, tiers: [offer.tier] } : { ok: false, code: offer.code };

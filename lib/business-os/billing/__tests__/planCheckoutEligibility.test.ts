@@ -9,10 +9,12 @@ import { join } from 'path';
 
 import { INVITE_ISSUANCE_POLICY } from '@/lib/business-os/entitlements/config/invites';
 import { PLAN_STRIPE_PRICES } from '@/lib/business-os/entitlements/config/planPrices';
-import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
+import { TIER_MATRIX, TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import {
+  buyableTiers,
   heldPaymentOffer,
   planCheckoutEligibility,
+  planPurchaseOffer,
   readHeldPaymentSwitches,
   sellableTiers,
   type HeldPaymentSwitches,
@@ -30,8 +32,10 @@ describe('sellableTiers', () => {
 });
 
 describe('planCheckoutEligibility', () => {
-  it('not held → every sellable tier', () => {
-    expect(planCheckoutEligibility({ ok: true, held: false }, ALL_ON)).toEqual({ ok: true, held: false, tiers: sellableTiers() });
+  // Rewritten on purpose for P-4.1 (SA W-1): a non-held account's tiers are
+  // decided by `planPurchaseOffer` after every read, not at step 6.
+  it('not held → admitted past the hold, with no tier list (planPurchaseOffer decides later)', () => {
+    expect(planCheckoutEligibility({ ok: true, held: false }, ALL_ON)).toEqual({ ok: true, held: false });
   });
 
   it('a held friend (account_invite) → the friend tier ONLY, taken from the invite policy', () => {
@@ -39,7 +43,7 @@ describe('planCheckoutEligibility', () => {
     expect(result).toEqual({ ok: true, held: true, tiers: [INVITE_ISSUANCE_POLICY.account.grantId] });
     // Non-vacuity: the friend tier is the cheapest tier, and another tier exists that the friend may not buy.
     expect(INVITE_ISSUANCE_POLICY.account.grantId).toBe(TIER_ORDER[0]);
-    expect(result.ok && result.tiers).not.toContain(TIER_ORDER[TIER_ORDER.length - 1]);
+    expect(result.ok && result.held ? result.tiers : []).not.toContain(TIER_ORDER[TIER_ORDER.length - 1]);
   });
 
   it('a held admin invitee (admin_invite) → refused until P-9 (fail closed)', () => {
@@ -68,7 +72,7 @@ describe('planCheckoutEligibility', () => {
 
   it('not held is unaffected by the held-payment switches; an unreadable hold stays hold_unreadable', () => {
     const allOff: HeldPaymentSwitches = { checkoutEnabled: false, pricesEnabled: false, paidInvitesAvailable: false };
-    expect(planCheckoutEligibility({ ok: true, held: false }, allOff)).toEqual({ ok: true, held: false, tiers: sellableTiers() });
+    expect(planCheckoutEligibility({ ok: true, held: false }, allOff)).toEqual({ ok: true, held: false });
     expect(planCheckoutEligibility({ ok: false }, allOff)).toEqual({ ok: false, code: 'hold_unreadable' });
   });
 
@@ -95,6 +99,72 @@ describe('heldPaymentOffer (P-5a.2, S5-2)', () => {
       expect(heldPaymentOffer(friend, { ...ALL_ON, [off]: false })).toEqual({ kind: 'unavailable', code: 'held_payment_unavailable' });
       expect(heldPaymentOffer(admin, { ...ALL_ON, [off]: false })).toEqual({ kind: 'unavailable', code: 'held_payment_unavailable' });
     }
+  });
+});
+
+describe('buyableTiers (P-4.1, M-1)', () => {
+  it('is every priced tier whose presentation.availableToBuy is on, in tier order', () => {
+    expect(buyableTiers()).toEqual(sellableTiers().filter((tier) => TIER_MATRIX.presentation[tier].availableToBuy));
+  });
+
+  it('production config sells every priced tier (availableToBuy on since 2026-10-13, for testing; productionConfig.test.ts pins it too)', () => {
+    expect(buyableTiers()).toEqual(sellableTiers());
+    // Every tier is priced, so "every priced tier" is not a vacuous claim.
+    expect(sellableTiers()).toEqual([...TIER_ORDER]);
+  });
+
+  it.each(TIER_ORDER.map((tier) => [tier]))('turning availableToBuy OFF for %s drops exactly that tier', (off) => {
+    const presentation = TIER_MATRIX.presentation as Record<string, { availableToBuy: boolean }>;
+    const saved = presentation[off].availableToBuy;
+    presentation[off].availableToBuy = false;
+    try {
+      expect(buyableTiers()).toEqual(TIER_ORDER.filter((tier) => tier !== off));
+    } finally {
+      presentation[off].availableToBuy = saved;
+    }
+  });
+});
+
+describe('planPurchaseOffer (P-4.1, M-1, BQ-P10; SA W-2)', () => {
+  const ON = { checkoutEnabled: true, pricesEnabled: true };
+  const NONE = { openEndedFreeAccess: false, subscriptionLive: false };
+  const ALL = [...TIER_ORDER];
+
+  it('everything on, nothing in the way → choose, exactly the buyable tiers given', () => {
+    expect(planPurchaseOffer(NONE, ON, ALL)).toEqual({ kind: 'choose', tiers: ALL });
+    expect(planPurchaseOffer(NONE, ON, [TIER_ORDER[0]])).toEqual({ kind: 'choose', tiers: [TIER_ORDER[0]] });
+  });
+
+  it.each([['checkoutEnabled'], ['pricesEnabled']] as const)('%s off → switches_off', (off) => {
+    expect(planPurchaseOffer(NONE, { ...ON, [off]: false }, ALL)).toEqual({ kind: 'none', reason: 'switches_off' });
+  });
+
+  it('paidInvitesAvailable is not an input (held accounts only)', () => {
+    const withHeldSwitchOff: HeldPaymentSwitches = { ...ALL_ON, paidInvitesAvailable: false };
+    expect(planPurchaseOffer(NONE, withHeldSwitchOff, ALL)).toEqual({ kind: 'choose', tiers: ALL });
+  });
+
+  it('open-ended free access → free_access_no_end_date (BQ-P10)', () => {
+    expect(planPurchaseOffer({ ...NONE, openEndedFreeAccess: true }, ON, ALL)).toEqual({ kind: 'none', reason: 'free_access_no_end_date' });
+  });
+
+  it('a live subscription on our record → paying', () => {
+    expect(planPurchaseOffer({ ...NONE, subscriptionLive: true }, ON, ALL)).toEqual({ kind: 'none', reason: 'paying' });
+  });
+
+  it('nothing buyable → not_on_sale', () => {
+    expect(planPurchaseOffer(NONE, ON, [])).toEqual({ kind: 'none', reason: 'not_on_sale' });
+  });
+
+  it('first reason wins: switches, then free access, then paying, then not on sale', () => {
+    const everything = { openEndedFreeAccess: true, subscriptionLive: true };
+    expect(planPurchaseOffer(everything, { ...ON, checkoutEnabled: false }, [])).toEqual({ kind: 'none', reason: 'switches_off' });
+    expect(planPurchaseOffer(everything, ON, [])).toEqual({ kind: 'none', reason: 'free_access_no_end_date' });
+    expect(planPurchaseOffer({ ...everything, openEndedFreeAccess: false }, ON, [])).toEqual({ kind: 'none', reason: 'paying' });
+  });
+
+  it('defaults to the production buyable tiers', () => {
+    expect(planPurchaseOffer(NONE, ON)).toEqual(buyableTiers().length ? { kind: 'choose', tiers: buyableTiers() } : { kind: 'none', reason: 'not_on_sale' });
   });
 });
 
