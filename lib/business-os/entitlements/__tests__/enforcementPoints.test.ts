@@ -270,9 +270,6 @@ describe('backward: a gate cannot ship unregistered', () => {
     },
     {
       file: 'app/business-os/layout.tsx',
-      // `type PlanBadge` as the extractor sees it — an inline type import keeps
-      // its `type` keyword, which is worth leaving visible: it says at a glance
-      // that the layout imports one VALUE-bearing function and one type.
       // Just the one now: the read itself moved into
       // `lib/business-os/entitlements/readPlanBadge.ts` so its three safety
       // guarantees could be tested (QA-10). The layout awaits one function.
@@ -319,7 +316,7 @@ describe('backward: a gate cannot ship unregistered', () => {
         'INVITE_TYPES',
         'PAID_INVITE_TYPE',
         'planLabel',
-        'type InviteTypeId',
+        'InviteTypeId',
       ],
       why: 'The admin invite operations. They read the invite config (T-14, T-15) and label plans for the admin list with `planLabel`. The Paid refusal here is an issuance rule on WHO MAY INVITE, not a capability gate on what an account may do.',
     },
@@ -327,7 +324,7 @@ describe('backward: a gate cannot ship unregistered', () => {
       file: 'lib/business-os/invites/inviteOffer.ts',
       // No resolver (SA M-3): the resolution lives in `planOfferView.ts`, inside
       // the module, and this file gets only its read-only result.
-      symbols: ['EntitlementConfig', 'INVITE_TYPES', 'INVITE_TYPE_IDS', 'describePlanOffer', 'type PlanOfferCategory'],
+      symbols: ['EntitlementConfig', 'INVITE_TYPES', 'INVITE_TYPE_IDS', 'describePlanOffer', 'PlanOfferCategory'],
       why: 'Describes the plan an invite OFFERS through `describePlanOffer`, a read-only view inside the entitlements module that previews a plan the way `adminPlansView` and `customerPlanView` do. It imports no resolver and no decision function, so it cannot refuse a capability.',
     },
     {
@@ -342,12 +339,12 @@ describe('backward: a gate cannot ship unregistered', () => {
     },
     {
       file: 'lib/business-os/llm/chargeResolver.ts',
-      symbols: ['currentCreditValue', 'type CreditValueVersion'],
+      symbols: ['CreditValueVersion', 'currentCreditValue'],
       why: 'Credit deduction slice 3a: the one cost-to-credits conversion reads the credit value (`config/creditValue.ts`, data only) to turn an action cost into credits for the charge record. It MEASURES what an action cost; it resolves no account plan and refuses nothing. If it ever imports a resolver or a decision function, it is being asked to gate and this suite says so.',
     },
     {
       file: 'lib/business-os/invites/inviteRedemption.ts',
-      symbols: ['CHAMPION_INVITE_TYPE', 'EntitlementConfig', 'INVITE_ISSUANCE_POLICY', 'isRedeemableCohortGrant', 'type InviteTypeId'],
+      symbols: ['CHAMPION_INVITE_TYPE', 'EntitlementConfig', 'INVITE_ISSUANCE_POLICY', 'InviteTypeId', 'isRedeemableCohortGrant'],
       why: 'Invite-only signup Slice 1b: the redemption flow re-checks the issuance policy (T-15) and that the invite row is a decided, still-configured cohort grant (GR-1, RC-4 via `grantRules`) before claiming it. An issuance and grant-shape rule on an INVITE, not a capability gate on what an account may do.',
     },
     // ── Friend invites from a champion account (invite-only signup, Slice 5a) ──
@@ -475,12 +472,28 @@ describe('backward: a gate cannot ship unregistered', () => {
     {
       file: 'lib/business-os/billing/planCheckoutEligibility.ts',
       symbols: ['INVITE_ISSUANCE_POLICY', 'PLAN_STRIPE_PRICES', 'TIER_MATRIX', 'TIER_ORDER', 'TierId'],
-      why: 'Plan payments P-3a (SA-P11, SA Q-10), rewritten for P-4.1 (SA Q-4, W-6): which tiers an account may BUY. Held by a friend invite: the friend tier only (`INVITE_ISSUANCE_POLICY.account.grantId`, FR-30). Not held: `planPurchaseOffer`, the tiers with a Stripe price (`PLAN_STRIPE_PRICES`, `TIER_ORDER`) whose `TIER_MATRIX.presentation.availableToBuy` is on (M-1), refused to free access with no end date (BQ-P10, a fact it is handed) or beside a live subscription on our record. It refuses a SALE, grants or withholds no capability, so there is no capability to register it under, and it calls no `check()` / `decide()`. If it ever does, or refuses a feature by plan, it moves to ENFORCEMENT_POINTS.',
+      why: 'Plan payments P-3a (SA-P11, SA Q-10), rewritten for P-4.1 (SA Q-4, W-6), re-checked for P-7b.1a (SA V-10, no new symbol): which tiers an account may BUY. Held by a friend invite: the friend tier only (`INVITE_ISSUANCE_POLICY.account.grantId`, FR-30). Not held: `planPurchaseOffer`, the tiers with a Stripe price (`PLAN_STRIPE_PRICES`, `TIER_ORDER`) whose `TIER_MATRIX.presentation.availableToBuy` is on (M-1), refused to free access with no end date (BQ-P10, a fact it is handed) or beside a live subscription on our record. Paying: `planUpgradeOffer` (P-7b.1a, U-2), the buyable tiers ABOVE the bought tier in `TIER_ORDER`, from our billing record only. It refuses a SALE or an upgrade SALE, grants or withholds no capability, so there is no capability to register it under, and it calls no `check()` / `decide()`. If it ever does, or refuses a feature by plan, it moves to ENFORCEMENT_POINTS.',
     },
     {
       file: 'lib/business-os/billing/planCheckoutPrice.ts',
       symbols: ['PLAN_STRIPE_PRICES', 'PlanStripePrices', 'TierId'],
       why: 'Plan payments P-3a (SA-P12 b): resolves the tier lookup key (`PLAN_STRIPE_PRICES`) to one Stripe price and compares it with the display price. It compares two prices, resolves no account and refuses nothing by plan; it is the runtime twin of planPriceCheck.ts.',
+    },
+    // ── Plan payments P-7b.1a, 2026-10-13 — upgrade now (SA V-10) ─────────────
+    {
+      file: 'lib/business-os/billing/planUpgrade.ts',
+      symbols: ['TIER_ORDER', 'TierId'],
+      why: 'Plan payments P-7b.1a (workplan §3.2 to §3.4, SA U-2, V-10): the upgrade orchestration borrows the `TierId` TYPE for the tier the owner names and reads `TIER_ORDER` to tell an upgrade (a tier ABOVE the one paid for) from a webhook lag or a mismatch after the fresh Stripe read. It refuses an upgrade SALE (not subscribed, not active, cancelling, pending at Stripe, not an upgrade, price mismatch), grants or withholds no capability, resolves no entitlement and calls no `check()` / `decide()`, so there is no capability to register it under. If it ever does, or refuses a feature by plan, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'app/api/business-os/billing/plan/upgrade/preview/route.ts',
+      symbols: ['TIER_ORDER', 'resolveAccountId'],
+      why: 'Plan payments P-7b.1a (SA V-10, V-11): the upgrade preview route. `TIER_ORDER` builds the body schema (which tier the owner names) and `resolveAccountId` is the account seam for the session account. It quotes what an upgrade would cost (a read at Stripe) and refuses an upgrade SALE through planUpgrade.ts; it grants or withholds no capability and calls no `check()` / `decide()`. If it ever does, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'app/api/business-os/billing/plan/upgrade/route.ts',
+      symbols: ['TIER_ORDER', 'resolveAccountId'],
+      why: 'Plan payments P-7b.1a (SA V-10, V-11): the upgrade confirm route. `TIER_ORDER` builds the body schema and `resolveAccountId` is the account seam for the session account (the audit entity id). It swaps the price on the owner subscription through planUpgrade.ts and refuses an upgrade SALE; the plan changes later from the webhook. It grants or withholds no capability and calls no `check()` / `decide()`. If it ever does, it moves to ENFORCEMENT_POINTS.',
     },
     {
       // Plan payments P-5a.2 (workplan §3.3, §3.5; SA P5-C11, Q-4).
@@ -535,7 +548,17 @@ describe('backward: a gate cannot ship unregistered', () => {
 
   /** Every symbol a file imports from the entitlements module. */
   function entitlementImports(relative: string): string[] {
-    const code = codeOf(read(relative));
+    return entitlementImportsOf(codeOf(read(relative)));
+  }
+
+  /**
+   * The symbols one piece of (comment-free) source imports from the module.
+   * Plan payments P-7b.1a (P-4.1 follow-up F-B): an inline `type` modifier
+   * (`import { a, type B }`) is stripped, so the entry lists `B`, the same
+   * name a separate `import type { B }` line gives. A type still counts: the
+   * guard records every symbol, type or value, by name.
+   */
+  function entitlementImportsOf(code: string): string[] {
     const found = new Set<string>();
 
     // `import { a, b as c } from '…/business-os/entitlements/…'`, across lines.
@@ -543,7 +566,7 @@ describe('backward: a gate cannot ship unregistered', () => {
       /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"][^'"]*business-os\/entitlements\/[^'"]*['"]/g
     )) {
       for (const part of match[1].split(',')) {
-        const name = part.trim().split(/\s+as\s+/)[0].trim();
+        const name = part.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim();
         if (name) found.add(name);
       }
     }
@@ -558,6 +581,22 @@ describe('backward: a gate cannot ship unregistered', () => {
 
     return [...found].sort();
   }
+
+  it('F-B: the symbol reader strips an inline `type` modifier, aliases included', () => {
+    expect(
+      entitlementImportsOf(
+        "import { TIER_ORDER, type TierId, type Labels as L } from '@/lib/business-os/entitlements/config/tierMatrix';"
+      )
+    ).toEqual(['Labels', 'TIER_ORDER', 'TierId']);
+    // The same names as the separate-line spelling P-4.1 used as a workaround.
+    expect(
+      entitlementImportsOf(
+        "import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';\nimport type { TierId } from '@/lib/business-os/entitlements/config/tierMatrix';"
+      )
+    ).toEqual(['TIER_ORDER', 'TierId']);
+    // A name that merely starts with "type" is not a modifier.
+    expect(entitlementImportsOf("import { typeOfThing } from '@/lib/business-os/entitlements/x';")).toEqual(['typeOfThing']);
+  });
 
   it('finds every file that reaches the entitlements module, and each is accounted for', () => {
     const importers = files.filter((relative) => ENTITLEMENT_IMPORT.test(codeOf(read(relative))));

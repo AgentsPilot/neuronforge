@@ -395,6 +395,19 @@ export const AUDIT_EVENTS = {
   // source (null when it could not be read), livemode, event id; never an
   // email. A replay writes none.
   BOS_BILLING_FIRST_PAYMENT_STAMPED: 'BOS_BILLING_FIRST_PAYMENT_STAMPED',
+  // Plan payments P-7b.1a (SA U-9, V-11): an owner confirmed an upgrade of a
+  // paid plan (POST /api/business-os/billing/plan/upgrade) and the price swap
+  // reached Stripe. Written ONCE per confirmed request, whatever the outcome
+  // (upgraded, processing, action_required incl. a resumed 3-D Secure,
+  // declined, or unknown when the write's answer was lost), with logAndFlush
+  // before the response (WC-7). Entity type 'business_os_billing_account', id
+  // = the ACCOUNT id. The plan itself changes later, from the webhook
+  // (BOS_BILLING_INVOICE_PAID with billingReason). Refusals and previews are
+  // logged, never audited. Details: from and to tier, lookup key, proration
+  // date, outcome, resumed, invoice and subscription ids, livemode, actor
+  // 'owner', correlation id; never the confirmation secret, an email or a
+  // card detail.
+  BOS_BILLING_UPGRADE_REQUESTED: 'BOS_BILLING_UPGRADE_REQUESTED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -1020,6 +1033,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: "An account's first paid Business OS plan invoice was stamped on its invitation record (once; releases a held friend)",
+  },
+  // Plan payments P-7b.1a. 'info': an owner asked for an upgrade they chose;
+  // SOC2 alone, as every Business OS money event (SA W11b-3).
+  [AUDIT_EVENTS.BOS_BILLING_UPGRADE_REQUESTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner confirmed a plan upgrade and the price change reached Stripe (outcome recorded; the plan changes from the webhook)',
   },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',
