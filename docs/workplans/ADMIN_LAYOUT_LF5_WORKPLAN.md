@@ -1,13 +1,13 @@
 # Workplan: Admin Layout LF-5 (Admin users page wording)
 
-> **Last Updated**: 2026-10-13
+> **Last Updated**: 2026-10-14
 
 **Developer:** Dev
 **Requirement:** [ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md) §1 LF-5 (user request 2026-10-13; copy approved by the user)
 **Branch:** `feature/admin-layout-lf5` (from `origin/main` 229a6c2e)
 **Path:** UI short path (Dev, then SA code review and QA in parallel, then user diff, then RM)
 **Date:** 2026-10-13
-**Status:** Code Complete (uncommitted), awaiting SA + QA
+**Status:** PR #355 open — fast-track (SA passed), awaiting user merge
 
 ## Overview
 
@@ -59,4 +59,22 @@ Out of scope: the sidebar description "Who can open admin" (`AdminSidebar.tsx`),
 
 ## QA Testing Report
 
+No separate QA: copy-only slice, TL ruled proportionate effort. SA ran the settings suites green. RM re-ran before push: `npx jest app/admin/settings app/admin/components lib/admin/__tests__/admin-authz-surface.guard.test.ts app/__tests__/tailwind-css-escape.guard.test.ts --ci` (26 suites / 869 tests passed) and `npm run lint:hooks` (clean).
+
 ## Commit Info
+
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf5` |
+| Code commit | `6ed474e7` fix(admin): plainer wording on the Admin users page (LF-5) |
+| Base | `origin/main` 229a6c2e (no merge needed) |
+| PR | [#355](https://github.com/AgentsPilot/neuronforge/pull/355), open, fast-track; the user merges |
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|---|---|---|
+| 2026-10-13 | Workplan written and built (Dev) | Copy-only change on Admin users; SA code review approved |
+| 2026-10-14 | PR opened (RM) | Commit `6ed474e7`, PR #355 open (fast-track); status, QA note and Commit Info filled in |
