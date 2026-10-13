@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-layout-lf3b` (from `origin/main` at `8014ee73`), worktree `neuronforge-admin-layout-2`
 **Path:** UI short path
 **Date:** 2026-10-13
-**Status:** Built, awaiting SA + QA
+**Status:** PR #348 open — fast-track (SA approved, QA PASS WITH NOTES)
 
 ## Overview
 
@@ -270,9 +270,18 @@ Q5c trace: focus on messages-content, opener gone
 
 ## Commit Info
 
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf3b` |
+| Code commit | `5ecfbfd6` feat(admin): Messages asks in admin dialogs instead of the browser box (LF-3b) |
+| `origin/main` merge | Not needed (already up to date) |
+| PR | [#348](https://github.com/AgentsPilot/neuronforge/pull/348), open, fast-track; the user merges |
+| RM pre-PR run | jest (messages, components, authz-surface guard, tailwind escape guard): 29 suites, 975 tests pass; `lint:hooks` clean |
+
 ## Change History
 
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-13 | Created and built (Dev) | Workplan, build and results |
 | 2026-10-13 | QA report (QA) | PASS WITH NOTES: 1,059 of 1,059 combined, Messages 160 of 160, guards 209 of 209, lint:hooks clean; 3 sequential and 3 parallel runs green; 20 throwaway probes green and deleted; no bugs, notes N-1 to N-3 |
+| 2026-10-13 | PR opened (RM) | Code commit `5ecfbfd6`, PR #348 open (fast-track); Commit Info filled; status updated |
