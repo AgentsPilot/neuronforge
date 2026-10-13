@@ -9,7 +9,7 @@
 **Branch:** `feature/admin-layout-lf3a` (cut from `origin/main` at `8014ee73`), worktree `neuronforge-admin-layout-2`
 **Path:** Full cycle (SA SQ-4: a form inside `AdminDrawer` is a new pattern, CLAUDE.md rule 7)
 **Date:** 2026-10-13
-**Status:** Code Complete (built, uncommitted; awaiting SA code review + QA)
+**Status:** PR #353 open — fast-track (SA + QA passed); TL browser checks B-1 to B-8 owed; the user merges
 
 ## Overview
 
@@ -693,7 +693,14 @@ None. The Invites folder runs in 93 to 127 s on this machine; `page.render` is t
 
 ## Commit Info
 
-(RM to populate)
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf3a` |
+| Feature commit | `58a6f2ea` feat(admin): Signup Invites opens New invite in the side panel and asks before Revoke (LF-3a) |
+| Merge of `origin/main` | `1454ca9b` (main at `229a6c2e`, no conflict) |
+| PR | [#353](https://github.com/AgentsPilot/neuronforge/pull/353), open; the user merges |
+| Checks after the merge (RM) | 29 suites, 1,086 tests pass; `npm run lint:hooks` exit 0; request pin SHA-256 `c518031…` unchanged |
+| Owed | TL browser checks B-1 to B-8 (read-only) |
 
 ## Change History
 
@@ -705,3 +712,4 @@ None. The Invites folder runs in 93 to 127 s on this machine; `page.render` is t
 | 2026-10-13 | SA code review (SA) | APPROVED WITH FIXES. C1 to C7 met in the code; request bytes identical to `origin/main` (submit functions diffed, only send-once lines added); D-7 (a) holds; G-8 exact with controls and liveness, G-7 reaches `sheet.tsx` and `dialog.tsx`; `AdminDrawer` comment-only; V-1 to V-5 accepted. SA mutations SA-1 (D-12) and SA-2 (R-10) bit and were restored. F-1: #348 has merged, so merge `origin/main` and retire Q-8 in the standard's Messages row (docs only) |
 | 2026-10-13 | QA (QA) | PASS WITH NOTES. 29 suites, 1,084 tests green; lint:hooks exit 0; Invites folder green three runs in a row (271 tests, no `page.render` timeout); pins SHA-256 unchanged; 14-case throwaway probe (focus inside the drawer, real double click on Create and on confirm, in-flight lock, failure paths, reopen reset, revoke URL and storage, keyboard-only create and revoke) all green, then deleted. No bugs. Notes: same-second Revoke names collide (Low), one unreproduced probe failure under load, a kept draft may carry a withdrawn grant (the server refuses it). Re-run the Invites suites after SA's F-1 merge |
 | 2026-10-13 | SA F-1 applied (Dev) | `origin/main` `f302680f` taken in (fast-forward, no merge commit; only the follow-ups requirement needed its LF-3a rows put back); standard §1 row 12 Q-8 retired by LF-3b (#348) with a Change History row; follow-ups §14 gains LF3A-F1 (QA N-1); Results "Base" and the C6 row updated. Suites re-run; pin SHA-256 unchanged |
+| 2026-10-13 | Committed, PR opened (RM) | Commit `58a6f2ea`, `origin/main` merged in `1454ca9b`; suites and lint:hooks green after the merge; PR #353 open (fast-track). Browser checks B-1 to B-8 owed |
