@@ -1,10 +1,10 @@
 # Requirement: Admin "Credits left" wrong after a credit period is restarted (re-anchor fix)
 
-> **Last Updated**: 2026-10-12
+> **Last Updated**: 2026-10-13
 
 **Created by:** BA
 **Date:** 2026-10-12
-**Status:** Draft
+**Status:** Fixed — PR #331 merged 2026-10-13. W-1 follow-up (leak-check fold) implemented, uncommitted, in review
 **Type:** Bug fix
 
 ## Overview
@@ -75,7 +75,7 @@ Same trigger: an admin `assign_tier` that resets the anchor (PF-13).
 - Changing the re-anchoring rule itself (SA-P2 / PF-13 stand).
 - Any change to how the owner's Credits card computes its figure.
 - Cleaning up or archiving old-period credit totals rows.
-- Follow-up (SA W-1): fold `creditLeakCheck.addMonthsUtc` / `creditPeriodStartAt` onto `currentPeriodStartMs` in its own small slice, with the leak-check `it.each` as the regression net. Until then a test-only parity table keeps the two TS copies in agreement.
+- ~~Follow-up (SA W-1): fold `creditLeakCheck.addMonthsUtc` / `creditPeriodStartAt` onto `currentPeriodStartMs` in its own small slice, with the leak-check `it.each` as the regression net.~~ **Done 2026-10-13 (SA F-1..F-7, uncommitted):** `creditPeriodStartAt` now delegates to `currentPeriodStartMs`, `addMonthsUtc` is deleted, and every existing leak-check period row passes unchanged. The parity table is replaced by a source guard. Two label-only behaviour changes in the nightly leak check were accepted by SA; neither affects leak status, counts or USD, and neither needs a prod check or user action: (a) the sub-millisecond tie now follows the SQL `>`; (b) an anchor string without a zone gives no period label instead of being read as server-local time. See the workplan's Follow-up section.
 
 ## Open Questions
 
@@ -128,3 +128,5 @@ Same trigger: an admin `assign_tier` that resets the anchor (PF-13).
 |---|---|---|
 | 2026-10-12 | Created | BA bug-fix note from user report reproduced on test account `5f63adbd…`; root cause verified in `computePositions` / `isCurrentPeriodRow` |
 | 2026-10-12 | SA requirement review | APPROVED WITH CONDITIONS: exact-key equality against a TS mirror of `business_os_credit_period_start` (the `>= anchor` guard is not enough, because Stripe anchors are backdated); per-account block verified correct |
+| 2026-10-13 | PR #331 merged | Fix live on main |
+| 2026-10-13 | W-1 follow-up | SA approved the fold with F-1..F-7; implemented (uncommitted). Out of Scope item closed; P-2 (a)(b) accepted as label-only |
