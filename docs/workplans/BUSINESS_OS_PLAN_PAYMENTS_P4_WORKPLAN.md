@@ -6,8 +6,8 @@
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): F1 (and the F10 note); §9.1 P-4 row; §9.1.2 "Findings from the user's Stripe test-account session" (F-1, F-2, F-5, the standard sandbox); §9.1.1 N-4, N-5 (as updated 2026-10-12); §10.4 **BQ-P10** (decided "Refuse until end date set"); PF-7; SR-5, SR-8, SR-11, SR-15, SR-16, SR-17; AC-F1.1 to AC-F1.5; and **"SA Ruling — P-4 and P-7b.1 sequencing (2026-10-12)"**, R-4 must-fixes **M-1 to M-9** and the CF-6 placement.
 **Depends on:** P-3b merged (#251, #299); P-5a merged (P-5a.1 #314, **P-5a.2 #327**), whose `PlanEmbeddedCheckout`, `lib/client/stripeJs.ts`, return marker, bounded refresh and `heldPaymentOffer` pattern this slice reuses.
 **Date:** 2026-10-13
-**Branch:** `feature/bos-plan-payments-p4`, worktree `neuronforge-invite-s1`, fresh from `origin/main` `28d64b02` (#327). Confirmed with `git branch --show-current` on 2026-10-13. Uncommitted.
-**Status:** SA **APPROVED WITH CONDITIONS** 2026-10-13 (W-1 to W-12; two PRs, P-4.1 then P-4.2). **P-4.1 Code Complete** 2026-10-13 (uncommitted); **SA code review: CODE APPROVED** 2026-10-13, ready for QA. P-4.2 not started.
+**Branch:** P-4.1: `feature/bos-plan-payments-p4`, worktree `neuronforge-invite-s1`, fresh from `origin/main` `28d64b02` (#327), MERGED as PR #337. **P-4.2: `feature/bos-plan-payments-p4-2`**, same worktree, fresh from `origin/main` `808939ef` (after #337); confirmed with `git branch --show-current` on 2026-10-13. Uncommitted.
+**Status:** SA **APPROVED WITH CONDITIONS** 2026-10-13 (W-1 to W-12; two PRs, P-4.1 then P-4.2). P-4.1 **MERGED** (PR #337). **P-4.2 Code Complete** 2026-10-13 (uncommitted); **SA code review: APPROVED WITH FIXES** 2026-10-13 (two fixes applied by SA), **QA: PASS WITH NOTES** 2026-10-13 (no bugs; PF-7 recorded closed, subject to G-3); he/es drafts await G-3; T11 demo is TL/user's (checklist in Implementation Notes (P-4.2)).
 
 ## Overview
 
@@ -265,13 +265,13 @@ purchase: {
 | ✅ T2 (P-4.1) | M-1: `buyableTiers()`, `planPurchaseOffer` (switches, not on sale); checkout non-held branch on it; tests incl. "a direct POST for a priced tier with `availableToBuy` off is refused `price_unavailable`/`tier_not_sold`" | 0.3d |
 | ✅ T3 (P-4.1) | BQ-P10: `freeAccess.ts` (structural helpers); snapshot port; step-7 refusal `free_access_no_end_date`; tests (open-ended champion refused; dated champion, dated champion in grace, trial, tier, paused tier all allowed; no Stripe call on refusal) | 0.35d |
 | ✅ T4 (P-4.1) | M-3: `retrieveCheckoutSessionState`; step 9 matrix (open → expire + CAS release + continue; expired → release + continue; complete → `checkout_processing`; mismatch / throw / release failure → `checkout_open`); race test; P-5a.2 pins rewritten on purpose | 0.5d |
-| ⬜ T5 | `customerPlanView.plans` (every shown plan, price, `availableToBuy`); tests incl. paused/expired tier account lists its own plan | 0.4d |
-| ⬜ T6 | `planPurchaseView.ts` + `my-plan` route: billing state from our record, F-2 `renews_on` / `ends_on_paid`, `paying`, `trialEndsToday`, failed billing read; route tests (401, still reads no query/body, billing read by session user + mode, no Stripe call) | 0.45d |
-| ⬜ T7 | `PlanPurchase.tsx` + `PlanSection` wiring: Choose list, embedded checkout, refusal line by code, return marker, bounded re-fetch, success only from the re-read, "taking longer" + check-again link; shared refresh constants | 0.6d |
-| ⬜ T8 (P-4.1 part ✅: holding-screen `checkout_processing` en/he/es) | i18n: en/he/es keys (§9), `awaitingPaymentCopy` `checkout_processing`, RTL render tests; he/es drafts to the user (G-3) | 0.3d |
-| ⬜ T9 (P-4.1 part ✅: its registrations, `test:bos-entitlements`, ENTITLEMENTS doc) | Registrations (§3.7), `test:bos-entitlements`; `BUSINESS_OS_ENTITLEMENTS.md` § Billing; requirement P-4 row and Change History | 0.2d |
-| ⬜ T10 | Full checks (G-2), `git diff --stat` reviewed (no deletion-only file), Implementation Notes | 0.2d |
-| ⬜ T11 | Demo on the standard sandbox (§8), F-5 watch, subscription cancelled the same day | 0.3d |
+| ✅ T5 (P-4.2) | `customerPlanView.plans` (every shown plan, price, `availableToBuy`); tests incl. paused/expired tier account lists its own plan | 0.4d |
+| ✅ T6 (P-4.2) | `planPurchaseView.ts` + `my-plan` route: billing state from our record, F-2 `renews_on` / `ends_on_paid`, `paying`, `trialEndsToday`, failed billing read; route tests (401, still reads no query/body, billing read by session user + mode, no Stripe call) | 0.45d |
+| ✅ T7 (P-4.2) | `PlanPurchase.tsx` + `PlanSection` wiring: Choose list, embedded checkout, refusal line by code, return marker, bounded re-fetch, success only from the re-read, "taking longer" + check-again link; shared refresh constants | 0.6d |
+| ✅ T8 (P-4.1 part ✅: holding-screen `checkout_processing` en/he/es; P-4.2 part ✅, he/es DRAFTS for G-3) | i18n: en/he/es keys (§9), `awaitingPaymentCopy` `checkout_processing`, RTL render tests; he/es drafts to the user (G-3) | 0.3d |
+| ✅ T9 (P-4.1 part ✅; P-4.2 part ✅: `planPurchaseView.ts` registered, placement and repository guards, ENTITLEMENTS doc, requirement row; PF-7 left for QA, G-6) | Registrations (§3.7), `test:bos-entitlements`; `BUSINESS_OS_ENTITLEMENTS.md` § Billing; requirement P-4 row and Change History | 0.2d |
+| ✅ T10 (P-4.2) | Full checks (G-2), `git diff --stat` reviewed (no deletion-only file), Implementation Notes | 0.2d |
+| ⬜ T11 (TL / user; checklist in Implementation Notes (P-4.2)) | Demo on the standard sandbox (§8), F-5 watch, subscription cancelled the same day | 0.3d |
 | | **Total** | **≈ 4.0d** |
 
 ---
@@ -565,6 +565,89 @@ None blocking.
 
 ### Code Approved for QA: Yes
 
+### SA Code Review — P-4.2 (2026-10-13)
+
+**Code Review by SA — 2026-10-13**
+**Status:** ✅ **APPROVED WITH FIXES** (two small fixes applied by SA, each with a test; listed below)
+
+Reviewed the uncommitted diff on `feature/bos-plan-payments-p4-2` at `808939ef` (22 modified + 7 new, +923/−46; `git diff --stat` shows no deletion-only file): `planPurchaseView.ts`, `planPurchaseTypes.ts`, the `my-plan` route, `customerPlanView.ts` (`plans`), `freeAccess.ts` (`freeAccessEndedByPurchase`), `PlanSection.tsx`, `PlanPurchase.tsx`, `planPurchaseCopy.ts`, `checkoutProcessing.ts`, `PaymentProcessingRefresher.tsx`, the settings page line, en/he/es, the guards and registrations, both docs, and every test file in the diff.
+
+#### Conditions verified
+
+| # | Check | Result |
+|---|---|---|
+| F-C | Matrix driven through the view's own reads | ✅ `viewOffers()` calls the real `readPlanPurchaseView` with the world's snapshot, billing row, switches and buyable list (not the predicate's facts); every one of the 288 cases asserts view = predicate AND checkout admits exactly the view's tiers. Mutation "view ignores BQ-P10" → 12 failures |
+| P-4.1 dev. 1 | `isLiveSubscriptionStatus` | ✅ imported from `planCheckout.ts`; no second status set |
+| W-5 | F-2 wording | ✅ `billingStateFromRecord`: renewing = `active`, not cancelling, `endedAt` null, future period end; ending = `active` + `cancelAtPeriodEnd`; everything else (incl. `past_due`) `null`. Route replaces `endsWhen` only for `kind: 'tier'` (mutation caught). See deviation 5 |
+| W-7 / Q-3 | Two sentences, exact | ✅ en verbatim: "Buying ends your free trial today, and the first month is charged now." / "Buying ends your free access today, and the first month is charged now."; structural (`timed` / `admin_dated`), no cohort id; pinned in `planCopy.i18n.test.ts` |
+| W-8 | `BILLING_REPOSITORY_IMPORTS` | ✅ `'planPurchaseView.ts': [BILLING_ACCOUNTS]`; `server-only`; injectable `billing` port; repository name allow-list updated |
+| W-9 | `my-plan` input-free, no Stripe | ✅ no `searchParams`/body read; billing by `user.id` + `currentStripeMode()`; no Stripe import in route or view (asserted); a view throw is caught → 200, `purchase: null` |
+| W-6 | Registrations | ✅ new non-gate entry for `planPurchaseView.ts` (`FreeAccessEndedByPurchase` type registered); `why` says it refuses nothing and has no capability. Payload types live in the import-free `planPurchaseTypes.ts`; `PlanSection` / `PlanPurchase` / `planPurchaseCopy` import nothing from the entitlements module (source guard). `customerPlanView.plans` adds no tier or capability literal (reads `tierOrder` + `planCommercialFlags`) |
+| BQ-P10 | Champion with no end date | ✅ view → `none / free_access_no_end_date`, no list, no button (render + route tests); the checkout still refuses (P-4.1, unchanged) |
+| M-6 | New plan only from the server re-read | ✅ `succeeded` = server payload `kind: 'tier'` AND `purchase.billing.state === 'renewing'`; a failed re-read keeps processing (mutation of the success predicate caught by Dev; SA confirmed the marker pattern check and the Choose-hidden-while-marker gate are each caught) |
+| Refresher bounded | 4 s × 15, shared constants | ✅ `exhausted` gate (mutation "unbounded" caught); exact `1 + LIMIT` reads pinned; constants moved to `checkoutProcessing.ts` and re-exported unchanged |
+| Rule 1 / client bundle | No repository / server-only in client files | ✅ P-5a.2 F-1 guard style extended to the four Settings client files: no entitlements import, no `server-only` / `lib/repositories` / `supabaseServer`, billing VALUE import only `checkoutReturnMarker`, which is asserted import-free. `planPurchaseCopy.ts`'s import from `planCheckout.ts` is `import type` (erased) |
+| Tenant isolation | `tenant-isolation-guard` | ✅ the only new read is `findByUser(session user, server mode)`; no caller-supplied id; no new write or service-role path; the POST body is still `{ tier, returnTo }` (pinned) |
+| Pino | | ✅ no `console.*` in any touched or new file (guarded); the view warns via `createLogger`, the route via its correlation-id child logger |
+| i18n | en/he/es, RTL | ✅ 25 keys in all three, placeholders checked, "excluding tax" in each language; Hebrew renders `dir="rtl"`; he/es are DRAFTS for G-3 |
+
+#### Rulings on deviations 1–14
+
+| # | Ruling |
+|---|---|
+| 1 | **Accepted.** `processing` had no our-data source after W-2; the marker plus the server re-read is the right split |
+| 2 | **Accepted.** Structural values mapped to the payload words in billing keeps `freeAccess.ts` cohort-id-free |
+| 3 | **Accepted.** Every `null` case is one the checkout refuses anyway (steps 5, 7), and the route catching a view throw keeps the plan on screen; the section shows no Choose. Fix 1 below closes the one display gap it left |
+| 4 | **Accepted, with the residual stated.** The `/business-os` layout runs `redirectIfAwaitingPayment()` before anything else, so a held account does not reach Settings. The gate fails OPEN on an unreadable hold (SA Q-2 of slice 5b): in that window a held account could see Choose. That is display only: the checkout reads the hold itself and, held, decides by `heldPaymentOffer` (refuses a tier the invite does not allow, `hold_unreadable` if it cannot read it). Adding a lineage + invite read to every `my-plan` call to close a transient display window is not proportionate. QA confirms the redirect from `/business-os/settings?section=plan` for a held account |
+| 5 | **Accepted (W-5 literal).** A past date can only render "Ends on" while our record still says `active` + `cancelAtPeriodEnd` after the period end, i.e. the webhook-lag window before `customer.subscription.deleted` is mirrored. It names the true end date; no money effect. Not changed |
+| 6 | **Accepted, with Fix 1.** Production today (switches off, `availableToBuy` on since 2026-10-13): the customer sees their plan and the plan above as information, with no "Available to choose." line and no "Coming soon" badge, and no Choose list. That is an improvement on main, which currently shows "Available to choose." with nothing to choose. Dev keyed the line on `!!plan.purchase`, so `purchase: null` brought it back; fixed to `!== undefined` |
+| 7 | **Accepted.** "Coming soon" with no control for a shown but unoffered plan; never a dead button (mutation caught) |
+| 8 | **Accepted.** A total map over every refusal code, typed so a new code fails the build |
+| 9 | **Accepted.** Prop from the page's existing `useSearchParams`; `section=plan` re-expands the same section, so `PlanSection` stays mounted across `router.replace` |
+| 10 | **Accepted.** `checkoutReturnMarker.ts` is pure and import-free (the P-5a.2 precedent), and the guard pins both the single allowed value import and the file's import-freeness |
+| 11 | **Accepted.** The success line is the server's own answer (tier + `renewing`); a stale marker on a paying account says something true and makes no re-read. A stale marker on an account with nothing live costs one minute of "processing" and then "Check again" without the marker (D11) |
+| 12 | **Accepted.** Re-export keeps the holding screen's importers unchanged |
+| 13 | **Accepted.** Required by the repository-name guard; both entries are commented |
+| 14 | **Accepted.** PF-7 closure is QA's to record, after G-3 |
+
+#### Fixes applied by SA
+
+| # | File | Fix | Priority | Test |
+|---|---|---|---|---|
+| 1 | `components/business-os/settings/PlanSection.tsx` | `purchaseKnown={plan.purchase !== undefined}` (was `!!plan.purchase`). The route always sends `purchase`; `null` (view threw, or unknown key mode, e.g. an environment with no Stripe key) also offers nothing, so it must not revive "Available to choose." with no way to choose | Medium | `PlanPurchase.render.test.tsx`: "purchase: null … still no 'Available to choose.'" (non-vacuous: asserts `nextPlanUp.availableToBuy` is true). Reverting the fix fails it |
+| 2 | `components/business-os/settings/PlanSection.tsx` | A successful re-read after checkout also clears `failed`. Before, a failed FIRST read (returning from Stripe on a flaky connection) left "plan unavailable" on screen for good while the re-reads silently succeeded behind it | Low | "a failed FIRST read does not hide a later good re-read". Reverting the fix fails it |
+
+#### Checks run by SA
+
+| Check | Result |
+|---|---|
+| `lib/repositories/__tests__` (all, which Dev had not run) | 88 suites, 2,050 tests, all pass |
+| Affected scope (`lib/business-os/billing`, `lib/business-os/entitlements`, `app/api/business-os/entitlements`, `app/api/business-os/billing`, `components/business-os`, `components/test-business-os`, `app/business-os/settings`, `app/api/stripe`, `app/invite`, `lib/client`, `lib/stripe`, `BusinessOsBillingAccountRepository.test.ts`), after the fixes | 140 suites, 3,806 tests, all pass |
+| `npm run test:bos-entitlements` | 245 suites, 7,256 tests, all pass |
+| ESLint on the two files SA edited | Clean |
+| Mutation checks (each restored by byte copy; `md5sum -c` OK on all six sources afterwards) | All caught: view ignores BQ-P10 (12 fail); billing read with the other mode (3); renewing without the future-date check (1); free-access sentence without a Choose list (1); route replaces `endsWhen` for any kind (1); Choose button for a non-offered plan (1); Choose list while a marker is present (2); refresher unbounded (1); marker not pattern-checked (1); `freeAccessEndedByPurchase` ignores "live" (2); `plans` lists hidden tiers (1); each SA fix reverted (1 each) |
+
+#### Code Review Comments
+
+None open after the two fixes.
+
+#### Optimisation Suggestions (Low, not for this PR)
+
+- An admin-assigned paid tier with no billing record (F4) is offered Choose for every plan, including the one it is already on ("Choose Essentials" while on Essentials). Correct by the predicate (buying starts paying and replaces the tier), but worth a product look when P-7b.1 designs upgrade wording.
+- F-B (P-4.1) still open: the `enforcementPoints.test.ts` parser and inline `type` modifiers.
+
+#### QA focus
+
+1. M-6 end to end (D2): marker URL, "Payment processing…", then "You're on Essentials." and "Renews on <date>" only after the webhook lands; reload without the marker shows no Choose list and no "Available to choose." line (D3).
+2. D11: a bogus marker on an account with nothing live: about a minute of processing, then "Check again" opens Choose.
+3. Production-shape check: both switches off, `availableToBuy` on: the plan above shows no "Available to choose.", no "Coming soon", no Choose list. And with the Stripe key unset (purchase `null`): the same (Fix 1).
+4. A held account opening `/business-os/settings?section=plan` is redirected to the holding screen (deviation 4).
+5. BQ-P10 (D5): an open-ended champion sees no Choose; a direct POST still answers 409 `free_access_no_end_date`. Mind W-12 for which account to use.
+6. Refusal lines localized by code (D10), never server English; Hebrew right to left and he/es drafts to the user for G-3 (D9); PF-7 recorded by QA.
+7. Network tab on `my-plan`: no query string, no Stripe request from the server log for that call.
+
+### Code Approved for QA: Yes (with SA fixes 1 and 2 applied)
+
 ---
 
 ## Implementation Notes
@@ -672,6 +755,139 @@ Pins changed on purpose, none loosened. Each still fails if the flag is ignored 
 | `planCheckout.qa.test.ts` | Comment said production pins it off | Comment only |
 
 Not affected: the admin Tiers tests (`page.render` uses fixtures that set the flag explicitly; `payload.contract` renders the real payload but asserts field names, not the flag's value), `tierMatrix.invariant.test.ts` (schema refinement), and the drift snapshot (`entitlements.snapshot.json` does not record presentation). No lifecycle registration changes: no new importer. Checks: the 7 requested areas 83 suites / 2,589 tests green; `test:bos-entitlements` 245 / 7,202 green; `typecheck:bos-llm` 0 new.
+
+### Implementation Notes (P-4.2, "Buy in Settings") — Dev, 2026-10-13
+
+Branch `feature/bos-plan-payments-p4-2`, worktree `neuronforge-invite-s1`, fresh from `origin/main` `808939ef` (P-4.1 merged as #337). **Uncommitted** (RM commits after SA, QA and the user). T5 to T10 built; T11 (the demo) is TL's and the user's, checklist below.
+
+#### What was built
+
+| Item | Where | Notes |
+|---|---|---|
+| T5 | `lib/business-os/entitlements/customerPlanView.ts`: `CustomerPlanChoice`, `shownPlanChoices()`, view field `plans` | Every tier with `shownToCustomers`, in `tierOrder`, with localized `name`, `monthlyPriceUsd`, `availableToBuy`, whatever the account is on (a paused or expired tier account lists its own plan). `[]` on the failure paths. Read through `planCommercialFlags` / `planLabel` / `planMonthlyPriceUsd`; no tier literal. `nextPlanUp` unchanged |
+| W-7 helper | `lib/business-os/entitlements/freeAccess.ts`: `freeAccessEndedByPurchase(resolution, now, cohorts?)` | Structural: a live cohort with a duration → `timed`; a live admin-dated cohort with an end date → `admin_dated`; otherwise `null`. "Live" = no end yet, or an end in the future (no state names). Deviation 2 |
+| Wire types | `lib/business-os/billing/planPurchaseTypes.ts` (new, no imports) | `PlanPurchaseWire` = `{ offer, billing, endsFreeAccessOnPurchase }`, so the Settings components type-import it without touching the entitlements module or a `server-only` file (W-6) |
+| T6 | `lib/business-os/billing/planPurchaseView.ts` (new, `server-only`) | `readPlanPurchaseView({ userId, accountId, snapshot }, deps)`: injectable `switches`, `billing` (`findByUser`), `mode`, `buyableTiers`, `now`, `logger`. Billing row by the session user and the server key's mode; no Stripe import (asserted). `offer` = `planPurchaseOffer` fed from its own reads (`hasOpenEndedFreeAccess`, `isLiveSubscriptionStatus`, deviation-1 ruling). `billingStateFromRecord` = W-5 exactly. `billingEndsWhen` → `plan.renews_on` / `plan.ends_on_paid`. `endsFreeAccessOnPurchase` only when the offer is `choose`. A failed billing read: offer as if no record, `billing: null`, warn |
+| T6 | `app/api/business-os/entitlements/my-plan/route.ts` | Still input-free (its guard tests unchanged and green). Adds `purchase`; for `kind: 'tier'` replaces `endsWhen` with the record's sentence when known. A throw inside the purchase view is caught: 200 with the plan and `purchase: null` |
+| T7 | `components/business-os/settings/PlanPurchase.tsx` (new client island) | Choose list: every `plans` entry, price with "a month, excluding tax", a Choose button exactly for `purchase.offer.tiers`, "Coming soon" with no control for a shown plan that is not offered. Reuses `PlanEmbeddedCheckout` (`returnTo: 'settings_plan'`); once a frame opens, the other rows' buttons go; one "not set up" line when there is no usable publishable key (M-2). `onComplete` → `router.replace('/business-os/settings?section=plan&checkout=<id>')` and tells the section |
+| T7 | `components/business-os/settings/planPurchaseCopy.ts` (new) | `PLAN_PURCHASE_REFUSAL_KEYS`, typed over every `PlanCheckoutRefusalCode` + `not_available` + `invalid_input` (a new code fails the build); 401 → signed out; unknown → generic. `fillTemplate`, `SETTINGS_PLAN_PATH`, `settingsPlanReturnPath` |
+| T7 / M-6 | `components/business-os/settings/PlanSection.tsx` | Payload gains optional `plans` and `purchase`. Prop `checkoutMarker` (pattern-checked with `isCheckoutReturnMarker`, display only). With a marker: "Payment processing…" and a re-read of `my-plan` every 4 s, at most 15; "You're on <plan>." ONLY when the server's answer is a tier AND `purchase.billing.state === 'renewing'`; a failed re-read keeps the plan on screen and stays on processing; after the last, "This is taking longer than usual." and "Check again" → `/business-os/settings?section=plan` (no marker). The Choose list is hidden while a marker is present |
+| Shared constants | `components/business-os/billing/checkoutProcessing.ts` (new) | `PROCESSING_REFRESH_INTERVAL_MS` (4000) and `PROCESSING_REFRESH_LIMIT` (15), moved from `PaymentProcessingRefresher.tsx`, which imports and re-exports them (no behaviour change) |
+| Settings page | `app/business-os/settings/page.tsx` | One line: `<PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} />` (the page already reads `useSearchParams` inside its Suspense boundary). No `console.*` in the file |
+| T8 | `lib/business-os/translations/{en,he,es}.ts` | 25 `plan.*` keys (below). he/es DRAFTS (G-3) |
+| T9 | `enforcementPoints.test.ts` | New non-gate entry `planPurchaseView.ts`: `FreeAccessEndedByPurchase`, `freeAccessEndedByPurchase`, `hasOpenEndedFreeAccess`. `my-plan` route entry unchanged (its entitlements imports did not change). `PlanSection` / `PlanPurchase` import nothing from the module |
+| T9 / W-8 | `routerPlacement.guard.test.ts` | `'planPurchaseView.ts': [BILLING_ACCOUNTS]` in `BILLING_REPOSITORY_IMPORTS` |
+| T9 | `lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts` | "Only the listed files name the repository": + `planPurchaseView.ts` and the my-plan route test (it fakes the repository module by name) |
+| T9 | `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` | "Buy in Settings (P-4.2)" paragraph and table under § Plan checkout; Change History row |
+
+#### Copy (T8, M-7). English final; **he and es are DRAFTS for the user's approval (G-3)**
+
+| Key | en | he (DRAFT) | es (DRAFT) |
+|---|---|---|---|
+| `plan.choose.heading` | Choose a plan | בחירת תוכנית | Elige un plan |
+| `plan.choose.button` | Choose {plan} | לבחירת {plan} | Elegir {plan} |
+| `plan.choose.starting` | Opening checkout… | פותחים את התשלום… | Abriendo el pago… |
+| `plan.choose.price_ex_tax` | {amount} a month, excluding tax | {amount} לחודש, לא כולל מס | {amount} al mes, impuestos no incluidos |
+| `plan.choose.trial_ends_today` | Buying ends your free trial today, and the first month is charged now. | רכישה מסיימת היום את תקופת הניסיון, והחודש הראשון מחויב מיד. | Al comprar, tu prueba gratuita termina hoy y el primer mes se cobra ahora. |
+| `plan.choose.free_access_ends_today` | Buying ends your free access today, and the first month is charged now. | רכישה מסיימת היום את הגישה החינמית, והחודש הראשון מחויב מיד. | Al comprar, tu acceso gratuito termina hoy y el primer mes se cobra ahora. |
+| `plan.choose.not_configured` | Payments are not set up on this site yet. | התשלומים עדיין לא הוגדרו באתר. | Los pagos todavía no están configurados en este sitio. |
+| `plan.renews_on` | Renews on {date}. | מתחדש ב־{date}. | Se renueva el {date}. |
+| `plan.ends_on_paid` | Ends on {date}. It will not renew. | מסתיים ב־{date}. לא יתחדש. | Termina el {date}. No se renovará. |
+| `plan.purchase.processing` | Payment processing… | התשלום בעיבוד… | Pago en proceso… |
+| `plan.purchase.slow` | This is taking longer than usual. | זה לוקח יותר זמן מהרגיל. | Esto está tardando más de lo habitual. |
+| `plan.purchase.check_again` | Check again | לבדוק שוב | Comprobar de nuevo |
+| `plan.purchase.done` | You're on {plan}. | התוכנית שלך עכשיו: {plan}. | Ya tienes {plan}. |
+| `plan.refusal.checkout_processing` | Your payment is being processed. | התשלום כבר בעיבוד. | Tu pago ya se está procesando. |
+| `plan.refusal.free_access_no_end_date` | Your free access has no end date, so there is nothing to buy yet. | לגישה החינמית שלך אין תאריך סיום, ולכן עדיין אין מה לרכוש. | Tu acceso gratuito no tiene fecha de fin, así que todavía no hay nada que comprar. |
+| `plan.refusal.subscription_live` | You already have a subscription. | כבר יש מינוי לחשבון. | Ya tienes una suscripción. |
+| `plan.refusal.price_unavailable` | This plan cannot be bought right now. | אי אפשר לרכוש את התוכנית הזו כרגע. | Este plan no se puede comprar en este momento. |
+| `plan.refusal.checkout_open` | A checkout is already open. Please try again in a moment. | חלון תשלום כבר פתוח. כדאי לנסות שוב בעוד רגע. | Ya hay un pago abierto. Inténtalo de nuevo en un momento. |
+| `plan.refusal.generic` | Something went wrong opening checkout. Please try again. | משהו השתבש בפתיחת התשלום. כדאי לנסות שוב. | Algo salió mal al abrir el pago. Inténtalo de nuevo. |
+| `plan.refusal.not_open` | Buying a plan is not open right now. Please try again later. | רכישת תוכנית לא פתוחה כרגע. כדאי לנסות שוב מאוחר יותר. | La compra de planes no está disponible ahora. Inténtalo de nuevo más tarde. |
+| `plan.refusal.busy` | A checkout is already being opened. Please wait a moment and try again. | התשלום כבר נפתח. כדאי לחכות רגע ולנסות שוב. | Ya se está abriendo un pago. Espera un momento e inténtalo de nuevo. |
+| `plan.refusal.email_required` | Your account needs an email address before you can pay. Please contact support. | כדי לשלם צריך כתובת אימייל בחשבון. יש לפנות לתמיכה. | Tu cuenta necesita una dirección de correo electrónico para poder pagar. Contacta con soporte. |
+| `plan.refusal.support` | We could not set up billing for your account. Please contact support. | לא הצלחנו להגדיר חיוב עבור החשבון. יש לפנות לתמיכה. | No pudimos configurar la facturación de tu cuenta. Contacta con soporte. |
+| `plan.refusal.signed_out` | Your session has ended. Please sign in again. | החיבור הסתיים. יש להתחבר שוב. | Tu sesión ha terminado. Vuelve a iniciar sesión. |
+| `plan.refusal.not_ready` | Your account is not ready for a plan yet. Please contact support. | החשבון עדיין לא מוכן לתוכנית. יש לפנות לתמיכה. | Tu cuenta todavía no está lista para un plan. Contacta con soporte. |
+
+Refusal mapping: `not_available`, `checkout_unavailable`, `lock_unavailable`, `held_*` → `not_open`; `price_unavailable`, `price_mismatch` → `price_unavailable`; `checkout_open` → `checkout_open`; `checkout_processing` → `checkout_processing`; `checkout_busy`, `retry_later` → `busy`; `subscription_live` → `subscription_live`; `free_access_no_end_date` → `free_access_no_end_date`; `no_plan_row` → `not_ready`; `email_required` → `email_required`; `billing_record_conflict` → `support`; the read and Stripe failures and `invalid_input` → `generic`; no code + 401 → `signed_out`.
+
+#### Tests (new and changed)
+
+| File | What |
+|---|---|
+| `lib/business-os/billing/__tests__/planPurchaseView.test.ts` (new, 24) | Read by session user + mode (test → `false`, live → `true`); unreadable plan / no plan row / unknown mode → `null` and no billing read; offer per switches, BQ-P10, every live status (`paying`), canceled / incomplete_expired (Choose), nothing on sale; failed billing read (error and throw); W-5 rows (renewing, ending, ended, past period end, every other status incl. `past_due`, missing / unparseable date); `endsFreeAccessOnPurchase` trial / free_access / tier / offer-none; source guard (`server-only`, no Stripe, no request, `findByUser(userId, livemode)`) |
+| `planPurchaseOffer.matrix.test.ts` (**rewritten on purpose**, SA F-C) | Every one of the 288 combinations now also runs the REAL `readPlanPurchaseView` through its own ports (snapshot, billing row, switches, buyable) and asserts it equals the predicate AND that the real checkout admits exactly the tiers the VIEW offers. Exceptions block: baseline via the view; M-3 `complete` shows the view still offering (the documented exception) |
+| `app/api/business-os/entitlements/my-plan/__tests__/route.test.ts` (+12) | Repository, key mode, the two flags and `StripeService` mocked. Billing read keyed by the session user and mode whatever the URL says; 401 reads no billing; Choose = `buyableTiers()`; `renews_on` / `ends_on_paid`; `past_due` keeps `while_paid`; a cohort keeps its own sentence; open-ended champion → `free_access_no_end_date`; trial → `trial`; switches off → `switches_off`; failed billing read → 200; view throws → 200 with `purchase: null`; unreadable plan → no purchase, no billing read; zero Stripe calls, no Stripe import in the route or the view. The existing no-input / header / seam guards unchanged and green |
+| `components/business-os/settings/__tests__/PlanPurchase.render.test.tsx` (new, 33) | Real plan view + real purchase view through JSON into the real `PlanSection`. Choose list (names, "excluding tax", buttons), a non-offered plan "Coming soon" with no control, trial and free-access sentences, open-ended champion / paying / switches off → no Choose, "Renews on" / "Ends on", M-2 one line and no POST, POST body exactly `{ tier, returnTo: 'settings_plan' }`, other buttons hidden after start, completion → `router.replace` with the marker + processing, refusals localized by code (six codes, server English never shown), 401 / unknown, every route code mapped and present in en/he/es, M-6 success only after a re-read shows `renewing` + tier, failed re-reads bounded to 15 and never success + check-again link without the marker, malformed marker ignored, stale marker on a paying account, he/es no English and `dir="rtl"` in Hebrew, source guards (no entitlements import, no server code, billing value import only `checkoutReturnMarker`, no `console.*`, `'use client'`) |
+| `customerPlanView.test.ts` (+7), `customerPlanView.noExclusions.test.ts` | `plans`: shown tiers in order with name / price / flag; same list for tier, trial, champion; a lapsed tier lists its own plan; Hebrew names; `shownToCustomers` off drops the tier; no cohort; empty on failure. **Allow-lists changed on purpose:** `VIEW_KEYS` / `OK_PATH_KEYS` gain `plans`, with a new `PLAN_CHOICE_KEYS` exact set per entry |
+| `freeAccess.test.ts` (+7) | `freeAccessEndedByPurchase` through the real `deriveLifecycle`, renamed-cohort fixture; the "no cohort id in the source" guard still green |
+| `planCopy.i18n.test.ts` (+1, KEYS +25) | Every new key in all three languages; placeholders `{plan}`, `{amount}`, `{date}`; "excluding tax" in each language; the two W-7 English sentences verbatim |
+| `PlanSection.render.test.tsx` | One test renamed and its comment rewritten (it still proves no control appears from config alone, now "with no purchase view in the payload") |
+
+Mutation checks (each restored with a byte copy; `md5sum -c` OK): the view ignoring the live-subscription fact → 24 failures (matrix + view tests); `succeeded` not requiring `renewing` + tier → 3 failures in `PlanPurchase.render.test.tsx`.
+
+#### Checks run on the final diff
+
+| Check | Result |
+|---|---|
+| Affected suites: `lib/business-os/billing`, `lib/business-os/entitlements`, `app/api/business-os/entitlements`, `app/api/business-os/billing`, `components/business-os`, `components/test-business-os`, `app/business-os/settings`, `app/api/stripe`, `app/invite`, `lib/client`, `lib/stripe`, `BusinessOsBillingAccountRepository.test.ts` | 140 suites, 3,804 tests, 110 snapshots, all pass |
+| `npm run test:bos-entitlements` | Green: 245 suites, 7,256 tests (the first run caught the repository name guard; fixed, see T9) |
+| `npm run typecheck:bos-llm` | Passed: 508 files, 28 errors, **0 new** (the "1 baseline entry is fixed" note is `app/api/onboarding/build/route.ts`, outside this diff) |
+| `tsc --noEmit` (whole project, 12 GB heap) | No error in any touched file (one `s` regex flag in the new render test fixed). The pre-existing duplicate-key errors in `translations/en.ts` / `es.ts` (`crm.task.priority.*`, `crm.booking.status.*`, `config.intake.preview`) are not in this diff |
+| ESLint on the 26 touched files | 0 errors; 5 pre-existing warnings (settings page `loadData` deps and two unused locals; `planCopy.i18n.test.ts` unused `readFileSync` / `join`), none on changed lines |
+| `npm run lint:hooks` | Pass |
+| `git diff --stat` | 22 modified (+923 / −46, docs included) and 7 new files; no deletion-only file |
+
+#### Deviations for SA
+
+1. **`billing.state` is `renewing | ending` only, no `processing`.** §3.4 listed `processing`; W-2 removed its only source (an open session reading `complete` needs Stripe). "Processing" is decided by the URL marker in the browser and released only by the server re-read (M-6). `past_due` and every other status give `billing: null` (W-5).
+2. **`freeAccessEndedByPurchase` returns `timed | admin_dated`, mapped to `trial | free_access` in `planPurchaseView.ts`.** The literal `'trial'` is a cohort id, and `freeAccess.test.ts` refuses any quoted cohort id in `freeAccess.ts`. The payload keeps W-7's words.
+3. **`purchase: null`** when the plan is unreadable, has no plan row, or the key mode is unknown (the checkout refuses all three at steps 5 and 7), and when the view throws (the route catches it; the plan still renders). The section then shows no Choose list.
+4. **The view does not read the payment hold.** A held account is kept on the holding screen by the page gate and never reaches Settings; its checkout is still decided by `heldPaymentOffer`. The matrix test covers non-held accounts, as in P-4.1.
+5. **"Ends on" does not require a future period end** (W-5's wording, literal); it requires `active`, `cancelAtPeriodEnd` and a parseable date. "Renews on" requires `active`, not cancelling, `endedAt` null and a future period end.
+6. **`NextPlanUp` drops its "Available to choose." line whenever the payload carries a purchase view**, including with the switches off (production today) or when paying: the line would promise a choice nobody can make. "Coming soon" (flag off) is unchanged. A payload without `purchase` renders exactly as before.
+7. **The Choose list shows every shown plan**; one the server does not offer reads "Coming soon" with no control, rather than being hidden.
+8. **Six refusal keys beyond §9** (`not_open`, `busy`, `email_required`, `support`, `signed_out`, `not_ready`): the map is typed over every refusal code, like the holding screen's, so each needed a line.
+9. **The marker reaches `PlanSection` as a prop** from the settings page's existing `useSearchParams` (one line in `app/business-os/settings/page.tsx`, not in §4). This keeps `next/navigation` out of `PlanSection`, so its existing render suites run unchanged. `PlanPurchase` uses `useRouter().replace` (with `scroll: false`) after Stripe's `onComplete`, and also tells the section directly, so processing starts before the URL updates.
+10. **`PlanSection` value-imports `isCheckoutReturnMarker`** from `lib/business-os/billing/checkoutReturnMarker.ts` (import-free, pure). The new source guard allows exactly that billing value import in the Settings client files and asserts the file has no import.
+11. **A stale marker on an account that already pays** shows "You're on <plan>." at once from the first read (no re-read). It is the server's answer, so it is true.
+12. **`PaymentProcessingRefresher.tsx` re-exports** the moved constants, because its test imports them from there.
+13. **Guards updated beyond §4:** the repository name allow-list in `BusinessOsBillingAccountRepository.test.ts` (+2 entries).
+14. **PF-7 (G-6) is not recorded closed by Dev.** The Settings payment screen's strings are all in en/he/es and Hebrew renders RTL (tested), but closure is QA's to record, and he/es await G-3.
+
+#### T11: demo checklist (TL / user; standard sandbox `acct_1UPKR4C7KDUGYIcA`, no production endpoint pause)
+
+Setup (local only, never committed): the standard sandbox `pk_test_` / `sk_test_` keys in `.env.local`; `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` and `BUSINESS_OS_PLAN_PRICES_ENABLED` on; `availableToBuy` is already on for both tiers in the committed config (2026-10-13 decision); `stripe listen` with the CLI 1.53 syntax; `npm run check-bos-plan-prices` passes against the sandbox.
+
+| # | Step | Expected | ✓ |
+|---|---|---|---|
+| D1 | A **trial** test owner opens Settings → Plan | "Choose a plan" lists Essentials and Autopilot, each "$79 / $129 a month, excluding tax" with "Choose …"; the line "Buying ends your free trial today, and the first month is charged now." | ⬜ |
+| D1b | A Founding Partner **with** an end date (admin-set, future) opens Settings → Plan | Choose list, and "Buying ends your free access today, and the first month is charged now." (do not buy, or buy and cancel the same day) | ⬜ |
+| D2 | D1 owner: Choose Essentials, pay with `4242 4242 4242 4242` | The frame opens in the page; after paying, the URL becomes `…/settings?section=plan&checkout=cs_test_…`, "Payment processing…", then "You're on Essentials." and "Renews on <date>". Tiers page `basic`; paid-through = Stripe period end; money history and audit as in P-3b | ⬜ |
+| D3 | Reload Settings (without the marker) | No Choose list; "Renews on <date>"; the Autopilot block as information, with no "Available to choose." line | ⬜ |
+| D4 | A second owner: Choose, close the tab, reopen within a minute, Choose again (M-3) | A new frame opens; the first session is `expired` in the sandbox dashboard; dev log `bos_billing_checkout_replaced` | ⬜ |
+| D5 | Champion test account with **no tier in force and no end date** (W-12: not the account still holding `sub_1UPnr9C7KDUGYIcAE5yxoCaQ`) | No Choose list. A direct POST from the harness → 409 `free_access_no_end_date` | ⬜ |
+| D6 | Admin sets an end date on that champion | Choose appears with the free-access line (do not buy, or buy and cancel the same day) | ⬜ |
+| D7 | Turn ONE tier's `availableToBuy` off locally, reload; then a direct POST for it | That tier reads "Coming soon" with no button; the POST → 503 `price_unavailable` (log `reason: tier_not_sold`) | ⬜ |
+| D8 | Unset (or set to an `sk_test_…`) `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, restart | One line "Payments are not set up on this site yet."; no Choose button; no POST in the network tab | ⬜ |
+| D9 | Switch the UI to Hebrew, then Spanish, on D1 and D2's screens | Every new string translated; Hebrew right to left; the user approves the he/es drafts (G-3) | ⬜ |
+| D10 | A refused start (e.g. D4c from P-4.1: pay in tab A, Choose in tab B before the webhook) | The localized "Your payment is being processed." line, not the server's English | ⬜ |
+| D11 | Open `…/settings?section=plan&checkout=cs_test_bogus` on an account with nothing live | "Payment processing…", then after about a minute "This is taking longer than usual." and "Check again", which opens the section without the marker and shows Choose again | ⬜ |
+| F-5 | Watch the **first** Choose after a cold `npm run dev` | If `404 not_available` recurs: record the time, the response and the server log line; retry once | ⬜ |
+
+After the demo: cancel every demo subscription in the sandbox the same day (N-4); revert any local flip (`git diff` shows no change to `tierMatrix.ts`).
+
+#### QA follow-ups (Dev, 2026-10-13, after QA P-4.2 "PASS WITH NOTES")
+
+| QA note | Outcome |
+|---|---|
+| 1. In-flight `disabled` guard not pinned | **Fixed.** New test in `PlanPurchase.render.test.tsx` holds the first checkout POST open and asserts the first row reads "starting", every other offered Choose button is present but disabled, no frame is mounted, and after release exactly one POST was made and the frame opens. Mutation `disabled={false}` now caught (1 test failed); source restored by re-editing |
+| 3. "Renews on" / "Ends on" in UTC | **Fixed.** Reuses the existing account clock, `useLanguage().timezone` (from `user_preferences.timezone`; the provider holds UTC when unset, its own fallback). `PlanSection.renderSentence` takes it and applies it ONLY to the billing-instant keys, exported as `ACCOUNT_CLOCK_SENTENCE_KEYS` (`plan.renews_on`, `plan.ends_on_paid`); cohort / admin end dates are midnight UTC and stay in UTC (the original reason). Tests: renewing and ending at `2099-11-12T22:30Z` read November 13 in Asia/Jerusalem; no timezone → November 12 as before; a cohort midnight on America/Los_Angeles still reads March 1; the key set equals `billingEndsWhen`'s keys. Mutation back to `'UTC'` caught (2 tests failed); restored. No wire or route change |
+| 2. Stripe frame language follows the browser | **Not built; for SA / user.** (a) It needs a contract change: the checkout body is strict `{ tier, returnTo }`, recorded as "No contract change" for P-4 and pinned by SA in P-4 and P-5a (tenant-isolation rows, "POST exactly `{ tier, returnTo }`" tests); the alternative, a server-side read of `user_preferences.preferred_language` in `startPlanCheckout`, is a new read on the checkout path. (b) Stripe Checkout supports `es` but **not `he`** (Stripe.js locale table: Hebrew is Elements only), so a Hebrew owner can only get `auto` (browser) or a forced language such as English; that is a business choice |
+| 4. Stale comment | **Fixed.** `app/business-os/settings/page.tsx` comment above `settings-section-plan` now describes the P-4.2 Choose list |
+
+Gates after the follow-ups: `components/business-os`, `lib/business-os/billing`, `app/api/business-os/billing`, `app/api/business-os/entitlements`, `app/invite`, `lib/stripe`: 66 suites / 1,872 tests green; `npm run test:bos-entitlements` 245 / 7,256 green; `npm run typecheck:bos-llm` passed, 0 new. Uncommitted.
 
 ---
 
@@ -787,6 +1003,165 @@ limit 10;
 - [x] All automated acceptance criteria for P-4.1 pass, and there are no bugs. Ready for the user diff review and the W-11 manual demo. The he/es drafts await G-3; G-5 is per the SA conditions
 - [ ] Issues found — Dev must address before commit
 
+### QA — P-4.2 "Buy in Settings" (2026-10-13)
+
+**Test mode:** full (P-4.2 scope, plus regression on P-4.1 and the P-5a.2 holding screen)
+**Strategy used:** A + B (Jest unit, route integration with fakes, render tests through the real plan view and the real purchase view), source reading, a throwaway probe suite (5 tests, deleted afterwards) and two mutation checks. No browser, real database or Stripe was available, so the live journey is left to the T11 checklist below (Option D, TL / user)
+**Focus:** ui, api, security, i18n
+**Skipped:** the live sandbox demo (environment). Handed over as the refined T11 checklist
+**Input source:** prompt from TL, plus SA's P-4.2 QA focus list (items 1 to 7) and Dev's Implementation Notes
+**Verdict:** ✅ **PASS WITH NOTES**. No bugs. One Low test gap (a mutation survived), four Low edge cases, and the PF-7 record below
+
+#### Gates run (worktree `neuronforge-invite-s1`, `808939ef` plus the uncommitted P-4.2 diff incl. SA fixes 1 and 2)
+
+| Check | Result |
+|---|---|
+| Affected scope: `lib/business-os/billing`, `lib/business-os/entitlements`, `app/api/business-os/entitlements`, `app/api/business-os/billing`, `components/business-os`, `components/test-business-os`, `app/business-os`, `app/api/stripe`, `app/invite`, `lib/client`, `lib/stripe`, `lib/repositories/__tests__` (all of it) | ✅ 227 suites, 5,777 tests, 110 snapshots, all pass (larger than SA's 140 / 3,806 because this scope includes all of `lib/repositories/__tests__` and all of `app/business-os`) |
+| `lib/business-os/invites/__tests__/paymentHold.test.ts` + `my-plan` route test (the layout gate and the route, run on their own) | ✅ 2 suites, 71 tests |
+| `npm run test:bos-entitlements` | ✅ 245 suites, 7,256 tests, all pass |
+| `npm run typecheck:bos-llm` | ✅ passed: 508 files, 28 errors, **0 new** (the "1 baseline entry is fixed" note is `app/api/onboarding/build/route.ts`, outside this diff) |
+| `npm run lint:hooks` | ✅ exit 0 |
+| QA probe suite (scratch, deleted; `git status` shows no probe left) | ✅ 5 / 5: a trial lists both plans with "excluding tax" and a Choose button each, plus the trial sentence; a LAPSED tier account (every buyable tier, `tierExpiresAt` in the past, billing `canceled`) gets a Choose button for its OWN plan and no "Renews on"; production shape on a trial (switches off, `availableToBuy` on) shows no Choose list, no "Available to choose.", no "Coming soon" and no trial sentence; `past_due` shows no Choose and no dated sentence; a marker on a `past_due` account never claims success, makes exactly `1 + 15` reads and ends on "Check again" pointing at `/business-os/settings?section=plan` |
+
+#### Mutation checks (each restored by re-editing; `md5sum -c` OK on both files afterwards)
+
+| Mutation | Result |
+|---|---|
+| `billingStateFromRecord`: "renewing" without the `endedAt === null` check | ✅ Caught, 1 test: `planPurchaseView.test.ts` › "null: active but ended, or a period end in the past" |
+| `PlanPurchase`: the other rows' Choose buttons no longer disabled while one start is in flight (`disabled={false}`) | ⚠️ **Survived** (107 / 107 green in `components/business-os/settings` + `app/business-os`). See Edge Case 1 |
+
+#### Test Coverage
+
+| Acceptance criterion / focus item | Tested? | Result | Notes |
+|---|---|---|---|
+| Trial: both plans, "a month, excluding tax", Choose each, trial sentence (W-7 verbatim) | ✅ | Pass | Render test (sentence) + QA probe (both plans and buttons). English pinned verbatim in `planCopy.i18n.test.ts` |
+| Admin-dated free access with an end date: Choose + free-access sentence | ✅ | Pass | Render test "a Founding Partner WITH an end date"; `freeAccess.test.ts` through the real `deriveLifecycle` |
+| Paused / expired tier account may re-buy its own plan | ✅ | Pass | `customerPlanView.test.ts` (`plans` lists its own tier) + QA probe end to end (own-plan Choose button rendered). The resolver keeps a tier basis, so BQ-P10 does not catch it |
+| Paying: no Choose; "Renews on {date}" / "Ends on {date}. It will not renew." (W-5); `past_due` dateless | ✅ | Pass | Route + render tests; QA probe for `past_due` render; mutation 1 caught |
+| Open-ended champion (BQ-P10): no Choose; checkout still refuses | ✅ | Pass | View → `none / free_access_no_end_date` (route + render); checkout 409 pinned in P-4.1's `planCheckout` / route tests (green in this run); matrix: view = predicate = checkout in all 288 worlds |
+| Production shape (switches off, `availableToBuy` on): no "Available to choose.", no "Coming soon", no list | ✅ | Pass | Render test + QA probe (adds the explicit "no Coming soon" and "no trial sentence" assertions the render test lacks) |
+| `purchase: null` (Fix 1): same | ✅ | Pass | Render test, non-vacuous (`nextPlanUp.availableToBuy` true); read in source: `purchaseKnown={plan.purchase !== undefined}` |
+| Return marker → processing → "You're on <plan>" only from the server re-read (M-6) | ✅ | Pass | `succeeded` = server `kind: 'tier'` AND `purchase.billing.state === 'renewing'`; render tests + SA's mutation; the Choose list is hidden while a marker is present |
+| Failed FIRST read, then a good re-read (Fix 2) | ✅ | Pass | Render test; `setFailed(false)` on a good re-read (source) |
+| Bogus marker → about 60 s → "Check again" → Choose back | ✅ | Pass | Render test (15 failed re-reads) + QA probe (`past_due`, exactly 16 reads); the link has no marker, so the next load shows Choose when nothing is live. A malformed marker is ignored (`isCheckoutReturnMarker`) |
+| Refresher bounded 4 s × 15 | ✅ | Pass | Shared constants in `checkoutProcessing.ts`, re-exported by `PaymentProcessingRefresher.tsx` (holding-screen suites unchanged and green) |
+| Held account redirected away from Settings | ✅ (source + guard) | Pass | `app/business-os/layout.tsx` runs `await redirectIfAwaitingPayment()` as its first statement, pinned by `paymentHold.test.ts` for all four layouts; `/business-os/settings` sits under that layout. **Residual accepted by SA (deviation 4):** the gate fails OPEN on an unreadable hold, so in that window a held account could see Choose; display only, the checkout re-reads the hold and decides by `heldPaymentOffer` (`hold_unreadable` if it cannot) |
+| `my-plan` takes no query string and makes no Stripe call | ✅ | Pass | Route guards (no `searchParams` / body / identity header, at source and runtime), "never calls Stripe" test, and the client `fetch` URL has no query (source) |
+| Every refusal code localized en/he/es, never server English | ✅ | Pass | `PLAN_PURCHASE_REFUSAL_KEYS` is typed total over `PlanCheckoutRefusalCode`; render test checks every route code maps to a key present in all three languages, and that the server message is never shown. 25 new keys each appear exactly once per language file (QA grep) |
+| Hebrew RTL | ✅ | Pass | Render test asserts `dir="rtl"` and no English in he / es |
+| Client files import no repository / `server-only` (rule 1) | ✅ | Pass | Source guard in `PlanPurchase.render.test.tsx`; QA read the imports of `PlanSection`, `PlanPurchase`, `planPurchaseCopy` (type-only import from `planCheckout.ts`), `checkoutProcessing`, `checkoutReturnMarker` |
+| Tenant isolation | ✅ | Pass | One new read, `findByUser(session user, server mode)`; POST body still `{ tier, returnTo }` |
+| P-5a.2 holding screen and P-4.1 unchanged | ✅ | Pass | `app/invite`, `lib/business-os/billing` and `app/api/business-os/billing` all green |
+| Live sandbox journey (T11) | ⚠️ | Not run | Environment. Refined checklist below |
+
+#### Issues Found
+
+**Bugs (must fix before commit):** none.
+
+**Performance issues:** none. `my-plan` adds one indexed billing read per call; the re-read loop is bounded to 15 calls, and only while a marker is on the URL.
+
+**Edge cases / test gaps (nice to fix; Low, not blocking):**
+1. **Test gap: the "other Choose buttons are disabled while a start is in flight" guard is not pinned** (`PlanPurchase.tsx`, `disabled={activeTier !== null && activeTier !== plan.planId}`). The existing test checks the other buttons are gone once the frame OPENS, not while the POST is pending. Without the guard, a second click during the first POST would hit the server lock (`checkout_busy`), and its `onRefused` would reset `activeTier` to `null` while the first frame opens, which hides every row's checkout including the open frame. Suggest a test that holds the first POST open and asserts the other buttons are disabled.
+2. **The Stripe frame's language follows the browser, not the app.** `createBusinessOsPlanCheckoutSession` passes no `locale`, so Stripe uses `auto`. A Hebrew-UI owner with an English browser sees our strings in Hebrew and Stripe's form in English. Stripe-owned and outside PF-7's "our strings" scope (below), but worth a follow-up (pass the reader's locale to the session).
+3. **"Renews on" is formatted in UTC** (`renderSentence`, `timeZone: 'UTC'`, chosen for cohort midnights). A Stripe period end is the purchase instant one month on, so an owner in Israel who buys between 00:00 and 02:00/03:00 local time sees the renewal date one day early. Cosmetic; no money effect.
+4. **Stale comment** in `app/business-os/settings/page.tsx` above `settings-section-plan`: "Read-only in S-4a step 1: there is no way to buy or change a plan here yet". No longer true. Nit.
+5. Once a checkout frame is open there is no "choose a different plan" control short of a reload (which M-3 then handles). UX note for P-7b.1, not a defect. SA's own note (an admin-assigned paid tier with no billing record is offered Choose for the plan it is already on) also stands.
+
+#### PF-7 / M-7 / G-6 (WS-2 step 1b, localisation gate for payment screens)
+
+**Recorded CLOSED for our code, 2026-10-13, conditional only on G-3 (the user's approval of the he/es wording, which is a merge gate in its own right).** Evidence:
+- The two screens that ask for a plan payment, the holding screen (P-5a.2, plus P-4.1's `checkout_processing` line) and Settings → Plan (P-4.2), render every customer-facing string from `lib/business-os/translations/{en,he,es}.ts`: 25 new P-4.2 keys, each present exactly once per language, placeholders `{plan}` / `{amount}` / `{date}` checked, "excluding tax" in each language (`planCopy.i18n.test.ts`).
+- Every refusal is shown by `code` through a map typed total over the route's refusal codes (a new code fails the build), never the server's English (render tests, both screens).
+- Hebrew renders right to left (`dir="rtl"` asserted on both screens) and no English leaks into he or es (render tests).
+- Dates are formatted per language (`he-IL` / `es-ES` / `en-US`); prices stay in digits and USD (SR-15).
+- Not covered by PF-7 and noted above: the Stripe-hosted frame's own language (Edge Case 2).
+
+#### Refined T11 demo checklist (TL / user; standard sandbox `acct_1UPKR4C7KDUGYIcA`, no production endpoint pause)
+
+**Setup (local only, never committed):** in `neuronforge-invite-s1/.env.local`, the sandbox `pk_test_` / `sk_test_` keys and `STRIPE_WEBHOOK_SECRET` from `stripe listen`; `BUSINESS_OS_PLAN_CHECKOUT_ENABLED=true` and `BUSINESS_OS_PLAN_PRICES_ENABLED=true`. `availableToBuy` is already on for `basic` and `pro` in `main` (no flip needed). Run `stripe listen` (CLI 1.53 syntax) forwarding to `/api/stripe/webhook`; `npm run check-bos-plan-prices` passes. **W-12:** the user's own champion account holds a live sandbox subscription (`sub_1UPnr9C7KDUGYIcAE5yxoCaQ`), so it is refused `subscription_live` and shows no Choose: use a **fresh** champion test account for D1b / D5 / D6, and a non-champion trial account for D1 / D2. Keep the browser's network tab open throughout.
+
+| # | Step | Expected | ✓ |
+|---|---|---|---|
+| F-5 | The **first** Choose after a cold `npm run dev` (do it on D2) | 200 and a frame. If `404 not_available` appears: note the time, the response body and the server log line, then retry once | ⬜ |
+| D1 | Trial account opens `/business-os/settings?section=plan` | The Plan section opens; "Choose a plan" lists Essentials and Autopilot, "$79 a month, excluding tax" / "$129 a month, excluding tax", a "Choose …" button each; the line "Buying ends your free trial today, and the first month is charged now." The plan-above card has no "Available to choose." line. Network: `GET /api/business-os/entitlements/my-plan` with **no query string** | ⬜ |
+| D1b | Fresh champion **with** an admin-set future end date opens Settings → Plan | Choose list and "Buying ends your free access today, and the first month is charged now." Do not buy | ⬜ |
+| D2 | D1 account: Choose Essentials, pay with `4242 4242 4242 4242` | The frame opens in the page and the Autopilot button disappears; after paying the URL becomes `…/settings?section=plan&checkout=cs_test_…`, "Payment processing…", then (once the webhook lands, normally within seconds) "You're on Essentials." and "Renews on <date>". Server log for the my-plan calls: no Stripe request. SQL S1 and S2 below | ⬜ |
+| D3 | Reload Settings without the marker | No Choose list, no "Available to choose.", "Renews on <date>"; the Autopilot card as information only | ⬜ |
+| D4 | A second trial account: Choose, close the tab before paying, reopen within a minute, Choose again (M-3) | A new frame; the first session is `expired` in the sandbox dashboard; dev log `bos_billing_checkout_replaced`; SQL S3 shows `replaced_session_id` on the newest row | ⬜ |
+| D5 | Fresh champion with **no tier in force and no end date** (SQL S4 to pick one) | No Choose list. A direct POST from the `/test-business-os` harness → 409 `free_access_no_end_date`, no session in the sandbox dashboard | ⬜ |
+| D6 | Admin sets a future end date on that champion; reload | Choose appears with the free-access line. Do not buy | ⬜ |
+| D7 | Locally set ONE tier's `availableToBuy` to `false`, reload; then a direct POST for it | That tier reads "Coming soon" with no button; the POST → 503 `price_unavailable` (log `reason: tier_not_sold`). Revert the flip | ⬜ |
+| D8 | Unset `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (or set it to an `sk_test_…`), restart | One line "Payments are not set up on this site yet."; no Choose button; no POST in the network tab. Restore the key and restart | ⬜ |
+| D9 | Switch the UI to Hebrew, then Spanish, on the D1 and D2 screens | Every new string translated; Hebrew right to left; the user approves the he/es drafts (G-3) | ⬜ |
+| D10 | A refused start: pay in tab A, press Choose in tab B before the webhook lands (needs a fresh account, since D2's now pays) | "Your payment is being processed." in the UI language, not server English | ⬜ |
+| D11 | Open `…/settings?section=plan&checkout=cs_test_bogus` on an account with nothing live | "Payment processing…", about a minute later "This is taking longer than usual." and "Check again"; Check again opens the section without the marker and shows the Choose list | ⬜ |
+| D12 | Production shape: set both switches to `false` in `.env.local`, restart, open D1's account | No Choose list, no "Available to choose.", no "Coming soon", no trial sentence. Restore the switches | ⬜ |
+| D13 | Optional, only if a held friend test account exists: open `/business-os/settings?section=plan` as it | Redirected to `/invite/awaiting-payment` | ⬜ |
+| N-4 | Same day: cancel every demo subscription in the sandbox dashboard | SQL S5 returns no demo row; `git diff` shows no change to `tierMatrix.ts` or any committed file | ⬜ |
+
+Read-only SQL for the Supabase SQL editor (no comments, no punctuation inside strings):
+
+S1, the billing record after D2:
+
+```sql
+select user_id, livemode, bought_tier, subscription_status, cancel_at_period_end, current_period_end, ended_at, open_checkout_session_id, updated_at
+from business_os_billing_accounts
+where livemode = false
+and updated_at > now() - interval '2 hours'
+order by updated_at desc
+limit 10;
+```
+
+S2, the plan row of those accounts after D2:
+
+```sql
+select user_id, tier, tier_expires_at, cohort, cohort_expires_at
+from business_os_account_plans
+where user_id in (select user_id from business_os_billing_accounts where livemode = false and updated_at > now() - interval '2 hours')
+limit 10;
+```
+
+S3, the checkout audit rows after D2 and D4:
+
+```sql
+select created_at, user_id, action, details->>'sessionId' as session_id, details->>'replacedSessionId' as replaced_session_id
+from audit_trail
+where strpos(action, 'BILLING') > 0
+and created_at > now() - interval '2 hours'
+order by created_at desc
+limit 30;
+```
+
+S4, candidate champions for D5 (free access with no end date, no tier in force, nothing live in the sandbox):
+
+```sql
+select p.user_id, p.tier, p.tier_expires_at, p.cohort, p.cohort_expires_at, b.subscription_status
+from business_os_account_plans p
+left join business_os_billing_accounts b on b.user_id = p.user_id and b.livemode = false
+where p.cohort is not null
+and p.cohort_expires_at is null
+and (p.tier is null or p.tier_expires_at < now())
+and (b.subscription_status is null or b.subscription_status = 'canceled')
+limit 20;
+```
+
+S5, sandbox subscriptions still running (after N-4 it should list none of today's demo accounts):
+
+```sql
+select user_id, bought_tier, subscription_status, cancel_at_period_end, current_period_end, updated_at
+from business_os_billing_accounts
+where livemode = false
+and subscription_status is not null
+and subscription_status <> 'canceled'
+and ended_at is null
+order by updated_at desc
+limit 20;
+```
+
+#### Final Status
+- [x] All automated acceptance criteria for P-4.2 pass, and there are no bugs. Ready for the user diff review and the T11 demo. Open before merge: G-3 (he/es approval). Edge Case 1 is a recommended small test addition, not a blocker
+- [ ] Issues found — Dev must address before commit
+
 ---
 
 ## Commit Info
@@ -805,3 +1180,7 @@ _(RM populates this section.)_
 | 2026-10-13 | SA code review P-4.1: CODE APPROVED (SA) | W-1 to W-4, W-6, W-10, M-1, M-2, M-4 verified; deviations 1 to 9 accepted; affected suites (90 / 2,339) and `test:bos-entitlements` (245 / 7,202) green; 9 mutation checks all caught, sources md5-restored. No fixes applied. Low follow-ups F-A (stale `expiresAt` copy on a racing expire failure), F-B (guard parser inline `type`), F-C (P-4.2 matrix through `planPurchaseView`). QA focus listed |
 | 2026-10-13 | QA P-4.1: PASS WITH NOTES (QA) | Affected suites 136 / 3,608 green; `test:bos-entitlements` 245 / 7,202 green; `typecheck:bos-llm` 0 new; `lint:hooks` pass. 2 mutation checks caught (expired-path `replacedSessionId`; `buyableTiers` ignoring `availableToBuy`), sources md5-restored. No bugs; 3 Low test gaps (M-3 path not in the log-secret guard; no route test for expired → no `replacedSessionId`; held-matrix fixture basis). PF-7: P-4.1 share recorded, closure owed by P-4.2 QA. W-11 manual checklist written |
 | 2026-10-13 | `availableToBuy` turned on for testing (Dev, user decision) | `basic` and `pro` set to `availableToBuy: true` in `tierMatrix.ts` ("switch the plans on for now, as we are all testing, i want to see it work"). Inert in production while both server switches are off; Settings → Plan shows "Available to choose." until P-4.2. Seven test files re-pinned on purpose (production sells both tiers; turning ONE tier off refuses exactly that tier with no Stripe call). Supersedes the plan-stage "flip locally only" statements; see Implementation Notes. Uncommitted |
+| 2026-10-13 | P-4.2 "Buy in Settings" implemented (Dev) | T5 to T10 on `feature/bos-plan-payments-p4-2` (from `origin/main` `808939ef`): `customerPlanView.plans`; `freeAccessEndedByPurchase`; `planPurchaseTypes.ts`; `server-only` `planPurchaseView.ts` behind the input-free `my-plan` route (billing row by session user and key mode, no Stripe; W-5 F-2; `isLiveSubscriptionStatus`; `endsFreeAccessOnPurchase`); `PlanPurchase.tsx` + `planPurchaseCopy.ts` + `PlanSection` (Choose list on `PlanEmbeddedCheckout`, marker, bounded re-read, success only from the server, localized refusals); shared `checkoutProcessing.ts`; 25 `plan.*` keys (he/es DRAFT, G-3). Matrix test driven through the view (F-C). Registrations and guards (W-6, W-8). Affected suites 140 / 3,804 green; `test:bos-entitlements` 245 / 7,256 green; `typecheck:bos-llm` 0 new; ESLint 0 errors; `lint:hooks` pass. 14 deviations for SA; T11 checklist written. Uncommitted |
+| 2026-10-13 | SA code review P-4.2: APPROVED WITH FIXES (SA) | F-C, W-5 to W-9, BQ-P10, M-6, refresher bound, client-bundle and tenant-isolation checks verified; deviations 1 to 14 accepted (4 with the fail-open residual stated, 6 with Fix 1). Fixes applied: `PlanSection` hides "Available to choose." for `purchase: null` too (`!== undefined`), and a good re-read clears a failed first read; one test each, each proven by reverting. `lib/repositories/__tests__` 88 / 2,050, affected scope 140 / 3,806, `test:bos-entitlements` 245 / 7,256 green; 13 mutation checks all caught, sources md5-restored. Uncommitted |
+| 2026-10-13 | QA P-4.2: PASS WITH NOTES (QA) | Affected scope 227 suites / 5,777 tests, `test:bos-entitlements` 245 / 7,256, `typecheck:bos-llm` 0 new, `lint:hooks` clean; 5-test QA probe (trial list, lapsed tier re-buys its own plan, production shape, `past_due`, bounded marker) passed and deleted. Mutations: `endedAt` check caught; the in-flight `disabled` guard on other Choose buttons survived (Low test gap). No bugs. PF-7 recorded CLOSED for our code, subject to G-3. Refined T11 checklist with read-only SQL S1 to S5 |
+| 2026-10-13 | QA P-4.2 follow-ups (Dev) | Note 1: in-flight `disabled` test added, mutation now caught. Note 3: billing "Renews on" / "Ends on" dates on the account clock (`useLanguage().timezone`, UTC when unset), cohort dates stay UTC; 5 tests, mutation caught. Note 4: stale Settings comment updated. Note 2 (Stripe locale) NOT built: needs a checkout-contract change for SA, and Stripe Checkout has no Hebrew. Scope 66 / 1,872, `test:bos-entitlements` 245 / 7,256, `typecheck:bos-llm` 0 new. Uncommitted |

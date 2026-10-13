@@ -489,6 +489,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       why: 'Plan payments P-5a.2 (SA P5-C11, Q-4): the holding screen\'s model reads the plan NAME and monthly PRICE for display from `TIER_MATRIX.presentation` (G5-7: no literal on the screen), and borrows the `TierId` TYPE. Whether Pay is offered is decided by `heldPaymentOffer` in planCheckoutEligibility.ts (invite policy and switches), not here; this file resolves no plan, calls no `check()` / `decide()` and refuses nothing by plan or capability, so it is not a gate. The holding page itself imports nothing from the module.',
     },
     {
+      // Plan payments P-4.2 (workplan §3.4, §3.7; SA W-6, W-7).
+      file: 'lib/business-os/billing/planPurchaseView.ts',
+      symbols: ['FreeAccessEndedByPurchase', 'freeAccessEndedByPurchase', 'hasOpenEndedFreeAccess'],
+      why: 'Plan payments P-4.2 (SA W-6, W-7): the Settings → Plan purchase view behind the my-plan route. It reads `hasOpenEndedFreeAccess` (BQ-P10) over the snapshot the route already holds, to feed `planPurchaseOffer` the same fact the checkout uses, and `freeAccessEndedByPurchase` (with its `FreeAccessEndedByPurchase` TYPE) to pick the "ends your free trial / free access today" sentence. It DESCRIBES what the checkout would sell, for display; it refuses nothing itself (the checkout route does), grants or withholds no capability, and calls no `check()` / `decide()`, so there is no capability to register it under. If it ever refuses a request or a feature by plan, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
       file: 'components/test-business-os/PlanCheckoutPanel.tsx',
       symbols: ['TIER_ORDER'],
       why: 'Plan payments P-3a (SA Q-10): the internal /test-business-os Billing panel builds its tier select from `TIER_ORDER`, so the component holds no tier name. It is the demo trigger for the checkout route, displays nothing about a plan and refuses nothing.',

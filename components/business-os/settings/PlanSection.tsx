@@ -17,12 +17,21 @@
  * `server-only`, so importing them into this file is a build error rather than a
  * review finding.
  *
- * WHAT IS DELIBERATELY NOT HERE (S-4a step 1)
+ * BUYING (plan payments P-4.2)
  *
- * A buy button, an upgrade button, a price comparison the customer can act on,
- * or anything touching Stripe. Those are steps 2 to 4. A button that cannot
- * honour itself is worse than no button, and the next plan is shown here as
- * information — what it would add — not as an offer.
+ * The Choose list lives in `PlanPurchase`, and it too renders only what the
+ * server sent: `purchase.offer` is the same predicate the checkout refuses on,
+ * so a button appears exactly where the server would sell (M-5). After Stripe
+ * completes, the URL carries the return marker (`?checkout=`), this section
+ * shows "Payment processing" and re-reads `my-plan` every 4 s, at most 15
+ * times (`checkoutProcessing.ts`, shared with the holding screen). "You're on
+ * <plan>" is shown ONLY when that server re-read says the plan is a tier and
+ * our billing record reads `renewing` (M-6); a failed re-read never claims
+ * success, and after the last one "This is taking longer than usual" links to
+ * the section without the marker, which shows Choose again if nothing is live.
+ *
+ * The plan above is still information (what it would add). Upgrading a plan
+ * that is already paid for is P-7b.1, not here.
  *
  * Also not here: **anything about chat.** The chat capabilities are withheld from
  * Essentials in config and nothing enforces them yet, so a line saying "your plan
@@ -36,12 +45,20 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, Info, Loader2, Sparkles } from 'lucide-react';
 
+import { PROCESSING_REFRESH_INTERVAL_MS, PROCESSING_REFRESH_LIMIT } from '@/components/business-os/billing/checkoutProcessing';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+// Display only, and a pure file with no import (P-5a.2): a well-formed
+// checkout session id on the URL means "show Payment processing".
+import { isCheckoutReturnMarker } from '@/lib/business-os/billing/checkoutReturnMarker';
+import type { PlanPurchaseWire } from '@/lib/business-os/billing/planPurchaseTypes';
 import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
 import { createLogger } from '@/lib/logger';
+
+import { PlanPurchase, type PlanChoice } from './PlanPurchase';
+import { SETTINGS_PLAN_PATH } from './planPurchaseCopy';
 
 const logger = createLogger({ module: 'BusinessOsPlanSection' });
 
@@ -128,7 +145,22 @@ export interface PlanPayload {
   whenThisChanges: PlanSentence | null;
   included: PlanCategory[];
   nextPlanUp: PlanUpgrade | null;
+  /**
+   * Every plan shown to customers (P-4.2). Optional, like `purchase`: an older
+   * payload, or the builder's own output in a test, has neither and renders as
+   * the read-only section did.
+   */
+  plans?: PlanChoice[];
+  /** What may be bought, and what our billing record says (P-4.2). `null` when unknown. */
+  purchase?: PlanPurchaseWire | null;
   problem: PlanSentence | null;
+}
+
+/** The plan read. Resolves `null` when the server did not answer with a plan. */
+async function fetchPlan(): Promise<PlanPayload | null> {
+  const response = await fetch('/api/business-os/entitlements/my-plan');
+  const body = await response.json();
+  return body?.success && body?.data ? (body.data as PlanPayload) : null;
 }
 
 /**
@@ -142,10 +174,24 @@ export interface PlanPayload {
  * plan-above card below it. `t` and the language are passed in, since the
  * dictionary lives on the hook.
  */
+/**
+ * The sentences whose date is a billing INSTANT, read on the account's clock.
+ *
+ * "Renews on" / "Ends on … It will not renew." carry Stripe's period end: the
+ * purchase instant one month on, not a midnight. Formatted in UTC, an owner in
+ * Israel who bought between local midnight and 02:00/03:00 read the day before
+ * (QA P-4.2 note 3). These two keys come from `billingEndsWhen` only; a test
+ * pins that the two agree. Every other dated sentence names a cohort or admin
+ * end date stored as midnight UTC, and stays in UTC (see below).
+ */
+export const ACCOUNT_CLOCK_SENTENCE_KEYS: ReadonlySet<string> = new Set(['plan.renews_on', 'plan.ends_on_paid']);
+
 function renderSentence(
   value: PlanSentence | null | undefined,
   t: (key: string) => string,
-  language: string
+  language: string,
+  /** `user_preferences.timezone` via `useLanguage()`; the provider holds 'UTC' while unknown or unset. */
+  accountTimezone: string | undefined
 ): string | null {
   if (!value?.key) return null;
 
@@ -177,8 +223,13 @@ function renderSentence(
        * used to be built server-side from `getUTCDate()`. Formatting it in the
        * browser's zone instead moves it a day for every reader west of UTC — an
        * end date a day early, on the one line of this page that is a promise.
+       *
+       * EXCEPT a billing instant (`ACCOUNT_CLOCK_SENTENCE_KEYS`), read on the
+       * account's own clock, the one every other Business OS date uses
+       * (`useLanguage().timezone`, from `user_preferences.timezone`; UTC when
+       * not set, the provider's own fallback).
        */
-      timeZone: 'UTC',
+      timeZone: ACCOUNT_CLOCK_SENTENCE_KEYS.has(value.key) ? accountTimezone || 'UTC' : 'UTC',
     })
   );
 }
@@ -228,13 +279,61 @@ function CategoryRowText({
   );
 }
 
-export function PlanSection() {
-  const { t, isRTL, language } = useLanguage();
+export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string | null } = {}) {
+  const { t, isRTL, language, timezone } = useLanguage();
 
-  const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language);
+  const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language, timezone);
   const [plan, setPlan] = useState<PlanPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  /** Stripe completed in THIS page, before the URL caught up (P-4.2). */
+  const [completedSession, setCompletedSession] = useState<string | null>(null);
+  const [refreshes, setRefreshes] = useState(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  // The return marker, pattern-checked; display only. Never a release, never a claim.
+  const marker = isCheckoutReturnMarker(checkoutMarker) ? checkoutMarker : completedSession;
+  // M-6: success comes ONLY from the server's own answer.
+  const succeeded = plan?.status === 'ok' && plan.kind === 'tier' && plan.purchase?.billing?.state === 'renewing';
+  const processing = marker !== null && !succeeded;
+  const exhausted = refreshes >= PROCESSING_REFRESH_LIMIT;
+
+  const onCheckoutComplete = useCallback((sessionId: string) => {
+    setRefreshes(0);
+    setCompletedSession(sessionId);
+  }, []);
+
+  /*
+   * The bounded re-read after checkout (M-6): every 4 s, at most 15 times.
+   * A failed re-read keeps the plan already on screen and keeps saying
+   * "processing": it never claims success.
+   */
+  useEffect(() => {
+    if (!processing || exhausted || loading) return undefined;
+    const timer = setTimeout(() => {
+      fetchPlan()
+        .then((data) => {
+          if (mounted.current && data) {
+            setPlan(data);
+            // A first read that failed must not hide a later good answer (SA P-4.2 review).
+            setFailed(false);
+          }
+        })
+        .catch((error) => {
+          logger.warn({ err: error }, 'Plan re-read after checkout failed');
+        })
+        .finally(() => {
+          if (mounted.current) setRefreshes((count) => count + 1);
+        });
+    }, PROCESSING_REFRESH_INTERVAL_MS);
+    return () => clearTimeout(timer);
+  }, [processing, exhausted, loading, refreshes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -252,15 +351,14 @@ export function PlanSection() {
      * preference is saved. The SENTENCES do not wait for that — they are keys,
      * rendered below, and switch immediately.
      */
-    fetch('/api/business-os/entitlements/my-plan')
-      .then((response) => response.json())
-      .then((body) => {
+    fetchPlan()
+      .then((data) => {
         if (cancelled) return;
-        if (!body?.success || !body?.data) {
+        if (!data) {
           setFailed(true);
           return;
         }
-        setPlan(body.data as PlanPayload);
+        setPlan(data);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -313,6 +411,29 @@ export function PlanSection() {
         )}
       </div>
 
+      {/* After checkout (M-6): the server's answer, or "processing" until it comes. */}
+      {marker !== null && succeeded && plan.name && (
+        <p role="status" className="text-sm text-[var(--v2-text-primary)]" data-testid="plan-purchase-done">
+          {fill(t('plan.purchase.done'), { plan: plan.name })}
+        </p>
+      )}
+      {processing && !exhausted && (
+        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-muted)]" data-testid="plan-purchase-processing">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>{t('plan.purchase.processing')}</span>
+        </p>
+      )}
+      {processing && exhausted && (
+        <div className="space-y-1" data-testid="plan-purchase-slow">
+          <p className="text-sm text-[var(--v2-text-muted)]">{t('plan.purchase.slow')}</p>
+          {/* Without the marker: Choose shows again if nothing is live, so a stale
+              or bookmarked marker cannot trap the owner here. */}
+          <a href={SETTINGS_PLAN_PATH} className="text-sm text-[var(--v2-primary)] underline" data-testid="plan-purchase-check-again">
+            {t('plan.purchase.check_again')}
+          </a>
+        </div>
+      )}
+
       {/* Free plans only: what happens when free is not free. Written now so the
           change is something the customer has already read once. */}
       {sentence(plan.whenThisChanges) && <Notice>{sentence(plan.whenThisChanges)}</Notice>}
@@ -339,15 +460,31 @@ export function PlanSection() {
         )}
       </div>
 
-      {/* The plan above, as information. No button: step 1 is read-only. */}
-      {plan.nextPlanUp && <NextPlanUp upgrade={plan.nextPlanUp} />}
+      {/* The plan above, as information. Its own footer no longer says
+          "Available to choose." once the server sends a purchase view: the Choose
+          list below is the action, and with nothing offered (paying, switches
+          off) the line would promise a choice nobody can make. */}
+      {/* `!== undefined`, not truthiness (SA P-4.2 review): the route always
+          sends `purchase`, and `null` (the view threw, or the key mode is
+          unknown) offers nothing either, so it must not bring the line back. */}
+      {plan.nextPlanUp && <NextPlanUp upgrade={plan.nextPlanUp} purchaseKnown={plan.purchase !== undefined} />}
+
+      {/* Buying (P-4.2): only what the server offers, and not while a payment is landing. */}
+      {marker === null && plan.purchase?.offer.kind === 'choose' && (plan.plans?.length ?? 0) > 0 && (
+        <PlanPurchase
+          plans={plan.plans ?? []}
+          tiers={plan.purchase.offer.tiers}
+          endsFreeAccess={plan.purchase.endsFreeAccessOnPurchase}
+          onComplete={onCheckoutComplete}
+        />
+      )}
     </div>
   );
 }
 
-function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
-  const { t, language } = useLanguage();
-  const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language);
+function NextPlanUp({ upgrade, purchaseKnown = false }: { upgrade: PlanUpgrade; purchaseKnown?: boolean }) {
+  const { t, language, timezone } = useLanguage();
+  const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language, timezone);
   // Every word on this card comes from the dictionary (user decision,
   // 2026-10-02): the values were already in the reader's language, and English
   // words around them made one mixed line in Hebrew and Spanish (QA-6b-E1).
@@ -434,9 +571,9 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
           Driven by `availableToBuy`, so WS-2 step 3 flips a config flag and this
           becomes a real action without the component being touched. */}
       {upgrade.availableToBuy ? (
-        // The buy flow arrives with this flag (WS-2 step 3). That note is for us,
-        // not the owner, so it lives here rather than on the screen.
-        <p className="text-xs text-[var(--v2-text-muted)] mt-3">{t('plan.next.available')}</p>
+        // With a purchase view (P-4.2) the Choose list carries the action, so this
+        // line is not repeated; without one it reads as before.
+        purchaseKnown ? null : <p className="text-xs text-[var(--v2-text-muted)] mt-3">{t('plan.next.available')}</p>
       ) : (
         <p className="text-xs text-[var(--v2-text-muted)] mt-3">
           <span className="inline-block px-1.5 py-0.5 me-1.5 bg-[var(--v2-bg)] text-[var(--v2-text-muted)] rounded">
