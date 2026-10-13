@@ -19,10 +19,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Clock, User, Mail, Phone, Calendar, FileText, CheckCircle, XCircle, AlertCircle, Search, X, Plus, Globe, Facebook, MessageCircle, Users as UsersIcon, Check, Trash2, CreditCard, Tag, ClipboardList, Loader2 } from 'lucide-react';
-import PhoneInput from 'react-phone-number-input';
-import en from 'react-phone-number-input/locale/en';
+// The phone library is fetched after first paint, not with the page (PERF-2):
+// see components/crm/usePhoneLib.ts. The stylesheet stays static so the
+// cascade is unchanged.
 import 'react-phone-number-input/style.css';
-import { SearchableCountrySelect } from '@/components/crm/SearchableCountrySelect';
+import { usePhoneLib } from '@/components/crm/usePhoneLib';
+import { PhoneFieldPlaceholder } from '@/components/crm/PhoneFieldPlaceholder';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
 import { CancelReasonDialog } from '@/components/scheduling/CancelReasonDialog';
@@ -40,11 +42,6 @@ import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/Sc
 import { journeySteps } from '@/lib/business-os/clientJourney';
 import type { WeeklyAvailability } from './AvailabilityEditor';
 import type { Country } from 'react-phone-number-input';
-import {
-  applyCountryToPhone,
-  phoneFieldCountry,
-  phoneFieldValue,
-} from '@/components/crm/phoneField';
 
 const logger = createLogger({ module: 'SchedulingBookingModal' });
 
@@ -602,9 +599,18 @@ export function SchedulingBookingModal({
    * booking on the wrong country, and the calling code it applied belonged
    * somewhere else. See `components/crm/phoneField.ts`.
    */
-  const [phoneCountry, setPhoneCountry] = useState<Country>(() =>
-    phoneFieldCountry(formData.client_phone)
-  );
+  const phoneLib = usePhoneLib();
+  /*
+   * The number the starting country is read from: `formData.client_phone` as it was
+   * at mount, exactly what the initialiser read before. Held as a plain string
+   * because the reading itself needs the phone library, which may still be
+   * arriving at mount (PERF-2). Until the owner picks a country, the field's
+   * country is `phoneFieldCountry(phoneSeed)`, the same answer as before.
+   */
+  const [phoneSeed] = useState(() => formData.client_phone);
+  const [chosenPhoneCountry, setPhoneCountry] = useState<Country | undefined>(undefined);
+  const phoneCountry: Country | undefined =
+    chosenPhoneCountry ?? phoneLib?.phoneFieldCountry(phoneSeed);
   const [sendIntakeForm, setSendIntakeForm] = useState(false);
 
   // Intake form configuration status
@@ -2089,7 +2095,9 @@ export function SchedulingBookingModal({
                     </div>
                   </label>
                   <div className="flex gap-2" dir="ltr">
-                    <SearchableCountrySelect
+                    {phoneLib ? (
+                    <>
+                    <phoneLib.SearchableCountrySelect
                       value={phoneCountry}
                       /*
                         Choosing a country is a statement about the NUMBER, so it
@@ -2102,18 +2110,22 @@ export function SchedulingBookingModal({
                         setPhoneCountry(country);
                         setFormData(prev => ({
                           ...prev,
-                          client_phone: applyCountryToPhone(prev.client_phone, country) ?? prev.client_phone,
+                          client_phone: phoneLib.applyCountryToPhone(prev.client_phone, country) ?? prev.client_phone,
                         }));
                       }}
-                      labels={en}
+                      labels={phoneLib.phoneCountryLabelsEn}
                     />
-                    <PhoneInput
+                    <phoneLib.PhoneInput
                       countryCallingCodeEditable={false}
                       country={phoneCountry}
-                      value={phoneFieldValue(formData.client_phone, phoneCountry)}
+                      value={phoneLib.phoneFieldValue(formData.client_phone, phoneCountry)}
                       onChange={(value) => setFormData(prev => ({ ...prev, client_phone: value || '' }))}
                       className="phone-input-scheduling flex-1"
                     />
+                    </>
+                    ) : (
+                      <PhoneFieldPlaceholder className="phone-input-scheduling flex-1" />
+                    )}
                   </div>
                 </div>
 
