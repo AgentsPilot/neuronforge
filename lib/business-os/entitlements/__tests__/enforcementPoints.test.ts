@@ -483,6 +483,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       why: 'Plan payments P-3a (SA-P12 b): resolves the tier lookup key (`PLAN_STRIPE_PRICES`) to one Stripe price and compares it with the display price. It compares two prices, resolves no account and refuses nothing by plan; it is the runtime twin of planPriceCheck.ts.',
     },
     {
+      // Plan payments P-5a.2 (workplan §3.3, §3.5; SA P5-C11, Q-4).
+      file: 'lib/business-os/billing/heldPaymentView.ts',
+      symbols: ['TIER_MATRIX', 'TierId'],
+      why: 'Plan payments P-5a.2 (SA P5-C11, Q-4): the holding screen\'s model reads the plan NAME and monthly PRICE for display from `TIER_MATRIX.presentation` (G5-7: no literal on the screen), and borrows the `TierId` TYPE. Whether Pay is offered is decided by `heldPaymentOffer` in planCheckoutEligibility.ts (invite policy and switches), not here; this file resolves no plan, calls no `check()` / `decide()` and refuses nothing by plan or capability, so it is not a gate. The holding page itself imports nothing from the module.',
+    },
+    {
       file: 'components/test-business-os/PlanCheckoutPanel.tsx',
       symbols: ['TIER_ORDER'],
       why: 'Plan payments P-3a (SA Q-10): the internal /test-business-os Billing panel builds its tier select from `TIER_ORDER`, so the component holds no tier name. It is the demo trigger for the checkout route, displays nothing about a plan and refuses nothing.',

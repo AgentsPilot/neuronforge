@@ -178,6 +178,8 @@ function harness(options: Options = {}) {
     repo: repo as unknown as PlanCheckoutDeps['repo'],
     stripe: stripe as unknown as PlanCheckoutDeps['stripe'],
     pricesEnabled: () => true,
+    // P-5a.2: every held-payment switch on, so the held rules decide.
+    heldPaymentSwitches: () => ({ checkoutEnabled: true, pricesEnabled: true, paidInvitesAvailable: true }),
     mode: () => 'test',
     now: () => NOW,
     attemptId: () => 'qa-attempt',

@@ -198,6 +198,15 @@ const ENV = ['BUSINESS_OS_PLAN_CHECKOUT_ENABLED', 'BUSINESS_OS_PLAN_PRICES_ENABL
 const savedEnv: Record<string, string | undefined> = {};
 let clock = Date.parse('2026-10-07T10:00:00.000Z');
 
+/**
+ * P-5a.2 (S5-1): the held path also needs `paidInvitesAvailable`. It is a code
+ * constant (off on main), so this suite turns it on in memory for each test,
+ * the way a local demo flips it, and one test turns it off again. This file's
+ * module registry is its own, so no other suite sees the change.
+ */
+const mutablePolicy = INVITE_ISSUANCE_POLICY as { paidInvitesAvailable: boolean };
+const savedPaidInvitesAvailable = mutablePolicy.paidInvitesAvailable;
+
 beforeAll(() => {
   for (const name of ENV) savedEnv[name] = process.env[name];
 });
@@ -206,6 +215,7 @@ afterAll(() => {
     if (savedEnv[name] === undefined) delete process.env[name];
     else process.env[name] = savedEnv[name];
   }
+  mutablePolicy.paidInvitesAvailable = savedPaidInvitesAvailable;
   jest.restoreAllMocks();
 });
 
@@ -213,6 +223,7 @@ beforeEach(() => {
   process.env.BUSINESS_OS_PLAN_CHECKOUT_ENABLED = 'true';
   process.env.BUSINESS_OS_PLAN_PRICES_ENABLED = 'true';
   process.env.STRIPE_SECRET_KEY = 'sk_test_unit';
+  mutablePolicy.paidInvitesAvailable = true;
   // The shared price cache lives 60 s; each test runs two minutes later.
   clock += 120_000;
   jest.spyOn(Date, 'now').mockReturnValue(clock);
@@ -356,6 +367,16 @@ describe('POST /api/business-os/billing/plan/checkout — refusals map to status
       BODY,
       409,
       'held_tier_unresolved',
+    ],
+    [
+      'held friend while paidInvitesAvailable is off (P-5a.2, D5-3)',
+      () => {
+        state.lineage = { invite_id: INVITE, source: 'account_invite', first_paid_at: null };
+        mutablePolicy.paidInvitesAvailable = false;
+      },
+      { tier: INVITE_ISSUANCE_POLICY.account.grantId, returnTo: 'awaiting_payment' },
+      409,
+      'held_payment_unavailable',
     ],
     ['plan snapshot unreadable', () => (state.snapshot = { unavailable: true, resolution: null }), BODY, 503, 'plan_unreadable'],
     ['no plan row', () => (state.snapshot = { unavailable: false, resolution: { anomaly: 'no_plan_row' } }), BODY, 409, 'no_plan_row'],
