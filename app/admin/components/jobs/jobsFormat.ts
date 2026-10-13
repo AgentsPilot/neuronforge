@@ -3,21 +3,11 @@
  * list (moved here from JobsQueuesView.tsx by ADMIN_BOS_CLEANUP slice 7a,
  * OP-13, so the two share one copy without a circular import). No behaviour
  * change. A plain module, not a component: no imports, no 'use client'.
+ *
+ * Admin Layout Standard L-1b (C-5, CR-4): `formatUtc` moved out. Every Jobs
+ * file prints time through the shared `app/admin/components/layout/adminFormat.ts`,
+ * which has the same behaviour. `ageWords` stays here.
  */
-
-/**
- * "YYYY-MM-DD HH:mm UTC" for any ISO timestamp, whatever its offset (QA-L2).
- * The value is converted to UTC through Date, never sliced as text, so a
- * database that answers in another timezone (e.g. "+02:00") can never show a
- * local time labelled "UTC".
- */
-export function formatUtc(iso: string | null): string {
-  if (!iso) return '—';
-  const time = new Date(iso);
-  if (Number.isNaN(time.getTime())) return '—';
-  const utcIso = time.toISOString();
-  return `${utcIso.slice(0, 10)} ${utcIso.slice(11, 16)} UTC`;
-}
 
 /** "25 min", "4 h 0 min", "3 d 2 h"; "none" without a value. */
 export function ageWords(minutes: number | null): string {

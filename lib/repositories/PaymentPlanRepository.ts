@@ -9,7 +9,7 @@
  * Supports multi-currency and multiple payment processors.
  */
 
-import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
 import { planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { createLogger } from '@/lib/logger';
 
@@ -178,6 +178,53 @@ export interface PaymentPlanInstallmentUpdate {
 export interface PaymentPlanRepositoryResult<T> {
   data: T | null;
   error: Error | null;
+}
+
+// ── Stripe webhook and plan binding: period shapes (CF-5 PR 4) ───────────────
+// The queries the Stripe webhook and `bindPlanSubscription` issued inline
+// before they moved here (docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md
+// §7.3.5). Column lists are fixed inside each method; no caller chooses one.
+
+/** What the webhook records on a period Stripe collected: Stripe's invoice and our payment row. */
+export interface WebhookPeriodPayment {
+  stripeInvoiceId: string;
+  transactionId: string | null;
+}
+
+/** The next unpaid period of a plan: when it falls due and how much. */
+export type WebhookNextPeriod = Pick<PaymentPlanInstallment, 'due_date' | 'amount'>;
+
+/**
+ * One projected period of a plan that `bindPlanSubscription` has just bounded.
+ * The caller builds it as an object literal, so an extra key fails `tsc`
+ * (SA C-3). `subscription_id` is the `payment_plan_subscriptions` row id.
+ */
+export interface NewProjectedPeriodRow {
+  user_id: string;
+  payment_plan_id: string;
+  subscription_id: string;
+  booking_id: string | null;
+  contact_id: string | null;
+  installment_number: number;
+  amount: number;
+  currency: string;
+  due_date: string;
+  status: 'pending';
+}
+
+/**
+ * supabase-js's result, passed through unchanged (the same error object). The
+ * CF-5 PR 4 methods neither catch nor log (see their sections).
+ */
+export interface WebhookInstallmentResult<T> {
+  data: T | null;
+  error: PostgrestError | null;
+}
+
+/** A head-only count, as supabase-js answers it. */
+export interface ProjectedPeriodCountResult {
+  count: number | null;
+  error: PostgrestError | null;
 }
 
 // ==================== PAYMENT PLAN REPOSITORY ====================
@@ -859,6 +906,171 @@ export class PaymentPlanRepository {
       logger.error({ err: error, planId, contactId, userId }, 'Failed to get plan summary');
       return { data: null, error: error as Error };
     }
+  }
+
+  // Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)
+  //
+  // Moved out of `app/api/stripe/webhook/route.ts` (`recordPlanPeriodPaid`) and
+  // `lib/payments/bindPlanSubscription.ts` with no behaviour change (CF-5 PR 4,
+  // CLAUDE.md rule 1). Each method issues exactly the query the caller issued
+  // inline: same table, operation, columns, filters in order, payload and its
+  // key order, terminal. The webhook harness records the full chain; the bind
+  // unit tests record bind's.
+  //
+  // No `user_id` filter, as an exception to rule 4, bounded per
+  // docs/REPOSITORY_STRATEGY.md ("unscoped by design"): each doc names the owner
+  // check it relies on instead. A unit test asserts none adds one.
+  //
+  // Errors: supabase-js's own result, with no try/catch and no logging, unlike
+  // the methods above. The callers log every error they act on; a catch here
+  // would turn a thrown query into a quiet miss where the webhook used to fail
+  // with 500 and let Stripe retry.
+
+  /**
+   * ⟨unscoped-by-design⟩ The period already recorded for a Stripe invoice, or
+   * `null`. It is what makes a redelivered `invoice.paid` safe (the unique index
+   * on `stripe_invoice_id` backs it).
+   *
+   * Owner check relied on: the key is the invoice id of a signature-verified
+   * event, and the route proved the plan owned (`accountOwns`) before this read.
+   */
+  async findInstallmentIdByStripeInvoiceId(
+    stripeInvoiceId: string
+  ): Promise<WebhookInstallmentResult<{ id: string }>> {
+    const { data, error } = await this.supabase
+      .from('payment_plan_installments')
+      .select('id')
+      .eq('stripe_invoice_id', stripeInvoiceId)
+      .maybeSingle<{ id: string }>();
+    return { data, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Marks the projected period Stripe just collected as
+   * paid, with the same six fields `markInstallmentPaid` writes on the owner
+   * path plus Stripe's invoice id. Found by plan and period number.
+   *
+   * Owner check relied on: `planSubscriptionId` is the id of the plan row the
+   * route proved owned (`accountOwns`); the transaction id is the payment row
+   * it recorded for that plan a moment earlier.
+   */
+  async markPeriodPaidFromStripe(
+    planSubscriptionId: string,
+    installmentNumber: number,
+    payment: WebhookPeriodPayment
+  ): Promise<WebhookInstallmentResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_plan_installments')
+      .update({
+        status: 'paid',
+        paid_at: new Date().toISOString(),
+        stripe_invoice_id: payment.stripeInvoiceId,
+        payment_method: 'card',
+        processor_type: 'stripe',
+        transaction_id: payment.transactionId,
+        next_retry_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('subscription_id', planSubscriptionId)
+      .eq('installment_number', installmentNumber);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ The plan's next `pending` period (lowest number), or
+   * `null`: when the next charge falls due and how much it is.
+   *
+   * Owner check relied on: `planSubscriptionId` is the id of the plan row the
+   * route proved owned (`accountOwns`).
+   */
+  async findNextPendingPeriod(planSubscriptionId: string): Promise<WebhookInstallmentResult<WebhookNextPeriod>> {
+    const { data, error } = await this.supabase
+      .from('payment_plan_installments')
+      .select('due_date, amount')
+      .eq('subscription_id', planSubscriptionId)
+      .eq('status', 'pending')
+      .order('installment_number')
+      .limit(1)
+      .maybeSingle<WebhookNextPeriod>();
+    return { data, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ How many periods a bound plan already has (a head-only
+   * count; no row is read). `bindPlanSubscription` uses it to tell a finished
+   * bind from one whose projection never landed.
+   *
+   * Owner check relied on: `planSubscriptionId` is our own plan row's id, found
+   * by the Stripe subscription id the caller handed to bind after proving the
+   * sending account owns `ownerId`. Only a number comes back.
+   */
+  async countProjectedPeriods(planSubscriptionId: string): Promise<ProjectedPeriodCountResult> {
+    const { count, error } = await this.supabase
+      .from('payment_plan_installments')
+      .select('id', { count: 'exact', head: true })
+      .eq('subscription_id', planSubscriptionId);
+    return { count, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Writes the projected periods of a plan
+   * `bindPlanSubscription` has just bounded, in one statement, as built by the
+   * caller; nothing is added, reordered or read back.
+   *
+   * Owner check relied on: every row carries `user_id: ownerId`, which bind's
+   * caller proved owns the sending account; its booking and plan ids were vetted
+   * against that owner (`vetLinkId`, Fix-1b) before the rows were built.
+   */
+  async insertProjectedPeriods(rows: NewProjectedPeriodRow[]): Promise<WebhookInstallmentResult<null>> {
+    const { error } = await this.supabase.from('payment_plan_installments').insert(rows);
+    return { data: null, error };
+  }
+
+  // Stripe webhook and plan binding: owner-scoped (CF-5 PR 4)
+  //
+  // The same moves as the section above, for the two queries that already
+  // carried a `user_id` filter inline. They keep it, in the same place. Same
+  // error handling: no try/catch, no logging.
+
+  /**
+   * Stripe ended a plan that was not complete: its unsettled periods stop
+   * counting as owed. Scoped to the plan's owner (proved by `accountOwns`).
+   *
+   * `subscriptionId` is compared with `payment_plan_installments.subscription_id`,
+   * which is our plan row's UUID. The webhook passes Stripe's `sub_…` id here
+   * today, so this matches no row (F-3, reported for a business decision and
+   * pinned by the harness). The query is kept exactly as it was; do not fix it
+   * here.
+   */
+  async cancelOpenPeriodsForEndedPlan(userId: string, subscriptionId: string): Promise<WebhookInstallmentResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_plan_installments')
+      .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('subscription_id', subscriptionId)
+      .not('status', 'in', '(paid,cancelled)');
+    return { data: null, error };
+  }
+
+  /**
+   * The owner's oldest active `payment_plans` row for a service, or `null`.
+   * `bindPlanSubscription`'s fallback when the sale carried no (owned) plan id,
+   * matching how the public pages pick a plan.
+   */
+  async findOldestActivePlanIdForService(
+    userId: string,
+    serviceId: string
+  ): Promise<WebhookInstallmentResult<{ id: string }>> {
+    const { data, error } = await this.supabase
+      .from('payment_plans')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('service_id', serviceId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    return { data, error };
   }
 
   // ==================== HELPER METHODS ====================

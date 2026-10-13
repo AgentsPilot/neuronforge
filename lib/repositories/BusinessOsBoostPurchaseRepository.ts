@@ -243,11 +243,35 @@ export interface BusinessOsBoostTransitionResult {
 export type BusinessOsBoostReceiptStatus = 'recorded' | 'already_recorded' | 'conflict' | 'not_paid' | 'not_found';
 
 export const BOOST_CAP_OVERRIDE_COLUMNS = 'id, user_id, cap_minor, currency, reason, actor_admin_id, created_at';
+/** Slice 6a: the override history adds how each one ended. */
+export const BOOST_CAP_OVERRIDE_HISTORY_COLUMNS = `${BOOST_CAP_OVERRIDE_COLUMNS}, ended_at, ended_by_admin_id, ended_reason`;
+
+/** One cap change of an account, active or ended (slice 6a, the admin history). */
+export interface BusinessOsBoostCapOverrideHistoryRow extends BusinessOsBoostCapOverride {
+  endedAt: string | null;
+  endedByAdminId: string | null;
+  /** The admin's reason, or `replaced` when a newer override closed it. */
+  endedReason: string | null;
+}
 
 export const BOOST_PURCHASE_READ_LIMITS = {
   /** The most rows `listForAccount` returns; a request above it is clamped. */
   MAX_LIST: 200,
+  /** The most cap changes `listCapOverrides` returns (slice 6a: "the last 20 changes"). */
+  MAX_CAP_HISTORY: 20,
+  /** The most rows one `listForReconcile` read returns (slice 4b.2: the nightly batch). */
+  MAX_RECONCILE_BATCH: 50,
 } as const;
+
+/**
+ * The three reads of the slice 4b.2 reconcile pass (workplan §3.4, SA C-9):
+ *   - `stuck`: `pending` / `awaiting_payment` whose checkout expired before `before`;
+ *   - `receipt_missing`: `paid` with no receipt link, paid before `before`;
+ *   - `disputed`: `disputed`, last moved before `before`.
+ * Each is oldest first. The first two match the partial indexes of migration 20261032.
+ */
+export const BOOST_RECONCILE_LIST_KINDS = ['stuck', 'receipt_missing', 'disputed'] as const;
+export type BoostReconcileListKind = (typeof BOOST_RECONCILE_LIST_KINDS)[number];
 
 const ATTACH_STATUSES: readonly BusinessOsBoostAttachStatus[] = [
   'attached',
@@ -800,6 +824,50 @@ export class BusinessOsBoostPurchaseRepository {
     }
   }
 
+  /**
+   * UNSCOPED BY DESIGN (credits boost slice 4b.2; durable-queue-drain Step 9,
+   * tenant-isolation-guard Step 6). For the reconcile pass only
+   * (`lib/business-os/boost/boostReconcileDeps.ts`, pinned by test): a cron reads
+   * stuck rows across every account. Nothing here comes from a request: the kind,
+   * the mode and the cut-off are the pass's own. Every effect the pass then has
+   * runs through the 2b functions on the row's own id and returns the row's
+   * account (R-6). One Stripe mode per read: a row of the other mode cannot be
+   * read with this server's key.
+   */
+  async listForReconcile(input: {
+    kind: BoostReconcileListKind;
+    livemode: boolean;
+    before: string;
+    limit: number;
+  }): Promise<RepositoryResult<BusinessOsBoostPurchase[]>> {
+    const method = 'listForReconcile';
+    const ids = { kind: input?.kind, livemode: input?.livemode };
+    try {
+      const kind = toOneOf(input.kind, BOOST_RECONCILE_LIST_KINDS);
+      if (typeof input.livemode !== 'boolean') throw new BoostPurchaseRepositoryError('livemode must be a boolean');
+      const before = toTimestamp(input.before);
+      if (!(typeof input.limit === 'number' && Number.isFinite(input.limit))) {
+        throw new BoostPurchaseRepositoryError('A batch size is required');
+      }
+      const limit = Math.min(Math.max(1, Math.floor(input.limit)), BOOST_PURCHASE_READ_LIMITS.MAX_RECONCILE_BATCH);
+
+      // Intentionally no user_id filter: see the JSDoc (a cross-account cron read).
+      const query = this.supabase.from('business_os_boost_purchases').select(BOOST_PURCHASE_COLUMNS).eq('livemode', input.livemode);
+      const filtered =
+        kind === 'stuck'
+          ? query.in('status', ['pending', 'awaiting_payment']).lt('checkout_expires_at', before).order('checkout_expires_at', { ascending: true })
+          : kind === 'receipt_missing'
+            ? query.eq('status', 'paid').is('receipt_url', null).lt('paid_at', before).order('paid_at', { ascending: true })
+            : query.eq('status', 'disputed').lt('status_changed_at', before).order('status_changed_at', { ascending: true });
+      // The id breaks ties, so a batch is the same rows on a re-run.
+      const { data, error } = await filtered.order('id', { ascending: true }).range(0, limit - 1);
+      if (error) throw error;
+      return { data: ((data ?? []) as unknown as Record<string, unknown>[]).map(mapPurchase), error: null };
+    } catch (error) {
+      return this.fail(method, error, ids);
+    }
+  }
+
   /** The account's active cap override, or `null` (the default cap applies). */
   async findActiveCapOverride(accountId: string): Promise<RepositoryResult<BusinessOsBoostCapOverride | null>> {
     const method = 'findActiveCapOverride';
@@ -818,6 +886,42 @@ export class BusinessOsBoostPurchaseRepository {
       return this.fail(method, error, { accountId });
     }
   }
+  /**
+   * The account's cap changes, newest first, at most 20 (credits boost slice 6a,
+   * the admin view). Scoped `.eq('user_id', accountId)`: an override detached by
+   * an account deletion (`user_id` NULL, 2a QA I-2) can never be returned, so it
+   * can never show as anyone's active override.
+   */
+  async listCapOverrides(
+    accountId: string,
+    options: { limit?: number } = {}
+  ): Promise<RepositoryResult<BusinessOsBoostCapOverrideHistoryRow[]>> {
+    const method = 'listCapOverrides';
+    try {
+      this.assertUuid(accountId, 'An account id');
+      const limit = Math.min(Math.max(1, Math.floor(options.limit ?? BOOST_PURCHASE_READ_LIMITS.MAX_CAP_HISTORY)), BOOST_PURCHASE_READ_LIMITS.MAX_CAP_HISTORY);
+      const { data, error } = await this.supabase
+        .from('business_os_boost_cap_overrides')
+        .select(BOOST_CAP_OVERRIDE_HISTORY_COLUMNS)
+        .eq('user_id', accountId)
+        .order('created_at', { ascending: false })
+        .range(0, limit - 1);
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as Record<string, unknown>[];
+      return {
+        data: rows.map((raw) => ({
+          ...mapOverride(raw),
+          endedAt: toNullableTimestamp(raw.ended_at),
+          endedByAdminId: toNullableUuid(raw.ended_by_admin_id),
+          endedReason: toNullableText(raw.ended_reason),
+        })),
+        error: null,
+      };
+    } catch (error) {
+      return this.fail(method, error, { accountId });
+    }
+  }
+
   // ============ Slice 2b: crediting, status and receipt ============
 
   /**

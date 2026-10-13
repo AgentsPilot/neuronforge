@@ -5,7 +5,7 @@
  *
  * ⚠️ DESTRUCTIVE AND LIVE once the second secret is set and the function is
  * applied (BQ-1): it removes one TEST account completely, login included, so
- * the email can sign up again. Every guard G-1 to G-18 runs inside the
+ * the email can sign up again. Every guard G-1 to G-19 runs inside the
  * generated, secret-gated database function; this route adds none and
  * removes none.
  *

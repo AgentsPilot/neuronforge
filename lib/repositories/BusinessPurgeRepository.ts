@@ -90,6 +90,11 @@ const SchemaIntrospectionSchema = z.object({
     z.object({
       table_name: z.string().min(1),
       column_name: z.string().min(1),
+      // information_schema's 'YES' / 'NO', already in the payload since
+      // 20260915a. OPTIONAL so the reconciler parses as before; the
+      // delete-graph check reads it for SET NULL / SET DEFAULT edges and
+      // treats an absent value as NOT nullable (fail closed).
+      is_nullable: z.string().optional(),
     })
   ),
   foreign_keys: z.array(

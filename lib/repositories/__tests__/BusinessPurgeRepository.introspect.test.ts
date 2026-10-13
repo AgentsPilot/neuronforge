@@ -46,7 +46,8 @@ describe('BusinessPurgeRepository.introspectSchema', () => {
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(rpc.mock.calls[0]).toEqual(['purge_schema_introspect']);
     expect(error).toBeNull();
-    expect(data?.columns).toEqual([{ table_name: 'a', column_name: 'user_id' }]);
+    // is_nullable is kept for the delete-graph check (SET NULL into a NOT NULL column, 2026-10-08).
+    expect(data?.columns).toEqual([{ table_name: 'a', column_name: 'user_id', is_nullable: 'NO' }]);
     expect(data?.foreign_keys).toEqual(VALID.foreign_keys);
     // Purge slice 3a: triggers are kept for the delete-graph check.
     expect(data?.triggers).toEqual(VALID.triggers);

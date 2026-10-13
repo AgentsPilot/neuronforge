@@ -35,6 +35,14 @@
  * (the second-to-last cell); the new `RetryQueueItemDialog.tsx` owns one POST,
  * to the literal action URL, with a pinned body that carries no time, owner or
  * account, and never says "Cancel", "Requeue" or "Drain".
+ *
+ * Amended by Admin Layout Standard L-1b (§7.2, C-10, C-12, C-14 S-7),
+ * narrowly: the "green lives in exactly one constant, GREEN_STYLE" rule is
+ * rewritten, because the view's `Badge` became the shared `StatusChip`: no
+ * Jobs file holds a green class at all, green reaches the page only through
+ * the chip's `ok` tone, and the view maps exactly two statuses to `'ok'`
+ * (healthy, clear). A new block pins the three dialogs to the shared admin
+ * dialog classes (F-88, F-89). Every other rule is unchanged.
  */
 
 import * as fs from 'fs';
@@ -92,13 +100,18 @@ describe('the jobs & queues client files', () => {
     expect(code).not.toMatch(/\bOK\b/);
   });
 
-  it('green lives in exactly one constant, GREEN_STYLE (SC-7(g))', () => {
-    const code = codeOf(read('app/admin/components/jobs/JobsQueuesView.tsx'));
-    const decl = code.match(/const GREEN_STYLE = '([^']*)';/);
-    expect(decl?.[1]).toMatch(GREEN_CLASS);
-    expect(code.replace(decl![0], '')).not.toMatch(GREEN_CLASS);
-    expect(code.match(/\bGREEN_STYLE\b/g)).toHaveLength(2); // the declaration and TONE_CLASSES.green
-    expect(codeOf(read('app/admin/jobs-queues/page.tsx'))).not.toMatch(GREEN_CLASS);
+  // Rewritten by Admin Layout Standard L-1b (was "green lives in exactly one
+  // constant, GREEN_STYLE", SC-7(g)): the green moved to the shared chip.
+  it.each([...CLIENT_FILES, FORMAT])('%s holds no green class (green comes only from the shared StatusChip, C-14 S-7)', (file) => {
+    expect(codeOf(read(file))).not.toMatch(GREEN_CLASS);
+  });
+
+  it('the view maps exactly two statuses to the green ok tone: healthy and clear', () => {
+    const code = codeOf(read(VIEW));
+    expect(code.match(/:\s*'ok'/g)).toHaveLength(2);
+    expect(code).toMatch(/\bhealthy:\s*'ok'/);
+    expect(code).toMatch(/\bclear:\s*'ok'/);
+    expect(code).toMatch(/import\s*\{[^}]*\bStatusChip\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/StatusChip'/);
   });
 });
 
@@ -296,5 +309,18 @@ describe('slice 7c: one more item action, and nothing more (SA OP-16, W7C-13)', 
 
   it('CancelQueueItemDialog.tsx is untouched by 7c: it still never says Retry', () => {
     expect(codeOf(read(CANCEL_DIALOG))).not.toMatch(/\bRetry\b/);
+  });
+});
+
+describe('Admin Layout Standard L-1b: the dialogs use the shared admin dialog classes (C-10; F-88, F-89)', () => {
+  it.each([DIALOG, CANCEL_DIALOG, RETRY_DIALOG])('%s passes the three shared constants and declares no palette of its own', (file) => {
+    const code = codeOf(read(file));
+    expect(code).toMatch(/import\s*\{[^}]*\bADMIN_DIALOG_CLASS\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/adminDialog'/);
+    expect(code.match(/className=\{ADMIN_DIALOG_CLASS\}/g)).toHaveLength(1);
+    expect(code).toMatch(/<DialogContent\b[^>]*className=\{ADMIN_DIALOG_CLASS\}/);
+    expect(code.match(/<DialogTitle className=\{ADMIN_DIALOG_TITLE_CLASS\}>/g)).toHaveLength(1);
+    expect(code.match(/<DialogDescription className=\{ADMIN_DIALOG_DESCRIPTION_CLASS\}>/g)).toHaveLength(1);
+    expect(code).not.toMatch(/\bDARK_DIALOG\b/);
+    expect(code).not.toMatch(/!bg-/);
   });
 });

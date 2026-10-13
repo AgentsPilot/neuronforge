@@ -65,7 +65,7 @@ describe('toBoostPurchaseView', () => {
     ['abandoned', 'expired'],
     ['flagged_mismatch', 'under_review'],
     ['disputed', 'under_review'],
-    ['dispute_lost', 'under_review'],
+    ['dispute_lost', 'reversed'],
     ['refunded', 'refunded'],
     ['partially_refunded', 'partially_refunded'],
   ] as const)('row status %s → owner status %s', (row, owner) => {

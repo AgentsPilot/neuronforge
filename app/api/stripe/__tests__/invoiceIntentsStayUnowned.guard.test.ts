@@ -50,15 +50,52 @@ describe('the payment-intent handler', () => {
     expect(code).toMatch(/looksStripeGenerated/);
   });
 
+  /*
+   * CF-5 PR 3 (workplan BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES §7.3.4, SA C-2)
+   * moved the lookup by intent and the attach into `PaymentTransactionRepository`.
+   * Checking the route text alone would now fail for the wrong reason, or, once
+   * rewritten loosely, pass on a handler that no longer does either. So the
+   * check follows the queries: the route still makes both calls, with the
+   * intent and the invoice it proved owned, and attaches only a row that has no
+   * invoice yet; the repository methods still hold the two chains.
+   */
   it('invoice.paid no longer assumes it is the only writer', () => {
     const code = codeOf(WEBHOOK);
     // It must look the row up by intent as well as by invoice…
-    expect(code).toMatch(/\.eq\('stripe_payment_intent_id', paymentIntentId\)/);
-    // …and attach rather than insert a colliding row.
+    expect(code).toMatch(
+      /paymentTransactionRepository\.findByPaymentIntentId\(\s*paymentIntentId,\s*WEBHOOK_TRANSACTION_ATTACH_COLUMNS\s*\)/
+    );
+    // …and attach rather than insert a colliding row, only when the row has no invoice.
     expect(code).toMatch(/alreadyRecorded/);
-    expect(code).toMatch(/\.update\(\{ invoice_id: platformInvoice\.id \}\)/);
+    expect(code).toMatch(
+      /if \(!byIntent\.invoice_id\) \{\s*const \{ error: attachError \} = await paymentTransactionRepository\.attachToInvoice\(\s*byIntent\.id,\s*platformInvoice\.id\s*\)/
+    );
+
+    const lookup = repositoryMethod('findByPaymentIntentId');
+    expect(lookup).toMatch(/from\('payment_transactions'\)/);
+    expect(lookup).toMatch(/\.eq\('stripe_payment_intent_id', paymentIntentId\)/);
+    const attach = repositoryMethod('attachToInvoice');
+    expect(attach).toMatch(/from\('payment_transactions'\)/);
+    expect(attach).toMatch(/\.update\(\{ invoice_id: invoiceId \}\)/);
+    expect(attach).toMatch(/\.eq\('id', id\)/);
+    // The lookup the handler uses must return the invoice link it tests.
+    expect(codeOf(REPOSITORY)).toMatch(/WEBHOOK_TRANSACTION_ATTACH_COLUMNS = 'id, invoice_id';/);
   });
 });
+
+const REPOSITORY = 'lib/repositories/PaymentRepository.ts';
+
+/** One `PaymentTransactionRepository` method's code (comments removed), up to the next method. */
+function repositoryMethod(name: string): string {
+  const code = codeOf(REPOSITORY);
+  const classStart = code.indexOf('export class PaymentTransactionRepository');
+  const classEnd = code.indexOf('\nexport ', classStart + 1);
+  const cls = code.slice(classStart, classEnd);
+  const start = cls.search(new RegExp(`\\n  async ${name}\\b`));
+  expect(start).toBeGreaterThan(-1);
+  const next = cls.indexOf('\n  async ', start + 1);
+  return cls.slice(start, next === -1 ? undefined : next);
+}
 
 describe('no surface stamps an owner on an invoice-backed intent', () => {
   /**

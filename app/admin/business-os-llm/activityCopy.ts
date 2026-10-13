@@ -5,7 +5,6 @@
  */
 
 import type { ActivityOutcome, ActivitySort, ActivityTrigger } from './activityTypes';
-import type { ActivityPreset } from './activityPresets';
 
 export const ACTIVITY_TAB_LABEL = 'Activity';
 
@@ -14,15 +13,6 @@ export const ACTIVITY_INTRO =
   'Read from the credit ledger; nothing here changes it.';
 
 export const TIMES_ARE_UTC = 'Times are UTC.';
-
-export const PRESET_LABELS: Record<ActivityPreset, string> = {
-  today: 'Today',
-  yesterday: 'Yesterday',
-  this_week: 'This week',
-  last_week: 'Last week',
-  this_month: 'This month',
-  last_month: 'Last month',
-};
 
 export const SORT_LABELS: Record<ActivitySort, string> = {
   time: 'Newest first',
@@ -39,6 +29,29 @@ export const TRIGGER_LABELS: Record<ActivityTrigger, string> = {
   scheduled: 'Scheduled',
   external: 'External',
 };
+
+// ---- L-8a: the filter bar's own words (the window labels are the shared ones) ----
+
+export const MIN_COST_LABEL = 'Minimum cost (USD)';
+/** The minimum cost's own Apply: visible "Apply", named apart from Custom's (WCAG 2.5.3: the name starts with the visible word). */
+export const APPLY_MIN_COST_LABEL = 'Apply minimum cost';
+export const SORT_LABEL = 'Sort';
+/** QA-L8a-1: a malformed amount is refused in the bar; the route keeps its size and precision messages. */
+export const MIN_COST_FORMAT_PROBLEM = 'Enter an amount like 0.25';
+
+// ---- L-8a: the KPI strip (§7.11). Every value comes from the payload already read (K-9) ----
+
+export const KPI_ACTIONS = 'AI actions';
+export const KPI_FAILED = 'Failed';
+export const KPI_COST = 'Cost (USD, net)';
+export const KPI_UNRESOLVED = 'Unresolved corrections';
+/** The count could not be read but the list is full: never a made-up number. */
+export const KPI_AT_LEAST = (shown: string) => `at least ${shown}`;
+export const KPI_UNKNOWN = 'Unknown';
+/** K-8: a figure taken over the rows shown, when the list is capped. */
+export const KPI_OF_SHOWN = (shown: string) => `of the ${shown} shown`;
+/** K-8: rows whose net figure could not be read are left out of the sum. */
+export const KPI_NET_LEFT_OUT = (n: string) => `${n} without a net figure left out`;
 
 export const AREA_NOT_DECLARED = 'Not declared';
 export const NAME_UNAVAILABLE = 'Name unavailable';
@@ -112,6 +125,8 @@ export const MARKER_LOST = 'No audit entry — lost';
 /** Neutral for every reason (SA-CR-B-3); the reason follows as visible text. */
 export const MARKER_ENTRY_UNKNOWN = 'Audit entry unknown';
 export const MARKER_ACCOUNT_MISMATCH = 'Audit entry on another account — defect';
+/** SA C-1: a charge of a non-AI service has no AI audit entry by design. */
+export const MARKER_NOT_AI = 'Not an AI action';
 
 /** The reason, short, shown as visible text in the chip (QA E-B3: never hover-only). */
 export const ENTRY_UNKNOWN_SHORT = {
@@ -183,18 +198,15 @@ export const COLUMNS = {
   state: 'Record state',
 } as const;
 
-export const SHOW_ALL_BUSINESSES = 'Show all businesses';
-
 // ---- B2a: the drill-down drawer (FR-B2, AC-B17: text, never colour alone) ----
 
-/** The row button's visible text; its accessible name is `OPEN_DETAILS_LABEL`. */
-export const OPEN_DETAILS = 'Open';
 /** The button's accessible name: which action, and when, so a screen reader can tell rows apart. */
 export const OPEN_DETAILS_LABEL = (actionType: string, when: string | null) =>
   `Open details for ${actionType || 'this action'}${when ? ` at ${when}` : ''}`;
 
 export const DRILL_DOWN_TITLE = 'AI action';
-export const DRILL_DOWN_LOADING = 'Reading the AI action…';
+/** L-8b: the shared loading state reads "Reading {what}…", the same words as before. */
+export const DRILL_DOWN_WHAT = 'the AI action';
 /** The route's one 404 body for every "not found": the screen says the same, and nothing more. */
 export const DRILL_DOWN_NOT_FOUND = 'This AI action could not be found.';
 export const DRILL_DOWN_ERROR_FALLBACK = 'Could not read the AI action';

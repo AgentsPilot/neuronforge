@@ -25,6 +25,13 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`,
+// and `@/lib/logger/client` re-exports from the mocked `@/lib/logger` above.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
+
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(mockSearch),
@@ -81,18 +88,20 @@ describe('the deep link from Businesses', () => {
     const fetchMock = mockRoute(EMPTY_PAGE);
     render(<AuditTrailPage />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const first = fetchedUrls(fetchMock)[0];
+    // The first LIST request: since L-1c the archive notice mounts with the
+    // page (no early-return spinner, SA M-3), so its request can come first.
+    await waitFor(() => expect(fetchedUrls(fetchMock).some((u) => u.includes('/api/admin/audit-trail'))).toBe(true));
+    const first = fetchedUrls(fetchMock).find((u) => u.includes('/api/admin/audit-trail')) as string;
     expect(first).toContain('action=BUSINESS_AI_ACTION_FAILED');
     expect(first).toContain(`user_id=${ACCOUNT}`);
-    expect((await screen.findByTestId('account-filter-chip')).textContent).toContain(ACCOUNT.slice(0, 8));
+    expect((await screen.findByTestId('business-filter-chip')).textContent).toContain(ACCOUNT.slice(0, 8));
   });
 
   it('clearing the chip drops the account filter', async () => {
     mockSearch = `user_id=${ACCOUNT}`;
     const fetchMock = mockRoute(EMPTY_PAGE);
     render(<AuditTrailPage />);
-    fireEvent.click(await screen.findByLabelText('Show every account'));
+    fireEvent.click(await screen.findByLabelText('Remove business'));
 
     await waitFor(() => {
       const last = fetchedUrls(fetchMock).at(-1) as string;

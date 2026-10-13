@@ -10,8 +10,10 @@
  * (`redirect_on_completion: 'if_required'`): completion arrives through
  * `onComplete`.
  *
- * Paying here changes NO plan until P-3b ships: the webhook recognises the
- * plan invoice and answers 500 by design (see the workplan's demo runbook).
+ * Since P-3b.2, paying here SWITCHES the account's plan: the webhook applies
+ * the paid plan invoice (see the P-3b workplan's demo runbook). Test mode only,
+ * but the database is shared, so use a test account and cancel the sandbox
+ * subscription afterwards.
  *
  * The tier list is `TIER_ORDER` from the entitlements config, so this file
  * holds no tier name. It imports nothing else from that module and decides
@@ -24,6 +26,7 @@ import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { EmbeddedCheckout, EmbeddedCheckoutProvider } from '@stripe/react-stripe-js';
 
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 
 type DebugLogType = 'info' | 'error' | 'success';
 
@@ -108,7 +111,8 @@ export function PlanCheckoutPanel({ onLog, onResponse }: PlanCheckoutPanelProps)
     <div>
       <p style={{ fontSize: '13px', color: '#666', marginTop: 0 }}>
         Opens a Business OS plan checkout for the signed-in account (Stripe test mode only).
-        Paying does <strong>not</strong> change the plan until P-3b. Test card: 4242 4242 4242 4242, any future
+        Paying <strong>switches the account&apos;s plan</strong>. The database is shared, so use a test account only,
+        and cancel the sandbox subscription in Stripe afterwards. Test card: 4242 4242 4242 4242, any future
         date, any CVC. Needs <code>BUSINESS_OS_PLAN_CHECKOUT_ENABLED</code> and{' '}
         <code>BUSINESS_OS_PLAN_PRICES_ENABLED</code> in your local environment.
       </p>
@@ -134,19 +138,12 @@ export function PlanCheckoutPanel({ onLog, onResponse }: PlanCheckoutPanelProps)
           type="button"
           onClick={start}
           disabled={loading || clientSecret !== null}
-          style={{
-            padding: '8px 16px',
-            backgroundColor: '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '3px',
-            cursor: loading || clientSecret !== null ? 'not-allowed' : 'pointer',
-          }}
+          className={harnessButton('primary', 'md')}
         >
           {loading ? 'Starting...' : 'Start checkout'}
         </button>
         {clientSecret !== null && (
-          <button type="button" onClick={reset} style={{ padding: '8px 16px', cursor: 'pointer' }}>
+          <button type="button" onClick={reset} className={harnessButton('secondary', 'md')}>
             Close checkout
           </button>
         )}
@@ -168,8 +165,8 @@ export function PlanCheckoutPanel({ onLog, onResponse }: PlanCheckoutPanelProps)
             options={{
               clientSecret,
               onComplete: () => {
-                setStatus(`Session ${sessionId} completed. The plan is unchanged until P-3b.`);
-                onLog?.('success', `Plan checkout ${sessionId} completed (no plan change until P-3b)`);
+                setStatus(`Session ${sessionId} completed. The plan switches once the paid invoice reaches the webhook.`);
+                onLog?.('success', `Plan checkout ${sessionId} completed (plan switches on the paid invoice)`);
               },
             }}
           >

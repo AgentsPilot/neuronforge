@@ -8,8 +8,10 @@
  * the RPC row is mapped strictly — exactly one row, known status, parsable
  * figures, never a 0 or a guessed status (W11a-8); a NaN amount never reaches
  * the database as JSON null (which the reversal would read as "the rest");
- * every read scopes by `user_id` with an explicit column list; and nothing is
- * ever thrown.
+ * every read scopes by `user_id` with an explicit column list, except the one
+ * named all-accounts read `listLotsWithDrawsAllAccounts` (finance & business
+ * health slice 1b, SA-Q10), which takes no argument and is tested for having
+ * no `user_id` filter at all; and nothing is ever thrown.
  */
 
 import * as fs from 'fs';
@@ -502,6 +504,134 @@ describe('listLotsWithDraws', () => {
     const failed = await repository.listLotsWithDraws(ACCOUNT);
     expect(failed.data).toBeNull();
     expect(failed.error).toBeInstanceOf(Error);
+  });
+});
+
+describe('listLotsWithDrawsAllAccounts (R-b, finance & business health slice 1b, SA-Q10)', () => {
+  const OTHER = '77777777-7777-4777-8777-777777777777';
+  const infoOf = (repository: BusinessOsCreditLotRepository) =>
+    (repository as unknown as { logger: { info: jest.Mock } }).logger.info;
+
+  beforeEach(() => {
+    mockWarn.mockClear();
+  });
+
+  it('reads lots then draws with the explicit column lists, NO eq at all, both orders, the ceiling range; attaches draws; keeps NULL-account and boost lots', async () => {
+    const LOT_3 = '44444444-4444-4444-8444-444444444446';
+    const { client, queries } = recordingClient((_calls, index) =>
+      index === 0
+        ? {
+            data: [
+              lotRaw(LOT),
+              lotRaw(LOT_2, { user_id: OTHER }),
+              // A deleted account's lot: user_id NULL (ON DELETE SET NULL).
+              lotRaw(LOT_3, { user_id: null, source: 'boost_purchase', actor_kind: 'stripe_webhook', actor_admin_id: null, reason: null, source_ref: REQUEST }),
+            ],
+            error: null,
+          }
+        : { data: [drawRaw(DRAW, LOT), { ...drawRaw('55555555-5555-4555-8555-555555555556', LOT_2, 2.5), user_id: OTHER }], error: null }
+    );
+    const repository = new BusinessOsCreditLotRepository(client);
+    const result = await repository.listLotsWithDrawsAllAccounts();
+
+    expect(result.error).toBeNull();
+    expect(queries).toHaveLength(2);
+    expect(argsOf(queries[0], 'from')).toEqual([['business_os_credit_lots']]);
+    expect(argsOf(queries[0], 'select')).toEqual([[CREDIT_LOT_COLUMNS]]);
+    expect(argsOf(queries[0], 'eq')).toEqual([]);
+    expect(argsOf(queries[0], 'order')).toEqual([
+      ['created_at', { ascending: true }],
+      ['id', { ascending: true }],
+    ]);
+    expect(argsOf(queries[0], 'range')).toEqual([[0, CREDIT_LOT_READ_LIMITS.ROWS_CEILING - 1]]);
+    expect(argsOf(queries[1], 'from')).toEqual([['business_os_credit_lot_draws']]);
+    expect(argsOf(queries[1], 'select')).toEqual([[CREDIT_LOT_DRAW_COLUMNS]]);
+    expect(argsOf(queries[1], 'eq')).toEqual([]);
+    expect(argsOf(queries[1], 'in')).toEqual([['lot_id', [LOT, LOT_2, LOT_3]]]);
+    expect(argsOf(queries[1], 'order')).toEqual([
+      ['created_at', { ascending: true }],
+      ['id', { ascending: true }],
+    ]);
+    expect(argsOf(queries[1], 'range')).toEqual([[0, CREDIT_LOT_READ_LIMITS.ROWS_CEILING - 1]]);
+
+    const [first, second, third] = result.data ?? [];
+    expect(first).toMatchObject({ id: LOT, accountId: ACCOUNT, creditsGranted: 100.5 });
+    expect(first.draws.map((draw) => draw.credits)).toEqual([40]);
+    expect(second).toMatchObject({ id: LOT_2, accountId: OTHER });
+    expect(second.draws.map((draw) => draw.credits)).toEqual([2.5]);
+    expect(third).toMatchObject({ id: LOT_3, accountId: null, source: 'boost_purchase' });
+    expect(third.draws).toEqual([]);
+  });
+
+  it('no lot at all → [] with one query', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    expect(await new BusinessOsCreditLotRepository(client).listLotsWithDrawsAllAccounts()).toEqual({ data: [], error: null });
+    expect(queries).toHaveLength(1);
+  });
+
+  it('the lots read at its ceiling → too_many_lots; a draws chunk at its ceiling → too_many_draws; never a partial list', async () => {
+    const many = Array.from({ length: CREDIT_LOT_READ_LIMITS.ROWS_CEILING }, (_v, i) =>
+      lotRaw(`44444444-4444-4444-8444-${String(i).padStart(12, '0')}`)
+    );
+    const lots = await new BusinessOsCreditLotRepository(recordingClient(() => ({ data: many, error: null })).client).listLotsWithDrawsAllAccounts();
+    expect(lots).toEqual({ data: null, error: expect.any(Error) });
+    expect(lots.error?.message).toBe('too_many_lots');
+
+    const manyDraws = Array.from({ length: CREDIT_LOT_READ_LIMITS.ROWS_CEILING }, (_v, i) =>
+      drawRaw(`55555555-5555-4555-8555-${String(i).padStart(12, '0')}`, LOT)
+    );
+    const { client } = recordingClient((_calls, index) => (index === 0 ? { data: [lotRaw(LOT)], error: null } : { data: manyDraws, error: null }));
+    const draws = await new BusinessOsCreditLotRepository(client).listLotsWithDrawsAllAccounts();
+    expect(draws.data).toBeNull();
+    expect(draws.error?.message).toBe('too_many_draws');
+  });
+
+  it('201 lots → two draws chunks (200, 1)', async () => {
+    const lots = Array.from({ length: CREDIT_LOT_READ_LIMITS.MAX_IDS_PER_REQUEST + 1 }, (_v, i) =>
+      lotRaw(`44444444-4444-4444-8444-${String(i).padStart(12, '0')}`)
+    );
+    const { client, queries } = recordingClient((_calls, index) => (index === 0 ? { data: lots, error: null } : { data: [], error: null }));
+    const result = await new BusinessOsCreditLotRepository(client).listLotsWithDrawsAllAccounts();
+    expect(result.error).toBeNull();
+    expect(queries).toHaveLength(3);
+    expect((argsOf(queries[1], 'in')[0][1] as string[]).length).toBe(CREDIT_LOT_READ_LIMITS.MAX_IDS_PER_REQUEST);
+    expect((argsOf(queries[2], 'in')[0][1] as string[]).length).toBe(1);
+  });
+
+  it('an unreadable figure makes the whole read an error, never a 0', async () => {
+    const { client } = recordingClient((_calls, index) =>
+      index === 0 ? { data: [lotRaw(LOT)], error: null } : { data: [drawRaw(DRAW, LOT, 'forty')], error: null }
+    );
+    const result = await new BusinessOsCreditLotRepository(client).listLotsWithDrawsAllAccounts();
+    expect(result).toEqual({ data: null, error: expect.any(Error) });
+    expect(result.error?.message).toBe('unreadable_figure');
+  });
+
+  it('a read error → { data: null, error }, logged at warn without details; success logs counts only', async () => {
+    const failing = new BusinessOsCreditLotRepository(
+      recordingClient(() => ({ data: null, error: { code: '42501', message: 'denied', details: 'Failing row contains (Goodwill, admin_grant:x)' } })).client
+    );
+    const failed = await failing.listLotsWithDrawsAllAccounts();
+    expect(failed.data).toBeNull();
+    expect(failed.error?.message).toBe('denied');
+    expect(mockWarn).toHaveBeenCalledTimes(1);
+    expect(mockWarn.mock.calls[0][0]).toEqual({ method: 'listLotsWithDrawsAllAccounts', sqlstate: '42501', errorMessage: 'denied' });
+    expect(JSON.stringify(mockWarn.mock.calls)).not.toContain('Failing row');
+
+    const { client } = recordingClient((_calls, index) =>
+      index === 0 ? { data: [lotRaw(LOT)], error: null } : { data: [drawRaw(DRAW, LOT)], error: null }
+    );
+    const repository = new BusinessOsCreditLotRepository(client);
+    await repository.listLotsWithDrawsAllAccounts();
+    const info = infoOf(repository);
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info.mock.calls[0][0]).toEqual({ method: 'listLotsWithDrawsAllAccounts', lots: 1, draws: 1, durationMs: expect.any(Number) });
+    // No id, no figure, no reason in the cross-account line.
+    expect(JSON.stringify(info.mock.calls)).not.toMatch(new RegExp(`${ACCOUNT}|${LOT}|100\\.5|Goodwill|Taken back`));
+  });
+
+  it('takes no argument: there is no account to omit (SEC-3)', () => {
+    expect(BusinessOsCreditLotRepository.prototype.listLotsWithDrawsAllAccounts.length).toBe(0);
   });
 });
 

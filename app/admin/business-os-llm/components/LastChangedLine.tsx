@@ -26,12 +26,18 @@
  * generated from the schema, so this renderer does not rely on it (QA DEF-6 /
  * F-10 — the repo cannot establish what the column really permits, and every
  * seeded row does carry a timestamp, so the sub-state is defensive). Every
- * branch goes through `formatInstant`, which returns `null` rather than the
- * epoch: `new Date(null)` is 1970, a wrong answer that looks like a right one.
+ * branch goes through the shared `formatUtc` (Admin Layout Standard L-10,
+ * C-5), which answers an em dash rather than the epoch for a missing or
+ * unreadable value: `new Date(null)` is 1970, a wrong answer that looks like a
+ * right one. The em dash is decided once, below, as "(time not recorded)".
  */
 
-import { formatInstant } from '../format';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+
 import type { LastChangedBy } from '../types';
+
+/** `formatUtc`'s answer for a missing or unreadable instant. */
+const NO_TIME = '—';
 
 interface Props {
   lastChangedBy: LastChangedBy;
@@ -40,8 +46,8 @@ interface Props {
 export function LastChangedLine({ lastChangedBy }: Props) {
   if (lastChangedBy.kind === 'no_row') return null;
 
-  const at = formatInstant(lastChangedBy.at);
-  const when = at ? `at ${at}` : '(time not recorded)';
+  const at = formatUtc(lastChangedBy.at);
+  const when = at === NO_TIME ? '(time not recorded)' : `at ${at}`;
 
   if (lastChangedBy.kind === 'admin') {
     return (

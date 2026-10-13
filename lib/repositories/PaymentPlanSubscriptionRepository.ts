@@ -22,6 +22,7 @@
  * @module lib/repositories/PaymentPlanSubscriptionRepository
  */
 
+import type { PostgrestError } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabaseServer';
 import type { CancelledBy } from '@/lib/business-os/cancellationReasons';
 import { createLogger } from '@/lib/logger';
@@ -84,6 +85,27 @@ export interface CreatePlanSubscriptionInput {
 export interface PlanSubscriptionResult<T> {
   data: T | null;
   error: Error | null;
+}
+
+/**
+ * What the Stripe webhook needs to decide how a plan ended (CF-5 PR 4): who
+ * owns it, whether it is already closed, and how many periods were paid.
+ */
+export type WebhookPlanEndState = Pick<
+  PlanSubscription,
+  'id' | 'user_id' | 'status' | 'installment_count' | 'periods_paid'
+>;
+
+/** How Stripe ended a plan: it ran to its last period, or it was stopped. */
+export type WebhookPlanOutcome = 'completed' | 'cancelled';
+
+/**
+ * supabase-js's result, passed through unchanged (the same error object). The
+ * webhook methods below neither catch nor log (see their section).
+ */
+export interface WebhookPlanSubscriptionResult<T> {
+  data: T | null;
+  error: PostgrestError | null;
 }
 
 export class PaymentPlanSubscriptionRepository {
@@ -286,6 +308,66 @@ export class PaymentPlanSubscriptionRepository {
       logger.error({ err: error, id, status }, 'Could not close the plan');
       return { data: null, error: error as Error };
     }
+  }
+
+  // Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)
+  //
+  // Moved out of `app/api/stripe/webhook/route.ts` (`handlePlanSubscriptionEnded`)
+  // with no behaviour change (CF-5 PR 4, CLAUDE.md rule 1). Each method issues
+  // exactly the query the route issued inline: same table, operation, columns,
+  // filters, payload and its key order, terminal. The webhook's
+  // characterisation harness records the full chain.
+  //
+  // No `user_id` filter, as an exception to rule 4, bounded per
+  // docs/REPOSITORY_STRATEGY.md ("unscoped by design"): each doc names the owner
+  // check it relies on instead. A unit test asserts neither adds one.
+  //
+  // Errors: supabase-js's own `{ data, error }`, with no try/catch and no
+  // logging, unlike the methods above. A catch would turn a thrown query into a
+  // quiet miss where the route used to fail with 500 and let Stripe retry.
+  //
+  // The names are fixed: the webhook's harness and `fix1Ownership.qa` delegate
+  // to these two by name (workplan SA O-2).
+
+  /**
+   * ⟨unscoped-by-design⟩ The plan a Stripe subscription belongs to, reduced to
+   * what deciding its end needs, or `null` when it is not one of our plans.
+   *
+   * Owner check relied on: the key is the subscription id of a
+   * signature-verified `customer.subscription.deleted` event, which no business
+   * can choose. The route then calls `accountOwns` on the returned `user_id`
+   * and writes nothing for an account that does not own the plan.
+   */
+  async findEndStateBySubscriptionId(
+    stripeSubscriptionId: string
+  ): Promise<WebhookPlanSubscriptionResult<WebhookPlanEndState>> {
+    const { data, error } = await this.supabase
+      .from('payment_plan_subscriptions')
+      .select('id, user_id, status, installment_count, periods_paid')
+      .eq('stripe_subscription_id', stripeSubscriptionId)
+      .maybeSingle<WebhookPlanEndState>();
+    return { data, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Records how Stripe ended a plan: `completed_at` for a
+   * plan that ran to its end, `cancelled_at` for one that was stopped. Not
+   * `close()`: that writes the three cancel-reason columns and reads the row
+   * back, which the webhook never did.
+   *
+   * Owner check relied on: the row was found by `findEndStateBySubscriptionId`
+   * and proved owned (`accountOwns`) before this write; the id is that row's.
+   */
+  async endFromStripe(id: string, outcome: WebhookPlanOutcome): Promise<WebhookPlanSubscriptionResult<null>> {
+    const { error } = await this.supabase
+      .from('payment_plan_subscriptions')
+      .update({
+        status: outcome,
+        [outcome === 'completed' ? 'completed_at' : 'cancelled_at']: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    return { data: null, error };
   }
 }
 

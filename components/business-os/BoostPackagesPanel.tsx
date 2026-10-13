@@ -44,6 +44,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { formatMinorAmount } from '@/lib/business-os/currency';
 import type { BoostLabels, BoostPackagesPayload, BoostPackageView } from '@/lib/business-os/boost/boostPackagesTypes';
+import { BoostPurchasesList } from '@/components/business-os/BoostPurchasesList';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'BoostPackagesPanel' });
@@ -324,6 +325,12 @@ export function BoostPackagesPanel({ open, onOpenChange, returnFocusRef }: Boost
           {!checkout && failed && (
             <div data-testid="boost-packages-error" style={{ marginTop: 4 }}>
               <p style={{ fontSize: 13, color: ALERT }}>{t('usage.boost.error')}</p>
+              {/* 5b.2 (user decision 2026-10-08): the Purchases list lives under the
+                  packages, so it is hidden too; say so, or an owner who has bought
+                  something would think they have no purchases. */}
+              <p data-testid="boost-purchases-unavailable" style={{ fontSize: 12.5, color: MUTED, marginTop: 4 }}>
+                {t('usage.boost.purchases.unavailable')}
+              </p>
               <button
                 type="button"
                 data-testid="boost-packages-retry"
@@ -453,6 +460,8 @@ export function BoostPackagesPanel({ open, onOpenChange, returnFocusRef }: Boost
               <p data-testid="boost-packages-footer" style={{ fontSize: 11.5, color: MUTED, marginTop: 4 }}>
                 {t('usage.boost.footer')}
               </p>
+              {/* 5b.2 (FR-26, SA Q-3): shown only once the owner has bought something. */}
+              <BoostPurchasesList open={open} />
             </>
           )}
         </div>

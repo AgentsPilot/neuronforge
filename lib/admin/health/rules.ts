@@ -94,7 +94,10 @@ export const FLAG_LABELS: Readonly<Record<FlagId, string>> = {
 
 // ── Condition kinds (a closed union; a new kind is code, SA C-11) ──────────
 
-export type HealthCondition<M extends MetricId, F extends FlagId> =
+// Widened to any string id with Health's own defaults (finance & business
+// health slice 1a, SA-Q1): the admin finance page reuses these condition kinds
+// with its own metric ids. Health's rules still name only Health ids.
+export type HealthCondition<M extends string = MetricId, F extends string = FlagId> =
   /** metric >= value. May fire on a lower bound (a bound above the value proves it). */
   | { kind: 'atLeast'; metric: M; value: number }
   /**

@@ -458,6 +458,17 @@ Full npm test                                                                 98
 - SA 3 / QA Edge 3: Fixed by Dev: unrecognised sections go to an "Other rows" list; trigger rows show `detail`.
 - QA Edges 1-2: Fixed by Dev: tests for network errors (probe, check, delete) and no email or tag in `onLog`; `ready()` now fails on its own timeout.
 
+### SA code review: Copy buttons + audit actor (20261047), 2026-10-08
+
+**Status:** Code Approved (`feature/cleanup-panel-copy-button`, uncommitted)
+
+- Panel: `formatCheckResultText` / `formatDeleteReportText` take only the server view, so the typed email and confirmation cannot reach the clipboard; tests assert the email is absent. Clipboard missing or refused gives a visible "select the text" message. "not present" only for `status: 'absent'`; `unknown` stays for a failed count.
+- 20261047 vs 20261046 (CRLF-normalised diff): only the header lines, the audit INSERT (`user_id` = `cleanup.actor_id`) and the version stamp differ. Guards, plan, REVOKE/GRANT (service_role only) identical. The rollback is 20261046 minus its two apply-guard DO blocks, so it restores the function exactly.
+- Attribution: `cleanup.actor_id` is set only inside the function from `p_actor` on delete (the admin route passes the signed-in admin; delete without an actor is refused). The pasted file never sets it, so a pasted run writes `user_id = actor_id = NULL` and `source = 'operator_sql'`.
+- "into" appears only as the SQL keyword `INSERT INTO`, never inside a string. 20261046 + rollback pinned as applied; allowlist and L8 entries built from generator constants (R-7).
+- Verified: 47 suites / 1,565 tests on the touched areas, no tsc errors in the touched files, eslint clean.
+- Low (non-blocking): a "failed" copy message stays until the next click. That is acceptable.
+
 ## Commit Info
 
 | PR | Branch | Merge | What |
@@ -482,3 +493,4 @@ Full npm test                                                                 98
 | 2026-10-07 | SA code review (first-live-run fix) | Insight tables reset/LEAF + LIVE_ONLY accepted (no capture migration; C-1 backlog + RLS note); both G-18 skips and the survivor dedup proven zero-preserving; keep 8 s, no service_role widening, the pasted path is the fallback; C-2 server-side duration, C-3 runbook threshold |
 | 2026-10-07 | SA re-check (rebuilt on main) | (a) rollback test OK; (b) TRUNCATE regex misses `%I`/quoted, mask the label instead; required-tables guard correct; land before #253, which then adds serverMs to cleanupApiTypes |
 | 2026-10-07 | QA re-run (first-live-run fix) | Jest 57 suites / 1617 tests, guards, full suite with no new failures. 20261043 executed on a PGlite replica that has the insight tables: order guard, control (20261042 blocks), stamp, check OK, delete CLEAN with both insight tables emptied and counted, other account untouched, server_ms, trigger events wording, 11 blocked paths with zero rows changed, both G-18 skips and the survivor dedup safe, exact rollback to 20261042, pasted files. Open: SA condition (b) TRUNCATE regex (Medium). 2 Low edge cases |
+| 2026-10-08 | SA code review (Copy buttons + 20261047 audit actor) | Code Approved: clipboard text from server data only; function diff limited to the audit INSERT + stamp; grants identical; pasted path stays unattributed |

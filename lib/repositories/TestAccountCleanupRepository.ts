@@ -5,7 +5,7 @@
  * (SA-5, SA-6, SA-10, SA re-ruling R-2, R-5, R-6).
  *
  * Calls ONE database function, the generated secret-gated cleanup RPC, through
- * the service-role client. No SQL exists here: the guards G-1 to G-18, the
+ * the service-role client. No SQL exists here: the guards G-1 to G-19, the
  * deletes, the survivor scan and the success audit row all run inside the
  * function, in PostgREST's single transaction, so any error rolls all of it
  * back. The function refuses with 42501 unless it is sent the second secret
@@ -19,7 +19,7 @@
  * ── Why the user_id rule and tenant-isolation-guard do not apply ──────────
  * CLAUDE.md rule 4 and the `tenant-isolation-guard` skill protect one tenant's
  * request from touching another tenant. This is an operator tool: the target
- * is resolved by EMAIL inside the function, and the guards G-1 to G-18
+ * is resolved by EMAIL inside the function, and the guards G-1 to G-19
  * (exactly one login, the email contains the test tag, not an admin, no real
  * money, no other account's rows affected) are its isolation.
  *

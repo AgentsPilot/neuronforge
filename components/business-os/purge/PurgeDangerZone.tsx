@@ -75,7 +75,7 @@ function DeleteGraphPanel({ graph, boxStyle }: { graph: DeleteGraphView | undefi
 
   const sections: Array<{ title: string; items: string[] }> = graph
     ? [
-        { title: 'Child deleted after a parent it blocks (RESTRICT / NO ACTION)', items: edges(graph.blockingOrderViolations) },
+        { title: 'Child deleted after a parent it blocks (RESTRICT / NO ACTION, or SET NULL into a NOT NULL column)', items: edges(graph.blockingOrderViolations) },
         { title: 'Tables a cascade would empty that this run does not list', items: edges(graph.unlistedCascadeChildren) },
         {
           title: 'DELETE triggers nobody has reviewed',

@@ -12,7 +12,7 @@ import { NextRequest } from 'next/server';
 // ── Environment: the production runtime, as Vercel calls the cron ───────────
 const SECRET = 'adoption-test-secret';
 const env = process.env as Record<string, string | undefined>;
-const saved = { NODE_ENV: env.NODE_ENV, VERCEL_ENV: env.VERCEL_ENV, CRON_SECRET: env.CRON_SECRET };
+const saved = { NODE_ENV: env.NODE_ENV, VERCEL_ENV: env.VERCEL_ENV, CRON_SECRET: env.CRON_SECRET, STRIPE_SECRET_KEY: env.STRIPE_SECRET_KEY };
 
 // ── The run record ──────────────────────────────────────────────────────────
 const mockStartRun = jest.fn();
@@ -151,6 +151,11 @@ beforeEach(() => {
   env.NODE_ENV = 'production';
   env.VERCEL_ENV = 'production';
   env.CRON_SECRET = SECRET;
+  // bos-billing-reconcile: the boost pass reads the Stripe mode from the key's
+  // prefix before it lists anything. A test-mode key, so "nothing to do" is a
+  // clean run (no stuck purchase is listed, so Stripe is never called) and not a
+  // run that could not tell which mode to read.
+  env.STRIPE_SECRET_KEY = 'sk_test_adoption';
   jest.clearAllMocks();
   resetCronRunRecorderState();
   mockStartRun.mockResolvedValue({ data: true, error: null });
@@ -165,6 +170,7 @@ afterAll(() => {
   env.NODE_ENV = saved.NODE_ENV;
   env.VERCEL_ENV = saved.VERCEL_ENV;
   env.CRON_SECRET = saved.CRON_SECRET;
+  env.STRIPE_SECRET_KEY = saved.STRIPE_SECRET_KEY;
 });
 
 describe.each(BOS_CRON_JOBS.map((job) => [job.id, job] as const))('%s', (id, job) => {

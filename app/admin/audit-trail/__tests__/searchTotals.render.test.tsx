@@ -21,6 +21,10 @@
  *     the route actually does. Both halves are asserted here so a later reader
  *     cannot "fix" one by breaking the other.
  *
+ * L-1d: the totals print with thousands separators (§5.11 `formatCount`, SA
+ * Q-5), so the positive checks read "14,332". The negative check under a
+ * search refuses both forms, raw and formatted, so it cannot go vacuous.
+ *
  * This renders the real page component in jsdom. It is not a substitute for the
  * E2E this repo does not have (CLAUDE.md § Testing — Playwright is not
  * installed); it is the closest available check on rendered output, and a
@@ -44,11 +48,20 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`,
+// and `@/lib/logger/client` re-exports from the mocked `@/lib/logger` above.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
+
 import AuditTrailPage from '../page';
 
 /** The unfiltered table in this fixture: 14,332 rows => 717 pages of 20. */
 const UNFILTERED_TOTAL = 14332;
 const UNFILTERED_TOTAL_PAGES = 717;
+/** How the page prints that total (§5.11 thousands separators). */
+const UNFILTERED_TOTAL_SHOWN = '14,332';
 
 const row = (id: string) => ({
   id,
@@ -123,7 +136,7 @@ describe('the audit page never prints an unfiltered total while searching', () =
     await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeTruthy());
 
     expect(pagerLabel().textContent).toBe(`Page 1 of ${UNFILTERED_TOTAL_PAGES}`);
-    expect(document.body.textContent).toContain(`Showing 20 of ${UNFILTERED_TOTAL} audit logs`);
+    expect(document.body.textContent).toContain(`Showing 20 of ${UNFILTERED_TOTAL_SHOWN} audit logs`);
   });
 
   it('drops the unfiltered page count from the pager label once a search is active', async () => {
@@ -151,6 +164,7 @@ describe('the audit page never prints an unfiltered total while searching', () =
     const text = document.body.textContent ?? '';
     expect(text).not.toContain(String(UNFILTERED_TOTAL_PAGES));
     expect(text).not.toContain(String(UNFILTERED_TOTAL));
+    expect(text).not.toContain(UNFILTERED_TOTAL_SHOWN);
     expect(text).toContain('Showing 2 matches on this page');
     expect(text).toContain('Search scans only the current page of results');
   });
@@ -167,7 +181,7 @@ describe('the audit page never prints an unfiltered total while searching', () =
     await waitFor(() => {
       expect(pagerLabel().textContent).toBe(`Page 1 of ${UNFILTERED_TOTAL_PAGES}`);
     });
-    expect(document.body.textContent).toContain(`of ${UNFILTERED_TOTAL} audit logs`);
+    expect(document.body.textContent).toContain(`of ${UNFILTERED_TOTAL_SHOWN} audit logs`);
   });
 
   it('treats a whitespace-only term as no search, in the pager label too (X-2)', async () => {

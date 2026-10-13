@@ -14,10 +14,14 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+
 import { NO_STORED_ROW } from '../copy';
-import { formatInstant } from '../format';
 import type { AreaView } from '../types';
 import { LastChangedLine } from './LastChangedLine';
+
+/** `formatUtc`'s answer for a missing or unreadable instant (L-10, C-5). */
+const NO_TIME = '—';
 
 export function StoredRowPanel({ area }: { area: AreaView }) {
   const [open, setOpen] = useState(false);
@@ -30,7 +34,7 @@ export function StoredRowPanel({ area }: { area: AreaView }) {
     );
   }
 
-  const updatedAt = formatInstant(area.updatedAt);
+  const updatedAt = formatUtc(area.updatedAt);
 
   return (
     <div data-testid="stored-row" className="rounded-lg border border-slate-700 bg-slate-900/40">
@@ -46,15 +50,15 @@ export function StoredRowPanel({ area }: { area: AreaView }) {
           <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
         )}
         Stored row
-        <span className="font-mono text-[11px] normal-case tracking-normal text-slate-500">
+        <span className="font-mono text-[11px] normal-case tracking-normal text-slate-400">
           {area.key}
         </span>
       </button>
 
       {open && (
         <div className="space-y-2 border-t border-slate-800 px-3 py-2">
-          <p className="text-xs text-slate-500">
-            {updatedAt ? `Written at ${updatedAt}` : 'No write timestamp recorded'}
+          <p className="text-xs text-slate-400">
+            {updatedAt === NO_TIME ? 'No write timestamp recorded' : `Written at ${updatedAt}`}
           </p>
           {/* The SAME component the collapsed card uses, so the two renderings
               of FR-14 cannot drift apart. */}

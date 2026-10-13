@@ -1,6 +1,6 @@
 # Workplan: SECURITY DEFINER Lockdown, Slice 1 (drains, lock wrappers, no-arg mutator)
 
-> **Last Updated**: 2026-10-07
+> **Last Updated**: 2026-10-08
 
 **Developer:** Dev
 **Requirement:** [SECURITY_DEFINER_FUNCTIONS_LOCKDOWN_REQUIREMENT.md](/docs/requirements/SECURITY_DEFINER_FUNCTIONS_LOCKDOWN_REQUIREMENT.md) (FR-0.1 to FR-0.14, FR-1, §6, SA conditions C-1 to C-10)
@@ -8,7 +8,7 @@
 **Branch:** `fix/secdef-lockdown-slice-1` (worktree `neuronforge-secdef-s1`, off `origin/main` `d5f1efb1`)
 **Migration number:** `20261044` (`20261041` and `20261042` are on main; `20261043` is claimed by open PR #256, checked 2026-10-07. Re-check at PR time, see T-9)
 **Date:** 2026-10-07
-**Status:** In Progress (SA approved with conditions W-1 to W-7, folded in below; implementation T-5 to T-9 done, awaiting SA code review)
+**Status:** ✅ Done. PR #261 merged 2026-10-08 (merge `1299381a`); migration `20261044` applied on prod 2026-10-08 08:36 UTC; checker `VERDICT PASS 78 pass 0 fail`; acceptance recorded under [QA Testing Report](#qa-testing-report) (§ Prod apply and acceptance)
 
 ## Overview
 
@@ -250,9 +250,9 @@ No TS source, no other migration, no CI workflow change. Slice 6 (the guard) is 
 - ✅ T-7: Write the migration (§2.2) and the rollback (§2.4)
 - ✅ T-8: Write the checker (§2.3)
 - ✅ T-9: Run `npx jest supabase/migrations/__tests__/secdef-lockdown-slice1.migration.test.ts`, plus `npm run test:authz-guard` and the purge `no-deletion-paths` guard (both scan SQL folders) as regressions. `npx tsc --noEmit` on the test file. Re-check the number: `git fetch origin` then list `origin/main` `supabase/migrations/2026104*` and open PRs touching `supabase/migrations/`; if `20261044` is taken, rename both SQL files, the test constants and the doc mentions **Done 2026-10-07:** new test 66/66; boost_packs 20261039/20261040 tests 71/71; `no-deletion-paths` guard, `business-os-credit-lots` and `testAccountCleanupSql` (the tests that reference 20261041/20261042) 195/195; `test:authz-guard` 119/119; `tsc --strict` on the test file clean; paste greps clean on all four SQL files (only the 4 Q-1 literals in the pre-check). Number: `20261043` is claimed by open PR #256, so slice 1 is `20261044`
-- ⬜ T-10: Hand to SA for code review, then to the user for the diff (left uncommitted)
-- ⬜ T-11: User runs §6 steps 1 to 4 on prod; record the pre-check output and VERDICT under QA Testing Report
-- ⬜ T-12: QA confirms §5.3 acceptance; requirement updated with PR, merge and apply state
+- ✅ T-10: Hand to SA for code review, then to the user for the diff (left uncommitted). **Done:** SA approved with nits, user saw the diff, PR #261
+- ✅ T-11: User runs §6 steps 1 to 4 on prod; record the pre-check output and VERDICT under QA Testing Report. **Done 2026-10-08**, see § Prod apply and acceptance
+- ✅ T-12: QA confirms §5.3 acceptance; requirement updated with PR, merge and apply state. **Done 2026-10-08:** PR #261 merged (`1299381a`); requirement §4.3 slice status and inventory §6 updated. One acceptance source inconclusive (Supabase API-log path search), see § Prod apply and acceptance
 
 ---
 
@@ -549,8 +549,22 @@ If either block fails with `permission denied to set role`, that is the editor r
 
 | Check | Result |
 |---|---|
-| Lock check positive (service_role) | ⬜ prod (local PGlite ✅ no error) |
-| Lock check negative (anon, 42501) | ⬜ prod (local PGlite ✅ 42501) |
+| Lock check positive (service_role) | ✅ prod 2026-10-08: no error, `lock_released true` (local PGlite ✅ no error) |
+| Lock check negative (anon, 42501) | ✅ prod 2026-10-08: `42501 permission denied for function pg_advisory_unlock` (local PGlite ✅ 42501) |
+
+### Prod apply and acceptance (user, 2026-10-08)
+
+| # | Step (§6 / §5.3) | Result |
+|---|---|---|
+| 1 | Pre-check | Owner (Q2), grantor (Q5 grantors) and caller (Q6 to Q10) checks all clean. Q5 grantees first read a **false** `DIFFERS` x13 from a collation mismatch; the sets were identical. Fixed in `bc93c3f1` (`COLLATE "C"` on every `string_agg ... ORDER BY`), see Issues found ✅ |
+| 2 | Migration `20261044` | Applied 2026-10-08 **08:36 UTC** (11:36 local), new tab, success ✅ |
+| 3 | Checker | `VERDICT PASS 78 pass 0 fail` ✅ |
+| 4 | W-4 lock check | service_role: no error, `lock_released true`. anon: `42501 permission denied for function pg_advisory_unlock` ✅ |
+| 5 | §5.3 1(c) run record | `bos_cron_runs` since apply: lead-response 25, insight-actions 8, payment-reminders 3, daily-briefing 2, payment-retry 2 runs, all `succeeded` / HTTP 200. Queues were empty (claimed 0), so the runs prove the drains ran, not that a claim returned rows ✅ |
+| 6 | §5.3 1(a) Postgres logs | 0 `permission denied for function` since apply ✅ |
+| 7 | §5.3 1(a) API / edge logs by path | **Inconclusive.** The filter UI could not search the path field, and Logs Explorer was not reachable. Not a failure signal: steps 3, 4 and 6 cover the privilege outcome; the run-record gap (swallowed RPC errors, §1.2) is covered by step 6 ⚠️ |
+
+**Verdict:** slice 1 accepted. 13 functions closed; prod anon-executable SECURITY DEFINER count is now 55 (non-trigger 37), by arithmetic from the 2026-10-07 inventory (68 and 50), not by a re-run of the inventory script.
 
 ---
 
@@ -566,3 +580,4 @@ If either block fails with `permission denied to set role`, that is the editor r
 | 2026-10-07 | QA (local PGlite execution) | PASS. All five SQL files executed on a throwaway PGlite (Postgres 17) fixture with the prod ACL shapes: pre-check CLEAN, checker 39/39 before and 78/0 after, rollback restores the pre-state, W-4 blocks behave as specified. Negatives (missing function, other owner, non-superuser applier, foreign grantor, callers/views/policies/cron) all fail safe or get flagged. No bugs; prod steps still owed |
 | 2026-10-07 | SA code-review nits 2 and 3 (Dev) | §2.1 sort keys and §2.2 RAISE text aligned with the code; the static test now compares the pre-check expected-grantee strings directly against the TSV `execute_grantees`. SQL files unchanged |
 | 2026-10-08 | Prod pre-check fix (Dev) | Q5 grantees read DIFFERS x13 on prod though the sets matched: C-collated actual vs default-collated expected ordering. All pre-check `string_agg` orderings now `COLLATE "C"`; static test pins it (67/67). Migration, rollback, checker unchanged |
+| 2026-10-08 | Slice 1 done (Dev) | PR #261 merged 2026-10-08 (`1299381a`). User applied `20261044` on prod at 08:36 UTC; checker PASS 78/0; W-4 lock check service_role ok, anon 42501; `bos_cron_runs` all 5 drains ran and succeeded since apply (queues empty); Postgres logs 0 permission-denied; API-log path search inconclusive (UI limits). T-10 to T-12 closed; status Done |

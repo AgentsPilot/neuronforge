@@ -14,8 +14,20 @@
 // `acquireCheckoutLock` (the SR-5 checkout lock) and `replaceCustomer`. Both are
 // compare-and-set UPDATEs with `{ count: 'exact' }` and NO `.select()`, because
 // UPDATE + `.or()` + `.select()` fails with 42703 in production.
-// Lookups by a Stripe id and the webhook mirror updates arrive with P-3b, in
-// its own review. There is no DELETE grant, so there is no delete method.
+// P-3b.2 (workplan BUSINESS_OS_PLAN_PAYMENTS_P3B_WORKPLAN.md §3.3, §3.5): the
+// webhook's two lookups by a Stripe id (`findByStripeSubscription`,
+// `findByStripeCustomer`) and three compare-and-set UPDATEs
+// (`linkCheckoutSession`, `releaseCheckoutLock`, `mirrorSubscriptionState`).
+// Like P-3a's, every UPDATE is `{ count: 'exact' }` with NO `.select()` and,
+// here, no `.or()` at all. There is no DELETE grant, so there is no delete method.
+//
+// ── THE TWO LOOKUPS BY A STRIPE ID (documented exception to CLAUDE.md rule 4) ─
+// The webhook does not know the account yet: finding it is the point (SR-8).
+// So these two reads filter by a UNIQUE Stripe id + `livemode`, NOT by
+// `user_id`, and select the full row. The account is then taken from THAT row,
+// never from Stripe metadata, and every write that follows is scoped by that
+// row's `user_id` + `livemode` (tenant-isolation-guard). Neither lookup can
+// return two rows: `stripe_subscription_id` and `stripe_customer_id` are UNIQUE.
 //
 // ── SERVICE ROLE (intentional RLS bypass, documented per CLAUDE.md) ─────────
 // The table has RLS on, NO policy and NO client grant at all (SA-P1): owners
@@ -33,8 +45,10 @@
 // conflict is an error here, never a returned row.
 //
 // CALLERS: `lib/business-os/billing/businessOsStripeCustomer.ts`,
-// `lib/business-os/billing/planCheckout.ts` (P-3a), and the admin deletion
-// reads under `lib/business-os/purge/`. A source
+// `lib/business-os/billing/planCheckout.ts` (P-3a), the P-3b.2 webhook use
+// cases (`planPaymentApply.ts`, `planCheckoutSessionEvents.ts`,
+// `planSubscriptionMirror.ts`, wired by `planBillingHandler.ts`), and the
+// admin deletion reads under `lib/business-os/purge/`. A source
 // guard in `lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts`
 // holds the exact list of files allowed to name this repository.
 //
@@ -119,6 +133,8 @@ const CUSTOMER_ID_PATTERN = /^cus_[A-Za-z0-9]{1,251}$/;
 const UNIQUE_VIOLATION = '23505';
 /** A Stripe Checkout Session id, as the `checkout_id_shape` CHECK admits it (`cs_`, at most 255). */
 const CHECKOUT_SESSION_ID_PATTERN = /^cs_[A-Za-z0-9_]{1,252}$/;
+/** A Stripe subscription id, as the `subscription_id_shape` CHECK admits it (`sub_`, at most 255). */
+const SUBSCRIPTION_ID_PATTERN = /^sub_[A-Za-z0-9]{1,251}$/;
 
 /**
  * `Date.prototype.toISOString()` output only: no `+` (a URL would turn it into
@@ -452,6 +468,240 @@ export class BusinessOsBillingAccountRepository {
       return { data: { replaced: count === 1 }, error: null };
     } catch (err) {
       methodLogger.error({ err }, 'Failed to replace the Business OS Stripe customer');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  // ── P-3b.2: the webhook's reads and compare-and-set writes (§3.3, §3.5) ────
+
+  /**
+   * The billing row holding a Stripe subscription, in one mode, or `null`.
+   * Documented exception to the `user_id` filter (see the header): the
+   * account is not known yet, and is taken from the returned row.
+   */
+  async findByStripeSubscription(
+    stripeSubscriptionId: string,
+    livemode: boolean
+  ): Promise<RepositoryResult<BusinessOsBillingAccount | null>> {
+    if (
+      typeof stripeSubscriptionId !== 'string' ||
+      !SUBSCRIPTION_ID_PATTERN.test(stripeSubscriptionId) ||
+      typeof livemode !== 'boolean'
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    try {
+      const { data, error } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .select(BILLING_ACCOUNT_COLUMNS)
+        .eq('stripe_subscription_id', stripeSubscriptionId)
+        .eq('livemode', livemode)
+        .maybeSingle();
+      if (error) throw asError(error);
+      if (data === null || data === undefined) return { data: null, error: null };
+      return { data: mapAccount(data as Record<string, unknown>), error: null };
+    } catch (err) {
+      this.logger.error(
+        { err, method: 'findByStripeSubscription', stripeSubscriptionId, livemode },
+        'Failed to read the Business OS billing row by subscription'
+      );
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * The billing row holding a Stripe customer, in one mode, or `null`. Same
+   * documented exception as `findByStripeSubscription`.
+   */
+  async findByStripeCustomer(
+    stripeCustomerId: string,
+    livemode: boolean
+  ): Promise<RepositoryResult<BusinessOsBillingAccount | null>> {
+    if (typeof stripeCustomerId !== 'string' || !CUSTOMER_ID_PATTERN.test(stripeCustomerId) || typeof livemode !== 'boolean') {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    try {
+      const { data, error } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .select(BILLING_ACCOUNT_COLUMNS)
+        .eq('stripe_customer_id', stripeCustomerId)
+        .eq('livemode', livemode)
+        .maybeSingle();
+      if (error) throw asError(error);
+      if (data === null || data === undefined) return { data: null, error: null };
+      return { data: mapAccount(data as Record<string, unknown>), error: null };
+    } catch (err) {
+      this.logger.error(
+        { err, method: 'findByStripeCustomer', stripeCustomerId, livemode },
+        'Failed to read the Business OS billing row by customer'
+      );
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * `checkout.session.completed` (P-3a SA Q-1): link the session's
+   * subscription AND clear the checkout lock, by COMPARE-AND-SET.
+   *
+   * Succeeds only while the row still holds THIS session's lock and has no
+   * subscription yet. `linked: false` means either already done (a replay, or
+   * `invoice.paid` linked it first) or the row holds another subscription;
+   * the caller then clears the lock alone (`releaseCheckoutLock`). A unique
+   * violation (another account's row holds the subscription) is an error with
+   * an alert, never a returned row.
+   */
+  async linkCheckoutSession(input: {
+    userId: string;
+    livemode: boolean;
+    sessionId: string;
+    stripeSubscriptionId: string;
+    nowIso: string;
+  }): Promise<RepositoryResult<{ linked: boolean }>> {
+    const { userId, livemode, sessionId, stripeSubscriptionId, nowIso } = input;
+    if (
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof sessionId !== 'string' ||
+      !CHECKOUT_SESSION_ID_PATTERN.test(sessionId) ||
+      typeof stripeSubscriptionId !== 'string' ||
+      !SUBSCRIPTION_ID_PATTERN.test(stripeSubscriptionId) ||
+      !isFilterSafeIso(nowIso)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'linkCheckoutSession', userId, livemode });
+
+    try {
+      const { error, count } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .update(
+          {
+            stripe_subscription_id: stripeSubscriptionId,
+            open_checkout_session_id: null,
+            open_checkout_expires_at: null,
+            updated_at: nowIso,
+          },
+          { count: 'exact' }
+        )
+        .eq('user_id', userId)
+        .eq('livemode', livemode)
+        .eq('open_checkout_session_id', sessionId)
+        .is('stripe_subscription_id', null);
+      if (error) {
+        if (sqlStateOf(error) === UNIQUE_VIOLATION) {
+          methodLogger.error(
+            { sessionId, stripeSubscriptionId, alert: true },
+            'Stripe subscription is already recorded for another account; nothing was linked'
+          );
+          return { data: null, error: new BillingAccountRepositoryError('stripe_subscription_held_by_another_account') };
+        }
+        throw asError(error);
+      }
+      if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+      return { data: { linked: count === 1 }, error: null };
+    } catch (err) {
+      methodLogger.error({ err, sessionId }, 'Failed to link the Business OS checkout session');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * Clear the checkout lock of ONE session (`checkout.session.expired`, or a
+   * completed session whose subscription is not linked here), by
+   * COMPARE-AND-SET on the session id: another session's lock is never
+   * cleared. `released: false` means the lock was already gone or belongs to
+   * another session.
+   */
+  async releaseCheckoutLock(input: {
+    userId: string;
+    livemode: boolean;
+    sessionId: string;
+    nowIso: string;
+  }): Promise<RepositoryResult<{ released: boolean }>> {
+    const { userId, livemode, sessionId, nowIso } = input;
+    if (
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof sessionId !== 'string' ||
+      !CHECKOUT_SESSION_ID_PATTERN.test(sessionId) ||
+      !isFilterSafeIso(nowIso)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'releaseCheckoutLock', userId, livemode });
+
+    try {
+      const { error, count } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .update({ open_checkout_session_id: null, open_checkout_expires_at: null, updated_at: nowIso }, { count: 'exact' })
+        .eq('user_id', userId)
+        .eq('livemode', livemode)
+        .eq('open_checkout_session_id', sessionId);
+      if (error) throw asError(error);
+      if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+      return { data: { released: count === 1 }, error: null };
+    } catch (err) {
+      methodLogger.error({ err, sessionId }, 'Failed to clear the Business OS checkout lock');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * SA Q-1: the status-only subscription mirror (`customer.subscription.updated`
+   * / `.deleted`). The caller passes what Stripe says NOW (read fresh), so
+   * event order does not matter. Writes exactly `subscription_status`,
+   * `cancel_at_period_end` and `ended_at`, compare-and-set on the row still
+   * holding this subscription. Never `current_period_end`: only a paid
+   * invoice moves that. `mirrored: false` means the row no longer holds it.
+   */
+  async mirrorSubscriptionState(input: {
+    userId: string;
+    livemode: boolean;
+    stripeSubscriptionId: string;
+    status: BusinessOsSubscriptionStatus;
+    cancelAtPeriodEnd: boolean;
+    endedAtIso: string | null;
+    nowIso: string;
+  }): Promise<RepositoryResult<{ mirrored: boolean }>> {
+    const { userId, livemode, stripeSubscriptionId, cancelAtPeriodEnd, endedAtIso, nowIso } = input;
+    const subscriptionStatus = input.status;
+    if (
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof stripeSubscriptionId !== 'string' ||
+      !SUBSCRIPTION_ID_PATTERN.test(stripeSubscriptionId) ||
+      !SUBSCRIPTION_STATUSES.includes(subscriptionStatus) ||
+      typeof cancelAtPeriodEnd !== 'boolean' ||
+      !(endedAtIso === null || isFilterSafeIso(endedAtIso)) ||
+      !isFilterSafeIso(nowIso)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'mirrorSubscriptionState', userId, livemode });
+
+    try {
+      const { error, count } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .update(
+          {
+            subscription_status: subscriptionStatus,
+            cancel_at_period_end: cancelAtPeriodEnd,
+            ended_at: endedAtIso,
+            updated_at: nowIso,
+          },
+          { count: 'exact' }
+        )
+        .eq('user_id', userId)
+        .eq('livemode', livemode)
+        .eq('stripe_subscription_id', stripeSubscriptionId);
+      if (error) throw asError(error);
+      if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+      return { data: { mirrored: count === 1 }, error: null };
+    } catch (err) {
+      methodLogger.error({ err, stripeSubscriptionId }, 'Failed to mirror the Business OS subscription state');
       return { data: null, error: asError(err) };
     }
   }

@@ -61,6 +61,7 @@ import {
 import { CLEANUP_FUNCTION_VERSION } from '@/lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated';
 import {
   BLOCKING_EDGES,
+  NOT_NULL_OVERWRITE_EDGES,
   PURGE_DESCRIPTORS,
   STORAGE_DESCRIPTORS,
   descriptorsForRun,
@@ -242,7 +243,7 @@ describe('order (SA C-12)', () => {
   });
 
   it('puts every blocking child before its parent', () => {
-    for (const edge of [...BLOCKING_EDGES, ...STEP_B_BLOCKING_EDGES]) {
+    for (const edge of [...BLOCKING_EDGES, ...NOT_NULL_OVERWRITE_EDGES, ...STEP_B_BLOCKING_EDGES]) {
       if (position(edge.child) === -1 || position(edge.parent) === -1) continue;
       expect([edge.child, position(edge.child) < position(edge.parent)]).toEqual([edge.child, true]);
     }
@@ -341,7 +342,7 @@ describe('links pointing at removed tables (SA F-2, F-3)', () => {
 });
 
 describe('guards', () => {
-  const ids = ['G-1', 'G-2', 'G-4', 'G-5', 'G-6', 'G-7', 'G-8', 'G-9', 'G-10', 'G-11', 'G-12', 'G-13', 'G-14', 'G-15', 'G-16', 'G-17', 'G-18'];
+  const ids = ['G-1', 'G-2', 'G-4', 'G-5', 'G-6', 'G-7', 'G-8', 'G-9', 'G-10', 'G-11', 'G-12', 'G-13', 'G-14', 'G-15', 'G-16', 'G-17', 'G-18', 'G-19'];
 
   it.each(ids)('%s is in both files', (id) => {
     expect(checkSql).toContain(`'${id}'::text AS guard`);
@@ -401,18 +402,36 @@ describe('guards', () => {
   });
 });
 
+const ACTOR = "NULLIF(current_setting('cleanup.actor_id', true), '')::uuid";
+
 describe('audit row (SA TQ-5, C-7)', () => {
   it('uses a registered event whose severity and flags match the SQL', () => {
     expect(AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED).toBe(AUDIT_ACTION);
     const meta = EVENT_METADATA[AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVED];
     expect(meta.severity).toBe(AUDIT_SEVERITY);
     expect([...(meta.complianceFlags ?? [])]).toEqual([...AUDIT_COMPLIANCE_FLAGS]);
-    expect(deleteSql).toContain(
-      `'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, NULLIF(current_setting('cleanup.actor_id', true), '')::uuid,`
-    );
+    expect(deleteSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,\n    ${ACTOR}, ${ACTOR},`);
     // SA-5: unset (the pasted file), actor_id is NULL and source is 'operator_sql', as before.
     expect(deleteSql).toContain("'source', coalesce(NULLIF(current_setting('cleanup.source', true), ''), 'operator_sql')");
     expect(deleteSql).toContain(`'${AUDIT_SEVERITY}', ARRAY['SOC2']::text[], now()`);
+  });
+
+  // 20261047 (AD-2 convention): /admin/audit-trail names a row only from user_id,
+  // so the admin who ran the delete is user_id AND actor_id; entity = the removed login.
+  it('names the admin as user_id and actor_id on the admin page, and NULL for the pasted operator_sql file', () => {
+    const columns = 'action, entity_type, entity_id, resource_name, user_id, actor_id,';
+    for (const sql of [deleteSql, migrationSql]) {
+      expect(sql).toContain(`INSERT INTO public.audit_trail (${columns}`);
+      expect(sql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,\n    ${ACTOR}, ${ACTOR},`);
+    }
+    // admin_page: the function sets the actor from p_actor on a delete (and refuses a delete without one).
+    expect(migrationSql).toContain("PERFORM pg_catalog.set_config('cleanup.actor_id', CASE WHEN p_mode = 'delete' THEN p_actor::text ELSE '' END, true);");
+    expect(migrationSql).toContain("PERFORM pg_catalog.set_config('cleanup.source', 'admin_page', true);");
+    expect(migrationSql).toContain("IF p_mode = 'delete' AND p_actor IS NULL THEN");
+    // operator_sql: the pasted file never sets an actor or a source, so user_id = actor_id = NULL.
+    expect(deleteSql).not.toMatch(/set_config\('cleanup\.(actor_id|source)'/);
+    // The restored 20261046 function still writes user_id NULL: the rollback really is the old behaviour.
+    expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
   });
 });
 
@@ -631,6 +650,12 @@ describe('applied history: a function migration is never edited once applied', (
     // Applied to prod by the user 2026-10-07 (plan payments P-3b.1, PR #251).
     ['supabase/migrations/20261042_operator_test_account_cleanup_billing_events.sql', 'f2aec8391439e1d26f67e720d4d625087614b289c6968e008b5ae91aebc4d40c'],
     ['supabase/SQL Scripts/20261042_operator_test_account_cleanup_billing_events_rollback.sql', 'ac784912b9d370cb78af13052e03247c9a0b994c0e3ede26c634a13436984067'],
+    // Applied to prod 2026-10-07/08 (test-account cleanup first live run, insight links).
+    ['supabase/migrations/20261043_operator_test_account_cleanup_insight_links.sql', '5f4c0d5650e7158506f65fbbe25f8818fed9b5875ae78ef040c83561276b800f'],
+    ['supabase/SQL Scripts/20261043_operator_test_account_cleanup_insight_links_rollback.sql', '7c16da55c512d10307ea9df995d23f7b4e8e5aeef11f0fd9ca701cb03b26a27b'],
+    // Applied to prod 2026-10-08 (scheduling_bookings before crm_contacts, G-19).
+    ['supabase/migrations/20261046_operator_test_account_cleanup_notnull_order.sql', 'e401f27fbe77e7a67fadb54e74fd36fc568a904c90eec410cc37d73ab45fa3b9'],
+    ['supabase/SQL Scripts/20261046_operator_test_account_cleanup_notnull_order_rollback.sql', 'd86a4874dcf2161d1849433061ce2b9c9c7841c1a216175cee3d4d20c1d7293b'],
   ];
 
   it.each(APPLIED)('%s is byte-identical to what was applied', (file, sha256) => {
@@ -745,5 +770,33 @@ describe('first live run fixes (2026-10-07)', () => {
     for (const [bit, event] of [[4, 'INSERT'], [8, 'DELETE'], [16, 'UPDATE'], [32, 'TRUNCATE']] as const) {
       expect(checkSql).toContain(`CASE WHEN (trg.tgtype::integer & ${bit}) <> 0 THEN '${event}' END`);
     }
+  });
+});
+
+describe('NOT NULL columns emptied by ON DELETE SET NULL (prod 23502, 2026-10-08)', () => {
+  it('deletes scheduling_bookings before crm_contacts, and every measured edge child-first', () => {
+    expect(NOT_NULL_OVERWRITE_EDGES.map((e) => `${e.child}.${e.column}->${e.parent}`)).toContain(
+      'scheduling_bookings.contact_id->crm_contacts'
+    );
+    for (const edge of NOT_NULL_OVERWRITE_EDGES) {
+      expect(position(edge.child)).toBeGreaterThan(-1);
+      expect([edge.child, position(edge.child) < position(edge.parent)]).toEqual([edge.child, true]);
+    }
+  });
+
+  it('G-19 reads the class from pg_catalog, in both files and the function, before the first DELETE', () => {
+    const g19 = buildCheckQuery();
+    for (const fragment of [
+      "con.confdeltype IN ('n', 'd') AND con.conrelid <> con.confrelid",
+      "AND att.attnotnull AND (con.confdeltype = 'n' OR NOT att.atthasdef)",
+      'AND child_plan.ord > parent_plan.ord',
+      'JOIN pg_catalog.pg_attribute AS att ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)',
+    ]) {
+      expect(g19).toContain(fragment);
+      expect(deleteSql).toContain(fragment);
+      expect(migrationSql).toContain(fragment);
+    }
+    // In the delete, G-19 is part of the guard rows that raise before anything is removed.
+    expect(deleteSql.indexOf("'G-19'::text AS guard")).toBeLessThan(deleteSql.indexOf("RAISE EXCEPTION 'BLOCKED, nothing was removed: %'"));
   });
 });

@@ -105,10 +105,12 @@ export class AiModelPricingRepository {
   /**
    * The rows the billing reader prices with: not retired, newest first.
    *
-   * ORDERING IS LOAD-BEARING. The unique constraint is
-   * `(provider, model_name, effective_date)`, so one model may have several
-   * rows; `effective_date DESC` puts the current price first and the caller
-   * keeps the FIRST row it sees per `provider:model`
+   * ORDERING IS LOAD-BEARING. Uniqueness is a partial unique index on
+   * `(provider, model_name, effective_date)` over active rows only
+   * (`retired_date IS NULL`, AI model price review slice 2), so one model may
+   * have several active rows on different dates; `effective_date DESC` puts the
+   * current price first and the caller keeps the FIRST row it sees per
+   * `provider:model`
    * (`lib/ai/pricing.ts`). Reverse this order and every such model is
    * silently priced at its oldest rate.
    *
@@ -142,7 +144,7 @@ export class AiModelPricingRepository {
         .lte('effective_date', today)
         .order('effective_date', { ascending: false })
         // Secondary sort so the result stays deterministic if the
-        // (provider, model_name, effective_date) uniqueness ever lapses.
+        // active-row (provider, model_name, effective_date) uniqueness ever lapses.
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -287,11 +289,12 @@ export class AiModelPricingRepository {
    * Apply a whole pricing catalogue: update the row for each `(provider,
    * model_name)` that already exists, insert the ones that do not.
    *
-   * NOT an upsert, on purpose. The table's unique constraint is
-   * `(provider, model_name, effective_date)` and each sync run stamps a fresh
-   * `effective_date`, so an upsert on that constraint would insert a new row
-   * every run and the table would grow without bound. Matching on
-   * `(provider, model_name)` only is today's semantics and keeps one row per model.
+   * NOT an upsert, on purpose. The table's uniqueness is a partial unique index
+   * on `(provider, model_name, effective_date)` over active rows
+   * (`retired_date IS NULL`) and each sync run stamps a fresh `effective_date`,
+   * so an upsert on that key would insert a new row every run and the table
+   * would grow without bound. Matching on `(provider, model_name)` only is
+   * today's semantics and keeps one row per model.
    *
    * The lookup takes the NEWEST row (`order effective_date desc` + `limit(1)` +
    * `maybeSingle`). The previous `.single()` errored whenever a model already had

@@ -494,7 +494,7 @@ async function buildStatic(
       // A-1: BOTH kinds of open-ended access, in one list, each saying which it
       // is. This is the answer to "who is not paying and has nothing stopping
       // them", and it is the reason tier_expires_at exists at all.
-      if (row.cohort && row.cohort_expires_at === null) {
+      if (isOpenEndedCohort(row) && row.cohort) {
         noEndDate.push(noEndDateRow(row, 'cohort', row.cohort));
       }
       if (row.tier && row.tier_expires_at === null) {
@@ -504,7 +504,7 @@ async function buildStatic(
       // The trim list, in one condition: free access, no end date, no business
       // ever built. A paying account fails the first test, which is the
       // exclusion that would hurt most if it were missing.
-      if (row.cohort === 'champion' && row.cohort_expires_at === null && row.profile_created_at === null) {
+      if (isDormantChampion(row)) {
         dormant.push(row);
       }
     }
@@ -655,7 +655,27 @@ function stateFor(config: EntitlementConfig, row: BusinessOsAccountPlan, now: Da
   return deriveLifecycle(fromPlanRow(row), lifecycleInputs(config), now).state;
 }
 
-function lifecycleInputs(config: EntitlementConfig) {
+/**
+ * A cohort with no end date: one of the two kinds of open-ended access (A-1).
+ * Exported (finance & business health slice 1a, SA-Q3) so the admin finance
+ * page counts "Founding Partners with no end date" by this one definition.
+ */
+export function isOpenEndedCohort(row: Pick<BusinessOsAccountPlan, 'cohort' | 'cohort_expires_at'>): boolean {
+  return !!row.cohort && row.cohort_expires_at === null;
+}
+
+/**
+ * The trim list, in one condition: free access, no end date, no business ever
+ * built. Exported (slice 1a, SA-Q3) for the admin finance page.
+ */
+export function isDormantChampion(
+  row: Pick<BusinessOsAccountPlan, 'cohort' | 'cohort_expires_at' | 'profile_created_at'>
+): boolean {
+  return row.cohort === 'champion' && row.cohort_expires_at === null && row.profile_created_at === null;
+}
+
+/** Exported (finance & business health slice 1a, SA-Q3); the shadow report's own inputs. */
+export function lifecycleInputs(config: EntitlementConfig) {
   return {
     cohorts: config.cohorts,
     tierOrder: config.tierOrder,

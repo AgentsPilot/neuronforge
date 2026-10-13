@@ -12,8 +12,49 @@
 
 import fs from 'fs';
 import path from 'path';
+import * as ts from 'typescript';
 
 const read = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
+
+/*
+ * CF-5 PR 4 moved the webhook's and the binder's queries on these tables into
+ * repositories (workplan BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES §7.3.5, SA
+ * C-2). The checks below follow each query into the method that now holds it,
+ * and keep a check on the caller that it calls that method. Both are read from
+ * the AST, so a slice ends where the function or method ends (C-2: the old
+ * `recordPlanPeriodPaid` slice ran to the end of the file).
+ */
+function parse(rel: string): ts.SourceFile {
+  return ts.createSourceFile(rel, read(rel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
+
+/** One top-level function's text, from `async function` to its closing brace. */
+function functionText(rel: string, name: string): string {
+  const sf = parse(rel);
+  const fn = sf.statements.find((s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === name);
+  expect(fn).toBeDefined();
+  return fn!.getText(sf);
+}
+
+/** One method's code, comments removed, from a named class. */
+function methodCode(rel: string, className: string, method: string): string {
+  const sf = parse(rel);
+  let found: ts.MethodDeclaration | undefined;
+  const visit = (node: ts.Node) => {
+    if (ts.isClassDeclaration(node) && node.name?.text === className) {
+      for (const member of node.members) {
+        if (ts.isMethodDeclaration(member) && member.body && member.name.getText(sf) === method) found = member;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  expect(found).toBeDefined();
+  return ts.createPrinter({ removeComments: true }).printNode(ts.EmitHint.Unspecified, found!, sf);
+}
+
+const BINDER = 'lib/payments/bindPlanSubscription.ts';
+const PLAN_REPOSITORY = 'lib/repositories/PaymentPlanRepository.ts';
 
 describe('the contact drawer needs BOTH tables, which is why §0 and §1 are load-bearing', () => {
   /*
@@ -45,12 +86,29 @@ describe('the contact drawer needs BOTH tables, which is why §0 and §1 are loa
   });
 
   it('projectPeriods is therefore the only writer of those rows for a website plan', () => {
-    const binder = read('lib/payments/bindPlanSubscription.ts');
+    const binder = read(BINDER);
 
-    expect(binder).toMatch(/from\('payment_plan_installments'\)\.insert\(/);
+    // CF-5 PR 4: the insert lives in the repository; projectPeriods is still
+    // the one place in the binder that calls it, and the method is a single
+    // insert on the table.
+    const projectPeriods = functionText(BINDER, 'projectPeriods');
+    expect(projectPeriods).toMatch(/paymentPlanRepository\.insertProjectedPeriods\(/);
+    expect(binder.match(/\binsertProjectedPeriods\(/g)).toHaveLength(1);
+    expect(methodCode(PLAN_REPOSITORY, 'PaymentPlanRepository', 'insertProjectedPeriods')).toMatch(
+      /from\('payment_plan_installments'\)\.insert\(rows\)/
+    );
     // And it returns early without writing when there is no plan row to point
     // at — the state §1 exists to prevent.
     expect(binder).toMatch(/if \(!planRowId\)/);
+    expect(projectPeriods.indexOf('if (!planRowId)')).toBeLessThan(projectPeriods.indexOf('insertProjectedPeriods('));
+  });
+
+  it('the binder reaches the database only through repositories (CF-5 PR 4, CLAUDE.md rule 1)', () => {
+    const binder = read(BINDER);
+
+    expect(binder).not.toMatch(/\.from\(/);
+    expect(binder).not.toMatch(/\bsupabaseServer\b/);
+    expect(binder).not.toMatch(/\.rpc\(/);
   });
 });
 
@@ -104,11 +162,19 @@ describe('a period Stripe already collected is marked paid, not left pending', (
    * taking anyway.
    */
   it('the webhook closes the instalment by subscription and period number', () => {
-    const webhook = read('app/api/stripe/webhook/route.ts');
-    const record = webhook.slice(webhook.indexOf('async function recordPlanPeriodPaid'));
+    // Bounded to the function (SA C-2): a later function's text cannot satisfy it.
+    const record = functionText('app/api/stripe/webhook/route.ts', 'recordPlanPeriodPaid');
 
-    expect(record).toMatch(/from\('payment_plan_installments'\)[\s\S]{0,200}status: 'paid'/);
-    expect(record).toMatch(/\.eq\('installment_number', periodsPaid\)/);
+    // CF-5 PR 4: the route closes it through the repository, by this plan's row
+    // id and the period number it just counted...
+    expect(record).toMatch(/paymentPlanRepository\.markPeriodPaidFromStripe\(plan\.data\.id, periodsPaid,/);
+    expect(record).not.toMatch(/from\(\s*['"`]payment_plan_installments['"`]\s*\)/);
+
+    // ...and the method is the update the route used to write inline.
+    const method = methodCode(PLAN_REPOSITORY, 'PaymentPlanRepository', 'markPeriodPaidFromStripe');
+    expect(method).toMatch(/from\('payment_plan_installments'\)[\s\S]{0,200}status: 'paid'/);
+    expect(method).toMatch(/\.eq\('subscription_id', planSubscriptionId\)/);
+    expect(method).toMatch(/\.eq\('installment_number', installmentNumber\)/);
   });
 
   it('the overdue chaser only looks at rows still pending', () => {

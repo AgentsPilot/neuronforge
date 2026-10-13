@@ -10,6 +10,13 @@
 //
 //   blockingOrderViolations  RESTRICT / NO ACTION edge, both ends in the run,
 //                            child ordered AFTER its parent        -> blocks
+//                            ALSO a SET NULL / SET DEFAULT edge whose child
+//                            column is NOT NULL (or cannot be shown nullable),
+//                            same ordering rule: the parent delete would try
+//                            to null a NOT NULL column and fail with 23502,
+//                            exactly as a NO ACTION edge fails with 23503
+//                            (test-account cleanup live failure, 2026-10-08:
+//                            scheduling_bookings.contact_id -> crm_contacts)
 //   unlistedCascadeChildren  CASCADE child of a run table that is NOT in the
 //                            run (a `never` or unclassified row would be lost
 //                            by cascade, beneath the classification) -> blocks
@@ -72,8 +79,13 @@ const ON_DELETE = {
 /** Codes that make a DELETE of the parent FAIL while a child row references it. */
 const BLOCKING_CODES: ReadonlySet<string> = new Set([ON_DELETE.NO_ACTION, ON_DELETE.RESTRICT]);
 
+/** SET NULL / SET DEFAULT: the child row survives, but its key is overwritten. */
+const OVERWRITE_CODES: ReadonlySet<string> = new Set(['n', 'd']);
+
 export type ForeignKeyFact = PurgeSchemaSnapshot['foreign_keys'][number];
 export type TriggerFact = NonNullable<PurgeSchemaSnapshot['triggers']>[number];
+/** A column of the live schema; `is_nullable` is information_schema's 'YES' / 'NO'. */
+export type ColumnFact = Pick<PurgeSchemaSnapshot['columns'][number], 'table_name' | 'column_name' | 'is_nullable'>;
 
 export interface GraphEdge {
   constraint: string;
@@ -115,6 +127,13 @@ export interface DeleteGraphInput {
   foreignKeys: readonly ForeignKeyFact[] | undefined;
   /** `undefined` = the payload had no triggers key → unreadable. */
   triggers: readonly TriggerFact[] | undefined;
+  /**
+   * Live columns with their nullability. Read only for a SET NULL / SET
+   * DEFAULT edge whose child is ordered after its parent: such an edge passes
+   * only when its column is shown NULLABLE here. Absent, or a column it cannot
+   * resolve, makes that edge blocking (fail closed); no other edge reads it.
+   */
+  columns?: readonly ColumnFact[];
   /** Defaults to the descriptor module's reviewed list. Injected by tests. */
   reviewedTriggers?: ReadonlyArray<{ table: string; trigger: string }>;
   /** Defaults to the descriptor module's exemption list. Injected by tests. */
@@ -147,6 +166,31 @@ export function isDeleteCapableTrigger(definition: string): boolean {
 }
 
 const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * Whether a SET NULL / SET DEFAULT edge can overwrite its child column without
+ * failing: only when that column is shown NULLABLE.
+ *
+ * The introspection payload names a FK's constraint but not its columns
+ * (migration 20260915a), so the column is read from Postgres's default
+ * constraint name, `<child>_<column>_fkey`, and must exist on the child. A
+ * name that does not follow it, a column absent from `columns`, or a missing
+ * nullability is NOT shown nullable, so the edge blocks (fail closed): the
+ * cost is a refusal an engineer clears, never a 23502 inside the delete.
+ *
+ * SET DEFAULT is treated like SET NULL: the payload carries no column default,
+ * and a NOT NULL column with no default fails the same way.
+ */
+export function isNullableOverwrite(fk: ForeignKeyFact, columns: readonly ColumnFact[] | undefined): boolean {
+  if (!columns) return false;
+  const prefix = `${fk.table_name}_`;
+  const suffix = '_fkey';
+  const name = fk.constraint_name;
+  if (!name.startsWith(prefix) || !name.endsWith(suffix) || name.length <= prefix.length + suffix.length) return false;
+  const column = name.slice(prefix.length, -suffix.length);
+  const fact = columns.find((c) => c.table_name === fk.table_name && c.column_name === column);
+  return fact?.is_nullable === 'YES';
+}
 const sortEdges = <T extends GraphEdge>(edges: T[]): T[] =>
   edges.sort((x, y) => byCode(x.child, y.child) || byCode(x.parent, y.parent) || byCode(x.constraint, y.constraint));
 
@@ -155,7 +199,7 @@ const sortEdges = <T extends GraphEdge>(edges: T[]): T[] =>
  * deterministic for a given input.
  */
 export function checkDeleteGraph(input: DeleteGraphInput): DeleteGraphResult {
-  const { run, foreignKeys, triggers } = input;
+  const { run, foreignKeys, triggers, columns } = input;
   const reviewed = input.reviewedTriggers ?? REVIEWED_DELETE_TRIGGERS;
   const exempt = new Set(input.cascadeCountExempt ?? CASCADE_COUNT_EXEMPT);
 
@@ -195,6 +239,17 @@ export function checkDeleteGraph(input: DeleteGraphInput): DeleteGraphResult {
       continue;
     }
 
+    // SET NULL / SET DEFAULT into a NOT NULL column fails the parent delete
+    // (23502) just as NO ACTION does (23503), so it is held to the same rule.
+    // A NULLABLE one is harmless and may run either way, which is what lets
+    // the full graph stay cyclic.
+    if (OVERWRITE_CODES.has(fk.on_delete)) {
+      if (childAt !== undefined && childAt > parentAt && !isNullableOverwrite(fk, columns)) {
+        blockingOrderViolations.push(edge);
+      }
+      continue;
+    }
+
     if (fk.on_delete === ON_DELETE.CASCADE) {
       reached.add(child);
       if (childAt === undefined) {
@@ -203,8 +258,8 @@ export function checkDeleteGraph(input: DeleteGraphInput): DeleteGraphResult {
         cascadeAfterParent.push({ ...edge, exempt: exempt.has(child) });
       }
     }
-    // SET NULL / SET DEFAULT: the child row survives, so no ordering or
-    // classification consequence (M-6 retains those by design).
+    // A nullable SET NULL / SET DEFAULT child survives with its key nulled:
+    // no classification consequence (M-6 retains those by design).
   }
 
   const reviewedKeys = new Set(reviewed.map((r) => `${r.table}\u0000${r.trigger}`));
@@ -260,9 +315,6 @@ export interface TenancyEdgePlan {
 }
 
 const TENANCY_COLUMN = 'user_id';
-
-/** SET NULL / SET DEFAULT: the child row survives, but its key is overwritten. */
-const OVERWRITE_CODES: ReadonlySet<string> = new Set(['n', 'd']);
 
 /**
  * Which edges control 7 checks, and which it refuses unseen. Mirrors the
@@ -368,6 +420,7 @@ export async function runDeleteGraphCheck(params: {
       run: descriptorsForRun(params.level, params.options),
       foreignKeys: data.foreign_keys,
       triggers: data.triggers,
+      columns: data.columns,
     });
 
     // Table and trigger names are schema, not tenant data — safe to log.

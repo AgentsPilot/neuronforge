@@ -185,11 +185,16 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-function conditionProblem(tile: MeasuredTileId, condition: unknown): string | null {
+/** The ids a tile's conditions may name. Health passes `TILE_VOCABULARY[tile]`. */
+export interface RuleVocabulary {
+  metrics: readonly string[];
+  flags: readonly string[];
+}
+
+function conditionProblem(vocab: RuleVocabulary, condition: unknown): string | null {
   if (!condition || typeof condition !== 'object') return 'condition missing';
   const c = condition as Record<string, unknown>;
   if (typeof c.kind !== 'string' || !KINDS.has(c.kind)) return 'unknown condition kind';
-  const vocab = TILE_VOCABULARY[tile];
   const ownMetric = (m: unknown) => typeof m === 'string' && (vocab.metrics as readonly string[]).includes(m);
 
   switch (c.kind) {
@@ -223,6 +228,19 @@ function conditionProblem(tile: MeasuredTileId, condition: unknown): string | nu
 
 /** Null when the list is usable; otherwise the first problem found. */
 export function validateRuleList(tile: MeasuredTileId, rules: unknown): RuleErrorReport | null {
+  return validateRuleListAgainst(tile, rules, TILE_VOCABULARY[tile]);
+}
+
+/**
+ * The validation itself, against any tile id and its vocabulary (finance &
+ * business health slice 1a, SA-W4): a behaviour-preserving extract, so the
+ * admin finance page validates its own rule data with the same checks.
+ */
+export function validateRuleListAgainst<T extends string>(
+  tile: T,
+  rules: unknown,
+  vocabulary: RuleVocabulary
+): { tile: T; ruleId: string | null; reason: string } | null {
   if (!Array.isArray(rules)) return { tile, ruleId: null, reason: 'rule list is not a list' };
   const ids = new Set<string>();
   let previousPriority = Number.NEGATIVE_INFINITY;
@@ -231,7 +249,7 @@ export function validateRuleList(tile: MeasuredTileId, rules: unknown): RuleErro
     if (!rule || typeof rule !== 'object') return { tile, ruleId: null, reason: 'rule is not an object' };
     const r = rule as Record<string, unknown>;
     const ruleId = typeof r.id === 'string' && r.id.trim() !== '' ? r.id : null;
-    const fail = (reason: string): RuleErrorReport => ({ tile, ruleId, reason });
+    const fail = (reason: string): { tile: T; ruleId: string | null; reason: string } => ({ tile, ruleId, reason });
 
     if (!ruleId) return fail('rule id missing');
     if (ids.has(ruleId)) return fail('duplicate rule id');
@@ -242,7 +260,7 @@ export function validateRuleList(tile: MeasuredTileId, rules: unknown): RuleErro
     if (r.colour !== 'red' && r.colour !== 'amber') return fail('colour must be red or amber');
     if (typeof r.description !== 'string' || r.description.trim() === '') return fail('description missing');
     if (OK_WORD.test(r.description)) return fail('a description may not say "OK"');
-    const problem = conditionProblem(tile, r.condition);
+    const problem = conditionProblem(vocabulary, r.condition);
     if (problem) return fail(problem);
   }
   return null;
@@ -264,11 +282,16 @@ export function validateRuleList(tile: MeasuredTileId, rules: unknown): RuleErro
 const MICRO = 1_000_000;
 const micros = (value: number): number => Math.round(value * MICRO);
 
-/** Never throws. A missing metric never matches. */
-export function matchCondition(
-  condition: HealthCondition<MetricId, FlagId>,
-  metrics: MetricValues,
-  flags: FlagValues
+/**
+ * Never throws. A missing metric never matches.
+ *
+ * Generic over the id types with Health's defaults (finance & business health
+ * slice 1a, SA-Q1): type-only, the evaluation is unchanged.
+ */
+export function matchCondition<M extends string = MetricId, F extends string = FlagId>(
+  condition: HealthCondition<M, F>,
+  metrics: Partial<Record<M, Measured>>,
+  flags: Partial<Record<F, boolean>>
 ): boolean {
   switch (condition.kind) {
     case 'atLeast': {
@@ -309,11 +332,11 @@ export function matchCondition(
 }
 
 /** The first rule, in list order, whose condition matches; null = none. */
-export function firstMatchingRule<R extends HealthRule<MetricId, FlagId>>(
-  rules: readonly R[],
-  metrics: MetricValues,
-  flags: FlagValues
-): R | null {
+export function firstMatchingRule<
+  R extends { condition: HealthCondition<M, F> },
+  M extends string = MetricId,
+  F extends string = FlagId,
+>(rules: readonly R[], metrics: Partial<Record<M, Measured>>, flags: Partial<Record<F, boolean>>): R | null {
   for (const rule of rules) {
     if (matchCondition(rule.condition, metrics, flags)) return rule;
   }

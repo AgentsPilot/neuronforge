@@ -40,6 +40,8 @@ import type { ExecutionResult } from '@/lib/types/plugin-types';
 import { PurgeDangerZone } from '@/components/business-os/purge/PurgeDangerZone';
 import { LlmUsageVerification } from '@/components/test-business-os/llm-usage/LlmUsageVerification';
 import { PlanCheckoutPanel } from '@/components/test-business-os/PlanCheckoutPanel';
+import { TestCreditsPanel } from '@/components/test-business-os/TestCreditsPanel';
+import { harnessButton } from '@/components/test-business-os/harnessButton';
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 // Add tabs here. The first real tab will replace/extend this list.
@@ -49,6 +51,7 @@ const TABS = [
   { id: 'danger-zone', label: 'Danger Zone' },
   { id: 'llm-usage', label: 'LLM Usage' },
   { id: 'billing', label: 'Billing' },
+  { id: 'test-credits', label: 'Test credits' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -334,15 +337,7 @@ export default function TestBusinessOSPage() {
           <button
             onClick={seedProfile}
             disabled={isLoading || !user}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#28a745',
-              color: 'white',
-              border: 'none',
-              borderRadius: '3px',
-              cursor: isLoading || !user ? 'not-allowed' : 'pointer',
-              opacity: isLoading || !user ? 0.6 : 1,
-            }}
+            className={harnessButton('success', 'md')}
           >
             Seed Profile
           </button>
@@ -380,16 +375,7 @@ export default function TestBusinessOSPage() {
             <button
               onClick={() => void loadModules()}
               disabled={isLoading || !user}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: isLoading || !user ? 'not-allowed' : 'pointer',
-                opacity: isLoading || !user ? 0.6 : 1,
-                fontSize: '14px',
-              }}
+              className={harnessButton('primary', 'md')}
             >
               {modulesLoaded ? 'Reload modules' : 'Load modules'}
             </button>
@@ -417,15 +403,7 @@ export default function TestBusinessOSPage() {
             <h2 style={{ margin: 0 }}>Last API Response</h2>
             <button
               onClick={copyToClipboard}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: copySuccess ? '#28a745' : '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
+              className={harnessButton(copySuccess ? 'success' : 'primary', 'md')}
             >
               {copySuccess ? '✓ Copied!' : 'Copy to Clipboard'}
             </button>
@@ -491,18 +469,26 @@ export default function TestBusinessOSPage() {
         </div>
       )}
 
+      {/* Tab: Test credits — TEST ONLY (slice TC-1). Admin-only; takes plan
+          credits from any account the admin picks, behind the server switch
+          BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED. Remove with its route. */}
+      {activeTab === 'test-credits' && (
+        <div style={panelStyle}>
+          <h2 style={{ marginTop: 0 }}>Test credits — take plan credits (test only)</h2>
+          <TestCreditsPanel
+            sessionUserId={user?.id ?? null}
+            authLoading={authLoading}
+            onLog={addDebugLog}
+            onResponse={setLastResponse}
+          />
+        </div>
+      )}
+
       {/* Shared: Debug Logs */}
       <div style={{ marginBottom: '20px' }}>
         <button
           onClick={clearLogs}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#dc3545',
-            color: 'white',
-            border: 'none',
-            borderRadius: '3px',
-            cursor: 'pointer',
-          }}
+          className={harnessButton('danger', 'md')}
         >
           Clear Debug Logs
         </button>

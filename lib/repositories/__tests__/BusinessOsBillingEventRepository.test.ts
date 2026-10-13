@@ -19,11 +19,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: { marker: 'service-role-default' } }));
 const mockInfo = jest.fn();
 const mockError = jest.fn();
+const mockWarn = jest.fn();
 jest.mock('@/lib/logger', () => {
   const make = (): Record<string, unknown> => {
     const logger: Record<string, unknown> = {
       info: (...args: unknown[]) => mockInfo(...args),
-      warn: jest.fn(),
+      warn: (...args: unknown[]) => mockWarn(...args),
       error: (...args: unknown[]) => mockError(...args),
       debug: jest.fn(),
     };
@@ -128,11 +129,13 @@ const APPLIED_ROW = {
   out_tier_after: 'tier_one',
   out_plan_written: true,
   out_anchor_set: true,
+  out_first_payment_stamped: false,
 };
 
 beforeEach(() => {
   mockInfo.mockClear();
   mockError.mockClear();
+  mockWarn.mockClear();
 });
 
 describe('constants', () => {
@@ -191,14 +194,71 @@ describe('applyPlanPayment', () => {
     const { client } = recordingClient(() => ({ data: [APPLIED_ROW], error: null }));
     const applied = await new BusinessOsBillingEventRepository(client).applyPlanPayment(applyInput());
     expect(applied).toEqual({
-      data: { status: 'applied', eventRowId: ROW_ID, tierBefore: null, tierAfter: 'tier_one', planWritten: true, anchorSet: true },
+      data: { status: 'applied', eventRowId: ROW_ID, tierBefore: null, tierAfter: 'tier_one', planWritten: true, anchorSet: true, firstPaymentStamped: false },
       error: null,
     });
 
     const recordedRow = { ...APPLIED_ROW, out_status: 'recorded', out_tier_before: 'tier_one', out_plan_written: false, out_anchor_set: false };
     const { client: second } = recordingClient(() => ({ data: [recordedRow], error: null }));
     const recorded = await new BusinessOsBillingEventRepository(second).applyPlanPayment(applyInput({ assignsPlan: false, amountMinor: 0 }));
-    expect(recorded.data).toEqual({ status: 'recorded', eventRowId: ROW_ID, tierBefore: 'tier_one', tierAfter: 'tier_one', planWritten: false, anchorSet: false });
+    expect(recorded.data).toEqual({
+      status: 'recorded',
+      eventRowId: ROW_ID,
+      tierBefore: 'tier_one',
+      tierAfter: 'tier_one',
+      planWritten: false,
+      anchorSet: false,
+      firstPaymentStamped: false,
+    });
+  });
+
+  describe('P-5a.1 / P5-C2: the first payment flag (20261028) is read leniently', () => {
+    it.each([
+      ['applied', true],
+      ['applied', false],
+      ['recorded', true],
+      ['recorded', false],
+    ])('%s with out_first_payment_stamped %s maps it as is, with no warning', async (status, stamped) => {
+      const { client } = recordingClient(() => ({ data: [{ ...APPLIED_ROW, out_status: status, out_first_payment_stamped: stamped }], error: null }));
+      const result = await new BusinessOsBillingEventRepository(client).applyPlanPayment(applyInput());
+      expect(result.error).toBeNull();
+      expect(result.data).toMatchObject({ status, firstPaymentStamped: stamped });
+      expect(mockWarn).not.toHaveBeenCalled();
+    });
+
+    it('a six-column row (the 20261027 function, before the migration or after its rollback) still maps, as not stamped, with a warning', async () => {
+      const sixColumns = Object.fromEntries(Object.entries(APPLIED_ROW).filter(([key]) => key !== 'out_first_payment_stamped'));
+      expect(Object.keys(sixColumns)).toHaveLength(6);
+      const { client } = recordingClient(() => ({ data: [sixColumns], error: null }));
+      const result = await new BusinessOsBillingEventRepository(client).applyPlanPayment(applyInput());
+      expect(result).toEqual({
+        data: { status: 'applied', eventRowId: ROW_ID, tierBefore: null, tierAfter: 'tier_one', planWritten: true, anchorSet: true, firstPaymentStamped: false },
+        error: null,
+      });
+      expect(mockWarn).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'bos_billing_first_payment_flag_unreadable', present: false }),
+        expect.any(String)
+      );
+      expect(mockError).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['NULL', null, 'null'],
+      ['a string', 'true', 'string'],
+      ['a number', 1, 'number'],
+    ])('%s is read as false with a warning, never as an error and never as true', async (_name, value, valueType) => {
+      const { client } = recordingClient(() => ({ data: [{ ...APPLIED_ROW, out_first_payment_stamped: value }], error: null }));
+      const result = await new BusinessOsBillingEventRepository(client).applyPlanPayment(applyInput());
+      expect(result.error).toBeNull();
+      expect(result.data).toMatchObject({ status: 'applied', firstPaymentStamped: false });
+      expect(mockWarn).toHaveBeenCalledWith(expect.objectContaining({ present: true, valueType }), expect.any(String));
+    });
+
+    it('a replay or a refusal never carries the flag, whatever the row says', async () => {
+      const { client } = recordingClient(() => ({ data: [{ out_status: 'already_applied', out_event_row_id: ROW_ID, out_first_payment_stamped: true }], error: null }));
+      const result = await new BusinessOsBillingEventRepository(client).applyPlanPayment(applyInput());
+      expect(result.data).toEqual({ status: 'already_applied', eventRowId: ROW_ID });
+    });
   });
 
   it.each([
@@ -403,8 +463,20 @@ describe('source rules', () => {
 
   it('only the listed files name the repository', () => {
     const ALLOWED = [
-      // P-3b.1 ships the repository with no caller. P-3b.2 adds the webhook
-      // use case (planPaymentApply.ts) here, in its own review.
+      // Not a caller: the P1-C6 / M-1 placement guard names this repository's
+      // module path to pin which billing files import it (P-3b.2).
+      'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
+      // Not a caller: the P-5a.1 boost guard (P5-C4) forbids boost files from
+      // naming this repository, so it names it as a pattern.
+      'lib/business-os/billing/__tests__/firstPaymentStamp.guard.test.ts',
+      // P-5a.1: the first payment stamp test imports the same TYPES for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
+      // P-3b.2: the apply use case's test imports the input and result TYPES to build its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
+      // P-3b.2 (workplan §3.1): the plan webhook handler wires the singleton;
+      // the apply use case takes it as a port TYPE (applyPlanPayment, recordEvent).
+      'lib/business-os/billing/planBillingHandler.ts',
+      'lib/business-os/billing/planPaymentApply.ts',
       'lib/repositories/BusinessOsBillingEventRepository.ts',
       // Not a caller: the billing account repository's own caller guard lists
       // this file's path, because it imports that repository's status type.

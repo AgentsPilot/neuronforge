@@ -40,6 +40,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import { StripeConnectRepository } from '@/lib/repositories/PaymentRepository';
+import { PluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
 
 const logger = createLogger({ module: 'StripeAccountContext' });
 
@@ -437,22 +439,19 @@ export async function resolveAccountOwner(
   db: AccountLookupDb,
   stripeAccountId: string
 ): Promise<string | null> {
-  const direct = await db
-    .from('stripe_connect_accounts')
-    .select('user_id')
-    .eq('stripe_account_id', stripeAccountId)
-    .maybeSingle();
+  // Both reads go through repositories built on the client this was handed
+  // (CF-5 PR 5, CLAUDE.md rule 1), with the chains they had inline. Neither
+  // repository method catches, so a rejected read still rejects here.
+  const direct = await new StripeConnectRepository(db).findOwnerIdByStripeAccountId(stripeAccountId);
 
   if (direct.error) throw ownerLookupError('stripe_connect_accounts', direct.error);
   if (direct.data?.user_id) return direct.data.user_id;
 
   // The OAuth path stores it inside profile_data, which cannot be queried by a
   // column, so the stripe connections are read and matched in memory. There are
-  // few of them per deployment and this runs once per webhook.
-  const viaPlugin = await db
-    .from('plugin_connections')
-    .select('user_id, profile_data, status')
-    .eq('plugin_key', 'stripe');
+  // few of them per deployment and this runs once per webhook. Every status is
+  // read, as before (not `findActiveByProfileData`).
+  const viaPlugin = await new PluginConnectionRepository(db).listByPluginKey('stripe');
 
   if (viaPlugin.error) throw ownerLookupError('plugin_connections', viaPlugin.error);
 

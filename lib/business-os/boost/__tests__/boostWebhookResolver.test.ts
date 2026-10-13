@@ -25,8 +25,11 @@ import {
 } from '@/lib/business-os/boost/__fixtures__/boostWebhookFixtures';
 import type { Logger } from '@/lib/logger';
 
-function port(opts: { bySession?: unknown; byId?: unknown; sessionError?: Error; idError?: Error } = {}) {
+function port(opts: { bySession?: unknown; byId?: unknown; sessionError?: Error; idError?: Error; byIntent?: unknown; intentError?: Error } = {}) {
   return {
+    findByPaymentIntentIdForWebhook: jest.fn(async () =>
+      opts.intentError ? { data: null, error: opts.intentError } : { data: (opts.byIntent ?? null) as never, error: null }
+    ),
     findBySessionIdForWebhook: jest.fn(async () =>
       opts.sessionError ? { data: null, error: opts.sessionError } : { data: (opts.bySession ?? null) as never, error: null }
     ),
@@ -56,8 +59,8 @@ describe('boost resolver (R-6)', () => {
     expect(purchases.findBySessionIdForWebhook).not.toHaveBeenCalled();
   });
 
-  it.each(['invoice.paid', 'charge.refunded', 'charge.dispute.created', 'payment_intent.succeeded'])(
-    '%s → not_business_os (refunds and disputes are 4b), nothing read',
+  it.each(['invoice.paid', 'payment_intent.succeeded', 'charge.succeeded', 'customer.subscription.updated'])(
+    '%s → not_business_os, nothing read',
     async (type) => {
       const purchases = port({ bySession: purchaseRow() });
       expect(await createBoostResolver({ purchases }).resolve(boostEvent(type), ctx)).toEqual({ kind: 'not_business_os' });
@@ -173,4 +176,88 @@ describe('the session narrowing and the shared lookup', () => {
     expect(found.kind).toBe('by_session');
     expect(purchases.findByIdForWebhook).not.toHaveBeenCalled();
   });
+});
+
+describe('4b.1: refund and dispute events, matched ONLY by our stored payment intent', () => {
+  const charge = (over: Record<string, unknown> = {}) =>
+    ({ id: 'evt_c', type: 'charge.refunded', livemode: false, data: { object: { id: 'ch_test_1', payment_intent: 'pi_test_boost_1', amount_refunded: 2500, currency: 'usd', ...over } } }) as unknown as Stripe.Event;
+  const dispute = (type: string, over: Record<string, unknown> = {}) =>
+    ({ id: 'evt_d', type, livemode: false, data: { object: { id: 'dp_test_1', payment_intent: 'pi_test_boost_1', status: 'needs_response', currency: 'usd', ...over } } }) as unknown as Stripe.Event;
+
+  it.each([
+    ['charge.refunded', charge()],
+    ['charge.dispute.created', dispute('charge.dispute.created')],
+    ['charge.dispute.closed', dispute('charge.dispute.closed', { status: 'won' })],
+    ['charge.dispute.funds_reinstated', dispute('charge.dispute.funds_reinstated')],
+  ])('%s with a purchase holding that payment intent → flow boost (no account in the outcome)', async (_name, event) => {
+    const purchases = port({ byIntent: purchaseRow({ status: 'paid', stripePaymentIntentId: 'pi_test_boost_1' }) });
+    expect(await createBoostResolver({ purchases }).resolve(event, ctx)).toEqual({ kind: 'flow', flow: 'boost', lookupKeys: [] });
+    expect(purchases.findByPaymentIntentIdForWebhook).toHaveBeenCalledWith('pi_test_boost_1');
+    expect(purchases.findBySessionIdForWebhook).not.toHaveBeenCalled();
+    expect(purchases.findByIdForWebhook).not.toHaveBeenCalled();
+  });
+
+  it('a payment intent our table does not hold → not_business_os (the legacy path), never a deny', async () => {
+    const purchases = port();
+    expect(await createBoostResolver({ purchases }).resolve(charge(), ctx)).toEqual({ kind: 'not_business_os' });
+  });
+
+  it('SA Q-2: a charge with no payment intent keeps the legacy path, and nothing is read (no charge-id lookup)', async () => {
+    const purchases = port({ byIntent: purchaseRow() });
+    for (const event of [charge({ payment_intent: null }), charge({ payment_intent: undefined }), dispute('charge.dispute.created', { payment_intent: null })]) {
+      expect(await createBoostResolver({ purchases }).resolve(event, ctx)).toEqual({ kind: 'not_business_os' });
+    }
+    expect(purchases.findByPaymentIntentIdForWebhook).not.toHaveBeenCalled();
+  });
+
+  it('metadata naming a boost, or our purchase id, never matches a charge (4a SA N-1)', async () => {
+    const purchases = port();
+    const event = charge({ payment_intent: 'pi_test_someone_else', metadata: { product: 'business_os_boost', purchase_id: PURCHASE } });
+    expect(await createBoostResolver({ purchases }).resolve(event, ctx)).toEqual({ kind: 'not_business_os' });
+    expect(purchases.findByIdForWebhook).not.toHaveBeenCalled();
+    expect(purchases.findBySessionIdForWebhook).not.toHaveBeenCalled();
+  });
+
+  it('an expanded payment intent object is read by its id', async () => {
+    const purchases = port({ byIntent: purchaseRow() });
+    await createBoostResolver({ purchases }).resolve(charge({ payment_intent: { id: 'pi_test_boost_1', object: 'payment_intent' } }), ctx);
+    expect(purchases.findByPaymentIntentIdForWebhook).toHaveBeenCalledWith('pi_test_boost_1');
+  });
+
+  it('a lookup error throws (the claim is released), never a deny', async () => {
+    await expect(createBoostResolver({ purchases: port({ intentError: transient }) }).resolve(charge(), ctx)).rejects.toBeInstanceOf(BoostResolverLookupError);
+  });
+
+  it('a Connect refund never reaches the resolver (dispatcher), and the resolver itself refuses it too', async () => {
+    const purchases = port({ byIntent: purchaseRow() });
+    const connect = { ...charge(), account: 'acct_1' } as unknown as Stripe.Event;
+    expect(await dispatchBusinessOsEvent(connect, ctx, [createBoostResolver({ purchases })])).toEqual({ kind: 'not_business_os' });
+    expect(await createBoostResolver({ purchases }).resolve(connect, ctx)).toEqual({ kind: 'not_business_os' });
+    expect(purchases.findByPaymentIntentIdForWebhook).not.toHaveBeenCalled();
+  });
+});
+
+describe('QA R-2 / R-5: what the charge branch of the resolver never claims', () => {
+  it('R-2 (QA4b-L1): a refund for a stuck PENDING purchase (no stored payment intent yet) → not_business_os (legacy); the 4b.2 pass recovers it', async () => {
+    // A pending row holds no payment intent, and matching is by stored intent only.
+    const pendingRow = purchaseRow({ status: 'pending', stripePaymentIntentId: null });
+    const purchases = port();
+    (purchases.findByPaymentIntentIdForWebhook as jest.Mock).mockImplementation(async (pi: string) => ({
+      data: (pendingRow.stripePaymentIntentId === pi ? pendingRow : null) as never,
+      error: null,
+    }));
+    const event = { id: 'evt_c', type: 'charge.refunded', livemode: false, data: { object: { id: 'ch_test_1', payment_intent: 'pi_test_boost_1', amount_refunded: 2500, currency: 'usd' } } } as unknown as Stripe.Event;
+    expect(await createBoostResolver({ purchases }).resolve(event, ctx)).toEqual({ kind: 'not_business_os' });
+  });
+
+  it.each(['charge.succeeded', 'charge.dispute.updated', 'charge.refund.updated', 'charge.captured', 'charge.failed'])(
+    'R-5: %s → not_business_os with no read at all',
+    async (type) => {
+      const purchases = port({ byIntent: purchaseRow({ status: 'paid', stripePaymentIntentId: 'pi_test_boost_1' }) });
+      const event = { id: 'evt_x', type, livemode: false, data: { object: { id: 'ch_test_1', payment_intent: 'pi_test_boost_1' } } } as unknown as Stripe.Event;
+      expect(await createBoostResolver({ purchases }).resolve(event, ctx)).toEqual({ kind: 'not_business_os' });
+      expect(purchases.findByPaymentIntentIdForWebhook).not.toHaveBeenCalled();
+      expect(purchases.findBySessionIdForWebhook).not.toHaveBeenCalled();
+    }
+  );
 });

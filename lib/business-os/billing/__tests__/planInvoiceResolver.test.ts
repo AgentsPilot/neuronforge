@@ -69,8 +69,17 @@ describe('fixtures', () => {
     expect(PRICE_B).toBeTruthy();
   });
 
-  it.each(fixtureNames)('%s is on the pinned API version 2025-10-29.clover', (name) => {
-    expect((fixture(name) as unknown as { api_version: string }).api_version).toBe('2025-10-29.clover');
+  // P-3b.2 (SA Q-9, C-6): a HAND-BUILT fixture is written in the SDK's pinned
+  // version; a CAPTURED one keeps the version Stripe rendered it in (the
+  // sandbox's account default is 2025-09-30.clover), and its source line says so.
+  it.each(fixtureNames)('%s is labelled with its real API version', (name) => {
+    const event = fixture(name) as unknown as { api_version: string; _fixture_source: string };
+    if (event._fixture_source.startsWith('HAND-BUILT')) {
+      expect(event.api_version).toBe('2025-10-29.clover');
+    } else {
+      expect(['2025-09-30.clover', '2025-10-29.clover']).toContain(event.api_version);
+      expect(event._fixture_source).toContain(event.api_version);
+    }
   });
 
   it.each(fixtureNames)('%s states where it came from (captured, or hand-built)', (name) => {
@@ -274,5 +283,240 @@ describe('planResolver on the REAL catalog (P-2b, workplan §3.5)', () => {
   it('a failed payment on a plan price is a plan flow; the no-key price is denied', async () => {
     expect(reasonOf(await resolveWith(realCatalog(), FAILED))).toBe('flow');
     expect(reasonOf(await resolveWith(realCatalog(), UNKNOWN))).toBe('unknown_price');
+  });
+});
+
+// ── P-3b.2: truncation fetch (CF-2), sessions and subscriptions (workplan §3.6) ──
+
+const SESSION_COMPLETED = fixture('checkout-session-completed-subscription.json');
+const SESSION_EXPIRED = fixture('checkout-session-expired-subscription.json');
+const SUB_UPDATED = fixture('customer-subscription-updated.json');
+const SUB_DELETED = fixture('customer-subscription-deleted.json');
+
+function fakeStripe(overrides: Partial<Record<'lines' | 'sessionPrices' | 'subscription', jest.Mock>> = {}) {
+  const reads = {
+    listInvoiceLinesAll: overrides.lines ?? jest.fn(),
+    listCheckoutSessionPriceIds: overrides.sessionPrices ?? jest.fn(),
+    retrieveBusinessOsSubscription: overrides.subscription ?? jest.fn(),
+  };
+  const factory = jest.fn(() => reads);
+  return { reads, factory };
+}
+
+function resolverWith(
+  catalog: PlanPriceCatalog,
+  stripe: ReturnType<typeof fakeStripe>,
+  enabled: boolean
+): (event: Stripe.Event) => Promise<DispatchOutcome> {
+  const resolver = createPlanResolver({
+    catalog,
+    stripe: stripe.factory as unknown as () => never,
+    recognitionEnabled: () => enabled,
+  });
+  return (event) => resolver.resolve(event, ctx);
+}
+
+/** A copy of an event with its object changed by `edit`. */
+function withObject<T>(event: Stripe.Event, edit: (object: T) => void): Stripe.Event {
+  const copy = JSON.parse(JSON.stringify(event)) as Stripe.Event;
+  edit(copy.data.object as unknown as T);
+  return copy;
+}
+
+const TRUNCATED = withInvoice(CREATE, (i) => {
+  i.lines.has_more = true;
+});
+
+describe('P-3b.2 switch OFF: every new branch is P-1 exactly, with ZERO Stripe calls (§3.6)', () => {
+  const cases: Array<[string, Stripe.Event, string]> = [
+    ['a truncated invoice', TRUNCATED, 'lines_truncated'],
+    ['a subscription-mode session completed', SESSION_COMPLETED, 'legacy_subscription_checkout'],
+    ['a subscription-mode session expired', SESSION_EXPIRED, 'not_business_os'],
+    ['a subscription updated', SUB_UPDATED, 'not_business_os'],
+    ['a subscription deleted', SUB_DELETED, 'not_business_os'],
+    [
+      'a subscription whose items are truncated',
+      withObject<Stripe.Subscription>(SUB_UPDATED, (s) => {
+        s.items.has_more = true;
+      }),
+      'not_business_os',
+    ],
+  ];
+
+  it.each(cases)('%s', async (_label, event, expected) => {
+    const stripe = fakeStripe();
+    const catalog = catalogKnowing({ [PRICE_A]: 'probe_a' });
+    const out = await resolverWith(catalog, stripe, false)(event);
+    expect(reasonOf(out)).toBe(expected);
+    expect(stripe.factory).not.toHaveBeenCalled();
+  });
+
+  it('the default switch is the price switch: unset in this suite, so the default resolver makes no Stripe call', async () => {
+    const stripe = fakeStripe();
+    const resolver = createPlanResolver({
+      catalog: catalogKnowing({ [PRICE_A]: 'probe_a' }),
+      stripe: stripe.factory as unknown as () => never,
+    });
+    for (const event of [TRUNCATED, SESSION_COMPLETED, SESSION_EXPIRED, SUB_UPDATED, SUB_DELETED]) {
+      await resolver.resolve(event, ctx);
+    }
+    expect(stripe.factory).not.toHaveBeenCalled();
+  });
+
+  it('the subscription-mode session deny is identical to P-1 (detail included)', async () => {
+    const out = await resolverWith(catalogKnowing({}), fakeStripe(), false)(SESSION_COMPLETED);
+    const session = SESSION_COMPLETED.data.object as Stripe.Checkout.Session;
+    expect(out).toEqual({
+      kind: 'deny',
+      reason: 'legacy_subscription_checkout',
+      detail: {
+        eventType: 'checkout.session.completed',
+        objectId: session.id,
+        priceIds: [],
+        lookupKeysMatched: [],
+        metadataKeys: Object.keys(session.metadata ?? {}).sort(),
+        amountPaid: session.amount_total,
+        livemode: false,
+      },
+    });
+  });
+});
+
+describe('P-3b.2 switch ON: a truncated invoice is read in full (CF-2)', () => {
+  it('a truncated recognised invoice is fetched and becomes a plan flow', async () => {
+    const all = [...invoiceOf(CREATE).lines.data];
+    const stripe = fakeStripe({ lines: jest.fn().mockResolvedValue(all) });
+    const out = await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(TRUNCATED);
+    expect(out).toEqual({ kind: 'flow', flow: 'plan', lookupKeys: ['probe_a'] });
+    expect(stripe.reads.listInvoiceLinesAll).toHaveBeenCalledWith(invoiceOf(CREATE).id);
+  });
+
+  it('the fetched lines decide: a second, unknown price on page two is mixed_prices', async () => {
+    const all = [...invoiceOf(CREATE).lines.data, ...invoiceOf(UNKNOWN).lines.data];
+    const stripe = fakeStripe({ lines: jest.fn().mockResolvedValue(all) });
+    expect(reasonOf(await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(TRUNCATED))).toBe('mixed_prices');
+  });
+
+  it('a fetch error throws (the claim is released and Stripe retries), never a deny', async () => {
+    const stripe = fakeStripe({ lines: jest.fn().mockRejectedValue(new Error('stripe down')) });
+    await expect(resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(TRUNCATED)).rejects.toThrow('stripe down');
+  });
+
+  it('an untruncated invoice is never fetched', async () => {
+    const stripe = fakeStripe();
+    await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(CREATE);
+    expect(stripe.factory).not.toHaveBeenCalled();
+  });
+});
+
+describe('P-3b.2 switch ON: checkout sessions, by their line-item prices (never by metadata)', () => {
+  const sessionId = (SESSION_COMPLETED.data.object as Stripe.Checkout.Session).id;
+
+  it.each([
+    ['completed', SESSION_COMPLETED],
+    ['expired', SESSION_EXPIRED],
+  ])('a %s session selling a plan price is a plan flow', async (_label, event) => {
+    const stripe = fakeStripe({ sessionPrices: jest.fn().mockResolvedValue([PRICE_A]) });
+    expect(await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(event)).toEqual({
+      kind: 'flow',
+      flow: 'plan',
+      lookupKeys: ['probe_a'],
+    });
+    expect(stripe.reads.listCheckoutSessionPriceIds).toHaveBeenCalledWith(sessionId);
+  });
+
+  it('unrecognised prices: completed keeps the P-1 deny, expired stays not Business OS, even with plan metadata', async () => {
+    const stripe = fakeStripe({ sessionPrices: jest.fn().mockResolvedValue(['price_other']) });
+    const resolve = resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true);
+    expect(reasonOf(await resolve(SESSION_COMPLETED))).toBe('legacy_subscription_checkout');
+    expect(reasonOf(await resolve(SESSION_EXPIRED))).toBe('not_business_os');
+  });
+
+  it('no priced line items: the unrecognised outcome', async () => {
+    const stripe = fakeStripe({ sessionPrices: jest.fn().mockResolvedValue([]) });
+    expect(reasonOf(await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(SESSION_COMPLETED))).toBe(
+      'legacy_subscription_checkout'
+    );
+  });
+
+  it('a plan price beside another price is mixed_prices', async () => {
+    const stripe = fakeStripe({ sessionPrices: jest.fn().mockResolvedValue([PRICE_A, 'price_other']) });
+    expect(await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(SESSION_COMPLETED)).toMatchObject({
+      kind: 'deny',
+      reason: 'mixed_prices',
+      detail: { objectId: sessionId, priceIds: [PRICE_A, 'price_other'], lookupKeysMatched: ['probe_a'] },
+    });
+  });
+
+  it('a plan price with legacy Pilot-Credit metadata is metadata_mismatch', async () => {
+    const event = withObject<Stripe.Checkout.Session>(SESSION_COMPLETED, (s) => {
+      s.metadata = { user_id: 'someone', credits: '5000' };
+    });
+    const stripe = fakeStripe({ sessionPrices: jest.fn().mockResolvedValue([PRICE_A]) });
+    expect(reasonOf(await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(event))).toBe('metadata_mismatch');
+  });
+
+  it('a payment-mode session (boost pack) is not Business OS, and Stripe is not asked', async () => {
+    const event = withObject<Stripe.Checkout.Session>(SESSION_COMPLETED, (s) => {
+      s.mode = 'payment';
+    });
+    const stripe = fakeStripe();
+    expect(await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(event)).toEqual({ kind: 'not_business_os' });
+    expect(stripe.factory).not.toHaveBeenCalled();
+  });
+
+  it('a Stripe error throws', async () => {
+    const stripe = fakeStripe({ sessionPrices: jest.fn().mockRejectedValue(new Error('rate limited')) });
+    await expect(resolverWith(catalogKnowing({}), stripe, true)(SESSION_EXPIRED)).rejects.toThrow('rate limited');
+  });
+});
+
+describe('P-3b.2 switch ON: subscriptions, by their item prices', () => {
+  it.each([
+    ['updated', SUB_UPDATED],
+    ['deleted', SUB_DELETED],
+  ])('a %s subscription on a plan price is a plan flow, read from the embedded items (no Stripe call)', async (_label, event) => {
+    const stripe = fakeStripe();
+    expect(await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(event)).toEqual({
+      kind: 'flow',
+      flow: 'plan',
+      lookupKeys: ['probe_a'],
+    });
+    expect(stripe.factory).not.toHaveBeenCalled();
+  });
+
+  it('an unrecognised price leaves it to the legacy handlers (not Business OS), even with plan metadata', async () => {
+    expect(await resolverWith(catalogKnowing({}), fakeStripe(), true)(SUB_UPDATED)).toEqual({ kind: 'not_business_os' });
+  });
+
+  it('truncated items: the subscription is read in full', async () => {
+    const event = withObject<Stripe.Subscription>(SUB_UPDATED, (s) => {
+      s.items.has_more = true;
+    });
+    const stripe = fakeStripe({ subscription: jest.fn().mockResolvedValue({ priceIds: [PRICE_A, 'price_other'] }) });
+    expect(reasonOf(await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), stripe, true)(event))).toBe('mixed_prices');
+    expect(stripe.reads.retrieveBusinessOsSubscription).toHaveBeenCalledWith('sub_probe_1');
+  });
+
+  it('a plan price with legacy metadata is metadata_mismatch (the legacy handler never sees it)', async () => {
+    const event = withObject<Stripe.Subscription>(SUB_UPDATED, (s) => {
+      s.metadata = { user_id: 'someone' };
+    });
+    expect(reasonOf(await resolverWith(catalogKnowing({ [PRICE_A]: 'probe_a' }), fakeStripe(), true)(event))).toBe(
+      'metadata_mismatch'
+    );
+  });
+
+  it('a Stripe error on the full read throws', async () => {
+    const event = withObject<Stripe.Subscription>(SUB_DELETED, (s) => {
+      s.items.has_more = true;
+    });
+    const stripe = fakeStripe({ subscription: jest.fn().mockRejectedValue(new Error('stripe down')) });
+    await expect(resolverWith(catalogKnowing({}), stripe, true)(event)).rejects.toThrow('stripe down');
+  });
+
+  it('a catalog failure throws (never a deny)', async () => {
+    const catalog: PlanPriceCatalog = { load: () => Promise.reject(new Error('catalog down')) };
+    await expect(resolverWith(catalog, fakeStripe(), true)(SUB_UPDATED)).rejects.toThrow('catalog down');
   });
 });

@@ -20,6 +20,7 @@ import { syncBookingsForTransactions } from '@/lib/payments/syncBookingPaymentSt
 import { resolveProcessorFee, feeColumns } from '@/lib/payments/processorFee';
 import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
+import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import {
@@ -27,8 +28,19 @@ import {
   WEBHOOK_INVOICE_FAILED_ACTIVITY_COLUMNS,
   WEBHOOK_INVOICE_LOOKUP_COLUMNS,
   WEBHOOK_INVOICE_RECEIPT_COLUMNS,
+  paymentTransactionRepository,
+  WEBHOOK_TRANSACTION_ATTACH_COLUMNS,
+  WEBHOOK_TRANSACTION_DISPUTE_COLUMNS,
+  WEBHOOK_TRANSACTION_ID_COLUMNS,
+  WEBHOOK_TRANSACTION_REFUND_COLUMNS,
 } from '@/lib/repositories/PaymentRepository';
+import { paymentRefundRepository } from '@/lib/repositories/PaymentRefundRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { userSubscriptionRepository } from '@/lib/repositories/UserSubscriptionRepository';
+import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
+import { creditTransactionRepository } from '@/lib/repositories/CreditTransactionRepository';
+import { billingEventRepository } from '@/lib/repositories/BillingEventRepository';
+import { legacyBoostPackPurchaseRepository } from '@/lib/repositories/LegacyBoostPackPurchaseRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
 import { createLogger, type Logger } from '@/lib/logger';
 import {
@@ -38,6 +50,7 @@ import {
   type BusinessOsFlow,
 } from '@/lib/business-os/billing/webhookDispatcher';
 import { handleBoostWebhookEvent } from '@/lib/business-os/boost/boostWebhookDeps';
+import { handlePlanBillingEvent } from '@/lib/business-os/billing/planBillingHandler';
 import Stripe from 'stripe';
 
 // Disable body parsing for webhook signature verification
@@ -53,12 +66,11 @@ const logger = createLogger({ module: 'stripe-webhook', route: '/api/stripe/webh
 // row already proved to belong to the sending account (`accountOwns`); see the
 // tenant-isolation notes in docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md §5.
 //
-// CF-5 PR 1 replaced this route's private service-role client with the shared
-// `supabaseServer` (the same URL and key; the dropped auth options only matter
-// for a signed-in session, which a service-role client never has, workplan §4).
-// The alias keeps the remaining direct queries compiling while later PRs move
-// them behind repositories; PR 5 removes it.
-const supabaseAdmin = supabaseServer;
+// This route issues no query of its own (CLAUDE.md rule 1; CF-5 PR 5 moved the
+// last ones behind repositories, which default to `supabaseServer`). It imports
+// `supabaseServer` only to hand it to three helpers that take a client:
+// `pilotCreditsToTokens`, `QuotaAllocationService` and `resolveAccountOwner`
+// (workplan SA Q-2). `routerPlacement.guard` pins that.
 
 // Plan payments P-1 removed `handleInvoicePaid`, the agent-platform conversion
 // of a platform `invoice.paid` into Pilot Credits. It took the account from
@@ -86,11 +98,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice, log: Logger) 
   }
 
   // Get user subscription
-  const { data: userSub } = await supabaseAdmin
-    .from('user_subscriptions')
-    .select('payment_retry_count, grace_period_days, current_period_end')
-    .eq('user_id', userId)
-    .single();
+  const { data: userSub } = await userSubscriptionRepository.findDunningState(userId);
 
   const retryCount = (userSub?.payment_retry_count || 0) + 1;
 
@@ -99,11 +107,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice, log: Logger) 
 
   if (!gracePeriodDays) {
     // Fetch default from system_settings_config
-    const { data: configData } = await supabaseAdmin
-      .from('system_settings_config')
-      .select('value')
-      .eq('key', 'payment_grace_period_days')
-      .maybeSingle();
+    const { data: configData } = await systemConfigRepository.findRawValue('payment_grace_period_days');
 
     gracePeriodDays = configData ? parseInt(configData.value as string) : 3;
   }
@@ -114,29 +118,24 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice, log: Logger) 
   const shouldPauseAgents = daysSincePeriodEnd > gracePeriodDays;
 
   // Update user subscription
-  await supabaseAdmin
-    .from('user_subscriptions')
-    .update({
-      payment_retry_count: retryCount,
-      last_payment_attempt: new Date().toISOString(),
-      status: shouldPauseAgents ? 'past_due' : 'active',
-      agents_paused: shouldPauseAgents
-    })
-    .eq('user_id', userId);
+  await userSubscriptionRepository.recordPaymentFailure(userId, {
+    retryCount,
+    status: shouldPauseAgents ? 'past_due' : 'active',
+    agentsPaused: shouldPauseAgents
+  });
 
-  // Log billing event
-  await supabaseAdmin
-    .from('billing_events')
-    .insert({
-      user_id: userId,
-      event_type: 'renewal_failed',
-      credits_delta: 0,
-      description: `Payment failed (attempt ${retryCount}). ${shouldPauseAgents ? 'Agents paused due to grace period exceeded.' : `Grace period active (${gracePeriodDays} days).`}`,
-      stripe_event_id: invoice.id,
-      stripe_invoice_id: invoice.id,
-      amount_cents: invoice.amount_due,
-      currency: invoice.currency
-    });
+  // Log billing event. The row is kept exactly as it was written inline,
+  // `stripe_event_id: invoice.id` included (legacy, FU-1).
+  await billingEventRepository.insert({
+    user_id: userId,
+    event_type: 'renewal_failed',
+    credits_delta: 0,
+    description: `Payment failed (attempt ${retryCount}). ${shouldPauseAgents ? 'Agents paused due to grace period exceeded.' : `Grace period active (${gracePeriodDays} days).`}`,
+    stripe_event_id: invoice.id,
+    stripe_invoice_id: invoice.id,
+    amount_cents: invoice.amount_due,
+    currency: invoice.currency
+  });
 
   // AUDIT TRAIL: Log payment failure
   try {
@@ -209,16 +208,12 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
     log.info({ pilotCredits, boostPackId }, 'Boost pack details');
 
     // Convert Pilot Credits to tokens for storage (fetched from database)
-    const credits = await pilotCreditsToTokens(pilotCredits, supabaseAdmin);
+    const credits = await pilotCreditsToTokens(pilotCredits, supabaseServer);
 
     log.info({ pilotCredits, tokens: credits }, 'Converting Pilot Credits to tokens');
 
     // Get current balance
-    const { data: userSub } = await supabaseAdmin
-      .from('user_subscriptions')
-      .select('balance, total_earned')
-      .eq('user_id', userId)
-      .single();
+    const { data: userSub } = await userSubscriptionRepository.findBalance(userId);
 
     const currentBalance = userSub?.balance || 0;
     const currentTotalEarned = userSub?.total_earned || 0;
@@ -227,38 +222,29 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
     const newBalance = currentBalance + credits;
     const newTotalEarned = currentTotalEarned + credits;
 
-    // Update balance
-    await supabaseAdmin
-      .from('user_subscriptions')
-      .update({
-        balance: newBalance,
-        total_earned: newTotalEarned,
-        // Clear free tier expiration on purchase (user is now a paying customer)
-        free_tier_expires_at: null,
-        account_frozen: false
-      })
-      .eq('user_id', userId);
+    // Update balance. The repository also clears the free tier expiration
+    // (user is now a paying customer) and unfreezes the account, as before.
+    await userSubscriptionRepository.applyBoostPackBalance(userId, {
+      balance: newBalance,
+      totalEarned: newTotalEarned
+    });
 
     // Create credit transaction and capture the ID
-    const { data: creditTransaction, error: creditTxError } = await supabaseAdmin
-      .from('credit_transactions')
-      .insert({
-        user_id: userId,
-        credits_delta: credits,
-        balance_before: currentBalance,
-        balance_after: newBalance,
-        transaction_type: 'allocation',
-        activity_type: 'boost_pack_purchase',
-        description: `Boost pack purchase: ${credits.toLocaleString()} credits`,
-        metadata: {
-          stripe_session_id: session.id,
-          stripe_payment_intent_id: session.payment_intent,
-          boost_pack_id: boostPackId,
-          amount_paid_cents: session.amount_total
-        }
-      })
-      .select('id')
-      .single();
+    const { data: creditTransaction, error: creditTxError } = await creditTransactionRepository.insertReturningId({
+      user_id: userId,
+      credits_delta: credits,
+      balance_before: currentBalance,
+      balance_after: newBalance,
+      transaction_type: 'allocation',
+      activity_type: 'boost_pack_purchase',
+      description: `Boost pack purchase: ${credits.toLocaleString()} credits`,
+      metadata: {
+        stripe_session_id: session.id,
+        stripe_payment_intent_id: session.payment_intent,
+        boost_pack_id: boostPackId,
+        amount_paid_cents: session.amount_total
+      }
+    });
 
     if (creditTxError) {
       log.error({ err: creditTxError, userId }, 'Failed to create credit transaction for boost pack');
@@ -268,23 +254,21 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
 
     // Record boost pack purchase with proper schema
     if (boostPackId) {
-      const { error: boostPackError } = await supabaseAdmin
-        .from('boost_pack_purchases')
-        .insert({
-          user_id: userId,
+      const { error: boostPackError } = await legacyBoostPackPurchaseRepository.insert({
+        user_id: userId,
+        boost_pack_id: boostPackId,
+        transaction_id: creditTransaction?.id || null,
+        credits_purchased: credits,
+        bonus_credits: 0, // Bonus already included in credits
+        price_paid_usd: (session.amount_total || 0) / 100, // Numeric, not string
+        stripe_payment_intent_id: session.payment_intent as string,
+        payment_status: 'succeeded',
+        metadata: {
+          stripe_session_id: session.id,
           boost_pack_id: boostPackId,
-          transaction_id: creditTransaction?.id || null,
-          credits_purchased: credits,
-          bonus_credits: 0, // Bonus already included in credits
-          price_paid_usd: (session.amount_total || 0) / 100, // Numeric, not string
-          stripe_payment_intent_id: session.payment_intent as string,
-          payment_status: 'succeeded',
-          metadata: {
-            stripe_session_id: session.id,
-            boost_pack_id: boostPackId,
-            amount_total: session.amount_total
-          }
-        });
+          amount_total: session.amount_total
+        }
+      });
 
       if (boostPackError) {
         log.error({ err: boostPackError, userId, boostPackId }, 'Failed to insert into boost_pack_purchases');
@@ -303,7 +287,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
 
     // Allocate storage and execution quotas based on new balance
     try {
-      const quotaService = new QuotaAllocationService(supabaseAdmin);
+      const quotaService = new QuotaAllocationService(supabaseServer);
       const quotaResult = await quotaService.allocateQuotasForUser(userId);
 
       if (quotaResult.success) {
@@ -365,14 +349,11 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription, log:
   }
 
   // Lifecycle mirror only: cancellation state and status.
-  await supabaseAdmin
-    .from('user_subscriptions')
-    .update({
-      cancel_at_period_end: subscription.cancel_at_period_end || false,
-      canceled_at: subscription.canceled_at ? new Date(subscription.canceled_at * 1000).toISOString() : null,
-      status: subscription.status
-    })
-    .eq('user_id', userId);
+  await userSubscriptionRepository.mirrorStripeStatus(userId, {
+    cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
+    canceledAt: subscription.canceled_at ? new Date(subscription.canceled_at * 1000).toISOString() : null,
+    status: subscription.status
+  });
 
   log.info({ userId, status: subscription.status }, 'Subscription status mirrored');
 }
@@ -425,16 +406,10 @@ async function handleDispute(
   const paymentIntentId =
     typeof dispute.payment_intent === 'string' ? dispute.payment_intent : dispute.payment_intent?.id;
 
-  let query = supabaseAdmin
-    .from('payment_transactions')
-    .select('id, user_id, status, amount, currency, contact_id, metadata')
-    .limit(1);
-
-  query = paymentIntentId
-    ? query.eq('stripe_payment_intent_id', paymentIntentId)
-    : query.eq('stripe_charge_id', chargeId || '');
-
-  const { data: matches } = await query;
+  const { data: matches } = await paymentTransactionRepository.findFirstByStripeReference(
+    { paymentIntentId, chargeId: chargeId || '' },
+    WEBHOOK_TRANSACTION_DISPUTE_COLUMNS
+  );
   const transaction = matches?.[0];
 
   if (!transaction) {
@@ -456,28 +431,24 @@ async function handleDispute(
 
   const nextStatus = won ? restored : 'disputed';
 
-  const { error } = await supabaseAdmin
-    .from('payment_transactions')
-    .update({
-      status: nextStatus,
-      metadata: {
-        ...metadata,
-        // Written only when the dispute opens, so a second event cannot
-        // overwrite the original with `disputed` and lose the way back.
-        status_before_dispute:
-          phase === 'opened' ? transaction.status : metadata.status_before_dispute,
-        dispute: {
-          id: dispute.id,
-          phase,
-          status: dispute.status,
-          reason: dispute.reason,
-          amount_minor: dispute.amount,
-          evidence_due_by: dispute.evidence_details?.due_by ?? null,
-        },
+  const { error } = await paymentTransactionRepository.recordDisputeState(transaction.id, {
+    status: nextStatus,
+    metadata: {
+      ...metadata,
+      // Written only when the dispute opens, so a second event cannot
+      // overwrite the original with `disputed` and lose the way back.
+      status_before_dispute:
+        phase === 'opened' ? transaction.status : metadata.status_before_dispute,
+      dispute: {
+        id: dispute.id,
+        phase,
+        status: dispute.status,
+        reason: dispute.reason,
+        amount_minor: dispute.amount,
+        evidence_due_by: dispute.evidence_details?.due_by ?? null,
       },
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', transaction.id);
+    },
+  });
 
   if (error) {
     log.error({ err: error, disputeId: dispute.id, transactionId: transaction.id }, 'Failed to record dispute');
@@ -523,16 +494,10 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
 
   // Located by either reference, because which one was recorded depends on the
   // flow that created the payment.
-  let query = supabaseAdmin
-    .from('payment_transactions')
-    .select('id, user_id, invoice_id, currency')
-    .limit(1);
-
-  query = paymentIntentId
-    ? query.eq('stripe_payment_intent_id', paymentIntentId)
-    : query.eq('stripe_charge_id', charge.id);
-
-  const { data: matches } = await query;
+  const { data: matches } = await paymentTransactionRepository.findFirstByStripeReference(
+    { paymentIntentId, chargeId: charge.id },
+    WEBHOOK_TRANSACTION_REFUND_COLUMNS
+  );
   const transaction = matches?.[0];
 
   if (!transaction) {
@@ -562,31 +527,29 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
      */
     const amountMajor = fromMinorUnits(stripeRefund.amount, refundCurrency);
 
-    const { error } = await supabaseAdmin.from('payment_refunds').upsert(
-      {
-        user_id: transaction.user_id,
-        transaction_id: transaction.id,
-        invoice_id: transaction.invoice_id,
-        amount: amountMajor,
-        amount_minor: stripeRefund.amount,
-        currency: refundCurrency,
-        // Stripe can report a refund as still pending for some payment methods;
-        // only a succeeded one may count toward the refunded total.
-        status: stripeRefund.status === 'succeeded' ? 'succeeded' : 'pending',
-        processor_type: 'stripe',
-        processor_refund_id: stripeRefund.id,
-        stripe_connect_account_id: connectAccountId,
-        // Deterministic, so a redelivery of this event cannot open a second row.
-        idempotency_key: `stripe:${stripeRefund.id}`,
-        source: 'webhook',
-        succeeded_at:
-          stripeRefund.status === 'succeeded'
-            ? new Date(stripeRefund.created * 1000).toISOString()
-            : null,
-        metadata: { origin: 'charge.refunded', charge_id: charge.id }
-      },
-      { onConflict: 'processor_refund_id' }
-    );
+    // Upserted on `processor_refund_id` (inside the repository).
+    const { error } = await paymentRefundRepository.upsertFromStripe({
+      user_id: transaction.user_id,
+      transaction_id: transaction.id,
+      invoice_id: transaction.invoice_id,
+      amount: amountMajor,
+      amount_minor: stripeRefund.amount,
+      currency: refundCurrency,
+      // Stripe can report a refund as still pending for some payment methods;
+      // only a succeeded one may count toward the refunded total.
+      status: stripeRefund.status === 'succeeded' ? 'succeeded' : 'pending',
+      processor_type: 'stripe',
+      processor_refund_id: stripeRefund.id,
+      stripe_connect_account_id: connectAccountId,
+      // Deterministic, so a redelivery of this event cannot open a second row.
+      idempotency_key: `stripe:${stripeRefund.id}`,
+      source: 'webhook',
+      succeeded_at:
+        stripeRefund.status === 'succeeded'
+          ? new Date(stripeRefund.created * 1000).toISOString()
+          : null,
+      metadata: { origin: 'charge.refunded', charge_id: charge.id }
+    });
 
     if (error) {
       log.error({ err: error, refundId: stripeRefund.id, chargeId: charge.id }, 'Failed to record refund');
@@ -701,12 +664,10 @@ async function handleConnectPaymentIntentSucceeded(
     return;
   }
 
-  const { data: existing } = await supabaseAdmin
-    .from('payment_transactions')
-    .select('id')
-    .eq('stripe_payment_intent_id', intent.id)
-    .limit(1)
-    .maybeSingle();
+  const { data: existing } = await paymentTransactionRepository.findByPaymentIntentId(
+    intent.id,
+    WEBHOOK_TRANSACTION_ID_COLUMNS
+  );
 
   if (existing) {
     log.info({ paymentIntentId: intent.id }, 'Payment already recorded');
@@ -755,7 +716,7 @@ async function handleConnectPaymentIntentSucceeded(
     paymentIntentId: intent.id,
   });
 
-  const { error } = await supabaseAdmin.from('payment_transactions').insert({
+  const { error } = await paymentTransactionRepository.insertFromWebhook({
     user_id: ownerId,
     contact_id: contactId,
     // `/ 100` assumed every currency has two decimal places. JPY has none, so a
@@ -849,11 +810,7 @@ async function recordPlanPeriodPaid(
     return true;
   }
 
-  const { data: alreadyRecorded } = await supabaseAdmin
-    .from('payment_plan_installments')
-    .select('id')
-    .eq('stripe_invoice_id', invoice.id)
-    .maybeSingle();
+  const { data: alreadyRecorded } = await paymentPlanRepository.findInstallmentIdByStripeInvoiceId(invoice.id);
 
   if (alreadyRecorded) {
     log.info({ stripeInvoiceId: invoice.id }, 'Plan period already recorded');
@@ -899,7 +856,7 @@ async function recordPlanPeriodPaid(
     paymentIntentId: planPaymentIntent,
   });
 
-  const { data: periodTransaction, error: txError } = await supabaseAdmin.from('payment_transactions').insert({
+  const { data: periodTransaction, error: txError } = await paymentTransactionRepository.insertFromWebhookReturningId({
     user_id: plan.data.user_id,
     contact_id: plan.data.contact_id,
     booking_id: plan.data.booking_id,
@@ -944,9 +901,7 @@ async function recordPlanPeriodPaid(
       installment_count: plan.data.installment_count,
     },
     ...describeChargeAccount(connectAccountId),
-  })
-    .select('id')
-    .single();
+  });
 
   if (txError) {
     log.error({ err: txError, stripeInvoiceId: invoice.id, subscriptionId }, 'Could not record a plan period');
@@ -966,20 +921,10 @@ async function recordPlanPeriodPaid(
    * row that was marked paid still claimed it had not been touched since it was
    * projected.
    */
-  await supabaseAdmin
-    .from('payment_plan_installments')
-    .update({
-      status: 'paid',
-      paid_at: new Date().toISOString(),
-      stripe_invoice_id: invoice.id,
-      payment_method: 'card',
-      processor_type: 'stripe',
-      transaction_id: periodTransaction?.id ?? null,
-      next_retry_at: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('subscription_id', plan.data.id)
-    .eq('installment_number', periodsPaid);
+  await paymentPlanRepository.markPeriodPaidFromStripe(plan.data.id, periodsPaid, {
+    stripeInvoiceId: invoice.id,
+    transactionId: periodTransaction?.id ?? null,
+  });
 
   /*
    * When the next period falls due.
@@ -991,14 +936,7 @@ async function recordPlanPeriodPaid(
    * already local, and a webhook should not make a network call to answer a
    * question it can answer from its own tables.
    */
-  const { data: nextPeriod } = await supabaseAdmin
-    .from('payment_plan_installments')
-    .select('due_date, amount')
-    .eq('subscription_id', plan.data.id)
-    .eq('status', 'pending')
-    .order('installment_number')
-    .limit(1)
-    .maybeSingle();
+  const { data: nextPeriod } = await paymentPlanRepository.findNextPendingPeriod(plan.data.id);
 
   await paymentPlanSubscriptionRepository.recordPeriodPaid(plan.data.id, periodsPaid, {
     chargeAt: nextPeriod?.due_date ?? null,
@@ -1023,11 +961,7 @@ async function recordPlanPeriodPaid(
    * wrote `paid`: this writes the same value again.
    */
   if (plan.data.booking_id) {
-    const { error: bookingError } = await supabaseAdmin
-      .from('scheduling_bookings')
-      .update({ payment_status: 'paid', updated_at: new Date().toISOString() })
-      .eq('id', plan.data.booking_id)
-      .eq('user_id', plan.data.user_id);
+    const { error: bookingError } = await schedulingBookingRepository.markPaidForOwner(plan.data.booking_id, plan.data.user_id);
 
     if (bookingError) {
       // Not fatal: the money is recorded, which is the part that must not be
@@ -1169,7 +1103,7 @@ async function accountOwner(connectAccountId: string, log: Logger): Promise<stri
   let owner = accountOwnerCache.get(connectAccountId) ?? null;
 
   if (!owner) {
-    owner = await resolveAccountOwner(supabaseAdmin, connectAccountId);
+    owner = await resolveAccountOwner(supabaseServer, connectAccountId);
     if (owner) accountOwnerCache.set(connectAccountId, owner);
   }
 
@@ -1369,13 +1303,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   // failed attempt is now retried, so this handler has to be safe to run twice.
   // Without this guard a retry would add a second payment against one invoice
   // and double the recorded revenue.
-  const { data: existingTx } = await supabaseAdmin
-    .from('payment_transactions')
-    .select('id')
-    .eq('invoice_id', platformInvoice.id)
-    .in('status', ['succeeded', 'refunded'])
-    .limit(1)
-    .maybeSingle();
+  const { data: existingTx } = await paymentTransactionRepository.findSettledIdForInvoice(platformInvoice.id);
 
   if (existingTx) {
     log.info(
@@ -1446,21 +1374,19 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   let alreadyRecorded = false;
 
   if (paymentIntentId) {
-    const { data: byIntent } = await supabaseAdmin
-      .from('payment_transactions')
-      .select('id, invoice_id')
-      .eq('stripe_payment_intent_id', paymentIntentId)
-      .limit(1)
-      .maybeSingle();
+    const { data: byIntent } = await paymentTransactionRepository.findByPaymentIntentId(
+      paymentIntentId,
+      WEBHOOK_TRANSACTION_ATTACH_COLUMNS
+    );
 
     if (byIntent) {
       alreadyRecorded = true;
 
       if (!byIntent.invoice_id) {
-        const { error: attachError } = await supabaseAdmin
-          .from('payment_transactions')
-          .update({ invoice_id: platformInvoice.id })
-          .eq('id', byIntent.id);
+        const { error: attachError } = await paymentTransactionRepository.attachToInvoice(
+          byIntent.id,
+          platformInvoice.id
+        );
 
         if (attachError) {
           log.error(
@@ -1479,9 +1405,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
   const { error: txError } = alreadyRecorded
     ? { error: null }
-    : await supabaseAdmin
-    .from('payment_transactions')
-    .insert({
+    : await paymentTransactionRepository.insertFromWebhook({
       user_id: platformInvoice.user_id,
       contact_id: platformInvoice.contact_id,
       invoice_id: platformInvoice.id,
@@ -1547,13 +1471,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   // Update linked booking's payment_status if invoice has a booking_id
   if (platformInvoice.booking_id) {
     log.info({ bookingId: platformInvoice.booking_id }, 'Updating booking payment_status');
-    const { error: bookingUpdateError } = await supabaseAdmin
-      .from('scheduling_bookings')
-      .update({
-        payment_status: 'paid',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', platformInvoice.booking_id);
+    const { error: bookingUpdateError } = await schedulingBookingRepository.markPaidUnscoped(platformInvoice.booking_id);
 
     if (bookingUpdateError) {
       log.error(
@@ -1722,12 +1640,18 @@ async function handleConnectCheckoutCompleted(
       typeof session.subscription === 'string' ? session.subscription : session.subscription.id;
     const ownerId = session.metadata?.owner_id;
 
-    try {
-      // The webhook has no module-level client; the one at the invoice handler
-      // is function-scoped. Constructed here for the same reason.
-      const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!);
+    // The webhook has no module-level client; the one at the invoice handler
+    // is function-scoped. Constructed here for the same reason.
+    const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
-      if (ownerId && (await accountOwns(connectAccountId, ownerId, log))) {
+    // Checked BEFORE the `try` below (FU-5 SA Q-3, CF-5 PR 4): an owner lookup
+    // that fails still throws (500, claim released, Stripe retries), but it is
+    // not a failed bind, so it must not be logged as "Could not bound a payment
+    // plan". Same order of effects as before: the client, the lookup, the bind.
+    const ownsPlan = ownerId ? await accountOwns(connectAccountId, ownerId, log) : false;
+
+    try {
+      if (ownerId && ownsPlan) {
         await bindPlanSubscription({
           stripe: stripeClient,
           connectAccountId,
@@ -1800,28 +1724,26 @@ async function handleConnectCheckoutCompleted(
     const paidAt = new Date().toISOString();
     const amountPaid = (session.amount_total || 0) / 100;
 
-    const { error: txError } = await supabaseAdmin
-      .from('payment_transactions')
-      .insert({
-        user_id: platformInvoice.user_id,
-        contact_id: platformInvoice.contact_id,
-        invoice_id: invoiceId,
-        amount: amountPaid,
-        currency: platformInvoice.currency || 'USD',
-        status: 'succeeded',
-        processor_type: 'stripe',
-        payment_method: 'card',
-        paid_at: paidAt,
-        stripe_payment_intent_id: session.payment_intent as string,
-        description: `Payment for invoice ${platformInvoice.invoice_number}`,
-        metadata: {
-          checkout_session_id: session.id,
-          connect_account_id: connectAccountId
-        },
-        // Same reasoning as the invoice handler: recorded at charge time,
-        // never inferred at refund time.
-        ...describeChargeAccount(connectAccountId)
-      });
+    const { error: txError } = await paymentTransactionRepository.insertFromWebhook({
+      user_id: platformInvoice.user_id,
+      contact_id: platformInvoice.contact_id,
+      invoice_id: invoiceId,
+      amount: amountPaid,
+      currency: platformInvoice.currency || 'USD',
+      status: 'succeeded',
+      processor_type: 'stripe',
+      payment_method: 'card',
+      paid_at: paidAt,
+      stripe_payment_intent_id: session.payment_intent as string,
+      description: `Payment for invoice ${platformInvoice.invoice_number}`,
+      metadata: {
+        checkout_session_id: session.id,
+        connect_account_id: connectAccountId
+      },
+      // Same reasoning as the invoice handler: recorded at charge time,
+      // never inferred at refund time.
+      ...describeChargeAccount(connectAccountId)
+    });
 
     if (txError) {
       // Thrown, not logged and swallowed. The caller turns this into a non-2xx
@@ -1866,26 +1788,20 @@ async function handleConnectCheckoutCompleted(
     // Update linked booking's payment_status if invoice has a booking_id
     if (platformInvoice.booking_id) {
       log.info({ bookingId: platformInvoice.booking_id, invoiceId }, 'Updating booking payment status for invoice booking');
-      const { error: bookingError } = await supabaseAdmin
-        .from('scheduling_bookings')
-        .update({
-          payment_status: 'paid',
-          /*
-           * And confirm it, if it was only pending because money was owed.
-           *
-           * This set `payment_status` alone, so a booking taken with payment
-           * up front stayed `pending` forever once paid — while the website's
-           * own finalize route set it `confirmed` for the same event. Two paths
-           * through the same purchase left the booking in two different states.
-           *
-           * Scoped to `pending` by the filter below so a cancelled or completed
-           * booking is never resurrected by a late webhook.
-           */
-          status: 'confirmed',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', platformInvoice.booking_id)
-        .eq('status', 'pending');
+      /*
+       * Paid, and confirmed if it was only pending because money was owed.
+       *
+       * This set `payment_status` alone, so a booking taken with payment
+       * up front stayed `pending` forever once paid — while the website's
+       * own finalize route set it `confirmed` for the same event. Two paths
+       * through the same purchase left the booking in two different states.
+       *
+       * Scoped to `pending` (inside the method) so a cancelled or completed
+       * booking is never resurrected by a late webhook.
+       */
+      const { error: bookingError } = await schedulingBookingRepository.markPaidAndConfirmIfPending(
+        platformInvoice.booking_id
+      );
 
       if (bookingError) {
         log.error({ err: bookingError, bookingId: platformInvoice.booking_id }, 'Failed to update booking payment status');
@@ -1915,17 +1831,10 @@ async function handleConnectCheckoutCompleted(
 
     // Update booking payment status. `count` (never `.select()` after an
     // update) is how a foreign id is told apart: it updates nothing.
-    const { error: bookingError, count: bookingsUpdated } = await supabaseAdmin
-      .from('scheduling_bookings')
-      .update(
-        {
-          payment_status: 'paid',
-          updated_at: new Date().toISOString()
-        },
-        { count: 'exact' }
-      )
-      .eq('id', bookingId)
-      .eq('user_id', owner);
+    const { error: bookingError, count: bookingsUpdated } = await schedulingBookingRepository.markPaidForOwnerCounted(
+      bookingId,
+      owner
+    );
 
     if (bookingError) {
       log.error({ err: bookingError, bookingId }, 'Failed to update booking payment status');
@@ -2166,11 +2075,7 @@ async function handlePlanSubscriptionEnded(
   connectAccountId: string,
   log: Logger
 ) {
-  const { data: plan } = await supabaseAdmin
-    .from('payment_plan_subscriptions')
-    .select('id, user_id, status, installment_count, periods_paid')
-    .eq('stripe_subscription_id', subscription.id)
-    .maybeSingle();
+  const { data: plan } = await paymentPlanSubscriptionRepository.findEndStateBySubscriptionId(subscription.id);
 
   // Not a plan this platform sold. Connected accounts have subscriptions of
   // their own and they are none of our business.
@@ -2188,31 +2093,22 @@ async function handlePlanSubscriptionEnded(
 
   const completed = (plan.periods_paid ?? 0) >= (plan.installment_count ?? 0);
 
-  await supabaseAdmin
-    .from('payment_plan_subscriptions')
-    .update({
-      status: completed ? 'completed' : 'cancelled',
-      [completed ? 'completed_at' : 'cancelled_at']: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', plan.id);
+  await paymentPlanSubscriptionRepository.endFromStripe(plan.id, completed ? 'completed' : 'cancelled');
 
   // Periods that will now never be charged stop counting as owed. `cancelled`
   // is a settled status, which is what takes them out of receivables.
+  //
+  // Everything unsettled, not only `pending`: the method filters out only `paid`
+  // and `cancelled`. A billed-but-unpaid period kept counting as owed on a
+  // subscription Stripe had already ended — the exact thing this write exists
+  // to prevent.
+  //
+  // `subscription.id` is Stripe's id, compared with a column that holds our plan
+  // row's UUID, so this never matches today: PostgREST rejects the value and
+  // the error is discarded (F-3, reported, pinned by the harness). CF-5 moves it
+  // unchanged; the fix is its own decision.
   if (!completed) {
-    await supabaseAdmin
-      .from('payment_plan_installments')
-      .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
-      .eq('user_id', plan.user_id)
-      .eq('subscription_id', subscription.id)
-      /*
-       * Everything unsettled, not only `pending`.
-       *
-       * A billed-but-unpaid period kept counting as owed on a subscription
-       * Stripe had already ended — the exact thing the comment above says this
-       * write exists to prevent.
-       */
-      .not('status', 'in', '(paid,cancelled)');
+    await paymentPlanRepository.cancelOpenPeriodsForEndedPlan(plan.user_id, subscription.id);
   }
 
   log.info(
@@ -2235,24 +2131,15 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription, log:
     return;
   }
 
-  await supabaseAdmin
-    .from('user_subscriptions')
-    .update({
-      status: 'canceled',
-      canceled_at: new Date().toISOString(),
-      cancel_at_period_end: false
-    })
-    .eq('user_id', userId);
+  await userSubscriptionRepository.markCanceled(userId);
 
   // Log billing event
-  await supabaseAdmin
-    .from('billing_events')
-    .insert({
-      user_id: userId,
-      event_type: 'subscription_canceled',
-      credits_delta: 0,
-      description: 'Subscription canceled'
-    });
+  await billingEventRepository.insert({
+    user_id: userId,
+    event_type: 'subscription_canceled',
+    credits_delta: 0,
+    description: 'Subscription canceled'
+  });
 
   log.info({ userId, subscriptionId: subscription.id }, 'Subscription canceled');
 }
@@ -2277,6 +2164,7 @@ const BUSINESS_OS_FLOW_HANDLERS: Partial<
   Record<BusinessOsFlow, (event: Stripe.Event, log: Logger) => Promise<void>>
 > = {
   boost: handleBoostWebhookEvent,
+  plan: handlePlanBillingEvent,
 };
 
 /**

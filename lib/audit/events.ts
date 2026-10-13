@@ -217,6 +217,13 @@ export const AUDIT_EVENTS = {
   // (BD-26, lib/audit/ownerVisibility.ts): the reason is internal.
   BOS_CREDIT_LOT_GRANTED: 'BOS_CREDIT_LOT_GRANTED',
   BOS_CREDIT_LOT_REDUCED: 'BOS_CREDIT_LOT_REDUCED',
+  // TEST ONLY (slice TC-1): an admin took N plan credits from an account on the
+  // /test-business-os harness, as one test charge on the credit ledger. Written
+  // only by POST /api/admin/business-os/test/take-credits, after the RPC
+  // answers `recorded: true`, then flushed (WC-7). Entity type
+  // 'business_os_credit_period' (operator-only, BD-26), id = the account. Remove
+  // with the harness tab.
+  BOS_TEST_CREDITS_TAKEN: 'BOS_TEST_CREDITS_TAKEN',
   // Credit deduction slice 8b: a recorded AI charge took the account's shown
   // percentage of PLAN credits left from at or above the low line (10) to
   // below it. Written only by lib/business-os/credits/creditLowLine.ts, with
@@ -245,6 +252,27 @@ export const AUDIT_EVENTS = {
   BOS_BOOST_CREDITED: 'BOS_BOOST_CREDITED',
   BOS_BOOST_PAYMENT_FAILED: 'BOS_BOOST_PAYMENT_FAILED',
   BOS_BOOST_FLAGGED: 'BOS_BOOST_FLAGGED',
+  // Credits boost slice 4b.1: Stripe reported a refund or a dispute on a boost
+  // payment and it was recorded on the purchase (FR-35). Written by the webhook
+  // against the purchase (owner-visible entity; the owner sees a neutral label
+  // and no details, SA Q-4). Details: kind (refund | dispute), the event, the
+  // target and previous status, the cumulative refunded amount for a refund.
+  BOS_BOOST_PAYMENT_REVERSED: 'BOS_BOOST_PAYMENT_REVERSED',
+  // Credits boost slice 4b.2: an admin ran the boost reconcile pass now
+  // (POST /api/admin/business-os/credits/boost/reconcile). One write-ahead row
+  // per press, flushed before the pass runs. SA C-7: written against an admin /
+  // system entity ('system', id = the run id the route generates, the admin as
+  // user and actor), NEVER against a purchase, so it reaches no owner's audit.
+  // Details: the run id and the correlation id; never an account or a payment.
+  BOS_BOOST_RECONCILE_TRIGGERED: 'BOS_BOOST_RECONCILE_TRIGGERED',
+  // Credits boost slice 6b: an admin set or ended ONE account's spending limit
+  // for top-ups (FR-22), through the entitlements admin route (set_boost_cap /
+  // end_boost_cap). Entity 'business_os_account_plan' (operator-only, BD-26),
+  // id = the account; the admin as actor. Changes: the limit before and after
+  // (minor units, default or override); details: the reason, the window, the
+  // override ids. Never written for a repeated identical set (SA C-2).
+  BOS_BOOST_CAP_OVERRIDE_SET: 'BOS_BOOST_CAP_OVERRIDE_SET',
+  BOS_BOOST_CAP_OVERRIDE_ENDED: 'BOS_BOOST_CAP_OVERRIDE_ENDED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -355,6 +383,18 @@ export const AUDIT_EVENTS = {
   // actor and entity as BOS_BILLING_INVOICE_PAID. Details: refusal reason and
   // Stripe ids. Registered in P-3b.1; first written in P-3b.2.
   BOS_BILLING_PAYMENT_REFUSED: 'BOS_BILLING_PAYMENT_REFUSED',
+  // Plan payments P-5a.1 (S5-4, P5-C7): business_os_apply_plan_payment stamped
+  // the account's first payment on its lineage row (the paid time and the
+  // invoice id) in the same transaction as a paid invoice above $0. For
+  // a held friend this is what lifts the payment hold. Written ONCE per stamp,
+  // only when the function reports out_first_payment_stamped, by
+  // planPaymentApply through recordPlanChange as a companion of
+  // BOS_BILLING_INVOICE_PAID under the same bounded flush. Platform actor and
+  // details.actor 'stripe_webhook'. Entity type 'business_os_account_lineage',
+  // id = the account. Details: invoice id, money history row id, lineage
+  // source (null when it could not be read), livemode, event id; never an
+  // email. A replay writes none.
+  BOS_BILLING_FIRST_PAYMENT_STAMPED: 'BOS_BILLING_FIRST_PAYMENT_STAMPED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -880,6 +920,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'An admin took credits back from a Business OS credit lot (credits, lot remaining and reason recorded)',
   },
+  // TEST ONLY (slice TC-1): the same weight as a lot reduction, an admin
+  // changed what an account can spend.
+  [AUDIT_EVENTS.BOS_TEST_CREDITS_TAKEN]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin took plan credits from a Business OS account on the test harness (credits and reason recorded)',
+  },
   // Credit deduction slice 8b (SA SQ-46): 'info', no compliance flags — an
   // observation for admins, not an operator alert. The writer passes NO
   // severity, so this registration is the only source (pinned by test).
@@ -901,9 +948,34 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     description: 'A delayed payment for a Business OS credits boost failed',
   },
+  // Credits boost slice 4b.1: 'warning' — money went back to the payer or is contested.
+  [AUDIT_EVENTS.BOS_BOOST_PAYMENT_REVERSED]: {
+    severity: 'warning',
+    description: 'A refund or dispute on a Business OS credits boost payment was recorded (credits are not taken back automatically)',
+  },
   [AUDIT_EVENTS.BOS_BOOST_FLAGGED]: {
     severity: 'warning',
     description: 'A Business OS credits boost payment was flagged for review (reason code recorded)',
+  },
+  // Credits boost slice 6b: 'warning' + SOC2, like the credit grant: an admin
+  // changed how much one business may spend.
+  [AUDIT_EVENTS.BOS_BOOST_CAP_OVERRIDE_SET]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: "An admin set a Business OS account's credit top-up spending limit (amount, window and reason recorded)",
+  },
+  [AUDIT_EVENTS.BOS_BOOST_CAP_OVERRIDE_ENDED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: "An admin returned a Business OS account's credit top-up spending limit to the default (reason recorded)",
+  },
+  // Credits boost slice 4b.2: 'warning' + SOC2, like BOS_QUEUE_DRAIN_STARTED —
+  // an admin made the platform credit, expire or fail purchases across every
+  // account, outside the schedule.
+  [AUDIT_EVENTS.BOS_BOOST_RECONCILE_TRIGGERED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin ran the Business OS credits boost reconcile pass now',
   },
   // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
   // (and possibly send) queued items across every account, outside the schedule.
@@ -941,6 +1013,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'A Business OS plan payment was refused and recorded in the money history (reason recorded)',
+  },
+  // Plan payments P-5a.1. 'info': a fact about a payment the customer chose;
+  // SOC2 alone, as every Business OS money event (SA W11b-3).
+  [AUDIT_EVENTS.BOS_BILLING_FIRST_PAYMENT_STAMPED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: "An account's first paid Business OS plan invoice was stamped on its invitation record (once; releases a held friend)",
   },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',

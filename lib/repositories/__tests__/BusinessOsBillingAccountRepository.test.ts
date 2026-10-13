@@ -58,7 +58,8 @@ function recordingClient(respond: (calls: Call[], index: number) => Answer) {
       const index = queries.length;
       queries.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'or', 'insert', 'update', 'upsert', 'delete']) {
+      // `is`: P-3b.2's link compare-and-set (`stripe_subscription_id IS NULL`).
+      for (const method of ['select', 'eq', 'is', 'or', 'insert', 'update', 'upsert', 'delete']) {
         builder[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return builder;
@@ -427,6 +428,248 @@ describe('replaceCustomer (compare-and-set on the old customer id)', () => {
   });
 });
 
+// ── P-3b.2: the webhook's lookups and compare-and-set writes (workplan §3.3, §3.5) ──
+
+const SUBSCRIPTION = 'sub_a1B2c3';
+
+describe.each([
+  ['findByStripeSubscription', 'stripe_subscription_id', SUBSCRIPTION, 'cus_abc123'],
+  ['findByStripeCustomer', 'stripe_customer_id', 'cus_abc123', SUBSCRIPTION],
+] as const)('%s (documented lookup by a UNIQUE Stripe id, §3.3)', (method, column, id, wrongShape) => {
+  const call = (repository: BusinessOsBillingAccountRepository, value: string, livemode: boolean) =>
+    repository[method](value, livemode);
+
+  it('filters by the Stripe id AND livemode (no user_id: the account is what is being found), explicit columns, maps the row', async () => {
+    const { client, queries } = recordingClient(() => ({ data: rowRaw({ stripe_subscription_id: SUBSCRIPTION }), error: null }));
+    const result = await call(new BusinessOsBillingAccountRepository(client), id, true);
+    expect(argsOf(queries[0], 'select')).toEqual([[BILLING_ACCOUNT_COLUMNS]]);
+    expect(argsOf(queries[0], 'eq')).toEqual([
+      [column, id],
+      ['livemode', true],
+    ]);
+    expect(argsOf(queries[0], 'maybeSingle')).toHaveLength(1);
+    expect(result.data).toMatchObject({ id: ROW_ID, accountId: USER, stripeSubscriptionId: SUBSCRIPTION });
+  });
+
+  it('a detached row (account deleted) maps with accountId null, never a guess', async () => {
+    const { client } = recordingClient(() => ({ data: rowRaw({ user_id: null }), error: null }));
+    expect((await call(new BusinessOsBillingAccountRepository(client), id, false)).data?.accountId).toBeNull();
+  });
+
+  it('no row → data null; an error → returned, never thrown', async () => {
+    const empty = recordingClient(() => ({ data: null, error: null }));
+    expect(await call(new BusinessOsBillingAccountRepository(empty.client), id, false)).toEqual({ data: null, error: null });
+    const failing = recordingClient(() => ({ data: null, error: { message: 'down' } }));
+    const result = await call(new BusinessOsBillingAccountRepository(failing.client), id, false);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('down');
+  });
+
+  it.each([
+    ['the other kind of Stripe id', wrongShape],
+    ['an id carrying a filter', `${id},user_id.neq.x`],
+    ['an empty id', ''],
+  ])('refuses %s before querying', async (_label, value) => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null }));
+    expect((await call(new BusinessOsBillingAccountRepository(client), value, false)).error?.message).toBe('invalid_input');
+    expect(queries).toHaveLength(0);
+  });
+
+  it('refuses a non-boolean mode before querying', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null }));
+    expect((await call(new BusinessOsBillingAccountRepository(client), id, 'true' as unknown as boolean)).error?.message).toBe(
+      'invalid_input'
+    );
+    expect(queries).toHaveLength(0);
+  });
+});
+
+describe('linkCheckoutSession (checkout.session.completed, compare-and-set)', () => {
+  const INPUT = { userId: USER, livemode: false, sessionId: SESSION, stripeSubscriptionId: SUBSCRIPTION, nowIso: NOW_ISO };
+
+  it('links the subscription and clears the lock, CAS on this session and NO subscription yet, count exact, no select, no or', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    const result = await new BusinessOsBillingAccountRepository(client).linkCheckoutSession(INPUT);
+    expect(result).toEqual({ data: { linked: true }, error: null });
+    expect(argsOf(queries[0], 'update')).toEqual([
+      [
+        { stripe_subscription_id: SUBSCRIPTION, open_checkout_session_id: null, open_checkout_expires_at: null, updated_at: NOW_ISO },
+        { count: 'exact' },
+      ],
+    ]);
+    expect(argsOf(queries[0], 'eq')).toEqual([
+      ['user_id', USER],
+      ['livemode', false],
+      ['open_checkout_session_id', SESSION],
+    ]);
+    expect(argsOf(queries[0], 'is')).toEqual([['stripe_subscription_id', null]]);
+    expect(argsOf(queries[0], 'select')).toEqual([]);
+    expect(argsOf(queries[0], 'or')).toEqual([]);
+  });
+
+  it('count 0 → linked: false (a replay, another lock, or a subscription already on the row)', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: null, count: 0 }));
+    expect(await new BusinessOsBillingAccountRepository(client).linkCheckoutSession(INPUT)).toEqual({
+      data: { linked: false },
+      error: null,
+    });
+  });
+
+  it("a unique violation (another account's row holds the subscription) → an error with an alert, never linked", async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { code: '23505', message: 'duplicate key' }, count: null }));
+    const result = await new BusinessOsBillingAccountRepository(client).linkCheckoutSession(INPUT);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('stripe_subscription_held_by_another_account');
+    expect(mockError).toHaveBeenCalledWith(expect.objectContaining({ alert: true }), expect.any(String));
+  });
+
+  it('an impossible count is an error', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: null, count: 2 }));
+    expect((await new BusinessOsBillingAccountRepository(client).linkCheckoutSession(INPUT)).error?.message).toBe('unexpected_update_count');
+  });
+
+  it('drops injected fields at runtime: the patch stays the four columns', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    await new BusinessOsBillingAccountRepository(client).linkCheckoutSession({
+      ...INPUT,
+      user_id: '88888888-8888-4888-8888-888888888888',
+      bought_tier: 'x',
+    } as unknown as typeof INPUT);
+    expect(Object.keys(argsOf(queries[0], 'update')[0][0] as Record<string, unknown>).sort()).toEqual([
+      'open_checkout_expires_at',
+      'open_checkout_session_id',
+      'stripe_subscription_id',
+      'updated_at',
+    ]);
+  });
+
+  it.each([
+    ['a non-uuid account', { ...INPUT, userId: 'nope' }],
+    ['a non-session id', { ...INPUT, sessionId: 'pi_1' }],
+    ['a non-subscription id', { ...INPUT, stripeSubscriptionId: 'cus_1' }],
+    ['a subscription id carrying a filter', { ...INPUT, stripeSubscriptionId: 'sub_1,user_id.neq.x' }],
+    ['an offset time', { ...INPUT, nowIso: '2026-10-07T10:00:00+00:00' }],
+  ])('refuses %s before querying', async (_label, input) => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    expect((await new BusinessOsBillingAccountRepository(client).linkCheckoutSession(input)).error?.message).toBe('invalid_input');
+    expect(queries).toHaveLength(0);
+  });
+});
+
+describe('releaseCheckoutLock (compare-and-set on the session id)', () => {
+  const INPUT = { userId: USER, livemode: true, sessionId: SESSION, nowIso: NOW_ISO };
+
+  it('clears exactly the two lock columns of THIS session only, count exact, no select', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    expect(await new BusinessOsBillingAccountRepository(client).releaseCheckoutLock(INPUT)).toEqual({
+      data: { released: true },
+      error: null,
+    });
+    expect(argsOf(queries[0], 'update')).toEqual([
+      [{ open_checkout_session_id: null, open_checkout_expires_at: null, updated_at: NOW_ISO }, { count: 'exact' }],
+    ]);
+    expect(argsOf(queries[0], 'eq')).toEqual([
+      ['user_id', USER],
+      ['livemode', true],
+      ['open_checkout_session_id', SESSION],
+    ]);
+    expect(argsOf(queries[0], 'select')).toEqual([]);
+    expect(argsOf(queries[0], 'or')).toEqual([]);
+  });
+
+  it("count 0 → released: false (already gone, or another session's lock, which is left alone)", async () => {
+    const { client } = recordingClient(() => ({ data: null, error: null, count: 0 }));
+    expect((await new BusinessOsBillingAccountRepository(client).releaseCheckoutLock(INPUT)).data).toEqual({ released: false });
+  });
+
+  it('a database error is returned, never thrown', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { message: 'down' }, count: null }));
+    expect((await new BusinessOsBillingAccountRepository(client).releaseCheckoutLock(INPUT)).error?.message).toBe('down');
+  });
+
+  it('refuses invalid input before querying', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    const repository = new BusinessOsBillingAccountRepository(client);
+    expect((await repository.releaseCheckoutLock({ ...INPUT, sessionId: 'cs_x,open_checkout_session_id.is.null' })).error?.message).toBe('invalid_input');
+    expect((await repository.releaseCheckoutLock({ ...INPUT, userId: 'nope' })).error?.message).toBe('invalid_input');
+    expect(queries).toHaveLength(0);
+  });
+});
+
+describe('mirrorSubscriptionState (SA Q-1, status-only mirror)', () => {
+  const INPUT = {
+    userId: USER,
+    livemode: false,
+    stripeSubscriptionId: SUBSCRIPTION,
+    status: 'canceled' as const,
+    cancelAtPeriodEnd: false,
+    endedAtIso: '2026-10-07T09:00:00.000Z',
+    nowIso: NOW_ISO,
+  };
+
+  it('writes exactly status, cancel_at_period_end and ended_at, CAS on the row holding this subscription, count exact, no select', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    expect(await new BusinessOsBillingAccountRepository(client).mirrorSubscriptionState(INPUT)).toEqual({
+      data: { mirrored: true },
+      error: null,
+    });
+    expect(argsOf(queries[0], 'update')).toEqual([
+      [
+        { subscription_status: 'canceled', cancel_at_period_end: false, ended_at: '2026-10-07T09:00:00.000Z', updated_at: NOW_ISO },
+        { count: 'exact' },
+      ],
+    ]);
+    expect(argsOf(queries[0], 'eq')).toEqual([
+      ['user_id', USER],
+      ['livemode', false],
+      ['stripe_subscription_id', SUBSCRIPTION],
+    ]);
+    expect(argsOf(queries[0], 'select')).toEqual([]);
+  });
+
+  it('never writes current_period_end, the tier or the lock (only a paid invoice moves those)', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    await new BusinessOsBillingAccountRepository(client).mirrorSubscriptionState({
+      ...INPUT,
+      current_period_end: '2030-01-01T00:00:00.000Z',
+      bought_tier: 'x',
+    } as unknown as typeof INPUT);
+    expect(Object.keys(argsOf(queries[0], 'update')[0][0] as Record<string, unknown>).sort()).toEqual([
+      'cancel_at_period_end',
+      'ended_at',
+      'subscription_status',
+      'updated_at',
+    ]);
+  });
+
+  it('a live subscription mirrors ended_at as null', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    await new BusinessOsBillingAccountRepository(client).mirrorSubscriptionState({
+      ...INPUT,
+      status: 'active',
+      cancelAtPeriodEnd: true,
+      endedAtIso: null,
+    });
+    expect(argsOf(queries[0], 'update')[0][0]).toMatchObject({ subscription_status: 'active', cancel_at_period_end: true, ended_at: null });
+  });
+
+  it('count 0 → mirrored: false (the row no longer holds this subscription)', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: null, count: 0 }));
+    expect((await new BusinessOsBillingAccountRepository(client).mirrorSubscriptionState(INPUT)).data).toEqual({ mirrored: false });
+  });
+
+  it.each([
+    ['an unknown status', { ...INPUT, status: 'mystery' as unknown as 'active' }],
+    ['a non-boolean cancel flag', { ...INPUT, cancelAtPeriodEnd: 'true' as unknown as boolean }],
+    ['an unreadable end', { ...INPUT, endedAtIso: 'yesterday' }],
+    ['a non-subscription id', { ...INPUT, stripeSubscriptionId: 'cus_1' }],
+  ])('refuses %s before querying', async (_label, input) => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    expect((await new BusinessOsBillingAccountRepository(client).mirrorSubscriptionState(input)).error?.message).toBe('invalid_input');
+    expect(queries).toHaveLength(0);
+  });
+});
+
 describe('source guards', () => {
   const source = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsBillingAccountRepository.ts'), 'utf8');
   const code = source.replace(/\/\/.*$/gm, '');
@@ -436,15 +679,15 @@ describe('source guards', () => {
     expect(BILLING_ACCOUNT_COLUMNS.split(', ')).toEqual(migrationColumns());
   });
 
-  it('scope (P-2a SA Q-9, P-3a §3.5): one insert, two compare-and-set updates, no delete, no upsert, no rpc, no spread into a payload', () => {
+  it('scope (P-2a SA Q-9, P-3a §3.5, P-3b.2 §3.5): one insert, five compare-and-set updates, no delete, no upsert, no rpc, no spread into a payload', () => {
     expect(code.match(/\.insert\(/g)).toHaveLength(1);
-    expect(code.match(/\.update\(/g)).toHaveLength(2);
+    expect(code.match(/\.update\(/g)).toHaveLength(5);
     expect(code).not.toMatch(/\.(delete|upsert|rpc)\(/);
     expect(code).not.toMatch(/\.update\(\{\s*\.\.\./);
     // UPDATE + .or() + .select() fails 42703 in production (2026-09-29): the
     // two compare-and-set methods must never select.
     const lf = code.replace(/\r\n/g, '\n');
-    for (const method of ['acquireCheckoutLock', 'replaceCustomer']) {
+    for (const method of ['acquireCheckoutLock', 'replaceCustomer', 'linkCheckoutSession', 'releaseCheckoutLock', 'mirrorSubscriptionState']) {
       const start = lf.indexOf(`async ${method}(`);
       const end = lf.indexOf('\n  }\n', start);
       expect(start).toBeGreaterThan(0);
@@ -452,16 +695,22 @@ describe('source guards', () => {
       const body = lf.slice(start, end);
       expect(body).toContain("{ count: 'exact' }");
       expect(body).not.toMatch(/\.select\(|\.single\(|\.maybeSingle\(/);
+      // P-3b.2 (R-7): the three webhook writes use no `.or()` at all.
+      if (method !== 'acquireCheckoutLock') expect(body).not.toMatch(/\.or\(/);
     }
     expect(code).not.toMatch(/\.insert\(\{\s*\.\.\./);
     expect(code).not.toMatch(/select\(\s*['"]\*['"]/);
   });
 
-  it('the read and both updates scope by user_id and livemode; the other from() is the three-field insert', () => {
-    expect(code.match(/\.from\(/g)).toHaveLength(4);
-    expect(code.match(/\.maybeSingle\(\)/g)).toHaveLength(1);
-    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(3);
-    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(3);
+  it('the read and every update scope by user_id and livemode; the two Stripe-id lookups by livemode; the other from() is the three-field insert', () => {
+    expect(code.match(/\.from\(/g)).toHaveLength(9);
+    expect(code.match(/\.maybeSingle\(\)/g)).toHaveLength(3);
+    // findByUser and the five updates.
+    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(6);
+    // The same six, plus the two documented lookups by a UNIQUE Stripe id (§3.3).
+    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(8);
+    expect(code.match(/\.eq\('stripe_subscription_id', stripeSubscriptionId\)/g)).toHaveLength(2);
+    expect(code.match(/\.eq\('stripe_customer_id', stripeCustomerId\)/g)).toHaveLength(2);
     expect(code).toContain('.insert({ user_id: userId, livemode, stripe_customer_id: stripeCustomerId })');
   });
 
@@ -492,11 +741,25 @@ describe('source guards', () => {
       'lib/business-os/billing/__tests__/businessOsStripeCustomer.test.ts',
       // P-3a: imports the billing row TYPE to build fakes.
       'lib/business-os/billing/__tests__/planCheckout.test.ts',
+      // P-3b.2: the webhook use-case tests import the billing row TYPE to build fakes.
+      'lib/business-os/billing/__tests__/planCheckoutSessionEvents.test.ts',
+      // P-5a.1: the first payment stamp test imports the same TYPE for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
+      'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
+      'lib/business-os/billing/__tests__/planSubscriptionMirror.test.ts',
       'lib/business-os/billing/businessOsStripeCustomer.ts',
+      // Plan payments P-3b.2 (workplan §3.1, §3.5): the plan webhook handler
+      // wires the singleton; its three use cases take it as a port TYPE
+      // (findByStripeSubscription, findByStripeCustomer, linkCheckoutSession,
+      // releaseCheckoutLock, mirrorSubscriptionState).
+      'lib/business-os/billing/planBillingHandler.ts',
       // Plan payments P-3a: the checkout reads the billing row and records the
       // lock (findByUser, acquireCheckoutLock; replaceCustomer via the customer
       // function).
       'lib/business-os/billing/planCheckout.ts',
+      'lib/business-os/billing/planCheckoutSessionEvents.ts',
+      'lib/business-os/billing/planPaymentApply.ts',
+      'lib/business-os/billing/planSubscriptionMirror.ts',
       // Admin delete AD-1b (SC-5): R-3 reads BOTH livemode rows of the target's
       // plan billing account (findByUser only); the evaluator imports the status
       // type. Their tests name it to fake it. No entitlements import.

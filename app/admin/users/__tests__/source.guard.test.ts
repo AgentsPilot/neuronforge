@@ -32,7 +32,18 @@ const SCREEN_FILES = [
   // Admin delete AD-1c
   `${ROOT}/components/DeleteBusinessDialog.tsx`,
   `${ROOT}/deletionCopy.ts`,
+  // Admin Layout Standard L-4a
+  `${ROOT}/usersFilters.ts`,
+  `${ROOT}/components/BusinessesKpis.tsx`,
+  // Admin Layout Standard L-4b (the row detail moved into the drawer)
+  `${ROOT}/components/BusinessDetail.tsx`,
+  `${ROOT}/components/BusinessAuditSection.tsx`,
+  `${ROOT}/useBusinessDetails.ts`,
+  `${ROOT}/usersFormat.ts`,
 ];
+
+/** The drawer body that holds the danger area since L-4b (it was the expanded row in `page.tsx`). */
+const DETAIL = `${ROOT}/components/BusinessDetail.tsx`;
 
 /**
  * Credit deduction slice 8a (SA C-S8-1, DV-4): the ONE allowed `lib/business-os`
@@ -168,7 +179,8 @@ describe('the Credits block (credit deduction slice 11c)', () => {
 
   it('the panel renders the block above the plan, with the business label (user UI fixes, 2026-10-04)', () => {
     const panel = codeOf(read(`${ROOT}/components/BusinessOsPanel.tsx`));
-    expect(panel).toContain('<CreditsBlock accountId={accountId} businessLabel={businessLabel} />');
+    // Boost slice 6b adds the take-back wiring props after these two (SA C-5).
+    expect(panel).toMatch(/<CreditsBlock\s+accountId=\{accountId\}\s+businessLabel=\{businessLabel\}/);
     expect(panel.indexOf('<CreditsBlock')).toBeLessThan(panel.indexOf('<EntitlementSnapshot'));
   });
 
@@ -286,16 +298,145 @@ describe('the Delete… dialog: preview, then a typed confirmation only with a t
     expect(codeOf(read(file))).not.toMatch(/dangerouslySetInnerHTML/);
   });
 
-  it('the page opens it from the expanded row only, inside the danger area, and refreshes the list after a deletion', () => {
+  // L-4b (SA M-3): the expanded row became the drawer body. The page side pins
+  // that the body is mounted only inside the one drawer; the detail side keeps
+  // the old order and bodies, with `refreshList` (the page passes `fetchUsers`).
+  it('the page mounts the detail only inside its one drawer, and names no danger-area part itself', () => {
     const page = codeOf(read(`${ROOT}/page.tsx`));
-    expect(page.match(/<DeleteBusinessDialog\b/g)).toHaveLength(1);
-    const expanded = page.indexOf('{isExpanded && (');
+    expect(page.match(/<AdminDrawer\b/g)).toHaveLength(1);
+    expect(page.match(/<BusinessDetail\b/g)).toHaveLength(1);
+    const drawer = page.indexOf('<AdminDrawer');
+    const detail = page.indexOf('<BusinessDetail');
+    expect(detail).toBeGreaterThan(drawer);
+    expect(page.indexOf('</AdminDrawer>')).toBeGreaterThan(detail);
+    expect(page.slice(drawer, detail)).toContain('open={isOpen && selected !== null}');
+    expect(page.match(/refreshList=\{fetchUsers\}/g)).toHaveLength(1);
+    // L-2b SA M-4: outside every branch. From the loaded branch's opening to the
+    // drawer, every brace and parenthesis is closed again, so the drawer is not
+    // inside `{!error && hasLoaded && (` (jsdom cannot tell an unmount from a close).
+    const branch = page.slice(page.indexOf('{!error && hasLoaded && ('), drawer);
+    expect(branch.length).toBeGreaterThan(0);
+    const tally = (text: string, ch: string) => text.split(ch).length - 1;
+    expect(tally(branch, '{')).toBe(tally(branch, '}'));
+    expect(tally(branch, '(')).toBe(tally(branch, ')'));
+    expect(page).not.toMatch(/DeleteBusinessDialog|TestAccountCleanupPanel|SHOW_AD1_DELETE_ENTRY|cleanupApiTypes/);
+    expect(page).not.toContain('data-testid="danger-area"');
+  });
+
+  it('the detail opens it inside the danger area only, and refreshes the list after a deletion', () => {
+    const detail = codeOf(read(DETAIL));
+    expect(detail.match(/<DeleteBusinessDialog\b/g)).toHaveLength(1);
+    const dangerArea = detail.indexOf('data-testid="danger-area"');
+    expect(dangerArea).toBeGreaterThan(-1);
+    expect(detail.indexOf('<DeleteBusinessDialog')).toBeGreaterThan(dangerArea);
+    expect(detail.indexOf('data-testid="delete-business-open"')).toBeGreaterThan(dangerArea);
+    const dialog = detail.slice(detail.indexOf('<DeleteBusinessDialog'), detail.indexOf('/>', detail.indexOf('<DeleteBusinessDialog')));
+    expect(dialog).toMatch(/onDeleted=\{\(\) => \{\s*void refreshList\(\);\s*\}\}/);
+    // The comment travels with the body, word for word (raw source: codeOf drops comments).
+    expect(read(DETAIL)).toMatch(
+      /onDeleted=\{\(\) => \{\s*\/\/ FR-A9: after a deletion the row reads "No Business OS business"\.\s*void refreshList\(\);\s*\}\}/,
+    );
+    // Only the two bodies call it (onDeleted, onRemoved).
+    expect(detail.match(/refreshList\(/g)).toHaveLength(2);
+  });
+});
+
+describe('the account hard delete in the danger area (AU-1 / AU-2; SA AU-C2 … AU-C5)', () => {
+  const PANEL_FILE = 'components/business-os/purge/TestAccountCleanupPanel.tsx';
+  const PANEL_IMPORT = "import { TestAccountCleanupPanel } from '@/components/business-os/purge/TestAccountCleanupPanel';";
+
+  it('AU-C5: the AD-1 Delete… entry is hidden by a constant that is false, gating both the button and the dialog', () => {
+    const page = codeOf(read(DETAIL));
+    expect(page.match(/const SHOW_AD1_DELETE_ENTRY = (\w+);/g)).toEqual(['const SHOW_AD1_DELETE_ENTRY = false;']);
+    const gate = page.indexOf('{SHOW_AD1_DELETE_ENTRY && (');
+    expect(gate).toBeGreaterThan(page.indexOf('data-testid="danger-area"'));
+    expect(page.indexOf('data-testid="delete-business-open"')).toBeGreaterThan(gate);
+    expect(page.indexOf('<DeleteBusinessDialog')).toBeGreaterThan(gate);
+    // Both sit before the gate closes, i.e. before the panel that follows it.
+    expect(page.indexOf('<DeleteBusinessDialog')).toBeLessThan(page.indexOf('<TestAccountCleanupPanel'));
+  });
+
+  it('AU-C2 / AU-C3: the detail imports the panel only and mounts it once, after danger-area, keyed by the row, only with an email', () => {
+    const page = codeOf(read(DETAIL));
+    expect(page).toContain(PANEL_IMPORT);
+    expect(page).not.toMatch(/cleanupApiTypes/);
+    expect(page.match(/<TestAccountCleanupPanel\b/g)).toHaveLength(1);
     const dangerArea = page.indexOf('data-testid="danger-area"');
-    expect(expanded).toBeGreaterThan(-1);
-    expect(dangerArea).toBeGreaterThan(expanded);
-    expect(page.indexOf('<DeleteBusinessDialog')).toBeGreaterThan(dangerArea);
-    expect(page.indexOf('data-testid="delete-business-open"')).toBeGreaterThan(dangerArea);
-    const dialog = page.slice(page.indexOf('<DeleteBusinessDialog'), page.indexOf('/>', page.indexOf('<DeleteBusinessDialog')));
-    expect(dialog).toMatch(/onDeleted=\{\(\) => \{\s*void fetchUsers\(\);\s*\}\}/);
+    expect(dangerArea).toBeGreaterThan(-1);
+    const at = page.indexOf('<TestAccountCleanupPanel');
+    expect(at).toBeGreaterThan(dangerArea);
+    const panel = page.slice(at, page.indexOf('/>', at));
+    expect(panel).toMatch(/key=\{user\.id\}/);
+    expect(panel).toMatch(/lockedEmail=\{user\.email\}/);
+    expect(panel).toMatch(/onRemoved=\{\(\) => \{\s*void refreshList\(\);\s*\}\}/);
+    expect(page.slice(dangerArea, at)).toMatch(/\{user\.email \? \(\s*$/);
+    // The comment travels with the body, word for word (raw source: codeOf drops comments).
+    expect(read(DETAIL)).toMatch(
+      /onRemoved=\{\(\) => \{\s*\/\/ AU-C2: CLEAN only, once the admin clicks Done \(or the panel unmounts\); the row leaves the list\.\s*void refreshList\(\);\s*\}\}/,
+    );
+  });
+
+  it('AU-C4: neither the page, the detail nor the panel names the database function, comments included', () => {
+    for (const file of [`${ROOT}/page.tsx`, DETAIL, PANEL_FILE]) {
+      // Split so this guard does not itself name the function (R-7: only the repository may).
+      expect({ file, hit: read(file).includes('operator_test_' + 'account_cleanup') }).toEqual({ file, hit: false });
+    }
+  });
+
+  it('AU-C7: the panel has no console.*', () => {
+    expect(codeOf(read(PANEL_FILE))).not.toMatch(/console\./);
+  });
+});
+
+describe('the dialogs use the shared admin class (Admin Layout Standard L-4a; D-8 (a), F-88, F-103)', () => {
+  const DIALOG_FILES = [
+    `${ROOT}/components/CreditFormDialog.tsx`,
+    `${ROOT}/components/DeleteBusinessDialog.tsx`,
+    `${ROOT}/components/BoostCapDialog.tsx`,
+    `${ROOT}/components/BoostReconcileDialog.tsx`,
+  ];
+
+  /** What keeps a file off the shared dialog class; empty when it is on it. */
+  function dialogClassFindings(code: string): string[] {
+    const findings: string[] = [];
+    const imported = /import\s*\{[^}]*\bADMIN_DIALOG_CLASS\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/adminDialog'/;
+    if (!imported.test(code)) findings.push('no ADMIN_DIALOG_CLASS import from the alias');
+    const contents = [...code.matchAll(/<DialogContent\b[^>]*>/g)].map((m) => m[0]);
+    if (contents.length === 0) findings.push('no DialogContent');
+    for (const tag of contents) {
+      if (!/className=\{(?:ADMIN_DIALOG_CLASS|`\$\{ADMIN_DIALOG_CLASS\}[^`]*`)\}/.test(tag)) findings.push(`not on the class: ${tag}`);
+    }
+    if (/\bDARK_DIALOG\b/.test(code)) findings.push('DARK_DIALOG');
+    return findings;
+  }
+
+  it('the matcher sees each way off the class (planted samples)', () => {
+    const IMPORT = "import { ADMIN_DIALOG_CLASS } from '@/app/admin/components/layout/adminDialog';";
+    const TEMPLATE_CLASS = 'className={`${ADMIN_DIALOG_CLASS} sm:!max-w-2xl`}';
+    expect(dialogClassFindings(`${IMPORT} <DialogContent data-testid="x" className={ADMIN_DIALOG_CLASS}>`)).toEqual([]);
+    expect(dialogClassFindings(`${IMPORT} <DialogContent ${TEMPLATE_CLASS} aria-busy={b}>`)).toEqual([]);
+    expect(dialogClassFindings(`${IMPORT} const DARK_DIALOG = 'x'; <DialogContent className={ADMIN_DIALOG_CLASS}>`)).toEqual([
+      'DARK_DIALOG',
+    ]);
+    expect(dialogClassFindings(`${IMPORT} <DialogContent className={DARK}>`)).toHaveLength(1);
+    expect(dialogClassFindings('<DialogContent className={ADMIN_DIALOG_CLASS}>')).toEqual([
+      'no ADMIN_DIALOG_CLASS import from the alias',
+    ]);
+    expect(dialogClassFindings(IMPORT)).toEqual(['no DialogContent']);
+  });
+
+  it.each(DIALOG_FILES)('%s passes ADMIN_DIALOG_CLASS to DialogContent and declares no DARK_DIALOG', (file) => {
+    expect({ file, findings: dialogClassFindings(codeOf(read(file))) }).toEqual({ file, findings: [] });
+  });
+});
+
+describe('no dead Advanced Filters panel (Admin Layout Standard L-4a; D-11 (a), F-2)', () => {
+  // Words only the panel used. Not "Email Verified" or "Auth Provider": the
+  // row detail's user card shows "Email Verified:" and "Auth Providers:".
+  const PANEL_WORDS = ['Apply Filters', 'showAdvancedFilters', 'Has Agents', 'All Providers', 'Unverified Only', 'Joined Date'];
+
+  it('page.tsx names none of the panel words', () => {
+    const page = codeOf(read(`${ROOT}/page.tsx`));
+    expect(PANEL_WORDS.filter((word) => page.includes(word))).toEqual([]);
   });
 });

@@ -845,6 +845,20 @@ describe('B1b / AC-B6: no audit entry, classified (FR-B5 question 1)', () => {
     expect(payload.audit?.noEntry).toEqual({ tooRecent: 1, mayBeArchived: 0, lost: 1, unknown: 0, accountMismatch: 0 });
   });
 
+  it('SA C-1 (TC-1): a settled charge of a non-AI service is not_applicable, never lost, and not counted', async () => {
+    const settledAi = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-02T11:40:00+00:00' });
+    // Any non-AI service: the rule is generic, keyed on the EFFECTIVE service.
+    const settledNonAi = charge(A, '0.0000000000', '50.000000', {
+      created_at: '2026-10-02T11:40:00+00:00',
+      service: 'some_other_service',
+      action_type: 'some_action',
+    });
+    const { deps } = makeDeps({ page: [settledAi, settledNonAi] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows.map((r) => r.entry)).toEqual([{ state: 'lost' }, { state: 'not_applicable' }]);
+    expect(payload.audit?.noEntry).toEqual({ tooRecent: 0, mayBeArchived: 0, lost: 1, unknown: 0, accountMismatch: 0 });
+  });
+
   it('a charge older than the latest succeeded cutoff may be archived; one well after it is lost', async () => {
     const old = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T08:00:00+00:00' });
     const newer = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T11:00:00+00:00' });

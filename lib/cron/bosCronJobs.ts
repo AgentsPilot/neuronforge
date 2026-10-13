@@ -43,6 +43,7 @@ export type BosCronJobId =
   | 'insight-measure'
   | 'credit-leak-check'
   | 'stripe-settlement-gap'
+  | 'bos-billing-reconcile'
   | 'payment-reminders';
 
 export type BosQueueId =
@@ -518,6 +519,65 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { kind: 'atLeast', key: 'listingFailed', value: 1 },
       { kind: 'atLeast', key: 'lookupFailed', value: 1 },
       { kind: 'atLeast', key: 'accountListingFailed', value: 1 },
+    ],
+  },
+  {
+    /*
+     * Credits boost slice 4b.2 (FR-43; plan payments SA-P4 / PF-5): ONE cron
+     * with pluggable passes (`lib/business-os/billing/reconcilePasses.ts`). The
+     * boost pass re-reads Stripe for purchases a webhook missed: stuck ones are
+     * credited, expired or failed, open disputes are re-read (SA C-9) and
+     * missing receipt links are filled. NOT a queue drain: its writes are
+     * row-locked, idempotent SQL functions (SA Q-5). Counts only, never money.
+     *
+     * A finding (a purchase a person must look at) is shown as a number and
+     * does not colour the job, following the settlement gap check: the
+     * `bos_boost_reconcile_finding` error log is the alert. The job is "partly
+     * done" only when it could not finish its work: a row deferred to the next
+     * run, the deadline, an unreadable list, no usable Stripe key, or a pass
+     * that failed. P-8b adds its pass's counts here.
+     */
+    id: 'bos-billing-reconcile',
+    path: '/api/cron/bos-billing-reconcile',
+    schedule: '41 5 * * *',
+    ...DAILY,
+    ...MAX_60,
+    label: 'Billing reconcile',
+    description: 'Recovers credit top-ups a Stripe webhook missed: credits, expires or fails them, re-reads open disputes and fills missing receipts',
+    scheduleWords: 'Daily at 05:41 UTC',
+    addedOn: '2026-10-09',
+    drainsQueue: null,
+    counts: [
+      { key: 'boostExamined', path: ['data', 'boostExamined'], label: 'stuck top-ups examined' },
+      { key: 'boostCredited', path: ['data', 'boostCredited'], label: 'top-ups credited' },
+      { key: 'boostExpired', path: ['data', 'boostExpired'], label: 'top-ups expired' },
+      { key: 'boostFailed', path: ['data', 'boostFailed'], label: 'top-ups marked failed' },
+      { key: 'boostStillProcessing', path: ['data', 'boostStillProcessing'], label: 'payments still processing' },
+      { key: 'boostStillOpen', path: ['data', 'boostStillOpen'], label: 'checkouts still open' },
+      { key: 'boostFlagged', path: ['data', 'boostFlagged'], label: 'top-ups needing a person' },
+      { key: 'boostRaced', path: ['data', 'boostRaced'], label: 'already settled by a webhook' },
+      { key: 'boostReversalsApplied', path: ['data', 'boostReversalsApplied'], label: 'refunds or disputes recorded' },
+      { key: 'boostDisputesExamined', path: ['data', 'boostDisputesExamined'], label: 'open disputes re-read' },
+      { key: 'boostDisputesConcluded', path: ['data', 'boostDisputesConcluded'], label: 'disputes concluded' },
+      { key: 'boostDisputesStillOpen', path: ['data', 'boostDisputesStillOpen'], label: 'disputes still open' },
+      { key: 'boostReceiptsExamined', path: ['data', 'boostReceiptsExamined'], label: 'missing receipts examined' },
+      { key: 'boostReceiptsFilled', path: ['data', 'boostReceiptsFilled'], label: 'receipts filled' },
+      { key: 'boostReceiptsNotFilled', path: ['data', 'boostReceiptsNotFilled'], label: 'receipts still missing' },
+      { key: 'boostDeferred', path: ['data', 'boostDeferred'], label: 'left for the next run' },
+      { key: 'boostDeadlineHit', path: ['data', 'boostDeadlineHit'], label: 'stopped at the time limit (1 = yes)' },
+      { key: 'boostRowsLeft', path: ['data', 'boostRowsLeft'], label: 'top-ups left when time ran out' },
+      { key: 'boostBatchFull', path: ['data', 'boostBatchFull'], label: 'a batch was full (1 = yes)' },
+      { key: 'boostListFailed', path: ['data', 'boostListFailed'], label: 'a list read was refused' },
+      { key: 'boostStripeUnavailable', path: ['data', 'boostStripeUnavailable'], label: 'Stripe could not be read (1 = yes)' },
+      { key: 'passesRun', path: ['data', 'passesRun'], label: 'passes run' },
+      { key: 'passesFailed', path: ['data', 'passesFailed'], label: 'passes failed' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'boostDeferred', value: 1 },
+      { kind: 'atLeast', key: 'boostDeadlineHit', value: 1 },
+      { kind: 'atLeast', key: 'boostListFailed', value: 1 },
+      { kind: 'atLeast', key: 'boostStripeUnavailable', value: 1 },
+      { kind: 'atLeast', key: 'passesFailed', value: 1 },
     ],
   },
   {

@@ -20,6 +20,14 @@
  *     businesses. This turns that into a red test instead.
  *
  * Source-text assertions, so they survive any refactor of the code they describe.
+ *
+ * Admin Layout Standard L-1e (RC-7): there are two pickers until the finance
+ * adoption slice. The shared `AdminBusinessPicker.tsx` (Audit trail, and since
+ * L-8a the Business OS AI Activity tab) and the original
+ * `BusinessAccountPicker.tsx` (Finance keeps it until the finance adoption
+ * slice, which deletes it; SA M-2 on L-8) are both held to the path and
+ * logging checks, and the shared file
+ * joins the audit surface (one file, not the whole shared folder: SA Q-7).
  */
 
 import * as fs from 'fs';
@@ -27,10 +35,12 @@ import * as path from 'path';
 
 const ROOT = path.resolve(__dirname, '../../../..');
 
-const PICKER = 'app/admin/audit-trail/BusinessAccountPicker.tsx';
+const ORIGINAL_PICKER = 'app/admin/audit-trail/BusinessAccountPicker.tsx';
+const SHARED_PICKER = 'app/admin/components/layout/AdminBusinessPicker.tsx';
+const PICKERS = [ORIGINAL_PICKER, SHARED_PICKER];
 const REUSED_ROUTE = 'app/api/admin/business-os/llm-usage/businesses/route.ts';
 
-/** Every file on the audit surface: the admin page, its route, the shared lib. */
+/** Every file on the audit surface: the admin page, its route, the shared lib, and the shared picker. */
 const AUDIT_SURFACE_DIRS = ['app/admin/audit-trail', 'app/api/admin/audit-trail', 'lib/audit'];
 
 function read(rel: string): string {
@@ -52,7 +62,7 @@ function walk(rel: string): string[] {
   });
 }
 
-const SURFACE_FILES = AUDIT_SURFACE_DIRS.flatMap((dir) => walk(dir));
+const SURFACE_FILES = [...AUDIT_SURFACE_DIRS.flatMap((dir) => walk(dir)), SHARED_PICKER];
 
 /**
  * One pattern for EVERY way a module edge can be written, because an earlier
@@ -79,7 +89,9 @@ function businessOsModuleEdges(source: string): string[] {
 
 describe('the audit surface imports nothing from Business OS', () => {
   it('finds the files it checks', () => {
-    expect(SURFACE_FILES).toContain(PICKER);
+    expect(SURFACE_FILES).toContain(ORIGINAL_PICKER);
+    expect(SURFACE_FILES).toContain(SHARED_PICKER);
+    expect(fs.existsSync(path.join(ROOT, SHARED_PICKER))).toBe(true);
     expect(SURFACE_FILES).toContain('app/admin/audit-trail/page.tsx');
     expect(SURFACE_FILES).toContain('app/api/admin/audit-trail/route.ts');
     expect(SURFACE_FILES.length).toBeGreaterThanOrEqual(8);
@@ -138,10 +150,10 @@ describe('the guard above actually catches what it claims to', () => {
 describe('the endpoint the picker reuses', () => {
   const routeSource = read(REUSED_ROUTE);
 
-  it('is the path the picker names', () => {
+  it.each(PICKERS)('is the path %s names', (picker) => {
     // The constant is the single place the URL is written; if it stops matching a
     // real route file, the picker returns nothing at runtime and nothing else fails.
-    const declared = read(PICKER).match(/BUSINESS_SEARCH_PATH\s*=\s*'([^']+)'/)?.[1];
+    const declared = read(picker).match(/BUSINESS_SEARCH_PATH\s*=\s*'([^']+)'/)?.[1];
     expect(declared).toBe('/api/admin/business-os/llm-usage/businesses');
     expect(fs.existsSync(path.join(ROOT, `app${declared}/route.ts`))).toBe(true);
   });
@@ -187,8 +199,8 @@ describe('no business name and no search text may be logged (AC-B13)', () => {
     ].map((match) => match[1]);
   }
 
-  it('the picker logs only the error, with no term and no name', () => {
-    const contexts = loggedContexts(read(PICKER));
+  it.each(PICKERS)('%s logs only the error, with no term and no name', (picker) => {
+    const contexts = loggedContexts(read(picker));
     expect(contexts.length).toBeGreaterThan(0);
     for (const context of contexts) {
       expect(context).not.toMatch(/query|term|search|companyName|business(?!\s)/i);

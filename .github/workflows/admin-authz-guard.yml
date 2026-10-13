@@ -11,6 +11,16 @@
 #   R8  a server-rendered render entry point under app/admin/** that does
 #       not guard itself (OI-21)
 #
+# It also runs supabase/__tests__/security-definer-surface.guard.test.ts
+# (SECURITY DEFINER lockdown, slice 6). That file scans every .sql file in
+# supabase/migrations, 'supabase/SQL Scripts' and supabase/held: every function
+# a file creates or alters as SECURITY DEFINER needs, in the same file, a
+# REVOKE ... ON FUNCTION <schema>.<name> FROM PUBLIC, anon, authenticated and a
+# pinned search_path. Pre-existing gaps sit on a frozen baseline that may only
+# shrink. Both files run through `npm run test:authz-guard` in the one step
+# below, so the required check name is unchanged and no CI time is added.
+# See docs/workplans/SECDEF_LOCKDOWN_SLICE6_WORKPLAN.md.
+#
 # There is no R7: it is reserved in the suite for the parked inverted rule
 # ("is anything that BEHAVES like an admin route gated, wherever it lives?").
 # The OI-21 rule took R8 rather than the free number so that parked decision
@@ -35,10 +45,14 @@
 # it closes.
 #
 # The scope step below is NOT that filter. The guard scans app/, lib/,
-# components/, hooks/ and supabase/migrations + 'supabase/SQL Scripts', and the
-# skip rule covers only docs/, root-level *.md, scripts/ and .claude/ - none of
-# which the guard reads (the rule anchors `scripts/` at the repo root, so
-# 'supabase/SQL Scripts' never matches it). A new admin route, the change this
+# components/, hooks/ and supabase/migrations + 'supabase/SQL Scripts' (the
+# SECURITY DEFINER file adds supabase/held), and the skip rule covers only
+# docs/, root-level *.md, scripts/ and .claude/ - none of which the guard
+# depends on (the rule anchors `scripts/` at the repo root, so
+# 'supabase/SQL Scripts' never matches it). The SECURITY DEFINER file also
+# reads every other tracked .sql file (outside the three scanned dirs), but
+# only as a best-effort tripwire: a PR touching only scripts/ or docs/ skips
+# this job, and that is accepted (those files are never applied). A new admin route, the change this
 # guard exists to catch, can never be classified as skippable. The job also
 # still runs and still reports on every PR, so it remains requireable.
 #

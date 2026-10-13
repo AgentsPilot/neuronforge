@@ -454,6 +454,106 @@ describe('listRowsForAccountCreatedInRange (slice 4b, the leak check)', () => {
   });
 });
 
+describe('listRowsOfAllAccountsCreatedInRange (finance & business health slice 1a, R-a)', () => {
+  const WINDOW = { from: new Date('2026-10-01T00:00:00.000Z'), to: new Date('2026-10-10T00:00:00.000Z') };
+
+  it('reads EVERY account’s charges AND adjustments by created_at, half-open, newest first, with no account, kind or service filter', async () => {
+    const deleted = ledgerRow('2', { user_id: null });
+    const adjustment = ledgerRow('3', { kind: 'adjustment', action_id: null, service: null, user_id: B });
+    const { client, queries } = recordingClient(() => ({ data: [ledgerRow('1'), deleted, adjustment], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsOfAllAccountsCreatedInRange(WINDOW, {
+      pageSize: 5,
+      ceiling: 10,
+    });
+
+    expect(result.error).toBeNull();
+    // NULL user_id rows (a deleted account) come back: the caller buckets them.
+    expect(result.data).toEqual({ rows: [ledgerRow('1'), deleted, adjustment], reachedCeiling: false });
+    const [q] = queries;
+    expect(q[0].args).toEqual(['business_os_credit_charges']);
+    expect(argsOf(q, 'select')).toEqual([[CREDIT_LEDGER_ROW_COLUMNS]]);
+    expect(argsOf(q, 'eq')).toEqual([]);
+    expect(argsOf(q, 'in')).toEqual([]);
+    expect(argsOf(q, 'not')).toEqual([]);
+    expect(argsOf(q, 'is')).toEqual([]);
+    expect(argsOf(q, 'gte')).toEqual([['created_at', WINDOW.from.toISOString()]]);
+    expect(argsOf(q, 'lt')).toEqual([['created_at', WINDOW.to.toISOString()]]);
+    expect(argsOf(q, 'lte')).toEqual([]);
+    expect(argsOf(q, 'order')).toEqual([
+      ['created_at', { ascending: false }],
+      ['id', { ascending: false }],
+    ]);
+    expect(argsOf(q, 'range')).toEqual([[0, 4]]);
+  });
+
+  it('logs at info (a cross-account read), with counts and no figure', async () => {
+    const { client } = recordingClient(() => ({ data: [ledgerRow('1')], error: null }));
+    await new BusinessOsCreditLedgerReadRepository(client).listRowsOfAllAccountsCreatedInRange(WINDOW, PAGING);
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'listRowsOfAllAccountsCreatedInRange', rows: 1, reachedCeiling: false }),
+      expect.any(String)
+    );
+    const logged = JSON.stringify(mockLog.info.mock.calls);
+    expect(logged).not.toContain('cost_usd');
+    expect(logged).not.toContain(A);
+  });
+
+  it('pages, de-duplicates by id, and reports the ceiling with >=', async () => {
+    let n = 0;
+    const { client } = recordingClient(() => {
+      const page = [ledgerRow(String(n)), ledgerRow(String(n + 1))];
+      n += 1;
+      return { data: page, error: null };
+    });
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsOfAllAccountsCreatedInRange(WINDOW, {
+      pageSize: 2,
+      ceiling: 3,
+    });
+    expect(result.data?.rows.map((r) => r.id)).toEqual(['0', '1', '2']);
+    expect(result.data?.reachedCeiling).toBe(true);
+  });
+
+  it('exactly ceiling rows counts as reached ("may be incomplete")', async () => {
+    const { client } = recordingClient((_c, i) =>
+      i === 0 ? { data: [ledgerRow('1'), ledgerRow('2')], error: null } : { data: [], error: null }
+    );
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsOfAllAccountsCreatedInRange(WINDOW, {
+      pageSize: 2,
+      ceiling: 2,
+    });
+    expect(result.data?.rows).toHaveLength(2);
+    expect(result.data?.reachedCeiling).toBe(true);
+  });
+
+  it('a short page ends the read below the ceiling', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [ledgerRow('1')], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsOfAllAccountsCreatedInRange(WINDOW, PAGING);
+    expect(result.data?.reachedCeiling).toBe(false);
+    expect(queries).toHaveLength(1);
+  });
+
+  it.each([
+    ['an empty half-open range', { from: WINDOW.to, to: WINDOW.to }, PAGING],
+    ['a reversed range', { from: WINDOW.to, to: WINDOW.from }, PAGING],
+    ['a page larger than PostgREST returns', WINDOW, { pageSize: 1001, ceiling: 10 }],
+    ['a ceiling over 20,000', WINDOW, { pageSize: 1000, ceiling: 20_001 }],
+  ])('refuses %s before querying', async (_name, range, paging) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsOfAllAccountsCreatedInRange(range, paging);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+  });
+
+  it('returns a failed page as an error, never a partial result, and never throws', async () => {
+    const { client } = recordingClient((_c, i) =>
+      i === 0 ? { data: [ledgerRow('1'), ledgerRow('2')], error: null } : { data: null, error: new Error('page 2') }
+    );
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsOfAllAccountsCreatedInRange(WINDOW, PAGING);
+    expect(result).toEqual({ data: null, error: expect.objectContaining({ message: 'page 2' }) });
+  });
+});
+
 describe('findChargesByActionIds', () => {
   const ID = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
 
@@ -934,7 +1034,7 @@ describe('source guards', () => {
     expect(code).toMatch(/\.lt\(\s*['"]created_at['"]/);
   });
 
-  it('is imported only by the report builder, the leak check (slice 4b), the Activity view (B1a) and its drill-down (B2a), the barrel and tests', () => {
+  it('is imported only by the report builder, the leak check (slice 4b), the Activity view (B1a) and its drill-down (B2a), the finance page (finance & business health 1a), the barrel and tests', () => {
     const roots = ['app', 'lib', 'components', 'hooks', 'scripts'];
     const found: string[] = [];
     const walk = (dir: string) => {
@@ -969,6 +1069,14 @@ describe('source guards', () => {
         'lib/business-os/credits/aiActivityDrillDownDeps.ts',
         // Slice 8a: the admin "Credits left" column's production wiring.
         'lib/business-os/credits/adminCreditPercentDeps.ts',
+        // Finance & business health slice 1a: the CreditLedgerRow TYPE for the
+        // pure Section 3 sums; it calls no read method ...
+        'lib/business-os/finance/aiCost.ts',
+        // ... the builder: types via Pick<...>; it calls no read method itself ...
+        'lib/business-os/finance/financeHealth.ts',
+        // ... and its production wiring, which calls three reads: all accounts
+        // by time (R-a), one account by time, and charges by action id.
+        'lib/business-os/finance/financeHealthDeps.ts',
         'lib/repositories/BusinessOsCreditLedgerReadRepository.ts',
         'lib/repositories/index.ts',
       ].sort()

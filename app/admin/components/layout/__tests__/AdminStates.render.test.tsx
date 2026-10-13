@@ -1,0 +1,89 @@
+/**
+ * @jest-environment jsdom
+ */
+
+/**
+ * The shared loading and error states (Admin Layout Standard C-3, §5.10).
+ */
+
+import React from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
+
+import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
+
+describe('AdminLoading', () => {
+  it('says "Reading {what}…" with a hidden spinner icon, in a status live region', () => {
+    const { container } = render(<AdminLoading what="the health summary" />);
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe('Reading the health summary…');
+    const icon = container.querySelector('svg');
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute('aria-hidden')).toBe('true');
+    expect(icon?.getAttribute('class')).toContain('animate-spin');
+    expect(screen.queryAllByRole('region')).toHaveLength(0);
+  });
+});
+
+describe('AdminError', () => {
+  it('puts the testid on the message element, whose text is exactly the message (RC-3)', () => {
+    render(<AdminError message="Forbidden" testId="x-error" />);
+    expect(screen.getByTestId('x-error').textContent).toBe('Forbidden');
+    expect(screen.getByRole('alert').contains(screen.getByTestId('x-error'))).toBe(true);
+    expect(screen.queryAllByRole('region')).toHaveLength(0);
+  });
+
+  it('renders no button without onRetry', () => {
+    render(<AdminError message="Forbidden" testId="x-error" />);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('with onRetry, "Try again" calls it once and sits outside the testid element', () => {
+    const onRetry = jest.fn();
+    render(<AdminError message="Forbidden" testId="x-error" onRetry={onRetry} />);
+    const button = screen.getByRole('button', { name: 'Try again' });
+    expect(button.getAttribute('type')).toBe('button');
+    expect(screen.getByTestId('x-error').contains(button)).toBe(false);
+    expect(screen.getByTestId('x-error').textContent).toBe('Forbidden');
+    fireEvent.click(button);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AdminEmpty (L-1c)', () => {
+  it('shows the sentence and the hint, with no button without onClear, and no region', () => {
+    render(<AdminEmpty message="No events match." hint="Try fewer filters." testId="x-empty" />);
+    expect(screen.getByTestId('x-empty').textContent).toBe('No events match.Try fewer filters.');
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryAllByRole('region')).toHaveLength(0);
+  });
+
+  it('with onClear, "Clear filters" calls it', () => {
+    const onClear = jest.fn();
+    render(<AdminEmpty message="No events match." onClear={onClear} />);
+    const button = screen.getByRole('button', { name: 'Clear filters' });
+    expect(button.getAttribute('type')).toBe('button');
+    fireEvent.click(button);
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AdminNotice (L-1d)', () => {
+  it('amber, with the testid on the text element and a hidden icon', () => {
+    const { container } = render(<AdminNotice testId="x-notice">Search scans only this page.</AdminNotice>);
+    const text = screen.getByTestId('x-notice');
+    expect(text.textContent).toBe('Search scans only this page.');
+    const box = container.firstElementChild as HTMLElement;
+    for (const cls of ['border-amber-500/40', 'bg-amber-500/10', 'text-amber-200']) expect(box.className).toContain(cls);
+    const icon = box.querySelector('svg');
+    expect(icon?.getAttribute('aria-hidden')).toBe('true');
+    expect(text.contains(icon)).toBe(false);
+  });
+
+  it('carries no role at all (not alert, not status) and is no region', () => {
+    const { container } = render(<AdminNotice>Partial.</AdminNotice>);
+    expect(container.querySelectorAll('[role]')).toHaveLength(0);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryAllByRole('region')).toHaveLength(0);
+  });
+});

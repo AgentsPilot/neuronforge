@@ -31,10 +31,12 @@ export const OWNER_EVENT_LABELS: Readonly<Record<string, OwnerEventLabel>> = {
   BOS_BOOST_CREDITED: { en: 'Credits added', he: 'קרדיטים נוספו', es: 'Créditos añadidos' },
   BOS_BOOST_PAYMENT_FAILED: { en: 'Payment did not go through', he: 'התשלום לא עבר', es: 'El pago no se completó' },
   BOS_BOOST_FLAGGED: { en: 'Payment under review', he: 'התשלום בבדיקה', es: 'Pago en revisión' },
+  // Credits boost 4b.1 (SA Q-4): a refund or dispute recorded; the details stay operator-only.
+  BOS_BOOST_PAYMENT_REVERSED: { en: 'Payment update', he: 'עדכון תשלום', es: 'Actualización del pago' },
 };
 
 /** Events whose details are operator-only: the owner sees the label and nothing else. */
-export const OWNER_NEUTRAL_EVENTS: ReadonlySet<string> = new Set(['BOS_BOOST_FLAGGED']);
+export const OWNER_NEUTRAL_EVENTS: ReadonlySet<string> = new Set(['BOS_BOOST_FLAGGED', 'BOS_BOOST_PAYMENT_REVERSED']);
 
 /** The owner's view of one audit row. Unlabelled rows are returned unchanged (same object). */
 export function presentOwnerAuditRow<T extends { action: string; details?: unknown }>(row: T): T | (T & { owner_label: OwnerEventLabel }) {

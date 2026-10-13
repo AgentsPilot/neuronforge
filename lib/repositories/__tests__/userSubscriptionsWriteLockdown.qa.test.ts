@@ -61,12 +61,16 @@ describe('QA — who can write user_subscriptions at all', () => {
     // Adding a file to this list must be a deliberate, reviewed act.
     // Plan payments P-10 removed two writers: the free-tier freeze job is an
     // inert 410 (TK-3, BQ-P8) and sync-subscription is a 410 (CF-3).
+    // CF-5 PR 5 moved the Stripe webhook's four writes (dunning, boost pack,
+    // status mirror, canceled) into UserSubscriptionRepository, so the webhook
+    // route is no longer a writer. `routerPlacement.guard` pins that the route
+    // has no `.from(` at all, and the test below that each moved query keeps
+    // its `.eq('user_id', userId)`.
     expect(writers).toEqual([
       'app/api/stripe/cancel-subscription/route.ts', // supabaseAdmin
       'app/api/stripe/reactivate-subscription/route.ts', // supabaseAdmin
-      'app/api/stripe/webhook/route.ts', // supabaseAdmin
       'lib/credits/rewardService.ts', // injected; browser client on purpose (W-3 / D-3)
-      'lib/repositories/UserSubscriptionRepository.ts', // supabaseServer by default (S-6)
+      'lib/repositories/UserSubscriptionRepository.ts', // supabaseServer by default (S-6; the webhook's legacy writes, CF-5 PR 5)
       'lib/services/CreditService.ts', // injected; only built with supabaseServer (W-1)
       'lib/services/ExecutionService.ts', // injected; quota writers must not run on a cookie client
       'lib/services/StorageService.ts', // injected; only built from QuotaAllocationService (admin)
@@ -105,7 +109,9 @@ describe('QA — injected-client services that write the table', () => {
       // checkout with its welcome bonus). P-10 removed subscription.updated's
       // and sync-subscription's (L-26). Left: the boost-pack branch, kept as-is
       // by Credits Boost FR-40 so in-flight sessions complete (SA P10 Q-2).
-      'app/api/stripe/webhook/route.ts::QuotaAllocationService(supabaseAdmin)',
+      // CF-5 PR 5 removed the route's `supabaseAdmin` alias: the argument is
+      // now the shared service-role `supabaseServer` itself.
+      'app/api/stripe/webhook/route.ts::QuotaAllocationService(supabaseServer)',
       // Documented exception (SA RC9-8): the caller's cookie client. Only the
       // read and the SECURITY DEFINER `increment_executions_used` RPC may be
       // used from this instance — never applyExecutionQuotaBasedOnTokens /
@@ -153,6 +159,25 @@ describe('QA — injected-client services that write the table', () => {
 });
 
 describe('QA — the service-role swaps keep user scoping (tenant-isolation-guard)', () => {
+  // CF-5 PR 5: the webhook's six legacy queries moved from the route into this
+  // repository section. Each must keep exactly one `.eq('user_id', userId)`,
+  // so the move cannot drop the only control on a service-role write.
+  it('the Stripe webhook legacy section of UserSubscriptionRepository is user-scoped on every query', () => {
+    const src = read('lib/repositories/UserSubscriptionRepository.ts');
+    const header = '// Stripe webhook, agent-platform legacy: owner-scoped (CF-5 PR 5)';
+    const start = src.indexOf(header);
+    expect(start).toBeGreaterThan(-1);
+    // Code only: the section's comments quote the filter, and must not count.
+    const section = src
+      .slice(start, src.indexOf('\n}', start))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const queries = section.match(/\.from\('user_subscriptions'\)/g) ?? [];
+    expect(queries).toHaveLength(6);
+    expect(section.match(/\.eq\('user_id', userId\)/g)).toHaveLength(6);
+    expect(section).not.toMatch(/\.upsert\(|\.insert\(|\.delete\(|\.rpc\(/);
+  });
+
   it('run-agent never lets a body-supplied user id reach CreditService', () => {
     const src = read('app/api/run-agent/route.ts');
     const args = [...src.matchAll(/creditService\.\w+\(\s*([\w.]+)/g)].map((m) => m[1]);

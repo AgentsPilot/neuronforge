@@ -33,6 +33,7 @@ jest.mock('@/lib/logger', () => {
 
 import {
   BOOST_CAP_OVERRIDE_COLUMNS,
+  BOOST_CAP_OVERRIDE_HISTORY_COLUMNS,
   BOOST_PURCHASE_COLUMNS,
   BOOST_PURCHASE_READ_LIMITS,
   BOS_ABANDON_BOOST_PURCHASE_RPC,
@@ -150,7 +151,7 @@ function rpcClient(outcome: { data: unknown; error: unknown } | Error) {
 function readClient(outcome: { data: unknown; error: unknown }) {
   const calls: Array<[string, unknown[]]> = [];
   const chain: Record<string, unknown> = {};
-  for (const name of ['select', 'eq', 'is', 'order']) {
+  for (const name of ['select', 'eq', 'is', 'order', 'in', 'lt']) {
     chain[name] = (...args: unknown[]) => {
       calls.push([name, args]);
       return chain;
@@ -604,7 +605,7 @@ describe('source guards', () => {
   });
 
   it('every column the repository selects exists in the migration', () => {
-    for (const column of [...BOOST_PURCHASE_COLUMNS.split(', '), ...BOOST_CAP_OVERRIDE_COLUMNS.split(', ')]) {
+    for (const column of [...BOOST_PURCHASE_COLUMNS.split(', '), ...BOOST_CAP_OVERRIDE_HISTORY_COLUMNS.split(', ')]) {
       expect(migration).toMatch(new RegExp(`\\n  ${column} `));
     }
   });
@@ -713,6 +714,9 @@ describe('slice 4a: findByIdForWebhook and the failure classification (SA C-1, C
     const allowed = [
       'lib/business-os/boost/boostWebhookSession.ts',
       'lib/business-os/boost/boostWebhookDeps.ts',
+      // Slice 4b.2 (SA C-2): the reconcile pass re-reads a row by the id it read
+      // from our own table a moment ago (never an id from a request or Stripe).
+      'lib/business-os/boost/boostReconcileDeps.ts',
       'lib/repositories/BusinessOsBoostPurchaseRepository.ts',
     ];
     const offenders: string[] = [];
@@ -762,5 +766,197 @@ describe('slice 5b.1: findForAccountBySessionId (SA C-3)', () => {
       expect(isDeterministicRepositoryError(result.error)).toBe(true);
       expect(calls).toEqual([]);
     }
+  });
+});
+
+describe('slice 4b.2: listForReconcile (unscoped by design, SA C-9)', () => {
+  const BEFORE = '2026-10-09T05:00:00.000Z';
+
+  it.each([
+    [
+      'stuck',
+      [
+        ['in', ['status', ['pending', 'awaiting_payment']]],
+        ['lt', ['checkout_expires_at', BEFORE]],
+        ['order', ['checkout_expires_at', { ascending: true }]],
+      ],
+    ],
+    [
+      'receipt_missing',
+      [
+        ['eq', ['status', 'paid']],
+        ['is', ['receipt_url', null]],
+        ['lt', ['paid_at', BEFORE]],
+        ['order', ['paid_at', { ascending: true }]],
+      ],
+    ],
+    [
+      'disputed',
+      [
+        ['eq', ['status', 'disputed']],
+        ['lt', ['status_changed_at', BEFORE]],
+        ['order', ['status_changed_at', { ascending: true }]],
+      ],
+    ],
+  ] as const)('%s: one mode, oldest first, id as tie-break, bounded, never a user_id filter', async (kind, filters) => {
+    const { repo, calls } = readClient({ data: [PURCHASE_ROW], error: null });
+    const result = await repo.listForReconcile({ kind, livemode: false, before: BEFORE, limit: 50 });
+    expect(calls).toEqual([
+      ['from', ['business_os_boost_purchases']],
+      ['select', [BOOST_PURCHASE_COLUMNS]],
+      ['eq', ['livemode', false]],
+      ...filters,
+      ['order', ['id', { ascending: true }]],
+      ['range', [0, 49]],
+    ]);
+    expect(calls.some(([name, args]) => name === 'eq' && args[0] === 'user_id')).toBe(false);
+    expect(result.data?.map((row) => row.accountId)).toEqual([ACCOUNT]);
+  });
+
+  it('the batch is clamped to 1..50 (a larger request reads 50)', async () => {
+    for (const [limit, last] of [
+      [500, 49],
+      [0, 0],
+      [7.9, 6],
+    ] as const) {
+      const { repo, calls } = readClient({ data: [], error: null });
+      await repo.listForReconcile({ kind: 'stuck', livemode: true, before: BEFORE, limit });
+      expect(calls[calls.length - 1]).toEqual(['range', [0, last]]);
+    }
+    expect(BOOST_PURCHASE_READ_LIMITS.MAX_RECONCILE_BATCH).toBe(50);
+  });
+
+  it('an unknown kind, a non-boolean mode, an unreadable cut-off or a NaN batch is refused before any query (deterministic)', async () => {
+    for (const input of [
+      { kind: 'everything', livemode: false, before: BEFORE, limit: 50 },
+      { kind: 'stuck', livemode: 'false', before: BEFORE, limit: 50 },
+      { kind: 'stuck', livemode: false, before: 'yesterday', limit: 50 },
+      { kind: 'stuck', livemode: false, before: BEFORE, limit: Number.NaN },
+    ]) {
+      const { repo, calls } = readClient({ data: [], error: null });
+      const result = await repo.listForReconcile(input as never);
+      expect(calls).toEqual([]);
+      expect(isDeterministicRepositoryError(result.error)).toBe(true);
+    }
+  });
+
+  it('a database error is returned (transient), never thrown; an unreadable row is an error, never a guess', async () => {
+    const failed = await readClient({ data: null, error: { code: '57014', message: 'canceling statement' } }).repo.listForReconcile({
+      kind: 'stuck',
+      livemode: false,
+      before: BEFORE,
+      limit: 50,
+    });
+    expect(failed.data).toBeNull();
+    expect(isDeterministicRepositoryError(failed.error)).toBe(false);
+
+    const unreadable = await readClient({ data: [{ ...PURCHASE_ROW, status: 'stuckish' }], error: null }).repo.listForReconcile({
+      kind: 'stuck',
+      livemode: false,
+      before: BEFORE,
+      limit: 50,
+    });
+    expect(unreadable.data).toBeNull();
+    expect(unreadable.error).toBeInstanceOf(BoostRepositoryFailure);
+  });
+
+  it('only the reconcile wiring names listForReconcile (app, lib, components)', () => {
+    const ROOT = process.cwd();
+    const allowed = ['lib/business-os/boost/boostReconcileDeps.ts', 'lib/repositories/BusinessOsBoostPurchaseRepository.ts'];
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(rel);
+        } else if (/\.tsx?$/.test(entry.name)) {
+          const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+          // The pass names it only through its typed port (`Pick<…, 'listForReconcile'>`), the deps wire it.
+          if (/\blistForReconcile\b/.test(text) && !allowed.includes(rel) && rel !== 'lib/business-os/boost/boostReconcilePass.ts') offenders.push(rel);
+        }
+      }
+    };
+    for (const root of ['app', 'lib', 'components']) walk(root);
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('slice 6a: listCapOverrides (2a QA I-2)', () => {
+  const OVERRIDE_ROW = {
+    id: OVERRIDE,
+    user_id: ACCOUNT,
+    cap_minor: 50000,
+    currency: 'USD',
+    reason: 'annual prepay customer',
+    actor_admin_id: ADMIN,
+    created_at: '2026-10-02T09:00:00+00:00',
+    ended_at: '2026-10-03T09:00:00+00:00',
+    ended_by_admin_id: ADMIN,
+    ended_reason: 'replaced',
+  };
+
+  it('scoped by user_id with the history columns, newest first, at most 20', async () => {
+    const { repo, calls } = readClient({ data: [OVERRIDE_ROW], error: null });
+    const result = await repo.listCapOverrides(ACCOUNT);
+    expect(calls).toEqual([
+      ['from', ['business_os_boost_cap_overrides']],
+      ['select', [BOOST_CAP_OVERRIDE_HISTORY_COLUMNS]],
+      ['eq', ['user_id', ACCOUNT]],
+      ['order', ['created_at', { ascending: false }]],
+      ['range', [0, 19]],
+    ]);
+    expect(result.data).toEqual([
+      {
+        id: OVERRIDE,
+        accountId: ACCOUNT,
+        capMinor: 50000,
+        currency: 'USD',
+        reason: 'annual prepay customer',
+        actorAdminId: ADMIN,
+        createdAt: '2026-10-02T09:00:00+00:00',
+        endedAt: '2026-10-03T09:00:00+00:00',
+        endedByAdminId: ADMIN,
+        endedReason: 'replaced',
+      },
+    ]);
+    expect(BOOST_PURCHASE_READ_LIMITS.MAX_CAP_HISTORY).toBe(20);
+  });
+
+  it('I-2: a detached override (user_id NULL, left by a deleted account) can never be returned for an account', async () => {
+    // A fake table holding the detached row and the account's own: the filter the repository applies decides.
+    const detached = { ...OVERRIDE_ROW, id: PREVIOUS, user_id: null, ended_at: null, ended_by_admin_id: null, ended_reason: null };
+    const table = [detached, OVERRIDE_ROW];
+    const filters: Array<[string, unknown]> = [];
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      eq: (column: string, value: unknown) => {
+        filters.push([column, value]);
+        return chain;
+      },
+      is: (column: string, value: unknown) => {
+        filters.push([column, value]);
+        return chain;
+      },
+      order: () => chain,
+      range: () => Promise.resolve({ data: table.filter((row) => filters.every(([c, v]) => (row as Record<string, unknown>)[c] === v)), error: null }),
+      maybeSingle: () => Promise.resolve({ data: table.find((row) => filters.every(([c, v]) => (row as Record<string, unknown>)[c] === v)) ?? null, error: null }),
+    };
+    const client = { from: () => chain, rpc: () => Promise.reject(new Error('no rpc')) };
+    const repo = new BusinessOsBoostPurchaseRepository(client as unknown as SupabaseClient);
+    const history = await repo.listCapOverrides(ACCOUNT);
+    expect(history.data?.map((row) => row.id)).toEqual([OVERRIDE]);
+    filters.length = 0;
+    const active = await repo.findActiveCapOverride(ACCOUNT);
+    // The account's own override is ended; the detached one is "active" but belongs to no account.
+    expect(active.data).toBeNull();
+  });
+
+  it('a malformed account id is refused before any query; a database error is returned, never thrown', async () => {
+    const { repo, calls } = readClient({ data: [], error: null });
+    expect(isDeterministicRepositoryError((await repo.listCapOverrides('nope')).error)).toBe(true);
+    expect(calls).toEqual([]);
+    const failed = await readClient({ data: null, error: { code: '57014', message: 'timeout' } }).repo.listCapOverrides(ACCOUNT);
+    expect(failed.data).toBeNull();
+    expect(isDeterministicRepositoryError(failed.error)).toBe(false);
   });
 });

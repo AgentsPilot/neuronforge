@@ -63,21 +63,20 @@ describe('the default filter', () => {
     expect(((await screen.findAllByRole('combobox'))[0] as HTMLSelectElement).value).toBe('active');
   });
 
-  it('labels the filtered count "shown", not "total", in the card and the pill', async () => {
+  // L-4a (§5.3, T-6): the header pills are gone; the first KPI tile keeps the same words.
+  it('labels the filtered count "shown", not "total", in the card', async () => {
     mockList(() => [DANA]);
     render(<UsersPage />);
-    expect((await screen.findByTestId('count-card-label')).textContent).toBe('Users shown (active)');
-    expect(screen.getByTestId('count-pill').textContent).toBe('1 shown');
+    expect((await screen.findByTestId('kpi-shown')).getAttribute('aria-label')).toBe('Users shown (active), 1');
 
     fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'all' } });
-    await waitFor(() => expect(screen.getByTestId('count-card-label').textContent).toBe('All users'));
-    expect(screen.getByTestId('count-pill').textContent).toBe('1 total');
+    await waitFor(() => expect(screen.getByTestId('kpi-shown').getAttribute('aria-label')).toBe('All users, 1'));
   });
 
   it('never logs the raw list body (names and emails), only counts', async () => {
     mockList(() => [DANA]);
     render(<UsersPage />);
-    await screen.findByTestId('count-pill');
+    await screen.findByTestId('kpi-shown');
     const logged = JSON.stringify(mockDebug.mock.calls);
     expect(logged).not.toContain('dana@example.com');
     expect(logged).not.toContain('Dana Cohen');
@@ -125,7 +124,9 @@ describe('an empty search under Active (U-4)', () => {
 });
 
 describe('no status or role column (U-9; C-23 satisfied by removal)', () => {
-  it('has no "Auth role" or "Status" header, seven columns in all', async () => {
+  // L-4b (SA Q-2 (b)): the Actions column went with the row toggle (the Open
+  // button sits in the first cell), so six columns; the intent is unchanged.
+  it('has no "Auth role" or "Status" header, six columns in all', async () => {
     mockList(() => [DANA]);
     render(<UsersPage />);
     await screen.findByTestId('row-activity');
@@ -139,7 +140,6 @@ describe('no status or role column (U-9; C-23 satisfied by removal)', () => {
       'Login Activity',
       'Last Sign In',
       'Joined',
-      'Actions',
     ]);
   });
 
@@ -161,10 +161,12 @@ describe('no status or role column (U-9; C-23 satisfied by removal)', () => {
     expect(row.querySelector('svg.lucide-shield')).toBeNull();
   });
 
-  it('the empty state spans all seven columns (slice 8a)', async () => {
+  it('the empty state spans all six columns (slice 8a; six since L-4b, SA Q-2 (b))', async () => {
     mockList(() => []);
     render(<UsersPage />);
     const cell = (await screen.findByText('No users found')).closest('td') as HTMLTableCellElement;
-    expect(cell.getAttribute('colspan')).toBe('7');
+    // Every column, whatever their number, and the literal six of today.
+    expect(cell.getAttribute('colspan')).toBe(String(screen.getAllByRole('columnheader').length));
+    expect(cell.getAttribute('colspan')).toBe('6');
   });
 });

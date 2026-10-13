@@ -149,8 +149,9 @@ describe('list labels', () => {
   });
 
   it('"total" only under All users; "shown" otherwise', () => {
-    expect(countLabels('all')).toEqual({ card: 'All users', pill: 'total' });
-    expect(countLabels('active')).toEqual({ card: 'Users shown (active)', pill: 'shown' });
-    expect(countLabels('inactive')).toEqual({ card: 'Users shown (inactive)', pill: 'shown' });
+    // L-4a (SA S-1): the header pill is gone, so `pill` is too; the card words are unchanged.
+    expect(countLabels('all')).toEqual({ card: 'All users' });
+    expect(countLabels('active')).toEqual({ card: 'Users shown (active)' });
+    expect(countLabels('inactive')).toEqual({ card: 'Users shown (inactive)' });
   });
 });

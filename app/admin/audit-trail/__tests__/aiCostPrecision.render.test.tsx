@@ -10,6 +10,10 @@
  *
  * `asUsd` lives inside the page (a Next page file may not export helpers), so
  * it is tested through a render of the real page, as the other suites here do.
+ *
+ * L-1d: the details open in the drawer through the row's Open button (clicking
+ * row text no longer opens anything). The label is a `dt` whose parent also
+ * holds its `dd`, so the value lookup is unchanged.
  */
 
 import React from 'react';
@@ -28,6 +32,13 @@ jest.mock('@/lib/logger', () => ({
     child: jest.fn().mockReturnThis(),
   }),
 }));
+
+// RC-1 (Admin Layout Standard L-1c): the page logs through `clientLogger.child`,
+// and `@/lib/logger/client` re-exports from the mocked `@/lib/logger` above.
+jest.mock('@/lib/logger/client', () => {
+  const noop = () => undefined;
+  return { clientLogger: { child: () => ({ error: noop, warn: noop, info: noop, debug: noop }) } };
+});
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(''),
@@ -80,11 +91,11 @@ function mockRoute(logs: unknown[]): void {
   }));
 }
 
-/** Render one AI entry, expand it, and return the Estimated Cost value. */
+/** Render one AI entry, open it in the drawer, and return the Estimated Cost value. */
 async function renderedCost(cost: number): Promise<string> {
   mockRoute([aiEntry('e1', cost)]);
   render(<AuditTrailPage />);
-  fireEvent.click(await screen.findByText('owner@example.com'));
+  fireEvent.click(await screen.findByRole('button', { name: /^Open details for/ }));
   const label = await screen.findByText('Estimated Cost');
   return within(label.parentElement as HTMLElement).getByText(/^\$/).textContent as string;
 }

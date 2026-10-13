@@ -27,6 +27,10 @@
 import { createHash } from 'crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
+import {
+  MIGRATION_FILE as CLEANUP_MIGRATION_FILE,
+  ROLLBACK_FILE as CLEANUP_ROLLBACK_FILE,
+} from '@/scripts/generate-test-account-cleanup-sql';
 
 const ROOT = process.cwd();
 const MIGRATIONS_DIR = join(ROOT, 'supabase', 'migrations');
@@ -792,12 +796,20 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
     // 20261042 (plan payments P-3b.1) is the next version of that same generated function, and its
     // rollback restores the 20261041 one: same reason, nothing on the charge path changes. 20261043
     // (test-account cleanup first live run) and its rollback, which restores 20261042: same again.
+    // 20261045 (scheduling_bookings before crm_contacts, G-19) and its rollback, which restores
+    // 20261043: same again. 20261047 (the audit row names the admin as user_id) and its rollback,
+    // which restores 20261046: same again. Taken from the generator's constants, so this file does
+    // not spell the next version's name (R-7).
     const testAccountCleanup = [
+      join(ROOT, ...CLEANUP_MIGRATION_FILE.split('/')),
+      join(ROOT, ...CLEANUP_ROLLBACK_FILE.split('/')),
       join(MIGRATIONS_DIR, '20261041_operator_test_account_cleanup.sql'),
       join(MIGRATIONS_DIR, '20261042_operator_test_account_cleanup_billing_events.sql'),
       join(SQL_SCRIPTS_DIR, '20261042_operator_test_account_cleanup_billing_events_rollback.sql'),
       join(MIGRATIONS_DIR, '20261043_operator_test_account_cleanup_insight_links.sql'),
       join(SQL_SCRIPTS_DIR, '20261043_operator_test_account_cleanup_insight_links_rollback.sql'),
+      join(MIGRATIONS_DIR, '20261046_operator_test_account_cleanup_notnull_order.sql'),
+      join(SQL_SCRIPTS_DIR, '20261046_operator_test_account_cleanup_notnull_order_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))

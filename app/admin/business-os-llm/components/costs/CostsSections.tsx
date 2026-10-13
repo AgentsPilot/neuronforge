@@ -3,9 +3,33 @@
  * workplan §4.1): per account and period, the breakdowns, the fallback-priced
  * charges, and the spread per action type. Presentational only: every figure
  * arrives in the payload; nothing is computed here but formatting.
+ *
+ * Admin Layout Standard L-9b (§2.7): each section stays a card (four
+ * differently shaped blocks, §5.7 non-table content), and every table inside
+ * takes the shared table classes, so the tab has one density (F-72) and every
+ * number column is right-aligned in tabular figures, never monospace (F-71).
+ * The period check and "few examples" are the shared `StatusChip` (§5.9:
+ * "matches its rows" is a proven-clear state, so `ok`; "not checked" is
+ * `unknown`). Fallback times go through the shared `formatUtc`, through
+ * `Date`, never sliced as text (F-74). Codes (action types, breakdown keys,
+ * period starts) keep their monospace: they are codes, not numbers.
  */
 
-import { Chip } from '../Chip';
+import {
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TD_ID,
+  ADMIN_TD_NUM,
+  ADMIN_TH,
+  ADMIN_TH_NUM,
+  ADMIN_THEAD,
+  formatShortId,
+} from '@/app/admin/components/layout/adminTable';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { StatusChip } from '@/app/admin/components/layout/StatusChip';
+
 import {
   BREAKDOWN_NOTE,
   FALLBACK_NOTE,
@@ -23,18 +47,14 @@ import type {
   CostReportPayload,
 } from '../../costTypes';
 
-const TH = 'px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-slate-400';
-const TH_NUM = `${TH} text-right`;
-const TD = 'px-3 py-2 text-slate-200';
-const TD_NUM = 'px-3 py-2 text-right font-mono text-slate-200';
-
 function accountLabel(companyName: string | null, accountId: string): string {
   return companyName ?? `${accountId.slice(0, 8)}…`;
 }
 
 function SectionShell({ title, testId, children }: { title: React.ReactNode; testId: string; children: React.ReactNode }) {
   return (
-    <section data-testid={testId} className="space-y-3 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+    // `id` = the test id: the KPI strip's anchor tiles point here (L-9a, §2.5).
+    <section id={testId} data-testid={testId} className="space-y-3 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
       <h2 className="text-sm font-semibold text-white">{title}</h2>
       {children}
     </section>
@@ -54,14 +74,14 @@ function SectionFailed({ testId }: { testId: string }) {
 function FiguresCells({ f }: { f: CostPeriodFigures }) {
   return (
     <>
-      <td className={TD_NUM}>{formatCredits(f.creditsTotal)}</td>
-      <td className={TD_NUM}>{formatCredits(f.creditsOwner)}</td>
-      <td className={TD_NUM}>{formatCredits(f.creditsScheduled)}</td>
-      <td className={TD_NUM}>{formatCredits(f.creditsExternal)}</td>
-      <td className={TD_NUM}>{formatCredits(f.creditsAdjustment)}</td>
-      <td className={TD_NUM}>{formatUsd(f.costUsd)}</td>
-      <td className={TD_NUM}>{formatCount(f.charges)}</td>
-      <td className={TD_NUM}>{formatCount(f.fallbackPriced)}</td>
+      <td className={ADMIN_TD_NUM}>{formatCredits(f.creditsTotal)}</td>
+      <td className={ADMIN_TD_NUM}>{formatCredits(f.creditsOwner)}</td>
+      <td className={ADMIN_TD_NUM}>{formatCredits(f.creditsScheduled)}</td>
+      <td className={ADMIN_TD_NUM}>{formatCredits(f.creditsExternal)}</td>
+      <td className={ADMIN_TD_NUM}>{formatCredits(f.creditsAdjustment)}</td>
+      <td className={ADMIN_TD_NUM}>{formatUsd(f.costUsd)}</td>
+      <td className={ADMIN_TD_NUM}>{formatCount(f.charges)}</td>
+      <td className={ADMIN_TD_NUM}>{formatCount(f.fallbackPriced)}</td>
     </>
   );
 }
@@ -69,17 +89,17 @@ function FiguresCells({ f }: { f: CostPeriodFigures }) {
 function CheckCell({ matches, fromRows }: { matches: boolean | null; fromRows: CostPeriodFigures | null }) {
   if (matches === true) {
     return (
-      <Chip tone="info" testId="period-check-ok">
+      <StatusChip tone="ok" testId="period-check-ok">
         matches its rows
-      </Chip>
+      </StatusChip>
     );
   }
   if (matches === false) {
     return (
       <div className="space-y-1">
-        <Chip tone="danger" testId="period-check-mismatch">
+        <StatusChip tone="danger" testId="period-check-mismatch">
           mismatch
-        </Chip>
+        </StatusChip>
         {fromRows && (
           <p className="text-[11px] text-red-300">
             rows: {formatCredits(fromRows.creditsTotal)} credits, {formatUsd(fromRows.costUsd)},{' '}
@@ -90,9 +110,9 @@ function CheckCell({ matches, fromRows }: { matches: boolean | null; fromRows: C
     );
   }
   return (
-    <Chip tone="quiet" testId="period-check-skipped">
+    <StatusChip tone="unknown" testId="period-check-skipped">
       not checked
-    </Chip>
+    </StatusChip>
   );
 }
 
@@ -106,38 +126,38 @@ export function PeriodsSection({ report }: { report: CostReportPayload }) {
           rows. Both figures are shown.
         </p>
       )}
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead className="border-b border-slate-700">
+      <div className={ADMIN_TABLE_WRAP}>
+        <table className={ADMIN_TABLE} aria-label="Per account and billing period">
+          <thead className={ADMIN_THEAD}>
             <tr>
-              <th className={TH}>Business</th>
-              <th className={TH}>Period start</th>
-              <th className={TH_NUM}>Credits</th>
-              <th className={TH_NUM}>Owner</th>
-              <th className={TH_NUM}>Scheduled</th>
-              <th className={TH_NUM}>External</th>
-              <th className={TH_NUM}>Corrections</th>
-              <th className={TH_NUM}>Cost (USD)</th>
-              <th className={TH_NUM}>Charges</th>
-              <th className={TH_NUM}>Fallback</th>
-              <th className={TH}>Check</th>
+              <th scope="col" className={ADMIN_TH}>Business</th>
+              <th scope="col" className={ADMIN_TH}>Period start</th>
+              <th scope="col" className={ADMIN_TH_NUM}>Credits</th>
+              <th scope="col" className={ADMIN_TH_NUM}>Owner</th>
+              <th scope="col" className={ADMIN_TH_NUM}>Scheduled</th>
+              <th scope="col" className={ADMIN_TH_NUM}>External</th>
+              <th scope="col" className={ADMIN_TH_NUM}>Corrections</th>
+              <th scope="col" className={ADMIN_TH_NUM}>Cost (USD)</th>
+              <th scope="col" className={ADMIN_TH_NUM}>Charges</th>
+              <th scope="col" className={ADMIN_TH_NUM}>Fallback</th>
+              <th scope="col" className={ADMIN_TH}>Check</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className={ADMIN_TBODY}>
             {report.periods.map((p) => (
               <tr key={`${p.accountId}|${p.periodStart}`} data-testid="period-row">
-                <td className={TD} title={p.accountId}>
+                <td className={ADMIN_TD} title={p.accountId}>
                   {accountLabel(p.companyName, p.accountId)}
                 </td>
-                <td className={`${TD} font-mono`}>{formatDay(p.periodStart)}</td>
+                <td className={`${ADMIN_TD} whitespace-nowrap font-mono`}>{formatDay(p.periodStart)}</td>
                 {p.stored ? (
                   <FiguresCells f={p.stored} />
                 ) : (
-                  <td className={`${TD} text-red-300`} colSpan={8}>
+                  <td className={`${ADMIN_TD} text-red-300`} colSpan={8}>
                     no totals row for this period
                   </td>
                 )}
-                <td className={TD}>
+                <td className={ADMIN_TD}>
                   <CheckCell matches={p.matches} fromRows={p.fromRows} />
                 </td>
               </tr>
@@ -145,7 +165,7 @@ export function PeriodsSection({ report }: { report: CostReportPayload }) {
           </tbody>
           <tfoot className="border-t border-slate-600">
             <tr data-testid="period-total-row">
-              <td className={`${TD} font-semibold`} colSpan={2}>
+              <td className={`${ADMIN_TD} font-semibold text-slate-200`} colSpan={2}>
                 Total
               </td>
               <FiguresCells f={report.grandTotal.stored} />
@@ -167,30 +187,30 @@ function breakdownKey(line: CostBreakdownLine): string {
 
 function BreakdownTable({ title, lines }: { title: string; lines: CostBreakdownLine[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-700/60">
-      <table className="min-w-full text-sm" data-testid={`breakdown-${title}`}>
-        <thead className="border-b border-slate-700">
+    <div className={ADMIN_TABLE_WRAP}>
+      <table className={ADMIN_TABLE} data-testid={`breakdown-${title}`} aria-label={`Breakdown by ${title.toLowerCase()}`}>
+        <thead className={ADMIN_THEAD}>
           <tr>
-            <th className={TH}>{title}</th>
-            <th className={TH_NUM}>Charges</th>
-            <th className={TH_NUM}>Credits</th>
-            <th className={TH_NUM}>Cost (USD)</th>
-            <th className={TH_NUM}>of which corrections</th>
+            <th scope="col" className={ADMIN_TH}>{title}</th>
+            <th scope="col" className={ADMIN_TH_NUM}>Charges</th>
+            <th scope="col" className={ADMIN_TH_NUM}>Credits</th>
+            <th scope="col" className={ADMIN_TH_NUM}>Cost (USD)</th>
+            <th scope="col" className={ADMIN_TH_NUM}>of which corrections</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-800">
+        <tbody className={ADMIN_TBODY}>
           {lines.map((line) => (
             <tr key={`${line.unresolved}|${line.key}`}>
-              <td className={`${TD} font-mono ${line.unresolved ? 'text-amber-300' : ''}`}>
+              <td className={`${ADMIN_TD} font-mono ${line.unresolved ? 'text-amber-300' : ''}`}>
                 {breakdownKey(line)}
                 {line.failedCharges > 0 && (
                   <span className="ml-2 text-[11px] text-slate-400">({line.failedCharges} failed)</span>
                 )}
               </td>
-              <td className={TD_NUM}>{formatCount(line.charges)}</td>
-              <td className={TD_NUM}>{formatCredits(line.credits)}</td>
-              <td className={TD_NUM}>{formatUsd(line.costUsd)}</td>
-              <td className={TD_NUM}>
+              <td className={ADMIN_TD_NUM}>{formatCount(line.charges)}</td>
+              <td className={ADMIN_TD_NUM}>{formatCredits(line.credits)}</td>
+              <td className={ADMIN_TD_NUM}>{formatUsd(line.costUsd)}</td>
+              <td className={ADMIN_TD_NUM}>
                 {line.corrections > 0
                   ? `${formatCredits(line.correctionCredits)} (${line.corrections})`
                   : '—'}
@@ -245,6 +265,14 @@ export function BreakdownsSection({ report }: { report: CostReportPayload }) {
 
 // ============ 3. Fallback-priced charges ============
 
+/** The hover text of the short group id: the full group id, then the action id when there is one. */
+function fallbackIdTitle(groupId: string | null, actionId: string | null): string | undefined {
+  const parts = [groupId ? `Group ${groupId}` : null, actionId ? `Action ${actionId}` : null].filter(
+    (part): part is string => part !== null
+  );
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
 export function FallbackSection({ report }: { report: CostReportPayload }) {
   const { fallback } = report;
   return (
@@ -259,37 +287,41 @@ export function FallbackSection({ report }: { report: CostReportPayload }) {
           </p>
           <p className="text-xs text-slate-400">{FALLBACK_NOTE}</p>
           {fallback.items.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="border-b border-slate-700">
-                  <tr>
-                    <th className={TH}>When (UTC)</th>
-                    <th className={TH}>Business</th>
-                    <th className={TH}>Action type</th>
-                    <th className={TH_NUM}>Credits</th>
-                    <th className={TH_NUM}>Cost (USD)</th>
-                    <th className={TH}>Group id</th>
-                    <th className={TH}>Reconciled</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {fallback.items.map((item) => (
-                    <tr key={item.actionId ?? `${item.accountId}|${item.createdAt}`} data-testid="fallback-row">
-                      <td className={`${TD} font-mono`}>{item.createdAt.slice(0, 16).replace('T', ' ')}</td>
-                      <td className={TD} title={item.accountId}>
-                        {accountLabel(item.companyName, item.accountId)}
-                      </td>
-                      <td className={`${TD} font-mono`}>{item.actionType ?? '—'}</td>
-                      <td className={TD_NUM}>{formatCredits(item.credits)}</td>
-                      <td className={TD_NUM}>{formatUsd(item.costUsd)}</td>
-                      <td className={`${TD} font-mono text-xs`} title={item.actionId ?? undefined}>
-                        {item.groupId ?? '—'}
-                      </td>
-                      <td className={TD}>{item.reconciled ? 'yes' : 'no'}</td>
+            <div>
+              <div className={ADMIN_TABLE_WRAP}>
+                <table className={ADMIN_TABLE} aria-label="Fallback-priced charges">
+                  <thead className={ADMIN_THEAD}>
+                    <tr>
+                      <th scope="col" className={ADMIN_TH}>When (UTC)</th>
+                      <th scope="col" className={ADMIN_TH}>Business</th>
+                      <th scope="col" className={ADMIN_TH}>Action type</th>
+                      <th scope="col" className={ADMIN_TH_NUM}>Credits</th>
+                      <th scope="col" className={ADMIN_TH_NUM}>Cost (USD)</th>
+                      <th scope="col" className={ADMIN_TH}>Group id</th>
+                      <th scope="col" className={ADMIN_TH}>Reconciled</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className={ADMIN_TBODY}>
+                    {fallback.items.map((item) => (
+                      <tr key={item.actionId ?? `${item.accountId}|${item.createdAt}`} data-testid="fallback-row">
+                        {/* Through Date, never sliced as text (F-74): an offset instant shows its UTC time. */}
+                        <td className={`${ADMIN_TD} whitespace-nowrap tabular-nums`}>{formatUtc(item.createdAt)}</td>
+                        <td className={ADMIN_TD} title={item.accountId}>
+                          {accountLabel(item.companyName, item.accountId)}
+                        </td>
+                        <td className={`${ADMIN_TD} font-mono`}>{item.actionType ?? '—'}</td>
+                        <td className={ADMIN_TD_NUM}>{formatCredits(item.credits)}</td>
+                        <td className={ADMIN_TD_NUM}>{formatUsd(item.costUsd)}</td>
+                        {/* §5.7 Ids: the short id shown, the full group id and the action id on hover. */}
+                        <td className={ADMIN_TD} title={fallbackIdTitle(item.groupId, item.actionId)} data-testid="fallback-group-id">
+                          <span className={ADMIN_TD_ID}>{formatShortId(item.groupId)}</span>
+                        </td>
+                        <td className={ADMIN_TD}>{item.reconciled ? 'yes' : 'no'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               {fallback.count > fallback.items.length && (
                 <p className="mt-2 text-xs text-slate-400">
                   Showing the newest {fallback.items.length} of {fallback.count}.
@@ -314,40 +346,40 @@ export function SpreadSection({ report }: { report: CostReportPayload }) {
         <>
           <p className="text-xs text-slate-400">{SPREAD_NOTE(report.limits.fewExamplesBelow)}</p>
           {report.spreads.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="border-b border-slate-700">
+            <div className={ADMIN_TABLE_WRAP}>
+              <table className={ADMIN_TABLE} aria-label="Spread per action type">
+                <thead className={ADMIN_THEAD}>
                   <tr>
-                    <th className={TH}>Action type</th>
-                    <th className={TH}>Area</th>
-                    <th className={TH_NUM}>Succeeded</th>
-                    <th className={TH_NUM}>Failed</th>
-                    <th className={TH_NUM}>Cost p50</th>
-                    <th className={TH_NUM}>Cost p90</th>
-                    <th className={TH_NUM}>Credits p50</th>
-                    <th className={TH_NUM}>Credits p90</th>
-                    <th className={TH} />
+                    <th scope="col" className={ADMIN_TH}>Action type</th>
+                    <th scope="col" className={ADMIN_TH}>Area</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>Succeeded</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>Failed</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>Cost p50</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>Cost p90</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>Credits p50</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>Credits p90</th>
+                    <th scope="col" className={ADMIN_TH} />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800">
+                <tbody className={ADMIN_TBODY}>
                   {report.spreads.map((s) => (
                     <tr key={`${s.service}|${s.actionType}`} data-testid="spread-row">
-                      <td className={`${TD} font-mono`}>
+                      <td className={`${ADMIN_TD} font-mono`}>
                         {s.actionType ?? '—'}
-                        <span className="ml-1 text-[11px] text-slate-500">{s.service}</span>
+                        <span className="ml-1 text-[11px] text-slate-400">{s.service}</span>
                       </td>
-                      <td className={TD}>{s.area ?? NOT_DECLARED_LABEL}</td>
-                      <td className={TD_NUM}>{formatCount(s.examples)}</td>
-                      <td className={TD_NUM}>{formatCount(s.failed)}</td>
-                      <td className={TD_NUM}>{formatUsd(s.costUsd.p50)}</td>
-                      <td className={TD_NUM}>{formatUsd(s.costUsd.p90)}</td>
-                      <td className={TD_NUM}>{formatCredits(s.credits.p50)}</td>
-                      <td className={TD_NUM}>{formatCredits(s.credits.p90)}</td>
-                      <td className={TD}>
+                      <td className={ADMIN_TD}>{s.area ?? NOT_DECLARED_LABEL}</td>
+                      <td className={ADMIN_TD_NUM}>{formatCount(s.examples)}</td>
+                      <td className={ADMIN_TD_NUM}>{formatCount(s.failed)}</td>
+                      <td className={ADMIN_TD_NUM}>{formatUsd(s.costUsd.p50)}</td>
+                      <td className={ADMIN_TD_NUM}>{formatUsd(s.costUsd.p90)}</td>
+                      <td className={ADMIN_TD_NUM}>{formatCredits(s.credits.p50)}</td>
+                      <td className={ADMIN_TD_NUM}>{formatCredits(s.credits.p90)}</td>
+                      <td className={ADMIN_TD}>
                         {s.fewExamples && (
-                          <Chip tone="warn" testId="spread-few-examples">
+                          <StatusChip tone="warn" testId="spread-few-examples">
                             few examples
-                          </Chip>
+                          </StatusChip>
                         )}
                         {s.fallbackExcluded > 0 && (
                           <span className="ml-2 text-[11px] text-slate-400">

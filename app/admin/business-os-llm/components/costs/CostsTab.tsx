@@ -4,68 +4,87 @@
  * The Costs & credits tab of the Business OS AI admin page (credit deduction
  * slice 4a, workplan §4.6): the operator cost report.
  *
- * Read-only: one `GET` to `/api/admin/business-os/credits/report`, and the
- * leak check panel's own `GET` (slice 4b), run only when its button is pressed. No `@/lib/` import (the page's source guard): the payload types are
- * re-declared in `../../costTypes.ts`.
- *
- * The account filter is a choice from the accounts the report itself returned
- * (SA S-5: no business-name search). The list is kept from the last
- * all-accounts read, so narrowing to one account does not empty the picker.
+ * Read-only: one `GET` to `/api/admin/business-os/credits/report`, the shared
+ * business picker's own `GET`, and the leak check panel's own `GET` (slice 4b),
+ * run only when its button is pressed. No `@/lib/` import (the page's source
+ * guard): the payload types are re-declared in `../../costTypes.ts`.
  *
  * Only the NEWEST request may set the screen (SA CR-N2): each read takes a
  * sequence number and aborts the one before it, so a slow earlier response can
  * never overwrite a later window. A failed read clears the report instead of
  * leaving the previous window's figures under the error, where they would read
  * as current.
+ *
+ * Admin Layout Standard L-9a: every filter is in the URL through the shared
+ * `useAdminFilters` (spec in `../../costsFilters.ts`), parsed before the first
+ * read, so an inbound link reads its own view once. The route's query is
+ * resolved ONCE per filter change (memoised on the identity-stable `filters`),
+ * so Refresh and "Try again" re-send the same dates even across midnight. The
+ * page passes `active` (F-113): while another tab is shown this tab's hook
+ * neither re-reads nor writes, so a tab switch starts no read here. The account
+ * `<select>` gave way to the shared business picker (SA-R-11), which searches
+ * every business; one with no charges in the window gets the empty state.
+ *
+ * A platform account chosen in the picker is refused by the route (409); the
+ * tab says why in its own words instead of a generic error (SA M-2, the
+ * Activity precedent L-8 Q-12). That code must be seen before any generic
+ * copy, so the read keeps its own branching on `readJsonBody` rather than
+ * `readAdminResponse`.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, AlertTriangle, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { formatInstant } from '../../format';
-import { formatCount, utcDateDaysAgo } from '../../costFormat';
+import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
+import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
+import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
+import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
+
+import { formatCount } from '../../costFormat';
 import {
   COSTS_EMPTY,
   COSTS_EMPTY_HINT,
+  COSTS_ERROR_FALLBACK,
   COSTS_INCOMPLETE,
-  COSTS_INTRO,
   COSTS_PERIOD_RULE,
+  COSTS_PLATFORM_ACCOUNT,
+  COSTS_WHAT,
   INCOMPLETE_REASON_TEXT,
   NAMES_FAILED,
   SECTION_FAILED,
   UNREADABLE_AMOUNTS,
 } from '../../costCopy';
+import { COSTS_FILTER_SPEC, costsRouteSearch } from '../../costsFilters';
 import type { CostReportPayload } from '../../costTypes';
+import { CostsFilterBar } from './CostsFilterBar';
+import { CostsKpis } from './CostsKpis';
 import { BreakdownsSection, FallbackSection, PeriodsSection, SpreadSection } from './CostsSections';
 import { LeakCheckPanel } from './LeakCheckPanel';
 
 const REPORT_URL = '/api/admin/business-os/credits/report';
-const PRESETS = [7, 30, 90] as const;
-type Preset = (typeof PRESETS)[number] | 'custom';
 
-interface Query {
-  from: string;
-  to: string;
-  accountId: string;
+interface CostsError {
+  kind: 'platform_account' | 'other';
+  message: string;
 }
 
-function presetQuery(days: number, accountId: string): Query {
-  return { from: utcDateDaysAgo(days - 1), to: utcDateDaysAgo(0), accountId };
-}
+export function CostsTab({ active = true }: { active?: boolean } = {}) {
+  const { filters, setFilters, clear, isDefault } = useAdminFilters(COSTS_FILTER_SPEC, { active });
+  /**
+   * The route's query, resolved once per filter change. An object, not the
+   * string, so the read effect is keyed on the filters' identity: a change of
+   * filters reads, and nothing else does.
+   */
+  const request = useMemo(() => ({ search: costsRouteSearch(filters, new Date()) }), [filters]);
 
-export function CostsTab() {
-  const [preset, setPreset] = useState<Preset>(30);
-  const [query, setQuery] = useState<Query>(() => presetQuery(30, ''));
-  const [customFrom, setCustomFrom] = useState(query.from);
-  const [customTo, setCustomTo] = useState(query.to);
   const [payload, setPayload] = useState<CostReportPayload | null>(null);
-  const [accounts, setAccounts] = useState<CostReportPayload['accounts']>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<CostsError | null>(null);
+  /** The business last picked, with the name the picker showed (not in the URL). */
+  const [picked, setPicked] = useState<{ accountId: string; name: string | null } | null>(null);
   const sequence = useRef(0);
   const inFlight = useRef<AbortController | null>(null);
 
-  const load = useCallback(async (q: Query) => {
+  const load = useCallback(async (search: string) => {
     const mine = ++sequence.current;
     inFlight.current?.abort();
     const controller = new AbortController();
@@ -75,31 +94,40 @@ export function CostsTab() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ from: q.from, to: q.to });
-      if (q.accountId) params.set('accountId', q.accountId);
-      const response = await fetch(`${REPORT_URL}?${params.toString()}`, { signal: controller.signal });
-      const body = await response.json();
-      if (!isCurrent()) return;
-      if (!response.ok || !body?.success) {
-        throw new Error(typeof body?.error === 'string' ? body.error : 'Could not read the cost report');
+      let response: Response;
+      try {
+        response = await fetch(`${REPORT_URL}?${search}`, { signal: controller.signal });
+      } catch {
+        // A superseded (or aborted) request says nothing about the screen. A
+        // network failure says the shared words, never the browser's (§5.10).
+        if (!isCurrent()) return;
+        setPayload(null);
+        setError({ kind: 'other', message: ADMIN_NETWORK_ERROR });
+        return;
       }
-      const data = body.data as CostReportPayload;
-      setPayload(data);
-      // Keep the picker's list from an all-accounts read only.
-      if (!q.accountId) setAccounts(data.accounts);
-    } catch (err) {
-      // A superseded (or aborted) request says nothing about the screen.
+      // A non-JSON body (a proxy's HTML error page) reads as null, so the tab
+      // shows its own words, never a parser message. A JSON error body still
+      // gives the route's reason (400, 409). Newest wins before any setState (SA S-7).
+      const body = await readJsonBody(response);
       if (!isCurrent()) return;
-      setPayload(null);
-      setError(err instanceof Error ? err.message : 'Could not read the cost report');
+      if (!response.ok || body === null || body.success !== true) {
+        setPayload(null);
+        setError(
+          body?.error === 'platform_account'
+            ? { kind: 'platform_account', message: COSTS_PLATFORM_ACCOUNT }
+            : { kind: 'other', message: typeof body?.error === 'string' ? body.error : COSTS_ERROR_FALLBACK }
+        );
+        return;
+      }
+      setPayload(body.data as CostReportPayload);
     } finally {
       if (isCurrent()) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load(query);
-  }, [load, query]);
+    void load(request.search);
+  }, [load, request]);
 
   // Unmounting abandons the last read; nothing may set state afterwards.
   useEffect(
@@ -110,177 +138,111 @@ export function CostsTab() {
     []
   );
 
-  const choosePreset = (days: (typeof PRESETS)[number]) => {
-    setPreset(days);
-    setQuery((q) => presetQuery(days, q.accountId));
-  };
-
-  const applyCustom = () => {
-    setPreset('custom');
-    setQuery((q) => ({ from: customFrom, to: customTo, accountId: q.accountId }));
-  };
+  const reread = useCallback(() => void load(request.search), [load, request]);
 
   const report = payload;
   const isEmpty = report !== null && report.sections.totals === 'ok' && report.periods.length === 0;
-  const chosenAccountLabel = accounts.find((a) => a.accountId === query.accountId)?.companyName ?? null;
+  const sectionsShown = report !== null && report.sections.totals !== 'failed' && !isEmpty;
+
+  // The chip's name: the picked name, else the report's own name for that
+  // account, else none (the short id; RC-6, no lookup).
+  const businessName = !filters.account
+    ? null
+    : picked && picked.accountId === filters.account && picked.name
+      ? picked.name
+      : report?.accounts.find((account) => account.accountId === filters.account)?.companyName ?? null;
 
   return (
     <div className="space-y-4" data-testid="costs-tab">
-      <p className="max-w-3xl text-sm text-slate-400">{COSTS_INTRO}</p>
+      <CostsKpis report={report} firstLoad={loading && !report && !error} sectionsShown={sectionsShown} />
 
-      <div className="flex flex-wrap items-end gap-3" data-testid="costs-controls">
-        <div className="flex rounded-lg border border-slate-700 p-0.5" role="group" aria-label="Window">
-          {PRESETS.map((days) => (
-            <button
-              key={days}
-              type="button"
-              onClick={() => choosePreset(days)}
-              aria-pressed={preset === days}
-              className={`rounded-md px-3 py-1 text-xs ${
-                preset === days ? 'bg-purple-500/20 text-purple-200' : 'text-slate-300 hover:bg-slate-800'
-              }`}
-            >
-              Last {days} days
-            </button>
+      <CostsFilterBar
+        filters={filters}
+        setFilters={setFilters}
+        onClear={clear}
+        canClear={!isDefault}
+        businessName={businessName}
+        onPickBusiness={(accountId, name) => {
+          setPicked({ accountId, name });
+          setFilters({ account: accountId });
+        }}
+        busy={loading}
+        readAt={report?.generatedAt ?? null}
+        onRefresh={reread}
+      />
+
+      {/* Always mounted, so a re-read marks the content busy instead of replacing it. */}
+      <div data-testid="costs-content" aria-busy={loading} className="space-y-4">
+        {error &&
+          (error.kind === 'platform_account' ? (
+            <AdminNotice testId="costs-platform-account">{error.message}</AdminNotice>
+          ) : (
+            <AdminError testId="costs-error" message={error.message} onRetry={reread} />
           ))}
-        </div>
 
-        <label className="flex flex-col text-[11px] text-slate-400">
-          From (UTC)
-          <input
-            type="date"
-            value={customFrom}
-            onChange={(e) => setCustomFrom(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
-          />
-        </label>
-        <label className="flex flex-col text-[11px] text-slate-400">
-          To (UTC)
-          <input
-            type="date"
-            value={customTo}
-            onChange={(e) => setCustomTo(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
-          />
-        </label>
-        <button
-          type="button"
-          onClick={applyCustom}
-          className="rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:bg-slate-800"
-        >
-          Apply dates
-        </button>
+        {loading && !report && !error && (
+          <div data-testid="costs-loading">
+            <AdminLoading what={COSTS_WHAT} />
+          </div>
+        )}
 
-        <label className="flex flex-col text-[11px] text-slate-400">
-          Account
-          <select
-            value={query.accountId}
-            onChange={(e) => setQuery((q) => ({ ...q, accountId: e.target.value }))}
-            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
-            data-testid="costs-account-filter"
-          >
-            <option value="">All accounts</option>
-            {accounts.map((a) => (
-              <option key={a.accountId} value={a.accountId}>
-                {a.companyName ?? a.accountId}
-              </option>
-            ))}
-          </select>
-        </label>
+        {report && (
+          <div className="space-y-4">
+            <p className="text-xs text-slate-400" data-testid="costs-window">
+              {report.window.from} to {report.window.to} (UTC)
+              {report.rowsRead !== null && <> &middot; {formatCount(report.rowsRead)} ledger rows read</>}
+              {' · '}
+              {COSTS_PERIOD_RULE(report.periodLookbackDays)}
+            </p>
 
-        <div className="ml-auto flex items-center gap-3">
-          {report && formatInstant(report.generatedAt) && (
-            <span className="text-xs text-slate-500">read at {formatInstant(report.generatedAt)}</span>
-          )}
-          <button
-            type="button"
-            onClick={() => void load(query)}
-            disabled={loading}
-            title="Re-read the cost report"
-            aria-label="Re-read the cost report"
-            className="rounded-lg border border-slate-700 p-2 transition-colors hover:bg-slate-800 disabled:opacity-40"
-          >
-            <RefreshCw className={`h-4 w-4 text-slate-400 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div
-          data-testid="costs-error"
-          className="flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200"
-        >
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {loading && !report && (
-        <div data-testid="costs-loading" className="flex items-center gap-3 py-12 text-slate-300">
-          <RefreshCw className="h-6 w-6 animate-spin text-purple-500" aria-hidden="true" />
-          Reading the cost report&hellip;
-        </div>
-      )}
-
-      {report && (
-        <div className="space-y-4">
-          <p className="text-xs text-slate-500" data-testid="costs-window">
-            {report.window.from} to {report.window.to} (UTC)
-            {report.rowsRead !== null && <> &middot; {formatCount(report.rowsRead)} ledger rows read</>}
-            {' · '}
-            {COSTS_PERIOD_RULE(report.periodLookbackDays)}
-          </p>
-
-          {report.incomplete && (
-            <div
-              data-testid="costs-incomplete"
-              className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200"
-            >
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>
+            {/* L-9b (E-9): the shared notice; same words and reasons, its amber. */}
+            {report.incomplete && (
+              <AdminNotice testId="costs-incomplete">
                 {COSTS_INCOMPLETE}{' '}
                 <span className="text-amber-300/80">
                   ({report.incompleteReasons.map((r) => INCOMPLETE_REASON_TEXT[r] ?? r).join(', ')})
                 </span>
-              </span>
-            </div>
-          )}
+              </AdminNotice>
+            )}
 
-          {report.unreadableAmounts > 0 && (
-            <p data-testid="costs-unreadable" className="text-xs text-amber-300">
-              {UNREADABLE_AMOUNTS(report.unreadableAmounts)}
-            </p>
-          )}
+            {/* L-10 task 9 (F-120, SA L-10 Q-7): each partial fact is its own
+                shared notice, same words and test ids, after the incomplete one.
+                Separate boxes, not one merged notice: each says a different
+                thing is missing (§5.10 Partial), and no copy changes. */}
+            {report.unreadableAmounts > 0 && (
+              <AdminNotice testId="costs-unreadable">{UNREADABLE_AMOUNTS(report.unreadableAmounts)}</AdminNotice>
+            )}
 
-          {report.sections.names === 'failed' && (
-            <p data-testid="costs-names-failed" className="text-xs text-amber-300">
-              {NAMES_FAILED}
-            </p>
-          )}
+            {report.sections.names === 'failed' && (
+              <AdminNotice testId="costs-names-failed">{NAMES_FAILED}</AdminNotice>
+            )}
 
-          {report.sections.totals === 'failed' ? (
-            <p data-testid="costs-totals-failed" className="text-sm text-red-300">
-              {SECTION_FAILED}
-            </p>
-          ) : isEmpty ? (
-            <div data-testid="costs-empty" className="rounded-xl border border-slate-700 bg-slate-800/40 p-8 text-center">
-              <p className="text-sm font-medium text-slate-200">{COSTS_EMPTY}</p>
-              <p className="mt-1 text-xs text-slate-400">{COSTS_EMPTY_HINT}</p>
-            </div>
-          ) : (
-            <>
-              <PeriodsSection report={report} />
-              <BreakdownsSection report={report} />
-              <FallbackSection report={report} />
-              <SpreadSection report={report} />
-            </>
-          )}
-        </div>
-      )}
+            {report.sections.totals === 'failed' ? (
+              <p data-testid="costs-totals-failed" className="text-sm text-red-300">
+                {SECTION_FAILED}
+              </p>
+            ) : isEmpty ? (
+              <AdminEmpty
+                message={COSTS_EMPTY}
+                hint={COSTS_EMPTY_HINT}
+                testId="costs-empty"
+                onClear={isDefault ? undefined : clear}
+              />
+            ) : (
+              <>
+                <PeriodsSection report={report} />
+                <BreakdownsSection report={report} />
+                <FallbackSection report={report} />
+                <SpreadSection report={report} />
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Slice 4b: the on-demand leak check. Its own window (at most 7 days) and
-          button; it follows the account chosen above. */}
-      <LeakCheckPanel accountId={query.accountId} accountLabel={chosenAccountLabel} />
+          button; it follows the business chosen above. */}
+      <LeakCheckPanel accountId={filters.account} accountLabel={businessName} />
     </div>
   );
 }

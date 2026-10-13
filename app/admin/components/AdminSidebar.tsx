@@ -28,7 +28,8 @@ import {
   HeartPulse,
   Archive,
   Clock,
-  MailPlus
+  MailPlus,
+  Wallet
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -90,6 +91,13 @@ const navigationSections: NavSection[] = [
         // Slice 4: the landing answers "is anything wrong?" in red / amber /
         // grey tiles. The description must never claim that all is well.
         description: 'Is anything wrong? Business OS'
+      },
+      {
+        // Finance & business health slice 1a: read-only, directly after Health.
+        name: 'Finance',
+        href: '/admin/finance',
+        icon: Wallet,
+        description: 'Revenue, AI cost and credits, Business OS'
       },
       {
         name: 'AI cost & usage',

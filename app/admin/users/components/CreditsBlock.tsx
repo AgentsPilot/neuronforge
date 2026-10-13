@@ -24,7 +24,7 @@
  * here, while the figures are read again.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Coins } from 'lucide-react';
 
 import {
@@ -144,6 +144,11 @@ function UsageSection({ usage }: { usage: CreditUsageBlockView }) {
   );
 }
 
+/** A lot this block offers Take back for (the admin's own account aside). Shared with the top-ups block (boost 6b, SA C-5). */
+function isTakeBackable(lot: CreditLotView): boolean {
+  return lot.counted && !lot.expired && lot.remaining > 0;
+}
+
 function LotRow({
   lot,
   canChange,
@@ -153,7 +158,7 @@ function LotRow({
   canChange: boolean;
   onTakeBack: (lot: CreditLotView) => void;
 }) {
-  const takeBackable = canChange && lot.counted && !lot.expired && lot.remaining > 0;
+  const takeBackable = canChange && isTakeBackable(lot);
   return (
     <li data-testid="credits-lot" className="rounded border border-slate-700/60 bg-slate-900/40 p-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-300">
@@ -219,9 +224,20 @@ interface Props {
   accountId: string;
   /** The business name when the summary named one, otherwise the account id. */
   businessLabel: string;
+  /**
+   * Credits boost slice 6b (SA C-5): Take back asked for from the top-ups block,
+   * by lot id. A new `seq` opens this block's Take back dialog on that lot, only
+   * when the lot is loaded here and can be taken back; otherwise nothing opens.
+   */
+  takeBackRequest?: { lotId: string; seq: number } | null;
+  /**
+   * Reports, after every read, the lots this block offers Take back for (none on
+   * the admin's own account) and every lot it has loaded (QA6b-L2).
+   */
+  onTakeBackableLots?: (lotIds: string[], loadedLotIds: string[]) => void;
 }
 
-export function CreditsBlock({ accountId, businessLabel }: Props) {
+export function CreditsBlock({ accountId, businessLabel, takeBackRequest = null, onTakeBackableLots }: Props) {
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [reloadToken, setReloadToken] = useState(0);
   const [dialog, setDialog] = useState<CreditFormMode | null>(null);
@@ -245,6 +261,35 @@ export function CreditsBlock({ accountId, businessLabel }: Props) {
   }, [accountId, reloadToken]);
 
   const reload = useCallback(() => setReloadToken((n) => n + 1), []);
+
+  // Boost 6b (SA C-5): tell the panel which lots can be taken back right now.
+  const loadedData = load.state === 'ok' ? load.data : null;
+  useEffect(() => {
+    if (!onTakeBackableLots) return;
+    if (!loadedData || loadedData.extra.status !== 'ok') {
+      onTakeBackableLots([], []);
+      return;
+    }
+    const loaded = loadedData.extra.lots.map((lot) => lot.id);
+    if (loadedData.isOwnAccount) {
+      onTakeBackableLots([], loaded);
+      return;
+    }
+    onTakeBackableLots(loadedData.extra.lots.filter(isTakeBackable).map((lot) => lot.id), loaded);
+  }, [loadedData, onTakeBackableLots]);
+
+  // Boost 6b (SA C-5): open Take back on the lot the top-ups block asked for.
+  const handledSeq = useRef<number | null>(null);
+  useEffect(() => {
+    if (!takeBackRequest || handledSeq.current === takeBackRequest.seq) return;
+    handledSeq.current = takeBackRequest.seq;
+    if (!loadedData || loadedData.isOwnAccount || loadedData.extra.status !== 'ok') return;
+    const lot = loadedData.extra.lots.find((candidate) => candidate.id === takeBackRequest.lotId);
+    if (lot && isTakeBackable(lot)) {
+      setNotice(null);
+      setDialog({ kind: 'take_back', lot });
+    }
+  }, [takeBackRequest, loadedData]);
 
   function openDialog(mode: CreditFormMode) {
     setNotice(null);

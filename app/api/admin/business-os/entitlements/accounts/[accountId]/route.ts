@@ -41,6 +41,7 @@ import { onboardingConversationRepository } from '@/lib/repositories/OnboardingC
 // Slice 11b: the credit ops' dependencies. Service role by design (the lot
 // repository's header explains why); the account id they receive is the path
 // id, after the gate, Zod and the tenant check, never a body value.
+import { businessOsBoostPurchaseRepository } from '@/lib/repositories/BusinessOsBoostPurchaseRepository';
 import { businessOsCreditLotRepository } from '@/lib/repositories/BusinessOsCreditLotRepository';
 import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
@@ -237,6 +238,8 @@ export async function POST(request: NextRequest, context: { params: { accountId:
       // PF-13: assign_tier and set_cohort keep the credit-period anchor of a
       // subscribed account; a failed read is 500 billing_read_failed (SA Q-6).
       billing: { hasLivePlanSubscription },
+      // Credits boost slice 6b: set_boost_cap / end_boost_cap through 2a's functions.
+      boostCap: { repository: businessOsBoostPurchaseRepository },
     });
 
     if (!outcome.ok) {
@@ -245,6 +248,13 @@ export async function POST(request: NextRequest, context: { params: { accountId:
         { success: false, error: outcome.error, details: outcome.details },
         { status: outcome.status }
       );
+    }
+
+    if (outcome.unchanged) {
+      // Credits boost slice 6b (SA C-2): the same limit was already set, so
+      // nothing was written and there is no audit entry. Ids only in the log.
+      requestLogger.info({ accountId, op: parsed.data.op, action: outcome.action }, 'Admin op unchanged; nothing written, no audit entry');
+      return NextResponse.json({ success: true, data: { accountId, op: parsed.data.op, ...outcome.data } });
     }
 
     if (outcome.replayed) {

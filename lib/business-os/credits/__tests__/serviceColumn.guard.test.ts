@@ -79,6 +79,15 @@ const ACTIVITY_SCREEN_MODULES = [
   'app/admin/business-os-llm/activityDrillDownTypes.ts',
 ];
 
+/**
+ * Finance & business health slice 1a: the finance builder, its route and its
+ * page live outside the credits module and sum the ledger, so they are walked
+ * here too. Grouping goes through `resolveEffectiveFields` only.
+ */
+const FINANCE_DIR = 'lib/business-os/finance';
+const FINANCE_ROUTE = 'app/api/admin/business-os/finance/route.ts';
+const FINANCE_PAGE_DIR = 'app/admin/finance';
+
 const files = [
   ...sourceFiles(CREDITS_DIR),
   READ_REPOSITORY,
@@ -87,10 +96,13 @@ const files = [
   ACTIVITY_DRILL_DOWN_ROUTE,
   ...sourceFiles(ACTIVITY_SCREEN_DIR),
   ...ACTIVITY_SCREEN_MODULES,
+  ...sourceFiles(FINANCE_DIR),
+  FINANCE_ROUTE,
+  ...sourceFiles(FINANCE_PAGE_DIR),
 ];
 
 describe('N-10: no grouping or filtering on the raw service column', () => {
-  it('scans the credits module, both read repositories and the AI Activity view', () => {
+  it('scans the credits module, both read repositories, the AI Activity view and the finance page', () => {
     expect(files).toEqual(
       expect.arrayContaining([
         RESOLVER,
@@ -115,6 +127,12 @@ describe('N-10: no grouping or filtering on the raw service column', () => {
         `${ACTIVITY_SCREEN_DIR}/ActivityDrillDown.tsx`,
         `${ACTIVITY_SCREEN_DIR}/DrillDownCharges.tsx`,
         ...ACTIVITY_SCREEN_MODULES,
+        // Finance 1a, named so moving a file turns this red.
+        `${FINANCE_DIR}/aiCost.ts`,
+        `${FINANCE_DIR}/financeHealth.ts`,
+        `${FINANCE_DIR}/financeHealthDeps.ts`,
+        FINANCE_ROUTE,
+        `${FINANCE_PAGE_DIR}/components/AiCostSection.tsx`,
       ])
     );
   });

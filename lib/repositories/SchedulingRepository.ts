@@ -5,7 +5,7 @@
  * Following the repository pattern defined in REPOSITORY_STRATEGY.md
  */
 
-import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
 import type { CancelledBy } from '@/lib/business-os/cancellationReasons';
 import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
@@ -276,6 +276,17 @@ export interface SchedulingBookingUpdate {
 export interface SchedulingRepositoryResult<T> {
   data: T | null;
   error: Error | null;
+}
+
+/**
+ * supabase-js's result, passed through unchanged (the same error object), for
+ * the Stripe webhook and plan-binding booking methods (CF-5 PR 4), which
+ * neither catch nor log. `count` only where the write asked for one.
+ */
+export interface WebhookBookingResult<T> {
+  data: T | null;
+  error: PostgrestError | null;
+  count?: number | null;
 }
 
 // ==================== SCHEDULING SERVICE REPOSITORY ====================
@@ -1827,6 +1838,139 @@ export class SchedulingBookingRepository {
       logger.error({ err: error, userId }, 'Failed to get sync stats');
       return { data: null, error: error as Error };
     }
+  }
+
+  // Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)
+  //
+  // Moved out of `app/api/stripe/webhook/route.ts` with no behaviour change
+  // (CF-5 PR 4, CLAUDE.md rule 1). Each method issues exactly the query the
+  // route issued inline: same table, operation, payload and its key order,
+  // filters in order, awaited with nothing read back. The webhook's
+  // characterisation harness records the full chain.
+  //
+  // No `user_id` filter, as an exception to rule 4, bounded per
+  // docs/REPOSITORY_STRATEGY.md ("unscoped by design"): each doc names the owner
+  // check it relies on instead. A unit test asserts neither adds one. These set
+  // `payment_status`; none filters on it (bookingPaymentStatusReaders.guard).
+  //
+  // Errors: supabase-js's own `{ data, error }`, with no try/catch and no
+  // logging, unlike the methods above. The route logs every error it acts on; a
+  // catch here would turn a thrown query into a quiet miss where the webhook
+  // used to fail with 500 and let Stripe retry. Deliberately not `update()`:
+  // that is user-scoped, pre-reads the status and returns a joined row.
+
+  /**
+   * ⟨unscoped-by-design⟩ Connect `invoice.paid`: the booking an invoice was
+   * raised for is now paid.
+   *
+   * Owner check relied on: the id is the `booking_id` of an invoice the route
+   * proved owned (`accountOwns`) before this write. The booking's own owner is
+   * not re-checked, and there is no `user_id` filter (FU-4, pre-existing).
+   */
+  async markPaidUnscoped(id: string): Promise<WebhookBookingResult<null>> {
+    const { error } = await this.supabase
+      .from('scheduling_bookings')
+      .update({
+        payment_status: 'paid',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    return { data: null, error };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Connect checkout for an invoice: the invoice's booking
+   * is now paid, and confirmed if it was only pending because money was owed.
+   * The `status = 'pending'` filter keeps a cancelled or completed booking from
+   * being brought back by a late event.
+   *
+   * Owner check relied on: as `markPaidUnscoped`, the `booking_id` of an invoice
+   * proved owned (`accountOwns`); no `user_id` filter (FU-4, pre-existing).
+   */
+  async markPaidAndConfirmIfPending(id: string): Promise<WebhookBookingResult<null>> {
+    const { error } = await this.supabase
+      .from('scheduling_bookings')
+      .update({
+        payment_status: 'paid',
+        status: 'confirmed',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('status', 'pending');
+    return { data: null, error };
+  }
+
+  // Stripe webhook and plan binding: owner-scoped (CF-5 PR 4)
+  //
+  // The same moves as the section above, for the queries that already carried a
+  // `user_id` filter inline (the webhook's plan period and checkout booking,
+  // `bindPlanSubscription`'s plan link and contact read). They keep it, in the
+  // same place, so a booking of another business matches no row. Same error
+  // handling: no try/catch, no logging.
+
+  /**
+   * A plan period was collected: the plan's booking is paid. Scoped to the
+   * plan's owner, which the webhook proved (`accountOwns`).
+   */
+  async markPaidForOwner(id: string, userId: string): Promise<WebhookBookingResult<null>> {
+    const { error } = await this.supabase
+      .from('scheduling_bookings')
+      .update({ payment_status: 'paid', updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('user_id', userId);
+    return { data: null, error };
+  }
+
+  /**
+   * Connect checkout for a booking (Fix-1, F-2): the booking id is metadata the
+   * connected account wrote, so the write is scoped to the business that owns
+   * the sending account. Asks for `count` (never `.select()` after an update):
+   * `0` is how the caller tells a foreign id from a booking it updated.
+   */
+  async markPaidForOwnerCounted(id: string, userId: string): Promise<WebhookBookingResult<null>> {
+    const { error, count } = await this.supabase
+      .from('scheduling_bookings')
+      .update(
+        {
+          payment_status: 'paid',
+          updated_at: new Date().toISOString(),
+        },
+        { count: 'exact' }
+      )
+      .eq('id', id)
+      .eq('user_id', userId);
+    return { data: null, error, count };
+  }
+
+  /**
+   * `bindPlanSubscription`: tells a booking which plan it is sold under, so the
+   * drawer never has to infer a plan. Scoped to the plan's owner; the booking id
+   * was vetted against that owner first (Fix-1b).
+   */
+  async linkPaymentPlan(id: string, userId: string, paymentPlanId: string): Promise<WebhookBookingResult<null>> {
+    const { error } = await this.supabase
+      .from('scheduling_bookings')
+      .update({ payment_plan_id: paymentPlanId, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('user_id', userId);
+    return { data: null, error };
+  }
+
+  /**
+   * `bindPlanSubscription`: the contact a plan's booking belongs to, or `null`.
+   * Scoped to the owner, so a booking of another business reads as absent.
+   */
+  async findContactIdForOwner(
+    id: string,
+    userId: string
+  ): Promise<WebhookBookingResult<{ contact_id: string | null }>> {
+    const { data, error } = await this.supabase
+      .from('scheduling_bookings')
+      .select('contact_id')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .maybeSingle<{ contact_id: string | null }>();
+    return { data, error };
   }
 }
 

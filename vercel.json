@@ -64,6 +64,10 @@
     {
       "path": "/api/cron/insight-measure",
       "schedule": "55 4 * * *"
+    },
+    {
+      "path": "/api/cron/bos-billing-reconcile",
+      "schedule": "41 5 * * *"
     }
   ],
   "rewrites": [

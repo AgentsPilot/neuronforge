@@ -83,6 +83,32 @@ export type {
   ChargeListOptions,
   ChargeListPage,
 } from './BusinessOsCreditLedgerReadRepository';
+// Admin finance & business health page (slice 1a): read-only, service role,
+// live-mode billing status and revenue head counts; slice 2a adds the
+// businesses' client payments and refunds (layer B). No write method.
+export {
+  BusinessOsFinanceReadRepository,
+  businessOsFinanceReadRepository,
+  FINANCE_BILLING_STATUS_COLUMNS,
+  FINANCE_CLIENT_INSTALMENT_DUE_COLUMNS,
+  FINANCE_CLIENT_INVOICE_DUE_COLUMNS,
+  FINANCE_CLIENT_PAYMENT_COLUMNS,
+  FINANCE_CLIENT_PLAN_COLUMNS,
+  FINANCE_CLIENT_REFUND_COLUMNS,
+  FINANCE_READ_LIMITS,
+  FinanceReadCeilingError,
+} from './BusinessOsFinanceReadRepository';
+export type {
+  FinanceBillingStatusRow,
+  FinanceClientDueRow,
+  FinanceClientPaymentRow,
+  FinanceClientPlanRow,
+  FinanceClientRange,
+  FinanceClientReadOptions,
+  FinanceClientReadResult,
+  FinanceClientRefundRow,
+  FinanceRevenueCounts,
+} from './BusinessOsFinanceReadRepository';
 // Business OS credit ledger, the OWNER'S OWN read (credit deduction slice 6a):
 // the dashboard card. Takes the caller's RLS client (required, so no singleton);
 // owner-granted columns only; no write method.
@@ -235,6 +261,39 @@ export type {
   WebhookClaimResult,
   WebhookClaimStatus,
 } from './ProcessedWebhookEventRepository';
+// CF-5 PR 3: the refund ledger's Stripe webhook write (payment_refunds).
+export { PaymentRefundRepository, paymentRefundRepository } from './PaymentRefundRepository';
+export type { NewStripeRefundRow, PaymentRefundResult } from './PaymentRefundRepository';
+// CF-5 PR 5: the Stripe webhook's agent-platform legacy writes (billing_events,
+// boost_pack_purchases) and the types of the legacy sections it added to
+// UserSubscriptionRepository and SystemConfigRepository.
+export { BillingEventRepository, billingEventRepository } from './BillingEventRepository';
+export type { BillingEventResult, NewLegacyBillingEventRow } from './BillingEventRepository';
+export {
+  LegacyBoostPackPurchaseRepository,
+  legacyBoostPackPurchaseRepository,
+} from './LegacyBoostPackPurchaseRepository';
+export type {
+  LegacyBoostPackPurchaseResult,
+  NewLegacyBoostPackPurchaseRow,
+} from './LegacyBoostPackPurchaseRepository';
+export type {
+  LegacyBalance,
+  LegacyDunningState,
+  LegacyDunningStatus,
+  LegacyWebhookResult,
+} from './UserSubscriptionRepository';
+export type { LegacyWebhookConfigKey, LegacyWebhookConfigResult } from './SystemConfigRepository';
+// CF-5 PR 3: the types of PaymentTransactionRepository's Stripe webhook section (payment_transactions).
+export type {
+  NewWebhookTransactionRow,
+  WebhookDisputeState,
+  WebhookStripeReference,
+  WebhookTransactionByIntentColumns,
+  WebhookTransactionByReferenceColumns,
+  WebhookTransactionFields,
+  WebhookTransactionResult,
+} from './PaymentRepository';
 export type {
   LedgerCallRow,
   LedgerLabelRow,

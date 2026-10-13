@@ -78,6 +78,16 @@ const BOS_CRONS: CronEntry[] = [
    * and 04:45 is the credit leak check.
    */
   { path: '/api/cron/insight-measure', schedule: '55 4 * * *' },
+  /*
+   * The 17th: the nightly billing reconcile (credits boost slice 4b.2,
+   * 2026-10-09). One cron with pluggable passes (boost today, P-8b's plan pass
+   * later) that recovers what a missed Stripe webhook left behind. 05:41 is
+   * after the settlement gap check at 05:17, so two Stripe sweeps never
+   * overlap, and on a minute divisible by neither 5 nor 15, so it shares a
+   * tick with no other job. Added to `vercel.json` last (durable-queue-drain
+   * Step 8), after migration 20261032 is applied.
+   */
+  { path: '/api/cron/bos-billing-reconcile', schedule: '41 5 * * *' },
 ];
 
 const RETIRED_AGENTSPILOT = [
@@ -89,8 +99,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 16 Business OS jobs, unchanged and in order', () => {
-    expect(crons).toHaveLength(16);
+  it('schedules exactly the 17 Business OS jobs, unchanged and in order', () => {
+    expect(crons).toHaveLength(17);
     expect(crons).toEqual(BOS_CRONS);
   });
 

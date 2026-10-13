@@ -46,7 +46,9 @@
  * `eventPatch` and `dispatch` knobs, and two named delegations on the plan
  * subscription repository mock. The 45 entries before it are byte-identical.
  * This file is not edited again during CF-5 PRs 1 to 5: they prove themselves
- * against it as it stands.
+ * against it as it stands. One exception: CF-5 PR 3 added its own `describe`
+ * (X56 to X58) for #257's attach arms, which landed after PR 0, written against
+ * the untouched route before PR 3 moved them.
  */
 
 import fs from 'fs';
@@ -759,7 +761,12 @@ describe('Stripe webhook, platform path through the Business OS router (P-1)', (
     expect(logged('bos_billing_event_denied')).toEqual([{ level: 'warn', reason: 'unknown_price', alert: undefined }]);
   });
 
-  it('P3. invoice.paid on a price the catalog knows: no handler yet, claim released, 500', async () => {
+  // Plan payments P-3b.2 (SA F-1, with the CF-5 session's written agreement):
+  // the `plan` handler is now registered, so this no longer pins "no handler
+  // yet". The fixture's ids are not Stripe-shaped, so the handler refuses to
+  // write and the claim is released. The handler's return path is covered by
+  // `planHandler.route.test.ts` (F-2).
+  it('P3. invoice.paid on a known price, ids not Stripe-shaped: the plan handler refuses to write, claim released, 500', async () => {
     const result = await run({
       fixtureDir: 'platform',
       fixture: 'invoice-paid-known-price.json',
@@ -770,7 +777,7 @@ describe('Stripe webhook, platform path through the Business OS router (P-1)', (
     expect(claimStatus(result)).toBe('failed');
     expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
     expect(logged('bos_billing_event_denied')).toEqual([]);
-    expect(logged('bos_billing_plan_unhandled')).toEqual([{ level: 'warn', reason: undefined, alert: undefined }]);
+    expect(logged('bos_billing_plan_unhandled')).toEqual([]);
   });
 
   it('P4. invoice.paid, unknown price but a Business OS marker: denied and alerted', async () => {
@@ -1841,6 +1848,57 @@ describe('Stripe webhook, CF-5 PR 0: arms the repository moves will touch', () =
   it('X47. platform customer.subscription.updated with no user_id: nothing written', async () => {
     expect(
       await run({ fixtureDir: 'platform', fixture: 'subscription-updated-legacy.json', eventPatch: NO_USER_ID })
+    ).toMatchSnapshot();
+  });
+});
+
+/*
+ * CF-5 PR 3 (workplan §7.3.4). #257 (Stripe settlement recovery) landed after
+ * PR 0 and added a lookup by payment intent and an attach to `invoice.paid`.
+ * Every recorded scenario misses that lookup, so its hit, attach, attach-error
+ * and already-attached arms were cold. These entries were written against the
+ * UNTOUCHED route, before PR 3 moved those two queries, with an anchored `-t`
+ * and no `-u`; the 100 entries above are byte-identical.
+ *
+ * The `payment_transactions:select` answers are consumed in order: first the
+ * dedupe by invoice (a miss), then the lookup by intent.
+ */
+describe('Stripe webhook, CF-5 PR 3: the #257 attach arms', () => {
+  const byIntent = (invoiceId: string | null): Record<string, Answer | Answer[]> => ({
+    'payment_invoices:select': ok(PLATFORM_INVOICE),
+    'payment_transactions:select': [ok(null), ok({ id: 'tx-by-intent', invoice_id: invoiceId })],
+  });
+
+  it('X56. invoice.paid already recorded under its intent with no invoice: attached, not inserted, invoice marked paid', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid.json',
+        owners: OWNER_A,
+        db: byIntent(null),
+        invoicePaymentIntent: 'pi_invoice_1',
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X57. invoice.paid: the attach to the existing row fails, logged, still not inserted, invoice marked paid', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid.json',
+        owners: OWNER_A,
+        db: { ...byIntent(null), 'payment_transactions:update': DB_DOWN },
+        invoicePaymentIntent: 'pi_invoice_1',
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('X58. invoice.paid already recorded under its intent and already attached: no attach, no insert, invoice marked paid', async () => {
+    expect(
+      await run({
+        fixture: 'invoice-paid.json',
+        owners: OWNER_A,
+        db: byIntent('pinv-0001'),
+        invoicePaymentIntent: 'pi_invoice_1',
+      })
     ).toMatchSnapshot();
   });
 });

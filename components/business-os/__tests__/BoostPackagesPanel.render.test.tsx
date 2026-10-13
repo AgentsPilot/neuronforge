@@ -165,8 +165,10 @@ describe('the package picker', () => {
   it('purchaseAvailable false: clicking a Buy sends nothing (5b.1: the server decides)', async () => {
     await openWith(okReply(payload()));
     for (const buy of screen.getAllByTestId('boost-package-buy')) fireEvent.click(buy);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    for (const [url] of fetchMock.mock.calls) expect(String(url)).toBe('/api/business-os/credits/boost/packages');
+    // 5b.2: the Purchases list also reads its own route; the checkout is never called.
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls.filter((url) => url === '/api/business-os/credits/boost/packages')).toHaveLength(1);
+    expect(urls.some((url) => url.includes('/boost/checkout'))).toBe(false);
   });
 
   it('5b.1: purchaseAvailable true → every Buy is enabled and reads "Buy" (the flow is tested in BoostPackagesPanel.buy.render.test.tsx)', async () => {
@@ -234,7 +236,8 @@ describe('the package picker', () => {
     await waitFor(() => expect(screen.getByTestId('boost-packages-error')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('boost-packages-retry'));
     await waitFor(() => expect(screen.getAllByTestId('boost-package')).toHaveLength(3));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // 5b.2: count the packages reads only (the Purchases list reads its own route once the list shows).
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === '/api/business-os/credits/boost/packages')).toHaveLength(2);
   });
 
   it('closed: no read at all', () => {

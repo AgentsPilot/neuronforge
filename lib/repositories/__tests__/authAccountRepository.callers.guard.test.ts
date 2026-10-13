@@ -111,6 +111,9 @@ const FUNCTION_ALLOWED = new Set(
     'supabase/SQL Scripts/20261013_business_os_invite_existing_account_rollback.sql',
     'scripts/check-bos-invite-existing-account-migration.sql',
     'supabase/migrations/__tests__/business-os-invite-existing-account.migration.test.ts',
+    // The SECURITY DEFINER surface guard names it in its frozen baseline
+    // (20261013 revokes in three statements; SECDEF lockdown slice 6, SA Q-2).
+    'supabase/__tests__/security-definer-surface.guard.test.ts',
   ].map((file) => file.split('/').join(sep))
 );
 

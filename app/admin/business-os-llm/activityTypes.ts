@@ -65,6 +65,8 @@ export type ActivityEntryState =
   | { state: 'too_recent' }
   | { state: 'may_be_archived' }
   | { state: 'lost' }
+  /** Not an AI action (e.g. a test-harness charge): no AI audit entry is expected (SA C-1). */
+  | { state: 'not_applicable' }
   | { state: 'unknown'; reason: ActivityEntryUnknownReason };
 
 /** Over the ROWS SHOWN, not the window. */

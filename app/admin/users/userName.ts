@@ -22,13 +22,23 @@ export function toStatusFilter(value: string): StatusFilter {
 
 /**
  * The route's `stats.totalUsers` is the FILTERED count, so "total" is only true
- * under "All users" (SA C-15 (a)). The card and the header pill say "shown"
- * otherwise.
+ * under "All users" (SA C-15 (a)). The first KPI tile says "shown" otherwise.
+ * (L-4a removed the header pill and its `pill` word, SA S-1.)
  */
-export function countLabels(filter: StatusFilter): { card: string; pill: string } {
-  if (filter === 'active') return { card: 'Users shown (active)', pill: 'shown' };
-  if (filter === 'inactive') return { card: 'Users shown (inactive)', pill: 'shown' };
-  return { card: 'All users', pill: 'total' };
+export function countLabels(filter: StatusFilter): { card: string } {
+  if (filter === 'active') return { card: 'Users shown (active)' };
+  if (filter === 'inactive') return { card: 'Users shown (inactive)' };
+  return { card: 'All users' };
+}
+
+/**
+ * Who a row's details toggle names (A-2; L-4a SA S-4): the person's name as the
+ * row shows it, else the email, else "this login". Never "null" or "undefined".
+ */
+export function rowToggleName(fullName: string | null | undefined, email: string | null | undefined): string {
+  if (hasPersonName(fullName)) return fullName.trim();
+  if (typeof email === 'string' && email.trim().length > 0) return email.trim();
+  return 'this login';
 }
 
 /**
