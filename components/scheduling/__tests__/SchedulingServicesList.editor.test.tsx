@@ -365,26 +365,58 @@ describe('creating a service, where there is no saved row yet', () => {
 
 describe('a service with no price', () => {
   /*
-   * At a price of nothing `serviceMoneyLine` answers `free` and never consults
-   * the shape -- so card, invoice and quote were offered, one of them lit,
-   * deciding nothing. The payment-plan row already collapsed on the same test.
+   * A SAVED service left at nothing has answered the question: nothing is
+   * collected, so the shape decides nothing and is not asked. A service being
+   * CREATED has not answered it, and hiding the shapes there took away the
+   * first thing an owner fills in.
+   *
+   * Both halves are pinned, because each has been broken once: the gate was
+   * first written on the price, which trapped a quote (choosing it cleared the
+   * price, which then hid the way back), and then on `moneyLine.key`, which
+   * spared the quote but still emptied the new-service form.
    */
   const FREE = { ...SERVICE, price: 0, collection: 'invoice' } as unknown as SchedulingService;
 
-  it('does not ask how they pay', async () => {
+  const openNewService = async () => {
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) } as Response)
+    ) as unknown as typeof fetch;
+    render(<SchedulingServicesList services={[]} processorReady showAddButton intakeEnabled={false} />);
+    fireEvent.click(screen.getByText('Add a service'));
+    await settle();
+  };
+
+  it('a saved free service does not ask how they pay', async () => {
     await openEditor({ service: FREE });
     for (const name of ['They pay by card', 'You invoice them', 'You quote first']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
   });
 
-  it('and says the service is free', async () => {
+  it('and the flow says why', async () => {
     await openEditor({ service: FREE });
     says(/Nothing is collected/);
   });
 
-  it('while a priced service still asks', async () => {
+  it('but a NEW service still asks, before it has a price', async () => {
+    // The breakage this guards: a new direct service resolves to `free` before
+    // a price is typed, so a gate on that answer alone empties the form.
+    await openNewService();
+    for (const name of ['They pay by card', 'You invoice them', 'You quote first']) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    }
+  });
+
+  it('and a quote never hides its own way back', async () => {
+    /*
+     * Choosing a quote clears the price. Gated on the PRICE that made quote a
+     * one-way door -- the controls that could undo it were the ones it hid.
+     * Gated on `moneyLine.key`, a quote is settled at `proposal` before price
+     * is consulted, so its own shapes stay on screen.
+     */
     await openEditor();
-    expect(screen.getByRole('button', { name: 'You quote first' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'You quote first' }));
+    expect(screen.getByRole('button', { name: 'They pay by card' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'You invoice them' })).toBeInTheDocument();
   });
 });

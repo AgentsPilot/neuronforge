@@ -14,7 +14,14 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { recurringDateKeys, recurringLocalInputs, MAX_OCCURRENCES } from '../recurrence';
+import {
+  recurringDateKeys,
+  recurringLocalInputs,
+  cadenceOf,
+  nextInSeries,
+  MAX_OCCURRENCES,
+  type Cadence,
+} from '../recurrence';
 
 describe('weekly', () => {
   it('starts on the first meeting and steps seven days', () => {
@@ -140,5 +147,167 @@ describe('as the dialog holds them', () => {
   it('refuses an hour that is not one', () => {
     expect(recurringLocalInputs('2026-10-07', '10', 'weekly', 3)).toEqual([]);
     expect(recurringLocalInputs('2026-10-07', '', 'weekly', 3)).toEqual([]);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * READING THE RHYTHM BACK OFF THE DATES.
+ *
+ * Reported: a fortnightly package reopened with its six correct dates above a
+ * cadence chip reading "every week". A quote stores the instants and not the
+ * spacing, so the chip was showing its own initial value.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+describe('cadenceOf', () => {
+  it('names the rhythm of the reported series', () => {
+    // The live dates: six meetings, every second Thursday.
+    expect(
+      cadenceOf(['2026-10-08', '2026-10-22', '2026-11-05', '2026-11-19', '2026-12-03', '2026-12-17'])
+    ).toBe('biweekly');
+  });
+
+  it('is the exact inverse of the generator, for every cadence', () => {
+    // The property that matters: whatever the generator produced, this names.
+    for (const cadence of ['weekly', 'biweekly', 'monthly'] as Cadence[]) {
+      for (const count of [2, 3, 6, 12]) {
+        expect(cadenceOf(recurringDateKeys('2026-01-15', cadence, count))).toBe(cadence);
+      }
+    }
+  });
+
+  it('names a monthly series that the month lengths bend', () => {
+    // The 31st clamps to the 28th, 30th and so on, so a gap measured in days
+    // would call this anything but monthly. Asking the generator does not.
+    expect(cadenceOf(recurringDateKeys('2026-01-31', 'monthly', 6))).toBe('monthly');
+  });
+
+  it('names nothing when a date was moved by hand', () => {
+    // One meeting pushed a day: no cadence generates this, and claiming one
+    // would re-space the series the moment the owner touched the count.
+    expect(
+      cadenceOf(['2026-10-08', '2026-10-22', '2026-11-06', '2026-11-19'])
+    ).toBeNull();
+  });
+
+  it('names nothing from too little to tell', () => {
+    expect(cadenceOf([])).toBeNull();
+    expect(cadenceOf(['2026-10-08'])).toBeNull();
+    expect(cadenceOf(['not-a-date', '2026-10-22'])).toBeNull();
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * WHERE THE NEXT MEETING GOES.
+ *
+ * Adding a seventh session to a fortnightly course opened the booking dialog
+ * on tomorrow's first free hour, leaving the owner to work out a date the
+ * series had already decided.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+describe('nextInSeries', () => {
+  /** The reported course: every second Thursday at 09:30. */
+  const COURSE = [
+    '2026-10-08T09:30',
+    '2026-10-22T09:30',
+    '2026-11-05T09:30',
+    '2026-11-19T09:30',
+    '2026-12-03T09:30',
+    '2026-12-17T09:30',
+  ];
+
+  it('is a fortnight after the last one, at the same time', () => {
+    expect(nextInSeries(COURSE)).toBe('2026-12-31T09:30');
+  });
+
+  it('does not care what order they arrive in', () => {
+    const shuffled = [COURSE[3], COURSE[0], COURSE[5], COURSE[1], COURSE[4], COURSE[2]];
+    expect(nextInSeries(shuffled)).toBe('2026-12-31T09:30');
+  });
+
+  it('follows a weekly series weekly', () => {
+    expect(nextInSeries(['2026-10-08T14:00', '2026-10-15T14:00'])).toBe('2026-10-22T14:00');
+  });
+
+  it('follows a monthly series by the month, not by 30 days', () => {
+    expect(nextInSeries(['2026-01-31T08:00', '2026-02-28T08:00'])).toBe('2026-03-31T08:00');
+  });
+
+  it('says nothing about a series with no rhythm', () => {
+    // Hand-adjusted: proposing a date from a pattern that is not there would
+    // be a guess dressed as the agreement.
+    expect(nextInSeries(['2026-10-08T09:30', '2026-10-22T09:30', '2026-11-06T09:30'])).toBeNull();
+  });
+
+  it('says nothing about a single meeting', () => {
+    expect(nextInSeries(['2026-10-08T09:30'])).toBeNull();
+    expect(nextInSeries([])).toBeNull();
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * ONE MOVED MEETING MUST NOT COST THE SERIES ITS RHYTHM.
+ *
+ * Reported: "add new meeting opens the dialog with today's date." The course
+ * runs every second Thursday at 09:30 and its last meeting is 17 Dec, so it
+ * should open on 31 Dec. The second session had been moved from the 22nd to
+ * the 23rd, so the diary's real gaps are 15, 13, 14, 14 days — a pattern no
+ * cadence generates, which left the whole series unnamed.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+describe('a series the diary has drifted off', () => {
+  /** As it stands: session two moved a day. */
+  const DIARY = [
+    '2026-10-08T09:30',
+    '2026-10-23T09:30',
+    '2026-11-05T09:30',
+    '2026-11-19T09:30',
+    '2026-12-03T09:30',
+    '2026-12-17T09:30',
+  ];
+
+  /** As it was sold, which never moves. */
+  const SOLD = [
+    '2026-10-08T09:30',
+    '2026-10-22T09:30',
+    '2026-11-05T09:30',
+    '2026-11-19T09:30',
+    '2026-12-03T09:30',
+    '2026-12-17T09:30',
+  ];
+
+  it('names no cadence on its own, which is why this was needed', () => {
+    expect(cadenceOf(DIARY.map(d => d.slice(0, 10)))).toBeNull();
+    expect(nextInSeries(DIARY)).toBeNull();
+  });
+
+  it('takes the rhythm from the agreement and the anchor from the diary', () => {
+    // The reported expectation: a fortnight after 17 Dec, at 09:30.
+    expect(nextInSeries(DIARY, SOLD)).toBe('2026-12-31T09:30');
+  });
+
+  it('moves on each time another is added, rather than repeating itself', () => {
+    /*
+     * The reason the anchor is the diary's last meeting and not the last one
+     * sold: adding a seventh must then propose an eighth, not the seventh
+     * again — which is now a slot it would collide with.
+     */
+    const withSeventh = [...DIARY, '2026-12-31T09:30'];
+    expect(nextInSeries(withSeventh, SOLD)).toBe('2027-01-14T09:30');
+  });
+
+  it('proposes one even for a package down to a single meeting', () => {
+    // One date names no rhythm by itself, but the quote still does.
+    expect(nextInSeries(['2026-12-17T09:30'], SOLD)).toBe('2026-12-31T09:30');
+  });
+
+  it('still prefers the diary when the diary is regular', () => {
+    // The agreement is only a second opinion; a clean series answers for
+    // itself, and keeps the monthly anchor that regenerating preserves.
+    expect(nextInSeries(SOLD, ['2026-01-05T08:00', '2026-01-12T08:00'])).toBe('2026-12-31T09:30');
+  });
+
+  it('says nothing when neither can name a rhythm', () => {
+    expect(nextInSeries(DIARY, ['2026-10-08T09:30'])).toBeNull();
+    expect(nextInSeries(DIARY)).toBeNull();
   });
 });

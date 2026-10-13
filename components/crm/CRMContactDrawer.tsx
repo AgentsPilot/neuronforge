@@ -21,21 +21,21 @@ import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookin
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
 import { SessionCard, type SessionCardData } from './SessionCard';
 import { CollapsibleSection } from './CollapsibleSection';
-import PhoneInput from 'react-phone-number-input';
-import en from 'react-phone-number-input/locale/en';
+// The phone library is fetched after first paint, not with the page (PERF-2):
+// see components/crm/usePhoneLib.ts. The stylesheet stays static so the
+// cascade is unchanged.
 import 'react-phone-number-input/style.css';
-import { SearchableCountrySelect } from './SearchableCountrySelect';
+import { usePhoneLib } from '@/components/crm/usePhoneLib';
+import { PhoneFieldPlaceholder } from '@/components/crm/PhoneFieldPlaceholder';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMActivity } from '@/lib/repositories/CRMActivityRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 import type { Country } from 'react-phone-number-input';
-import {
-  applyCountryToPhone,
-  phoneFieldCountry,
-  phoneFieldValue,
-} from '@/components/crm/phoneField';
 import type { EmailSendStatus } from '@/lib/business-os/emailSendStatus';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'CRMContactDrawer' });
 
 interface CRMContactDrawerProps {
   contact: CRMContact;
@@ -703,9 +703,18 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
    * only a genuinely empty field falls back, and there the owner picks before
    * typing.
    */
-  const [phoneCountry, setPhoneCountry] = useState<Country>(() =>
-    phoneFieldCountry(formData.phone)
-  );
+  const phoneLib = usePhoneLib();
+  /*
+   * The number the starting country is read from: `formData.phone` as it was
+   * at mount, exactly what the initialiser read before. Held as a plain string
+   * because the reading itself needs the phone library, which may still be
+   * arriving at mount (PERF-2). Until the owner picks a country, the field's
+   * country is `phoneFieldCountry(phoneSeed)`, the same answer as before.
+   */
+  const [phoneSeed] = useState(() => formData.phone);
+  const [chosenPhoneCountry, setPhoneCountry] = useState<Country | undefined>(undefined);
+  const phoneCountry: Country | undefined =
+    chosenPhoneCountry ?? phoneLib?.phoneFieldCountry(phoneSeed);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -788,7 +797,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setTasks(data.tasks);
       }
     } catch (error) {
-      console.error('Failed to fetch tasks:', error);
+      logger.error({ err: error }, 'Failed to fetch tasks');
     } finally {
       setLoadingTasks(false);
     }
@@ -821,7 +830,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setErrorMessage(data.error || t('crm.drawer.task_create_error'));
       }
     } catch (error) {
-      console.error('Failed to create task:', error);
+      logger.error({ err: error }, 'Failed to create task');
       setErrorMessage(t('crm.drawer.task_create_error'));
     } finally {
       setSavingTask(false);
@@ -844,7 +853,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         fetchTasks(contact.id);
       }
     } catch (error) {
-      console.error('Failed to update task:', error);
+      logger.error({ err: error }, 'Failed to update task');
     }
   };
 
@@ -860,7 +869,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         fetchTasks(contact.id);
       }
     } catch (error) {
-      console.error('Failed to delete task:', error);
+      logger.error({ err: error }, 'Failed to delete task');
     }
   };
 
@@ -874,7 +883,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setActivities(data.activities);
       }
     } catch (error) {
-      console.error('Failed to fetch activities:', error);
+      logger.error({ err: error }, 'Failed to fetch activities');
     } finally {
       setLoadingActivities(false);
     }
@@ -903,7 +912,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         fetchActivities(contact.id);
       }
     } catch (error) {
-      console.error('Failed to create activity:', error);
+      logger.error({ err: error }, 'Failed to create activity');
     } finally {
       setSavingActivity(false);
     }
@@ -934,7 +943,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setTimeout(() => setNotesSaved(false), 2000);
       }
     } catch (error) {
-      console.error('Failed to auto-save notes:', error);
+      logger.error({ err: error }, 'Failed to auto-save notes');
     } finally {
       setSavingNotes(false);
     }
@@ -974,7 +983,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setPayments(data.transactions || []);
       }
     } catch (error) {
-      console.error('Failed to fetch payments:', error);
+      logger.error({ err: error }, 'Failed to fetch payments');
     } finally {
       setLoadingPayments(false);
     }
@@ -990,7 +999,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setAppointments(data.bookings || []);
       }
     } catch (error) {
-      console.error('Failed to fetch appointments:', error);
+      logger.error({ err: error }, 'Failed to fetch appointments');
     } finally {
       setLoadingAppointments(false);
     }
@@ -1004,7 +1013,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setServices(data.services || []);
       }
     } catch (error) {
-      console.error('Failed to fetch services:', error);
+      logger.error({ err: error }, 'Failed to fetch services');
     }
   };
 
@@ -1025,7 +1034,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setBookingTimezone(typeof data.timezone === 'string' && data.timezone ? data.timezone : 'UTC');
       }
     } catch (error) {
-      console.error('Failed to fetch availability:', error);
+      logger.error({ err: error }, 'Failed to fetch availability');
     }
   };
 
@@ -1038,7 +1047,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setEmails(data.emails || []);
       }
     } catch (error) {
-      console.error('Failed to fetch emails:', error);
+      logger.error({ err: error }, 'Failed to fetch emails');
     } finally {
       setLoadingEmails(false);
     }
@@ -1068,7 +1077,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setDocuments(data.documents || []);
       }
     } catch (error) {
-      console.error('Failed to fetch documents:', error);
+      logger.error({ err: error }, 'Failed to fetch documents');
     } finally {
       setLoadingDocuments(false);
     }
@@ -1091,7 +1100,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         return template;
       }
     } catch (error) {
-      console.error('Failed to fetch intake template:', error);
+      logger.error({ err: error }, 'Failed to fetch intake template');
     }
     return null;
   };
@@ -1181,7 +1190,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setErrorMessage(data.error || t('crm.drawer.upload_error'));
       }
     } catch (error) {
-      console.error('Failed to upload document:', error);
+      logger.error({ err: error }, 'Failed to upload document');
       setErrorMessage(t('crm.drawer.upload_error'));
     } finally {
       setUploadingDocument(false);
@@ -1204,7 +1213,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setErrorMessage(data.error || t('crm.drawer.delete_error'));
       }
     } catch (error) {
-      console.error('Failed to delete document:', error);
+      logger.error({ err: error }, 'Failed to delete document');
       setErrorMessage(t('crm.drawer.delete_error'));
     }
   };
@@ -1218,7 +1227,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         window.open(data.document.download_url, '_blank');
       }
     } catch (error) {
-      console.error('Failed to get download URL:', error);
+      logger.error({ err: error }, 'Failed to get download URL');
     }
   };
 
@@ -1266,7 +1275,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setErrorMessage(data.error || t('crm.drawer.save_error'));
       }
     } catch (error) {
-      console.error('Failed to save contact:', error);
+      logger.error({ err: error }, 'Failed to save contact');
       setErrorMessage(t('crm.drawer.save_error'));
     } finally {
       setLoading(false);
@@ -1289,7 +1298,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setErrorMessage(data.error || t('crm.drawer.delete_error'));
       }
     } catch (error) {
-      console.error('Failed to delete contact:', error);
+      logger.error({ err: error }, 'Failed to delete contact');
       setErrorMessage(t('crm.drawer.delete_error'));
     } finally {
       setDeleting(false);
@@ -1320,7 +1329,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setErrorMessage(data.error || t('crm.drawer.save_error'));
       }
     } catch (error) {
-      console.error('Failed to deactivate contact:', error);
+      logger.error({ err: error }, 'Failed to deactivate contact');
       setErrorMessage(t('crm.drawer.save_error'));
     } finally {
       setDeactivating(false);
@@ -1556,7 +1565,9 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                     {t('crm.modal.phone')} <span className="text-red-500 dark:text-red-400">*</span>
                   </Label>
                   <div className="flex gap-2" dir="ltr">
-                    <SearchableCountrySelect
+                    {phoneLib ? (
+                    <>
+                    <phoneLib.SearchableCountrySelect
                       value={phoneCountry}
                       /*
                         Choosing a country is a statement about the NUMBER, so it
@@ -1569,18 +1580,22 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                         setPhoneCountry(country);
                         setFormData(prev => ({
                           ...prev,
-                          phone: applyCountryToPhone(prev.phone, country) ?? prev.phone,
+                          phone: phoneLib.applyCountryToPhone(prev.phone, country) ?? prev.phone,
                         }));
                       }}
-                      labels={en}
+                      labels={phoneLib.phoneCountryLabelsEn}
                     />
-                    <PhoneInput
+                    <phoneLib.PhoneInput
                       countryCallingCodeEditable={false}
                       country={phoneCountry}
-                      value={phoneFieldValue(formData.phone, phoneCountry)}
+                      value={phoneLib.phoneFieldValue(formData.phone, phoneCountry)}
                       onChange={(value) => setFormData(prev => ({ ...prev, phone: value || '' }))}
                       className="phone-input-crm flex-1"
                     />
+                    </>
+                    ) : (
+                      <PhoneFieldPlaceholder className="phone-input-crm flex-1" />
+                    )}
                   </div>
                 </div>
               </div>

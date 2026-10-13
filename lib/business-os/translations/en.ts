@@ -4234,6 +4234,7 @@ export const en = {
     'proposal.download_to_check': 'Download to check it',
     'proposal.error_upload': 'The document could not be uploaded. Please try again.',
     'proposal.error_file_too_big': 'That file is over {max}MB. Please attach a smaller one.',
+    'proposal.error_file_type': 'That kind of file cannot be attached ({type}). Use a PDF, a Word or Excel document, a scan, or a photo.',
     'proposal.new_title': 'Send a Quote',
     'proposal.revise_title': 'Revise the Quote',
     'proposal.view_title': 'Quote',

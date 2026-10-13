@@ -117,6 +117,44 @@ const vercelProjectProductionHost = (): string | null =>
 
 const isOnVercel = () => vercelEnv() !== null || Boolean(process.env.VERCEL);
 
+/**
+ * The address the page is ACTUALLY being served from, in a browser.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS NEEDED EVEN THOUGH EVERYTHING ABOVE EXISTS
+ *
+ * The rules above detect a deployment through Vercel's system variables. On the
+ * SERVER every one of them is readable. In the browser only the `NEXT_PUBLIC_`
+ * copies survive, and those are inlined at build time only when the project has
+ * "Automatically expose System Environment Variables" switched on. It is a
+ * checkbox, it is off by default on some projects, and nothing in the code can
+ * tell whether it was ticked.
+ *
+ * When it is not, `isOnVercel()` is FALSE in the browser on a real deployment —
+ * `VERCEL` and `VERCEL_ENV` are server-only and simply are not there. Rule 1
+ * then never fires, the configured loopback is treated as usable, and every
+ * address built in a client component reads `http://localhost:3000`. That is
+ * the smart-link preview showing a localhost link on the live site, and it is
+ * invisible server-side, which is why the rest of the platform looked correct.
+ *
+ * A browser does not need to deduce any of this. It is loaded FROM the address
+ * in question, so `window.location.origin` is not a guess — it is the answer,
+ * and it needs no variable, no checkbox and no deployment detection.
+ *
+ * Used only to overrule a loopback or a missing value, never a real configured
+ * domain: a business may serve this app from a canonical host and reach it by
+ * another, and the canonical one must still win. So this corrects the case that
+ * is always wrong and leaves every deliberate configuration alone.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const browserOrigin = (): string | null => {
+  if (typeof window === 'undefined') return null;
+
+  const origin = window.location?.origin;
+  // `null` is what a sandboxed iframe reports, as the string.
+  return origin && origin !== 'null' ? origin : null;
+};
+
 /** An address only the machine that built it can reach. */
 const isLoopbackOrigin = (value: string) =>
   /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:\d+)?(\/|$)/i.test(value.trim());
@@ -133,6 +171,20 @@ const normalizePath = (path: string) => {
 export function platformOrigin(): string {
   const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
   const onVercel = isOnVercel();
+
+  /*
+   * Rule 0: in a browser served from a real host, that host is the answer.
+   *
+   * It outranks the rules below because it is the only one that does not have
+   * to INFER where the code is running — see `browserOrigin`. It applies only
+   * when the configured value is a loopback or absent, which are the two cases
+   * that are wrong no matter what; a configured real domain is left alone, so
+   * a canonical host still beats whichever address the visitor arrived by.
+   */
+  const served = browserOrigin();
+  if (served && !isLoopbackOrigin(served) && (!configured || isLoopbackOrigin(configured))) {
+    return stripTrailingSlashes(served);
+  }
 
   // Rule 1: a loopback address configured on a deployed build is not usable.
   const usableConfigured = configured && !(onVercel && isLoopbackOrigin(configured))
@@ -209,8 +261,61 @@ export function publicSiteHost(): string | null {
   const configured = process.env.NEXT_PUBLIC_PUBLIC_SITE_HOST?.trim();
   if (!configured) return null;
 
-  return stripTrailingSlashes(configured).replace(/^https?:\/\//, '');
+  const host = stripTrailingSlashes(configured).replace(/^https?:\/\//, '');
+
+  /*
+   * THE LOOPBACK RULE, WHICH THIS VARIABLE NEVER HAD.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `platformOrigin` refuses a loopback `NEXT_PUBLIC_APP_URL` on a deployed
+   * build, because an address only the builder's machine can reach is never
+   * configuration. That reasoning applies word for word here and was never
+   * applied: whatever this variable holds was returned unexamined.
+   *
+   * It matters more here than it looks. This host OUTRANKS `platformOrigin` —
+   * `publicSiteDisplayHost` returns `{prefix}.{host}` and never consults the
+   * platform origin at all when it is set. So one stale value makes every
+   * address a business shows and shares local, even on a deployment whose
+   * `NEXT_PUBLIC_APP_URL` is perfectly correct. The share guide's link preview
+   * is the clearest case: it is a mockup of what a CLIENT sees in a post, and a
+   * client can never reach any of these hosts.
+   *
+   * And the documented way to work on this locally is to set it to
+   * `lvh.me:3000`, so a developer's own setting is exactly the shape that must
+   * not survive into a deployment.
+   *
+   * `NODE_ENV` is the right test here, unlike in `platformOrigin` where it was
+   * not: there the danger was a configured value arriving on a Vercel build,
+   * which runs as `production`, so the question was "am I deployed?" and
+   * `NODE_ENV` could not answer it. Here the question is the reverse — "am I on
+   * the one machine where a local host is reachable?" — and `development` is
+   * precisely that machine. It is inlined into the browser bundle too, so this
+   * works client-side without needing any Vercel variable to be exposed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (!isDevelopment() && isLocalOnlyHost(host)) return null;
+
+  return host;
 }
+
+/**
+ * A host that only resolves on the machine running the dev server.
+ *
+ * `lvh.me` and `localtest.me` are here with the loopback addresses because they
+ * are the same thing wearing a domain name: every subdomain of either resolves
+ * to 127.0.0.1, which is the whole reason they are used to exercise the
+ * subdomain shape locally. Nobody else can reach one.
+ *
+ * Named and shared, because two separate questions need the same answer: which
+ * scheme a host takes, and whether a host is usable at all off the laptop.
+ * `schemeForHost` carried this pattern inline and `publicSiteHost` asked
+ * nothing, so the knowledge existed in the file and was not applied where it
+ * decided whether an address was real.
+ */
+const isLocalOnlyHost = (host: string) =>
+  /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0|.*\.lvh\.me|lvh\.me|.*\.localtest\.me|localtest\.me)(:\d+)?$/i.test(
+    host.trim()
+  );
 
 /**
  * `http` for the local testing hosts, `https` for everything else.
@@ -219,10 +324,7 @@ export function publicSiteHost(): string | null {
  * would make the one mechanism that proves the subdomain shape locally
  * unusable.
  */
-const schemeForHost = (host: string) =>
-  /^(localhost|127\.0\.0\.1|.*\.lvh\.me|lvh\.me|.*\.localtest\.me|localtest\.me)(:\d+)?$/.test(host)
-    ? 'http'
-    : 'https';
+const schemeForHost = (host: string) => (isLocalOnlyHost(host) ? 'http' : 'https');
 
 /**
  * The internal route that serves a business's pages, in both shapes.

@@ -1999,13 +1999,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               below went on reading "Nothing is collected."
 
               The gate is `moneyLine.key`, not `price`, because that function
-              already holds the order these questions are answered in — a
-              quoted service is settled at `proposal` BEFORE price is looked
-              at, so this never hides the shape on a service whose price is
-              simply not named yet. The payment-plan row below already
-              collapses off the same answer.
+              already holds the order these questions are answered in: a quoted
+              service is settled at `proposal` BEFORE price is consulted, so a
+              quote never hides its own shapes and cannot become a one-way door.
+
+              `|| isNew` because that reasoning does NOT reach a service being
+              created. A new DIRECT service has no price yet, so the key is
+              `free` and all three disappeared — the first question an owner
+              answers, gone before they could answer it. Measured, not assumed:
+              a probe mounted the new-service editor and found none of the three
+              buttons rendering.
+
+              An empty price is a question still open; a saved service left at
+              nothing has answered it. Only the second hides the shapes.
             */}
-            {moneyLine.key !== 'free' && (
+            {(moneyLine.key !== 'free' || isNew) && (
               <div className="flex flex-col gap-2.5 mb-3">
                 {segmentWithWhy([
                   {
