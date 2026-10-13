@@ -60,9 +60,16 @@ describe('paging', () => {
     /*
      * Derived at render from what EXISTS, so it can never point past the end
      * and there is no frame in between where the list is empty.
+     *
+     * The stored value gained a `null` — "nobody has paged yet" — so the view
+     * can follow a booking named by a link from the Needs-you card instead of
+     * always opening at the top. That is a different DEFAULT, not a different
+     * mechanism: still derived at render, still clamped, still no effect.
      */
-    expect(code).toMatch(/const page = Math\.min\(bookingPage, pageCount - 1\)/);
+    expect(code).toMatch(/const page = Math\.min\(bookingPage \?\? \w+, pageCount - 1\)/);
     expect(code).toMatch(/const pageCount = Math\.max\(1, Math\.ceil\(filteredSessions\.length \/ PAGE_SIZE\)\)/);
+    // The reset-by-effect this was written against must stay gone.
+    expect(code).not.toMatch(/useEffect\([\s\S]{0,200}setBookingPage/);
   });
 
   it('counts the filtered set, which is the list being looked at', () => {
@@ -121,10 +128,22 @@ describe('search', () => {
     expect(code).toContain('{sortedSessions.length > PAGE_SIZE && (');
   });
 
-  it('returns to the first page when the term changes', () => {
+  it('stops pointing at the old page when the term changes', () => {
+    /*
+     * `setBookingPage(null)`, not `(0)`.
+     *
+     * The requirement is that page 3 of the previous set does not survive into
+     * a set that may not have three pages — and `null` meets it, because the
+     * derived page falls back to 0 when nothing is focused. It is the better
+     * answer rather than merely an equal one: when a search still CONTAINS the
+     * booking a Needs-you link named, null lands the owner back on it, where 0
+     * would drop them at the top of the results and make them hunt again.
+     */
     const input = code.slice(code.indexOf('{sortedSessions.length > PAGE_SIZE && ('), code.indexOf('{filteredSessions.length === 0 ?'));
     expect(input).toContain('setBookingSearch(e.target.value)');
-    expect(input).toContain('setBookingPage(0)');
+    expect(input).toContain('setBookingPage(null)');
+    // Never pinned to a literal page, which is what stranded the focused row.
+    expect(input).not.toContain('setBookingPage(0)');
   });
 
   it('says so when it finds nothing, and quotes the term', () => {
