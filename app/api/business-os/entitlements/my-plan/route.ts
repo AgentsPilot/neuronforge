@@ -24,9 +24,14 @@
  * the handler never reads `nextUrl.searchParams` or a body, so the day somebody
  * adds `?accountId=` the test fails rather than the customer.
  *
- * ── Read-only (S-4a step 1) ─────────────────────────────────────────────────
- * There is no POST. No buying, no upgrading, no Stripe — steps 2 to 4. Nothing
- * here writes. The plan read goes through `EntitlementService`, the only module
+ * ── Read-only (S-4a step 1), and still so with buying (plan payments P-4.2) ──
+ * There is no POST and nothing here writes. Buying happens at the checkout
+ * route; this read only DESCRIBES it, in `purchase` (`planPurchaseView.ts`):
+ * what the owner may Choose (the same predicate the checkout refuses on), and
+ * "Renews on" / "Ends on" from OUR billing record. That billing row is read by
+ * the session user and the server key's mode, never by a request value, and no
+ * Stripe call is made here (SR-11; SA W-9). For a paid tier, the plan's ending
+ * sentence is replaced by the record's one when the record knows it (F-2). The plan read goes through `EntitlementService`, the only module
  * that talks to the entitlement repository; the reader's language is read
  * through `userPreferencesRepository.findLocale(user.id)`, the session user's
  * own row, never a caller-named one.
@@ -41,6 +46,8 @@ import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { buildCustomerPlanView } from '@/lib/business-os/entitlements/customerPlanView';
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
 import { getEntitlementService } from '@/lib/business-os/entitlements/EntitlementService';
+import { billingEndsWhen, readPlanPurchaseView } from '@/lib/business-os/billing/planPurchaseView';
+import type { PlanPurchaseWire } from '@/lib/business-os/billing/planPurchaseTypes';
 import { createLogger } from '@/lib/logger';
 import { userPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
 
@@ -108,6 +115,23 @@ export async function GET(request: NextRequest) {
       locale,
     });
 
+    /*
+     * What may be bought, and what our billing record says (P-4.2). Keyed by the
+     * SESSION user and the server key's mode inside the view; no Stripe call.
+     * A failure here never hides the plan: the section then shows no Choose
+     * button and the plan's own sentence.
+     */
+    let purchase: PlanPurchaseWire | null = null;
+    try {
+      purchase = await readPlanPurchaseView({ userId: user.id, accountId, snapshot });
+    } catch (err) {
+      requestLogger.warn({ err, event: 'bos_billing_purchase_view_failed' }, 'Purchase view unavailable; plan shown without it');
+    }
+
+    // F-2: a paid tier's "while the plan is paid for" becomes "Renews on" /
+    // "Ends on" when our record knows the date. A free plan keeps its own.
+    const recordEndsWhen = view.kind === 'tier' ? billingEndsWhen(purchase?.billing ?? null) : null;
+
     requestLogger.info(
       {
         userId: user.id,
@@ -115,11 +139,16 @@ export async function GET(request: NextRequest) {
         planId: view.planId,
         included: view.included.length,
         stale: snapshot.stale,
+        offer: purchase ? purchase.offer.kind : null,
+        billing: purchase?.billing?.state ?? null,
       },
       'Customer plan read'
     );
 
-    return NextResponse.json({ success: true, data: view });
+    return NextResponse.json({
+      success: true,
+      data: { ...view, endsWhen: recordEndsWhen ?? view.endsWhen, purchase },
+    });
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to read the customer plan');
     return NextResponse.json(

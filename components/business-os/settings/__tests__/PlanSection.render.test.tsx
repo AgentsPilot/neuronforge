@@ -220,12 +220,14 @@ describe('a paying customer on Essentials', () => {
     expect(screen.getByText(/19,750 per month becomes 32,250 per month/)).toBeInTheDocument();
   });
 
-  it('sees Autopilot as "Available to choose." — and still nothing to click until P-4.2', async () => {
+  it('with no purchase view in the payload: Autopilot is "Available to choose." and there is nothing to click', async () => {
     // `availableToBuy` is ON in the shipped config since 2026-10-13 (user
     // decision, for testing; requirement §9.5 re-checks it at go-live). The
-    // section says so, and drops the "Coming soon" badge — but the Buy button is
-    // P-4.2's, so there is still no control at all. A button arriving here
-    // before P-4.2 is a change somebody has to make on purpose.
+    // section says so, and drops the "Coming soon" badge. The Choose buttons
+    // (P-4.2) come ONLY from the server's `purchase` view, which this payload
+    // (the plan builder alone) does not carry, so there is still no control at
+    // all: a button cannot appear from config by itself.
+    // PlanPurchase.render.test.tsx covers the payload WITH a purchase view.
     await renderFor('basic');
 
     expect(screen.queryByRole('button')).not.toBeInTheDocument();

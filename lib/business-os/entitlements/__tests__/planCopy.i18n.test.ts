@@ -59,7 +59,40 @@ const KEYS = [
   'plan.next.changes_line',
   'plan.next.available',
   'plan.next.coming_soon',
+  // Plan payments P-4.2: buying in Settings → Plan (he/es DRAFTS, gate G-3).
+  ...purchaseKeys(),
 ];
+
+/** The P-4.2 keys, as a function so the list can sit below `KEYS` in reading order. */
+function purchaseKeys(): string[] {
+  return [
+    'plan.choose.heading',
+    'plan.choose.button',
+    'plan.choose.starting',
+    'plan.choose.price_ex_tax',
+    'plan.choose.trial_ends_today',
+    'plan.choose.free_access_ends_today',
+    'plan.choose.not_configured',
+    'plan.renews_on',
+    'plan.ends_on_paid',
+    'plan.purchase.processing',
+    'plan.purchase.slow',
+    'plan.purchase.check_again',
+    'plan.purchase.done',
+    'plan.refusal.checkout_processing',
+    'plan.refusal.free_access_no_end_date',
+    'plan.refusal.subscription_live',
+    'plan.refusal.price_unavailable',
+    'plan.refusal.checkout_open',
+    'plan.refusal.generic',
+    'plan.refusal.not_open',
+    'plan.refusal.busy',
+    'plan.refusal.email_required',
+    'plan.refusal.support',
+    'plan.refusal.signed_out',
+    'plan.refusal.not_ready',
+  ];
+}
 
 const LANGUAGES = 3;
 
@@ -129,6 +162,29 @@ describe('the plan section speaks all three languages', () => {
       expect(texts).toHaveLength(LANGUAGES);
       for (const text of texts) for (const slot of needed) expect(text).toContain(slot);
     }
+  });
+
+  it('the P-4.2 purchase templates keep their placeholders, and "excluding tax" is said in every language', () => {
+    const slots: Record<string, string[]> = {
+      'plan.choose.button': ['{plan}'],
+      'plan.choose.price_ex_tax': ['{amount}'],
+      'plan.renews_on': ['{date}'],
+      'plan.ends_on_paid': ['{date}'],
+      'plan.purchase.done': ['{plan}'],
+    };
+    for (const [key, needed] of Object.entries(slots)) {
+      const texts = copyFor(key);
+      expect(texts).toHaveLength(LANGUAGES);
+      for (const text of texts) for (const slot of needed) expect(text).toContain(slot);
+    }
+    // M-8: the price line says tax is not included (en, es, he in file order).
+    const [en, es, he] = copyFor('plan.choose.price_ex_tax');
+    expect(en).toMatch(/excluding tax/);
+    expect(es).toMatch(/impuestos no incluidos/);
+    expect(he).toMatch(/לא כולל מס/);
+    // SA W-7: the two sentences, as the user approved the English.
+    expect(copyFor('plan.choose.trial_ends_today')[0]).toBe('Buying ends your free trial today, and the first month is charged now.');
+    expect(copyFor('plan.choose.free_access_ends_today')[0]).toBe('Buying ends your free access today, and the first month is charged now.');
   });
 
   it('still says the load-bearing things', () => {
