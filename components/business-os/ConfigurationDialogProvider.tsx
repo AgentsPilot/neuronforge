@@ -27,7 +27,8 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
+// Lazy (PERF-1): the dialog's chunk loads after the page paints, not with it.
+import { LazyConfigurationDialog } from '@/components/business-os/lazyDialogs';
 import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 
 type ConfigTab = 'services' | 'availability' | 'intake' | 'payments' | 'business' | 'invoice';
@@ -193,7 +194,7 @@ export function ConfigurationDialogProvider({ children }: { children: React.Reac
   return (
     <ConfigurationDialogContext.Provider value={value}>
       {children}
-      <ConfigurationDialog
+      <LazyConfigurationDialog
         isOpen={isOpen}
         onClose={handleClose}
         initialTab={initialTab}

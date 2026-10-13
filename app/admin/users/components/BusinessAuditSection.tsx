@@ -81,7 +81,8 @@ export function BusinessAuditSection({ logs, filter, onFilterChange }: BusinessA
   const shown = filterLogs(logs, filter);
 
   return (
-    <DrawerSection title="Audit trail" testId="detail-audit">
+    // "Activity": the drawer's section name (Admin Layout follow-ups LF-4a.2, BD-4).
+    <DrawerSection title="Activity" testId="detail-audit">
       <button
         type="button"
         data-testid="detail-audit-toggle"

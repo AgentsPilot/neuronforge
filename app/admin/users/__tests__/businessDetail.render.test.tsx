@@ -315,17 +315,27 @@ describe('D-3 / D-4 / D-5 opening', () => {
     expect(detailReads(DANA_ID)).toEqual({ login: 1, audit: 1, stats: 1 });
     await waitFor(() => expect(count('/api/admin/archiving')).toBe(1));
 
+    // LF-4a.2 (BD-4): strip, then Credits & billing, Plan & entitlements, AI usage
+    // (All products last in it), Account & security (plugins last in it),
+    // Activity, and the danger area last. Both money blocks' reads have landed
+    // before the assertions (SA optimisation: no late act() warning).
+    await within(dialog).findByTestId('credits-block');
+    await waitFor(() => expect(within(dialog).queryByText('Loading credits…')).toBeNull());
+    await within(dialog).findByTestId('boost-cap');
     expectInOrder([
       within(dialog).getByTestId('bos-panel'),
-      within(dialog).getByRole('group', { name: 'User information' }),
-      within(dialog).getByRole('group', { name: 'Account timeline' }),
-      within(dialog).getByRole('group', { name: 'Security' }),
-      within(dialog).getByRole('group', { name: 'Login activity' }),
-      within(dialog).getByTestId('plugins-card'),
+      within(dialog).getByTestId('drawer-strip'),
+      within(dialog).getByRole('group', { name: 'Credits & billing' }),
+      within(dialog).getByRole('group', { name: 'Plan & entitlements' }),
+      within(dialog).getByRole('group', { name: 'AI usage' }),
       within(dialog).getByTestId('ai-spend-card'),
+      within(dialog).getByRole('group', { name: 'Account & security' }),
+      within(dialog).getByTestId('account-login-stats'),
+      within(dialog).getByTestId('plugins-card'),
       within(dialog).getByTestId('detail-audit'),
       within(dialog).getByTestId('danger-area'),
     ]);
+    expect(within(dialog).getByRole('group', { name: 'Activity' })).toBe(within(dialog).getByTestId('detail-audit'));
   });
 
   it('D-4: a row with no business is titled by the person; a row with no name by the email', async () => {
@@ -345,7 +355,8 @@ describe('D-3 / D-4 / D-5 opening', () => {
     expect(lines[0]).toBe('2026-09-01 00:00 UTC');
     expect(lines[1]).toMatch(/^(Just now|\d+h ago|\d+d ago)$/);
     expect(within(dialog).getByTestId('detail-last-sign-in').textContent).toBe('Never');
-    const timeline = within(dialog).getByRole('group', { name: 'Account timeline' });
+    // LF-4a.2 (BD-10): the timeline fields are in the Account & security section.
+    const timeline = within(dialog).getByRole('group', { name: 'Account & security' });
     expect(timeline.textContent).not.toContain(new Date('2026-09-01T00:00:00Z').toLocaleDateString());
   });
 });
@@ -539,7 +550,8 @@ describe('D-13 / D-14 / D-15 the detail reads (QA-P8, O-3; SA Q-4)', () => {
     detailAnswer = { 'login-stats': htmlOk };
     await renderPage();
     const dialog = await openWithButton('Dana Cohen');
-    expect(within(dialog).queryByRole('group', { name: 'Login activity' })).toBeNull();
+    // LF-4a.2 (BD-10): the login fields live in Account & security's sign-in group.
+    expect(within(dialog).queryByTestId('account-login-stats')).toBeNull();
     expect(within(dialog).getByTestId('plugins-card').textContent).toContain('1/2 active');
     expect(within(dialog).getByTestId('ai-spend-card').textContent).toContain('$0.4321');
     fireEvent.click(within(dialog).getByTestId('detail-audit-toggle'));
@@ -556,7 +568,8 @@ describe('D-13 / D-14 / D-15 the detail reads (QA-P8, O-3; SA Q-4)', () => {
     const dialog = await openWithButton('Dana Cohen');
     fireEvent.click(within(dialog).getByTestId('detail-audit-toggle'));
     expect(within(dialog).getByText('No audit logs found')).toBeTruthy();
-    expect(within(dialog).getByRole('group', { name: 'Login activity' })).toBeTruthy();
+    // LF-4a.2 (BD-10, SA C4): the login fields live in Account & security's sign-in group.
+    expect(within(dialog).getByTestId('account-login-stats')).toBeTruthy();
     await closeWithEscape();
     detailAnswer = {};
     await openWithButton('Dana Cohen');
@@ -616,14 +629,49 @@ describe('D-16 / D-18 / D-19 / D-20 the body', () => {
     const h2s = dialog.querySelectorAll('h2');
     expect(h2s).toHaveLength(1);
     expect(h2s[0].textContent).toBe('Acme Therapy 99999999…');
+    // LF-4a.2 (BD-4, SA C2): exactly five sections for a Business OS account,
+    // each named by its first heading, its h3. Two named exceptions, asserted by
+    // containment: Credits & billing also holds the one h4 of each unedited
+    // money block (LF-4b removes this when they become labels), and Plan &
+    // entitlements the snapshot's own h3 inside the plan fold.
+    await within(dialog).findByTestId('credits-block');
+    await waitFor(() => expect(within(dialog).queryByText('Loading credits…')).toBeNull());
+    await within(dialog).findByTestId('boost-cap');
     const sections = Array.from(dialog.querySelectorAll('[role="group"][aria-labelledby]'));
-    expect(sections.length).toBeGreaterThanOrEqual(7);
+    expect(sections.map((s) => s.querySelector('h3')?.textContent)).toEqual([
+      'Credits & billing',
+      'Plan & entitlements',
+      'AI usage',
+      'Account & security',
+      'Activity',
+    ]);
+    const allowedExtra = (section: Element): Element[] => {
+      const name = section.querySelector('h3')?.textContent;
+      if (name === 'Credits & billing') {
+        return [
+          within(dialog).getByTestId('credits-block').querySelector('h4'),
+          within(dialog).getByTestId('boost-block').querySelector('h4'),
+        ].filter((h): h is HTMLHeadingElement => h !== null);
+      }
+      if (name === 'Plan & entitlements') {
+        const snapshotHeading = within(dialog).getByTestId('bos-panel-plan').querySelector('h3');
+        return snapshotHeading ? [snapshotHeading] : [];
+      }
+      return [];
+    };
     for (const section of sections) {
-      const headings = section.querySelectorAll('h1, h2, h3, h4, h5, h6');
-      expect({ id: section.getAttribute('aria-labelledby'), count: headings.length }).toEqual({
+      const headings = Array.from(section.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+      const extras = allowedExtra(section);
+      const name = section.querySelector('h3')?.textContent;
+      const expectedExtras = name === 'Credits & billing' ? 2 : name === 'Plan & entitlements' ? 1 : 0;
+      expect({ name, extras: extras.length }).toEqual({ name, extras: expectedExtras });
+      expect({ name, id: section.getAttribute('aria-labelledby'), count: headings.length }).toEqual({
+        name,
         id: headings[0]?.id,
-        count: 1,
+        count: 1 + extras.length,
       });
+      // Containment: every extra heading is exactly one of the named ones (identity, not shape).
+      headings.slice(1).forEach((heading, i) => expect(heading).toBe(extras[i]));
     }
   });
 });

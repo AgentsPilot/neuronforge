@@ -26,7 +26,7 @@ import type { FlowStepKey } from '@/lib/business-os/clientJourney';
 import { TestimonialEditor } from '@/components/website/TestimonialEditor';
 import { ProcessStepEditor } from '@/components/website/ProcessStepEditor';
 import type { TestimonialItem, ProcessStep } from '@/components/website/blocks/types';
-import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
+import { LazyConfigurationDialog } from '@/components/business-os/lazyDialogs';
 import { MediaUploader } from '@/components/website/MediaUploader';
 import { FontPicker } from '@/components/website/FontPicker';
 import { Switch } from '@/components/ui/switch';
@@ -8603,7 +8603,7 @@ export default function WebsiteManagementPage() {
       )}
 
       {/* Configuration Dialog (for services editing) */}
-      <ConfigurationDialog
+      <LazyConfigurationDialog
         isOpen={isConfigOpen}
         onClose={() => setIsConfigOpen(false)}
         initialTab="services"

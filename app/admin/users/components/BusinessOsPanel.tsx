@@ -1,9 +1,18 @@
 /**
- * The Business OS panel at the top of an expanded Businesses row
- * (admin reorganisation slice 2b).
+ * The Business OS part of the Businesses drawer (admin reorganisation slice
+ * 2b; layout from Admin Layout follow-ups LF-4a.2).
  *
- * Order: header, Credits (credit deduction slice 11c, its own read), Plan &
- * entitlements (collapsed), AI spend, AI failures.
+ * Order (BD-4): a header line, the summary strip, then three sections:
+ * Credits & billing (the Credits and Credit top-ups blocks, unedited, each
+ * with its own read), Plan & entitlements (collapsed), AI usage (Business OS
+ * spend and failures, then "All products" from the drawer, folded). The rest of
+ * the drawer (Account & security, Activity, Danger area) is `BusinessDetail`'s.
+ *
+ * The panel stays the one owner of its two reads and of the take-back wiring
+ * between the two money blocks (SA ruling LF-4a.2 SQ-B: not lifted). It always
+ * renders one root and the three sections; only their contents switch, and the
+ * money blocks have one fixed slot with no key, so they mount once per opening
+ * (SA C7).
  *
  * Two reads, both admin-gated on the server:
  *   - the EXISTING entitlements route, rendered by the SAME component the Plans
@@ -20,9 +29,8 @@
 
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { Briefcase } from 'lucide-react';
 
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import {
@@ -30,9 +38,19 @@ import {
   EntitlementSnapshot,
 } from '@/app/admin/business-os-tiers/components/EntitlementSnapshot';
 import type { AccountPayload } from '@/app/admin/business-os-tiers/types';
-import type { AccountSummaryPayload } from '../types';
+import { DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
+import type { AccountSummaryPayload, AdminUserRow } from '../types';
 import { CreditsBlock } from './CreditsBlock';
 import { BoostBlock } from './BoostBlock';
+import {
+  BusinessSummaryStrip,
+  STRIP_COPY,
+  type StripCreditsSlot,
+  type StripSlot,
+} from './BusinessSummaryStrip';
+import { ShowMoreList } from './drawerFolds';
 
 /**
  * Every refusal the summary route can return, as a sentence. Kept complete by a
@@ -49,10 +67,16 @@ export const SUMMARY_ERROR_COPY: Record<string, string> = {
 
 type Load<T> = { state: 'loading' } | { state: 'ok'; data: T } | { state: 'error'; code: string };
 
+/**
+ * One GET. The request is byte-identical to before LF-4a.2; only the body is
+ * read through `readJsonBody` (§5.10, SA-C12), which maps an unreadable body to
+ * `null` and so to the same `'unknown'` code the old parser error gave. The
+ * truthiness test on `success` is kept on purpose (SA review point 4).
+ */
 async function readJson<T>(url: string): Promise<Load<T>> {
   try {
     const response = await fetch(url, { cache: 'no-store' });
-    const body = await response.json();
+    const body = await readJsonBody(response);
     if (!response.ok || !body?.success) {
       return { state: 'error', code: typeof body?.error === 'string' ? body.error : 'unknown' };
     }
@@ -78,21 +102,35 @@ function auditLink(accountId: string, groupId?: string | null): string {
   return `/admin/audit-trail?${params.toString()}`;
 }
 
-/** The fold's one line: the tier and cohort the entitlements read already returned, nothing more. */
+/**
+ * The tier and cohort the entitlements read already returned, nothing more.
+ * Never empty (SA C6): with neither it says "No plan recorded", as the strip
+ * does. The section heading already says "Plan & entitlements" (SQ-H).
+ */
 function planSummary(payload: AccountPayload): string {
-  const parts = ['Plan & entitlements'];
+  const parts: string[] = [];
   if (payload.plan?.tier) parts.push(payload.plan.tier);
   if (payload.plan?.cohort) parts.push(`cohort ${payload.plan.cohort}`);
-  return parts.join(' · ');
+  return parts.length > 0 ? parts.join(' · ') : STRIP_COPY.noPlan;
 }
+
+/** The link style the drawer uses for every in-text link (BD-11: no decorative green). */
+const LINK_CLASS = 'text-xs text-blue-300 underline hover:text-blue-200';
 
 interface Props {
-  accountId: string;
-  /** The login's name, shown beside the business name. */
-  userName: string | null;
+  /** The open row: its id, the login's name, and the strip's row facts (BD-1). */
+  user: AdminUserRow;
+  /**
+   * "All products, token records", built by the drawer from the page's stats
+   * read; shown in AI usage in every state of this panel (BD-7, SA C3 (d)).
+   * Presentational: it holds no read.
+   */
+  allProducts: ReactNode;
 }
 
-export function BusinessOsPanel({ accountId, userName }: Props) {
+export function BusinessOsPanel({ user, allProducts }: Props) {
+  const accountId = user.id;
+  const userName = user.full_name;
   const [plan, setPlan] = useState<Load<AccountPayload>>({ state: 'loading' });
   const [summary, setSummary] = useState<Load<AccountSummaryPayload>>({ state: 'loading' });
   // Credits boost 6b (SA C-5): Take back from a top-up opens the Credits block's dialog.
@@ -149,169 +187,231 @@ export function BusinessOsPanel({ accountId, userName }: Props) {
       ? summary.data.business.companyName
       : accountId;
 
+  // The strip's slots (BD-1, BD-12, BD-13, SQ-G): placeholders until both reads
+  // settle; then "Not a Business OS account" when the reads say so (the reads
+  // decide, not the row); a failed read says so, never a zero (BD-3).
+  let planSlot: StripSlot = { kind: 'unreadable' };
+  let aiSlot: StripSlot = { kind: 'unreadable' };
+  let creditsSlot: StripCreditsSlot = { kind: 'cell' };
+  if (loading) {
+    planSlot = { kind: 'reading' };
+    aiSlot = { kind: 'reading' };
+    creditsSlot = { kind: 'reading' };
+  } else if (notBos) {
+    planSlot = { kind: 'not_bos' };
+    aiSlot = { kind: 'not_bos' };
+    creditsSlot = { kind: 'not_bos' };
+  } else {
+    if (plan.state === 'ok') planSlot = { kind: 'value', text: planSummary(plan.data) };
+    if (summary.state === 'ok' && summary.data.aiSpend30d.status !== 'error') {
+      const spend = summary.data.aiSpend30d;
+      aiSlot = {
+        kind: 'value',
+        text: formatUsd(spend.total.estimatedCostUsd),
+        sub: spend.status === 'incomplete' ? 'estimated, a lower bound' : 'estimated',
+      };
+    }
+  }
+
+  // One root in every state, and the three sections always render (SA C7):
+  // only their contents switch, so nothing above the money blocks changes type.
   return (
-    <section
-      data-testid="bos-panel"
-      className="bg-gradient-to-br from-emerald-500/10 to-teal-500/10 p-6 rounded-xl border border-emerald-500/20"
-    >
-      <header className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <Briefcase className="h-5 w-5 text-emerald-400 self-center" aria-hidden="true" />
-        <h3 data-testid="bos-panel-business" className="text-lg font-bold text-white">
-          {headerTitle}
-        </h3>
-        <span data-testid="bos-panel-user" className="text-sm text-slate-400">
-          {userName || 'No name'}
-        </span>
-      </header>
-
-      {loading && <p className="text-sm text-slate-400">Loading Business OS details…</p>}
-
-      {!loading && notBos && (
-        <p data-testid="bos-panel-not-bos" className="text-sm text-slate-400">
-          {SUMMARY_ERROR_COPY.not_a_business_os_account}
-        </p>
-      )}
-
-      {!loading && !notBos && (
-        <div className="space-y-6">
-          {/* Business */}
-          {summary.state === 'ok' && summary.data.business.status === 'ok' && (
-            <p data-testid="bos-panel-vertical" className="text-sm text-slate-300">
-              Vertical: <span className="text-white">{summary.data.business.vertical}</span>
-              {summary.data.business.subVertical && (
-                <span className="text-slate-400"> · {summary.data.business.subVertical}</span>
-              )}
-            </p>
-          )}
-          {summary.state === 'ok' && summary.data.business.status === 'none' && (
-            <p className="text-sm text-slate-400">Business profile not created yet (setup in progress).</p>
-          )}
-
-          {/* Credits (credit deduction slice 11c): its own read, first after the header */}
-          <CreditsBlock
-            accountId={accountId}
-            businessLabel={businessLabel}
-            takeBackRequest={takeBackRequest}
-            onTakeBackableLots={onTakeBackableLots}
-          />
-
-          {/* Credit top-ups (credits boost slice 6a): its own read, after Credits.
-              6b (SA C-5): its Take back opens the Credits block's dialog on the purchase's lot. */}
-          <BoostBlock accountId={accountId} businessLabel={businessLabel} takeBack={takeBack} />
-
-          {/* Plan: the entitlements API, rendered by the Plans & entitlements
-              component, collapsed by default here only (user UI fixes,
-              2026-10-04). The Plans page renders it open, unchanged. A read
-              failure is never hidden behind the fold. */}
-          {plan.state === 'ok' ? (
-            <details data-testid="bos-panel-plan" className="group">
-              <summary
-                data-testid="bos-panel-plan-summary"
-                className="cursor-pointer select-none text-sm font-semibold text-slate-300 hover:text-white"
-              >
-                {planSummary(plan.data)}
-                <span className="font-normal text-emerald-300">
-                  {' · '}
-                  <span className="group-open:hidden">Show all capabilities</span>
-                  <span className="hidden group-open:inline">Hide capabilities</span>
-                </span>
-              </summary>
-              <EntitlementSnapshot payload={plan.data} />
-            </details>
-          ) : (
-            plan.state === 'error' && (
-              <div>
-                <h4 className="text-sm font-semibold text-slate-300">Plan & entitlements</h4>
-                <p data-testid="bos-panel-plan-error" className="mt-2 text-sm text-rose-300">
-                  {ENTITLEMENT_ERROR_COPY[plan.code] ?? 'The plan could not be read.'}
-                </p>
-              </div>
-            )
-          )}
-
-          {summary.state === 'error' && (
-            <p data-testid="bos-panel-summary-error" className="text-sm text-rose-300">
-              {SUMMARY_ERROR_COPY[summary.code] ?? 'The Business OS summary could not be read.'}
-            </p>
-          )}
-
-          {summary.state === 'ok' && (
+    <div data-testid="bos-panel" className="space-y-6">
+      <div data-testid="bos-panel-header" className="space-y-1">
+        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-slate-400">
+          <span data-testid="bos-panel-business" className="font-semibold text-slate-200">
+            {headerTitle}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span data-testid="bos-panel-user">{userName || 'No name'}</span>
+          {!notBos && summary.state === 'ok' && summary.data.business.status === 'ok' && (
             <>
-              {/* AI spend, 30 days */}
-              <div data-testid="bos-panel-spend">
-                <h4 className="text-sm font-semibold text-slate-300">
-                  Business OS AI spend (last 30 days, USD estimated)
-                </h4>
-                {summary.data.aiSpend30d.status === 'error' ? (
-                  <p className="mt-2 text-sm text-rose-300">The AI usage ledger could not be read.</p>
-                ) : (
-                  <>
-                    <p className="mt-2 text-2xl font-bold text-white">
-                      {formatUsd(summary.data.aiSpend30d.total.estimatedCostUsd)}
-                      <span className="ml-3 text-sm font-normal text-slate-400">
-                        {summary.data.aiSpend30d.total.calls.toLocaleString('en-US')} calls ·{' '}
-                        {summary.data.aiSpend30d.total.tokens.toLocaleString('en-US')} tokens
-                      </span>
-                    </p>
-                    {summary.data.aiSpend30d.status === 'incomplete' && (
-                      <p data-testid="bos-panel-spend-incomplete" className="mt-1 text-xs text-amber-300">
-                        More than {summary.data.aiSpend30d.readCeiling.toLocaleString('en-US')} calls in 30 days:
-                        this total is a lower bound.
-                      </p>
-                    )}
-                    {summary.data.aiSpend30d.lines.length > 0 && (
-                      <ul className="mt-2 flex flex-wrap gap-2 text-xs">
-                        {summary.data.aiSpend30d.lines.map((line) => (
-                          <li key={line.key} className="rounded bg-slate-800/60 px-2 py-1 text-slate-300">
-                            {line.key}: {formatUsd(line.estimatedCostUsd)} ({line.calls})
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </>
+              <span aria-hidden="true">·</span>
+              <span data-testid="bos-panel-vertical" className="text-slate-300">
+                Vertical: <span className="text-white">{summary.data.business.vertical}</span>
+                {summary.data.business.subVertical && (
+                  <span className="text-slate-400"> · {summary.data.business.subVertical}</span>
                 )}
-                <Link
-                  href={`/admin/analytics?scope=bos&user=${encodeURIComponent(accountId)}`}
-                  className="mt-2 inline-block text-xs text-emerald-300 underline hover:text-emerald-200"
-                >
-                  Open in AI cost & usage
-                </Link>
-              </div>
-
-              {/* Recent AI failures */}
-              <div data-testid="bos-panel-failures">
-                <h4 className="text-sm font-semibold text-slate-300">Recent Business OS AI failures (last 30 days)</h4>
-                {summary.data.recentAiFailures.status === 'error' ? (
-                  <p className="mt-2 text-sm text-rose-300">The audit trail could not be read.</p>
-                ) : summary.data.recentAiFailures.items.length === 0 ? (
-                  <p className="mt-2 text-sm text-slate-400">No failed AI actions.</p>
-                ) : (
-                  <ul className="mt-2 space-y-1 text-sm">
-                    {summary.data.recentAiFailures.items.map((item) => (
-                      <li key={item.id} className="flex flex-wrap items-center gap-x-3 text-slate-300">
-                        <span className="text-slate-400">{new Date(item.createdAt).toLocaleString()}</span>
-                        <span>{item.area ?? 'unknown area'}</span>
-                        {item.actionType && <span className="text-slate-400">{item.actionType}</span>}
-                        {item.errorCode && <span className="font-mono text-rose-300">{item.errorCode}</span>}
-                        <Link href={auditLink(accountId, item.groupId)} className="text-xs text-blue-300 underline">
-                          In audit trail
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <Link
-                  data-testid="bos-panel-failures-link"
-                  href={auditLink(accountId)}
-                  className="mt-2 inline-block text-xs text-blue-300 underline hover:text-blue-200"
-                >
-                  View all of this business’s AI failures in the audit trail
-                </Link>
-              </div>
+              </span>
             </>
           )}
-        </div>
-      )}
-    </section>
+        </p>
+        {!notBos && summary.state === 'ok' && summary.data.business.status === 'none' && (
+          <p className="text-sm text-slate-400">Business profile not created yet (setup in progress).</p>
+        )}
+      </div>
+
+      <BusinessSummaryStrip
+        plan={planSlot}
+        credits={creditsSlot}
+        aiSpend={aiSlot}
+        business={user.business}
+        creditsLeft={user.creditsLeft}
+        lastSignInAt={user.last_sign_in_at ?? null}
+      />
+
+      {/* 1. Credits & billing: the two money blocks, moved whole and unedited
+          (LF-4b owns their insides). Today's gate: mounted only after both
+          reads settle, and only for a Business OS account (BD-13). */}
+      <DrawerSection title="Credits & billing" testId="drawer-section-credits">
+        {loading && <p className="text-sm text-slate-400">Loading Business OS details…</p>}
+
+        {!loading && notBos && (
+          <p data-testid="bos-panel-not-bos" className="text-sm text-slate-400">
+            {SUMMARY_ERROR_COPY.not_a_business_os_account}
+          </p>
+        )}
+
+        {!loading && !notBos && (
+          <div className="space-y-6">
+            {/* Credits (credit deduction slice 11c): its own read */}
+            <CreditsBlock
+              accountId={accountId}
+              businessLabel={businessLabel}
+              takeBackRequest={takeBackRequest}
+              onTakeBackableLots={onTakeBackableLots}
+            />
+
+            {/* Credit top-ups (credits boost slice 6a): its own read, after Credits.
+                6b (SA C-5): its Take back opens the Credits block's dialog on the purchase's lot. */}
+            <BoostBlock accountId={accountId} businessLabel={businessLabel} takeBack={takeBack} />
+          </div>
+        )}
+      </DrawerSection>
+
+      {/* 2. Plan: the entitlements API, rendered by the Plans & entitlements
+          component, collapsed by default here only (user UI fixes,
+          2026-10-04). The Plans page renders it open, unchanged. A read
+          failure is never hidden behind the fold. */}
+      <DrawerSection title="Plan & entitlements" testId="drawer-section-plan">
+        {loading && <p className="text-sm text-slate-400">Loading the plan…</p>}
+
+        {!loading && notBos && (
+          <p data-testid="bos-plan-not-bos" className="text-sm text-slate-400">
+            {SUMMARY_ERROR_COPY.not_a_business_os_account}
+          </p>
+        )}
+
+        {!loading && !notBos && plan.state === 'ok' && (
+          <details data-testid="bos-panel-plan" className="group">
+            <summary
+              data-testid="bos-panel-plan-summary"
+              className="cursor-pointer select-none text-sm font-semibold text-slate-300 hover:text-white"
+            >
+              {planSummary(plan.data)}
+              <span className="font-normal text-blue-300">
+                {' · '}
+                <span className="group-open:hidden">Show all capabilities</span>
+                <span className="hidden group-open:inline">Hide capabilities</span>
+              </span>
+            </summary>
+            <EntitlementSnapshot payload={plan.data} />
+          </details>
+        )}
+
+        {!loading && !notBos && plan.state === 'error' && (
+          <p data-testid="bos-panel-plan-error" className="text-sm text-rose-300">
+            {ENTITLEMENT_ERROR_COPY[plan.code] ?? 'The plan could not be read.'}
+          </p>
+        )}
+      </DrawerSection>
+
+      {/* 3. AI usage (BD-7, Q-4 (a)): Business OS first and open; "All
+          products" from the drawer last, folded, in every state (SA C3 (d)). */}
+      <DrawerSection title="AI usage" testId="drawer-section-ai">
+        {loading && <p className="text-sm text-slate-400">Loading Business OS AI usage…</p>}
+
+        {!loading && !notBos && summary.state === 'error' && (
+          <p data-testid="bos-panel-summary-error" className="text-sm text-rose-300">
+            {SUMMARY_ERROR_COPY[summary.code] ?? 'The Business OS summary could not be read.'}
+          </p>
+        )}
+
+        {!loading && !notBos && summary.state === 'ok' && (
+          <>
+            {/* Not headings: each DrawerSection has exactly one (L-1d M-4; SA C2). */}
+            <div data-testid="bos-panel-spend" className="space-y-2">
+              <p className="text-sm font-semibold text-slate-300">Business OS, last 30 days (USD estimated)</p>
+              {summary.data.aiSpend30d.status === 'error' ? (
+                <p className="text-sm text-rose-300">The AI usage ledger could not be read.</p>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-white">
+                    {formatUsd(summary.data.aiSpend30d.total.estimatedCostUsd)}
+                    <span className="ml-3 text-sm font-normal text-slate-400">
+                      {summary.data.aiSpend30d.total.calls.toLocaleString('en-US')} calls ·{' '}
+                      {summary.data.aiSpend30d.total.tokens.toLocaleString('en-US')} tokens
+                    </span>
+                  </p>
+                  {summary.data.aiSpend30d.status === 'incomplete' && (
+                    <p data-testid="bos-panel-spend-incomplete" className="text-xs text-amber-300">
+                      More than {summary.data.aiSpend30d.readCeiling.toLocaleString('en-US')} calls in 30 days:
+                      this total is a lower bound.
+                    </p>
+                  )}
+                  {summary.data.aiSpend30d.lines.length > 0 && (
+                    <ul className="flex flex-wrap gap-2 text-xs">
+                      {summary.data.aiSpend30d.lines.map((line) => (
+                        <li key={line.key} className="rounded bg-slate-800/60 px-2 py-1 text-slate-300">
+                          {line.key}: {formatUsd(line.estimatedCostUsd)} ({line.calls})
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+              <Link
+                href={`/admin/analytics?scope=bos&user=${encodeURIComponent(accountId)}`}
+                className={`inline-block ${LINK_CLASS}`}
+              >
+                Open in AI cost & usage
+              </Link>
+            </div>
+
+            <div data-testid="bos-panel-failures" className="space-y-2">
+              <p className="text-sm font-semibold text-slate-300">Recent Business OS AI failures (last 30 days)</p>
+              {summary.data.recentAiFailures.status === 'error' ? (
+                <p className="text-sm text-rose-300">The audit trail could not be read.</p>
+              ) : summary.data.recentAiFailures.items.length === 0 ? (
+                <p className="text-sm text-slate-400">No failed AI actions.</p>
+              ) : (
+                // BD-8: the newest three, the rest hidden (never unmounted) behind "Show N more".
+                <ShowMoreList
+                  testId="bos-panel-failures-more"
+                  listClassName="space-y-1 text-sm"
+                  items={summary.data.recentAiFailures.items.map((item) => (
+                    <li
+                      key={item.id}
+                      data-testid="bos-panel-failure"
+                      className="flex flex-wrap items-center gap-x-3 text-slate-300"
+                    >
+                      {/* §5.11: UTC, never the browser's local time (P-8). */}
+                      <span data-testid="bos-panel-failure-time" className="text-slate-400">
+                        {formatUtc(item.createdAt)}
+                      </span>
+                      <span>{item.area ?? 'unknown area'}</span>
+                      {item.actionType && <span className="text-slate-400">{item.actionType}</span>}
+                      {item.errorCode && <span className="font-mono text-rose-300">{item.errorCode}</span>}
+                      <Link href={auditLink(accountId, item.groupId)} className="text-xs text-blue-300 underline">
+                        In audit trail
+                      </Link>
+                    </li>
+                  ))}
+                />
+              )}
+              <Link
+                data-testid="bos-panel-failures-link"
+                href={auditLink(accountId)}
+                className={`inline-block ${LINK_CLASS}`}
+              >
+                View all of this business’s AI failures in the audit trail
+              </Link>
+            </div>
+          </>
+        )}
+
+        {allProducts}
+      </DrawerSection>
+    </div>
   );
 }
