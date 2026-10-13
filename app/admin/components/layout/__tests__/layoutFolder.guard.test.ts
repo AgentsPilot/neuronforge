@@ -500,7 +500,10 @@ const MIGRATED_PAGES = [
     ],
   },
   {
-    // The Jobs guard's CLIENT_FILES (Admin Layout Standard L-1b).
+    // The Jobs guard's CLIENT_FILES (Admin Layout Standard L-1b), except
+    // `ReconcileTopUpsDialog.tsx` (follow-ups LF-4c), deliberately NOT listed:
+    // a money dialog moved from Businesses that still reads its route with
+    // `.json(` (L-4b SA Q-5, SA-C12 precedent). The Jobs guard pins its request.
     page: '/admin/jobs-queues (Scheduled jobs & queues)',
     files: [
       'app/admin/jobs-queues/page.tsx',
@@ -554,10 +557,11 @@ const MIGRATED_PAGES = [
     // unchanged, plus the strip, the folds and the "All products" block, which
     // read nothing. The credit, top-up and delete components are deliberately
     // NOT listed (L-4b SA Q-5, the G-6 precedent): CreditsBlock,
-    // CreditFormDialog, BoostBlock, BoostCapDialog, BoostReconcileDialog and
-    // DeleteBusinessDialog each still read their own route with `.json(`, and
-    // their error copy is pinned by their own render and contract tests.
-    // Converting them is money work, not a layout change (LF-4b, LF-4c).
+    // CreditFormDialog, BoostBlock, BoostCapDialog and DeleteBusinessDialog
+    // each still read their own route with `.json(`, and their error copy is
+    // pinned by their own render and contract tests. Converting them is money
+    // work, not a layout change (LF-4b). The reconcile dialog left this folder
+    // in LF-4c (now `app/admin/components/jobs/ReconcileTopUpsDialog.tsx`).
     page: '/admin/users (Businesses)',
     files: [
       'app/admin/users/page.tsx',
