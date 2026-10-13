@@ -124,9 +124,11 @@ interface Props {
    * block closes the dialog, shows them, and reads its figures again.
    */
   onSuccess: (lines: string[]) => void;
+  /** F-108 (LF-4b, BD-15): where focus goes on close; the block returns it to the opener. */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
-export function CreditFormDialog({ open, onOpenChange, mode, accountId, businessLabel, limits, onSuccess }: Props) {
+export function CreditFormDialog({ open, onOpenChange, mode, accountId, businessLabel, limits, onSuccess, onCloseAutoFocus }: Props) {
   const ids = useId();
   const [requestId, setRequestId] = useState<string>('');
   const [step, setStep] = useState<'form' | 'confirm'>('form');
@@ -248,7 +250,7 @@ export function CreditFormDialog({ open, onOpenChange, mode, accountId, business
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent data-testid="credit-form-dialog" className={ADMIN_DIALOG_CLASS}>
+      <DialogContent data-testid="credit-form-dialog" className={ADMIN_DIALOG_CLASS} onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>{title}</DialogTitle>
           <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>

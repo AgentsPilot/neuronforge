@@ -352,7 +352,8 @@ describe('Take back (SA C-5)', () => {
     const onTakeBack = jest.fn();
     await mount(view(), {}, { takeBack: { lotIds: new Set([LOT]), loadedLotIds: new Set([LOT]), onTakeBack } });
     fireEvent.click(screen.getByTestId('boost-take-back'));
-    expect(onTakeBack).toHaveBeenCalledWith(LOT);
+    // LF-4b (SA-C8): the button travels with the request, so focus can return to it.
+    expect(onTakeBack).toHaveBeenCalledWith(LOT, screen.getByTestId('boost-take-back'));
   });
 
   it('a lot the Credits block has NOT loaded (yet) → "Take back in Credits above", no button', async () => {

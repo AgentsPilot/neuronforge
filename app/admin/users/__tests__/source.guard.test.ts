@@ -42,6 +42,8 @@ const SCREEN_FILES = [
   `${ROOT}/usersFormat.ts`,
   // Admin Layout follow-ups LF-4a.2 (the drawer layout)
   ...LF4A2_FILES(),
+  // Admin Layout follow-ups LF-4b (inside the money blocks)
+  `${ROOT}/components/moneyBlockUi.ts`,
 ];
 
 /**
@@ -67,6 +69,56 @@ describe('the LF-4a.2 drawer layout adds no request (BD-1, AC-4.3)', () => {
     expect(strip).toContain('<CreditsLeftCell business={business} creditsLeft={creditsLeft} />');
     expect(strip).not.toMatch(/planLeft|extraCredits|creditBands/);
   });
+});
+
+/**
+ * LF-4b checks, written with string methods only (no regex escapes: the
+ * repo's Tailwind-scan note). `flat` joins the lines, trimmed, with one space.
+ */
+const flat = (code: string) =>
+  code
+    .split(String.fromCharCode(10))
+    .map((line) => line.split(String.fromCharCode(13)).join('').trim())
+    .filter((line) => line.length > 0)
+    .join(' ');
+const occurrences = (code: string, needle: string) => code.split(needle).length - 1;
+
+describe('LF-4b inside the money blocks (BD-14, BD-15)', () => {
+  const BLOCK = `${ROOT}/components/CreditsBlock.tsx`;
+
+  it('the money-block helper sends no request', () => {
+    expect(codeOf(read(`${ROOT}/components/moneyBlockUi.ts`))).not.toContain('fetch(');
+  });
+
+  it('BD-14: the drawer hands refreshList to the panel as onCreditsChanged, the onRemoved shape', () => {
+    const detail = flat(codeOf(read(`${ROOT}/components/BusinessDetail.tsx`)));
+    expect(detail).toContain('onCreditsChanged={() => { void refreshList(); }}');
+    const panel = codeOf(read(`${ROOT}/components/BusinessOsPanel.tsx`));
+    expect(occurrences(panel, 'onCreditsChanged={onCreditsChanged}')).toBe(1);
+  });
+
+  it('BD-14: the Credits block calls onCreditsChanged exactly once, inside handleSuccess, and in no dependency list', () => {
+    const code = codeOf(read(BLOCK));
+    expect(occurrences(code, 'onCreditsChanged?.()')).toBe(1);
+    const start = code.indexOf('function handleSuccess(');
+    expect(start).toBeGreaterThan(-1);
+    expect(code.slice(start, code.indexOf('}', start))).toContain('onCreditsChanged?.()');
+    let at = code.indexOf('}, [');
+    while (at >= 0) {
+      expect(code.slice(at, code.indexOf(']', at))).not.toContain('onCreditsChanged');
+      at = code.indexOf('}, [', at + 1);
+    }
+  });
+
+  it.each([`${ROOT}/components/CreditFormDialog.tsx`, `${ROOT}/components/BoostCapDialog.tsx`])(
+    'BD-15: %s forwards onCloseAutoFocus to DialogContent as a named handler',
+    (file) => {
+      const code = codeOf(read(file));
+      expect(occurrences(code, '<DialogContent ')).toBe(1);
+      const start = code.indexOf('<DialogContent ');
+      expect(code.slice(start, code.indexOf('>', start))).toContain('onCloseAutoFocus={onCloseAutoFocus}');
+    }
+  );
 });
 
 /** The drawer body that holds the danger area since L-4b (it was the expanded row in `page.tsx`). */
@@ -363,8 +415,9 @@ describe('the Delete… dialog: preview, then a typed confirmation only with a t
     expect(read(DETAIL)).toMatch(
       /onDeleted=\{\(\) => \{\s*\/\/ FR-A9: after a deletion the row reads "No Business OS business"\.\s*void refreshList\(\);\s*\}\}/,
     );
-    // Only the two bodies call it (onDeleted, onRemoved).
-    expect(detail.match(/refreshList\(/g)).toHaveLength(2);
+    // Only the three bodies call it: onDeleted, onRemoved, and onCreditsChanged
+    // (LF-4b, BD-14: once after a successful Give or Take back).
+    expect(occurrences(detail, 'refreshList(')).toBe(3);
   });
 });
 

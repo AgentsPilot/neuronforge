@@ -16,11 +16,31 @@
  * request is recorded with its URL, method, headers, raw body and `cache`
  * option. `crypto.randomUUID` is a counter that records what it minted.
  * Every test fails on any console error or warning, and on any request the
- * stub does not know.
+ * stub does not know. The stub, the waits, the uuid counter and the guard are
+ * the shared pin harness (`tests/admin/drawerPinHarness.ts`, LF-4b Step 12);
+ * the route table below is this file's own.
  */
 
 import React from 'react';
 import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+
+import {
+  deferred,
+  fromQueue,
+  getCount,
+  installFetch,
+  installPinLifecycle,
+  listReads,
+  minted,
+  posts,
+  quiet,
+  requestOf,
+  settle,
+  setRoutes,
+  unexpected,
+  type Queued,
+  type Reply,
+} from '@/tests/admin/drawerPinHarness';
 
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({
@@ -169,29 +189,11 @@ function boost(overrides: Partial<AdminBoostView> = {}): AdminBoostView {
   };
 }
 
-// ── The recording fetch stub ────────────────────────────────────────────────
+// ── The route table (the recording stub is the shared pin harness) ──────────
 
-interface Reply {
-  status: number;
-  body?: unknown;
-}
-type Queued = Reply | Promise<Reply>;
-
-interface Call {
-  url: string;
-  method: string;
-  headers: HeadersInit | undefined;
-  body: string | null;
-  cache: RequestCache | undefined;
-}
-
-let calls: Call[] = [];
-let unexpected: string[] = [];
-let pending = 0;
 let creditsData: AccountCreditPositionPayload;
 let boostData: AdminBoostView;
 let opsQueue: Queued[] = [];
-let minted: string[] = [];
 
 const ok = (data: unknown): Reply => ({ status: 200, body: { success: true, data } });
 const refused = (status: number, error: string, details?: Record<string, unknown>): Reply => ({
@@ -216,88 +218,10 @@ function routeGet(url: string): Queued {
   return refused(404, 'not mocked');
 }
 
-/** The next queued answer; a POST nothing was queued for is unexpected (SA fix 4), and still answers 500. */
-function fromQueue(queue: Queued[], url: string): Queued {
-  const next = queue.shift();
-  if (next !== undefined) return next;
-  unexpected.push(`POST ${url} (nothing queued)`);
-  return refused(500, 'not queued');
-}
-
 function routePost(url: string): Queued {
   if (url === OPS_URL) return fromQueue(opsQueue, url);
   unexpected.push(`POST ${url}`);
   return refused(404, 'not mocked');
-}
-
-function installFetch(): void {
-  const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const url = String(input);
-    const method = (init?.method ?? 'GET').toUpperCase();
-    calls.push({
-      url,
-      method,
-      headers: init?.headers,
-      body: typeof init?.body === 'string' ? init.body : null,
-      cache: init?.cache,
-    });
-    pending += 1;
-    try {
-      const reply = await (method === 'GET' ? routeGet(url) : routePost(url));
-      return { ok: reply.status >= 200 && reply.status < 300, status: reply.status, json: async () => reply.body } as unknown as Response;
-    } finally {
-      pending -= 1;
-    }
-  });
-  global.fetch = fetchMock as unknown as typeof fetch;
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
-const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-
-const posts = () => calls.filter((c) => c.method === 'POST');
-const getCount = (url: string) => calls.filter((c) => c.method === 'GET' && c.url === url).length;
-const listReads = () => calls.filter((c) => c.method === 'GET' && c.url.startsWith('/api/admin/users?')).length;
-const bodyOf = (call: Call): unknown => JSON.parse(call.body ?? 'null');
-
-/** The whole recorded request; the body parsed, or the raw string when `raw` (the reconcile body is the literal '{}'). */
-const requestOf = (call: Call, raw = false) => ({
-  url: call.url,
-  method: call.method,
-  headers: call.headers,
-  cache: call.cache,
-  body: raw ? call.body : bodyOf(call),
-});
-
-/** Every request answered and every resulting state update flushed. */
-async function settle() {
-  await waitFor(() => expect(pending).toBe(0));
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-}
-
-/**
- * Quiet: nothing in flight and no new request for a 300 ms window (real
- * timers), repeated until a window passes with no new call. A late extra read
- * (a timer after a success, say) lands inside the window and is counted.
- */
-async function quiet() {
-  await settle();
-  let seen = -1;
-  while (seen !== calls.length || pending !== 0) {
-    seen = calls.length;
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    });
-  }
 }
 
 /** The final read counts, once the drawer has gone quiet. */
@@ -348,49 +272,15 @@ async function openTakeBack(drawer: HTMLElement, index: number): Promise<HTMLEle
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-let consoleError: jest.SpyInstance;
-let consoleWarn: jest.SpyInstance;
-
-beforeAll(() => {
-  const proto = Element.prototype as unknown as Record<string, unknown>;
-  proto.hasPointerCapture ??= () => false;
-  proto.releasePointerCapture ??= () => undefined;
-  proto.scrollIntoView ??= () => undefined;
-});
+// The shared harness: browser shims, emptied records, the uuid counter, the
+// console and unexpected-request guard after every test.
+setRoutes(routeGet, routePost);
+installPinLifecycle({ countUuids: true });
 
 beforeEach(() => {
-  calls = [];
-  unexpected = [];
-  pending = 0;
   opsQueue = [];
-  minted = [];
   creditsData = credits();
   boostData = boost();
-  Object.defineProperty(globalThis, 'crypto', {
-    configurable: true,
-    value: {
-      randomUUID: () => {
-        const id = uuid(minted.length + 1);
-        minted.push(id);
-        return id;
-      },
-    },
-  });
-  consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-  consoleWarn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-});
-
-afterEach(async () => {
-  try {
-    await settle();
-    expect(unexpected).toEqual([]);
-    expect(consoleError).not.toHaveBeenCalled();
-    expect(consoleWarn).not.toHaveBeenCalled();
-  } finally {
-    // Restored even when a guard fails, so a spy never leaks into the next test.
-    consoleError.mockRestore();
-    consoleWarn.mockRestore();
-  }
 });
 
 // ── Give credits ────────────────────────────────────────────────────────────
@@ -429,8 +319,8 @@ describe('Give credits (PIN-c, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'grant_credits', amount: 1000, expiresAt: null, requestId: minted[minted.length - 1], reason: 'goodwill gesture' }),
     ]);
-    // One Credits re-read; today no top-ups re-read and no list re-read (BD-14 adds the list read in LF-4b, by name).
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    // One Credits re-read and one list re-read (BD-14, LF-4b); no top-ups re-read.
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('GIVE-2: a dated gift sends the local end time as an ISO instant; the confirm step shows what is sent; the notice reads the response', async () => {
@@ -451,7 +341,7 @@ describe('Give credits (PIN-c, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'grant_credits', amount: 250, expiresAt: instant, requestId: minted[minted.length - 1], reason: 'loyalty' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('GIVE-3 (PIN-a): one request id per opening, the same id on the retry after a failure, a new id on the next opening', async () => {
@@ -495,7 +385,7 @@ describe('Give credits (PIN-c, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
       opsPost({ op: 'grant_credits', amount: 10, expiresAt: null, requestId: firstId, reason: 'first try' }),
       opsPost({ op: 'grant_credits', amount: 10, expiresAt: null, requestId: secondId, reason: 'second gift' }),
     ]);
-    await expectReads({ credits: 3, boost: 1, list: 1 });
+    await expectReads({ credits: 3, boost: 1, list: 3 });
   });
 
   it('GIVE-4 (PIN-f): a double click sends once; while in flight the dialog refuses Escape and its Back is disabled', async () => {
@@ -529,7 +419,7 @@ describe('Give credits (PIN-c, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'grant_credits', amount: 5, expiresAt: null, requestId: minted[minted.length - 1], reason: 'double click' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('GIVE-5 (PIN-g): a refusal keeps the dialog open with the mapped sentence; no notice, no re-read', async () => {
@@ -583,7 +473,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 50, requestId: minted[mintedBefore], reason: 'mistaken amount' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it("TAKE-2: 'Everything left' sends amount 'rest' and says so on the confirm step", async () => {
@@ -603,7 +493,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 'rest', requestId: minted[minted.length - 1], reason: 'closing the gift' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('TAKE-3: a paid lot blocks Continue until the paid confirmation is ticked, and only then sends confirmPaidCredits', async () => {
@@ -631,7 +521,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
         confirmPaidCredits: true,
       }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('TAKE-4 (PIN-g, PIN-a): exceeds_remaining keeps the dialog open with the remaining figure; the retry reuses the request id', async () => {
@@ -658,7 +548,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 150, requestId: id, reason: 'too much' }),
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 120, requestId: id, reason: 'too much' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('TAKE-5 (PIN-f): a double click sends once; while in flight the dialog refuses Escape', async () => {
@@ -685,7 +575,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 1, requestId: minted[minted.length - 1], reason: 'double click' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 });
 

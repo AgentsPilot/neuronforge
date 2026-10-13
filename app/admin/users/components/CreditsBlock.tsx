@@ -22,10 +22,19 @@
  * admin's own account (the server refuses it regardless, 403 `own_account`).
  * A success closes the dialog and shows the server's result as a status line
  * here, while the figures are read again.
+ *
+ * Layout (Admin Layout follow-ups LF-4b): Give credits sits in a bordered
+ * action bar above the figures (BD-5); the lots show the newest three and fold
+ * the rest, hidden and never unmounted (BD-8); after a success the drawer
+ * re-reads the list once (`onCreditsChanged`, BD-14); closing the dialog
+ * returns focus to the button that opened it, or to the section heading when
+ * that button is gone (BD-15, F-108).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Coins } from 'lucide-react';
+
+import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
 
 import {
   CREDIT_COPY,
@@ -38,6 +47,8 @@ import {
 } from '../creditCopy';
 import type { AccountCreditPositionPayload, CreditLotView, CreditUsageBlockView } from '../types';
 import { CreditFormDialog, type CreditFormMode } from './CreditFormDialog';
+import { ShowMoreList } from './drawerFolds';
+import { MONEY_ACTION_BAR, useReturnFocus } from './moneyBlockUi';
 
 type Load = { state: 'loading' } | { state: 'ok'; data: AccountCreditPositionPayload } | { state: 'error'; code: string };
 
@@ -156,7 +167,8 @@ function LotRow({
 }: {
   lot: CreditLotView;
   canChange: boolean;
-  onTakeBack: (lot: CreditLotView) => void;
+  /** The lot, and the button that asked (focus returns to it, F-108). */
+  onTakeBack: (lot: CreditLotView, opener: HTMLElement) => void;
 }) {
   const takeBackable = canChange && isTakeBackable(lot);
   return (
@@ -192,7 +204,7 @@ function LotRow({
           <button
             type="button"
             data-testid="credits-take-back"
-            onClick={() => onTakeBack(lot)}
+            onClick={(event) => onTakeBack(lot, event.currentTarget)}
             className="ml-auto rounded border border-slate-600 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-700/50"
           >
             {CREDIT_COPY.takeBackButton}
@@ -229,15 +241,34 @@ interface Props {
    * by lot id. A new `seq` opens this block's Take back dialog on that lot, only
    * when the lot is loaded here and can be taken back; otherwise nothing opens.
    */
-  takeBackRequest?: { lotId: string; seq: number } | null;
+  takeBackRequest?: TakeBackRequest | null;
   /**
    * Reports, after every read, the lots this block offers Take back for (none on
    * the admin's own account) and every lot it has loaded (QA6b-L2).
    */
   onTakeBackableLots?: (lotIds: string[], loadedLotIds: string[]) => void;
+  /**
+   * BD-14 (LF-4b, SA-C7): called once after a successful Give or Take back, so
+   * the drawer re-reads the list and the strip, the row and this block agree.
+   * Called only from `handleSuccess`: never from an effect, a close or a re-read.
+   */
+  onCreditsChanged?: () => void;
 }
 
-export function CreditsBlock({ accountId, businessLabel, takeBackRequest = null, onTakeBackableLots }: Props) {
+/**
+ * Take back asked for from the top-ups block (boost 6b): the lot, a sequence
+ * number, and the top-up's button, so focus can return to it (SA-C8).
+ */
+export interface TakeBackRequest {
+  lotId: string;
+  seq: number;
+  opener: HTMLElement | null;
+}
+
+export function CreditsBlock({ accountId, businessLabel, takeBackRequest = null, onTakeBackableLots, onCreditsChanged }: Props) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // F-108 (BD-15). This block must not be memoised: see `useReturnFocus` (SA C6).
+  const { remember, onCloseAutoFocus } = useReturnFocus(rootRef);
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [reloadToken, setReloadToken] = useState(0);
   const [dialog, setDialog] = useState<CreditFormMode | null>(null);
@@ -286,29 +317,49 @@ export function CreditsBlock({ accountId, businessLabel, takeBackRequest = null,
     if (!loadedData || loadedData.isOwnAccount || loadedData.extra.status !== 'ok') return;
     const lot = loadedData.extra.lots.find((candidate) => candidate.id === takeBackRequest.lotId);
     if (lot && isTakeBackable(lot)) {
+      // SA C5: only a request that opens the dialog replaces the remembered opener.
+      remember(takeBackRequest.opener);
       setNotice(null);
       setDialog({ kind: 'take_back', lot });
     }
-  }, [takeBackRequest, loadedData]);
+  }, [takeBackRequest, loadedData, remember]);
 
-  function openDialog(mode: CreditFormMode) {
+  function openDialog(mode: CreditFormMode, opener: HTMLElement) {
+    remember(opener);
     setNotice(null);
     setDialog(mode);
   }
 
-  /** A success closes the dialog, shows the server's figures, and reads the block again. */
+  /** A success closes the dialog, shows the server's figures, reads the block again, and tells the drawer (BD-14). */
   function handleSuccess(lines: string[]) {
     setDialog(null);
     setNotice(lines);
     reload();
+    onCreditsChanged?.();
   }
 
   return (
-    <div data-testid="credits-block">
-      <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+    <div data-testid="credits-block" ref={rootRef}>
+      {/* A label, not a heading: the section's h3 is its only heading (D-20, LF-4b). */}
+      <p className="flex items-center gap-2 text-sm font-semibold text-slate-300">
         <Coins className="h-4 w-4 text-amber-300" aria-hidden="true" />
         {CREDIT_COPY.heading}
-      </h4>
+      </p>
+
+      {/* BD-5: the money action, in a bar of its own, above the figures. Same
+          condition as before: a good read, not the admin's own account. */}
+      {load.state === 'ok' && !load.data.isOwnAccount && (
+        <div data-testid="credits-actions" className={`mt-2 ${MONEY_ACTION_BAR}`}>
+          <button
+            type="button"
+            data-testid="credits-give"
+            onClick={(event) => openDialog({ kind: 'give' }, event.currentTarget)}
+            className={ADMIN_BUTTON}
+          >
+            {CREDIT_COPY.giveButton}
+          </button>
+        </div>
+      )}
 
       {notice && (
         <div
@@ -367,35 +418,29 @@ export function CreditsBlock({ accountId, businessLabel, takeBackRequest = null,
                 </p>
               ) : (
                 <>
-                  <ul className="space-y-2">
-                    {load.data.extra.lots.map((lot) => (
+                  {/* BD-8: the newest three (the route sends newest first), the rest hidden, never unmounted. */}
+                  <ShowMoreList
+                    testId="credits-lots-more"
+                    listClassName="space-y-2"
+                    items={load.data.extra.lots.map((lot) => (
                       <LotRow
                         key={lot.id}
                         lot={lot}
                         canChange={!load.data.isOwnAccount}
-                        onTakeBack={(chosen) => openDialog({ kind: 'take_back', lot: chosen })}
+                        onTakeBack={(chosen, opener) => openDialog({ kind: 'take_back', lot: chosen }, opener)}
                       />
                     ))}
-                  </ul>
-                  <p className="text-xs text-slate-500">{CREDIT_COPY.datesNote}</p>
+                  />
+                  <p className="text-xs text-slate-400">{CREDIT_COPY.datesNote}</p>
                 </>
               )}
             </div>
           )}
 
-          {load.data.isOwnAccount ? (
+          {load.data.isOwnAccount && (
             <p data-testid="credits-own-account" className="text-sm text-slate-400">
               {creditErrorSentence('own_account')}
             </p>
-          ) : (
-            <button
-              type="button"
-              data-testid="credits-give"
-              onClick={() => openDialog({ kind: 'give' })}
-              className="rounded border border-emerald-500/50 px-3 py-1.5 text-sm text-emerald-200 hover:bg-emerald-500/10"
-            >
-              {CREDIT_COPY.giveButton}
-            </button>
           )}
         </div>
       )}
@@ -403,6 +448,7 @@ export function CreditsBlock({ accountId, businessLabel, takeBackRequest = null,
       {dialog && limits && (
         <CreditFormDialog
           open
+          onCloseAutoFocus={onCloseAutoFocus}
           onOpenChange={(open) => {
             if (!open) setDialog(null);
           }}

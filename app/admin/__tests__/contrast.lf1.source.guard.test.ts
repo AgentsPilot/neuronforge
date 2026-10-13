@@ -49,11 +49,21 @@ const NEWLINE = String.fromCharCode(10);
 
 const EXCLUDED = ['app/admin/audit-trail/BusinessAccountPicker.tsx'];
 
+/**
+ * Businesses (LF-4b, requirement §4, SA C8): the whole folder is walked. One
+ * named exclusion: the AD-1 "Delete…" dialog, whose entry is hidden
+ * (`SHOW_AD1_DELETE_ENTRY = false`); its two slate-500 lines go to slate-400 in
+ * the slice that shows the entry (finding LF4B-F2). The walk test asserts the
+ * file still exists, so a rename cannot leave a stale exclusion.
+ */
+const BUSINESSES_EXCLUDED = ['app/admin/users/components/DeleteBusinessDialog.tsx'];
+
 const PAGES: Record<string, string[]> = {
   Health: ['app/admin/page.tsx', ...walk('app/admin/components/health')],
   'Scheduled jobs & queues': ['app/admin/jobs-queues/page.tsx', ...walk('app/admin/components/jobs')],
   'Audit trail': walk('app/admin/audit-trail').filter((relative) => !EXCLUDED.includes(relative)),
   'Business OS AI Activity': walk('app/admin/business-os-llm/components/activity'),
+  Businesses: walk('app/admin/users').filter((relative) => !BUSINESSES_EXCLUDED.includes(relative)),
 };
 
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
@@ -105,6 +115,18 @@ describe('LF-1 contrast guard: the walk', () => {
         'app/admin/business-os-llm/components/activity/RecordStateMarker.tsx',
       ]),
     );
+    expect(PAGES.Businesses).toEqual(
+      expect.arrayContaining([
+        'app/admin/users/page.tsx',
+        'app/admin/users/components/CreditsBlock.tsx',
+        'app/admin/users/components/BoostBlock.tsx',
+        'app/admin/users/components/CreditsLeftCell.tsx',
+      ]),
+    );
+    for (const excluded of BUSINESSES_EXCLUDED) {
+      expect(PAGES.Businesses).not.toContain(excluded);
+      expect(fs.existsSync(path.join(process.cwd(), excluded))).toBe(true);
+    }
     for (const files of Object.values(PAGES)) {
       for (const file of files) expect(fs.existsSync(path.join(process.cwd(), file))).toBe(true);
       expect(files.some((file) => file.includes('/__tests__/'))).toBe(false);
