@@ -218,7 +218,14 @@ describe('readHoldForSession (the holding screen, SA R-4)', () => {
     session.user = { id: ACCOUNT };
     store.lineage = friendLineage();
     store.invite = { grant_kind: 'tier', language: 'he' };
-    expect(await readHoldForSession()).toEqual({ state: 'held', language: 'he' });
+    // P-5a.2 (workplan A-1): `held` also carries the hold and the SESSION's ids.
+    expect(await readHoldForSession()).toEqual({
+      state: 'held',
+      language: 'he',
+      hold: { ok: true, held: true, inviteId: INVITE, source: 'account_invite' },
+      userId: ACCOUNT,
+      accountId: ACCOUNT,
+    });
     expect(store.inviteReads).toEqual([INVITE]);
   });
 
@@ -226,9 +233,9 @@ describe('readHoldForSession (the holding screen, SA R-4)', () => {
     session.user = { id: ACCOUNT };
     store.lineage = friendLineage();
     store.invite = 'error';
-    expect(await readHoldForSession()).toEqual({ state: 'held', language: 'en' });
+    expect(await readHoldForSession()).toMatchObject({ state: 'held', language: 'en' });
     store.invite = { grant_kind: 'tier', language: 'fr' };
-    expect(await readHoldForSession()).toEqual({ state: 'held', language: 'en' });
+    expect(await readHoldForSession()).toMatchObject({ state: 'held', language: 'en' });
   });
 
   it('R-4: an unreadable hold is the error state, never "not held"', async () => {

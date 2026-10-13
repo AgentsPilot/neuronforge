@@ -97,7 +97,14 @@ export const INVITE_TYPE_IDS = Object.keys(INVITE_TYPES) as InviteTypeId[];
  *
  * The two switches are separate on purpose (T-18):
  * - `paidInvitesAvailable` means "payment is live" (C-6). It also gates admin
- *   Paid invites (F5c-3).
+ *   Paid invites (F5c-3), AND, from plan payments P-5a.2, a held friend's Pay:
+ *   while it is off the holding screen says "payment coming soon" and the plan
+ *   checkout refuses a held account (`held_payment_unavailable`; requirement
+ *   §9.1.1 D5-3, SA S5-1, S5-7). It is ONE switch on purpose (S5-7): admin
+ *   tier invites are still refused at redemption whatever it says until P-9.
+ *   Turn it on only after P-9 has merged (requirement §9.5 row 17), in a
+ *   reviewed one-line PR. Local demos flip it in the working tree and never
+ *   commit the flip.
  * - `accountInvitesAvailable` means "champions may send friend invites". Code
  *   config, not an environment variable: turning it on or off is a one-line
  *   change released through the normal review. It was switched on 2026-10-01,
@@ -113,7 +120,11 @@ export const INVITE_ISSUANCE_POLICY = {
     /** Essentials, derived rather than written (C-7, FR-30). */
     grantId: TIER_ORDER[0] as string,
   },
-  /** The C-6 switch. `false` until Slice 5c: the server refuses every Paid invite at redemption. */
+  /**
+   * The C-6 switch. `false` until Slice 5c: the server refuses every Paid invite
+   * at redemption. Also gates a held friend's Pay (P-5a.2, S5-7; see above).
+   * On only after P-9 has merged; never commit a local demo flip.
+   */
   paidInvitesAvailable: false as boolean,
   /** The T-18 switch: friend invites from champion accounts. On since 2026-10-01, by the user's choice (BQ-13). */
   accountInvitesAvailable: true as boolean,

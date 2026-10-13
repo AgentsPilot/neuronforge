@@ -56,6 +56,9 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   'planPaymentApply.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE],
   'planCheckoutSessionEvents.ts': [BILLING_ACCOUNTS],
   'planSubscriptionMirror.ts': [BILLING_ACCOUNTS],
+  // P-5a.2 (workplan BUSINESS_OS_PLAN_PAYMENTS_P5A_WORKPLAN.md §3.3): the
+  // holding screen's model reads the session user's billing row (findByUser).
+  'heldPaymentView.ts': [BILLING_ACCOUNTS],
 };
 const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 
