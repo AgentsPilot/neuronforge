@@ -39,7 +39,7 @@ function Muted({ children }: { children: string }) {
 export function CreditsLeftCell({ business, creditsLeft }: Props) {
   if (business === null) {
     return (
-      <span data-testid="row-credits-left" className="text-sm text-slate-500" aria-label="No Business OS business">
+      <span data-testid="row-credits-left" className="text-sm text-slate-400" aria-label="No Business OS business">
         —
       </span>
     );

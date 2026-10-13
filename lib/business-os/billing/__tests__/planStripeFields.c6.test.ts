@@ -23,7 +23,19 @@ import path from 'path';
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'stripe');
 
-type ObjectKind = 'invoice' | 'invoice_line' | 'subscription' | 'checkout_session' | 'checkout_line_item';
+type ObjectKind =
+  | 'invoice'
+  | 'invoice_line'
+  | 'subscription'
+  | 'checkout_session'
+  | 'checkout_line_item'
+  // P-7b.1b (U-7 / G-3): the objects the upgrade path reads from Stripe's
+  // answers to OUR calls (SDK responses at the pinned `2025-10-29.clover`).
+  | 'invoice_preview'
+  | 'upgrade_response'
+  | 'pending_update'
+  | 'invoice_payment'
+  | 'stripe_error';
 
 /** §3.7: the fields read, per object. `[]` = every element of a non-empty array. */
 const FIELDS_READ: Readonly<Record<ObjectKind, readonly string[]>> = {
@@ -68,6 +80,17 @@ const FIELDS_READ: Readonly<Record<ObjectKind, readonly string[]>> = {
   checkout_session: ['id', 'mode', 'customer', 'subscription', 'metadata', 'amount_total', 'livemode'],
   // From `checkout.sessions.listLineItems`, not from the event (the demo saves that response too).
   checkout_line_item: ['price.id'],
+  // P-7b.1b (U-7): `previewBusinessOsPlanUpgrade` reads the preview's amounts only.
+  invoice_preview: ['amount_due', 'total', 'total_taxes', 'currency'],
+  // `upgradeBusinessOsPlanSubscription`: the update's answer, `latest_invoice.confirmation_secret` expanded (E-1a).
+  upgrade_response: ['id', 'livemode', 'pending_update', 'latest_invoice.id', 'latest_invoice.status', 'latest_invoice.confirmation_secret'],
+  // `pendingUpdateFacts`: any subscription carrying one (E-1b, E-2, E-4).
+  pending_update: ['expires_at', 'subscription_items[].price.id'],
+  // `upgradePaymentStateOf`: one `invoicePayments.list` read with the PaymentIntent expanded (E-1b; the
+  // expanded `latest_invoice.payments...` path hits `property_expansion_max_depth`, so the list is the path).
+  invoice_payment: ['is_default', 'payment.payment_intent.status'],
+  // `confirmPlanUpgrade`'s catch matches the in-flight conflict by its code, whatever its class (SA F-2, E-6).
+  stripe_error: ['err.type', 'err.code', 'err.statusCode', 'raw.code', 'raw.type'],
 };
 
 /**
@@ -86,6 +109,16 @@ const CAPTURED_OBJECTS: readonly ObjectKind[] = [
   'invoice',
   'invoice_line',
   'subscription',
+  // P-7b.1b (U-7 / G-3), from the P-7b.1 sandbox experiments E-1 to E-6 of
+  // 2026-10-13 (standard sandbox, test mode): the SDK's answers to our calls at
+  // the pinned `2025-10-29.clover`, and the webhook events as the sandbox
+  // renders them (`2026-09-30.endive`, requirement §9.1.2 F-4). Files
+  // `captured-p7b1-*.json`, scrubbed as the P-3b captures were.
+  'invoice_payment',
+  'invoice_preview',
+  'pending_update',
+  'stripe_error',
+  'upgrade_response',
 ];
 
 function has(value: unknown, segments: readonly string[]): boolean {
@@ -115,21 +148,36 @@ function load(name: string): Fixture {
   const raw = JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8')) as Record<string, unknown>;
   const source = String(raw._fixture_source ?? '');
   const objects: Fixture['objects'] = [];
-  if (raw.object === 'list') {
-    // A saved `listLineItems` response.
-    for (const item of (raw.data as unknown[]) ?? []) objects.push({ kind: 'checkout_line_item', value: item });
-  } else {
-    const object = (raw.data as { object: Record<string, unknown> }).object;
+  const addStripeObject = (object: Record<string, unknown>) => {
     if (object.object === 'invoice') {
       objects.push({ kind: 'invoice', value: object });
       for (const line of ((object.lines as { data: unknown[] }).data ?? [])) objects.push({ kind: 'invoice_line', value: line });
     } else if (object.object === 'subscription') {
       objects.push({ kind: 'subscription', value: object });
+      if (object.pending_update) objects.push({ kind: 'pending_update', value: object.pending_update });
     } else if (object.object === 'checkout.session') {
       objects.push({ kind: 'checkout_session', value: object });
     }
+  };
+  if (raw.object === 'list') {
+    // A saved list response: `listLineItems` (P-3b) or `invoicePayments.list` (P-7b.1).
+    for (const item of (raw.data as Array<Record<string, unknown>>) ?? []) {
+      objects.push({ kind: item.object === 'invoice_payment' ? 'invoice_payment' : 'checkout_line_item', value: item });
+    }
+  } else if (raw.err !== undefined) {
+    // P-7b.1 E-6: a captured Stripe error (the SDK error's fields and Stripe's raw body).
+    objects.push({ kind: 'stripe_error', value: raw });
+  } else if (raw.object === 'invoice' && /-preview\.json$/.test(name)) {
+    // P-7b.1: an `invoices.createPreview` answer; only its amounts are read.
+    objects.push({ kind: 'invoice_preview', value: raw });
+  } else if (raw.object === 'invoice' || raw.object === 'subscription') {
+    // P-7b.1: an SDK answer to our own call, not an event.
+    addStripeObject(raw);
+    if (/-(update-response|replay)\.json$/.test(name)) objects.push({ kind: 'upgrade_response', value: raw });
+  } else {
+    addStripeObject((raw.data as { object: Record<string, unknown> }).object);
   }
-  return { name, source, apiVersion: String(raw.api_version ?? ''), objects };
+  return { name, source, apiVersion: String(raw.api_version ?? raw._fixture_api_version ?? ''), objects };
 }
 
 const fixtures = fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json')).map(load);
@@ -161,9 +209,11 @@ describe('C-6: captured payloads (ratchet)', () => {
     expect(kinds).toEqual([...CAPTURED_OBJECTS].sort());
   });
 
-  it('every captured fixture states its real api_version, which is a clover version', () => {
+  it('every captured fixture states its real api_version: clover, or the endive events of the sandbox (P-7b.1)', () => {
     for (const fixture of captured) {
-      expect(['2025-09-30.clover', '2025-10-29.clover']).toContain(fixture.apiVersion);
+      // P-3b events at the production endpoint's `2025-09-30.clover`; P-7b.1 SDK answers at the
+      // pinned `2025-10-29.clover`; P-7b.1 events as the standard sandbox renders them (§9.1.2 F-4).
+      expect(['2025-09-30.clover', '2025-10-29.clover', '2026-09-30.endive']).toContain(fixture.apiVersion);
       expect(fixture.source).toContain(fixture.apiVersion);
     }
   });

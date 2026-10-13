@@ -630,10 +630,10 @@ describe('D-16 / D-18 / D-19 / D-20 the body', () => {
     expect(h2s).toHaveLength(1);
     expect(h2s[0].textContent).toBe('Acme Therapy 99999999…');
     // LF-4a.2 (BD-4, SA C2): exactly five sections for a Business OS account,
-    // each named by its first heading, its h3. Two named exceptions, asserted by
-    // containment: Credits & billing also holds the one h4 of each unedited
-    // money block (LF-4b removes this when they become labels), and Plan &
-    // entitlements the snapshot's own h3 inside the plan fold.
+    // each named by its first heading, its h3. One named exception, asserted by
+    // containment: Plan & entitlements also holds the snapshot's own h3 inside
+    // the plan fold. LF-4b turned the money blocks' h4s into labels, so Credits
+    // & billing has exactly one heading and its exception is gone.
     await within(dialog).findByTestId('credits-block');
     await waitFor(() => expect(within(dialog).queryByText('Loading credits…')).toBeNull());
     await within(dialog).findByTestId('boost-cap');
@@ -647,12 +647,6 @@ describe('D-16 / D-18 / D-19 / D-20 the body', () => {
     ]);
     const allowedExtra = (section: Element): Element[] => {
       const name = section.querySelector('h3')?.textContent;
-      if (name === 'Credits & billing') {
-        return [
-          within(dialog).getByTestId('credits-block').querySelector('h4'),
-          within(dialog).getByTestId('boost-block').querySelector('h4'),
-        ].filter((h): h is HTMLHeadingElement => h !== null);
-      }
       if (name === 'Plan & entitlements') {
         const snapshotHeading = within(dialog).getByTestId('bos-panel-plan').querySelector('h3');
         return snapshotHeading ? [snapshotHeading] : [];
@@ -663,7 +657,7 @@ describe('D-16 / D-18 / D-19 / D-20 the body', () => {
       const headings = Array.from(section.querySelectorAll('h1, h2, h3, h4, h5, h6'));
       const extras = allowedExtra(section);
       const name = section.querySelector('h3')?.textContent;
-      const expectedExtras = name === 'Credits & billing' ? 2 : name === 'Plan & entitlements' ? 1 : 0;
+      const expectedExtras = name === 'Plan & entitlements' ? 1 : 0;
       expect({ name, extras: extras.length }).toEqual({ name, extras: expectedExtras });
       expect({ name, id: section.getAttribute('aria-labelledby'), count: headings.length }).toEqual({
         name,
@@ -672,6 +666,13 @@ describe('D-16 / D-18 / D-19 / D-20 the body', () => {
       });
       // Containment: every extra heading is exactly one of the named ones (identity, not shape).
       headings.slice(1).forEach((heading, i) => expect(heading).toBe(extras[i]));
+    }
+    // The money blocks hold no heading of their own (labels since LF-4b).
+    for (const testId of ['credits-block', 'boost-block']) {
+      expect({ testId, headings: within(dialog).getByTestId(testId).querySelectorAll('h1, h2, h3, h4, h5, h6').length }).toEqual({
+        testId,
+        headings: 0,
+      });
     }
   });
 });

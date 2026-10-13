@@ -172,8 +172,10 @@ describe('planInvoiceFacts: assigns-plan (SA-P8, SA-P16c)', () => {
  * U-3 (P-7b.1a, SA U-3; requirement CF-6 closed) and V-6: a paid
  * `subscription_update` with `total` > 0 and a positive plan line assigns the
  * plan even when `amount_paid` is 0. Every other invoice kind is pinned
- * unchanged. Fixtures are hand-built (the sandbox captures, U-7, are pending
- * experiments E-3 and E-5).
+ * unchanged. Fixtures here are hand-built; the real E-3 (credit balance,
+ * `amount_paid` 0, `total` 3387) and E-5 (under the minimum, `amount_paid` 0,
+ * `total` 14) captures run through this function in
+ * `planUpgrade.captured.test.ts` (U-7, P-7b.1b).
  */
 describe('planInvoiceFacts: U-3 / CF-6 matrix, and every existing kind pinned (V-6)', () => {
   const upgrade = (change: (i: Stripe.Invoice) => void) => edit(PRORATION, change);

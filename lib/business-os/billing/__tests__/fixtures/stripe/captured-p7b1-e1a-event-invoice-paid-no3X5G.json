@@ -1,0 +1,214 @@
+{
+  "_fixture_source": "CAPTURED (2026-09-30.endive, webhook event) P-7b.1 sandbox experiment e1a, webhook event as rendered by the Events API (event api_version 2026-09-30.endive), acct_1UPKR4C7KDUGYIcA test mode, 2026-10-13. Scrubbed before commit: emails, names, addresses, phones, hosted URLs and every client/confirmation secret replaced with placeholders. Ids, prices, amounts, statuses, timestamps and api_version as Stripe sent them.",
+  "id": "evt_1UQ6k3C7KDUGYIcAkTno3X5G",
+  "object": "event",
+  "api_version": "2026-09-30.endive",
+  "created": 1791901907,
+  "data": {
+    "object": {
+      "id": "in_1UQ6k0C7KDUGYIcA1wBeL94X",
+      "object": "invoice",
+      "account_country": "US",
+      "account_name": "Test Customer",
+      "account_tax_ids": null,
+      "amount_due": 3387,
+      "amount_overpaid": 0,
+      "amount_paid": 3387,
+      "amount_remaining": 0,
+      "amount_shipping": 0,
+      "application": null,
+      "attempt_count": 1,
+      "attempted": true,
+      "auto_advance": false,
+      "automatic_tax": {
+        "disabled_reason": null,
+        "enabled": false,
+        "liability": null,
+        "provider": null,
+        "status": null
+      },
+      "automatically_finalizes_at": null,
+      "billing_reason": "subscription_update",
+      "collection_method": "charge_automatically",
+      "created": 1792765893,
+      "currency": "usd",
+      "custom_fields": null,
+      "customer": "cus_VQyhNZVu5iAAHT",
+      "customer_account": null,
+      "customer_address": null,
+      "customer_email": "fixture@example.invalid",
+      "customer_name": "Test Customer",
+      "customer_phone": null,
+      "customer_shipping": null,
+      "customer_tax_exempt": "none",
+      "customer_tax_ids": [],
+      "default_payment_method": null,
+      "default_source": null,
+      "default_tax_rates": [],
+      "description": null,
+      "discounts": [],
+      "due_date": null,
+      "effective_at": 1792765893,
+      "ending_balance": 0,
+      "footer": null,
+      "from_invoice": null,
+      "hosted_invoice_url": "https://example.invalid/scrubbed",
+      "invoice_pdf": "https://example.invalid/scrubbed",
+      "issuer": {
+        "type": "self"
+      },
+      "last_finalization_error": null,
+      "latest_revision": null,
+      "lines": {
+        "object": "list",
+        "data": [
+          {
+            "id": "il_1UTjVJC7KDUGYIcAPtgXQsiG",
+            "object": "line_item",
+            "amount": -5352,
+            "currency": "usd",
+            "description": "Unused time on Essentials after 23 Oct 2026",
+            "discount_amounts": [],
+            "discountable": false,
+            "discounts": [],
+            "invoice": "in_1UQ6k0C7KDUGYIcA1wBeL94X",
+            "livemode": false,
+            "metadata": {},
+            "parent": {
+              "invoice_item_details": null,
+              "subscription_item_details": {
+                "invoice_item": "ii_1UQ6k0C7KDUGYIcAz49lkrWQ",
+                "proration": true,
+                "proration_details": {
+                  "credited_items": {
+                    "invoice": "in_1UQ6jsC7KDUGYIcA5e6upU0u",
+                    "invoice_line_items": [
+                      "il_1UQ6jpC7KDUGYIcAoNS3LfMG"
+                    ]
+                  }
+                },
+                "subscription": "sub_1UQ6jsC7KDUGYIcA6rLb2v0N",
+                "subscription_item": "si_VQyhXV97HM2U82"
+              },
+              "type": "subscription_item_details"
+            },
+            "period": {
+              "end": 1794580293,
+              "start": 1792765893
+            },
+            "pretax_credit_amounts": [],
+            "pricing": {
+              "price_details": {
+                "price": "price_1UPKt4C7KDUGYIcA44aGOAvu",
+                "product": "bos_plan_basic"
+              },
+              "type": "price_details",
+              "unit_amount_decimal": null
+            },
+            "quantity": 1,
+            "quantity_decimal": "1",
+            "subtotal": -5352,
+            "taxes": []
+          },
+          {
+            "id": "il_1UTjVKC7KDUGYIcAAEPxDmXT",
+            "object": "line_item",
+            "amount": 8739,
+            "currency": "usd",
+            "description": "Remaining time on Autopilot after 23 Oct 2026",
+            "discount_amounts": [],
+            "discountable": false,
+            "discounts": [],
+            "invoice": "in_1UQ6k0C7KDUGYIcA1wBeL94X",
+            "livemode": false,
+            "metadata": {},
+            "parent": {
+              "invoice_item_details": null,
+              "subscription_item_details": {
+                "invoice_item": "ii_1UQ6k0C7KDUGYIcAWg7n5Gv1",
+                "proration": true,
+                "proration_details": {
+                  "credited_items": null
+                },
+                "subscription": "sub_1UQ6jsC7KDUGYIcA6rLb2v0N",
+                "subscription_item": "si_VQyhXV97HM2U82"
+              },
+              "type": "subscription_item_details"
+            },
+            "period": {
+              "end": 1794580293,
+              "start": 1792765893
+            },
+            "pretax_credit_amounts": [],
+            "pricing": {
+              "price_details": {
+                "price": "price_1UPKt5C7KDUGYIcAU9USgAv7",
+                "product": "bos_plan_pro"
+              },
+              "type": "price_details",
+              "unit_amount_decimal": null
+            },
+            "quantity": 1,
+            "quantity_decimal": "1",
+            "subtotal": 8739,
+            "taxes": []
+          }
+        ],
+        "has_more": false,
+        "total_count": 2,
+        "url": "/v1/invoices/in_1UQ6k0C7KDUGYIcA1wBeL94X/lines"
+      },
+      "livemode": false,
+      "metadata": {},
+      "next_payment_attempt": null,
+      "number": "KSOFO2QW-0002",
+      "on_behalf_of": null,
+      "parent": {
+        "quote_details": null,
+        "subscription_details": {
+          "metadata": {},
+          "subscription": "sub_1UQ6jsC7KDUGYIcA6rLb2v0N"
+        },
+        "type": "subscription_details"
+      },
+      "payment_settings": {
+        "default_mandate": null,
+        "payment_method_options": null,
+        "payment_method_types": null
+      },
+      "period_end": 1792765893,
+      "period_start": 1791901893,
+      "post_payment_credit_notes_amount": 0,
+      "pre_payment_credit_notes_amount": 0,
+      "receipt_number": null,
+      "rendering": null,
+      "shipping_cost": null,
+      "shipping_details": null,
+      "starting_balance": 0,
+      "statement_descriptor": null,
+      "status": "paid",
+      "status_transitions": {
+        "finalized_at": 1792765893,
+        "marked_uncollectible_at": null,
+        "paid_at": 1792765893,
+        "voided_at": null
+      },
+      "subtotal": 3387,
+      "subtotal_excluding_tax": 3387,
+      "test_clock": "clock_1UQ6jrC7KDUGYIcA4Hkay8r9",
+      "total": 3387,
+      "total_discount_amounts": [],
+      "total_excluding_tax": 3387,
+      "total_pretax_credit_amounts": [],
+      "total_taxes": [],
+      "webhooks_delivered_at": null
+    }
+  },
+  "livemode": false,
+  "pending_webhooks": 0,
+  "request": {
+    "id": "req_SpULoihtJC2UJm",
+    "idempotency_key": "bos-upgrade:sub_1UQ6jsC7KDUGYIcA6rLb2v0N:price_1UPKt5C7KDUGYIcAU9USgAv7:1792765893"
+  },
+  "type": "invoice.paid"
+}

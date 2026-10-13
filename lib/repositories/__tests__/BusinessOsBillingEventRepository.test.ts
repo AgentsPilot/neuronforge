@@ -473,6 +473,8 @@ describe('source rules', () => {
       'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
       // P-3b.2: the apply use case's test imports the input and result TYPES to build its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
+      // P-7b.1b (U-7): the captured-payload test imports the apply input and event TYPES for its fake.
+      'lib/business-os/billing/__tests__/planUpgrade.captured.test.ts',
       // P-3b.2 (workplan §3.1): the plan webhook handler wires the singleton;
       // the apply use case takes it as a port TYPE (applyPlanPayment, recordEvent).
       'lib/business-os/billing/planBillingHandler.ts',

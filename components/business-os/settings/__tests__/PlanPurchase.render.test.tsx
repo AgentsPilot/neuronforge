@@ -174,6 +174,13 @@ async function show(payload: PlanPayload, props: { checkoutMarker?: string | nul
 
 const fill = (template: string, values: Record<string, string>) => template.replace(/\{(\w+)\}/g, (slot, name: string) => values[name] ?? slot);
 
+/**
+ * The Choose button's label for a plan row (P-7b.1b, SA Q-7): the plan in force,
+ * when it is a tier with no billing record (admin-assigned), reads "Pay for".
+ */
+const chooseLabel = (payload: PlanPayload, plan: { planId: string; name: string }) =>
+  fill(COPY[payload.kind === 'tier' && payload.planId === plan.planId ? 'plan.choose.button_own' : 'plan.choose.button'], { plan: plan.name });
+
 describe('the Choose list renders only what the server offers (M-5)', () => {
   it('an Essentials account with nothing paid: every offered plan, its price excluding tax, and a Choose button', async () => {
     const payload = await payloadFor();
@@ -185,7 +192,7 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     expect(payload.plans!.length).toBeGreaterThan(1);
     for (const plan of payload.plans!) {
       expect(list.getByText(fill(COPY['plan.choose.price_ex_tax'], { amount: `$${plan.monthlyPriceUsd}` }))).toBeInTheDocument();
-      expect(list.getByRole('button', { name: fill(COPY['plan.choose.button'], { plan: plan.name }) })).toBeInTheDocument();
+      expect(list.getByRole('button', { name: chooseLabel(payload, plan) })).toBeInTheDocument();
     }
     // The section's "Available to choose." line is not repeated: the list is the action.
     expect(screen.queryByText(COPY['plan.next.available'])).not.toBeInTheDocument();
@@ -315,11 +322,11 @@ describe('the checkout (P-5a.2 component, returnTo settings_plan)', () => {
     await show(payload);
     const [first, second] = payload.plans!;
 
-    await userEvent.click(screen.getByRole('button', { name: fill(COPY['plan.choose.button'], { plan: first.name }) }));
+    await userEvent.click(screen.getByRole('button', { name: chooseLabel(payload, first) }));
 
     await waitFor(() => expect(screen.getByTestId('fake-checkout')).toBeInTheDocument());
     expect(server.posts).toEqual([{ tier: first.planId, returnTo: 'settings_plan' }]);
-    expect(screen.queryByRole('button', { name: fill(COPY['plan.choose.button'], { plan: second.name }) })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: chooseLabel(payload, second) })).not.toBeInTheDocument();
   });
 
   /*
@@ -346,13 +353,13 @@ describe('the checkout (P-5a.2 component, returnTo settings_plan)', () => {
       });
     }) as unknown as typeof fetch;
 
-    await userEvent.click(screen.getByRole('button', { name: fill(COPY['plan.choose.button'], { plan: first.name }) }));
+    await userEvent.click(screen.getByRole('button', { name: chooseLabel(payload, first) }));
     await waitFor(() => expect(server.posts).toHaveLength(1));
 
     // The first row reads "starting"; every other row's button is there but disabled.
     expect(within(screen.getByTestId(`plan-choice-${first.planId}`)).getByRole('button')).toHaveTextContent(COPY['plan.choose.starting']);
     for (const plan of others) {
-      expect(screen.getByRole('button', { name: fill(COPY['plan.choose.button'], { plan: plan.name }) })).toBeDisabled();
+      expect(screen.getByRole('button', { name: chooseLabel(payload, plan) })).toBeDisabled();
     }
     expect(screen.queryByTestId('fake-checkout')).not.toBeInTheDocument();
 
