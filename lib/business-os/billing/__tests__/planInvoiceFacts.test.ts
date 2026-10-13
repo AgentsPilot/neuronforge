@@ -58,6 +58,7 @@ describe('planInvoiceFacts: a first paid invoice', () => {
         paidAt: iso(1790000070),
         assignsPlan: true,
         billingReason: CREATE.billing_reason,
+        decidingPriceIds: [PRICE_A],
       },
     });
   });
@@ -151,17 +152,12 @@ describe('planInvoiceFacts: assigns-plan (SA-P8, SA-P16c)', () => {
     expect(facts(free)).toMatchObject({ ok: true, facts: { amountMinor: 0, assignsPlan: true } });
   });
 
-  it('a $0 cycle invoice WITHOUT a discount assigns nothing; a $0 subscription_update does not either (C-3, CF-6)', () => {
+  it('a $0 cycle invoice WITHOUT a discount assigns nothing (C-3)', () => {
     const noDiscount = edit(RENEWAL, (i) => {
       i.amount_paid = 0;
       i.lines.data[0].amount = 0;
     });
     expect(facts(noDiscount)).toMatchObject({ ok: true, facts: { assignsPlan: false } });
-    const update = edit(PRORATION, (i) => {
-      i.amount_paid = 0;
-      (i as unknown as { discounts: string[] }).discounts = ['di_1'];
-    });
-    expect(facts(update)).toMatchObject({ ok: true, facts: { assignsPlan: false } });
   });
 
   it('a failed invoice never assigns a plan, reads amount_due, and needs no paid_at', () => {
@@ -169,6 +165,64 @@ describe('planInvoiceFacts: assigns-plan (SA-P8, SA-P16c)', () => {
       ok: true,
       facts: { tier: 'tier_two', amountMinor: FAILED.amount_due, paidAt: null, assignsPlan: false },
     });
+  });
+});
+
+/**
+ * U-3 (P-7b.1a, SA U-3; requirement CF-6 closed) and V-6: a paid
+ * `subscription_update` with `total` > 0 and a positive plan line assigns the
+ * plan even when `amount_paid` is 0. Every other invoice kind is pinned
+ * unchanged. Fixtures are hand-built (the sandbox captures, U-7, are pending
+ * experiments E-3 and E-5).
+ */
+describe('planInvoiceFacts: U-3 / CF-6 matrix, and every existing kind pinned (V-6)', () => {
+  const upgrade = (change: (i: Stripe.Invoice) => void) => edit(PRORATION, change);
+
+  it.each([
+    ['an upgrade charged to the card (amount_paid > 0), unchanged', upgrade(() => undefined), true],
+    ['an upgrade paid from the credit balance (amount_paid 0, total > 0)', upgrade((i) => { i.amount_paid = 0; }), true],
+    ['an upgrade under the minimum charge, carried to the balance (total 30, amount_paid 0)', upgrade((i) => { i.amount_paid = 0; i.total = 30; }), true],
+    ['the old CF-6 shape with a discount on it (amount_paid 0, total > 0)', upgrade((i) => { i.amount_paid = 0; (i as unknown as { discounts: string[] }).discounts = ['di_1']; }), true],
+    [
+      'a trial price swap (total 0, the new plan line at 0, no positive line)',
+      upgrade((i) => { i.amount_paid = 0; i.total = 0; i.lines.data = [i.lines.data[1]]; i.lines.data[0].amount = 0; }),
+      false,
+    ],
+    [
+      'a prorated downgrade credit (total < 0)',
+      upgrade((i) => { i.amount_paid = 0; i.total = -2985; i.lines.data[0].amount = 1990; i.lines.data[1].amount = -4975; }),
+      false,
+    ],
+    [
+      'a paid update with total > 0 but no positive PLAN line (the charge is not a plan price)',
+      upgrade((i) => { i.amount_paid = 0; i.total = 30; i.lines.data = [i.lines.data[1]]; i.lines.data[0].amount = 0; }),
+      false,
+    ],
+  ])('%s', (_label, invoice, expected) => {
+    expect(facts(invoice)).toMatchObject({ ok: true, facts: { billingReason: 'subscription_update', assignsPlan: expected } });
+  });
+
+  it('a FAILED upgrade invoice never assigns, whatever its total', () => {
+    const failedUpgrade = upgrade((i) => { i.amount_paid = 0; });
+    expect(facts(failedUpgrade, 'failed')).toMatchObject({ ok: true, facts: { assignsPlan: false } });
+  });
+
+  it.each([
+    ['subscription_create paid > 0', CREATE, true],
+    ['the $0 trial subscription_create', TRIAL, false],
+    ['subscription_cycle paid > 0', RENEWAL, true],
+    ['subscription_cycle $0 with a discount', edit(RENEWAL, (i) => { i.amount_paid = 0; i.lines.data[0].amount = 0; (i as unknown as { discounts: string[] }).discounts = ['di_1']; }), true],
+    ['subscription_cycle $0 without a discount', edit(RENEWAL, (i) => { i.amount_paid = 0; i.lines.data[0].amount = 0; }), false],
+    ['manual paid > 0', edit(CREATE, (i) => { i.billing_reason = 'manual'; }), true],
+    ['manual $0 with total > 0 (never the U-3 rule)', edit(CREATE, (i) => { i.billing_reason = 'manual'; i.amount_paid = 0; }), false],
+    ['subscription_create $0 with total > 0 (never the U-3 rule)', edit(CREATE, (i) => { i.amount_paid = 0; }), false],
+  ])('V-6: %s (unchanged)', (_label, invoice, expected) => {
+    expect(facts(invoice)).toMatchObject({ ok: true, facts: { assignsPlan: expected } });
+  });
+
+  it('decidingPriceIds: the positive line\'s price for an upgrade; every plan line\'s price on a $0 invoice', () => {
+    expect(facts(PRORATION)).toMatchObject({ ok: true, facts: { decidingPriceIds: [PRICE_B] } });
+    expect(facts(TRIAL)).toMatchObject({ ok: true, facts: { decidingPriceIds: [PRICE_A] } });
   });
 });
 

@@ -10,8 +10,156 @@ import {
   BOS_PRODUCT_METADATA_KEY,
   BOS_USER_ID_METADATA_KEY,
 } from '@/lib/business-os/billing/stripeMetadataKeys';
+import { subscriptionIdFromInvoice } from '@/lib/payments/invoiceSubscription';
 
 const logger = createLogger({ module: 'StripeService' });
+
+// ── Business OS plan upgrade facts (plan payments P-7b.1a, workplan §3.3) ──
+
+/** One subscription item, as the upgrade routes and the U-4 guard read it. */
+export interface BusinessOsSubscriptionItemFacts {
+  id: string;
+  priceId: string | null;
+  /** Unix seconds. On `2025-10-29.clover` the period lives on the item (SA V-8). */
+  currentPeriodStart: number | null;
+  currentPeriodEnd: number | null;
+}
+
+/** Stripe's pending update on a subscription: when it expires and the prices it would set. */
+export interface BusinessOsPendingUpdateFacts {
+  expiresAt: number;
+  priceIds: string[];
+}
+
+/**
+ * The payment state of an upgrade invoice. `none`: no payment Stripe reports
+ * a usable state for (the orchestration treats it as "outcome unknown").
+ */
+export type BusinessOsUpgradePaymentState = 'succeeded' | 'requires_action' | 'requires_payment_method' | 'processing' | 'none';
+
+export interface BusinessOsUpgradePreviewFacts {
+  amountDueMinor: number;
+  totalMinor: number;
+  /** SA V-12: Stripe's tax on the preview (0 while no tax is collected). */
+  taxMinor: number;
+  currency: string;
+}
+
+export interface BusinessOsUpgradeFacts {
+  subscriptionId: string;
+  livemode: boolean;
+  pendingUpdate: boolean;
+  pendingUpdateExpiresAt: number | null;
+  invoiceId: string | null;
+  invoiceStatus: string | null;
+  paymentState: BusinessOsUpgradePaymentState;
+  /** For the owner's browser only (SA V-1). Never logged, audited or put in an error. */
+  confirmationClientSecret: string | null;
+}
+
+export interface BusinessOsUpgradeInvoiceFacts {
+  invoiceId: string;
+  subscriptionId: string | null;
+  customerId: string | null;
+  status: string | null;
+  billingReason: string | null;
+  amountDueMinor: number | null;
+  livemode: boolean;
+  paymentState: BusinessOsUpgradePaymentState;
+  /** For the owner's browser only (SA V-1). Never logged, audited or put in an error. */
+  confirmationClientSecret: string | null;
+}
+
+/** SA U-1: the idempotency key of one upgrade request. Same request, same key. */
+export function businessOsUpgradeIdempotencyKey(subscriptionId: string, priceId: string, prorationDate: number): string {
+  return `bos-upgrade:${subscriptionId}:${priceId}:${prorationDate}`;
+}
+
+/**
+ * A Stripe error reduced to what an operator needs (SA V-1 / F-1). A Stripe
+ * error can carry the PaymentIntent, client secret included, so the object
+ * itself is never logged.
+ */
+function safeStripeErrorFields(err: unknown): Record<string, unknown> {
+  if (typeof err !== 'object' || err === null) return { kind: typeof err };
+  const e = err as { type?: unknown; code?: unknown; statusCode?: unknown; requestId?: unknown; name?: unknown };
+  return {
+    name: typeof e.name === 'string' ? e.name : null,
+    type: typeof e.type === 'string' ? e.type : null,
+    code: typeof e.code === 'string' ? e.code : null,
+    statusCode: typeof e.statusCode === 'number' ? e.statusCode : null,
+    requestId: typeof e.requestId === 'string' ? e.requestId : null,
+  };
+}
+
+function refId(ref:string | { id?: string | null } | null | undefined): string | null {
+  if (!ref) return null;
+  if (typeof ref === 'string') return ref;
+  return ref.id ?? null;
+}
+
+function isWholeMinor(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function unixOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function subscriptionItemFacts(item: Stripe.SubscriptionItem): BusinessOsSubscriptionItemFacts {
+  return {
+    id: item.id,
+    priceId: item.price?.id ?? null,
+    currentPeriodStart: unixOrNull(item.current_period_start),
+    currentPeriodEnd: unixOrNull(item.current_period_end),
+  };
+}
+
+function pendingUpdateFacts(pending: Stripe.Subscription.PendingUpdate | null | undefined): BusinessOsPendingUpdateFacts | null {
+  if (!pending) return null;
+  const priceIds: string[] = [];
+  for (const item of pending.subscription_items ?? []) {
+    const id = item.price?.id;
+    if (id && !priceIds.includes(id)) priceIds.push(id);
+  }
+  return { expiresAt: pending.expires_at, priceIds };
+}
+
+/** Sum of the Basil `total_taxes[].amount`, 0 when absent; null when unreadable. */
+function invoiceTaxMinor(invoice: Stripe.Invoice): number | null {
+  const taxes = (invoice as unknown as { total_taxes?: Array<{ amount?: unknown }> | null }).total_taxes;
+  if (taxes === undefined || taxes === null) return 0;
+  let sum = 0;
+  for (const entry of taxes) {
+    if (!isWholeMinor(entry?.amount)) return null;
+    sum += entry.amount;
+  }
+  return sum;
+}
+
+/**
+ * The payment state from an invoice's payments (pure). The default payment
+ * (`is_default`), else the first; its PaymentIntent's status decides. A
+ * PaymentIntent that was not expanded tells nothing: `none`.
+ */
+export function upgradePaymentStateOf(payments: ReadonlyArray<Stripe.InvoicePayment>): BusinessOsUpgradePaymentState {
+  const chosen = payments.find((payment) => payment.is_default) ?? payments[0];
+  const intent = chosen?.payment?.payment_intent;
+  if (!intent || typeof intent === 'string') return 'none';
+  switch (intent.status) {
+    case 'succeeded':
+      return 'succeeded';
+    case 'requires_action':
+      return 'requires_action';
+    case 'requires_payment_method':
+      return 'requires_payment_method';
+    case 'processing':
+    case 'requires_capture':
+      return 'processing';
+    default:
+      return 'none';
+  }
+}
 
 /**
  * StripeService
@@ -398,6 +546,15 @@ export class StripeService {
    * status, `billing_cycle_anchor`, `cancel_at_period_end`, `ended_at`, the
    * customer, the metadata and EVERY item price (paged when the embedded item
    * list says `has_more`). Unix seconds are returned as Stripe gives them.
+   *
+   * P-7b.1a (workplan §3.3 a, SA design point "items not de-duplicated"):
+   * additive fields for the upgrade routes and the U-4 guard. `items` is the
+   * COMPLETE item list from the same paged read (never de-duplicated, so
+   * "exactly one item" is decided on its length), each with its period: on
+   * `2025-10-29.clover` the current period lives on the ITEM, not the
+   * subscription (SA V-8). `pendingUpdate` is Stripe's pending update (its
+   * expiry and the prices it would set), `latestInvoiceId` the invoice it
+   * waits on. `priceIds` stays de-duplicated for its existing callers.
    */
   async retrieveBusinessOsSubscription(
     subscriptionId: string,
@@ -412,13 +569,18 @@ export class StripeService {
     livemode: boolean;
     metadata: Stripe.Metadata;
     priceIds: string[];
+    items: BusinessOsSubscriptionItemFacts[];
+    pendingUpdate: BusinessOsPendingUpdateFacts | null;
+    latestInvoiceId: string | null;
   }> {
     const subscription = await this.stripe.subscriptions.retrieve(subscriptionId);
     const priceIds: string[] = [];
-    const add = (items: ReadonlyArray<Stripe.SubscriptionItem>) => {
-      for (const item of items) {
+    const items: BusinessOsSubscriptionItemFacts[] = [];
+    const add = (page: ReadonlyArray<Stripe.SubscriptionItem>) => {
+      for (const item of page) {
         const id = item.price?.id;
         if (id && !priceIds.includes(id)) priceIds.push(id);
+        items.push(subscriptionItemFacts(item));
       }
     };
 
@@ -458,7 +620,176 @@ export class StripeService {
       livemode: subscription.livemode,
       metadata: subscription.metadata ?? {},
       priceIds,
+      items,
+      pendingUpdate: pendingUpdateFacts(subscription.pending_update),
+      latestInvoiceId: refId(subscription.latest_invoice),
     };
+  }
+
+  // ── Business OS plan upgrade (plan payments P-7b.1a, workplan §3.3; SA U-1) ──
+  // The ONE write is `upgradeBusinessOsPlanSubscription`. Every method builds
+  // its own parameters (CF-4): the caller passes ids taken from OUR billing
+  // row and the fresh subscription read, a price id from the runtime price
+  // check, and the server-chosen proration date. No metadata, no anchor, no
+  // trial end, no new price. Each returns FACTS only: the raw Stripe objects
+  // carry a confirmation client secret and are never returned or logged.
+
+  /**
+   * Read-only: what the upgrade would cost now (`invoices.createPreview`,
+   * which replaced "upcoming invoice" on the Basil line). The amounts only.
+   */
+  async previewBusinessOsPlanUpgrade(params: {
+    customerId: string;
+    subscriptionId: string;
+    itemId: string;
+    priceId: string;
+    prorationDate: number;
+  }): Promise<BusinessOsUpgradePreviewFacts> {
+    const { customerId, subscriptionId, itemId, priceId, prorationDate } = params;
+    const invoice = await this.stripe.invoices.createPreview({
+      customer: customerId,
+      subscription: subscriptionId,
+      subscription_details: {
+        items: [{ id: itemId, price: priceId }],
+        proration_behavior: 'always_invoice',
+        proration_date: prorationDate,
+      },
+    });
+    const amountDueMinor = invoice.amount_due;
+    const totalMinor = invoice.total;
+    const taxMinor = invoiceTaxMinor(invoice);
+    if (!isWholeMinor(amountDueMinor) || !Number.isSafeInteger(totalMinor) || taxMinor === null) {
+      throw new Error('upgrade_preview_amounts_unreadable');
+    }
+    return {
+      amountDueMinor,
+      totalMinor,
+      taxMinor,
+      currency: typeof invoice.currency === 'string' ? invoice.currency.toLowerCase() : '',
+    };
+  }
+
+  /**
+   * THE upgrade write (SA U-1): swap the one item's price on the existing
+   * subscription, charge the prorated difference at once
+   * (`always_invoice`), and leave the subscription unchanged unless the
+   * payment succeeds (`pending_if_incomplete`). The idempotency key is built
+   * here from the subscription, the price and the proration date, so two
+   * identical confirms replay rather than charge twice (Stripe answers an
+   * identical in-flight request with an idempotency error).
+   *
+   * A card error THROWN by the call propagates (the orchestration maps it to
+   * `declined`, SA V-7, whatever experiment E-2 shows).
+   */
+  async upgradeBusinessOsPlanSubscription(params: {
+    subscriptionId: string;
+    itemId: string;
+    priceId: string;
+    prorationDate: number;
+  }): Promise<BusinessOsUpgradeFacts> {
+    const { subscriptionId, itemId, priceId, prorationDate } = params;
+    const subscription = await this.stripe.subscriptions.update(
+      subscriptionId,
+      {
+        items: [{ id: itemId, price: priceId }],
+        proration_behavior: 'always_invoice',
+        proration_date: prorationDate,
+        payment_behavior: 'pending_if_incomplete',
+        expand: ['latest_invoice.confirmation_secret'],
+      },
+      { idempotencyKey: businessOsUpgradeIdempotencyKey(subscriptionId, priceId, prorationDate) }
+    );
+
+    const invoice = typeof subscription.latest_invoice === 'object' ? subscription.latest_invoice : null;
+    const pending = pendingUpdateFacts(subscription.pending_update);
+
+    // SA F-1: the payment state is read only when there IS a pending update
+    // (without one the outcome is `upgraded` whatever the payment says, so the
+    // read would only add a way to fail). The write above has ALREADY
+    // happened, so a failure of this follow-up read must never leave the
+    // method as an error: the orchestration would classify it by its class and
+    // could answer "refused before running" for a change that was made (V-3).
+    // Any failure answers `none` → unknown outcome, audited and alerted.
+    // Without a pending update no network read is made; a `paid` invoice is
+    // still reported as `succeeded` (no read needed), anything else `none`.
+    let paymentState: BusinessOsUpgradePaymentState = invoice?.status === 'paid' ? 'succeeded' : 'none';
+    if (pending !== null && invoice) {
+      try {
+        paymentState = await this.upgradeInvoicePaymentState(invoice);
+      } catch (err) {
+        // Never the error object: a Stripe error here can carry the PaymentIntent (V-1).
+        logger.warn(
+          {
+            event: 'bos_billing_upgrade_payment_read_failed',
+            subscriptionId: subscription.id,
+            invoiceId: invoice.id ?? null,
+            stripeError: safeStripeErrorFields(err),
+          },
+          'Upgrade payment state unreadable after the update; answering none'
+        );
+        paymentState = 'none';
+      }
+    }
+
+    return {
+      subscriptionId: subscription.id,
+      livemode: subscription.livemode,
+      pendingUpdate: pending !== null,
+      pendingUpdateExpiresAt: pending?.expiresAt ?? null,
+      invoiceId: invoice?.id ?? refId(subscription.latest_invoice),
+      invoiceStatus: invoice?.status ?? null,
+      paymentState,
+      confirmationClientSecret: invoice?.confirmation_secret?.client_secret ?? null,
+    };
+  }
+
+  /**
+   * One invoice, for the Q-2 resume (SA ruling): is the subscription's latest
+   * invoice OUR open upgrade invoice, waiting on 3-D Secure? Read only after
+   * the fresh subscription read showed a pending update (SA V-9), by the id
+   * Stripe gave for that subscription. Facts only; the confirmation secret is
+   * returned for the confirm route's 200 body and nothing else (SA V-1).
+   */
+  async retrieveBusinessOsUpgradeInvoice(invoiceId: string): Promise<BusinessOsUpgradeInvoiceFacts> {
+    const invoice = await this.stripe.invoices.retrieve(invoiceId, { expand: ['confirmation_secret'] });
+    return {
+      invoiceId: invoice.id ?? invoiceId,
+      subscriptionId: subscriptionIdFromInvoice(invoice),
+      customerId: refId(invoice.customer as string | { id: string } | null),
+      status: invoice.status ?? null,
+      billingReason: invoice.billing_reason ?? null,
+      amountDueMinor: isWholeMinor(invoice.amount_due) ? invoice.amount_due : null,
+      livemode: invoice.livemode,
+      paymentState: await this.upgradeInvoicePaymentState(invoice),
+      confirmationClientSecret: invoice.confirmation_secret?.client_secret ?? null,
+    };
+  }
+
+  /**
+   * The payment state of an upgrade invoice. THE E-1 SEAM (workplan §3.3,
+   * SA design point): how the payment is read on `2025-10-29.clover` is
+   * settled by sandbox experiment E-1, which has not run yet (pending E-1).
+   * Today: a `paid` invoice is `succeeded` with no read; any other status but
+   * `open` is `none`; an `open` invoice uses its `payments` list when the
+   * object already carries it (expanded), else ONE `invoicePayments.list`
+   * read with the PaymentIntent expanded. If E-1 shows the expanded list is
+   * reliable on the update's answer, only the update's `expand` changes; if it
+   * shows the list read is needed, nothing changes. The mapping to the
+   * outcome does not depend on which.
+   */
+  private async upgradeInvoicePaymentState(invoice: Stripe.Invoice): Promise<BusinessOsUpgradePaymentState> {
+    if (invoice.status === 'paid') return 'succeeded';
+    if (invoice.status !== 'open' || !invoice.id) return 'none';
+    const payments =
+      invoice.payments?.data ??
+      (
+        await this.stripe.invoicePayments.list({
+          invoice: invoice.id,
+          limit: 10,
+          expand: ['data.payment.payment_intent'],
+        })
+      ).data;
+    return upgradePaymentStateOf(payments);
   }
 
   /**

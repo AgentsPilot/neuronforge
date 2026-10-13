@@ -186,6 +186,28 @@ export interface GapItem {
   /** The proposal, booking or invoice this is about, for the action. */
   entityId?: string;
   /**
+   * The BOOKING to open, where that is not what `entityId` holds.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `entityId` is whatever the gap's action posts to — a proposal for
+   * `send_quote`, an invoice for `send_invoice`, a payment stage for
+   * `bill_stage`. The three NAVIGATING actions need something else entirely:
+   * the booking to open in the drawer, which for a stage is its parent job and
+   * not the stage itself.
+   *
+   * The card used to pass `entityId` straight into `&booking=`, so
+   * `stage_awaiting_completion` named a `payment_plan_installments` id as a
+   * booking. Nothing matched it, nothing expanded, and the owner landed on an
+   * unexpanded list exactly as if no booking had been named at all — the
+   * failure is silent, because an id that matches no row looks identical to no
+   * id.
+   *
+   * Set it only where `entityId` is not already the booking. Absent means
+   * `entityId` is the booking, which is true of most gaps that navigate.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  bookingId?: string;
+  /**
    * What this one is worth, where money is involved.
    *
    * Typed rather than folded into `note` as text. `invoice_unpaid` used to put

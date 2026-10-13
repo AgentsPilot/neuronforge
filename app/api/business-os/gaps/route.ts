@@ -332,6 +332,16 @@ export async function GET(request: NextRequest) {
           since: item.since,
           entityId: item.entityId ?? null,
           /*
+           * The booking the row's button opens, where that is not `entityId`.
+           *
+           * This list is written out field by field rather than spread, which
+           * is deliberate — the card should only receive what it needs — but it
+           * does mean a new field is dropped in silence unless it is named
+           * here. `bill_stage` is the one gap that needs it: its `entityId` is
+           * a payment stage, and the card was passing that to `&booking=`.
+           */
+          bookingId: item.bookingId ?? null,
+          /*
            * What is held on it, where money is involved.
            *
            * The card needs this to decide which button a row gets: a cancelled

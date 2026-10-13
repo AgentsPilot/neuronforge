@@ -24,7 +24,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
 import { createLogger } from '@/lib/logger';
-import { fromBusinessLocalInput } from '@/lib/scheduling/businessTime';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { transactionMoneyArrived } from '@/lib/payments/bookingPaymentState';
 import type { EmailSendStatus } from '@/lib/business-os/emailSendStatus';
@@ -61,6 +60,9 @@ import { RefundModal } from '@/components/payments/RefundModal';
 // has one kind of control across the drawer.
 import { SwitchRow } from '@/components/payments/SwitchRow';
 
+import { packageSessionPayment } from '@/lib/payments/packageSessionPayment';
+import { toBusinessLocalInput } from '@/lib/scheduling/businessTime';
+import { nextInSeries } from '@/lib/scheduling/recurrence';
 import type {
   CRMContact,
   CRMActivity,
@@ -1840,6 +1842,22 @@ export function CRMContactDrawerV2({
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [editingBooking, setEditingBooking] = useState<SchedulingBooking | undefined>(undefined);
   /*
+   * ADDING A MEETING TO A PACKAGE, which borrows the booking dialog to choose
+   * the hour and then writes through the meetings endpoint — see `onPickSlot`.
+   * Null whenever the dialog is doing its ordinary job.
+   */
+  const [addMeetingTo, setAddMeetingTo] = useState<{
+    containerId: string;
+    serviceId: string;
+    billsPerMeeting: boolean;
+    /** Where the series says the next one falls; null when it has no rhythm. */
+    nextLocal: string | null;
+    /** And the few after that, to offer instead of "today, tomorrow". */
+    upcoming: string[];
+  } | null>(null);
+  /* The owner's answer about the money, asked beside the date in that dialog. */
+  const [chargeNewMeeting, setChargeNewMeeting] = useState(false);
+  /*
    * What actually happened to a payment plan, per booking.
    *
    * The journey builds its plan from the SERVICE — "sold as 3 monthly payments"
@@ -2374,7 +2392,26 @@ export function CRMContactDrawerV2({
         serviceCurrency
       );
 
-      const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : isFreeService ? {
+      /*
+       * A PACKAGE'S MEETING IS BILLED FOR ITSELF — see `packageSessionPayment`.
+       *
+       * Asked after the quote and BEFORE "is the service free", which is the
+       * rung that was swallowing it: the service behind a quoted package is
+       * priced 0, so a meeting with a paid ₪74.99 invoice read as free and the
+       * row showed no money and offered no refund.
+       */
+      const sessionMoney = packageSessionPayment({
+        parentBookingId: bookingData.parent_booking_id,
+        paymentStatus: booking.payment_status,
+        paymentId: booking.payment_id,
+        currency: serviceCurrency,
+        periods: planPeriods,
+        invoice: invoiceData,
+        refundedTotal: bookingWithInvoice.refunded_total,
+        paidAt: paidAtFromRecords,
+      });
+
+      const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : sessionMoney ? sessionMoney : isFreeService ? {
         amount: 0,
         currency: serviceCurrency,
         status: 'free' as const
@@ -2808,6 +2845,14 @@ export function CRMContactDrawerV2({
               refunded_at?: string | null;
             };
             payments?: Array<{ id: string; status: string; paid_at?: string | null }>;
+            /* Embedded by the booking query, and the record of what each
+               meeting of a package was sold for. */
+            planPeriods?: Array<{
+              amount: number | string;
+              currency?: string | null;
+              status: string;
+              invoice_id?: string | null;
+            }>;
           };
           const invoiceData = bookingMoney.invoice;
 
@@ -2826,7 +2871,21 @@ export function CRMContactDrawerV2({
             serviceCurrency
           );
 
-          const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : isFreeService ? {
+          // The meeting's own money, on the same rung as the primary path — see
+          // the note there and in `packageSessionPayment`.
+          const sessionMoney = packageSessionPayment({
+            parentBookingId: bookingData.parent_booking_id,
+            paymentStatus: booking.payment_status,
+            paymentId: booking.payment_id,
+            currency: serviceCurrency,
+            periods: bookingMoney.planPeriods,
+            invoice: invoiceData,
+            refundedTotal: (booking as SchedulingBooking & { refunded_total?: number | string | null })
+              .refunded_total,
+            paidAt: paidAtFromRecords,
+          });
+
+          const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : sessionMoney ? sessionMoney : isFreeService ? {
             amount: 0,
             currency: serviceCurrency,
             status: 'free' as const
@@ -3565,28 +3624,7 @@ export function CRMContactDrawerV2({
                  * owner's answer — see the route — and it is only asked where it
                  * means anything, which `packageBillsPerMeeting` decides.
                  */
-                onAddPackageMeeting={async (containerId, startTime, charge) => {
-                  const response = await fetch(`/api/scheduling/bookings/${containerId}/meetings`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      // The input holds the business's wall clock; the column
-                      // holds an instant, as everywhere else in this drawer.
-                      start_time: fromBusinessLocalInput(startTime, timezone).toISOString(),
-                      charge,
-                    }),
-                  });
-
-                  const data = await response.json();
-
-                  if (!response.ok || !data.success) {
-                    throw new Error(data.error || t('crm.booking.package.add_failed'));
-                  }
-
-                  await fetchSessions(contact.id, { silent: true });
-                  await fetchActivities(contact.id, { silent: true });
-                }}
-                packageBillsPerMeeting={containerId => {
+                onAddPackageMeeting={containerId => {
                   /*
                    * Billed per meeting when its stages are the meetings: each
                    * waiting on the owner and bound to a booking of its own.
@@ -3594,7 +3632,71 @@ export function CRMContactDrawerV2({
                    * already has.
                    */
                   const sold = proposals.find(p => p.package_booking_id === containerId);
-                  return Boolean(sold?.sessions?.bill_per_session);
+
+                  /* The container's own service, which the new meeting
+                     inherits — so the dialog opens on the right hours instead
+                     of on whichever service happens to be first. */
+                  const container = allBookings.find(item => item.id === containerId);
+
+                  /*
+                   * WHERE THE SERIES SAYS THE NEXT ONE GOES.
+                   *
+                   * A course that runs every second Thursday at 09:30 runs
+                   * every second Thursday at 09:30. Opening on "tomorrow, the
+                   * next free hour" asked the owner to work out a date the
+                   * agreement had already decided, and invited one that breaks
+                   * the rhythm the client is planning around.
+                   *
+                   * Read off the meetings themselves, on the business's clock,
+                   * because nothing records the spacing — see `nextInSeries`.
+                   * A hand-adjusted series names no cadence and gets the
+                   * dialog's own default instead of a guess.
+                   */
+                  const meetings = allBookings
+                    .filter(item => item.parent_booking_id === containerId && item.start_time)
+                    .map(item => toBusinessLocalInput(new Date(item.start_time), timezone));
+
+                  /*
+                   * And the dates the quote SOLD, as a second opinion.
+                   *
+                   * One rescheduled session is enough to put the diary off the
+                   * pattern — moving the second meeting by a day made the gaps
+                   * 15, 13, 14, 14 — and a series that names no rhythm got no
+                   * proposed date at all. The agreement never moves, so it
+                   * still knows the course is fortnightly.
+                   */
+                  const soldLocals = (sold?.sessions?.dates ?? [])
+                    .map(iso => new Date(iso))
+                    .filter(at => !Number.isNaN(at.getTime()))
+                    .map(at => toBusinessLocalInput(at, timezone));
+
+                  /*
+                   * The next few, each asked of the series as it would stand
+                   * with the one before it already added. Built by the same
+                   * reader rather than by stepping a date here, so the chips
+                   * and the field can never disagree about the rhythm — and so
+                   * a monthly course keeps its anchor day.
+                   */
+                  const upcoming: string[] = [];
+                  let running = meetings;
+
+                  for (let i = 0; i < 6; i += 1) {
+                    const next = nextInSeries(running, soldLocals);
+                    if (!next) break;
+                    upcoming.push(next);
+                    running = [...running, next];
+                  }
+
+                  setAddMeetingTo({
+                    containerId,
+                    serviceId: container?.service_id ?? '',
+                    billsPerMeeting: Boolean(sold?.sessions?.bill_per_session),
+                    nextLocal: upcoming[0] ?? null,
+                    upcoming,
+                  });
+                  setChargeNewMeeting(false);
+                  setEditingBooking(undefined);
+                  setShowBookingModal(true);
                 }}
                 /* What became of each plan — stopped, completed, still running.
                    The journey derives the plan from the service, which is the
@@ -3964,6 +4066,7 @@ export function CRMContactDrawerV2({
         onClose={() => {
           setShowBookingModal(false);
           setEditingBooking(undefined);
+          setAddMeetingTo(null);
         }}
         onBookingUpdated={() => {
           fetchSessions(contact.id, { silent: true });
@@ -3997,6 +4100,65 @@ export function CRMContactDrawerV2({
           phone: contact.phone
         }}
         existingBookings={allBookings}
+        /*
+         * CHOOSING AN HOUR FOR A PACKAGE'S NEXT MEETING.
+         *
+         * The dialog supplies what it knows — the service's hours, the days
+         * the owner closed, the slots already sold — and writes nothing. The
+         * meeting itself is created by the meetings endpoint, which is what
+         * makes it a meeting OF this package rather than a standalone
+         * appointment belonging to no purchase.
+         */
+        prefilledServiceId={addMeetingTo?.serviceId}
+        prefilledStartLocal={addMeetingTo?.nextLocal ?? undefined}
+        seriesSlots={addMeetingTo?.upcoming}
+        extraToggle={
+          addMeetingTo?.billsPerMeeting
+            ? {
+                label: t('crm.booking.package.charge_it'),
+                checked: chargeNewMeeting,
+                onChange: setChargeNewMeeting,
+              }
+            : undefined
+        }
+        onPickSlot={
+          addMeetingTo
+            ? async (start, end) => {
+                const response = await fetch(
+                  `/api/scheduling/bookings/${addMeetingTo.containerId}/meetings`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      start_time: start.toISOString(),
+                      /* The length the owner just saw and confirmed, rather
+                         than the one the quote sold: the two can differ, and
+                         the dialog is what they were looking at. */
+                      duration_minutes: Math.max(
+                        5,
+                        Math.round((end.getTime() - start.getTime()) / 60_000)
+                      ),
+                      charge: chargeNewMeeting && addMeetingTo.billsPerMeeting,
+                    }),
+                  }
+                );
+
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                  /* Thrown, not swallowed: the dialog shows the server's own
+                     words, and "that hour is taken" is the whole point of
+                     having opened it. */
+                  throw new Error(data.error || t('crm.booking.package.add_failed'));
+                }
+
+                setAddMeetingTo(null);
+                await fetchSessions(contact.id, { silent: true });
+                await fetchActivities(contact.id, { silent: true });
+                await fetchAllBookings();
+              }
+            : undefined
+        }
       />
 
       {/* Document Upload Modal */}

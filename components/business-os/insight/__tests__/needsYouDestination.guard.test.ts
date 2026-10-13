@@ -53,16 +53,49 @@ function destinationFor(action: string): string | undefined {
   return openBookingBody().match(/section=([a-z]+)/)?.[1];
 }
 
-/** The body of the shared `openBooking` helper. */
+/**
+ * The body of the shared `openBooking` helper.
+ *
+ * Read to the function's own closing brace rather than a fixed number of
+ * characters. It was 700, which silently stopped covering the body the moment a
+ * comment was added above the `router.push` — and a window that falls short
+ * makes this guard report the destination as MISSING, which is the same thing
+ * it reports when the destination really is missing.
+ */
 function openBookingBody(): string {
   const start = card.indexOf('const openBooking =');
-  return start === -1 ? '' : card.slice(start, start + 700);
+  if (start === -1) return '';
+  const rest = card.slice(start);
+  const end = rest.indexOf('\n  };');
+  return end === -1 ? rest : rest.slice(0, end);
 }
 
-/** The props handed to the element that opens `tag`. */
+/**
+ * The props handed to the element that opens `tag` — the WHOLE element.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This took a fixed 6000 characters from the opening tag, which is a guess
+ * about how long a props list is rather than a statement about where it ends.
+ * `BookingsTab`'s is 10,885, and the moment a handler above `onCompleteStage`
+ * grew, the prop fell outside the window and this failed while the wiring it
+ * guards was perfectly correct.
+ *
+ * The wrong half of that is worse than the false alarm: a window too SHORT
+ * cries wolf, but a window too LONG runs into the next element, and
+ * "is this prop on BookingsTab" would start passing because a sibling has it.
+ *
+ * JSX closes a self-closing element on a line indented exactly as its opening
+ * tag, which is what this reads. No window, no guess.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 function propsOf(tag: string): string {
   const open = drawer.indexOf(`<${tag}`);
-  return open === -1 ? '' : drawer.slice(open, open + 6000);
+  if (open === -1) return '';
+
+  const indent = drawer.slice(drawer.lastIndexOf('\n', open) + 1, open);
+  const close = drawer.indexOf(`\n${indent}/>`, open);
+
+  return close === -1 ? drawer.slice(open) : drawer.slice(open, close);
 }
 
 describe('the two rows that navigate rather than send', () => {
@@ -130,7 +163,46 @@ describe('the booking a gap was raised from', () => {
   /* A gap with no entity must degrade to the list rather than naming a booking
      that does not exist. */
   it('is omitted when the gap carries no entity', () => {
-    expect(openBookingBody()).toMatch(/item\.entityId\s*\?/);
+    expect(openBookingBody()).toMatch(/bookingId\s*\?/);
+  });
+
+  /**
+   * AND IT MUST BE A BOOKING ID, WHICH `entityId` IS NOT ALWAYS.
+   *
+   * `entityId` is whatever the gap's action posts to: a proposal for
+   * `send_quote`, an invoice for `send_invoice`, a payment stage for
+   * `bill_stage`. Passing a stage id as `&booking=` matched no row in the list,
+   * so nothing expanded and the owner landed exactly where they would have with
+   * no id at all. That is the trap this whole describe exists for: a WRONG id
+   * and a MISSING id fail identically, in silence.
+   */
+  it('prefers the gap\'s booking over whatever its action posts to', () => {
+    expect(openBookingBody()).toMatch(/item\.bookingId\s*\?\?\s*item\.entityId/);
+  });
+
+  it('is carried by the route that feeds the card', () => {
+    // Written field by field, so a new one is dropped unless it is named.
+    const route = readFileSync(
+      join(__dirname, '..', '..', '..', '..', 'app', 'api', 'business-os', 'gaps', 'route.ts'),
+      'utf8'
+    );
+    expect(route).toMatch(/bookingId:\s*item\.bookingId/);
+  });
+
+  /**
+   * THE PAGE HAS TO CONTAIN THE ROW, OR EXPANDING IT SHOWS NOTHING.
+   *
+   * The list is five to a page. Expanding a booking on page four while the view
+   * sits on page one renders the open row outside the slice: the link looks
+   * like it did nothing. Gaps that raise these rows are weeks old by the time
+   * they are worth showing, so the booking named is rarely among the five most
+   * recent — and the one case where page one happens to be right is a contact
+   * with a single booking, which is the contact the fault cannot be seen on.
+   */
+  it('moves the list to the page that row is on', () => {
+    expect(bookingsTab).toMatch(/findIndex[\s\S]{0,120}focusBookingId/);
+    // Derived, not stored: the owner's own paging must still win afterwards.
+    expect(bookingsTab).toMatch(/bookingPage\s*\?\?/);
   });
 
   it('is read by the CRM page and handed to the drawer', () => {

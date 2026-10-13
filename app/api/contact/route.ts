@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import nodemailer from 'nodemailer';
 import { createLogger } from '@/lib/logger';
 import { htmlToText } from '@/lib/email/htmlToText';
+import { escapeHtml } from '@/lib/email/escapeHtml';
 
 const logger = createLogger({ module: 'ContactAPI' });
 
@@ -73,42 +74,48 @@ export async function POST(request: NextRequest) {
           <html>
             <head>
               <meta charset="utf-8">
-              <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-                .container { max-width: 600px; margin: 0 auto; }
-                .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
-                .content { background: white; padding: 30px; border: 1px solid #e1e5e9; border-top: none; border-radius: 0 0 8px 8px; }
-                .message-box { background: #f8f9fa; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #667eea; }
-              </style>
+              <meta name="viewport" content="width=device-width, initial-scale=1">
             </head>
-            <body>
-              <div class="container">
-                <div class="header">
-                  <h1>Message Received!</h1>
-                  <p>Thanks for reaching out to AgentPilot</p>
+            <!--
+              INLINE STYLES ONLY. Gmail's mobile apps strip a stylesheet out
+              of the head, and only that — so a template styled by classes
+              arrives on a phone with its markup intact and every rule that
+              laid it out gone, which reads as "the email did not render".
+              This one used .container, .header and .message-box, and lost
+              all three.
+
+              The gradient is kept as a background with a solid colour behind
+              it: Outlook and several mobile clients ignore linear-gradient,
+              and without the fallback the header went white-on-white.
+            -->
+            <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333333;">
+              <div style="max-width: 600px; margin: 0 auto;">
+                <div style="background: #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+                  <h1 style="margin: 0 0 8px; color: #ffffff; font-size: 24px;">Message Received!</h1>
+                  <p style="margin: 0; color: #ffffff;">Thanks for reaching out to AgentPilot</p>
                 </div>
-                <div class="content">
-                  <p>Hi <strong>${name}</strong>,</p>
-                  
+                <div style="background: #ffffff; padding: 30px; border: 1px solid #e1e5e9; border-top: none; border-radius: 0 0 8px 8px;">
+                  <p>Hi <strong>${escapeHtml(name)}</strong>,</p>
+
                   <p>We've received your message and we're excited to hear from you!</p>
-                  
-                  <div class="message-box">
-                    <h4>Your message:</h4>
-                    <p>"${message.length > 200 ? message.substring(0, 200) + '...' : message}"</p>
+
+                  <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #667eea;">
+                    <h4 style="margin: 0 0 8px;">Your message:</h4>
+                    <p style="margin: 0;">"${escapeHtml(message.length > 200 ? message.substring(0, 200) + '...' : message)}"</p>
                   </div>
-                  
+
                   <p><strong>What happens next?</strong></p>
                   <ul>
                     <li>We'll review your message within 24 hours</li>
-                    <li>You'll get a personal response at <strong>${email}</strong></li>
+                    <li>You'll get a personal response at <strong>${escapeHtml(email)}</strong></li>
                     <li>We'll help you get started with AgentPilot</li>
                   </ul>
-                  
+
                   <p>In the meantime, feel free to explore AgentPilot and see what AI workflows you can build!</p>
-                  
+
                   <p>Best regards,<br>
                   <strong>The AgentPilot Team</strong></p>
-                  
+
                   <p><a href="https://agentpilot.ai" style="color: #667eea;">agentpilot.ai</a></p>
                 </div>
               </div>
@@ -136,21 +143,30 @@ agentpilot.ai
       // Send notification email to you
       // D12: this send was html-only; derive a plaintext part from the shared
       // htmlToText util so it is delivered as multipart/alternative too.
+      /*
+       * Escaped, then line breaks restored — in that order.
+       *
+       * Everything here is typed by a stranger into a public form. Unescaped,
+       * a message containing a "<" opens a tag the rest of the email lives
+       * inside, which is both how markup gets injected into our own inbox and
+       * a plain way for a message to arrive looking broken. Escaping after the
+       * <br> swap would turn the breaks back into visible text.
+       */
       const notificationHtml = `
           <div style="font-family: Arial, sans-serif; max-width: 600px;">
             <h2>New Contact Form Submission</h2>
             <div style="background: #f8f9fa; padding: 20px; border-radius: 8px;">
               <h3>Contact Details</h3>
-              <p><strong>Name:</strong> ${name}</p>
-              <p><strong>Email:</strong> ${email}</p>
+              <p><strong>Name:</strong> ${escapeHtml(name)}</p>
+              <p><strong>Email:</strong> ${escapeHtml(email)}</p>
               <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
 
               <h3>Message</h3>
-              <div style="background: white; padding: 15px; border-radius: 6px; border: 1px solid #ddd;">
-                ${message.replace(/\n/g, '<br>')}
+              <div style="background: #ffffff; padding: 15px; border-radius: 6px; border: 1px solid #ddd;">
+                ${escapeHtml(message).replace(/\n/g, '<br>')}
               </div>
 
-              <p><strong>Reply directly to this email to respond to ${name}</strong></p>
+              <p><strong>Reply directly to this email to respond to ${escapeHtml(name)}</strong></p>
             </div>
           </div>
         `;

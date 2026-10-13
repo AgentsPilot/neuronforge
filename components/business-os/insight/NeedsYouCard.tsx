@@ -47,6 +47,13 @@ export interface GapItemView {
   since: string;
   entityId: string | null;
   /**
+   * The booking to open, where `entityId` is not itself one.
+   *
+   * See `GapItem.bookingId`: `entityId` is whatever the action POSTS to, which
+   * for `bill_stage` is a payment stage. Only the navigating actions read this.
+   */
+  bookingId?: string | null;
+  /**
    * What is held on it, where money is involved.
    *
    * Decides the row's action for `booking_cancelled`, where one gap has two
@@ -438,9 +445,17 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
    * ───────────────────────────────────────────────────────────────────────────
    */
   const openBooking = (item: GapItemView) => {
-    const target = item.entityId
-      ? `&booking=${encodeURIComponent(item.entityId)}`
-      : '';
+    /*
+     * `bookingId` first, because `entityId` is not always a booking.
+     *
+     * It is whatever the gap's action POSTS to — a proposal, an invoice, a
+     * payment stage — and only some of those are the thing to open. Passing a
+     * stage id as `&booking=` matched no row and expanded nothing, which looks
+     * exactly like passing no id at all: the owner lands on the list either
+     * way, so the fault never announced itself.
+     */
+    const bookingId = item.bookingId ?? item.entityId;
+    const target = bookingId ? `&booking=${encodeURIComponent(bookingId)}` : '';
     router.push(`/business-os/crm?contact=${item.contactId}&section=bookings${target}`);
   };
 
@@ -815,7 +830,29 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                         : 'color-mix(in srgb, var(--v2-primary) 50%, transparent)',
                     }}
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    {/*
+                      ON A PHONE THE BUTTON TAKES ITS OWN LINE.
+
+                      Side by side, the action is `shrink-0` and the subject is
+                      `truncate`, so every pixel the button needs comes out of
+                      the text — and the button's label is a whole phrase
+                      ("כתיבת הצעה", "Write a quote"). At phone width that left
+                      the row reading "אופיר עומר · הצעת מחיר לש…", which cuts
+                      off exactly the half that says WHICH job is waiting. The
+                      name survives and the subject does not, which is the wrong
+                      way round: the owner knows their clients and is looking
+                      for the thing.
+
+                      A column below `sm`, the same row above it. Stacking is
+                      done on the CONTAINER rather than by giving the subject a
+                      full basis: `flex-1` already sets `flex-basis: 0%`, and
+                      which of the two wins is decided by their order in the
+                      stylesheet rather than in the class list, so it is not a
+                      thing to rely on. A column stretches its children by
+                      default, so the subject gets the full width with no
+                      second rule at all.
+                    */}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                       <div className="min-w-0 flex-1">
                         {/*
                           * WHO, and WHICH THING OF THEIRS, on one line.
@@ -945,7 +982,11 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                             tint and drops the lift, while `opacity` stays for
                             `working`, which is still in flight.
                           */
-                          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] disabled:active:scale-100 disabled:hover:brightness-100"
+                          /* `self-start`: the row above is a COLUMN on a phone,
+                             which stretches its children, and a button stretched
+                             to the full width of the card reads as the card's
+                             action rather than this row's. */
+                          className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] disabled:active:scale-100 disabled:hover:brightness-100"
                           style={
                             state.kind === 'done'
                               ? {

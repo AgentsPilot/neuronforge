@@ -68,11 +68,54 @@ describe('origins', () => {
    * without this the middleware rewrite ships having never run once.
    */
   it('uses http for lvh.me, which has no certificate and never will', () => {
+    /*
+     * `development` is now stated rather than assumed. `lvh.me` resolves to
+     * 127.0.0.1 and nobody off this machine can reach it, so `publicSiteHost`
+     * refuses it anywhere else — the same rule `platformOrigin` has always
+     * applied to a loopback app URL, which this variable never had.
+     *
+     * The test read as if the host were accepted everywhere, which is exactly
+     * the belief that let a local host reach a deployment.
+     */
+    process.env.NODE_ENV = 'development';
     process.env.NEXT_PUBLIC_PUBLIC_SITE_HOST = 'lvh.me:3000';
     const { publicSiteUrl } = load();
 
     expect(publicSiteUrl('joesgym', '/book')).toBe('http://joesgym.lvh.me:3000/book');
   });
+
+  it('and refuses it anywhere else, however it is configured', () => {
+    /*
+     * THE BUG THIS CLOSES: this host OUTRANKS `platformOrigin` —
+     * `publicSiteDisplayHost` returns `{prefix}.{host}` and never consults the
+     * platform origin when it is set. So one stale value makes every address a
+     * business displays and shares local, on a deployment whose
+     * `NEXT_PUBLIC_APP_URL` is perfectly correct. Falling back to the path
+     * shape is the right answer: it is an address that actually resolves.
+     */
+    process.env.NODE_ENV = 'production';
+    process.env.NEXT_PUBLIC_APP_URL = 'https://neuronforge-kohl.vercel.app';
+    process.env.NEXT_PUBLIC_PUBLIC_SITE_HOST = 'lvh.me:3000';
+    const { publicSiteUrl, publicSiteHost, publicSiteDisplayHost } = load();
+
+    expect(publicSiteHost()).toBeNull();
+    expect(publicSiteUrl('joesgym', '/book')).toBe(
+      'https://neuronforge-kohl.vercel.app/site/joesgym/book'
+    );
+    // What the share guide's link preview renders.
+    expect(publicSiteDisplayHost('joesgym')).toBe('neuronforge-kohl.vercel.app/site/joesgym');
+  });
+
+  it.each(['localhost:3000', '127.0.0.1:3000', 'joes.localtest.me:3000'])(
+    'refuses %s on a deployed build too',
+    host => {
+      process.env.NODE_ENV = 'production';
+      process.env.NEXT_PUBLIC_PUBLIC_SITE_HOST = host;
+      const { publicSiteHost } = load();
+
+      expect(publicSiteHost()).toBeNull();
+    }
+  );
 
   it('serves both address shapes from the same internal route', () => {
     const { publicSitePath } = load();
