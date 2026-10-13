@@ -1,6 +1,9 @@
 /**
- * Every user-facing string of the admin finance page (slices 1a, 1b, 2a and 2b). The render
- * test asserts against these constants, so a wording change is one edit.
+ * Every user-facing string of the admin finance page (slices 1a, 1b, 1c, 2a and 2b). The
+ * render test asserts against these constants, so a wording change is one edit.
+ *
+ * Slice 1c (BD-14, S1C-FR-7): our revenue counts test and real payments together, with
+ * no mode wording anywhere on the page; a tier group names its Founding Partners (BD-15).
  *
  * Tile states reuse Health's `STATUS_STYLES` labels as they are (SA-W7); the
  * headline under each carries the finance-specific reason.
@@ -51,11 +54,10 @@ export const SECTION_PARTIAL = 'At least';
 export const SECTION_OK = 'Loaded';
 
 export const REVENUE_TITLE = 'Our revenue';
-export const REVENUE_NONE_YET =
-  'None yet. Plan billing is not live (the payment webhook is not in place) and credit boosts are open to test accounts only.';
-export const REVENUE_RECORDED = 'Live revenue has started to arrive; the revenue section is coming in a later update';
+export const REVENUE_NONE_YET = 'None yet. No plan payment or credit boost has been recorded.';
+export const REVENUE_RECORDED = 'Revenue has been recorded. Amounts are shown in a later update.';
 export const REVENUE_COULD_NOT_CHECK = 'Could not check';
-export const REVENUE_SUBTITLE = 'Live-mode plan invoices and paid boosts, all businesses';
+export const REVENUE_SUBTITLE = 'Paid plan invoices and paid boosts, all businesses';
 
 export const ACCOUNTS_TITLE = 'Accounts by plan';
 export const ACCOUNTS_SUBTITLE_ALL = 'Business OS plan rows, all businesses, now';
@@ -70,6 +72,12 @@ export const ACCOUNTS_NO_END_DATE = 'Founding Partners with no end date';
 export const ACCOUNTS_DORMANT = 'Dormant Founding Partners (no business built)';
 export const ACCOUNTS_NEW = 'New in the window';
 export const ACCOUNTS_ENDING = 'Ending in the next 30 days';
+/** BD-15, SA-Q24: the note on a tier group row that holds paying Founding Partners (all businesses). */
+export function accountsFoundingNote(count: number): string {
+  return count === 1 ? 'including 1 Founding Partner' : `including ${count} Founding Partners`;
+}
+/** BD-15, SA-Q24: the neutral chip on the picked business's tier group row. */
+export const ACCOUNTS_FOUNDING_CHIP = 'Founding Partner';
 /**
  * Notes shown beside a plan row's `origin`, keyed by the stored value. A
  * backfilled row's created_at is the backfill date, not a signup.

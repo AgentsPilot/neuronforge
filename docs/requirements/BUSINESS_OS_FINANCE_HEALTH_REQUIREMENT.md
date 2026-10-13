@@ -31,6 +31,7 @@ This document is the feature's **single source of truth**: every slice decision,
 10. [Slices 1a and 1b: full specification](#10-slices-1a-and-1b-full-specification)
 11. [Slices 1a and 1b: acceptance criteria](#11-slices-1a-and-1b-acceptance-criteria)
     - [11A. Slice 2 (2a and 2b): full specification and acceptance criteria](#11a-slice-2-2a-and-2b-full-specification-and-acceptance-criteria)
+    - [11B. Slice 1c (fix): test-mode platform money and paying Founding Partners](#11b-slice-1c-fix-test-mode-platform-money-and-paying-founding-partners)
 12. [Testing and CI guards](#12-testing-and-ci-guards)
 13. [Read-only SQL cross-checks for slice 1](#13-read-only-sql-cross-checks-for-slice-1)
 14. [Open questions for SA](#14-open-questions-for-sa)
@@ -49,6 +50,7 @@ This document is the feature's **single source of truth**: every slice decision,
 | 1a | Page, menu, filter bar (URL), tiles K-1 / K-3 / K-5, "Platform revenue: none yet" panel, Section 1 accounts by plan, Section 3 AI cost | None (real rows today); **no migration**; new reads R-a, R-c, R-c′, R-d (§10.8) | ✅ **Merged PR #284 (2026-10-10); user manual QA L-1..L-13 owed** (merge `5a6fff13`; committed `946653a1`; SA code review APPROVED (SA-CR-1a), QA PASS WITH ISSUES, fix round 1 applied; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_RETROSPECTIVE.md)) | [BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md) | [#284](https://github.com/AgentsPilot/neuronforge/pull/284) |
 | 1b | Section 4 credits, tiles K-2 / K-4, SA-Q7 refactor | Slice 1a; **no migration**; new read R-b (§10.8) | ✅ **Merged PR #290 (2026-10-11); user manual QA L-14..L-22 owed** (branch `feature/bos-finance-health-1b`, committed `1f46bcb3`; user approved diff 2026-10-11; TL retrospective done; SA code review APPROVED (SA-CR-1b), QA PASS WITH ISSUES, fix round 1 applied; user manual QA L-14..L-22 owed; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_RETROSPECTIVE.md)) | [BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_WORKPLAN.md) | [#290](https://github.com/AgentsPilot/neuronforge/pull/290) |
 | 2 | Business takings and client payment problems (layer B); currency-grouping helper (CUR-1, CUR-2, AC-13) | None (real rows today); **no migration**; new reads R-e to R-i (§11A.7) plus the reused reminder read R-j; SA-Q9 resolved by BD-13; split **2a** (takings) and **2b** (client payment problems) | ⬜ **2a implemented (uncommitted); SA code review APPROVED (SA-CR-2a), QA PASS WITH ISSUES (no bugs), fix round 1 applied; user approved diff 2026-10-12; TL retrospective done; committed `502e5d5d` on `feature/bos-finance-health-2`, PR [#312](https://github.com/AgentsPilot/neuronforge/pull/312) opened 2026-10-12, merge pending; user manual QA L-23..L-31 owed. 2a MERGED PR #312 (2026-10-12, merge `045a4d06`). 2b: workplan written 2026-10-12 on branch `feature/bos-finance-health-2b`, 2b implemented (uncommitted); SA code review APPROVED WITH CONDITIONS (SA-CR-2b; condition SA-CR-1 backspace fix done), QA PASS WITH ISSUES (no bugs), fix round 1 applied; user approved diff 2026-10-12; TL retrospective done; committed `b4e0fa2b` on `feature/bos-finance-health-2b` (origin/main merged in `a6caf75e`), PR [#318](https://github.com/AgentsPilot/neuronforge/pull/318) opened 2026-10-12, merge pending; user manual QA L-32..L-41 owed** (§11A; SA rulings SA-Q13 to SA-Q19 and SA-W18 to SA-W27 in §0.3; findings S2-F1 to S2-F9 applied 2026-10-11; workplan-review edits E-8 to E-10 applied 2026-10-11) | 2a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md); 2b: [BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md) | 2a: [#312](https://github.com/AgentsPilot/neuronforge/pull/312); 2b: [#318](https://github.com/AgentsPilot/neuronforge/pull/318) |
+| 1c | Fix slice: test-mode platform money counts (BD-14); a paying Founding Partner is grouped under its paid tier (BD-15); revenue panel copy no longer says the webhook is missing | Slices 1a, 1b; **no migration**; changes R-c, R-c′, R-d (§11B) | ⬜ **1c implemented (uncommitted); SA code review APPROVED WITH CONDITIONS (SA-CR-1c; SA-CR-2 rename and SA-CR-3 test title done), QA PASS WITH ISSUES (no bugs), fix round 1 applied (FP note only while the FP period is current); user approved diff 2026-10-13; TL retrospective done; committed `fa7a4aad` on `feature/bos-finance-health-1c` (origin/main merged in `10e3c5f0`), PR [#335](https://github.com/AgentsPilot/neuronforge/pull/335) opened 2026-10-13, merge pending; user manual QA L-42..L-48 owed** | [BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_WORKPLAN.md) | [#335](https://github.com/AgentsPilot/neuronforge/pull/335) |
 | 3 | Growth funnel (invites) | More invite volume to be meaningful; "paid" stage waits on P-5 | ⬜ Not started | — | — |
 | 4 | Boost revenue (live, with test-mode switch) | Boost checkout open beyond test accounts (boost slice 5b.1 deployed + flag); new admin read on the boost repository | ⬜ Not started | — | — |
 | 5 | Plan revenue, MRR, paying vs comped, trial-to-paid | P-3b.2 (webhook writer), P-8a (MRR definition), P-5 (`first_paid_at` writer) | ⬜ Blocked on dependencies | — | — |
@@ -71,10 +73,13 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **BD-7** | BQ-7 | Margin counts **AI cost only**, labelled **"AI margin"**. The Stripe fee on our revenue is shown as a labelled **estimate**, because none is recorded for platform payments. | 2026-10-09 | User accepted proposed default |
 | **BD-8** | BQ-8 | Margin per plan may count a whole month under the plan the account is on **now**, with a visible note, until plan history exists. | 2026-10-09 | User accepted proposed default |
 | **BD-9** | BQ-9 | "Per month" = **calendar month in UTC** for platform totals. (Credit allowance stays on each account's own credit period; §8.4.) | 2026-10-09 | User accepted proposed default |
-| **BD-10** | BQ-10 | Platform money shows **live mode only**, with a labelled **test-mode switch** for demos. | 2026-10-09 | User accepted proposed default |
+| **BD-10** | BQ-10 | Platform money shows **live mode only**, with a labelled **test-mode switch** for demos. **Superseded 2026-10-13 by BD-14** (test and live platform money counted together, no switch for now); original text kept for history. | 2026-10-09 | User accepted proposed default |
 | **BD-11** | BQ-11 | KPI thresholds: AI cost up **50%** month on month = amber, **doubled** = red; any account over **150%** of allowance = amber; Founding Partners with **no end date** = amber (information); **any** boost or plan dispute = red. Thresholds are **data**, cheap to change. | 2026-10-09 | User accepted proposed default |
 | **BD-12** | BQ-12 | The legacy `exchange_rates` table is **never** used for a combined figure. Per-currency totals only; any FX use is a separate future decision for SA and the user. | 2026-10-09 | User accepted proposed default |
 | **BD-13** | SA-Q9 (slice 2) | **"Option A. Build slice 2 now. Test and real client payments are shown together, and all data is treated as real for now; no test-mode label and no livemode migration. In the future, test data may be filtered out by business or user."** Layer B (clients paying businesses) therefore shows every recorded client payment, with no test-mode label, no switch and no `livemode` filter, and no migration is added. **This resolves SA-Q9.** BD-10 is unchanged and still governs layer A (platform money). Filtering test businesses or users out later is DF-3. | 2026-10-11 | User decision |
+| **BD-14** | Slice 1c (owner test, 2026-10-12) | Platform money (layer A: plan billing events and boost purchases) counts **test-mode and live-mode payments together**, and all of it is treated as real, consistent with BD-13 for client payments. **No test-mode switch for now.** A future filter may exclude test businesses or users, the same as the BD-13 deferral (DF-3). **Supersedes BD-10.** | 2026-10-13 | User decision |
+| **BD-15** | Slice 1c (owner test, 2026-10-12) | An account that is **paying** for a tier is grouped under **that paid tier**, even when it also has the Founding Partner (`champion`) cohort; Founding Partner then shows as a **note or badge** on that account. A champion account that is **not** paying stays in the Founding Partner group. "Paying" is the existing single definition (`PAYING_SUBSCRIPTION_STATUSES`: `active` or `past_due`, with `ended_at` NULL), now counting test-mode rows too (BD-14). | 2026-10-13 | User decision |
+| **BD-16** | SA-Q21 (slice 1c) | **"There are no separate test and production rows; it should be one. We are in test mode now; assume that when we go live each account has one."** One billing record per account is the working assumption. The finance page is not built around an account holding both a test and a live billing row: no special handling for two rows beyond failing honestly (a section that cannot read a single row reports an error, never a wrong figure). SA-Q21's dual-row redesign is withdrawn; SA re-rules W41 and AC-85 against this. | 2026-10-13 | User decision |
 
 **Log:**
 - 2026-10-09 — BA applied SA findings F1–F14; slice 1 split into 1a/1b (SA F3).
@@ -86,6 +91,9 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 - 2026-10-11 — BA applied SA slice 2 findings S2-F1..F9 and the SA-Q13 to SA-Q19 rulings (SA-RR-2): §11A (money at scale 100, refunds by `amount` and dated by `created_at`, date-only `due_date` and new AC-74, no "Deleted business" row, invoice and instalment amount labels, 2 s reminder deadline), §12.1, §12.2 (finance source guard tripped in 2a; guard path and row fixes) and §13 checks 7 to 13 (trimmed currency codes, check 8 comment, check 13 at 690 seconds). Next: the 2a workplan.
 - 2026-10-11 — BA applied SA 2a workplan-review edits E-8..E-10 (SA-WP-2a): §13 check 7 gains `counted_payments` and `businesses_counted`, with AC-47 and S2-FR-2 comparing counted payments (E-8, SA-W18); refund-only lines and rows in S2-FR-2, S2-FR-7 and S2-FR-8 (E-9, SA-W19); unreadable amounts and fees in S2-CUR-3, an unreadable fee making the block `partial` (E-10, SA-W20).
 - 2026-10-12 — BA applied SA 2b workplan-review edits E-11..E-14 (SA-WP-2b): S2-CUR-5 allows date-ordered lists (E-11, SA-W30); AC-74 renders `2026-09-30` (E-12, SA-W32); §11A.7 R-h and R-i columns drop `subscription_id` and the plan `currency` (E-13, SA-W34); S2-FR-23 says the block frame is never `unknown` (E-14, SA-W31).
+- 2026-10-13 — The user's owner-account test (a Starter boost and a Basic subscription, both Stripe test mode, recorded correctly, verified read-only 2026-10-12) showed nothing on the Finance page: the revenue panel and the paying read are live-only (BD-10), and the account stayed in Founding Partner. User decided **BD-14** (test and live platform money together, no switch; supersedes BD-10) and **BD-15** (a paying champion is grouped under its paid tier, with a Founding Partner note). BA specified fix slice **1c** in §11B (about 1 day, no migration; AC-75 to AC-84; SQL checks 1 and 6 updated). Awaiting SA review (SA-Q20 to SA-Q24).
+- 2026-10-13 — BA applied SA 1c review edits E-15..E-19 (SA-RR-1c): §13 check 1 comment keeps the tier caveat (E-15, S1C-F4); AC-78 rewritten for the owner account (tier in force, shown as Comped, not Founding Partner, per S1C-F1) and for a paying champion with no tier in force (E-16); AC-80 adds `tier` is `(none)` (E-17); new AC-85 (two billing rows, page boundary, OR) and AC-86 (paid tier source, SA-Q20) (E-18); §11B.5 guard rows (E-19). §11B SA-Q20 background corrected (the account showed as Comped).
+- 2026-10-13 — BA applied SA 1c workplan-review edits E-20..E-25 (BD-16): S1C-FR-2 rewritten for one billing row per account, where two rows give an error and the 'Tier set' fallback (E-20); AC-82 two-row case now fails to the fallback (E-21); AC-80 "counted once" sentence removed (E-22); AC-85 rewritten (E-23); §11B.6 SA-Q21 marked withdrawn (E-24); §13 check 1 comments (E-25, ASCII, query unchanged).
 
 ### 0.3 SA rulings
 
@@ -133,6 +141,15 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **SA-W28 to SA-W40** | **Slice 2b workplan rulings, all approved as proposed.**<br>• W28: one generalised pager, with the 2a tests byte-identical.<br>• W29: positive pins for the reminder vocabulary and for the `'sent'` / `'pending'` literals.<br>• W30: overdue tables in date order (E-11).<br>• W31: the block frame is never `unknown` (E-14).<br>• W32: due dates shown as `YYYY-MM-DD` (E-12).<br>• W33: date-only helpers (`todayUtc`, `isRealDate`, `inclusiveDays`) with no `new Date`.<br>• W34: drop `subscription_id` and the plan `currency` (E-13).<br>• W35: a structural type for the reminder figures.<br>• W36: an overdue invoice with no due date counts as marked and sorts last.<br>• W37: instalment retries are fixed "not recorded" copy.<br>• W38: one names call.<br>• W39: plan statuses checked against the migration CHECK.<br>• W40: a new writer-names test. | 2026-10-12 | S2-CUR-5, S2-FR-23, §11A.7, AC-74 |
 | **SA-WP-2b** | **2026-10-12 SA workplan review (slice 2b): APPROVED WITH CONDITIONS.** Required changes SA-WR-20 to SA-WR-25 are in the workplan, including the `formatUtcDate` regression run over every importer of `adminFormat.ts`. BA applies E-11 to E-14 (exact text in the workplan's SA review) before V-11 and QA. | 2026-10-12 | Slice 2b |
 | **SA-CR-2b** | **2026-10-12 SA code review (slice 2b): APPROVED WITH CONDITIONS, code approved for QA.** SA-WR-20 to SA-WR-25 verified; D-1 to D-4 approved.<br>• Due dates are date-only end to end (AC-74 renders `2026-09-30`).<br>• Overdue amounts are per currency, labelled as the invoice or instalment amount.<br>• The failed-payments panel never shows a number.<br>• The block frame is never `unknown`.<br>• A picked business gets account-scoped reads only, and the reminder read is skipped.<br>**Condition SA-CR-1:** replace the literal backspace in the finance guard's cohort rule (`finance.source.guard.test.ts:145`) with `\b` and add a planted control; the corrected rule passes on today's code. | 2026-10-12 | Slice 2b |
+| **SA-Q20** | **The paid tier comes from the plan row `tier` first** (the entitlement truth, written by the webhook). A tier in force already maps through the existing path. A paying account whose lifecycle is champion goes to the plan row `tier` if it is in `config.tierOrder`, else `bought_tier` if it is, else Unknown/held. If they disagree, the plan row wins. R-c and R-c′ add `bought_tier` to their columns (amended by BD-16: no `id` column). | 2026-10-13 | S1C-FR-3, AC-86 |
+| **SA-Q21** | **Withdrawn 2026-10-13 by user decision BD-16** (one billing record per account). The original ruling (keyset on `id`, a `.limit(2)` list, OR over rows) is **not** built. **Replacement:** R-c keeps its keyset on `user_id` and R-c′ keeps `.maybeSingle()`; both drop only the mode filter. Two rows give an honest error, never a figure: R-c fails on a duplicate `user_id` among the rows read (SA-WR-27), and R-c′'s single-row read fails. Section 1 then shows "Tier set". | 2026-10-13 | S1C-FR-2, AC-82, AC-85 |
+| **SA-Q22** | **Rename** to `listBillingStatusesAllAccounts`, `listBillingStatusesForAccount` and `countRevenueRows`. The source guard's `:334-335` control becomes "the repository code names no `livemode`" with a planted control, and the repository header is rewritten for BD-14. | 2026-10-13 | §11B.5 |
+| **SA-Q23** | **Dormant Founding Partners counts the Founding Partner group only.** "Ending in 30 days" is unchanged. The slice 1a shadow-report parity test keeps a fixture with no paying champion. | 2026-10-13 | S1C-FR-5 |
+| **SA-Q24** | **A note on the group row plus a `neutral` `StatusChip` "Founding Partner" in the picked view; no new column.** The cohort is recognised through `stateForCohort`. The note counts every paying account in a tier group whose plan row has the champion cohort, so it also covers a tier in force. | 2026-10-13 | S1C-FR-4 |
+| **SA-RR-1c** | **2026-10-13 SA requirement review (slice 1c): APPROVED WITH CONDITIONS.** S1C-F1 (High): the owner test account had its tier in force and showed as Comped, not Founding Partner; BD-14 moves it and BD-15 adds the note; AC-78 is rewritten. S1C-F2 (High): two billing rows per account, fixed by SA-Q21. S1C-F3 to S1C-F6: shadow-report parity, the K-3 / check 1 caveat, a whole-file `livemode` rule, and an estimate of 1 to 1.5 days. The workplan starts after BA edits E-15 to E-19. | 2026-10-13 | Slice 1c |
+| **SA-W41 to SA-W46** | **Slice 1c workplan rulings (with BD-16).**<br>• W41: moot, because one row gives one `bought_tier`; `paidTierOf(planTier, boughtTier, tierOrder)`.<br>• W42: dormant counts the Founding Partner group only, so a Comped dormant champion is not counted either.<br>• W43: keep the SA-WR-17 test and add a picked-view chip test.<br>• W44: the override runs after `groupFor`, only when paying is true.<br>• W45: comment-only edit in `payingSubscriptionStatuses.ts`, never using the word "supabase".<br>• W46: no code change; the check 1 caveat is stated (E-25).<br>`!!cohort` is accepted, since `cohort !== ''` trips the cohort-literal rule. | 2026-10-13 | §11B, AC-80, AC-82, AC-85 |
+| **SA-WP-1c** | **2026-10-13 SA workplan review (slice 1c): APPROVED WITH CONDITIONS.** Under BD-16 the single-row reads are kept; keyset paging on `user_id` was verified correct for one row per account. Two rows give an honest error (SA-WR-27, SA-WR-28). Required changes SA-WR-26 to SA-WR-31; about 1 day. BA applies E-20 to E-25 (exact text in the workplan's SA review). | 2026-10-13 | Slice 1c |
+| **SA-CR-1c** | **2026-10-13 SA code review (slice 1c): APPROVED WITH CONDITIONS, code approved for QA.**<br>• The dual-row redesign is gone, and two rows give an honest error.<br>• The renames leave no old name.<br>• The repository code names no `livemode` (planted control).<br>• The paid tier comes from `tierOrder` only.<br>• The BD-15 override runs after `groupFor`, with the note and the picked-view chip; a non-paying champion stays in Founding Partner.<br>• Dormant counts the Founding Partner group only.<br>• The panel copy has no webhook or mode wording.<br>• Test-mode rows count in R-c, R-c′ and R-d.<br>Conditions (Low): **SA-CR-2** rename R-c′ to `findBillingStatusForAccount`, since under BD-16 it returns one row or null; **SA-CR-3** re-title the "spans pages" duplicate test. The page-boundary residual is accurate. | 2026-10-13 | Slice 1c |
 
 ### 0.4 Deferrals and parked items
 
@@ -269,6 +286,8 @@ Platform money filters on `livemode` (PF-15, `BUSINESS_OS_PLAN_PAYMENTS_REQUIREM
 
 **Layer B (slice 2, BD-13):** client payments have no `livemode` column and cannot be told apart from test rows (live check §2). By the user's decision they are shown **together and treated as real**, with **no test-mode label, no switch and no `livemode` filter**, and no migration. Filtering test businesses or users is a future item (DF-3). BD-10 above still governs layer A.
 
+**Layer A from slice 1c (BD-14, 2026-10-13):** BD-10 is superseded. Platform money counts test-mode and live-mode rows together and treats all of it as real, with no switch and no label; R-c, R-c′ and R-d drop the `livemode` filter (§11B). The paragraph above is kept for history.
+
 ### 6.5 Aggregation rules
 
 | # | Rule | Source |
@@ -307,6 +326,8 @@ Rules are data, first match wins, only red or amber are data, green only for cod
 | **K-5 Our revenue** | Live-mode platform revenue this month. | none in slice 1 | Always in slice 1: "None yet", "Revenue recorded, not yet shown" or "Could not check" (§10.6) | — | No | 1a (grey), 4-5 (values) |
 | K-6 Disputes | Open boost or plan disputes. | red: count >= 1 | No live source | — | Yes | 4 (boosts), 7 (plans) |
 | K-7 AI margin | AI margin this month | new condition kind "falls below" needed (SA) | No revenue | — | — | 6 |
+
+**Slice 1c (§11B.3):** K-3's definition text is unchanged, but paying champions are grouped under their tier (BD-15) and are not counted. K-5 becomes "Platform revenue (test and live mode together, BD-14)", still grey with no value.
 
 In slice 1a, **K-2 and K-4 are not rendered** (not placeholders); they appear in 1b. Every tile shows its text state, not colour alone (accessibility).
 
@@ -350,6 +371,8 @@ Each section lists its business definition, live-verified source, currency, time
 | `paused` | any | Unknown/held | — |
 | `unknown` | any | Unknown/held | — |
 | any pair not listed above | — | Unknown/held (so the six groups always sum to Total) | — |
+
+**Slice 1c (BD-14, BD-15):** "Paying" counts test-mode billing rows too, and a paying account that this table would place in Founding Partner goes to its paid tier's group with a Founding Partner note (§11B.2, S1C-FR-2 to S1C-FR-4).
 
 ### 8.2 Section 2: Revenue
 
@@ -503,6 +526,8 @@ Small numbered slices of a few days each, reusing existing infrastructure. Each 
 | S1-FR-25 | A panel titled "Our revenue" stating: "None yet. Plan billing is not live (the payment webhook is not in place) and credit boosts are open to test accounts only." It shows no $0 chart and no $0 figure. | 1a |
 | S1-FR-26 | **The panel never claims "none" when it is false.** It checks, through R-d (§10.8), whether any **live-mode** row exists in `business_os_billing_events` with `kind = 'invoice_paid'` or in `business_os_boost_purchases` with `paid_at` set (a `{ count: 'exact', head: true }` existence read, not a sum). If one exists, the panel instead says "Live revenue has started to arrive; the revenue section is coming in a later update" and K-5 says "Revenue recorded, not yet shown". If the check fails, the panel says "Could not check" and K-5 is grey. | 1a |
 | S1-FR-27 | Test-mode rows are ignored by this check (`livemode = true` in the query, BD-10). | 1a |
+
+**Slice 1c supersedes S1-FR-25 to S1-FR-27** (BD-14): the check counts both modes and the panel wording is in §11B.3. The rows above are kept for history.
 
 ### 10.7 Non-functional (slices 1a and 1b)
 
@@ -808,6 +833,89 @@ All testable by Jest or by QA's recorded manual check. Figures quoted "today" ar
 
 ---
 
+## 11B. Slice 1c (fix): test-mode platform money and paying Founding Partners
+
+Specified 2026-10-13 from the user's owner-account test and decisions **BD-14** and **BD-15** (§0.2). About **1 day**, **no migration**, no new table, no new read, no new tile. It changes slice 1a's reads R-c, R-c′ and R-d, the Section 1 classifier and the revenue panel copy. Where this section and an earlier slice 1a rule disagree (BD-10, §6.4 layer A, §8.1 "Paying", S1-FR-25 to S1-FR-27, AC-23), **this section governs**.
+
+### 11B.1 Scope
+
+| In 1c | Not in 1c |
+|---|---|
+| R-d counts test-mode and live-mode paid plan invoices and paid boosts (BD-14) | Any amount, sum or chart of our revenue (slices 4 and 5) |
+| R-c and R-c′ read test-mode and live-mode billing rows; "paying" counts both (BD-14) | A test-mode switch or label (none for now, BD-14) |
+| A paying champion is grouped under its paid tier, with a Founding Partner note (BD-15) | Filtering test businesses or users (DF-3) |
+| New revenue panel wording; the stale "webhook not in place" text is removed | Boost credits in the Credits section (still slice 4, unchanged) |
+| SQL checks 1 and 6 updated (§13) | Slices 4 and 5 specs: their "live, test switch" wording is superseded by BD-14 and is re-specified when each starts |
+
+### 11B.2 Functional rules
+
+| # | Rule |
+|---|---|
+| S1C-FR-1 | **R-d (BD-14).** The revenue existence check drops `livemode = true` on both tables: any `business_os_billing_events` row with `kind = 'invoice_paid'`, or any `business_os_boost_purchases` row with `paid_at` set, in either mode, counts. Still two `{ count: 'exact', head: true }` reads, still platform-wide (no account argument, AC-42), still no amount read. Replaces S1-FR-27. |
+| S1C-FR-2 | **R-c and R-c′ (BD-14, BD-16).** The paying reads drop `livemode = true`. One billing record per account is assumed (BD-16): R-c keeps its keyset on `user_id`, and R-c′ keeps its single-row read. If an account ever has two rows, the read reports an error, never a figure: R-c fails when a `user_id` appears twice among the rows it read, and R-c′'s single-row read fails. Section 1 then shows the 'Tier set' fallback (S1-FR-15). An account is paying when its row passes `isPayingBillingRow` (the single definition; no new constant). R-c and R-c′ add `bought_tier` to their columns (SA-Q20). |
+| S1C-FR-3 | **Grouping (BD-15).** An account whose §8.1 mapping would place it in **Founding Partner** (`champion`, or `grace` on the champion cohort) and that is **paying** is placed in its **paid tier's group** instead. The paid tier source is SA-Q20. A non-paying champion stays in Founding Partner, unchanged. Accounts whose tier is in force already map through the `tier` basis rows of §8.1; under BD-14 a test-mode paying row now puts them in the tier group instead of Comped. Every account is still in exactly one group, and the groups still sum to Total (AC-12). |
+| S1C-FR-4 | **Founding Partner note (BD-15).** A tier group that holds paying champions shows a note with their number, for example "including 1 Founding Partner". With a business picked, a paying champion shows a "Founding Partner" badge beside its tier group. Text, not colour alone. No `'champion'` cohort literal in finance code (SA-F6): the cohort is recognised through `stateForCohort`. |
+| S1C-FR-5 | **Founding Partner counts.** "Founding Partners with no end date" (K-3 and Section 1) counts only accounts **in the Founding Partner group**, so a paying champion is no longer counted (it already follows from the group rule, `planGroups.ts` counts by group key). Dormant Founding Partners and "ending in 30 days" follow SA-Q23. |
+| S1C-FR-6 | **Unchanged:** the paying definition (`active` or `past_due`, `ended_at` NULL); BD-4 (an admin-assigned tier without a paying row is Comped); the "Tier set" fallback when R-c fails; the plan walk; Section 3; Section 4. **Boost credits stay excluded from the Credits section until slice 4**, as before. |
+| S1C-FR-7 | **No test-mode wording** anywhere on layer A, matching BD-13 for layer B: no label, no note, no switch. |
+
+### 11B.3 Impact on K-3, K-5 and the revenue panel
+
+| Item | Before (1a) | After (1c) |
+|---|---|---|
+| **K-3** | "Accounts in the Founding Partner group whose cohort has no end date" | **Definition text unchanged**; its meaning narrows because a paying champion now leaves the group (S1C-FR-3). A note is added to §7.1: "Paying champions are grouped under their tier (BD-15) and are not counted." With a business picked: a paying champion answers "not an open-ended Founding Partner". |
+| **K-5** | "Live-mode platform revenue this month"; grey with "None yet", "Revenue recorded, not yet shown" or "Could not check" | Definition becomes "Platform revenue (test and live mode together, BD-14)". Still grey in 1c, same three states, still no value (values are slices 4 and 5). |
+| **Panel, none** | "None yet. Plan billing is not live (the payment webhook is not in place) and credit boosts are open to test accounts only." | **"None yet. No plan payment or credit boost has been recorded."** |
+| **Panel, recorded** | "Live revenue has started to arrive; the revenue section is coming in a later update" | **"Revenue has been recorded. Amounts are shown in a later update."** |
+| **Panel, failed** | "Could not check" | Unchanged. |
+| **Panel subtitle** | "Live-mode plan invoices and paid boosts, all businesses" | **"Paid plan invoices and paid boosts, all businesses"** |
+
+The panel still shows **no amount, no $0 figure and no chart**. Final wording may be polished by Dev within these meanings; it must not mention the webhook, test accounts, live mode or test mode.
+
+### 11B.4 Acceptance criteria (1c)
+
+- [ ] **AC-75** *(1c)* With only a **test-mode** `invoice_paid` billing event (and no other paid row), the panel says "Revenue has been recorded" and K-5 says "Revenue recorded, not yet shown"; the R-d queries name no `livemode` (mocked repository test). Replaces AC-23's "test-mode rows alone do not change it".
+- [ ] **AC-76** *(1c)* With only a **test-mode paid boost** (`paid_at` set), the same as AC-75.
+- [ ] **AC-77** *(1c)* With no paid row in either mode, the panel says "None yet" with the new wording, and shows no amount, no $0 figure and no chart; K-5 is grey (re-run of AC-22).
+- [ ] **AC-78** *(1c)* (a) A champion-cohort account whose plan row tier is **in force** and that has a paying **test-mode** billing row (`active` or `past_due`, `ended_at` NULL) is counted in that tier's group, not Comped, and the group shows the Founding Partner note; this is the owner test account. (b) A champion account with **no tier in force** and a paying row is counted in its paid tier's group (SA-Q20) with the note, and Founding Partner does not count it. In both, the six groups still sum to Total (unit test on the classifier; render test for the note).
+- [ ] **AC-79** *(1c)* A champion account that is not paying (no billing row; or `canceled`, `incomplete`, `unpaid`; or `active` with `ended_at` set) stays in Founding Partner, with no note.
+- [ ] **AC-80** *(1c)* K-3 counts only open-ended champions that are **not paying**, and matches updated SQL check 1: the sum of `no_cohort_end_date` over the champion rows where `paying` is false and `tier` is `(none)`.
+- [ ] **AC-81** *(1c)* The words "webhook", "not in place" and "test accounts only" appear nowhere in the finance page copy or the rendered revenue panel; the panel and the layer-A copy name no live mode or test mode (source and render test).
+- [ ] **AC-82** *(1c)* With a business picked whose only billing row is a paying test-mode row: Section 1 shows it in its tier group with the "Founding Partner" badge, K-3 says it is not an open-ended Founding Partner, R-c′ receives exactly that id, R-d is still called with no account argument, and a business with **two** billing rows makes the paying read fail, so Section 1 shows the 'Tier set' fallback and never a wrong group (BD-16; re-run of AC-42).
+- [ ] **AC-83** *(1c)* Auth failure is unchanged: 401 unauthenticated, 403 non-admin (including a `profiles.role`-only admin), the page refused by `requireAdminPage`, with no figures and no finance read made (re-run of AC-1 to AC-3).
+- [ ] **AC-84** *(1c)* Re-run over the 1c diff: AC-12 (sum to Total, now with a paying champion case), AC-28 (read-only, no migration), AC-30 (logs), AC-31 (the §11B.5 guard rows), AC-44 (scoped `tsc` with canary). QA records a manual check: admin opens Finance, sees "Revenue has been recorded" and the owner test account in its paid tier group with the Founding Partner note, and cross-checks against SQL checks 1 and 6.
+- [ ] **AC-85** *(1c)* **One billing row per account (BD-16).** R-c and R-c′ read without a mode filter and assume one row per account. If an account ever has two rows, the read returns an error: R-c when a `user_id` appears twice among the rows read, R-c′ when its single-row read fails. Section 1 then shows the 'Tier set' fallback with no Founding Partner note: never a wrong group or count (repository test and builder test).
+- [ ] **AC-86** *(1c)* **Paid tier source (SA-Q20).** A paying champion with no tier in force is grouped by the plan row `tier` when it is in `config.tierOrder`; otherwise by `bought_tier` when that is in `config.tierOrder`; otherwise in Unknown/held. When both are valid and differ, the plan row wins. No tier literal in finance code.
+
+### 11B.5 Guards and tests likely affected (§12.2)
+
+| Guard or test | Why it trips | What Dev must do |
+|---|---|---|
+| `lib/repositories/__tests__/BusinessOsFinanceReadRepository.test.ts` (`:133`, `:198`, `:242-248`) | Pins `['livemode', true]` on R-c, R-c′ and R-d; the `:242` comment cites AC-23 | Invert to "no `livemode` filter" on R-c, R-c′ and R-d; add the two-rows-per-account case; keep the no-write and one-caller pins unchanged |
+| `lib/business-os/finance/__tests__/finance.source.guard.test.ts:334-335` | "The layer-A reads still filter livemode" is the non-vacuity control for the layer-B no-`livemode` rule | Replace with: the repository's code, comments removed, names no `livemode` at all (planted control); keep the `:321` body-slicer control (SA-Q22). |
+| `finance.source.guard.test.ts` `:361`, `:507`, `:519` (no `livemode` / test-mode wording in listed files) | Not tripped if the new copy follows S1C-FR-7 | Run unchanged |
+| The 1a revenue-panel tests (S1-FR-26, S1-FR-27, AC-22, AC-23) in the builder tests and `app/admin/finance/__tests__/financePage.render.test.tsx` | Pin the old copy and the live-only behaviour | Update to AC-75 to AC-77 and AC-81 |
+| Section 1 classifier tests (`planGroups`, AC-12, AC-9) | New paying-champion mapping | Add AC-78 to AC-80 cases |
+| `planGroups.test.ts` parity with `buildShadowReport` (noEndDate / dormant, slice 1a) | Diverges when a fixture holds a paying champion (SA-Q23) | Keep the parity fixture free of paying champions; add a separate test that a paying dormant champion is not counted (S1C-F3) |
+| `enforcementPoints.test.ts` (`KNOWN_NON_GATE_IMPORTERS`) | Only if `planGroups.ts` imports a new entitlements symbol | Update the exact symbol list if so (the `business-os-entitlements` skill) |
+| `tierLiteral.forbidden.test.ts` | If the paid tier is read from `bought_tier`, it must flow as data | No tier literal; validate against `config.tierOrder` |
+| Stripe webhook placement guards (three files, §12.2) | Not expected (the read repository was verified not scanned, SA-Q16) | Run unchanged and paste the result |
+| `payingSubscriptionStatuses.test.ts` | Not tripped: the definition is unchanged | Run unchanged |
+
+The repository header comment (`BusinessOsFinanceReadRepository.ts:69`, "filters `livemode = true`") and the method names that say "Live" become wrong (SA-Q22).
+
+### 11B.6 Open questions for SA (1c)
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q20** | Where does a paying champion's **paid tier** come from? `deriveLifecycle` already lets a tier in force on the plan row win; the owner test account showed as Comped (its tier was in force and the live-only paying read was false; S1C-F1), not Founding Partner. The other source is `business_os_billing_accounts.bought_tier`. What if they disagree, or `bought_tier` is NULL or not in `config.tierOrder`? | Plan row tier in force wins (existing path); otherwise `bought_tier` when it is in `config.tierOrder`; otherwise Unknown/held (never dropped). Verify live with the `business-os-schema-check` skill whether the subscription webhook writes the plan row tier |
+| **SA-Q21** | Two billing rows per account under BD-14: R-c keysets on `user_id` with `gt`, so a page boundary between an account's two rows skips one; R-c′ uses `.maybeSingle()`. | Keyset on `id` (or `user_id`, `livemode`); R-c′ returns a list of at most two; the caller ORs `isPayingBillingRow` over the rows **Withdrawn 2026-10-13 by BD-16** (one billing record per account; see §0.3 SA-Q21). |
+| **SA-Q22** | Rename `listLiveBillingStatusesAllAccounts`, `findLiveBillingStatusForAccount` and `countLiveRevenueRows` (the word "Live" becomes false), and replace the source guard's non-vacuity control? | Rename in 1c (one caller, `financeHealthDeps.ts`); planted negative control |
+| **SA-Q23** | Do "dormant Founding Partners" (`isDormantChampion`, counted by row, not by group) and "ending in 30 days" still count a paying champion? | Dormant: count only accounts in the Founding Partner group, like K-3. Ending in 30 days: unchanged (it is any end date, not a group figure) |
+| **SA-Q24** | Is a group-row note ("including N Founding Partners") plus a badge in the picked-business view acceptable under the layout standard (§4), or should it be a column? | Note on the row plus the badge; no new column |
+
+---
+
 ## 12. Testing and CI guards
 
 ### 12.1 Expected tests
@@ -856,6 +964,7 @@ This table is SA's guard table from the SA review (SA-F5), replacing the earlier
 | `app/admin/finance/__tests__/source.guard.test.ts` | New block components | Only type imports from `lib/business-os/finance/`; no repository; no `console.` | 2a, 2b |
 | Shared layout folder guard (C-14, `app/admin/components/layout/__tests__/`) | The finance page imports shared exports through the alias; 2b builds `formatUtcDate` in the shared folder | Rules S-1 to S-10 hold for the new export; the migrated-pages registry is **not** changed (the page shell is not migrated, DF-4) | 2a, 2b |
 | New finance source guards (§12.1) | `currencyGroups` and the layer-B builders | No exported cross-currency total; no `exchange_rates`; no `livemode` in layer-B reads; no reminder rule literal | 2a, 2b |
+| Slice 1c rows (BD-14, BD-15) | R-c, R-c′ and R-d drop `livemode`; new paying-champion mapping; new panel copy | See §11B.5: the finance repository test's `livemode = true` pins, the source guard's layer-A non-vacuity control, the S1-FR-26/27 and AC-22/23 panel tests, the classifier tests; `enforcementPoints` only if symbols change | 1c |
 
 **Not tripped:** L8, BD-26 owner-read, `businessOwnedTables` / purge descriptors, `adminReadMethods`, `accountSeam.guard` (if SA-Q7 is followed), billing-account and billing-event caller lists, boost repository pins (SA-F2 keeps the page off them). **No new CI job and no added PR critical-path time:** every new test runs in the existing Jest gate or the existing `test:bos-entitlements` job.
 
@@ -869,23 +978,40 @@ This table is SA's guard table from the SA review (SA-F5), replacing the earlier
 
 The user can paste each script into the Supabase SQL editor to cross-check the page. Each script is read-only and returns **one final result set** (the editor shows only the last one). Months are UTC calendar months. Checks 1 to 3 and 6 back slice 1a; checks 4 and 5 back slice 1b.
 
-**File:** `check 1 - accounts by plan` (AC-9)
+**File:** `check 1 - accounts by plan` (AC-9; updated for slice 1c, AC-78 to AC-80)
 
 ```sql
--- Finance page check 1: accounts by cohort, tier and origin, read only.
+-- Finance page check 1: accounts by cohort, tier, origin and paying, read only.
 -- Compare with Section 1 and tile K-3.
+-- Paying means any billing row, test or live mode (BD-14), with status
+-- active or past_due and no end date. One billing row per account is assumed (BD-16).
+-- A paying champion is shown under its paid tier on the page (BD-15).
+-- K-3 equals the sum of no_cohort_end_date over champion rows where paying is false
+-- and tier is (none); a champion with a tier set is Comped or in its tier group.
+-- A champion whose tier has expired shows here under that tier but is a Founding Partner on the page.
 -- cohort_already_ended counts rows whose cohort end date has passed.
+with paying as (
+  select a.user_id, max(a.bought_tier) as bought_tier
+  from public.business_os_billing_accounts a
+  where a.user_id is not null
+    and a.subscription_status in ('active', 'past_due')
+    and a.ended_at is null
+  group by a.user_id
+)
 select
   coalesce(p.cohort, '(none)') as cohort,
   coalesce(p.tier, '(none)') as tier,
   coalesce(p.origin, '(none)') as origin,
+  (y.user_id is not null) as paying,
+  coalesce(y.bought_tier, '(none)') as paid_tier,
   count(*) as accounts,
   count(*) filter (where p.cohort_expires_at is null) as no_cohort_end_date,
   count(*) filter (where p.cohort_expires_at <= now()) as cohort_already_ended,
   count(*) filter (where p.created_at >= date_trunc('month', now(), 'UTC')) as created_this_month_utc
 from public.business_os_account_plans p
-group by 1, 2, 3
-order by 1, 2, 3;
+left join paying y on y.user_id = p.user_id
+group by 1, 2, 3, 4, 5
+order by 1, 2, 3, 4, 5;
 ```
 
 **File:** `check 2 - AI cost this month` (AC-10)
@@ -977,22 +1103,34 @@ from grants g
 left join taken t on t.lot_id = g.id;
 ```
 
-**File:** `check 6 - is there any live platform revenue` (AC-22, AC-23)
+**File:** `check 6 - is there any platform revenue` (AC-22; updated for slice 1c, AC-75 to AC-77)
 
 ```sql
--- Finance page check 6: live mode platform revenue rows, read only.
--- All zeros means the None yet panel is correct.
-select 'plan_invoice_paid_live' as source, count(*) as row_count
+-- Finance page check 6: platform revenue rows, test and live mode together, read only (BD-14).
+-- row_count is what the page counts. All zeros on the first two rows means None yet is correct;
+-- any non zero row_count on them means Revenue has been recorded.
+-- live_rows and test_rows are for information only; the page does not split them.
+select 'plan_invoice_paid' as source,
+  count(*) as row_count,
+  count(*) filter (where e.livemode) as live_rows,
+  count(*) filter (where not e.livemode) as test_rows
 from public.business_os_billing_events e
-where e.livemode = true and e.kind = 'invoice_paid'
+where e.kind = 'invoice_paid'
 union all
-select 'boost_paid_live', count(*)
+select 'boost_paid',
+  count(*),
+  count(*) filter (where b.livemode),
+  count(*) filter (where not b.livemode)
 from public.business_os_boost_purchases b
-where b.livemode = true and b.paid_at is not null
+where b.paid_at is not null
 union all
-select 'billing_accounts_live', count(*)
+select 'billing_accounts_paying',
+  count(*),
+  count(*) filter (where a.livemode),
+  count(*) filter (where not a.livemode)
 from public.business_os_billing_accounts a
-where a.livemode = true;
+where a.subscription_status in ('active', 'past_due')
+  and a.ended_at is null;
 ```
 
 ### Slice 2 checks (7 to 13)
@@ -1409,6 +1547,74 @@ The SQL checks 7 to 13 are ASCII only, with no "into", no apostrophe in a commen
 
 ---
 
+## SA Requirement Review — Slice 1c — 2026-10-13
+
+**Reviewed by SA — 2026-10-13, against `97c66132`**
+**Status:** ✅ **APPROVED WITH CONDITIONS.** The 1c workplan may start once the BA has applied E-15 to E-19 below. BD-14 and BD-15 are final and are not reopened.
+
+**How it was checked.** I opened the code rather than trusting the citations:
+- `lifecycle.ts:136-200`: **a tier in force wins outright** (`state: 'active'`, `basis: tier`, RC-11);
+- `planGroups.ts` `groupFor`: an active state on the tier basis, not paying, maps to **Comped**;
+- `BusinessOsFinanceReadRepository.ts` R-c (keyset `.gt('user_id')`), R-c′ (`.maybeSingle()`) and R-d;
+- the repository test at `:128-136`, `:194-200` and `:238-250` (the `livemode` pins);
+- `finance.source.guard.test.ts:321-336`;
+- the billing-accounts migration: `id uuid` primary key, `bought_tier text`, `UNIQUE (user_id, livemode)`.
+
+SQL checks 1 and 6 are ASCII only, with no "into", no apostrophe in a comment, and one result set each.
+
+### Findings
+
+1. **S1C-F1 (High): SA-Q20's premise is wrong, and AC-78 misses the user's own case.**
+   - **What really happens.** The test account has `tier = basic`, expiring 2026-11-12, so the tier is **in force**, and `cohort = champion`. `deriveLifecycle` returns `active` on the **tier** basis, and because R-c read live rows only the account was not paying, so `groupFor` put it in **Comped**, not Founding Partner.
+   - **What fixes it.** BD-14 alone moves it to the Basic group. BD-15 then adds the Founding Partner note, because its plan row carries the champion cohort.
+   - BD-15's "paying champion leaves Founding Partner" case also exists: a champion **without** a tier in force who is paying, for example after a tier expires before the renewal is written. Both cases need ACs: **E-16** and **E-17**.
+2. **S1C-F2 (High): two billing rows per account are a real correctness bug (SA-Q21).**
+   - R-c keysets on `user_id` with `.gt`, so a page boundary between one account's test row and live row drops the second.
+   - R-c′'s `.maybeSingle()` errors on two rows, which turns the picked business into "Could not check".
+   - Ruling SA-Q21 is the fix. The caller's OR needs no new logic: `payingIds` is already a `Set` built from every paying row.
+3. **S1C-F3 (Medium): the dormant count would diverge from the shadow report.** Under SA-Q23, "dormant Founding Partners" counts only the Founding Partner group. The slice 1a parity test (classifier vs `buildShadowReport`, AC-12 area) would then diverge whenever a paying champion is in the fixture. **Required:** keep the parity test over a fixture with no paying champion, and add a separate test that a paying dormant champion is not counted on the finance page. A guard row is added in E-19.
+4. **S1C-F4 (Medium): K-3 and check 1 agree only when no champion has a tier.** A champion whose tier is in force but who is not paying is Comped, not Founding Partner, yet check 1 still counts it under "champion, not paying". This is the 1a QA-2 caveat (AC-9). The check 1 comment and AC-80 must keep that caveat: **E-15** and **E-17**.
+5. **S1C-F5 (Low): the `livemode` guard must cover the whole repository.** Once layer A also has no `livemode` filter, the strongest rule is "the repository's code, comments removed, never names `livemode`", with a planted control (SA-Q22). The header paragraph "LIVE MODE (layer A only)" must be rewritten for BD-14.
+6. **S1C-F6 (Low): the estimate.** One day is tight for a rename plus keyset change across three reads, a classifier change with a note and a badge, new copy, guard edits and the SQL. **1 to 1.5 days** is realistic. Report at mid-day 1 if R-c / R-c′ is not green.
+
+### Rulings SA-Q20 to SA-Q24
+
+| # | Ruling |
+|---|---|
+| **SA-Q20** | **The paid tier comes from the plan row's `tier` first.** It is the entitlement truth, and the subscription webhook writes it: the live row shows `tier = basic`.<br>• A tier in force already maps through the existing path; only the paying test decides between the tier group and Comped.<br>• A **paying** account whose lifecycle is champion (no tier in force) goes to the plan row's `tier` when it is set and is in `config.tierOrder`; otherwise to `bought_tier` when that is in `config.tierOrder`; otherwise **Unknown/held**, never dropped.<br>• If the two disagree, the plan row wins.<br>• R-c and R-c′ select `bought_tier` (the column list grows by `id` and `bought_tier`).<br>• No tier literal: values are only compared with `config.tierOrder`. |
+| **SA-Q21** | **WITHDRAWN 2026-10-13 by user decision BD-16** (one billing record per account). The single-row reads are kept and two rows give an honest error; see §0.3 SA-Q21 and SA-WP-1c. The original text below is kept for history.<br>**R-c pages by keyset on the primary key `id`** (`.order('id')`, `.gt('id', last)`), keeping `.not('user_id', 'is', null)` and the 20,000-row error ceiling.<br>**R-c′** is `.eq('user_id', id).order('id').limit(2)` and returns a **list**, with no `.maybeSingle()`. `(user_id, livemode)` is unique, so there are never more than two rows.<br>The builder treats R-c′'s list like R-c's rows: an account is paying when any of its rows passes `isPayingBillingRow`.<br>Repository tests needed: two rows of one account across a page boundary (`pageSize: 1`) are both returned; R-c′ with two rows returns both and does not error. |
+| **SA-Q22** | **Rename in 1c:**<br>• `listLiveBillingStatusesAllAccounts` → `listBillingStatusesAllAccounts`<br>• `findLiveBillingStatusForAccount` → `listBillingStatusesForAccount`<br>• `countLiveRevenueRows` → `countRevenueRows`<br>The one-caller pin is text-based on the class name and is unaffected.<br>**Source guard `:334-335`:** replace it with a rule that the repository's code, comments removed, contains no `livemode` at all, plus a planted control. Keep the `:321` body-slicer control. Rewrite the repository header for BD-14. |
+| **SA-Q23** | **Dormant Founding Partners counts the Founding Partner group only**, like K-3; see S1C-F3 for the parity test. **"Ending in 30 days" is unchanged.** |
+| **SA-Q24** | **A note on the group row ("including N Founding Partners") and, with a business picked, a `neutral` `StatusChip` "Founding Partner" beside the group, both from `financeCopy.ts`. No new column.**<br>The cohort is recognised with `stateForCohort(row.cohort) === 'champion'`, which is a lifecycle state, not a cohort literal. The note counts every account in a **paid tier group** whose plan row carries the champion cohort. That includes the user's test account (tier in force), not only accounts that left Founding Partner. |
+
+**ACs.** AC-75 to AC-84 are testable. Three cases are missing and are added by E-16 to E-18:
+- the user's own tier-in-force case;
+- the fallback rules for the paid tier;
+- the two-row OR and the page-boundary case.
+
+`past_due` is already covered by AC-78. The K-3 change is covered by AC-80, with the E-17 caveat.
+
+### Requirement edits (BA applies; recorded in §0.3 as SA-RR-1c)
+
+- **E-15 (check 1 comment, S1C-F4).** In §13 check 1, replace the comment line `-- K-3 equals the sum of no_cohort_end_date over champion rows where paying is false.` with these two lines:
+
+  ```sql
+  -- K-3 equals the sum of no_cohort_end_date over champion rows where paying is false
+  -- and tier is (none); a champion with a tier set is Comped or in its tier group.
+  ```
+
+  They are ASCII, with no apostrophe and no "into".
+- **E-16 (AC-78, S1C-F1).** Replace AC-78 with: "**AC-78** *(1c)* (a) A champion-cohort account whose plan row tier is **in force** and that has a paying **test-mode** billing row (`active` or `past_due`, `ended_at` NULL) is counted in that tier's group, not Comped, and the group shows the Founding Partner note; this is the owner test account. (b) A champion account with **no tier in force** and a paying row is counted in its paid tier's group (SA-Q20) with the note, and Founding Partner does not count it. In both, the six groups still sum to Total (unit test on the classifier; render test for the note)."
+- **E-17 (AC-80, S1C-F4).** In AC-80, replace "matches updated SQL check 1: the sum of `no_cohort_end_date` over the champion rows where `paying` is false" with "matches updated SQL check 1: the sum of `no_cohort_end_date` over the champion rows where `paying` is false and `tier` is `(none)`".
+- **E-18 (new ACs).** Add after AC-84:
+  - "- [ ] **AC-85** *(1c)* **Two billing rows.** An account with one test-mode and one live-mode billing row is paying when **either** passes `isPayingBillingRow` (for example a live `canceled` row and a test `active` row). R-c returns both rows when they fall on either side of a page boundary (repository test with `pageSize: 1`). R-c′ returns both and never errors."
+  - "- [ ] **AC-86** *(1c)* **Paid tier source (SA-Q20).** A paying champion with no tier in force is grouped by the plan row `tier` when it is in `config.tierOrder`; otherwise by `bought_tier` when that is in `config.tierOrder`; otherwise in Unknown/held. When both are valid and differ, the plan row wins. No tier literal in finance code."
+- **E-19 (§11B.5 guard rows).**
+  - Replace the `finance.source.guard.test.ts:334-335` row's "What Dev must do" cell with: "Replace with: the repository's code, comments removed, names no `livemode` at all (planted control); keep the `:321` body-slicer control (SA-Q22)."
+  - Add a row: "`planGroups.test.ts` parity with `buildShadowReport` (noEndDate / dormant, slice 1a) | Diverges when a fixture holds a paying champion (SA-Q23) | Keep the parity fixture free of paying champions; add a separate test that a paying dormant champion is not counted (S1C-F3)".
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -1449,3 +1655,13 @@ The SQL checks 7 to 13 are ASCII only, with no "into", no apostrophe in a commen
 | 2026-10-12 | Slice 2b status: awaiting user diff review | SA-CR-2b approved with condition SA-CR-1 (literal backspace in finance.source.guard.test.ts:145 replaced by a word boundary, planted control added); QA PASS WITH ISSUES, no bugs; fix round 1 also qualifies the 'no failure ever stored' line when the plans read was incomplete, and documents that the reminder read error carries no client data. Same backspace defect in two non-finance tests handed to a separate task. User manual QA L-32 to L-41 owed. |
 | 2026-10-12 | Slice 2b approved by user | User read the diff and approved; TL retrospective `docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_RETROSPECTIVE.md`; RM to commit and open the PR. Completes slice 2. |
 | 2026-10-12 | RM: slice 2b committed and PR opened | Commit `b4e0fa2b` on `feature/bos-finance-health-2b`, `origin/main` (`8a43eb36`) merged in (`a6caf75e`), PR [#318](https://github.com/AgentsPilot/neuronforge/pull/318) to main. §0.1 slice 2 status and PR column updated. Manual QA L-32 to L-41 still owed by the user. No code changed. |
+| 2026-10-13 | BA: fix slice 1c specified (BD-14, BD-15) | User decisions BD-14 (test and live platform money counted together, no switch; BD-10 marked superseded, text kept) and BD-15 (a paying champion is grouped under its paid tier with a Founding Partner note). New §11B: scope, S1C-FR-1 to S1C-FR-7, K-3 / K-5 and panel copy impact (no "webhook not in place"; "Revenue has been recorded" vs "None yet"; still no amounts), AC-75 to AC-84, affected guards (§11B.5 and a §12.2 row), SA-Q20 to SA-Q24. §13 checks 1 and 6 updated. Superseded-by-1c notes added under §6.4, §7.1, §8.1 and §10.6. §0.1 row 1c and §0.2 log. No code changed. |
+| 2026-10-13 | SA requirement review, slice 1c: **APPROVED WITH CONDITIONS** | New section "SA Requirement Review — Slice 1c — 2026-10-13", checked against `97c66132`. §0.3 rows SA-Q20 to SA-Q24 and SA-RR-1c added. Findings S1C-F1 to S1C-F6. The owner account had its tier in force and showed as Comped; two billing rows per account are fixed by keyset on `id` and a list R-c′. BA edits E-15 to E-19: check 1 comment, AC-78 rewritten, AC-80 caveat, new AC-85 and AC-86, §11B.5 guard rows. Estimate 1 to 1.5 days. BD-14 and BD-15 not reopened. No code changed. |
+| 2026-10-13 | BA applied SA 1c review edits E-15..E-19 | E-15: §13 check 1 comment adds "and tier is (none)" (ASCII, no apostrophe, no "into", one result set). E-16: AC-78 rewritten, (a) owner account with tier in force (Comped before, not Founding Partner; S1C-F1), (b) paying champion with no tier in force. E-17: AC-80 caveat. E-18: AC-85 and AC-86 added. E-19: §11B.5 guard rows (`:334-335` cell replaced; `planGroups.test.ts` parity row added). SA-Q20 question text in §11B corrected. §0.1 1c status and §0.2 log updated. SA sections and §0.3 unchanged. No code changed. |
+| 2026-10-13 | BD-16 recorded (user decision) | One billing record per account is assumed (no separate test and live rows); SA-Q21 dual-row redesign withdrawn, W41 and AC-85 to be re-ruled by SA. |
+| 2026-10-13 | SA workplan review, slice 1c: **APPROVED WITH CONDITIONS** (with BD-16) | §0.3: SA-Q21 marked withdrawn with its replacement (single-row reads kept; two rows give an honest error); the SA-Q20 row no longer adds an `id` column; rows SA-W41 to SA-W46 and SA-WP-1c added. SA-Q21 in the slice 1c SA review is marked withdrawn. Requirement edits for BA (exact text in the workplan): E-20 (S1C-FR-2), E-21 (AC-82), E-22 (AC-80), E-23 (AC-85), E-24 (§11B.6 SA-Q21), E-25 (check 1 comments). No code changed. |
+| 2026-10-13 | BA applied SA 1c workplan-review edits E-20..E-25 (BD-16) | E-20: S1C-FR-2 rewritten (one billing row per account; two rows give an error and the 'Tier set' fallback; `bought_tier` added to R-c and R-c′). E-21: AC-82 two-row case. E-22: AC-80 "counted once" sentence removed. E-23: AC-85 rewritten. E-24: §11B.6 SA-Q21 marked withdrawn. E-25: §13 check 1 comments (ASCII, no apostrophe, no "into"; query unchanged). §0.1 1c status and §0.2 log updated. SA sections and §0.3 unchanged. No code changed. |
+| 2026-10-13 | SA code review, slice 1c: **APPROVED WITH CONDITIONS** | §0.3 row SA-CR-1c added. SA re-ran 41 suites / 1,891 tests, `test:bos-entitlements` (7,194 tests) and `test:authz-guard` (203 tests), all green. Low conditions for the fix round: SA-CR-2 (rename R-c′ to `findBillingStatusForAccount`), SA-CR-3 (re-title the duplicate-across-pages test). Code approved for QA; QA owes V-11 (checks 1 and 6) and the owner-account manual check. No code changed. |
+| 2026-10-13 | Slice 1c status: awaiting user diff review | SA-CR-1c approved with conditions SA-CR-2 (R-c' renamed findBillingStatusForAccount) and SA-CR-3 (test title), both done; QA PASS WITH ISSUES, no bugs; fix round 1 also limits the Founding Partner note and chip to accounts whose Founding Partner period is current. Note: the paid Basic tier displays as Essentials. User manual QA L-42 to L-48 owed. |
+| 2026-10-13 | Slice 1c approved by user | User read the diff and approved; TL retrospective `docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_RETROSPECTIVE.md`; RM to commit and open the PR. |
+| 2026-10-13 | Slice 1c PR opened (RM) | Committed `fa7a4aad` on `feature/bos-finance-health-1c`; origin/main merged in `10e3c5f0` (clean; finance, billing and Businesses-list suites 3,360 tests, `test:bos-entitlements` 7,231, `test:authz-guard` 203, all green); PR [#335](https://github.com/AgentsPilot/neuronforge/pull/335) opened, merge pending. §0.1 row 1c updated. |

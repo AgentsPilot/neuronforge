@@ -14,6 +14,9 @@
  * `credits.getSnapshots` is a fake (SA-WR-10): the real entitlement service is
  * never reached.
  *
+ * Slice 1c: the renamed billing and revenue reads, and two billing rows for the
+ * picked business giving 200 with the "Tier set" fallback (AC-82, SA-WR-28).
+ *
  * Slice 2a: the takings block in the payload (every money key beside its
  * currency, AC-48), `?currency=` refused (AC-46), the picked business through
  * the route (AC-65), a failed takings read is 200 with that block alone
@@ -78,9 +81,9 @@ const mockDeps = {
     findChargesByActionIds: jest.fn(),
   },
   finance: {
-    listLiveBillingStatusesAllAccounts: jest.fn(),
-    findLiveBillingStatusForAccount: jest.fn(),
-    countLiveRevenueRows: jest.fn(),
+    listBillingStatusesAllAccounts: jest.fn(),
+    findBillingStatusForAccount: jest.fn(),
+    countRevenueRows: jest.fn(),
     listClientPaymentsAllAccountsPaidInRange: jest.fn(),
     listClientPaymentsForAccountPaidInRange: jest.fn(),
     listClientRefundsAllAccountsCreatedInRange: jest.fn(),
@@ -248,9 +251,9 @@ function seed() {
   mockDeps.ledger.listRowsOfAllAccountsCreatedInRange.mockResolvedValue(ledger);
   mockDeps.ledger.listRowsForAccountCreatedInRange.mockResolvedValue(ledger);
   mockDeps.ledger.findChargesByActionIds.mockResolvedValue({ data: [], error: null });
-  mockDeps.finance.listLiveBillingStatusesAllAccounts.mockResolvedValue({ data: [], error: null });
-  mockDeps.finance.findLiveBillingStatusForAccount.mockResolvedValue({ data: null, error: null });
-  mockDeps.finance.countLiveRevenueRows.mockResolvedValue({ data: { planInvoicesPaid: 0, boostsPaid: 0 }, error: null });
+  mockDeps.finance.listBillingStatusesAllAccounts.mockResolvedValue({ data: [], error: null });
+  mockDeps.finance.findBillingStatusForAccount.mockResolvedValue({ data: null, error: null });
+  mockDeps.finance.countRevenueRows.mockResolvedValue({ data: { planInvoicesPaid: 0, boostsPaid: 0 }, error: null });
   const payments = { data: { rows: [clientPayment(ACCOUNT, TAKINGS_FIGURE, 'ils')], reachedCeiling: false }, error: null };
   const refunds = { data: { rows: [clientRefund(ACCOUNT, '76.54', 'ILS')], reachedCeiling: false }, error: null };
   mockDeps.finance.listClientPaymentsAllAccountsPaidInRange.mockResolvedValue(payments);
@@ -445,12 +448,26 @@ describe('200', () => {
     expect(res.status).toBe(200);
     expect(mockDeps.plans.pagePlans).not.toHaveBeenCalled();
     expect(mockDeps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
-    expect(mockDeps.finance.listLiveBillingStatusesAllAccounts).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listBillingStatusesAllAccounts).not.toHaveBeenCalled();
     expect(mockDeps.findPlanForAccount).toHaveBeenCalledWith(ACCOUNT);
-    expect(mockDeps.finance.findLiveBillingStatusForAccount).toHaveBeenCalledWith(ACCOUNT);
+    expect(mockDeps.finance.findBillingStatusForAccount).toHaveBeenCalledWith(ACCOUNT);
     for (const [id] of mockDeps.ledger.listRowsForAccountCreatedInRange.mock.calls) expect(id).toBe(ACCOUNT);
-    expect(mockDeps.finance.countLiveRevenueRows).toHaveBeenCalledWith();
+    expect(mockDeps.finance.countRevenueRows).toHaveBeenCalledWith();
     expect(mockFindNames).toHaveBeenCalledWith([ACCOUNT]);
+  });
+
+  it('AC-82 / AC-85 (slice 1c, SA-WR-28): two billing rows make the picked read fail → 200, Section 1 "Tier set", no Founding Partner note', async () => {
+    mockDeps.finance.findBillingStatusForAccount.mockResolvedValue({
+      data: null,
+      error: new Error('JSON object requested, multiple (or no) rows returned'),
+    });
+    const res = await call(`?accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    const accounts = (await res.json()).data.accounts;
+    expect(accounts.status).toBe('ok');
+    expect(accounts.figures.payingKnown).toBe(false);
+    expect(accounts.figures.groups.map((g: { key: string }) => g.key)).toContain('tier_set');
+    expect(accounts.figures.groups.every((g: { foundingPartners: number }) => g.foundingPartners === 0)).toBe(true);
   });
 
   it('AC-42 (slice 1b) through the route: every credit and lot read gets exactly the id; the all-accounts lot read is never called', async () => {

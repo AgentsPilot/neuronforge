@@ -2,7 +2,7 @@
 
 /**
  * "Our revenue" (S1-FR-25 to S1-FR-27). Three branches, all words: none yet,
- * recorded (a live paid row exists), or could not check. Never a $0 figure and
+ * recorded (a paid row exists, test or real, BD-14), or could not check. Never a $0 figure and
  * never a chart.
  */
 
