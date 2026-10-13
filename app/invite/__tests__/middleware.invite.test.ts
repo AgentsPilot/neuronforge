@@ -50,15 +50,28 @@ describe('/invite on the platform', () => {
 
 describe('a business subdomain', () => {
   it('its own /invite path is still rewritten to the business site', async () => {
+    /*
+     * `development` stated, not assumed. `lvh.me` is the local stand-in for
+     * wildcard DNS — every subdomain of it resolves to 127.0.0.1 — so
+     * `publicSiteHost` now refuses it anywhere but a dev machine, the same way
+     * `platformOrigin` has always refused a loopback app URL. This test
+     * exercises that local mechanism, so it has to say it is on that machine.
+     */
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
     process.env.NEXT_PUBLIC_PUBLIC_SITE_HOST = 'lvh.me:3000';
-    const response = await middleware(
-      new NextRequest('http://joesgym.lvh.me:3000/invite', { headers: { host: 'joesgym.lvh.me:3000' } })
-    );
-    const rewrite = response.headers.get('x-middleware-rewrite');
-    expect(rewrite).toBeTruthy();
-    expect(rewrite).toContain('/invite');
-    expect(rewrite).toContain('joesgym');
-    expect(response.headers.get('referrer-policy')).toBeNull();
+    try {
+      const response = await middleware(
+        new NextRequest('http://joesgym.lvh.me:3000/invite', { headers: { host: 'joesgym.lvh.me:3000' } })
+      );
+      const rewrite = response.headers.get('x-middleware-rewrite');
+      expect(rewrite).toBeTruthy();
+      expect(rewrite).toContain('/invite');
+      expect(rewrite).toContain('joesgym');
+      expect(response.headers.get('referrer-policy')).toBeNull();
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
   });
 });
 

@@ -739,3 +739,172 @@ describe('a revision of an ordinary staged job', () => {
     expect(screen.getByDisplayValue('Deposit')).toBeInTheDocument();
   });
 });
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * AN ACCEPTED PACKAGE DOES NOT CLASH WITH ITSELF.
+ *
+ * Reported: opening the one accepted quote that sells recurring meetings
+ * flagged five of its six dates as "something is already booked at this
+ * time". It was — by this quote. Acceptance had created the package, and the
+ * clash check compared the dates against every slot-holding booking in the
+ * window, its own sessions included.
+ *
+ * On the reporting account five of the six dates warned, on a READ-ONLY view
+ * the owner cannot act on, about a diary they had just checked and found
+ * correct. The container and its sessions are excluded by
+ * `basedOn.package_booking_id`; everything else in the window still counts.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/** A whole UTC day, so the assertion does not depend on the business zone. */
+const dayBlock = (date: string, id: string, parent: string | null) => ({
+  id,
+  parent_booking_id: parent,
+  status: 'confirmed',
+  start_time: `${date.slice(0, 10)}T00:00:00.000Z`,
+  end_time: `${date.slice(0, 10)}T23:59:00.000Z`,
+});
+
+const ACCEPTED_PACKAGE = {
+  ...DECLINED_PACKAGE,
+  status: 'accepted',
+  /** What acceptance created: the purchase these six meetings hang off. */
+  package_booking_id: 'pkg-1',
+};
+
+const SOLD_DATES = DECLINED_PACKAGE.sessions.dates;
+
+/** The package as the diary holds it, plus one unrelated meeting. */
+const diaryWithOwnSessions = () => [
+  // The container itself, which also holds an hour.
+  dayBlock(SOLD_DATES[0], 'pkg-1', null),
+  // Its six sessions.
+  ...SOLD_DATES.map((date, i) => dayBlock(date, `child-${i + 1}`, 'pkg-1')),
+  // Somebody else, on the third date. This one IS a conflict.
+  dayBlock(SOLD_DATES[2], 'other-1', null),
+];
+
+async function openAccepted(
+  basedOn: Record<string, unknown>,
+  options: { readOnly?: boolean } = {}
+) {
+  await act(async () => {
+    render(
+      <ProposalBuilderModal
+        isOpen
+        onClose={() => {}}
+        contactId="contact-1"
+        contactName="Dana"
+        serviceId="service-1"
+        supersedesId="prop-1"
+        readOnly={options.readOnly ?? true}
+        basedOn={basedOn as never}
+        onSent={() => {}}
+        t={t}
+      />
+    );
+  });
+}
+
+const takenWarnings = () => screen.queryAllByText(COPY['proposal.package_date_taken']);
+const pastWarnings = () => screen.queryAllByText(COPY['proposal.package_date_past']);
+const headline = () => screen.queryByText(/will not be booked/);
+
+/** The package as sold, with its first meeting already behind us. */
+const STARTED_PACKAGE = {
+  ...ACCEPTED_PACKAGE,
+  sessions: {
+    ...DECLINED_PACKAGE.sessions,
+    dates: ['2020-01-08T13:30:00.000Z', ...SOLD_DATES.slice(1)],
+  },
+};
+
+describe('an accepted package read back', () => {
+  it('says nothing about dates the client already approved', async () => {
+    // The reported screen, exactly: its own six meetings in the diary, the
+    // first one already held.
+    answers.bookings = diaryWithOwnSessions();
+
+    await openAccepted(STARTED_PACKAGE);
+
+    expect(takenWarnings()).toHaveLength(0);
+    expect(pastWarnings()).toHaveLength(0);
+    expect(headline()).not.toBeInTheDocument();
+  });
+
+  it('still shows the six dates it sold', async () => {
+    // Silencing the warnings must not silence the panel: the owner opened
+    // this to read the dates.
+    answers.bookings = diaryWithOwnSessions();
+
+    await openAccepted(STARTED_PACKAGE);
+
+    expect(seriesValues()).toHaveLength(6);
+  });
+});
+
+describe('revising a package that already exists', () => {
+  it('does not count its own meetings as hours already sold', async () => {
+    // Editable, so every warning is live again — but its own series is not
+    // one of them. Only the stranger on the third date is.
+    answers.bookings = diaryWithOwnSessions();
+
+    await openAccepted(ACCEPTED_PACKAGE, { readOnly: false });
+
+    expect(takenWarnings()).toHaveLength(1);
+  });
+
+  it('warns about all six when the quote owns no package', async () => {
+    // The contrast that proves the line above is the exclusion working, and
+    // not the warning having quietly stopped rendering.
+    answers.bookings = diaryWithOwnSessions();
+
+    const { package_booking_id: _ignored, ...noPackageYet } = ACCEPTED_PACKAGE;
+    await openAccepted(noPackageYet, { readOnly: false });
+
+    expect(takenWarnings()).toHaveLength(6);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * THE CADENCE CHIP IS PART OF THE PACKAGE.
+ *
+ * Reported on the accepted fortnightly course: the six dates came back
+ * correctly, two weeks apart, above a chip reading "every week". Nothing
+ * records the spacing, so the chip showed its own initial value — and because
+ * the chip drives regeneration, editing the count under it would have
+ * re-spaced a fortnightly course to weekly.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/** The reported series: six meetings, every second Thursday. */
+const FORTNIGHTLY = {
+  ...DECLINED_PACKAGE,
+  sessions: {
+    ...DECLINED_PACKAGE.sessions,
+    dates: [
+      '2099-10-08T13:30:00.000Z',
+      '2099-10-22T13:30:00.000Z',
+      '2099-11-05T13:30:00.000Z',
+      '2099-11-19T13:30:00.000Z',
+      '2099-12-03T13:30:00.000Z',
+      '2099-12-17T13:30:00.000Z',
+    ],
+  },
+};
+
+describe('reopening a package', () => {
+  it('shows the rhythm its dates were actually spaced at', async () => {
+    await openRevision(FORTNIGHTLY);
+
+    expect(pressed('Fortnightly')).toBe('true');
+    expect(pressed('Weekly')).toBe('false');
+  });
+
+  it('still shows weekly for a weekly series', async () => {
+    // DECLINED_PACKAGE is seven days apart: the fix must not simply swap one
+    // wrong default for another.
+    await openRevision();
+
+    expect(pressed('Weekly')).toBe('true');
+    expect(pressed('Fortnightly')).toBe('false');
+  });
+});

@@ -4015,6 +4015,7 @@ export const es = {
     'proposal.download_to_check': 'Descargar para revisarlo',
     'proposal.error_upload': 'No se pudo subir el documento. Inténtalo de nuevo.',
     'proposal.error_file_too_big': 'Ese archivo supera {max}MB. Adjunta uno más pequeño.',
+    'proposal.error_file_type': 'Ese tipo de archivo no se puede adjuntar ({type}). Usa un PDF, un documento de Word o Excel, un escaneo o una foto.',
     'proposal.new_title': 'Enviar Presupuesto',
     'proposal.revise_title': 'Revisar el Presupuesto',
     'proposal.view_title': 'Presupuesto',
