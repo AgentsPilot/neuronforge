@@ -367,6 +367,25 @@ export class StripeService {
     await this.stripe.checkout.sessions.expire(sessionId);
   }
 
+  /**
+   * The state of one checkout session, for plan payments P-4.1 M-3 (replace
+   * the account's own open checkout). Returns three facts and nothing else:
+   * the raw Stripe object carries the client secret, so it is never returned
+   * or logged (SA W-4 b). The caller passes only the session id stored on the
+   * account's own billing row, never a request value.
+   */
+  async retrieveCheckoutSessionState(
+    sessionId: string
+  ): Promise<{ status: 'open' | 'complete' | 'expired' | null; customerId: string | null; livemode: boolean }> {
+    const session = await this.stripe.checkout.sessions.retrieve(sessionId);
+    const customer = session.customer;
+    return {
+      status: session.status,
+      customerId: typeof customer === 'string' ? customer : customer?.id ?? null,
+      livemode: session.livemode,
+    };
+  }
+
   // ── Business OS plan webhook reads (plan payments P-3b.2, workplan §3.1, §3.6) ──
   // Three Stripe-only READS for the plan webhook handler and router: no database
   // client, no product record, no write of any kind. Each pages to the end, and

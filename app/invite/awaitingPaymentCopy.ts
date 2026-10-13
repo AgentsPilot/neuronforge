@@ -24,6 +24,16 @@
  *
  * **The he and es wording of the P-5a.2 keys is a DRAFT** awaiting the user's
  * approval (workplan gate G-4), as for invite 5a.
+ *
+ * ── Plan payments P-4.1 (M-3, BQ-P10; SA W-11, gate G-3) ───────────────────
+ * The checkout now replaces the account's own open payment window instead of
+ * refusing for up to 31 minutes. `checkout_open` remains only for the case
+ * where that window could not be checked or closed, and keeps its line. A
+ * window that was already PAID answers `checkout_processing`, shown as
+ * `refusalProcessing`. `free_access_no_end_date` (BQ-P10, every account) maps
+ * to `refusalNotReady`: a held account is not expected to reach it.
+ * **The he and es wording of `refusalProcessing` is a DRAFT** awaiting the
+ * user's approval (P-4 gate G-3).
  */
 
 import type { PlanCheckoutRefusalCode } from '@/lib/business-os/billing/planCheckout';
@@ -51,6 +61,8 @@ export interface AwaitingPaymentCopy {
   /** P-5a.2: a refused start, by refusal code (W-10). */
   refusalNotOpen: string;
   refusalCheckoutOpen: string;
+  /** P-4.1 M-3: the account's own payment window was already paid. */
+  refusalProcessing: string;
   refusalBusy: string;
   refusalSubscriptionLive: string;
   refusalNotReady: string;
@@ -88,6 +100,7 @@ export const AWAITING_PAYMENT_COPY: Record<InviteLocale, AwaitingPaymentCopy> = 
     processingCheckAgain: 'Check again',
     refusalNotOpen: 'Payment for your invitation is not open yet. Please try again later.',
     refusalCheckoutOpen: 'A payment window is already open for your account until {time}. Finish it there, or try again after that time.',
+    refusalProcessing: 'Your payment is already being processed. Refresh this page in a minute.',
     refusalBusy: 'A payment is already being opened. Please wait a moment and try again.',
     refusalSubscriptionLive: 'You already have a subscription. Refresh this page in a minute.',
     refusalNotReady: 'Your account is not ready for payment yet. Please try again later, or contact support.',
@@ -123,6 +136,7 @@ export const AWAITING_PAYMENT_COPY: Record<InviteLocale, AwaitingPaymentCopy> = 
     processingCheckAgain: 'לבדוק שוב',
     refusalNotOpen: 'התשלום על ההזמנה עדיין לא נפתח. כדאי לנסות שוב מאוחר יותר.',
     refusalCheckoutOpen: 'חלון תשלום כבר פתוח עבור החשבון עד {time}. אפשר להשלים אותו שם, או לנסות שוב אחרי השעה הזו.',
+    refusalProcessing: 'התשלום כבר בעיבוד. כדאי לרענן את הדף בעוד דקה.',
     refusalBusy: 'התשלום כבר נפתח. כדאי לחכות רגע ולנסות שוב.',
     refusalSubscriptionLive: 'כבר יש מינוי לחשבון. כדאי לרענן את הדף בעוד דקה.',
     refusalNotReady: 'החשבון עדיין לא מוכן לתשלום. כדאי לנסות שוב מאוחר יותר או לפנות לתמיכה.',
@@ -158,6 +172,7 @@ export const AWAITING_PAYMENT_COPY: Record<InviteLocale, AwaitingPaymentCopy> = 
     processingCheckAgain: 'Comprobar de nuevo',
     refusalNotOpen: 'El pago de tu invitación todavía no está disponible. Inténtalo de nuevo más tarde.',
     refusalCheckoutOpen: 'Ya hay una ventana de pago abierta para tu cuenta hasta las {time}. Complétala allí o inténtalo de nuevo después de esa hora.',
+    refusalProcessing: 'Tu pago ya se está procesando. Actualiza esta página en un minuto.',
     refusalBusy: 'Ya se está abriendo un pago. Espera un momento e inténtalo de nuevo.',
     refusalSubscriptionLive: 'Ya tienes una suscripción. Actualiza esta página en un minuto.',
     refusalNotReady: 'Tu cuenta todavía no está lista para el pago. Inténtalo más tarde o contacta con soporte.',
@@ -195,10 +210,12 @@ export const HELD_PAYMENT_REFUSAL_COPY: Readonly<Record<PlanCheckoutRefusalCode 
   price_mismatch: 'refusalNotOpen',
   lock_unavailable: 'refusalNotOpen',
   checkout_open: 'refusalCheckoutOpen',
+  checkout_processing: 'refusalProcessing',
   checkout_busy: 'refusalBusy',
   retry_later: 'refusalBusy',
   subscription_live: 'refusalSubscriptionLive',
   no_plan_row: 'refusalNotReady',
+  free_access_no_end_date: 'refusalNotReady',
   email_required: 'refusalEmailRequired',
   billing_record_conflict: 'refusalSupport',
   hold_unreadable: 'refusalGeneric',

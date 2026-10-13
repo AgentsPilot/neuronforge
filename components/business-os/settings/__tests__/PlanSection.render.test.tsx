@@ -220,16 +220,40 @@ describe('a paying customer on Essentials', () => {
     expect(screen.getByText(/19,750 per month becomes 32,250 per month/)).toBeInTheDocument();
   });
 
-  it('has nothing to click, and the unavailability is VISIBLE — not a dead button', async () => {
+  it('sees Autopilot as "Available to choose." — and still nothing to click until P-4.2', async () => {
+    // `availableToBuy` is ON in the shipped config since 2026-10-13 (user
+    // decision, for testing; requirement §9.5 re-checks it at go-live). The
+    // section says so, and drops the "Coming soon" badge — but the Buy button is
+    // P-4.2's, so there is still no control at all. A button arriving here
+    // before P-4.2 is a change somebody has to make on purpose.
     await renderFor('basic');
 
-    // `availableToBuy` is false, so there is no control at all — and the reason is
-    // on screen. A price with silence beside it reads as a broken page; a button
-    // that cannot honour itself is worse than none.
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getByText(COPY['plan.next.available'])).toBeInTheDocument();
+    expect(screen.queryByText(/Coming soon/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/get in touch if you would like to move plan/i)).not.toBeInTheDocument();
+  });
+
+  it('with availableToBuy turned OFF for Autopilot: nothing to click, and the unavailability is VISIBLE — not a dead button', async () => {
+    // The other branch, still reachable from config: turned off in memory for
+    // the next plan up only, so it is the flag (not the tier) that decides.
+    const presentation = readCodeConfig().matrix.presentation as Record<string, { availableToBuy: boolean }>;
+    const saved = presentation.pro.availableToBuy;
+    presentation.pro.availableToBuy = false;
+    try {
+      await renderFor('basic');
+    } finally {
+      presentation.pro.availableToBuy = saved;
+    }
+
+    // A price with silence beside it reads as a broken page; a button that
+    // cannot honour itself is worse than none.
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     expect(screen.getByText(/Coming soon/i)).toBeInTheDocument();
     expect(screen.getByText(/get in touch if you would like to move plan/i)).toBeInTheDocument();
+    expect(screen.queryByText(COPY['plan.next.available'])).not.toBeInTheDocument();
   });
 
   it('does not print "yes" beside every feature it has', async () => {
@@ -526,7 +550,10 @@ describe('a Hebrew or Spanish owner reads no English, and no repeated "Credits" 
     const improvement = upgrade.improves.find((entry) => entry.capability === 'credits.allowance')!;
     const line = dictionary['plan.next.improves_line'].replace('{from}', improvement.from).replace('{to}', improvement.to);
     expect(screen.getByText(line, { exact: false })).toBeInTheDocument();
-    expect(screen.getByText(dictionary['plan.next.coming_soon'])).toBeInTheDocument();
+    // Autopilot is availableToBuy since 2026-10-13, so the localised
+    // "available" line shows and the localised "coming soon" badge does not.
+    expect(screen.getByText(dictionary['plan.next.available'])).toBeInTheDocument();
+    expect(screen.queryByText(dictionary['plan.next.coming_soon'])).not.toBeInTheDocument();
   });
 
   it.each(['he', 'es'] as const)('%s: the cross-unit change on a trial is worded from the dictionary too', async (language) => {

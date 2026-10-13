@@ -1,14 +1,19 @@
 /**
  * Start a Business OS plan checkout (plan payments P-3a, workplan §3.3; SA
- * rulings Q-1 to Q-12 and conditions C-1 to C-4).
+ * rulings Q-1 to Q-12 and conditions C-1 to C-4; hardened by P-4.1: M-1, M-3,
+ * BQ-P10, SA W-1 to W-4 and W-10).
  *
  * Orchestration over injected ports, so every branch is tested with fakes. It
  * opens an EMBEDDED Stripe subscription checkout and records it as the
  * account's checkout lock. It assigns NO plan: P-3b does that from the webhook.
  *
- * The order is the contract (C-4): every database read (hold, plan row,
- * billing row) happens BEFORE any Stripe call, and every refusal before the
- * price check makes no Stripe call at all.
+ * The order is the contract (C-4, as worded by SA for P-4.1, Q-2 / W-10):
+ * "Every database read precedes any Stripe call. Every refusal decided from
+ * our own data (switches, key mode, hold, plan row, BQ-P10, `availableToBuy`,
+ * a live subscription on our record) precedes any Stripe call. The only Stripe
+ * calls before the price check are the M-3 retrieve and expire of the session
+ * id stored on the account's own billing row, made only while that lock is
+ * unexpired."
  *
  *   4  price switch off            → refuse: never sell what the webhook cannot recognise
  *   5  Stripe key mode unknown     → refuse
@@ -18,7 +23,18 @@
  *                                    tier, or a held admin invitee
  *   7  plan row (snapshot)         → refuse when unreadable, or when there is none (Q-4)
  *   8  billing row                 → refuse when unreadable
- *   9  layer 1, record             → refuse a live subscription or an unexpired lock
+ *   8a our-data decision, ONCE     → every account: BQ-P10 `free_access_no_end_date`
+ *      (SA W-1, W-3)                 (W-3). Held: a live subscription on the record.
+ *                                    Not held: `planPurchaseOffer` (M-1): switches,
+ *                                    BQ-P10, a live subscription on the record,
+ *                                    `availableToBuy` (`price_unavailable`/`tier_not_sold`)
+ *   9  the account's own open      → M-3: retrieve the session id stored on OUR row
+ *      checkout (M-3)                (never a request value); a customer or mode
+ *                                    mismatch → `checkout_open` + alert, nothing
+ *                                    expired; `open` → expire it, release the lock by
+ *                                    compare-and-set, continue; `expired` → release,
+ *                                    continue; `complete` → `checkout_processing`;
+ *                                    a Stripe or repository failure → `checkout_open`
  *   10 price                       → refuse unless it equals the display price (SA-P12 b)
  *   11 customer                    → create or reuse (P-2a contract)
  *   12 layer 1b, Stripe            → refuse a live subscription; page through all of
@@ -47,6 +63,8 @@ import {
   type BusinessOsSubscriptionStatus,
 } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import type { TierId } from '@/lib/business-os/entitlements/config/tierMatrix';
+import { hasOpenEndedFreeAccess } from '@/lib/business-os/entitlements/freeAccess';
+import type { FreeAccessResolutionLike } from '@/lib/business-os/entitlements/freeAccess';
 import { AWAITING_PAYMENT_PATH, readPaymentHold, type PaymentHold, type PaymentHoldReaders } from '@/lib/business-os/invites/paymentHold';
 import { platformOrigin } from '@/lib/utils/origins';
 import {
@@ -55,7 +73,9 @@ import {
   replaceBusinessOsStripeCustomer,
 } from '@/lib/business-os/billing/businessOsStripeCustomer';
 import {
+  buyableTiers,
   planCheckoutEligibility,
+  planPurchaseOffer,
   readHeldPaymentSwitches,
   type HeldPaymentSwitches,
 } from '@/lib/business-os/billing/planCheckoutEligibility';
@@ -101,6 +121,11 @@ export const LIVE_SUBSCRIPTION_STATUSES: readonly BusinessOsSubscriptionStatus[]
   'paused',
 ];
 
+/** SR-5 layer 1: does our record's status count as a live subscription? */
+export function isLiveSubscriptionStatus(status: BusinessOsSubscriptionStatus | null | undefined): boolean {
+  return !!status && LIVE_SUBSCRIPTION_STATUSES.includes(status);
+}
+
 /** The Stripe idempotency key of one checkout attempt: a fresh UUID per Stripe create. */
 export function planCheckoutIdempotencyKey(userId: string, attemptId: string): string {
   return `bos-plan-checkout:${userId}:${attemptId}`;
@@ -119,6 +144,8 @@ export type PlanCheckoutRefusalCode =
   | 'billing_row_unreadable'
   | 'subscription_live'
   | 'checkout_open'
+  | 'checkout_processing'
+  | 'free_access_no_end_date'
   | 'subscription_check_incomplete'
   | 'price_unavailable'
   | 'price_mismatch'
@@ -142,6 +169,10 @@ export const PLAN_CHECKOUT_REFUSALS: Readonly<Record<PlanCheckoutRefusalCode, { 
   billing_row_unreadable: { status: 503, message: 'We could not check your billing right now. Please try again.' },
   subscription_live: { status: 409, message: 'You already have a subscription.' },
   checkout_open: { status: 409, message: 'A checkout is already open for your account.' },
+  // P-4.1 M-3: the account's own open session reads `complete` at Stripe.
+  checkout_processing: { status: 409, message: 'Your payment is being processed.' },
+  // P-4.1 BQ-P10: free access an admin has not given an end date.
+  free_access_no_end_date: { status: 409, message: 'Your free access has no end date yet, so there is no plan to buy.' },
   subscription_check_incomplete: { status: 503, message: 'We could not check your subscriptions right now. Please try again.' },
   price_unavailable: { status: 503, message: 'This plan cannot be bought right now. Please try again later.' },
   price_mismatch: { status: 503, message: 'This plan cannot be bought right now. Please try again later.' },
@@ -164,15 +195,20 @@ export type PlanCheckoutResult =
       lookupKey: string;
       livemode: boolean;
       held: boolean;
+      /** M-3 (SA Q-5): the account's own open session this request expired, if any. */
+      replacedSessionId?: string;
     }
   | { ok: false; code: PlanCheckoutRefusalCode; expiresAt?: string };
 
 // ── Ports ───────────────────────────────────────────────────────────────────
 
-/** The two facts of an entitlement snapshot this reads. `SnapshotResult` satisfies it. */
+/**
+ * The facts of an entitlement snapshot this reads. `SnapshotResult` satisfies
+ * it. `basis` and `lifecycle.accessEndsAt` feed BQ-P10 (P-4.1).
+ */
 export interface PlanSnapshotLike {
   unavailable: boolean;
-  resolution: { anomaly?: string } | null;
+  resolution: ({ anomaly?: string } & FreeAccessResolutionLike) | null;
 }
 
 export interface PlanCheckoutLogger {
@@ -187,6 +223,7 @@ type CheckoutStripe = Pick<
   | 'listCustomerSubscriptions'
   | 'createBusinessOsPlanCheckoutSession'
   | 'expireCheckoutSession'
+  | 'retrieveCheckoutSessionState'
   | 'findOrCreatePlatformCustomer'
 >;
 
@@ -195,7 +232,10 @@ export interface PlanCheckoutDeps {
   /** Reads the account's entitlement snapshot by ACCOUNT id (the route resolves it). */
   readPlanSnapshot: (accountId: string) => Promise<PlanSnapshotLike>;
   logger: PlanCheckoutLogger;
-  repo?: Pick<BusinessOsBillingAccountRepository, 'findByUser' | 'recordCustomer' | 'acquireCheckoutLock' | 'replaceCustomer'>;
+  repo?: Pick<
+    BusinessOsBillingAccountRepository,
+    'findByUser' | 'recordCustomer' | 'acquireCheckoutLock' | 'replaceCustomer' | 'releaseCheckoutLock'
+  >;
   stripe?: CheckoutStripe;
   prices?: PlanCheckoutPriceResolver;
   pricesEnabled?: () => boolean;
@@ -205,6 +245,11 @@ export interface PlanCheckoutDeps {
    * answer for a HELD account only.
    */
   heldPaymentSwitches?: () => HeldPaymentSwitches;
+  /**
+   * The tiers on sale to a non-held account (P-4.1, M-1). Default
+   * `buyableTiers()`: a Stripe price AND `presentation.availableToBuy`.
+   */
+  buyableTiers?: () => readonly TierId[];
   mode?: () => StripeMode;
   now?: () => Date;
   attemptId?: () => string;
@@ -305,11 +350,12 @@ export async function startPlanCheckout(input: PlanCheckoutInput, deps: PlanChec
   }
   // The held branch delegates to the shared predicate `heldPaymentOffer`
   // (P5-C5); `held_payment_unavailable` is a warn with no alert (S5-1).
-  const eligibility = planCheckoutEligibility(hold, (deps.heldPaymentSwitches ?? readHeldPaymentSwitches)());
+  const switches = (deps.heldPaymentSwitches ?? readHeldPaymentSwitches)();
+  const eligibility = planCheckoutEligibility(hold, switches);
   if (!eligibility.ok) return refuse(eligibility.code, eligibility.code === 'hold_unreadable' ? 'error' : 'warn');
-  if (!eligibility.tiers.includes(tier)) {
-    return eligibility.held ? refuse('held_tier_not_allowed', 'warn') : refuse('price_unavailable', 'error', { reason: 'tier_not_sold' });
-  }
+  // The held path decides its tier here, unchanged (P-5a.2). A non-held
+  // account's tiers are decided at 8a, after every read (SA W-1).
+  if (eligibility.held && !eligibility.tiers.includes(tier)) return refuse('held_tier_not_allowed', 'warn');
 
   // 7. P-3b applies a payment only to an account with a plan row (Q-4).
   let snapshot: PlanSnapshotLike;
@@ -321,6 +367,7 @@ export async function startPlanCheckout(input: PlanCheckoutInput, deps: PlanChec
   }
   if (snapshot.unavailable || !snapshot.resolution) return refuse('plan_unreadable', 'error');
   if (snapshot.resolution.anomaly === 'no_plan_row') return refuse('no_plan_row', 'warn');
+  const resolution = snapshot.resolution;
 
   // 8. The billing row, read before any Stripe call (P-2a).
   const repo = deps.repo ?? businessOsBillingAccountRepository;
@@ -328,17 +375,107 @@ export async function startPlanCheckout(input: PlanCheckoutInput, deps: PlanChec
   if (existing.error) return refuse('billing_row_unreadable', 'error');
   const row = existing.data;
 
-  // 9. SR-5 / SA-P14 layer 1, from the record. Cheap: no Stripe call.
-  if (row?.subscriptionStatus && LIVE_SUBSCRIPTION_STATUSES.includes(row.subscriptionStatus)) {
-    return refuse('subscription_live', 'warn', { source: 'record', subscriptionStatus: row.subscriptionStatus });
+  // 8a. Every refusal decided from our own data, ONCE, after every database
+  // read and before any Stripe call (SA W-1), so a refused request never
+  // touches the account's open session (M-3 below). SR-5 layer 1 lives here.
+  const openEndedFreeAccess = hasOpenEndedFreeAccess(resolution);
+  const subscriptionLive = isLiveSubscriptionStatus(row?.subscriptionStatus);
+  const liveContext = { source: 'record', subscriptionStatus: row?.subscriptionStatus };
+  if (eligibility.held) {
+    // W-3: BQ-P10 applies to every account, held included (fail closed).
+    if (openEndedFreeAccess) return refuse('free_access_no_end_date', 'warn');
+    if (subscriptionLive) return refuse('subscription_live', 'warn', liveContext);
+  } else {
+    const offer = planPurchaseOffer({ openEndedFreeAccess, subscriptionLive }, switches, (deps.buyableTiers ?? buyableTiers)());
+    if (offer.kind === 'none') {
+      switch (offer.reason) {
+        case 'switches_off':
+          return refuse('checkout_unavailable', 'warn', { reason: 'purchase_switches_off' });
+        case 'free_access_no_end_date':
+          return refuse('free_access_no_end_date', 'warn');
+        case 'paying':
+          return refuse('subscription_live', 'warn', liveContext);
+        case 'not_on_sale':
+          return refuse('price_unavailable', 'error', { reason: 'tier_not_sold' });
+      }
+    }
+    if (!offer.tiers.includes(tier)) return refuse('price_unavailable', 'error', { reason: 'tier_not_sold' });
   }
+
+  const stripe = deps.stripe ?? getStripeService();
+
+  // 9. M-3: the account's own unexpired checkout is replaced, not a 31-minute
+  // block. The session id comes ONLY from our own row, read by the session
+  // user and the server key's mode (SA W-4 a); never from the request.
+  let replacedSessionId: string | undefined;
   const nowAtStart = now();
   if (row?.openCheckoutSessionId && row.openCheckoutExpiresAt && Date.parse(row.openCheckoutExpiresAt) > nowAtStart.getTime()) {
-    return refuse('checkout_open', 'warn', { openSessionId: row.openCheckoutSessionId }, row.openCheckoutExpiresAt);
+    const openSessionId = row.openCheckoutSessionId;
+    const openExpiresAt = row.openCheckoutExpiresAt;
+
+    let state: Awaited<ReturnType<CheckoutStripe['retrieveCheckoutSessionState']>>;
+    try {
+      state = await stripe.retrieveCheckoutSessionState(openSessionId);
+    } catch (err) {
+      return refuse('checkout_open', 'warn', { err, step: 'retrieve_open_session', openSessionId }, openExpiresAt);
+    }
+
+    // Ownership backstop (tenant-isolation-guard, W-4 c): the session must be
+    // our row's customer, in our row's mode. Otherwise nothing is expired.
+    if (state.customerId !== row.stripeCustomerId || state.livemode !== row.livemode) {
+      return refuse(
+        'checkout_open',
+        'error',
+        {
+          reason: 'open_session_ownership_mismatch',
+          openSessionId,
+          customerMatches: state.customerId === row.stripeCustomerId,
+          modeMatches: state.livemode === row.livemode,
+        },
+        openExpiresAt
+      );
+    }
+
+    if (state.status === 'complete') {
+      // Paid, or being paid: the webhook takes it from here. Never a second one.
+      return refuse('checkout_processing', 'warn', { openSessionId });
+    }
+    if (state.status !== 'open' && state.status !== 'expired') {
+      return refuse('checkout_open', 'warn', { reason: 'open_session_status_unknown', openSessionId }, openExpiresAt);
+    }
+
+    if (state.status === 'open') {
+      try {
+        await stripe.expireCheckoutSession(openSessionId);
+      } catch (err) {
+        // It may still be payable: no new session beside it (SR-5).
+        return refuse('checkout_open', 'warn', { err, step: 'expire_open_session', openSessionId }, openExpiresAt);
+      }
+      replacedSessionId = openSessionId;
+    }
+
+    // Compare-and-set on that session id. `released: false` is not a failure
+    // (W-4 d): a racing request or the `checkout.session.expired` webhook
+    // cleared it first, and step 14's compare-and-set is the arbiter.
+    const released = await repo.releaseCheckoutLock({ userId, livemode, sessionId: openSessionId, nowIso: now().toISOString() });
+    if (released.error) {
+      return refuse('checkout_open', 'error', { step: 'release_open_session_lock', openSessionId }, openExpiresAt);
+    }
+    log.info(
+      {
+        event: 'bos_billing_checkout_replaced',
+        userId,
+        tier,
+        replacedSessionId: openSessionId,
+        previousStatus: state.status,
+        expiredByUs: state.status === 'open',
+        lockReleased: released.data?.released ?? false,
+      },
+      "Plan checkout replaces the account's own open checkout"
+    );
   }
 
   // 10. The price must equal the price we show (SA-P12 b).
-  const stripe = deps.stripe ?? getStripeService();
   const prices =
     deps.prices ??
     (deps.stripe
@@ -444,7 +581,17 @@ export async function startPlanCheckout(input: PlanCheckoutInput, deps: PlanChec
   }
 
   log.info(
-    { event: 'bos_billing_checkout_started', userId, tier, lookupKey: price.lookupKey, sessionId: session.sessionId, livemode, held: eligibility.held, customerReplaced: replaced },
+    {
+      event: 'bos_billing_checkout_started',
+      userId,
+      tier,
+      lookupKey: price.lookupKey,
+      sessionId: session.sessionId,
+      livemode,
+      held: eligibility.held,
+      customerReplaced: replaced,
+      ...(replacedSessionId ? { replacedSessionId } : {}),
+    },
     'Plan checkout started'
   );
   return {
@@ -456,5 +603,6 @@ export async function startPlanCheckout(input: PlanCheckoutInput, deps: PlanChec
     lookupKey: price.lookupKey,
     livemode,
     held: eligibility.held,
+    ...(replacedSessionId ? { replacedSessionId } : {}),
   };
 }

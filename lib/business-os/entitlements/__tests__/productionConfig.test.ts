@@ -49,22 +49,27 @@ describe('the shipped configuration', () => {
       labels: { en: 'Essentials', he: 'Essentials', es: 'Essentials' },
       monthlyPriceUsd: 79,
       shownToCustomers: true,
-      availableToBuy: false,
+      availableToBuy: true,
       active: true,
     });
     expect(matrix.presentation.pro).toEqual({
       labels: { en: 'Autopilot', he: 'Autopilot', es: 'Autopilot' },
       monthlyPriceUsd: 129,
       shownToCustomers: true,
-      availableToBuy: false,
+      availableToBuy: true,
       active: true,
     });
   });
 
-  it('shows both plans to customers and lets nobody buy either yet', () => {
+  it('shows both plans to customers and offers both for sale (user decision, 2026-10-13, for testing)', () => {
     // Stated on its own because it is the commercial state of the product, and
-    // the two flags answer different questions. **Both plans are public; neither
-    // is purchasable**, because the buy path does not exist until WS-2 step 3.
+    // the two flags answer different questions. **Both plans are public and both
+    // are marked available to buy** — turned on 2026-10-13 by the user ("switch
+    // the plans on for now, as we are all testing, i want to see it work").
+    //
+    // This flag alone does not sell anything in production: the server also
+    // needs BUSINESS_OS_PLAN_PRICES_ENABLED and BUSINESS_OS_PLAN_CHECKOUT_ENABLED,
+    // both off on Vercel. Re-check per plan at go-live (requirement §9.5).
     //
     // Flipping `availableToBuy` is what turns buying on — no component changes
     // with it. If this test ever has to change, somebody has made a commercial
@@ -73,7 +78,7 @@ describe('the shipped configuration', () => {
 
     for (const tier of ['basic', 'pro'] as const) {
       expect(matrix.presentation[tier].shownToCustomers).toBe(true);
-      expect(matrix.presentation[tier].availableToBuy).toBe(false);
+      expect(matrix.presentation[tier].availableToBuy).toBe(true);
     }
   });
 

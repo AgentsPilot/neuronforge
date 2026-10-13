@@ -38,7 +38,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { EmbeddedCheckout, EmbeddedCheckoutProvider } from '@stripe/react-stripe-js';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -46,6 +45,7 @@ import { formatMinorAmount } from '@/lib/business-os/currency';
 import type { BoostLabels, BoostPackagesPayload, BoostPackageView } from '@/lib/business-os/boost/boostPackagesTypes';
 import { BoostPurchasesList } from '@/components/business-os/BoostPurchasesList';
 import { createLogger } from '@/lib/logger';
+import { getStripePromise } from '@/lib/client/stripeJs';
 
 const logger = createLogger({ module: 'BoostPackagesPanel' });
 
@@ -58,16 +58,6 @@ const MUTED = 'var(--v2-text-secondary)';
 const BORDER = 'var(--v2-border)';
 const PRIMARY = 'var(--v2-primary)';
 const ALERT = '#F97316';
-
-/** Stripe.js, loaded once per page and only when a payment form is about to open (SA Q-7: local). */
-let stripePromise: Promise<Stripe | null> | null = null;
-function browserStripe(): Promise<Stripe | null> | null {
-  const key = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-  // Defence in depth (SA C-2): the server already hides Buy without a usable key.
-  if (!key || !/^pk_(test|live)_/.test(key)) return null;
-  if (!stripePromise) stripePromise = loadStripe(key);
-  return stripePromise;
-}
 
 const isString = (value: unknown): value is string => typeof value === 'string';
 const isWhole = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0;
@@ -257,7 +247,11 @@ export function BoostPackagesPanel({ open, onOpenChange, returnFocusRef }: Boost
   const credits = new Intl.NumberFormat(language, { maximumFractionDigits: 0 });
   const percent = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 2 });
   const packages = payload ? [...payload.packages].sort((a, b) => a.order - b.order) : [];
-  const stripe = checkout ? browserStripe() : null;
+  // Stripe.js through the ONE shared loader (plan payments P-4.1, M-4), still
+  // loaded only when a payment form is about to open (SA Q-7). The loader keeps
+  // this panel's `pk_(test|live)_` check (defence in depth, SA C-2: the server
+  // already hides Buy without a usable key).
+  const stripe = checkout ? getStripePromise() : null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

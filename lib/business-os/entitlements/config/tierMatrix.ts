@@ -245,10 +245,15 @@ export const TIER_MATRIX = {
       labels: { en: 'Essentials', he: 'Essentials', es: 'Essentials' },
       monthlyPriceUsd: 79,
       shownToCustomers: true,
-      // Not yet: there is no buy path until WS-2 step 3. Flipping this to `true`
-      // is what turns it on — no component changes with it, which is the whole
-      // point of the flag living here.
-      availableToBuy: false,
+      // ON for testing — turned on 2026-10-13 by the user's decision ("switch the
+      // plans on for now, as we are all testing, i want to see it work"). Applies
+      // to `pro` below too. Production still sells nothing while
+      // BUSINESS_OS_PLAN_PRICES_ENABLED / BUSINESS_OS_PLAN_CHECKOUT_ENABLED are off
+      // on Vercel. Visible side effect: Settings → Plan shows "Available to
+      // choose." instead of "Coming soon" until P-4.2 adds the Buy button.
+      // RE-CHECK AT GO-LIVE, per plan (requirement §9.5). No component changes
+      // with this flag, which is the whole point of it living here.
+      availableToBuy: true,
       // FYI ONLY — NOT A SWITCH (user decision, 2026-09-29). Shown on the admin
       // Tiers card and read by nothing else. Open question before it does
       // anything: what should inactive DO — stop new assignments? hide the plan
@@ -259,7 +264,8 @@ export const TIER_MATRIX = {
       labels: { en: 'Autopilot', he: 'Autopilot', es: 'Autopilot' },
       monthlyPriceUsd: 129,
       shownToCustomers: true,
-      availableToBuy: false,
+      // ON for testing since 2026-10-13 — see the note on `basic` above.
+      availableToBuy: true,
       // FYI ONLY — NOT A SWITCH (user decision, 2026-09-29). Shown on the admin
       // Tiers card and read by nothing else. Open question before it does
       // anything: what should inactive DO — stop new assignments? hide the plan

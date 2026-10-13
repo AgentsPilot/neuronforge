@@ -127,6 +127,11 @@ function harness(options: Options = {}) {
       log.push('db:replaceCustomer');
       return options.replaceError ? { data: null, error: new Error('stripe_customer_held_by_another_account') } : { data: { replaced: true }, error: null };
     }),
+    // P-4.1 M-3: the compare-and-set release of the account's own open session.
+    releaseCheckoutLock: jest.fn(async (input: { sessionId: string }) => {
+      log.push(`db:releaseLock:${input.sessionId}`);
+      return { data: { released: true }, error: null };
+    }),
   };
   const stripe = {
     listPricesByLookupKeys: jest.fn(async () => {
@@ -147,6 +152,11 @@ function harness(options: Options = {}) {
     }),
     expireCheckoutSession: jest.fn(async (sessionId: string) => {
       log.push(`stripe:expire:${sessionId}`);
+    }),
+    // P-4.1 M-3: the account's own open session, still open at Stripe.
+    retrieveCheckoutSessionState: jest.fn(async (sessionId: string) => {
+      log.push(`stripe:retrieve:${sessionId}`);
+      return { status: 'open' as const, customerId: 'cus_stored', livemode: false };
     }),
     findOrCreatePlatformCustomer: jest.fn(async () => {
       log.push('stripe:createCustomer');
@@ -172,7 +182,8 @@ function harness(options: Options = {}) {
     } as unknown as PlanCheckoutDeps['holdReaders'],
     readPlanSnapshot: jest.fn(async () => {
       log.push('db:snapshot');
-      return { unavailable: false, resolution: {} };
+      // P-4.1: a tier basis, which BQ-P10 does not catch.
+      return { unavailable: false, resolution: { basis: { kind: 'tier' as const, tier: FRIEND_TIER }, lifecycle: { accessEndsAt: null } } };
     }),
     logger,
     repo: repo as unknown as PlanCheckoutDeps['repo'],
@@ -180,6 +191,10 @@ function harness(options: Options = {}) {
     pricesEnabled: () => true,
     // P-5a.2: every held-payment switch on, so the held rules decide.
     heldPaymentSwitches: () => ({ checkoutEnabled: true, pricesEnabled: true, paidInvitesAvailable: true }),
+    // P-4.1 M-1: every priced tier on sale, injected so these P-3a cases test
+    // what they always tested whatever the production `availableToBuy` says
+    // (on for every tier since 2026-10-13; productionConfig.test.ts pins it).
+    buyableTiers: () => TIER_ORDER,
     mode: () => 'test',
     now: () => NOW,
     attemptId: () => 'qa-attempt',
@@ -245,11 +260,21 @@ describe('QA — layer 1 from the record', () => {
     expect((await startPlanCheckout(INPUT, deps)).ok).toBe(true);
   });
 
-  it('a lock expiring 1 ms from now → checkout_open, no Stripe call', async () => {
+  // Rewritten on purpose for P-4.1 M-3: an unexpired lock is the account's
+  // own open checkout, replaced rather than a 31-minute block. The boundary
+  // still holds: 1 ms of lock left means the M-3 path runs, before any other
+  // Stripe call.
+  it('a lock expiring 1 ms from now → the M-3 path (retrieve, expire, release) before any other Stripe call', async () => {
     const expires = new Date(NOW.getTime() + 1).toISOString();
     const { deps, stripeCalls } = harness({ row: account({ openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: expires }) });
-    expect(await startPlanCheckout(INPUT, deps)).toEqual({ ok: false, code: 'checkout_open', expiresAt: expires });
-    expect(stripeCalls()).toEqual([]);
+    expect(await startPlanCheckout(INPUT, deps)).toMatchObject({ ok: true, replacedSessionId: 'cs_test_open' });
+    expect(stripeCalls().slice(0, 2)).toEqual(['stripe:retrieve:cs_test_open', 'stripe:expire:cs_test_open']);
+  });
+
+  it('a lock expiring EXACTLY now never reaches the M-3 path', async () => {
+    const { deps, stripeCalls } = harness({ row: account({ openCheckoutSessionId: 'cs_test_old', openCheckoutExpiresAt: NOW.toISOString() }) });
+    expect((await startPlanCheckout(INPUT, deps)).ok).toBe(true);
+    expect(stripeCalls().some((call) => call.startsWith('stripe:retrieve:'))).toBe(false);
   });
 });
 
@@ -317,6 +342,8 @@ describe('QA — the route status for the money-path refusals (the route maps th
     ['held_tier_unresolved', 409],
     ['subscription_live', 409],
     ['checkout_open', 409],
+    ['checkout_processing', 409],
+    ['free_access_no_end_date', 409],
     ['checkout_busy', 409],
     ['lock_unavailable', 503],
     ['price_mismatch', 503],

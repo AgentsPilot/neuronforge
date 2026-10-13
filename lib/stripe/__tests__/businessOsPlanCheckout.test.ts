@@ -11,6 +11,7 @@
 
 const mockSessionsCreate = jest.fn();
 const mockSessionsExpire = jest.fn();
+const mockSessionsRetrieve = jest.fn();
 const mockPricesList = jest.fn();
 const mockSubscriptionsList = jest.fn();
 
@@ -20,6 +21,7 @@ jest.mock('stripe', () =>
       sessions: {
         create: (...args: unknown[]) => mockSessionsCreate(...args),
         expire: (...args: unknown[]) => mockSessionsExpire(...args),
+        retrieve: (...args: unknown[]) => mockSessionsRetrieve(...args),
       },
     },
     prices: { list: (...args: unknown[]) => mockPricesList(...args) },
@@ -47,6 +49,7 @@ const service = () => new StripeService('sk_test_unit');
 beforeEach(() => {
   mockSessionsCreate.mockReset();
   mockSessionsExpire.mockReset();
+  mockSessionsRetrieve.mockReset();
   mockPricesList.mockReset();
   mockSubscriptionsList.mockReset();
 });
@@ -175,12 +178,42 @@ describe('listPricesByLookupKeys and expireCheckoutSession', () => {
   });
 });
 
+// P-4.1 M-3 (SA W-4 b): three facts only, never the client secret.
+describe('retrieveCheckoutSessionState', () => {
+  it('returns status, customer id and livemode only; the client secret never leaves', async () => {
+    mockSessionsRetrieve.mockResolvedValue({
+      id: 'cs_test_1',
+      status: 'open',
+      customer: 'cus_1',
+      livemode: false,
+      client_secret: 'cs_secret_never_returned',
+      metadata: { bos_user_id: USER },
+    });
+    const state = await service().retrieveCheckoutSessionState('cs_test_1');
+    expect(state).toEqual({ status: 'open', customerId: 'cus_1', livemode: false });
+    expect(JSON.stringify(state)).not.toContain('cs_secret_never_returned');
+    expect(mockSessionsRetrieve).toHaveBeenCalledWith('cs_test_1');
+  });
+
+  it('an expanded customer object gives its id; none gives null', async () => {
+    mockSessionsRetrieve.mockResolvedValueOnce({ status: 'complete', customer: { id: 'cus_2' }, livemode: true });
+    await expect(service().retrieveCheckoutSessionState('cs_live_1')).resolves.toEqual({ status: 'complete', customerId: 'cus_2', livemode: true });
+    mockSessionsRetrieve.mockResolvedValueOnce({ status: 'expired', customer: null, livemode: false });
+    await expect(service().retrieveCheckoutSessionState('cs_test_2')).resolves.toEqual({ status: 'expired', customerId: null, livemode: false });
+  });
+
+  it('a Stripe error propagates (the checkout decides what it means)', async () => {
+    mockSessionsRetrieve.mockRejectedValue(new Error('No such checkout.session'));
+    await expect(service().retrieveCheckoutSessionState('cs_test_x')).rejects.toThrow();
+  });
+});
+
 describe('source guards', () => {
   const svc = readFileSync(join(process.cwd(), 'lib', 'stripe', 'StripeService.ts'), 'utf8');
 
   it('the plan checkout methods take no database client and sit after createBoostPackCheckout (lockdown slice untouched)', () => {
     const boost = svc.indexOf('async createBoostPackCheckout(');
-    for (const name of ['listPricesByLookupKeys', 'listCustomerSubscriptions', 'createBusinessOsPlanCheckoutSession', 'expireCheckoutSession']) {
+    for (const name of ['listPricesByLookupKeys', 'listCustomerSubscriptions', 'createBusinessOsPlanCheckoutSession', 'expireCheckoutSession', 'retrieveCheckoutSessionState']) {
       const start = svc.indexOf(`async ${name}(`);
       expect(start).toBeGreaterThan(boost);
       expect(svc.slice(start, start + 600)).not.toMatch(/SupabaseClient/);

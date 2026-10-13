@@ -25,9 +25,10 @@ jest.mock('@/lib/stripe/StripeService', () => ({ getStripeService: () => mockGet
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
+import { COHORTS } from '@/lib/business-os/entitlements/config/cohorts';
 import { INVITE_ISSUANCE_POLICY } from '@/lib/business-os/entitlements/config/invites';
 import { PLAN_STRIPE_PRICES } from '@/lib/business-os/entitlements/config/planPrices';
-import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
+import { TIER_MATRIX, TIER_ORDER, type TierId } from '@/lib/business-os/entitlements/config/tierMatrix';
 import { BusinessOsStripeCustomerError } from '@/lib/business-os/billing/businessOsStripeCustomer';
 import {
   LIVE_SUBSCRIPTION_STATUSES,
@@ -39,6 +40,7 @@ import {
   type PlanCheckoutDeps,
   type PlanCheckoutInput,
   type PlanCheckoutResult,
+  type PlanSnapshotLike,
 } from '@/lib/business-os/billing/planCheckout';
 import { displayMonthlyPricesUsd, displayPriceInCents, type StripePriceLike } from '@/lib/business-os/billing/planPriceCheck';
 import type { HeldPaymentSwitches } from '@/lib/business-os/billing/planCheckoutEligibility';
@@ -55,6 +57,12 @@ const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
 const STRIPE_EXPIRES = NOW_SECONDS + PLAN_CHECKOUT_SESSION_LIFETIME_SECONDS + 7;
 const SECRET = 'cs_test_secret_never_logged';
 const HELD_SWITCHES_ON: HeldPaymentSwitches = { checkoutEnabled: true, pricesEnabled: true, paidInvitesAvailable: true };
+
+/** P-4.1: a resolution with a tier basis (not caught by BQ-P10). The default. */
+const TIER_RESOLUTION: NonNullable<PlanSnapshotLike['resolution']> = {
+  basis: { kind: 'tier', tier: FRIEND_TIER },
+  lifecycle: { accessEndsAt: null },
+};
 
 function account(overrides: Partial<BusinessOsBillingAccount> = {}): BusinessOsBillingAccount {
   return {
@@ -107,8 +115,18 @@ interface Options {
   modeThrows?: boolean;
   lineage?: BusinessOsAccountHoldFacts | null | 'error';
   invite?: BusinessOsInviteHoldFacts | null;
-  snapshot?: { unavailable: boolean; resolution: { anomaly?: string } | null } | 'throw';
+  snapshot?: PlanSnapshotLike | 'throw';
   row?: BusinessOsBillingAccount | null | 'error';
+  /**
+   * P-4.1 M-1: the tiers on sale to a non-held account. Default every priced
+   * tier, so the P-3a rows below test what they always tested; `'config'`
+   * leaves the dep out, so the production `buyableTiers()` decides.
+   */
+  buyable?: readonly TierId[] | 'config';
+  /** P-4.1 M-3: what Stripe says about the account's own open session. */
+  openSession?: { status: 'open' | 'complete' | 'expired' | null; customerId: string | null; livemode: boolean } | Error;
+  /** P-4.1 M-3: the compare-and-set release of that session's lock. */
+  release?: { released: boolean } | 'error';
   prices?: StripePriceLike[];
   subscriptions?: Array<{ complete: boolean; subscriptions: Array<{ id: string; status: string }> } | Error>;
   sessions?: Array<{ sessionId: string; clientSecret: string; expiresAt: number; livemode: boolean } | Error>;
@@ -146,6 +164,11 @@ function harness(options: Options = {}) {
       log.push('db:replaceCustomer');
       return { data: options.replaceResult ?? { replaced: true }, error: null };
     }),
+    releaseCheckoutLock: jest.fn(async (input: { sessionId: string }) => {
+      log.push(`db:releaseLock:${input.sessionId}`);
+      if (options.release === 'error') return { data: null, error: new Error('down') };
+      return { data: options.release ?? { released: true }, error: null };
+    }),
   };
 
   const stripe = {
@@ -168,6 +191,12 @@ function harness(options: Options = {}) {
     expireCheckoutSession: jest.fn(async (sessionId: string) => {
       log.push(`stripe:expire:${sessionId}`);
       if (options.expireThrows) throw new Error('already expired');
+    }),
+    retrieveCheckoutSessionState: jest.fn(async (sessionId: string) => {
+      log.push(`stripe:retrieve:${sessionId}`);
+      const state = options.openSession ?? { status: 'open', customerId: 'cus_stored', livemode: false };
+      if (state instanceof Error) throw state;
+      return state;
     }),
     findOrCreatePlatformCustomer: jest.fn(async () => {
       log.push('stripe:createCustomer');
@@ -197,13 +226,14 @@ function harness(options: Options = {}) {
     readPlanSnapshot: jest.fn(async () => {
       log.push('db:snapshot');
       if (options.snapshot === 'throw') throw new Error('snapshot down');
-      return options.snapshot ?? { unavailable: false, resolution: {} };
+      return options.snapshot ?? { unavailable: false, resolution: TIER_RESOLUTION };
     }),
     logger,
     repo: repo as unknown as PlanCheckoutDeps['repo'],
     stripe: stripe as unknown as PlanCheckoutDeps['stripe'],
     pricesEnabled: () => options.pricesEnabled ?? true,
     heldPaymentSwitches: () => options.heldSwitches ?? HELD_SWITCHES_ON,
+    ...(options.buyable === 'config' ? {} : { buyableTiers: () => (options.buyable as readonly TierId[] | undefined) ?? TIER_ORDER }),
     mode: () => {
       if (options.modeThrows) throw new Error('stripe_key_mode_unknown');
       return 'test';
@@ -330,15 +360,18 @@ describe('startPlanCheckout — early refusals make NO Stripe call (C-4)', () =>
     ['held admin invitee (until P-9)', { lineage: adminLineage, invite: { grant_kind: 'tier', language: 'en' } }, {}, 'held_tier_unresolved'],
     ['plan snapshot unavailable', { snapshot: { unavailable: true, resolution: null } }, {}, 'plan_unreadable'],
     ['plan snapshot read throws', { snapshot: 'throw' }, {}, 'plan_unreadable'],
-    ['no plan row (Q-4)', { snapshot: { unavailable: false, resolution: { anomaly: 'no_plan_row' } } }, {}, 'no_plan_row'],
+    ['no plan row (Q-4)', { snapshot: { unavailable: false, resolution: { ...TIER_RESOLUTION, anomaly: 'no_plan_row' } } }, {}, 'no_plan_row'],
     ['billing row unreadable', { row: 'error' }, {}, 'billing_row_unreadable'],
     ['live subscription on the record', { row: account({ subscriptionStatus: 'active', stripeSubscriptionId: 'sub_1' }) }, {}, 'subscription_live'],
     ['past_due subscription on the record', { row: account({ subscriptionStatus: 'past_due' }) }, {}, 'subscription_live'],
+    // P-4.1: an unexpired lock is no longer an early refusal; M-3 replaces it
+    // (its own describe block below). These two are the new early refusals.
+    ['P-4.1 M-1: a priced tier with availableToBuy off', { buyable: [] }, {}, 'price_unavailable'],
     [
-      'an unexpired checkout lock',
-      { row: account({ openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: '2026-10-07T10:20:00.000Z' }) },
+      'P-4.1 BQ-P10: free access with no end date',
+      { snapshot: { unavailable: false, resolution: { basis: { kind: 'cohort', cohort: 'x' }, lifecycle: { accessEndsAt: null } } } },
       {},
-      'checkout_open',
+      'free_access_no_end_date',
     ],
   ];
 
@@ -350,8 +383,13 @@ describe('startPlanCheckout — early refusals make NO Stripe call (C-4)', () =>
     expect(mockGetStripeService).not.toHaveBeenCalled();
   });
 
-  it('checkout_open carries the open lock\'s expiry', async () => {
-    const { deps } = harness({ row: account({ openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: '2026-10-07T10:20:00.000Z' }) });
+  // Rewritten on purpose for P-4.1 M-3: `checkout_open` now only means the
+  // account's own open session could not be read, expired or released.
+  it('checkout_open (open session unreadable) carries the open lock\'s expiry', async () => {
+    const { deps } = harness({
+      row: account({ openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: '2026-10-07T10:20:00.000Z' }),
+      openSession: new Error('stripe down'),
+    });
     expect(await startPlanCheckout(INPUT, deps)).toEqual({ ok: false, code: 'checkout_open', expiresAt: '2026-10-07T10:20:00.000Z' });
   });
 
@@ -398,9 +436,18 @@ describe('startPlanCheckout — early refusals make NO Stripe call (C-4)', () =>
     expectRefused(await startPlanCheckout(INPUT, deps), 'held_payment_unavailable');
   });
 
-  it('NOT held is unaffected by the held-payment switches', async () => {
-    const { deps } = harness({ heldSwitches: { checkoutEnabled: false, pricesEnabled: false, paidInvitesAvailable: false } });
+  // Rewritten on purpose for P-4.1 (M-1, SA W-1): a non-held account now goes
+  // through `planPurchaseOffer`, which reads the checkout and price switches
+  // (as the Settings view will). `paidInvitesAvailable` still governs held only.
+  it('NOT held is unaffected by paidInvitesAvailable', async () => {
+    const { deps } = harness({ heldSwitches: { checkoutEnabled: true, pricesEnabled: true, paidInvitesAvailable: false } });
     expect(await startPlanCheckout({ ...INPUT, tier: HIGHER_TIER }, deps)).toMatchObject({ ok: true, held: false });
+  });
+
+  it.each([['checkoutEnabled'], ['pricesEnabled']] as const)('NOT held with %s off → checkout_unavailable, no Stripe call', async (off) => {
+    const { deps, stripeCalls } = harness({ heldSwitches: { ...HELD_SWITCHES_ON, [off]: false } });
+    expectRefused(await startPlanCheckout({ ...INPUT, tier: HIGHER_TIER }, deps), 'checkout_unavailable');
+    expect(stripeCalls()).toEqual([]);
   });
 });
 
@@ -601,6 +648,283 @@ describe('startPlanCheckout — the lock race (SA Q-2)', () => {
     const { deps, stripe } = harness({ row: account(), sessions: [{ sessionId: 'cs_live_x', clientSecret: SECRET, expiresAt: STRIPE_EXPIRES, livemode: true }] });
     expectRefused(await startPlanCheckout(INPUT, deps), 'checkout_unavailable');
     expect(stripe.expireCheckoutSession).toHaveBeenCalledWith('cs_live_x');
+  });
+});
+
+// ── P-4.1: checkout hardening (M-1, BQ-P10, M-3; SA W-1 to W-4) ──────────
+
+const OPEN_LOCK = { openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: '2026-10-07T10:20:00.000Z' };
+const cohortResolution = (accessEndsAt: string | null): PlanSnapshotLike => ({
+  unavailable: false,
+  resolution: { basis: { kind: 'cohort', cohort: 'any_admin_dated' }, lifecycle: { accessEndsAt } },
+});
+
+describe('startPlanCheckout — M-1: availableToBuy is enforced on the server', () => {
+  it('a direct POST for a priced tier that is not on sale → price_unavailable / tier_not_sold, no Stripe call', async () => {
+    const { deps, logger, stripeCalls } = harness({ buyable: [FRIEND_TIER] });
+    expectRefused(await startPlanCheckout({ ...INPUT, tier: HIGHER_TIER }, deps), 'price_unavailable');
+    expect(stripeCalls()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'price_unavailable', reason: 'tier_not_sold' }), expect.any(String));
+  });
+
+  it('a tier on sale proceeds', async () => {
+    const { deps } = harness({ buyable: [FRIEND_TIER] });
+    expect(await startPlanCheckout(INPUT, deps)).toMatchObject({ ok: true, tier: FRIEND_TIER });
+  });
+
+  // The production config marks every tier availableToBuy (user decision,
+  // 2026-10-13, for testing — requirement §9.5 re-checks it at go-live). These
+  // two tests leave the dep out, so the REAL `buyableTiers()` reads the real
+  // TIER_MATRIX: the config sells what it says, and the flag is what refuses.
+  it('the PRODUCTION config (availableToBuy on for every tier since 2026-10-13) sells every tier to a non-held account', async () => {
+    for (const tier of TIER_ORDER) {
+      const { deps } = harness({ buyable: 'config' });
+      expect(await startPlanCheckout({ ...INPUT, tier }, deps)).toMatchObject({ ok: true, tier });
+    }
+  });
+
+  it.each(TIER_ORDER.map((tier) => [tier]))(
+    'the PRODUCTION config with availableToBuy turned OFF for %s refuses exactly that tier, with no Stripe call',
+    async (off) => {
+      const presentation = TIER_MATRIX.presentation as Record<string, { availableToBuy: boolean }>;
+      const saved = presentation[off].availableToBuy;
+      presentation[off].availableToBuy = false;
+      try {
+        const refused = harness({ buyable: 'config' });
+        expectRefused(await startPlanCheckout({ ...INPUT, tier: off }, refused.deps), 'price_unavailable');
+        expect(refused.stripeCalls()).toEqual([]);
+        expect(refused.logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({ code: 'price_unavailable', reason: 'tier_not_sold' }),
+          expect.any(String),
+        );
+        // Every OTHER tier still sells: the flag is per tier, not a global off.
+        for (const tier of TIER_ORDER.filter((t) => t !== off)) {
+          const { deps } = harness({ buyable: 'config' });
+          expect(await startPlanCheckout({ ...INPUT, tier }, deps)).toMatchObject({ ok: true, tier });
+        }
+      } finally {
+        presentation[off].availableToBuy = saved;
+      }
+    },
+  );
+
+  it('the held path is unchanged: a held friend buys the friend tier even when nothing is availableToBuy', async () => {
+    const { deps } = harness({ lineage: friendLineage, buyable: [] });
+    const result = await startPlanCheckout({ ...INPUT, tier: INVITE_ISSUANCE_POLICY.account.grantId as typeof FRIEND_TIER }, deps);
+    expect(result).toMatchObject({ ok: true, held: true });
+  });
+});
+
+describe('startPlanCheckout — BQ-P10: free access with no end date', () => {
+  it('refused free_access_no_end_date (409), warn with no alert, decided before any Stripe call', async () => {
+    const { deps, logger, stripeCalls, log } = harness({ snapshot: cohortResolution(null), row: account() });
+    const result = await startPlanCheckout(INPUT, deps);
+    expectRefused(result, 'free_access_no_end_date');
+    expect(PLAN_CHECKOUT_REFUSALS.free_access_no_end_date.status).toBe(409);
+    expect(stripeCalls()).toEqual([]);
+    expect(log).toEqual(['db:lineage', 'db:snapshot', 'db:findByUser']);
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ code: 'free_access_no_end_date' }), expect.any(String));
+  });
+
+  it.each([
+    ['an admin-dated cohort with an end date', cohortResolution('2026-12-01T00:00:00.000Z')],
+    ['an admin-dated cohort in grace (end date passed)', cohortResolution('2026-10-01T00:00:00.000Z')],
+    ['a tier (live, or an admin assignment with no end)', { unavailable: false, resolution: TIER_RESOLUTION }],
+    ['a paused / expired tier', { unavailable: false, resolution: { basis: { kind: 'tier', tier: FRIEND_TIER }, lifecycle: { accessEndsAt: '2026-10-01T00:00:00.000Z' } } }],
+  ] as Array<[string, PlanSnapshotLike]>)('%s → may buy', async (_label, snapshot) => {
+    const { deps } = harness({ snapshot });
+    expect((await startPlanCheckout(INPUT, deps)).ok).toBe(true);
+  });
+
+  it('a timed cohort (a trial: its config has a duration) with no access end is NOT caught', async () => {
+    // Found by structure in the production config, never by name.
+    const timed = Object.entries(COHORTS).find(([, config]) => 'durationHistory' in config)![0];
+    const { deps } = harness({ snapshot: { unavailable: false, resolution: { basis: { kind: 'cohort', cohort: timed }, lifecycle: { accessEndsAt: null } } } });
+    expect((await startPlanCheckout(INPUT, deps)).ok).toBe(true);
+  });
+
+  // SA W-3: the rule applies to every account, held included.
+  it('W-3: a HELD account with open-ended free access is refused too; a held fixture on a tier is not caught', async () => {
+    const grant = INVITE_ISSUANCE_POLICY.account.grantId as typeof FRIEND_TIER;
+    const caught = harness({ lineage: friendLineage, snapshot: cohortResolution(null) });
+    expectRefused(await startPlanCheckout({ ...INPUT, tier: grant }, caught.deps), 'free_access_no_end_date');
+    expect(caught.stripeCalls()).toEqual([]);
+
+    const tierHeld = harness({ lineage: friendLineage });
+    expect(await startPlanCheckout({ ...INPUT, tier: grant }, tierHeld.deps)).toMatchObject({ ok: true, held: true });
+  });
+});
+
+describe('startPlanCheckout — W-1: refusals from our own data never touch the open session', () => {
+  const cases: Array<[string, Options, Partial<PlanCheckoutInput>, string]> = [
+    ['tier not on sale (M-1)', { buyable: [FRIEND_TIER] }, { tier: HIGHER_TIER }, 'price_unavailable'],
+    ['free access with no end date (BQ-P10)', { snapshot: cohortResolution(null) }, {}, 'free_access_no_end_date'],
+    ['a live subscription on the record (SR-5 layer 1)', { row: account({ ...OPEN_LOCK, subscriptionStatus: 'active' }) }, {}, 'subscription_live'],
+    ['switches off', { heldSwitches: { ...HELD_SWITCHES_ON, checkoutEnabled: false } }, {}, 'checkout_unavailable'],
+  ];
+
+  it.each(cases)('%s, with an unexpired lock present → refused, ZERO Stripe calls, lock untouched', async (_label, options, input, code) => {
+    const { deps, repo, stripeCalls } = harness({ row: account(OPEN_LOCK), ...options });
+    expectRefused(await startPlanCheckout({ ...INPUT, ...input }, deps), code);
+    expect(stripeCalls()).toEqual([]);
+    expect(repo.releaseCheckoutLock).not.toHaveBeenCalled();
+    expect(mockGetStripeService).not.toHaveBeenCalled();
+  });
+
+  it('a held account: BQ-P10 and a live subscription refuse before M-3 as well', async () => {
+    const grant = INVITE_ISSUANCE_POLICY.account.grantId as typeof FRIEND_TIER;
+    for (const options of [
+      { snapshot: cohortResolution(null) },
+      { row: account({ ...OPEN_LOCK, subscriptionStatus: 'past_due' as const }) },
+    ] as Options[]) {
+      const { deps, repo, stripeCalls } = harness({ lineage: friendLineage, row: account(OPEN_LOCK), ...options });
+      expect((await startPlanCheckout({ ...INPUT, tier: grant }, deps)).ok).toBe(false);
+      expect(stripeCalls()).toEqual([]);
+      expect(repo.releaseCheckoutLock).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe('startPlanCheckout — M-3: the account\'s own open checkout is replaced (SA W-4)', () => {
+  it('open → expired at Stripe, lock released by compare-and-set, a NEW checkout returned; replacedSessionId recorded and logged', async () => {
+    const { deps, repo, stripe, log, logger } = harness({ row: account(OPEN_LOCK) });
+    const result = await startPlanCheckout(INPUT, deps);
+
+    expect(result).toMatchObject({ ok: true, sessionId: 'cs_test_new', replacedSessionId: 'cs_test_open' });
+    // Every DB read first; then the M-3 retrieve and expire (W-10 wording), then the rest.
+    expect(log.slice(0, 6)).toEqual([
+      'db:lineage',
+      'db:snapshot',
+      'db:findByUser',
+      'stripe:retrieve:cs_test_open',
+      'stripe:expire:cs_test_open',
+      'db:releaseLock:cs_test_open',
+    ]);
+    expect(log).toContain('stripe:createSession:cus_stored');
+    // The session id came from OUR row; the release is keyed by the session user and mode.
+    expect(stripe.retrieveCheckoutSessionState).toHaveBeenCalledWith('cs_test_open');
+    expect(repo.releaseCheckoutLock).toHaveBeenCalledWith({ userId: USER, livemode: false, sessionId: 'cs_test_open', nowIso: NOW.toISOString() });
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'bos_billing_checkout_replaced', replacedSessionId: 'cs_test_open', previousStatus: 'open', expiredByUs: true }),
+      expect.any(String)
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'bos_billing_checkout_started', replacedSessionId: 'cs_test_open' }),
+      expect.any(String)
+    );
+  });
+
+  it('expired → released and continued; nothing expired by us, so no replacedSessionId', async () => {
+    const { deps, stripe, repo } = harness({ row: account(OPEN_LOCK), openSession: { status: 'expired', customerId: 'cus_stored', livemode: false } });
+    const result = await startPlanCheckout(INPUT, deps);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.replacedSessionId).toBeUndefined();
+    expect(stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    expect(repo.releaseCheckoutLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('complete → checkout_processing (409), no expire, no release, no new session', async () => {
+    const { deps, stripe, repo } = harness({ row: account(OPEN_LOCK), openSession: { status: 'complete', customerId: 'cus_stored', livemode: false } });
+    const result = await startPlanCheckout(INPUT, deps);
+    expect(result).toEqual({ ok: false, code: 'checkout_processing' });
+    expect(PLAN_CHECKOUT_REFUSALS.checkout_processing.status).toBe(409);
+    expect(stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    expect(repo.releaseCheckoutLock).not.toHaveBeenCalled();
+    expect(stripe.createBusinessOsPlanCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['customer mismatch', { status: 'open', customerId: 'cus_someone_else', livemode: false }],
+    ['mode mismatch', { status: 'open', customerId: 'cus_stored', livemode: true }],
+  ] as const)('%s → checkout_open, error with an alert, and NOTHING expired or released', async (_label, openSession) => {
+    const { deps, stripe, repo, logger } = harness({ row: account(OPEN_LOCK), openSession });
+    expect(await startPlanCheckout(INPUT, deps)).toEqual({ ok: false, code: 'checkout_open', expiresAt: OPEN_LOCK.openCheckoutExpiresAt });
+    expect(stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    expect(repo.releaseCheckoutLock).not.toHaveBeenCalled();
+    expect(stripe.createBusinessOsPlanCheckoutSession).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'checkout_open', reason: 'open_session_ownership_mismatch', alert: true }),
+      expect.any(String)
+    );
+  });
+
+  it('retrieve throws → checkout_open, nothing expired or released', async () => {
+    const { deps, stripe, repo } = harness({ row: account(OPEN_LOCK), openSession: new Error('stripe down') });
+    expectRefused(await startPlanCheckout(INPUT, deps), 'checkout_open');
+    expect(stripe.expireCheckoutSession).not.toHaveBeenCalled();
+    expect(repo.releaseCheckoutLock).not.toHaveBeenCalled();
+  });
+
+  it('an unknown status → checkout_open, nothing expired', async () => {
+    const { deps, stripe } = harness({ row: account(OPEN_LOCK), openSession: { status: null, customerId: 'cus_stored', livemode: false } });
+    expectRefused(await startPlanCheckout(INPUT, deps), 'checkout_open');
+    expect(stripe.expireCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('expire throws → checkout_open (it may still be payable), no release, no new session', async () => {
+    const { deps, stripe, repo } = harness({ row: account(OPEN_LOCK), expireThrows: true });
+    expectRefused(await startPlanCheckout(INPUT, deps), 'checkout_open');
+    expect(repo.releaseCheckoutLock).not.toHaveBeenCalled();
+    expect(stripe.createBusinessOsPlanCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('a repository error on the release → checkout_open with an alert, no new session', async () => {
+    const { deps, stripe, logger } = harness({ row: account(OPEN_LOCK), release: 'error' });
+    expectRefused(await startPlanCheckout(INPUT, deps), 'checkout_open');
+    expect(stripe.createBusinessOsPlanCheckoutSession).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ step: 'release_open_session_lock', alert: true }), expect.any(String));
+  });
+
+  it('released: false is NOT a failure (W-4 d): it continues and step 14 arbitrates', async () => {
+    const { deps, repo } = harness({ row: account(OPEN_LOCK), release: { released: false } });
+    expect((await startPlanCheckout(INPUT, deps)).ok).toBe(true);
+    expect(repo.acquireCheckoutLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('two requests race on the same open session: one new checkout wins, the loser\'s new session is expired and never returned', async () => {
+    // One shared world: the lock row and the Stripe session states.
+    let lock: string | null = 'cs_test_open';
+    const sessionStatus: Record<string, 'open' | 'expired'> = { cs_test_open: 'open' };
+    const first = harness({ row: account(OPEN_LOCK) });
+    const second = harness({
+      row: account(OPEN_LOCK),
+      sessions: [{ sessionId: 'cs_test_two', clientSecret: 'other_secret', expiresAt: STRIPE_EXPIRES, livemode: false }],
+    });
+    for (const side of [first, second]) {
+      side.stripe.retrieveCheckoutSessionState.mockImplementation(async (id: string) => ({
+        status: sessionStatus[id] ?? 'open',
+        customerId: 'cus_stored',
+        livemode: false,
+      }));
+      side.stripe.expireCheckoutSession.mockImplementation(async (id: string) => {
+        sessionStatus[id] = 'expired';
+      });
+      side.repo.releaseCheckoutLock.mockImplementation(async (input: { sessionId: string }) => {
+        const released = lock === input.sessionId;
+        if (released) lock = null;
+        return { data: { released }, error: null };
+      });
+      side.repo.acquireCheckoutLock.mockImplementation(async (...args: unknown[]) => {
+        const input = args[0] as { sessionId: string };
+        if (lock !== null) return { data: { acquired: false }, error: null };
+        lock = input.sessionId;
+        return { data: { acquired: true }, error: null };
+      });
+    }
+
+    const [a, b] = await Promise.all([startPlanCheckout(INPUT, first.deps), startPlanCheckout(INPUT, second.deps)]);
+    expect([a.ok, b.ok].sort()).toEqual([false, true]);
+    const loserResult = a.ok ? b : a;
+    const loser = a.ok ? second : first;
+    expect(loserResult).toEqual({ ok: false, code: 'checkout_busy' });
+    // The loser expired the session IT created; its secret never left.
+    const loserNew = loser === first ? 'cs_test_new' : 'cs_test_two';
+    expect(loser.stripe.expireCheckoutSession).toHaveBeenCalledWith(loserNew);
+    expect(JSON.stringify(loserResult)).not.toContain('secret');
+    // The old session can no longer be paid, and the lock holds the winner's new one.
+    expect(sessionStatus.cs_test_open).toBe('expired');
+    expect(lock).toBe(a.ok ? 'cs_test_new' : 'cs_test_two');
   });
 });
 

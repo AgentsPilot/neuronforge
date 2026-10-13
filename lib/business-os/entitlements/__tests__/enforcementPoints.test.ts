@@ -465,17 +465,17 @@ describe('backward: a gate cannot ship unregistered', () => {
     {
       file: 'app/api/business-os/billing/plan/checkout/route.ts',
       symbols: ['TIER_ORDER', 'getEntitlementService', 'resolveAccountId'],
-      why: 'Plan payments P-3a (SA Q-4, Q-10): the plan checkout route. `TIER_ORDER` builds the body schema (which tier the owner names), `resolveAccountId` is the account seam for the session account, and `getEntitlementService().getSnapshot` is read ONLY to refuse an account with NO plan row (P-3b cannot apply a payment to one). It never calls `check()` / `decide()` and refuses nothing by tier or capability, so it is not a gate. If it ever does, it moves to ENFORCEMENT_POINTS.',
+      why: 'Plan payments P-3a (SA Q-4, Q-10), rewritten for P-4.1 (SA Q-4, W-6): the plan checkout route. `TIER_ORDER` builds the body schema (which tier the owner names), `resolveAccountId` is the account seam for the session account, and `getEntitlementService().getSnapshot` feeds the service, which through its snapshot port refuses a SALE: to an account with NO plan row (P-3b cannot apply a payment to one), to free access with no end date (BQ-P10) and of a tier whose `availableToBuy` is off (M-1). It refuses a sale, grants or withholds no capability, so there is no capability to register it under. If it ever calls `check()` / `decide()` or refuses a feature by plan, it moves to ENFORCEMENT_POINTS.',
     },
     {
       file: 'lib/business-os/billing/planCheckout.ts',
-      symbols: ['TierId'],
-      why: 'Plan payments P-3a (SA Q-4, Q-10): the checkout orchestration borrows the `TierId` TYPE for the tier the owner names. It refuses on a MISSING plan row (a P-3b precondition, read through an injected snapshot port), a live subscription, an open checkout or a price mismatch, never by tier or capability, and calls no `check()` / `decide()`. If it ever imports a value from the module, this suite asks again.',
+      symbols: ['FreeAccessResolutionLike', 'TierId', 'hasOpenEndedFreeAccess'],
+      why: 'Plan payments P-3a (SA Q-4, Q-10), rewritten for P-4.1 (SA Q-4, W-6): the checkout orchestration borrows the `TierId` TYPE for the tier the owner names, and reads `hasOpenEndedFreeAccess` (with its `FreeAccessResolutionLike` port type) over the snapshot it is handed. Through that port it refuses a SALE: on a MISSING plan row (a P-3b precondition), to free access with no end date (BQ-P10), of a tier whose `availableToBuy` is off (M-1, via planCheckoutEligibility.ts), beside a live subscription, or at a price mismatch. A refusal to sell grants or withholds no capability, so there is no capability to register it under, and it calls no `check()` / `decide()`. If it ever does, or refuses a feature by plan, it moves to ENFORCEMENT_POINTS.',
     },
     {
       file: 'lib/business-os/billing/planCheckoutEligibility.ts',
-      symbols: ['INVITE_ISSUANCE_POLICY', 'PLAN_STRIPE_PRICES', 'TIER_ORDER', 'TierId'],
-      why: 'Plan payments P-3a (SA-P11, SA Q-10): which tiers an account may BUY. Not held: every tier with a Stripe price (`PLAN_STRIPE_PRICES`, `TIER_ORDER`). Held by a friend invite: the friend tier only (`INVITE_ISSUANCE_POLICY.account.grantId`, FR-30). That applies invite policy to a purchase; it is not a plan or capability refusal and calls no `check()` / `decide()`, so it is not a gate.',
+      symbols: ['INVITE_ISSUANCE_POLICY', 'PLAN_STRIPE_PRICES', 'TIER_MATRIX', 'TIER_ORDER', 'TierId'],
+      why: 'Plan payments P-3a (SA-P11, SA Q-10), rewritten for P-4.1 (SA Q-4, W-6): which tiers an account may BUY. Held by a friend invite: the friend tier only (`INVITE_ISSUANCE_POLICY.account.grantId`, FR-30). Not held: `planPurchaseOffer`, the tiers with a Stripe price (`PLAN_STRIPE_PRICES`, `TIER_ORDER`) whose `TIER_MATRIX.presentation.availableToBuy` is on (M-1), refused to free access with no end date (BQ-P10, a fact it is handed) or beside a live subscription on our record. It refuses a SALE, grants or withholds no capability, so there is no capability to register it under, and it calls no `check()` / `decide()`. If it ever does, or refuses a feature by plan, it moves to ENFORCEMENT_POINTS.',
     },
     {
       file: 'lib/business-os/billing/planCheckoutPrice.ts',

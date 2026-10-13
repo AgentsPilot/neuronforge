@@ -22,6 +22,12 @@
  * `onStarted` gets the session id and expiry, and `onResponse` (the harness's
  * response viewer) gets the body with the secret replaced by a marker.
  *
+ * M-2 (plan payments P-4.1): the publishable key is checked FIRST. With no
+ * usable key (`getStripePromise()` is `null`), the component shows
+ * `labels.notConfigured` in place of the start button and never calls the
+ * route, so no session is opened and no checkout lock is taken for a frame
+ * that could not mount (SA O-1).
+ *
  * A refusal surfaces the route's `code` and `expiresAt` through `onRefused`.
  * The server's English `error` is passed along for the internal harness only;
  * customer screens localize by `code` and never show it (SA Q-8).
@@ -108,6 +114,8 @@ export function PlanEmbeddedCheckout({
   const stripe = useMemo(() => getStripePromise(), []);
 
   const start = async () => {
+    // M-2: never open a session (and take the SR-5 lock) that cannot be shown.
+    if (stripe === null) return;
     setLoading(true);
     setSession(null);
     onRequest?.();
@@ -144,6 +152,17 @@ export function PlanEmbeddedCheckout({
     }
   };
 
+  // M-2: no usable publishable key → say so, and offer no start at all.
+  if (stripe === null) {
+    return (
+      <div data-testid={testId}>
+        <p role="alert" data-testid={`${testId}-not-configured`} className="text-sm text-red-700">
+          {labels.notConfigured}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div data-testid={testId}>
       {session === null ? (
@@ -158,13 +177,7 @@ export function PlanEmbeddedCheckout({
         </button>
       ) : null}
 
-      {session !== null && stripe === null ? (
-        <p role="alert" data-testid={`${testId}-not-configured`} className="text-sm text-red-700">
-          {labels.notConfigured}
-        </p>
-      ) : null}
-
-      {session !== null && stripe !== null ? (
+      {session !== null ? (
         <div data-testid={`${testId}-frame`} className={frameClassName}>
           <EmbeddedCheckoutProvider
             key={session.sessionId}

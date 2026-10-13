@@ -16,7 +16,7 @@ import { NextRequest } from 'next/server';
 
 import { INVITE_ISSUANCE_POLICY } from '@/lib/business-os/entitlements/config/invites';
 import { PLAN_STRIPE_PRICES } from '@/lib/business-os/entitlements/config/planPrices';
-import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
+import { TIER_MATRIX, TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import { displayMonthlyPricesUsd, displayPriceInCents } from '@/lib/business-os/billing/planPriceCheck';
 
 const USER = '11111111-1111-4111-8111-111111111111';
@@ -26,14 +26,20 @@ const FRIEND_TIER = TIER_ORDER[0];
 const HIGHER_TIER = TIER_ORDER[TIER_ORDER.length - 1];
 
 type Row = Record<string, unknown> | null;
+type Resolution = { anomaly?: string; basis: { kind: string; tier?: string; cohort?: string }; lifecycle: { accessEndsAt: string | null } };
+
+/** P-4.1: a tier basis, which BQ-P10 does not catch. The default. */
+const TIER_RESOLUTION: Resolution = { basis: { kind: 'tier', tier: FRIEND_TIER }, lifecycle: { accessEndsAt: null } };
 
 const state: {
   user: { id: string; email?: string } | null;
   log: string[];
   lineage: Record<string, unknown> | null | 'error';
   invite: Record<string, unknown> | null;
-  snapshot: { unavailable: boolean; resolution: { anomaly?: string } | null };
+  snapshot: { unavailable: boolean; resolution: Resolution | null };
   row: Row | 'error';
+  /** P-4.1 M-3: what Stripe says about the account's own open session. */
+  openSession: { status: string | null; customerId: string | null; livemode: boolean } | Error;
   prices: Array<Record<string, unknown>> | null;
   subscriptions: Array<{ complete: boolean; subscriptions: Array<{ id: string; status: string }> } | Error>;
   sessions: Array<{ sessionId: string; clientSecret: string; expiresAt: number; livemode: boolean } | Error>;
@@ -44,8 +50,9 @@ const state: {
   log: [],
   lineage: null,
   invite: null,
-  snapshot: { unavailable: false, resolution: {} },
+  snapshot: { unavailable: false, resolution: TIER_RESOLUTION },
   row: null,
+  openSession: { status: 'open', customerId: 'cus_stored', livemode: false },
   prices: null,
   subscriptions: [],
   sessions: [],
@@ -100,6 +107,11 @@ jest.mock('@/lib/repositories/BusinessOsBillingAccountRepository', () => ({
     },
     acquireCheckoutLock: (...args: unknown[]) => mockAcquireLock(...args),
     replaceCustomer: (...args: unknown[]) => mockReplaceCustomer(...args),
+    // P-4.1 M-3: compare-and-set release of the account's own open session.
+    releaseCheckoutLock: async (input: { sessionId: string }) => {
+      state.log.push(`db:releaseLock:${input.sessionId}`);
+      return { data: { released: true }, error: null };
+    },
   },
 }));
 
@@ -134,6 +146,11 @@ const mockStripe = {
   }),
   expireCheckoutSession: jest.fn(async (sessionId: string) => {
     state.log.push(`stripe:expire:${sessionId}`);
+  }),
+  retrieveCheckoutSessionState: jest.fn(async (sessionId: string) => {
+    state.log.push(`stripe:retrieve:${sessionId}`);
+    if (state.openSession instanceof Error) throw state.openSession;
+    return state.openSession;
   }),
   findOrCreatePlatformCustomer: jest.fn(async (params: { idempotencyKey: string }) => {
     state.log.push(`stripe:createCustomer:${params.idempotencyKey}`);
@@ -207,6 +224,22 @@ let clock = Date.parse('2026-10-07T10:00:00.000Z');
 const mutablePolicy = INVITE_ISSUANCE_POLICY as { paidInvitesAvailable: boolean };
 const savedPaidInvitesAvailable = mutablePolicy.paidInvitesAvailable;
 
+/**
+ * P-4.1 M-1: the server sells a non-held account only a tier whose
+ * `presentation.availableToBuy` is on. Production turned it on for every tier
+ * on 2026-10-13 (user decision, for testing; requirement §9.5), so every test
+ * here runs against the PRODUCTION values — restored before each test — and
+ * the refusal tests turn ONE tier off in memory.
+ */
+const mutablePresentation = TIER_MATRIX.presentation as Record<string, { availableToBuy: boolean }>;
+const savedAvailableToBuy = Object.fromEntries(TIER_ORDER.map((tier) => [tier, mutablePresentation[tier].availableToBuy]));
+const restoreAvailableToBuy = () => {
+  for (const tier of TIER_ORDER) mutablePresentation[tier].availableToBuy = savedAvailableToBuy[tier];
+};
+const turnOffAvailableToBuy = (tier: string) => {
+  mutablePresentation[tier].availableToBuy = false;
+};
+
 beforeAll(() => {
   for (const name of ENV) savedEnv[name] = process.env[name];
 });
@@ -216,6 +249,7 @@ afterAll(() => {
     else process.env[name] = savedEnv[name];
   }
   mutablePolicy.paidInvitesAvailable = savedPaidInvitesAvailable;
+  restoreAvailableToBuy();
   jest.restoreAllMocks();
 });
 
@@ -224,6 +258,7 @@ beforeEach(() => {
   process.env.BUSINESS_OS_PLAN_PRICES_ENABLED = 'true';
   process.env.STRIPE_SECRET_KEY = 'sk_test_unit';
   mutablePolicy.paidInvitesAvailable = true;
+  restoreAvailableToBuy();
   // The shared price cache lives 60 s; each test runs two minutes later.
   clock += 120_000;
   jest.spyOn(Date, 'now').mockReturnValue(clock);
@@ -232,8 +267,9 @@ beforeEach(() => {
   state.log = [];
   state.lineage = null;
   state.invite = null;
-  state.snapshot = { unavailable: false, resolution: {} };
+  state.snapshot = { unavailable: false, resolution: TIER_RESOLUTION };
   state.row = null;
+  state.openSession = { status: 'open', customerId: 'cus_stored', livemode: false };
   state.prices = null;
   state.subscriptions = [];
   state.sessions = [];
@@ -338,6 +374,25 @@ describe('POST /api/business-os/billing/plan/checkout — the happy path', () =>
     expect(entry.details.held).toBe(true);
   });
 
+  // The production config, untouched (availableToBuy on for every tier since
+  // 2026-10-13): with both switches on, every tier sells to a non-held account.
+  it('the production config marks every tier availableToBuy (user decision, 2026-10-13, for testing)', () => {
+    expect(savedAvailableToBuy).toEqual(Object.fromEntries(TIER_ORDER.map((tier) => [tier, true])));
+  });
+
+  it.each(TIER_ORDER.map((tier) => [tier]))('the production config with both switches on sells %s → 200', async (tier) => {
+    const response = await POST(post({ tier, returnTo: 'test_harness' }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.tier).toBe(tier);
+  });
+
+  it('availableToBuy is per tier: turning the first tier OFF still sells the last one', async () => {
+    turnOffAvailableToBuy(FRIEND_TIER);
+    const response = await POST(post({ tier: HIGHER_TIER, returnTo: 'test_harness' }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.tier).toBe(HIGHER_TIER);
+  });
+
   it('the client secret and the email never appear in a log line', async () => {
     await POST(post(BODY));
     const lines = JSON.stringify(state.logLines);
@@ -379,15 +434,18 @@ describe('POST /api/business-os/billing/plan/checkout — refusals map to status
       'held_payment_unavailable',
     ],
     ['plan snapshot unreadable', () => (state.snapshot = { unavailable: true, resolution: null }), BODY, 503, 'plan_unreadable'],
-    ['no plan row', () => (state.snapshot = { unavailable: false, resolution: { anomaly: 'no_plan_row' } }), BODY, 409, 'no_plan_row'],
+    ['no plan row', () => (state.snapshot = { unavailable: false, resolution: { ...TIER_RESOLUTION, anomaly: 'no_plan_row' } }), BODY, 409, 'no_plan_row'],
     ['billing row unreadable', () => (state.row = 'error'), BODY, 503, 'billing_row_unreadable'],
     ['live subscription on record', () => (state.row = billingRow({ subscriptionStatus: 'active' })), BODY, 409, 'subscription_live'],
+    // P-4.1: an open checkout is no longer an early refusal (M-3 replaces it,
+    // below). These are the new early refusals, decided from our own data.
+    ['a tier that is not on sale (M-1, availableToBuy turned off for THAT tier only)', () => turnOffAvailableToBuy(BODY.tier), BODY, 503, 'price_unavailable'],
     [
-      'an open checkout',
-      () => (state.row = billingRow({ openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: '2099-01-01T00:00:00.000Z' })),
+      'free access with no end date (BQ-P10)',
+      () => (state.snapshot = { unavailable: false, resolution: { basis: { kind: 'cohort', cohort: 'any_admin_dated' }, lifecycle: { accessEndsAt: null } } }),
       BODY,
       409,
-      'checkout_open',
+      'free_access_no_end_date',
     ],
   ];
 
@@ -402,9 +460,52 @@ describe('POST /api/business-os/billing/plan/checkout — refusals map to status
     expect(mockLogAndFlush).not.toHaveBeenCalled();
   });
 
-  it('checkout_open returns the open lock\'s expiry', async () => {
+  // Rewritten on purpose for P-4.1 M-3: `checkout_open` now only means the
+  // account's own open session could not be read, expired or released.
+  it('checkout_open (open session unreadable) returns the open lock\'s expiry, no new session, no audit', async () => {
     state.row = billingRow({ openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: '2099-01-01T00:00:00.000Z' });
-    expect(await (await POST(post(BODY))).json()).toMatchObject({ code: 'checkout_open', expiresAt: '2099-01-01T00:00:00.000Z' });
+    state.openSession = new Error('stripe down');
+    const response = await POST(post(BODY));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'checkout_open', expiresAt: '2099-01-01T00:00:00.000Z' });
+    expect(mockStripe.createBusinessOsPlanCheckoutSession).not.toHaveBeenCalled();
+    expect(mockLogAndFlush).not.toHaveBeenCalled();
+  });
+
+  it('M-3: the account\'s own OPEN checkout is replaced → 200, and the audit records replacedSessionId (SA Q-5)', async () => {
+    state.row = billingRow({ openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: '2099-01-01T00:00:00.000Z' });
+    const response = await POST(post(BODY));
+    expect(response.status).toBe(200);
+    expect(mockStripe.retrieveCheckoutSessionState).toHaveBeenCalledWith('cs_test_open');
+    expect(mockStripe.expireCheckoutSession).toHaveBeenCalledWith('cs_test_open');
+    expect(state.log).toContain('db:releaseLock:cs_test_open');
+    const [entry] = mockLogAndFlush.mock.calls[0] as unknown as [{ details: Record<string, unknown> }];
+    expect(entry.details).toMatchObject({ sessionId: 'cs_test_new', replacedSessionId: 'cs_test_open' });
+  });
+
+  it('a plain start carries no replacedSessionId in its audit', async () => {
+    await POST(post(BODY));
+    const [entry] = mockLogAndFlush.mock.calls[0] as unknown as [{ details: Record<string, unknown> }];
+    expect(entry.details).not.toHaveProperty('replacedSessionId');
+  });
+
+  it('M-3: the account\'s own session reads COMPLETE → 409 checkout_processing, no new session, no audit', async () => {
+    state.row = billingRow({ openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: '2099-01-01T00:00:00.000Z' });
+    state.openSession = { status: 'complete', customerId: 'cus_stored', livemode: false };
+    const response = await POST(post(BODY));
+    expect(response.status).toBe(409);
+    const json = await response.json();
+    expect(json).toMatchObject({ success: false, code: 'checkout_processing', error: 'Your payment is being processed.' });
+    expect(mockStripe.expireCheckoutSession).not.toHaveBeenCalled();
+    expect(mockStripe.createBusinessOsPlanCheckoutSession).not.toHaveBeenCalled();
+    expect(mockLogAndFlush).not.toHaveBeenCalled();
+  });
+
+  it('the new refusal codes map to 409 with an English message and no provider text', async () => {
+    state.snapshot = { unavailable: false, resolution: { basis: { kind: 'cohort', cohort: 'any_admin_dated' }, lifecycle: { accessEndsAt: null } } };
+    const json = await (await POST(post(BODY))).json();
+    expect(json.error).toBe('Your free access has no end date yet, so there is no plan to buy.');
+    expect(JSON.stringify(json)).not.toMatch(/stripe|supabase/i);
   });
 
   it('a live subscription at Stripe (layer 1b) → 409 subscription_live, no session, no audit', async () => {
