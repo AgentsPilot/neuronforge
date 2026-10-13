@@ -1989,30 +1989,46 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               link — from the sentence about their own service rather than from
               a note about the option.
             */}
-            <div className="flex flex-col gap-2.5 mb-3">
-              {segmentWithWhy([
-                {
-                  value: 'card',
-                  label: t('scheduling.modal.shape.card'),
-                  active: saleShape === 'card',
-                  onClick: () => pickShape('card'),
-                },
-                {
-                  value: 'invoice',
-                  label: t('scheduling.modal.shape.invoice'),
-                  active: saleShape === 'invoice',
-                  onClick: () => pickShape('invoice'),
-                },
-                {
-                  value: 'quote',
-                  label: t('scheduling.modal.shape.quote'),
-                  active: saleShape === 'quote',
-                  onClick: () => pickShape('quote'),
-                },
-              ])}
+            {/*
+              AT A PRICE OF NOTHING THERE IS NO SHAPE TO CHOOSE.
 
+              `serviceMoneyLine` answers `free` on any price that is not above
+              zero and never consults the collection shape, so card, invoice
+              and quote were all three offered, one of them lit, and whichever
+              the owner pressed changed nothing they could see: the sentence
+              below went on reading "Nothing is collected."
 
-            </div>
+              The gate is `moneyLine.key`, not `price`, because that function
+              already holds the order these questions are answered in — a
+              quoted service is settled at `proposal` BEFORE price is looked
+              at, so this never hides the shape on a service whose price is
+              simply not named yet. The payment-plan row below already
+              collapses off the same answer.
+            */}
+            {moneyLine.key !== 'free' && (
+              <div className="flex flex-col gap-2.5 mb-3">
+                {segmentWithWhy([
+                  {
+                    value: 'card',
+                    label: t('scheduling.modal.shape.card'),
+                    active: saleShape === 'card',
+                    onClick: () => pickShape('card'),
+                  },
+                  {
+                    value: 'invoice',
+                    label: t('scheduling.modal.shape.invoice'),
+                    active: saleShape === 'invoice',
+                    onClick: () => pickShape('invoice'),
+                  },
+                  {
+                    value: 'quote',
+                    label: t('scheduling.modal.shape.quote'),
+                    active: saleShape === 'quote',
+                    onClick: () => pickShape('quote'),
+                  },
+                ])}
+              </div>
+            )}
 
             {moneyDisabled ? (
               /* Quoted: the amount and how it arrives are settled in the

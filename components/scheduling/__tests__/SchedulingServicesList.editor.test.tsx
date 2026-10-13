@@ -291,11 +291,30 @@ describe('a service with no appointment', () => {
 });
 
 describe('a free service', () => {
-  it('keeps its shape and says nothing is collected', async () => {
+  /*
+   * THIS ASSERTION USED TO RUN THE OTHER WAY, AND THE REVERSAL IS THE POINT.
+   *
+   * It read "keeps its shape and says nothing is collected", on the reasoning
+   * that free is a price and not a shape. That is true of the DATA and false
+   * of the SCREEN: `serviceMoneyLine` settles `free` without ever consulting
+   * the collection shape, so all three buttons sat there with one of them lit,
+   * and whichever the owner pressed the sentence underneath went on reading
+   * "Nothing is collected." A control that cannot change what it sits above is
+   * not a question, and `a service with no price` below says so in full.
+   *
+   * Kept rather than deleted, because the superseded expectation is the thing
+   * worth recording: anyone reinstating it will read why it went.
+   *
+   * NOT TRUE OF THE POPUP MODAL. `SchedulingServiceModal.render.test.tsx`
+   * still pins the shape as present on a free service, so the two editors
+   * genuinely differ on this one state. Flagged, not quietly aligned — the
+   * modal is a shipped surface and changing it was not asked for.
+   */
+  it('says nothing is collected, and stops asking how they pay', async () => {
     await openEditor({ service: { ...SERVICE, price: 0 } as unknown as SchedulingService });
 
     says(/Nothing is collected. This service is free/);
-    expect(screen.getByRole('button', { name: 'You invoice them' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'You invoice them' })).not.toBeInTheDocument();
   });
 });
 
