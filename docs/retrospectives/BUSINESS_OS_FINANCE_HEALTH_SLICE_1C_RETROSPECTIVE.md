@@ -100,14 +100,14 @@ The cycle ran in this order:
 | # | Item | Owner | Status |
 |---|---|---|---|
 | FU-1c-1 | Manual QA **L-42 to L-48** (workplan QA report): the revenue panel, the user's own account under **Essentials** with the Founding Partner note, the picked-business chip, §13 SQL checks 1 and 6 (with the E-25 caveat), `durationMs`. Plus the owed **L-1 to L-41** from 1a, 1b, 2a and 2b | User | ⬜ Owed |
-| FU-1c-2 | RM: commit, push and open the PR for `feature/bos-finance-health-1c`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ⬜ Approved by user, pending RM |
+| FU-1c-2 | RM: commit, push and open the PR for `feature/bos-finance-health-1c`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ✅ Committed `fa7a4aad`, PR [#335](https://github.com/AgentsPilot/neuronforge/pull/335) opened 2026-10-13 |
 | FU-1c-3 | **Slice 4 (boost revenue)** and **slice 5 (plan revenue)** now have real rows to show (the user's test-mode boost and plan invoice, counted under BD-14) | BA → SA → Dev | ⬜ Next candidates |
 | FU-1c-4 | AI-cost overlap review: open questions BQ-1 to BQ-5 (carried from FU-2b-4). **Urgent:** OV-2 (move Finance to the shared picker) must land before layout step L-8 deletes the picker `FinanceFilterBar.tsx` imports | User → BA → SA | ⬜ Open, time-sensitive |
 | FU-1c-5 | Recorded residual: a second billing row exactly past a 1,000-row page boundary is not detected by R-c (SA-WR-27). Acceptable under BD-16; revisit if the one-row assumption changes | SA | ⬜ Recorded |
 | FU-2b-5, FU-2b-6, FU-2b-7, FU-2b-9, FU-2b-10 | Carried: flaky wall-clock test; `schema:check` from a credentialed checkout; slice 3 waits on volume; slices 6 to 7 blocked; slice 8 snapshots | As before | ⬜ Unchanged |
 | FU-2a-5 to FU-2a-8, FU-1b-3, FU-1b-4, FU-4 | Carried from earlier slices (DF-3 test-data filtering, DF-4 page shell, layer-B mode and failed charges, BA Edit tool; zero allowance wording, `metricParams` typing, shared ledger read) | As before | ⬜ Unchanged |
 
-### Status: APPROVED BY USER — commit pending (RM) — `feature/bos-finance-health-1c`
+### Status: APPROVED BY USER — committed `fa7a4aad`, PR [#335](https://github.com/AgentsPilot/neuronforge/pull/335) — `feature/bos-finance-health-1c`
 
 ---
 
