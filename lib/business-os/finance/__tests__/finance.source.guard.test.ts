@@ -36,6 +36,14 @@
  * and no due date is parsed as an instant (SA-W33); the 2b files name no
  * client column; and no 2b page file or builder adds two amounts. Every new
  * rule has a planted negative control.
+ *
+ * Slice 1c (BD-14, SA-Q22, AC-81, SA-WR-30): "the layer-A reads still filter
+ * livemode" is REPLACED by "the repository's code names no livemode", with a
+ * planted control run through the same comment stripper as every rule here.
+ * Two wording rules join (AC-81): no page or builder code says "webhook",
+ * "not in place" or "test accounts only", and no scanned file's code names a
+ * mode. Each has a planted control, including the known false-positive shape
+ * of an identifier such as latestMode (SA-WR-30).
  */
 
 import * as fs from 'fs';
@@ -72,10 +80,11 @@ const LAYER_B_FREE = FILES.filter((file) => file !== REPOSITORY);
 
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 /** Comments removed: prose about a table is not a read of it. */
-const codeOf = (file: string) =>
-  read(file)
+const stripComments = (text: string) =>
+  text
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
+const codeOf = (file: string) => stripComments(read(file));
 
 describe('finance slice 1a source guards', () => {
   it('scans the slice’s files (non-vacuity)', () => {
@@ -331,8 +340,19 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
     expect(body).not.toMatch(/livemode/);
   });
 
-  it('the layer-A reads still filter livemode (the rule above is not vacuous by a missing word)', () => {
-    expect(bodyOf(codeOf(REPOSITORY), 'listLiveBillingStatusesAllAccounts')).toMatch(/livemode/);
+  // Slice 1c (SA-Q22, BD-14): the layer-A reads no longer filter by mode, so
+  // the whole repository's code names no livemode. The planted control runs
+  // the SAME stripper (stripComments), so the rule bites on code, not prose.
+  it('the repository-wide livemode rule bites on code and not on a comment (planted)', () => {
+    expect(stripComments("// livemode in a comment\nconst a = 1;")).not.toMatch(/livemode/);
+    expect(stripComments("/* livemode in a block */\nconst a = 1;")).not.toMatch(/livemode/);
+    expect(stripComments("const r = await q.eq('livemode', true);")).toMatch(/livemode/);
+  });
+
+  it('the repository code names no livemode (BD-14: test and real rows count together)', () => {
+    const code = codeOf(REPOSITORY);
+    expect(code.length).toBeGreaterThan(5000);
+    expect(code).not.toMatch(/livemode/);
   });
 
   // ── No FX, no exchange rate (CUR-3) ──
@@ -540,5 +560,45 @@ describe('finance slice 2b source guards (client payment problems, §12.1, AC-61
   // ── SA-W22 / SA-W35: the pure modules import no repository ──
   it.each([DUE_DATES, PROBLEMS])('%s: imports no repository and no Supabase client', (file) => {
     expect(read(file)).not.toMatch(/@\/lib\/repositories|supabase/i);
+  });
+});
+
+// ── Slice 1c: no mode and no webhook wording (AC-81, S1C-FR-7, SA-WR-30) ─────
+describe('finance slice 1c wording guards', () => {
+  const PAGE_AND_BUILDER = [...walk('app/admin/finance'), 'lib/business-os/finance/financeHealth.ts'];
+  const OLD_PANEL_WORDING = /webhook|not in place|test accounts only/i;
+  const MODE_WORDING = /livemode|test.?mode|live.?mode/i;
+
+  it('scans the page and the builder (non-vacuity)', () => {
+    expect(PAGE_AND_BUILDER).toEqual(
+      expect.arrayContaining(['app/admin/finance/financeCopy.ts', 'app/admin/finance/components/RevenuePanel.tsx'])
+    );
+  });
+
+  it('the old-panel wording rule bites (planted: the 1a "none yet" sentence)', () => {
+    const planted =
+      "export const REVENUE_NONE_YET = 'None yet. Plan billing is not live (the payment webhook is not in place) and credit boosts are open to test accounts only.';";
+    expect(stripComments(planted)).toMatch(OLD_PANEL_WORDING);
+    expect(stripComments('// the webhook writes it\nconst a = 1;')).not.toMatch(OLD_PANEL_WORDING);
+  });
+
+  it.each(PAGE_AND_BUILDER)('%s: no "webhook", "not in place" or "test accounts only" in code', (file) => {
+    expect(codeOf(file)).not.toMatch(OLD_PANEL_WORDING);
+  });
+
+  it('the mode-wording rule bites (planted), and its known false-positive shape is recorded (SA-WR-30)', () => {
+    expect(MODE_WORDING.test("'Live-mode plan invoices and paid boosts'")).toBe(true);
+    expect(MODE_WORDING.test("q.eq('livemode', true)")).toBe(true);
+    expect(MODE_WORDING.test('Shows Test mode payments')).toBe(true);
+    expect(MODE_WORDING.test("'deliver'")).toBe(false);
+    expect(MODE_WORDING.test("'alive'")).toBe(false);
+    // SA-WR-30: an identifier such as latestMode matches too. No scanned file
+    // holds one today (the rule below passes); if one ever does, narrow the
+    // rule to string literals rather than renaming the identifier.
+    expect(MODE_WORDING.test('const latestMode = 1;')).toBe(true);
+  });
+
+  it.each(FILES)('%s: names no mode in code (no livemode, test mode or live mode)', (file) => {
+    expect(codeOf(file)).not.toMatch(MODE_WORDING);
   });
 });

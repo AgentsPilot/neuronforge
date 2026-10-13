@@ -1,9 +1,9 @@
 // lib/business-os/billing/payingSubscriptionStatuses.ts
 //
 // What counts as a PAYING plan subscription on the admin finance & business
-// health page (slice 1a, SA-Q5): the account's live billing row has one of
-// these statuses AND has not ended. Live mode is the reader's job (the finance
-// read filters `livemode = true`).
+// health page (slice 1a, SA-Q5): the account's billing row has one of
+// these statuses AND has not ended. Mode is not filtered: test and live rows
+// both count (BD-14), and one billing row per account is assumed (BD-16).
 //
 // Deliberately its own set, not derived from the checkout's "live" statuses or
 // the deletion refusal's: those answer "may we still be charging?" and include
@@ -24,7 +24,7 @@ export type PayingSubscriptionStatus = (typeof PAYING_SUBSCRIPTION_STATUSES)[num
 
 const PAYING: ReadonlySet<string> = new Set<string>(PAYING_SUBSCRIPTION_STATUSES);
 
-/** True when this live billing row is paying now: a paying status and no end. */
+/** True when this billing row is paying now: a paying status and no end. */
 export function isPayingBillingRow(row: { subscription_status: string | null; ended_at: string | null }): boolean {
   return row.subscription_status !== null && PAYING.has(row.subscription_status) && row.ended_at === null;
 }
