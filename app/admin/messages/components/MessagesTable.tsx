@@ -99,7 +99,8 @@ export interface MessagesTableProps {
   /** The row whose last Delete failed (D-19): its action cell shows the line. */
   deleteFailedId: string | null;
   onOpen: (message: ContactMessage, opener: HTMLButtonElement) => void;
-  onDelete: (message: ContactMessage) => void;
+  /** Asks before deleting (LF-3b): the button is the dialog's opener, for focus return. */
+  onDelete: (message: ContactMessage, opener: HTMLButtonElement) => void;
 }
 
 export function MessagesTable({ rows, openId, deleteFailedId, onOpen, onDelete }: MessagesTableProps) {
@@ -180,7 +181,7 @@ export function MessagesTable({ rows, openId, deleteFailedId, onOpen, onDelete }
               <td className={ADMIN_TD}>
                 <button
                   type="button"
-                  onClick={() => onDelete(message)}
+                  onClick={(event) => onDelete(message, event.currentTarget)}
                   aria-label={`Delete message from ${message.name}`}
                   className="rounded p-1 text-red-400 hover:text-red-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
                 >
