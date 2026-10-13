@@ -679,7 +679,10 @@ export class StripeService {
    * identical in-flight request with an idempotency error).
    *
    * A card error THROWN by the call propagates (the orchestration maps it to
-   * `declined`, SA V-7, whatever experiment E-2 shows).
+   * `declined`, SA V-7). Experiment E-2 (2026-10-13) observed that Stripe
+   * RETURNS a decline on this path instead: the pending update is kept, the
+   * invoice stays `open` and its PaymentIntent reads `requires_payment_method`.
+   * The thrown shape stays mapped as a backstop.
    */
   async upgradeBusinessOsPlanSubscription(params: {
     subscriptionId: string;
@@ -766,16 +769,19 @@ export class StripeService {
   }
 
   /**
-   * The payment state of an upgrade invoice. THE E-1 SEAM (workplan §3.3,
-   * SA design point): how the payment is read on `2025-10-29.clover` is
-   * settled by sandbox experiment E-1, which has not run yet (pending E-1).
-   * Today: a `paid` invoice is `succeeded` with no read; any other status but
-   * `open` is `none`; an `open` invoice uses its `payments` list when the
-   * object already carries it (expanded), else ONE `invoicePayments.list`
-   * read with the PaymentIntent expanded. If E-1 shows the expanded list is
-   * reliable on the update's answer, only the update's `expand` changes; if it
-   * shows the list read is needed, nothing changes. The mapping to the
-   * outcome does not depend on which.
+   * The payment state of an upgrade invoice (workplan §3.3, SA design point),
+   * as sandbox experiment E-1 (2026-10-13, `2025-10-29.clover`) settled it:
+   * a `paid` invoice is `succeeded` with no read; any other status but `open`
+   * is `none` (a voided upgrade invoice, E-4, makes no read); an `open`
+   * invoice is read with ONE `invoicePayments.list` call with the
+   * PaymentIntent expanded (E-1b: the default payment, PaymentIntent
+   * `requires_action`). The update's answer carries no `payments` key, and
+   * expanding `latest_invoice.payments.data.payment.payment_intent` on the
+   * update is refused by Stripe (`property_expansion_max_depth`), so the list
+   * read is the permanent path. The `invoice.payments?.data` branch is kept
+   * for an invoice that already carries the list (an invoice retrieved with
+   * it expanded, as the E-2 capture was); it is not reached on the update's
+   * answer. Pinned by the captured fixtures (`planUpgrade.captured.test.ts`).
    */
   private async upgradeInvoicePaymentState(invoice: Stripe.Invoice): Promise<BusinessOsUpgradePaymentState> {
     if (invoice.status === 'paid') return 'succeeded';

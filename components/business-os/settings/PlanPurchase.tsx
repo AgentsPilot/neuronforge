@@ -58,6 +58,7 @@ export function PlanPurchase({
   tiers,
   endsFreeAccess,
   onComplete,
+  currentTierId = null,
 }: {
   plans: readonly PlanChoice[];
   /** The tiers the server offers (`purchase.offer.tiers`). */
@@ -65,6 +66,13 @@ export function PlanPurchase({
   endsFreeAccess: EndsFreeAccessOnPurchaseWire;
   /** Stripe completed: the section shows "Payment processing" and re-reads. */
   onComplete: (sessionId: string) => void;
+  /**
+   * The plan in force when it is a TIER (P-7b.1b, SA Q-7): an admin-assigned
+   * paid plan with no billing record is offered its own plan. That row reads
+   * "Pay for <plan>" with a one-line note, never "Choose" a plan already held.
+   * Label only: what is offered is still the server's `tiers`.
+   */
+  currentTierId?: string | null;
 }) {
   const { t } = useLanguage();
   const router = useRouter();
@@ -98,6 +106,7 @@ export function PlanPurchase({
           const offered = tiers.includes(plan.planId);
           // Once a frame is open, only its own row keeps a checkout.
           const showCheckout = offered && stripeReady && (!frameOpen || activeTier === plan.planId);
+          const ownPlan = offered && currentTierId !== null && currentTierId === plan.planId;
 
           return (
             <li key={plan.planId} className="space-y-2" data-testid={`plan-choice-${plan.planId}`}>
@@ -116,12 +125,18 @@ export function PlanPurchase({
                 ) : null}
               </div>
 
+              {ownPlan ? (
+                <p className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-choice-own-plan-note">
+                  {fillTemplate(t('plan.choose.own_plan_note'), { plan: plan.name })}
+                </p>
+              ) : null}
+
               {showCheckout ? (
                 <PlanEmbeddedCheckout
                   tier={plan.planId}
                   returnTo="settings_plan"
                   labels={{
-                    start: fillTemplate(t('plan.choose.button'), { plan: plan.name }),
+                    start: fillTemplate(t(ownPlan ? 'plan.choose.button_own' : 'plan.choose.button'), { plan: plan.name }),
                     starting: t('plan.choose.starting'),
                     notConfigured: t('plan.choose.not_configured'),
                   }}

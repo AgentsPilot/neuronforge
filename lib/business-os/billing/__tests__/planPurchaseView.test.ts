@@ -196,7 +196,12 @@ describe('the offer: planPurchaseOffer over this view\'s own reads (M-1, BQ-P10,
 
   it('a failed billing read never hides the plan: the offer is computed as if there were no record, billing is null', async () => {
     const errored = harness({ billing: { data: null, error: new Error('db down') } });
-    expect(await view(ON_A_TIER, errored.deps)).toEqual({ offer: { kind: 'choose', tiers: ALL_TIERS }, billing: null, endsFreeAccessOnPurchase: null });
+    expect(await view(ON_A_TIER, errored.deps)).toEqual({
+      offer: { kind: 'choose', tiers: ALL_TIERS },
+      billing: null,
+      endsFreeAccessOnPurchase: null,
+      upgrade: null,
+    });
     expect(errored.warns.map((w) => w.event)).toEqual(['bos_billing_purchase_view_billing_unread']);
 
     const threw = harness({
@@ -255,8 +260,59 @@ describe('endsFreeAccessOnPurchase (SA Q-3 / W-7): structural, and only beside a
 
   it('null whenever nothing is offered, even for a trial', async () => {
     const off = harness({ switches: { checkoutEnabled: false, pricesEnabled: true } });
-    expect(await view(TRIAL, off.deps)).toEqual({ offer: { kind: 'none', reason: 'switches_off' }, billing: null, endsFreeAccessOnPurchase: null });
+    expect(await view(TRIAL, off.deps)).toEqual({
+      offer: { kind: 'none', reason: 'switches_off' },
+      billing: null,
+      endsFreeAccessOnPurchase: null,
+      upgrade: null,
+    });
     // And open-ended free access is refused outright (BQ-P10), so no sentence either.
     expect((await view(OPEN_ENDED, harness().deps))!.endsFreeAccessOnPurchase).toBeNull();
+  });
+});
+
+describe('upgrade (P-7b.1b, workplan §3.6; SA U-2): planUpgradeOffer over this view\'s own billing read', () => {
+  const [LOWER, ...ABOVE] = TIER_ORDER as readonly string[];
+  const paying = (overrides: Partial<Row> = {}) =>
+    row({ subscriptionStatus: 'active', boughtTier: LOWER, stripeSubscriptionId: 'sub_own', currentPeriodEnd: FUTURE, ...overrides });
+
+  it('an active subscription on the lowest tier, switches on → the buyable tiers above it', async () => {
+    expect(ABOVE.length).toBeGreaterThan(0);
+    const h = harness({ billing: { data: paying(), error: null } });
+    const result = await view(ON_A_TIER, h.deps);
+    expect(result!.upgrade).toEqual({ tiers: ABOVE });
+    // Paying: Choose is still not offered; the upgrade is its own answer.
+    expect(result!.offer).toEqual({ kind: 'none', reason: 'paying' });
+  });
+
+  it('only the BUYABLE tiers above are listed; none buyable → null', async () => {
+    const onlyLower = harness({ billing: { data: paying(), error: null }, buyable: [LOWER] });
+    expect((await view(ON_A_TIER, onlyLower.deps))!.upgrade).toBeNull();
+  });
+
+  it.each([
+    ['switches off', { switches: { checkoutEnabled: false, pricesEnabled: true } }, paying()],
+    ['price switch off', { switches: { checkoutEnabled: true, pricesEnabled: false } }, paying()],
+    ['no billing row', {}, null],
+    ['no bought tier (a held or never-paid account)', {}, paying({ boughtTier: null })],
+    ['no subscription id', {}, paying({ stripeSubscriptionId: null })],
+    ['past_due', {}, paying({ subscriptionStatus: 'past_due' })],
+    ['ended', {}, paying({ endedAt: PAST })],
+    ['cancelling at the period end', {}, paying({ cancelAtPeriodEnd: true })],
+    ['already on the top tier', {}, paying({ boughtTier: TIER_ORDER[TIER_ORDER.length - 1] })],
+  ] as Array<[string, Parameters<typeof harness>[0], Row | null]>)('%s → null', async (_label, options, billingRow) => {
+    const h = harness({ ...options, billing: { data: billingRow, error: null } });
+    expect((await view(ON_A_TIER, h.deps))!.upgrade).toBeNull();
+  });
+
+  it('a failed billing read offers no upgrade (the routes answer billing_row_unreadable)', async () => {
+    const h = harness({ billing: { data: null, error: new Error('db down') } });
+    expect((await view(ON_A_TIER, h.deps))!.upgrade).toBeNull();
+  });
+
+  it('U-2: the plan row\'s tier is not an input (an admin-assigned top tier on a lower paid tier is still offered, Q-5)', async () => {
+    const topSnapshot = snapshotFor({ tier: TIER_ORDER[TIER_ORDER.length - 1], planVersion: 1, tierExpiresAt: FUTURE });
+    const h = harness({ billing: { data: paying(), error: null } });
+    expect((await view(topSnapshot, h.deps))!.upgrade).toEqual({ tiers: ABOVE });
   });
 });
