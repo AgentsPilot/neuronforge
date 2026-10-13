@@ -18,12 +18,17 @@
  * Who the account is comes from the session only (`getUser()`, then the
  * account seam `resolveAccountId`). The email for a new Stripe customer is the
  * session's too (SA Q-11). This route imports `resolveAccountId` and
- * `getEntitlementService` (for `getSnapshot`, to refuse an account with no
- * plan row, SA Q-4) and `TIER_ORDER` for the body schema; it decides nothing
- * by tier or capability, so it is a recorded non-gate (SA Q-10).
+ * `getEntitlementService` (for `getSnapshot`: the service refuses an account
+ * with no plan row, SA Q-4, and, since P-4.1, refuses a SALE to free access
+ * with no end date, BQ-P10) and `TIER_ORDER` for the body schema. The service
+ * also refuses a sale of a tier whose `availableToBuy` is off (M-1). None of
+ * that grants or withholds a capability, so it is a recorded non-gate (SA Q-10,
+ * P-4.1 W-6).
  *
  * The start is audited (BOS_BILLING_CHECKOUT_STARTED) and flushed before the
- * response (WC-7). Refusals are logged by the service, not audited (SA Q-9).
+ * response (WC-7); when the start replaced the account's own open checkout
+ * (P-4.1 M-3), `replacedSessionId` is in its details (SA Q-5). Refusals are
+ * logged by the service, not audited (SA Q-9).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -132,6 +137,7 @@ export async function POST(request: NextRequest) {
           livemode: result.livemode,
           held: result.held,
           expiresAt: result.expiresAt,
+          ...(result.replacedSessionId ? { replacedSessionId: result.replacedSessionId } : {}),
           actor: 'owner',
           correlationId,
         },

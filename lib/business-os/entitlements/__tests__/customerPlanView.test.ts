@@ -276,13 +276,15 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
     expect(view.nextPlanUp?.adds[0].labelKey).toBe('plan.category.ai_chat');
   });
 
-  it('Essentials cannot be left by pressing anything yet', () => {
+  it('Essentials is offered Autopilot as available to buy (availableToBuy on since 2026-10-13, for testing)', () => {
     const view = viewFor('basic');
 
-    expect(view.nextPlanUp?.availableToBuy).toBe(false);
-    // The 'Coming soon' wording lives in the badge the component renders; the
-    // payload carries the invitation, so the two are not the same string twice.
-    expect(view.nextPlanUp?.actionUnavailableBecause?.key).toBe('plan.move_before_then');
+    // The shipped config marks Autopilot buyable (user decision, 2026-10-13;
+    // requirement §9.5 re-checks it at go-live), so the payload carries no
+    // unavailability sentence. The real-config path of the `true` branch; the
+    // fixture block below covers both branches with one flag varied.
+    expect(view.nextPlanUp?.availableToBuy).toBe(true);
+    expect(view.nextPlanUp?.actionUnavailableBecause).toBeNull();
   });
 
   it('Autopilot is told there is nothing above it, rather than shown an empty offer', () => {
@@ -498,7 +500,8 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
  * passed 63 tests, and `availableToBuy: true` was never reached. The reason is
  * that the flags only VARY in the fixture matrix — every other test in this file
  * builds config with `readCodeConfig()`, where both tiers happen to be
- * shown-and-not-buyable, so both branches were invisible.
+ * shown-and-not-buyable (shown-AND-buyable since 2026-10-13), so both branches
+ * were invisible.
  *
  * The fixture is the right shape for this: `basic` shown+buyable, `growth`
  * shown-only, and `pro` hidden AND last in `tierOrder` — which is exactly the
