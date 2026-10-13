@@ -9,14 +9,28 @@
  * (BD-14, AC-4.10, SA C3), focus return on close (BD-15, AC-4.7, F-108) and the
  * contrast of the money blocks' information lines (§4).
  *
- * Through the whole page, opened from the row's Open button, with a
- * route-table stub in the `businessDrawer.layout.render` style: requests are
- * recorded as plain "METHOD url" strings, not with the pin harness's recorder
- * (SA SQ-9). The requests themselves are pinned by `businessDrawer.pins.*`.
+ * Through the whole page, opened from the row's Open button, on the shared
+ * pin harness (`tests/admin/drawerPinHarness.ts`, LF-4b Step 12) with this
+ * file's own route table. Requests are compared here as "METHOD url" lines;
+ * their bodies, headers and `cache` are pinned by `businessDrawer.pins.*`.
  */
 
 import React from 'react';
 import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+
+import {
+  calls,
+  deferred,
+  fromQueue,
+  installFetch,
+  installPinLifecycle,
+  quiet,
+  setRoutes,
+  unexpected,
+  type Call,
+  type Queued,
+  type Reply,
+} from '@/tests/admin/drawerPinHarness';
 
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({
@@ -151,43 +165,31 @@ const SUMMARY = {
   },
 };
 
-// ── Fetch stub ──────────────────────────────────────────────────────────────
+// ── The route table (the recording stub is the shared pin harness) ──────────
 
-interface ResponseLike {
-  ok: boolean;
-  status: number;
-  json: () => Promise<unknown>;
-}
-
-const answer = (status: number, body: unknown): ResponseLike => ({ ok: status < 400, status, json: async () => body });
+const answer = (status: number, body: unknown): Reply => ({ status, body });
 const okBody = (data: unknown) => answer(200, { success: true, data });
 
-/** Every request as "METHOD url". */
-let calls: string[] = [];
-let unexpected: string[] = [];
-let pending = 0;
+/** A request as one line, "METHOD url". */
+const line = (c: Call) => `${c.method} ${c.url}`;
+
 let listReadCount = 0;
 let creditsData: AccountCreditPositionPayload;
 let boostData: AdminBoostView;
 /** Answers to the entitlements POST, in order. */
-let opsQueue: ResponseLike[] = [];
+let opsQueue: Queued[] = [];
 /** While set, the top-ups read waits for it, as a real network read takes time. */
 let boostGate: Promise<void> | null = null;
 
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
+function routePost(url: string): Queued {
+  if (url === OPS_URL) return fromQueue(opsQueue, url);
+  unexpected.push(`POST ${url}`);
+  return answer(404, { success: false, error: 'not mocked' });
 }
 
-function route(method: string, url: string): ResponseLike {
-  if (method === 'POST') {
-    if (url === OPS_URL && opsQueue.length > 0) return opsQueue.shift() as ResponseLike;
-    unexpected.push(`${method} ${url}`);
-    return answer(500, { success: false, error: 'not queued' });
-  }
+function routeGet(url: string): Queued {
+  // The top-ups data is read when the gate opens, as the real answer would be.
+  if (boostGate && url === BOOST_URL) return boostGate.then(() => okBody(boostData));
   if (url.startsWith('/api/admin/users?')) {
     listReadCount += 1;
     return okBody([danaRow(listReadCount)]);
@@ -201,35 +203,8 @@ function route(method: string, url: string): ResponseLike {
   if (url === CREDITS_URL) return okBody(creditsData);
   if (url === '/api/admin/archiving') return okBody({ sources: [] });
   if (url === '/api/admin/test-account-cleanup/check') return okBody({ configured: true });
-  unexpected.push(`${method} ${url}`);
+  unexpected.push(`GET ${url}`);
   return answer(404, { success: false, error: 'not mocked' });
-}
-
-function installFetch() {
-  const fetchMock = jest.fn(async (input: string, init?: { method?: string }) => {
-    const url = String(input);
-    const method = init?.method ?? 'GET';
-    calls.push(`${method} ${url}`);
-    pending += 1;
-    try {
-      if (boostGate && method === 'GET' && url === BOOST_URL) await boostGate;
-      return route(method, url);
-    } finally {
-      pending -= 1;
-    }
-  });
-  global.fetch = fetchMock as unknown as typeof fetch;
-}
-
-/** Nothing in flight and no new request for a 300 ms window, repeated until one passes quietly. */
-async function quiet() {
-  let seen = -1;
-  while (seen !== calls.length || pending !== 0) {
-    seen = calls.length;
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    });
-  }
 }
 
 async function openDrawer(): Promise<HTMLElement> {
@@ -296,45 +271,19 @@ const classTokens = (el: Element) => (el.getAttribute('class') ?? '').split(' ')
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-let consoleError: jest.SpyInstance;
-let consoleWarn: jest.SpyInstance;
-let uuidCounter = 0;
-
-beforeAll(() => {
-  const proto = Element.prototype as unknown as Record<string, unknown>;
-  proto.hasPointerCapture ??= () => false;
-  proto.releasePointerCapture ??= () => undefined;
-  proto.scrollIntoView ??= () => undefined;
-});
+// The shared harness: browser shims, emptied records, the uuid counter, the
+// console and unexpected-request guard after every test.
+// `endQuiet`: every test ends quiet before the guard, so a late request is
+// checked in the test that caused it (this file's rule before the harness).
+setRoutes(routeGet, routePost);
+installPinLifecycle({ countUuids: true, endQuiet: true });
 
 beforeEach(() => {
-  calls = [];
-  unexpected = [];
-  pending = 0;
   listReadCount = 0;
   opsQueue = [];
   boostGate = null;
   creditsData = creditsPayload([lot(1), PAID_LOT]);
   boostData = boostView();
-  uuidCounter = 0;
-  Object.defineProperty(globalThis, 'crypto', {
-    configurable: true,
-    value: { randomUUID: () => `00000000-0000-4000-8000-${String(++uuidCounter).padStart(12, '0')}` },
-  });
-  consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-  consoleWarn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-});
-
-afterEach(async () => {
-  try {
-    await quiet();
-    expect(unexpected).toEqual([]);
-    expect(consoleError).not.toHaveBeenCalled();
-    expect(consoleWarn).not.toHaveBeenCalled();
-  } finally {
-    consoleError.mockRestore();
-    consoleWarn.mockRestore();
-  }
 });
 
 // ── T-A action bars (BD-5) ──────────────────────────────────────────────────
@@ -462,8 +411,8 @@ describe('T-F: lots and top-ups show the newest three and fold the rest (BD-8)',
 
 describe('T-B: one list re-read after a successful Give or Take back (BD-14)', () => {
   /** The requests sent from `start` on, sorted. */
-  const since = (start: number) => calls.slice(start).sort();
-  const listCall = () => calls.find((c) => c.startsWith('GET /api/admin/users?')) as string;
+  const since = (start: number) => calls.slice(start).map(line).sort();
+  const listCall = () => calls.map(line).find((c) => c.startsWith('GET /api/admin/users?')) as string;
 
   it('T-B1: a Give sends exactly its POST, one Credits read and one list read, nothing else', async () => {
     const drawer = await openDrawer();
@@ -477,7 +426,7 @@ describe('T-B: one list re-read after a successful Give or Take back (BD-14)', (
   it('T-B2: a refused Give, an Escape close, a Set limit and a Back to default send no list read', async () => {
     boostData = boostView({ cap: { status: 'ok', default: { amountMinor: 15000, currency: 'USD', windowDays: 30 }, active: ACTIVE_CAP, history: [] } });
     const drawer = await openDrawer();
-    const lists = () => calls.filter((c) => c.startsWith('GET /api/admin/users?')).length;
+    const lists = () => calls.map(line).filter((c) => c.startsWith('GET /api/admin/users?')).length;
     expect(lists()).toBe(1);
 
     let dialog = await give(drawer);
@@ -633,7 +582,7 @@ describe('T-R: closing a money dialog returns focus to its opener, else to the s
     fireEvent.change(within(dialog).getByTestId('boost-cap-reason-input'), { target: { value: 'larger studio' } });
     fireEvent.click(button(dialog, 'boost-cap-continue'));
     opsQueue.push(okBody({ amountMinor: 20000 }));
-    let gate = deferred();
+    let gate = deferred<void>();
     boostGate = gate.promise;
     fireEvent.click(button(dialog, 'boost-cap-confirm'));
     await waitFor(() => expect(dialog.isConnected).toBe(false));
@@ -652,7 +601,7 @@ describe('T-R: closing a money dialog returns focus to its opener, else to the s
     fireEvent.click(button(dialog, 'boost-cap-continue'));
     opsQueue.push(okBody({}));
     boostData = boostView();
-    gate = deferred();
+    gate = deferred<void>();
     boostGate = gate.promise;
     fireEvent.click(button(dialog, 'boost-cap-confirm'));
     await waitFor(() => expect(dialog.isConnected).toBe(false));
