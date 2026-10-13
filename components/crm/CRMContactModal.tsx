@@ -7,20 +7,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { X, Plus, Mail, User, Bot, Globe, Facebook, Search as SearchIcon, Users as UsersIcon, Phone as PhoneIcon, MessageCircle, Check, AlertCircle, Loader2 } from 'lucide-react';
-import PhoneInput from 'react-phone-number-input';
-import en from 'react-phone-number-input/locale/en';
+// The phone library is fetched after first paint, not with the page (PERF-2):
+// see components/crm/usePhoneLib.ts. The stylesheet stays static so the
+// cascade is unchanged.
 import 'react-phone-number-input/style.css';
-import { SearchableCountrySelect } from './SearchableCountrySelect';
+import { usePhoneLib } from '@/components/crm/usePhoneLib';
+import { PhoneFieldPlaceholder } from '@/components/crm/PhoneFieldPlaceholder';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMActivity } from '@/lib/repositories/CRMActivityRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 import type { Country } from 'react-phone-number-input';
-import {
-  applyCountryToPhone,
-  phoneFieldCountry,
-  phoneFieldValue,
-} from '@/components/crm/phoneField';
 
 interface CRMContactModalProps {
   contact?: CRMContact;
@@ -39,6 +36,9 @@ interface CRMContactModalProps {
 // Shared with the drawer, so the two cannot drift and neither can miss a value
 // capture writes. See components/crm/contactSources.ts.
 import { CONTACT_ORIGINS, contactOrigin } from '@/components/crm/contactSources';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'CRMContactModal' });
 
 export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpdated, prefill }: CRMContactModalProps) {
   const { t } = useLanguage();
@@ -67,9 +67,18 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
    * only a genuinely empty field falls back, and there the owner picks before
    * typing.
    */
-  const [phoneCountry, setPhoneCountry] = useState<Country>(() =>
-    phoneFieldCountry(formData.phone)
-  );
+  const phoneLib = usePhoneLib();
+  /*
+   * The number the starting country is read from: `formData.phone` as it was
+   * at mount, exactly what the initialiser read before. Held as a plain string
+   * because the reading itself needs the phone library, which may still be
+   * arriving at mount (PERF-2). Until the owner picks a country, the field's
+   * country is `phoneFieldCountry(phoneSeed)`, the same answer as before.
+   */
+  const [phoneSeed] = useState(() => formData.phone);
+  const [chosenPhoneCountry, setPhoneCountry] = useState<Country | undefined>(undefined);
+  const phoneCountry: Country | undefined =
+    chosenPhoneCountry ?? phoneLib?.phoneFieldCountry(phoneSeed);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [duplicateContact, setDuplicateContact] = useState<{ id: string; first_name?: string; last_name?: string; email: string } | null>(null);
@@ -113,7 +122,7 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
         setActivities(data.activities);
       }
     } catch (error) {
-      console.error('Failed to fetch activities:', error);
+      logger.error({ err: error }, 'Failed to fetch activities');
     } finally {
       setLoadingActivities(false);
     }
@@ -145,7 +154,7 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
         setDuplicateContact(null);
       }
     } catch (error) {
-      console.error('Failed to check email:', error);
+      logger.error({ err: error }, 'Failed to check email');
       setDuplicateContact(null);
     } finally {
       setCheckingEmail(false);
@@ -234,7 +243,7 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
         setErrorMessage(data.error || t('crm.modal.save_error'));
       }
     } catch (error) {
-      console.error('Failed to save contact:', error);
+      logger.error({ err: error }, 'Failed to save contact');
       setErrorMessage(t('crm.modal.save_error'));
     } finally {
       setLoading(false);
@@ -378,7 +387,9 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
                 {t('crm.modal.phone')} <span className="text-red-500 dark:text-red-400">*</span>
               </Label>
               <div className="flex gap-2" dir="ltr">
-                <SearchableCountrySelect
+                {phoneLib ? (
+                <>
+                <phoneLib.SearchableCountrySelect
                   value={phoneCountry}
                   /*
                     Choosing a country is a statement about the NUMBER, so it
@@ -391,18 +402,22 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
                     setPhoneCountry(country);
                     setFormData(prev => ({
                       ...prev,
-                      phone: applyCountryToPhone(prev.phone, country) ?? prev.phone,
+                      phone: phoneLib.applyCountryToPhone(prev.phone, country) ?? prev.phone,
                     }));
                   }}
-                  labels={en}
+                  labels={phoneLib.phoneCountryLabelsEn}
                 />
-                <PhoneInput
+                <phoneLib.PhoneInput
                   countryCallingCodeEditable={false}
                   country={phoneCountry}
-                  value={phoneFieldValue(formData.phone, phoneCountry)}
+                  value={phoneLib.phoneFieldValue(formData.phone, phoneCountry)}
                   onChange={(value) => setFormData(prev => ({ ...prev, phone: value || '' }))}
                   className="phone-input-crm flex-1"
                 />
+                </>
+                ) : (
+                  <PhoneFieldPlaceholder className="phone-input-crm flex-1" />
+                )}
               </div>
             </div>
           </div>

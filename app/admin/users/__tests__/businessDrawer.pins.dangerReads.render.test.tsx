@@ -12,14 +12,33 @@
  * moves, never a request, a count or the confirm step. Pin list:
  * docs/workplans/ADMIN_LAYOUT_LF4A1_WORKPLAN.md.
  *
- * Same harness as businessDrawer.pins.credits (Jest collects every file under
- * __tests__, so it cannot be shared as a module), with four accounts: a
- * Business OS account, a login with no Business OS business, and two Business
- * OS accounts whose entitlements read or summary read fails.
+ * The shared pin harness (`tests/admin/drawerPinHarness.ts`, LF-4b Step 12),
+ * without the uuid counter, and this file's own route table with four
+ * accounts: a Business OS account, a login with no Business OS business, and
+ * two Business OS accounts whose entitlements read or summary read fails.
  */
 
 import React from 'react';
 import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+
+import {
+  calls,
+  deferred,
+  fromQueue,
+  getCount,
+  installFetch,
+  installPinLifecycle,
+  listReads,
+  posts,
+  quiet,
+  requestOf,
+  settle,
+  setRoutes,
+  unexpected,
+  type Call,
+  type Queued,
+  type Reply,
+} from '@/tests/admin/drawerPinHarness';
 
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({
@@ -148,25 +167,8 @@ function deleteView(result: string) {
   };
 }
 
-// ── The recording fetch stub ────────────────────────────────────────────────
+// ── The route table (the recording stub is the shared pin harness) ──────────
 
-interface Reply {
-  status: number;
-  body?: unknown;
-}
-type Queued = Reply | Promise<Reply>;
-
-interface Call {
-  url: string;
-  method: string;
-  headers: HeadersInit | undefined;
-  body: string | null;
-  cache: RequestCache | undefined;
-}
-
-let calls: Call[] = [];
-let unexpected: string[] = [];
-let pending = 0;
 let listRows: unknown[] = [];
 let checkQueue: Queued[] = [];
 let deleteQueue: Queued[] = [];
@@ -207,14 +209,6 @@ function routeGet(url: string): Queued {
   return refused(404, 'not mocked');
 }
 
-/** The next queued answer; a POST nothing was queued for is unexpected (SA fix 4), and still answers 500. */
-function fromQueue(queue: Queued[], url: string): Queued {
-  const next = queue.shift();
-  if (next !== undefined) return next;
-  unexpected.push(`POST ${url} (nothing queued)`);
-  return refused(500, 'not queued');
-}
-
 function routePost(url: string): Queued {
   if (url === CLEANUP_CHECK_URL) return fromQueue(checkQueue, url);
   if (url === CLEANUP_DELETE_URL) return fromQueue(deleteQueue, url);
@@ -222,76 +216,9 @@ function routePost(url: string): Queued {
   return refused(404, 'not mocked');
 }
 
-function installFetch(): void {
-  const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const url = String(input);
-    const method = (init?.method ?? 'GET').toUpperCase();
-    calls.push({
-      url,
-      method,
-      headers: init?.headers,
-      body: typeof init?.body === 'string' ? init.body : null,
-      cache: init?.cache,
-    });
-    pending += 1;
-    try {
-      const reply = await (method === 'GET' ? routeGet(url) : routePost(url));
-      return { ok: reply.status >= 200 && reply.status < 300, status: reply.status, json: async () => reply.body } as unknown as Response;
-    } finally {
-      pending -= 1;
-    }
-  });
-  global.fetch = fetchMock as unknown as typeof fetch;
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
-const posts = () => calls.filter((c) => c.method === 'POST');
-const getCount = (url: string) => calls.filter((c) => c.method === 'GET' && c.url === url).length;
-const listReads = () => calls.filter((c) => c.method === 'GET' && c.url.startsWith('/api/admin/users?')).length;
-const bodyOf = (call: Call): unknown => JSON.parse(call.body ?? 'null');
-
-/** The whole recorded request; the body parsed, or the raw string when `raw` (the reconcile body is the literal '{}'). */
-const requestOf = (call: Call, raw = false) => ({
-  url: call.url,
-  method: call.method,
-  headers: call.headers,
-  cache: call.cache,
-  body: raw ? call.body : bodyOf(call),
-});
-
 /** One request as a line: method, URL, the `cache` option and the headers it was given ("none" when absent). */
 const describeCall = (c: Call) =>
   `${c.method} ${c.url} cache=${c.cache ?? 'none'} headers=${c.headers === undefined ? 'none' : JSON.stringify(c.headers)}`;
-
-async function settle() {
-  await waitFor(() => expect(pending).toBe(0));
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-}
-
-/**
- * Quiet: nothing in flight and no new request for a 300 ms window (real
- * timers), repeated until a window passes with no new call. A late extra read
- * (a timer after a success, say) lands inside the window and is counted.
- */
-async function quiet() {
-  await settle();
-  let seen = -1;
-  while (seen !== calls.length || pending !== 0) {
-    seen = calls.length;
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    });
-  }
-}
 
 async function renderPage() {
   installFetch();
@@ -360,38 +287,16 @@ async function checkAndConfirm(drawer: HTMLElement): Promise<HTMLButtonElement> 
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-let consoleError: jest.SpyInstance;
-let consoleWarn: jest.SpyInstance;
-
-beforeAll(() => {
-  const proto = Element.prototype as unknown as Record<string, unknown>;
-  proto.hasPointerCapture ??= () => false;
-  proto.releasePointerCapture ??= () => undefined;
-  proto.scrollIntoView ??= () => undefined;
-});
+// The shared harness: browser shims, emptied records, the console and
+// unexpected-request guard after every test. No uuid counter: nothing here
+// mints a request id, and the original file did not stub `crypto`.
+setRoutes(routeGet, routePost);
+installPinLifecycle({ countUuids: false });
 
 beforeEach(() => {
-  calls = [];
-  unexpected = [];
-  pending = 0;
   listRows = [DANA, OREN, ELI, SARA];
   checkQueue = [];
   deleteQueue = [];
-  consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-  consoleWarn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-});
-
-afterEach(async () => {
-  try {
-    await settle();
-    expect(unexpected).toEqual([]);
-    expect(consoleError).not.toHaveBeenCalled();
-    expect(consoleWarn).not.toHaveBeenCalled();
-  } finally {
-    // Restored even when a guard fails, so a spy never leaks into the next test.
-    consoleError.mockRestore();
-    consoleWarn.mockRestore();
-  }
 });
 
 // ── PIN-k: the per-open request list ────────────────────────────────────────
