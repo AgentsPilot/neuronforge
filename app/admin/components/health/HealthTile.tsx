@@ -133,7 +133,7 @@ export function HealthTile({ tile }: { tile: HealthTileData }) {
         </dl>
       )}
 
-      {tile.footnote && <p className="text-xs text-slate-500">{tile.footnote}</p>}
+      {tile.footnote && <p className="text-xs text-slate-400">{tile.footnote}</p>}
 
       {tile.pageLink && (
         <p className="text-sm">
@@ -155,11 +155,11 @@ export function HealthTile({ tile }: { tile: HealthTileData }) {
               <li key={`${index}-${rule.description}`}>
                 <span className={`px-1.5 py-0.5 rounded ${RULE_CHIP[rule.colour]}`}>{rule.colour}</span>{' '}
                 <span className="text-slate-300">{rule.description}</span>
-                <span className="block pl-5 text-slate-500">when {rule.condition}</span>
+                <span className="block pl-5 text-slate-400">when {rule.condition}</span>
               </li>
             ))}
             {tile.otherwise && (
-              <li data-testid="rule-otherwise" className="list-none text-slate-500">
+              <li data-testid="rule-otherwise" className="list-none text-slate-400">
                 {tile.otherwise}
               </li>
             )}

@@ -251,7 +251,7 @@ export function DrainNowDialog({ queueId, queueLabel, drainedByLabel, onDrained 
               onChange={(event) => setReason(event.target.value)}
               className="w-full rounded border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-white"
             />
-            <p id={hintId} className="text-xs text-slate-500">
+            <p id={hintId} className="text-xs text-slate-400">
               Don&apos;t paste client details.
             </p>
           </div>

@@ -375,7 +375,7 @@ function AuditEventBody({ log }: { log: AuditLogEntry }) {
               <div className="text-2xl font-bold text-slate-300">
                 {log.changes.before?.combined_score?.toFixed(2)}
               </div>
-              <div className="text-xs text-slate-500 mt-1">
+              <div className="text-xs text-slate-400 mt-1">
                 Multiplier: {log.changes.before?.combined_multiplier?.toFixed(3)}x
               </div>
             </div>
@@ -512,7 +512,7 @@ function AuditEventBody({ log }: { log: AuditLogEntry }) {
                           <div className="text-xs text-slate-400 mb-1">Range Key</div>
                           <div className="text-sm font-mono text-slate-200">{newRange.range_key}</div>
                           {newRange.category && (
-                            <div className="text-xs text-slate-500 mt-1">{newRange.category}</div>
+                            <div className="text-xs text-slate-400 mt-1">{newRange.category}</div>
                           )}
                         </div>
                         <div>
@@ -559,7 +559,7 @@ function AuditEventBody({ log }: { log: AuditLogEntry }) {
               ))}
             </div>
             {Object.keys(log.details.normalization_ranges).length > 6 && (
-              <div className="text-xs text-slate-500 mt-2">
+              <div className="text-xs text-slate-400 mt-2">
                 + {Object.keys(log.details.normalization_ranges).length - 6} more ranges
               </div>
             )}
@@ -1072,7 +1072,7 @@ function AuditTrailPageContent() {
                   {isSearchActive ? (
                     <>
                       Showing {formatCount(pagination.showing)} matches on this page{' '}
-                      <span className="text-slate-500">(Page {currentPage})</span>
+                      <span className="text-slate-400">(Page {currentPage})</span>
                     </>
                   ) : (
                     <>
@@ -1080,7 +1080,7 @@ function AuditTrailPageContent() {
                       {pagination.totalPages > 1 && (
                         <>
                           {' '}
-                          <span className="text-slate-500">
+                          <span className="text-slate-400">
                             (Page {currentPage} of {formatCount(pagination.totalPages)})
                           </span>
                         </>
@@ -1215,7 +1215,7 @@ function AuditTrailPageContent() {
                               log.resource_name
                             ) : (
                               <>
-                                <span className="text-slate-500">Entity id</span>{' '}
+                                <span className="text-slate-400">Entity id</span>{' '}
                                 <span className={ADMIN_TD_ID} title={log.entity_id}>
                                   {formatShortId(log.entity_id)}
                                 </span>
@@ -1226,7 +1226,7 @@ function AuditTrailPageContent() {
                               business profile (every agent-platform row) or the
                               business has not named itself (L-1d SA Q-4). */}
                           <td className={ADMIN_TD} data-testid="audit-cell-business">
-                            {log.business?.company_name || <span className="text-slate-500">—</span>}
+                            {log.business?.company_name || <span className="text-slate-400">—</span>}
                           </td>
                           {/* Name, then sign-in email, then the account id, shortened
                               with the full id on hover. A system row has no user. */}
@@ -1240,7 +1240,7 @@ function AuditTrailPageContent() {
                                 userLabel
                               )
                             ) : (
-                              <span className="text-slate-500">—</span>
+                              <span className="text-slate-400">—</span>
                             )}
                           </td>
                         </tr>

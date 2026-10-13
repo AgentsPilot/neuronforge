@@ -171,11 +171,11 @@ function JobRow({ job }: { job: JobView }) {
       <td className="py-2 pr-4">
         <div className="text-sm font-medium text-white">{job.label}</div>
         <div className="text-xs text-slate-400">{job.description}</div>
-        <div className="text-xs text-slate-500">
+        <div className="text-xs text-slate-400">
           {job.scheduleWords}
           {job.drainsQueueLabel ? ` · drains ${job.drainsQueueLabel}` : ''}
         </div>
-        {job.timeLimitNote && <div className="text-xs text-slate-500">{job.timeLimitNote}</div>}
+        {job.timeLimitNote && <div className="text-xs text-slate-400">{job.timeLimitNote}</div>}
       </td>
       <td className="py-2 pr-4">
         <StatusChip tone={JOB_TONE[job.status]} testId="status-badge">
@@ -193,13 +193,13 @@ function JobRow({ job }: { job: JobView }) {
             </div>
           </>
         ) : (
-          <span className="text-slate-500">No run recorded</span>
+          <span className="text-slate-400">No run recorded</span>
         )}
       </td>
       <td className="py-2 pr-4 text-xs text-slate-300">
         <div>Expected by {utc(job.expectedBy)}</div>
-        <div className="text-slate-500">Late after {utc(job.lateAt)}</div>
-        <div className="text-slate-500">Stopped after {utc(job.stoppedAt)}</div>
+        <div className="text-slate-400">Late after {utc(job.lateAt)}</div>
+        <div className="text-slate-400">Stopped after {utc(job.stoppedAt)}</div>
       </td>
       <td className="py-2 pr-4 text-xs text-slate-300">
         <div>
@@ -219,7 +219,7 @@ function JobRow({ job }: { job: JobView }) {
             ))}
           </ul>
         ) : (
-          <span className="text-slate-500">—</span>
+          <span className="text-slate-400">—</span>
         )}
       </td>
       <td className="py-2 text-xs text-slate-300">
@@ -232,7 +232,7 @@ function JobRow({ job }: { job: JobView }) {
             ))}
           </ul>
         ) : (
-          <span className="text-slate-500">None</span>
+          <span className="text-slate-400">None</span>
         )}
       </td>
     </tr>
@@ -272,7 +272,7 @@ function QueueCard({ queue, onDrained, refreshKey }: { queue: QueueView; onDrain
           <h3 id={`queue-${queue.id}-title`} className="text-sm font-medium text-white">
             {queue.label}
           </h3>
-          <p className="text-xs text-slate-500">Drained by {queue.drainedByLabel}</p>
+          <p className="text-xs text-slate-400">Drained by {queue.drainedByLabel}</p>
         </div>
         <div className="flex items-center gap-2">
           <StatusChip tone={QUEUE_TONE[queue.status]} testId="status-badge">
@@ -301,8 +301,8 @@ function QueueCard({ queue, onDrained, refreshKey }: { queue: QueueView; onDrain
       ) : (
         <p className="text-xs text-slate-400">Could not check just now.</p>
       )}
-      <p className="text-xs text-slate-500">Failures are {queue.windowWords}.</p>
-      {queue.note && <p className="text-xs text-slate-500">{queue.note}</p>}
+      <p className="text-xs text-slate-400">Failures are {queue.windowWords}.</p>
+      {queue.note && <p className="text-xs text-slate-400">{queue.note}</p>}
       {/* Shown even when the figures could not be read (slice 7a). */}
       {isDrainQueueId(queue.id) && (
         <>
@@ -398,14 +398,14 @@ export function JobsQueuesView() {
                 {view.runsReadMessage}
               </p>
             )}
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               Late and stopped are measured from the last start by Vercel&apos;s own scheduler; a manual call
               never resets them. &quot;Did not finish&quot; means the run is past its time limit with no finish
               recorded.
             </p>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead className="text-xs uppercase tracking-wide text-slate-500">
+                <thead className="text-xs uppercase tracking-wide text-slate-400">
                   <tr>
                     <th className="pb-1 pr-4 font-normal">Job</th>
                     <th className="pb-1 pr-4 font-normal">Status</th>
@@ -429,7 +429,7 @@ export function JobsQueuesView() {
             <h2 id="queues-title" className="text-sm font-semibold text-white">
               Queues
             </h2>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               Counts across all businesses. Items scheduled for later are not a backlog and never colour anything.
             </p>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">

@@ -41,11 +41,11 @@ export function AuditSummaryLine({ audit, shown }: { audit: ActivityAuditSummary
             })}
           </span>
         </p>
-        <p className="text-slate-500" data-testid="activity-audit-settle">
+        <p className="text-slate-400" data-testid="activity-audit-settle">
           {AUDIT_SETTLE_NOTE(audit.settleMinutes)}
         </p>
         {cutoff && (
-          <p className="text-slate-500" data-testid="activity-audit-archive-cutoff">
+          <p className="text-slate-400" data-testid="activity-audit-archive-cutoff">
             {AUDIT_ARCHIVE_CUTOFF_NOTE(cutoff)}
           </p>
         )}
