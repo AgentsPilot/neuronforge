@@ -54,6 +54,21 @@ const PROVIDERS: {
    * disambiguate — hence "Google" for the listing versus "Analytics".
    */
   short: Record<string, string>;
+  /**
+   * Whether to OFFER it. Absent means yes.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * An entry has two jobs and they come apart. One is the tile that starts a
+   * connection; the other is `providerOf`, which maps a platform already
+   * connected back to the OAuth flow that repairs it.
+   *
+   * So a provider we no longer want new connections to cannot simply be
+   * deleted: `providerOf` falls back to 'meta', and an expired Analytics
+   * connection would offer to reconnect it through Facebook. It stays listed
+   * and stops being offered.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  offered?: false;
 }[] = [
   {
     provider: 'meta',
@@ -63,7 +78,23 @@ const PROVIDERS: {
     short: { en: 'Facebook', es: 'Facebook', he: 'פייסבוק' },
   },
   {
+    /*
+     * NOT OFFERED. A GA4 property is something a business either already runs
+     * or has never opened, and these businesses are the second kind — so the
+     * tile was a dead end for almost everyone who pressed it.
+     *
+     * It also answered the wrong question. GA counts every visit to whatever
+     * property it is installed on, from every source, which is not a figure
+     * this product can put against leads it captured itself. The Google step a
+     * business does benefit from is the listing, which is its own provider
+     * below.
+     *
+     * Kept here so an account that connected one before can still see it, be
+     * told when its token expires and reconnect or disconnect it. The sync and
+     * `resolveVisits` are untouched: a connected property keeps reporting.
+     */
     provider: 'google_analytics',
+    offered: false,
     platforms: ['ga4'],
     logos: ['google-analytics'],
     labels: { en: 'Google Analytics', es: 'Google Analytics', he: 'גוגל אנליטיקס' },
@@ -684,7 +715,8 @@ export function ChannelsCard({
       run: () => onAction?.('create_booking_link'),
     });
   }
-  for (const { provider, platforms, logos, short, labels } of PROVIDERS) {
+  for (const { provider, platforms, logos, short, labels, offered } of PROVIDERS) {
+    if (offered === false) continue;
     if (rowsFor(platforms).length > 0) continue;
     addable.push({
       key: provider,

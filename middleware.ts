@@ -6,10 +6,10 @@
 
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { createEdgeLogger } from '@/lib/logger/edge'
 import { isReservedPrefix } from '@/lib/business-os/reservedPrefixes'
 import { publicSiteHost, publicSitePath } from '@/lib/utils/origins'
+import { onboardingVerdict } from '@/lib/security/onboardingVerdict'
 
 /*
  * Middleware runs in the Edge Runtime, where Pino cannot initialise — no
@@ -30,6 +30,36 @@ const logger = createEdgeLogger({ module: 'Middleware' })
  *
  * One list, three importers: this file, the checker, and the write path.
  */
+
+/**
+ * Paths whose URL IS a credential.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Every one of these carries a signed token or an unguessable id in the PATH,
+ * and that path is what a browser puts in the `Referer` header when the visitor
+ * follows a link off the page. The portal renders the business's own website
+ * and social links, so "follows a link off the page" is a thing clients
+ * routinely do from a page whose URL opens their booking.
+ *
+ * Modern browsers default to `strict-origin-when-cross-origin`, which withholds
+ * the path cross-origin, so the practical exposure today is small. It is a
+ * default, not a guarantee: it does not bind older browsers, embedded webviews,
+ * or a page that sets a looser policy of its own. `no-referrer` closes it by
+ * construction, costs nothing these pages use, and was already the decision for
+ * `/invite` — this only extends it to the four surfaces that carry the same
+ * class of secret.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function carriesASecretInTheUrl(pathname: string): boolean {
+  return (
+    pathname.startsWith('/book/manage/') ||
+    pathname.startsWith('/invoice/') ||
+    pathname.startsWith('/proposal/') ||
+    pathname.startsWith('/consent/') ||
+    pathname === '/invite' ||
+    pathname.startsWith('/invite/')
+  )
+}
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -136,10 +166,6 @@ export async function middleware(request: NextRequest) {
     pathname === '/book' ||
     pathname.startsWith('/book/') ||
     pathname.startsWith('/invoice/') || // Public invoice pages
-    // Choosing a new time. It used to live under `/book/manage/`, which the
-    // rule above already covered; on its own path it needs naming, or a client
-    // who happens to be a signed-in user is bounced into onboarding instead.
-    pathname.startsWith('/reschedule/') ||
     // The quote a client opens from their email. Unauthenticated by design —
     // the signed token in the URL is the authorisation — so it must never be
     // rewritten under /v2, where it 404s.
@@ -157,7 +183,19 @@ export async function middleware(request: NextRequest) {
     // must keep its auth and onboarding checks.
     pathname === '/payments/success' ||
     pathname === '/payments/cancelled' ||
-    pathname.match(/\.(ico|png|jpg|jpeg|svg|gif|woff|woff2|ttf|eot|html)$/) ||
+    /*
+     * Anything a browser or a tool fetches on its own.
+     *
+     * `.json` and `/.well-known/` were missing, and Chrome asks for
+     * `/.well-known/appspecific/com.chrome.devtools.json` unprompted on every
+     * page — which measured 1.85 SECONDS of onboarding work, because the
+     * remote `auth.getUser` below took 1.58s and the profile read another
+     * 262ms. For a file no human asked for.
+     */
+    pathname.match(
+      /\.(ico|png|jpg|jpeg|svg|gif|webp|avif|woff|woff2|ttf|eot|html|json|txt|xml|map|webmanifest)$/
+    ) ||
+    pathname.startsWith('/.well-known/') ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/signup') ||
     pathname.startsWith('/auth') ||
@@ -175,8 +213,53 @@ export async function middleware(request: NextRequest) {
   // They need to check onboarding status
 
   if (skipOnboardingCheck) {
-    return NextResponse.next()
+    const response = NextResponse.next()
+
+    if (carriesASecretInTheUrl(pathname)) {
+      /* The booking portal, an invoice, a quote, a consent confirmation: the
+         URL is the credential, so it must not travel in a `Referer` header. */
+      response.headers.set('Referrer-Policy', 'no-referrer')
+
+      /*
+       * And must never be held by anything between us and the client.
+       *
+       * These pages render one client's appointment, address and bill. The
+       * route-segment config says the same thing to Next; this says it to
+       * every proxy, CDN and browser cache in between, which is the half that
+       * matters once the credential moves out of the path and one URL starts
+       * rendering different content per caller.
+       */
+      response.headers.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate')
+    }
+
+    return response
   }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THERE IS NO PREFETCH SHORTCUT HERE.
+   *
+   * Next's App Router prefetches every `<Link>` in the viewport, and each
+   * prefetch is a real request to a real page path, so none of the exemptions
+   * above catch them. A dozen links means a dozen of these at once, which is
+   * the burst that took the server down.
+   *
+   * The obvious answer — skip when `Next-Router-Prefetch: 1` is present — does
+   * not work, and it is worth recording why so nobody tries it again. Next
+   * STRIPS its own routing headers before middleware runs. Measured: a request
+   * sent with `Next-Router-Prefetch`, `RSC` and `purpose` reached this function
+   * with only
+   *
+   *     accept, host, purpose, user-agent, x-forwarded-*
+   *
+   * Both Next headers were gone. A prefetch is indistinguishable from a
+   * navigation here.
+   *
+   * So the burst is handled where it actually lands: `onboardingVerdict`
+   * below shares ONE in-flight lookup between every concurrent request for the
+   * same token, instead of starting a dozen.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
 
   // === ONBOARDING CHECK (runs for protected routes) ===
   try {
@@ -214,47 +297,13 @@ export async function middleware(request: NextRequest) {
       requestLogger.debug({ hasAccessToken: !!accessToken }, 'Access token extracted')
 
       if (accessToken) {
-        // Create Supabase client with service role for DB queries
-        const supabase = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.SUPABASE_SERVICE_ROLE_KEY!
-        )
+        const verdict = await onboardingVerdict(accessToken, requestLogger)
 
-        // Verify the token and get user
-        const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken)
-
-        requestLogger.debug({ hasUser: !!user, hasAuthError: !!authError }, 'Token verified')
-
-        if (!authError && user) {
-          // Check business_profiles table for onboarding status
-          const { data: profile, error: profileError } = await supabase
-            .from('business_profiles')
-            .select('onboarding_completed')
-            .eq('user_id', user.id)
-            .single()
-
-          requestLogger.debug(
-            {
-              userId: user.id,
-              hasProfile: !!profile,
-              onboardingCompleted: profile?.onboarding_completed ?? null,
-              profileError: profileError?.message,
-            },
-            'Onboarding status resolved'
-          )
-
-          // If no profile or onboarding not completed → the onboarding chat.
-          // IMPORTANT: We ONLY check business_profiles table, NOT user_metadata
-          // This ensures all users go through onboarding, even if they completed
-          // an older version of it.
-          if (profileError || !profile || !profile.onboarding_completed) {
-            requestLogger.info({ userId: user.id }, 'Redirecting to onboarding')
-            const url = request.nextUrl.clone()
-            url.pathname = '/onboarding-chat'
-            return NextResponse.redirect(url)
-          } else {
-            requestLogger.debug({ userId: user.id }, 'Onboarding complete; continuing')
-          }
+        if (verdict === 'onboard') {
+          requestLogger.info('Redirecting to onboarding')
+          const url = request.nextUrl.clone()
+          url.pathname = '/onboarding-chat'
+          return NextResponse.redirect(url)
         }
       }
     }

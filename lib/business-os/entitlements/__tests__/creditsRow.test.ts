@@ -28,6 +28,7 @@ import { readCodeConfig, type EntitlementConfig } from '@/lib/business-os/entitl
 import type { CapabilityDef, CapabilityValue } from '@/lib/business-os/entitlements/types';
 import { INVITE_LOCALES, INVITE_PAGE_COPY } from '@/app/invite/invitePageCopy';
 import type { Locale } from '@/lib/i18n/config';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
 const NOW = new Date('2026-10-01T00:00:00.000Z');
 const config = readCodeConfig();
@@ -124,7 +125,7 @@ describe('D-h: the sentence under the credits row (SA Q-9)', () => {
     const noteKeys = new Set(PLANS.map((planId) => viewFor(planId).included[0].noteKey!));
 
     // The plan screen: the dictionary (read as text — it is a client module).
-    const dictionary = readFileSync(join(process.cwd(), 'lib/business-os/LanguageContext.tsx'), 'utf8');
+    const dictionary = dictionarySource();
     for (const key of noteKeys) {
       expect(dictionary.split(`'${key}':`).length - 1).toBe(3);
     }

@@ -27,12 +27,13 @@
 
 import fs from 'fs';
 import path from 'path';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf8');
 
 const bookingsTab = read('components/crm/contact-drawer/BookingsTab.tsx');
 const sessionCard = read('components/crm/SessionCard.tsx');
-const translations = read('lib/business-os/LanguageContext.tsx');
+const translations = dictionarySource();
 
 describe('the badge surfaces consult the clock', () => {
   it.each([

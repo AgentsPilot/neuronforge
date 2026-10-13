@@ -3,7 +3,13 @@
 import { Calendar, Clock, Hourglass, Wallet } from 'lucide-react';
 import { BrandButton } from '@/components/public/BrandButton';
 
-import { formatPublicDate, formatPublicMoney, formatPublicTime, publicT } from '@/lib/i18n/public-pages';
+import {
+  formatPublicDate,
+  formatPublicDay,
+  formatPublicMoney,
+  formatPublicTime,
+  publicT,
+} from '@/lib/i18n/public-pages';
 import type { PublicBrand } from '@/lib/branding/publicBranding';
 
 export interface PublicBookingSummary {
@@ -359,20 +365,17 @@ export function AppointmentCard({
                     ? t('portal.overdue')
                     : t('portal.due_by').replace(
                         '{date}',
-                        /* `UTC`, and deliberately NOT the business's zone.
-                           `due_date` is a SQL DATE — a day with no time and no
-                           zone — so it parses to midnight UTC. Read on any zone
-                           west of UTC that midnight is the PREVIOUS day, which
-                           is how a client gets told their money was due a day
-                           before the invoice says. The business's zone would
-                           fix it east of UTC and break it west; UTC is right
-                           everywhere, because UTC is what it was written as. */
-                        formatPublicDate(
-                          new Date(payment.dueDate),
-                          locale,
-                          { day: 'numeric', month: 'long' },
-                          'UTC'
-                        )
+                        /* A DAY, not an instant. `due_date` is a SQL DATE — no
+                           time and no zone in it — and `formatPublicDay` reads
+                           its parts without ever constructing an instant, so
+                           there is no clock that could move it to the day
+                           before. Instants (when a payment landed, when a
+                           meeting starts) go through `formatPublicDate` on the
+                           BUSINESS's zone; a client never reads UTC. */
+                        formatPublicDay(payment.dueDate, locale, {
+                          day: 'numeric',
+                          month: 'long',
+                        })
                       )}
                 </span>
               )}
@@ -515,8 +518,8 @@ export function AppointmentCard({
 
                 {/* Paid says so; unpaid says WHEN, which is the more useful
                     half for a payment still to come. `due_date` is a bare SQL
-                    DATE, so it is read back on the clock it was written in —
-                    UTC — rather than the reader's, where it slips a day. */}
+                    DATE, so it is read back from its own parts rather than
+                    on any clock, where it slips a day. */}
                 <span
                   className="text-xs"
                   style={{ color: settled ? '#15803D' : 'var(--ap-text-muted)' }}
@@ -524,12 +527,10 @@ export function AppointmentCard({
                   {settled
                     ? t('paid')
                     : period.dueDate
-                      ? formatPublicDate(
-                          new Date(`${period.dueDate}T00:00:00Z`),
-                          locale,
-                          { day: 'numeric', month: 'short' },
-                          'UTC'
-                        )
+                      ? formatPublicDay(period.dueDate, locale, {
+                          day: 'numeric',
+                          month: 'short',
+                        })
                       : ''}
                 </span>
 

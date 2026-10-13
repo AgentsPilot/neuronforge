@@ -66,6 +66,9 @@
  * three tabs; no rule change and no shared source change. The parked
  * `LedgerCheckPanel.tsx` (still `.json(`, F-123) and `Chip.tsx` are left out
  * by name, with the reason beside the entry.
+ *
+ * Amended by L-12: Admin users joins the registry; no rule change and no
+ * shared source change.
  */
 
 import * as fs from 'fs';
@@ -652,6 +655,13 @@ const MIGRATED_PAGES = [
       'app/admin/business-os-llm/components/costs/CostsSections.tsx',
       'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
     ],
+  },
+  {
+    // L-12: header with the Read-only badge, the Refresh-only bar, shared
+    // states, the read on readAdminResponse (F-85). No strip (D-5 (a)), no
+    // filters, no table, no drawer, no dialog: the page is read-only.
+    page: '/admin/settings (Admin users)',
+    files: ['app/admin/settings/page.tsx'],
   },
 ] as const;
 

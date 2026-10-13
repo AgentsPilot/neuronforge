@@ -2299,7 +2299,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         ops_utilization_low: `שקול לקדם משבצות זמן פנויות או להריץ מבצע מיוחד למילוי היומן.`,
         crm_cold_leads: `פנה ללידים האלה עם מעקב אישי. אפילו בדיקה קצרה יכולה להחיות הזדמנויות קרות.`,
         acq_traffic_drop: `בדוק את ערוצי השיווק שלך ושינויים אחרונים. ודא שמודעות רצות ותוכן מתפרסם.`,
-        acq_low_conversion: `בדוק את טפסי האתר והקריאות לפעולה. שקול לבצע בדיקות A/B לגישות שונות.`,
+        acq_low_conversion: `בדוק כמה קל להזמין או לפנות מהאתר: כמה קליקים זה לוקח, ואם הכפתור בולט בעמוד הראשון.`,
         ret_cancellation_spike: `בדוק את סיבות הביטול ושקול ליישם מדיניות ביטולים או דרישת מקדמה.`,
         conv_pipeline_stuck: `קדם את אנשי הקשר האלה עם פנייה ממוקדת. בדוק מה חוסם אותם מלהתקדם.`,
         conv_followup_overdue: `נקה את המעקבים הממתינים היום. מעקבים בזמן יכולים להציל עסקאות.`,
@@ -2369,7 +2369,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       ops_utilization_low: `Consider promoting available time slots or running a special offer to fill your calendar.`,
       crm_cold_leads: `Reach out to these leads with a personal follow-up. Even a quick check-in can revive cold opportunities.`,
       acq_traffic_drop: `Review your marketing channels and recent changes. Check if ads are running and content is being published.`,
-      acq_low_conversion: `Review your website forms and calls-to-action. Consider A/B testing different approaches.`,
+      acq_low_conversion: `Check how easily a visitor can book or get in touch: how many clicks it takes, and whether the button is visible without scrolling.`,
       ret_cancellation_spike: `Review cancellation reasons and consider implementing a cancellation policy or deposit requirement.`,
       conv_pipeline_stuck: `Move these contacts forward with targeted outreach. Consider what's blocking them from progressing.`,
       conv_followup_overdue: `Clear your follow-up backlog today. Timely follow-ups can recover deals that would otherwise be lost.`,
@@ -2882,7 +2882,14 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     userId: string,
     correlationSummary: CorrelationSummary,
     allInsights: Insight[],
-    ids: InsightRunIds
+    ids: InsightRunIds,
+    /**
+     * Rewrite the period's summary even though one already exists.
+     *
+     * The nightly run never passes this: see the early return below. It is for
+     * an owner asking for a fresh read on demand, and for backfills.
+     */
+    options: { force?: boolean } = {}
   ): Promise<RepositoryResult<BusinessHealthSummary>> {
     try {
       const language = await this.getUserLanguage(userId);
@@ -2896,6 +2903,50 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       const periodEnd = new Date(periodStart);
       periodEnd.setDate(periodStart.getDate() + 6);
       periodEnd.setHours(23, 59, 59, 999);
+
+      /*
+       * ONE SUMMARY PER PERIOD, NOT ONE PER NIGHT.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * `insight-detect` runs daily, and this used to recompute the six rates
+       * and REGENERATE THE LLM NARRATIVE on every one of those runs, writing
+       * seven summaries a week over the top of each other for a row whose period
+       * is the week. Six of the seven were paid for and discarded.
+       *
+       * Daily made no sense for a rolling 28-day window. Consecutive days share
+       * 27 of their 28 days of data, so yesterday's narrative and today's
+       * describe a 96% identical measurement — and the prose changed anyway,
+       * because the model is not deterministic. An owner who read the verdict on
+       * Tuesday found it reworded on Wednesday about the same week. A week moves
+       * 7 of 28 days, which is a quarter of the window and worth re-describing.
+       *
+       * It also keeps the narrative and the rates CONSISTENT. The narrative
+       * quotes its figures ("48% of invoices were paid on time"), and band 3 of
+       * the reports page renders `health_measures` from this same row. Freezing
+       * one without the other would put a sentence beside a table that
+       * contradicts it. Skipping the whole write freezes both together, so they
+       * always agree and the row is a genuine snapshot.
+       *
+       * `force` is the way to ask for a fresh one inside the same period.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (!options.force) {
+        const { data: existing } = await this.supabase
+          .from('business_health_summaries')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('period_type', 'weekly')
+          .eq('period_start', periodStart.toISOString())
+          .maybeSingle();
+
+        if (existing) {
+          logger.debug(
+            { userId, periodStart: periodStart.toISOString() },
+            'Health summary already written for this period; skipping recompute and narrative'
+          );
+          return { data: existing as BusinessHealthSummary, error: null };
+        }
+      }
 
       // Get previous period's score for comparison
       const { data: previousSummary } = await this.supabase
@@ -3664,20 +3715,39 @@ Generate in ${langName}. Respond with ONLY a JSON object:
         }
       }
 
-      // Get all active insights for health calculation
+      /*
+       * INSIGHTS DO NOT DECIDE WHETHER A HEALTH SUMMARY IS WRITTEN.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * This guarded on `allInsights.length > 0`, from when the health score WAS
+       * a function of our own detections: 100 minus severity penalties over
+       * insight counts, so with no insights there was genuinely nothing to
+       * score.
+       *
+       * `resolveBusinessHealth` replaced that model with six rates read straight
+       * from the module tables. Its signature is `(supabase, userId, now)` — it
+       * never sees an insight. So the guard was gating the new model on the old
+       * model's input, and the symptom was the opposite of what anyone intended:
+       * a business with nothing wrong got NO report at all. No verdict, no
+       * measured rates, two empty bands on the reports page, precisely because
+       * it was trading quietly.
+       *
+       * The insights are still passed in and still used — the narrative's
+       * critical-items list, `critical_count`, `high_count`, `insight_count` —
+       * and every one of those is correct on an empty array:
+       * `calculateCategoryScores([])` returns the 80 default per category, and
+       * the three filters return nothing.
+       * ───────────────────────────────────────────────────────────────────────
+       */
       const { data: allInsights } = await this.findActive(userId, 50);
 
-      // Create/update health summary
-      let healthSummary: BusinessHealthSummary | null = null;
-      if (allInsights && allInsights.length > 0) {
-        const healthResult = await this.createOrUpdateHealthSummary(
-          userId,
-          correlationSummary,
-          allInsights,
-          ids
-        );
-        healthSummary = healthResult.data;
-      }
+      const healthResult = await this.createOrUpdateHealthSummary(
+        userId,
+        correlationSummary,
+        allInsights ?? [],
+        ids
+      );
+      const healthSummary: BusinessHealthSummary | null = healthResult.data;
 
       logger.info(
         {

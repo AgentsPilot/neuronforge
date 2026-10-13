@@ -218,7 +218,7 @@ describe('[smoke] setup graph — a lock is a redirect, not a dead end', () => {
 });
 
 /** The two channel connections, which replaced a single 'channels' step. */
-const CHANNEL_STEPS = ['meta_insights', 'google_analytics'] as const;
+const CHANNEL_STEPS = ['meta_insights', 'google_business'] as const;
 
 describe('[smoke] setup graph — shape', () => {
   it('keeps a step the graph has never heard of rather than dropping it', () => {
@@ -296,7 +296,7 @@ describe('[smoke] setup graph — shape', () => {
     // are not. That answer said what the business wanted on day one; it is not a
     // permanent ruling, and someone who starts advertising on Instagram in week
     // six needs the way back in.
-    for (const id of ['meta_insights', 'google_analytics'] as const) {
+    for (const id of ['meta_insights', 'google_business'] as const) {
       const node = SETUP_STEPS.find(step => step.id === id);
       expect(node).toBeDefined();
       expect(node!.requires).toEqual([]);
@@ -313,7 +313,7 @@ describe('[smoke] setup graph — shape', () => {
     // informational.
     for (const node of SETUP_STEPS) {
       expect(node.requires).not.toContain('meta_insights');
-      expect(node.requires).not.toContain('google_analytics');
+      expect(node.requires).not.toContain('google_business');
     }
   });
 
@@ -622,5 +622,78 @@ describe('a step whose parent does not apply', () => {
 
     expect(topLevel).toContain('invoicing');
     expect(topLevel).toContain('profile');
+  });
+});
+
+/**
+ * The Google listing is listed, but never the thing to do next.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * WHAT THIS PREVENTS
+ *
+ * `suggested` falls through to the first ready step in graph order, and the
+ * two third-party channel steps sit last. So a business that had finished
+ * everything real was told its next move was connecting an account in somebody
+ * else's product, which nothing here can create: a dead end for anyone who
+ * does not already hold one.
+ *
+ * Removing the row was the wrong fix. The chain is the one place that lists
+ * what is still configurable, so someone who acquires analytics in week six
+ * needs it there. It stops being presented as work; it does not disappear.
+ * ───────────────────────────────────────────────────────────────────────────
+ */
+describe('third-party channels are offered, not pressed', () => {
+  const WITH_GA: StepId[] = [...ALL_STEP_IDS, 'google_business', 'meta_insights'];
+
+  it('is never the suggested next move, even when it is all that is left', () => {
+    const graph = resolveSetup(items(ALL_STEP_IDS, WITH_GA), CARD);
+
+    expect(nextStep(graph)).toBeNull();
+  });
+
+  it('is still listed, so there is a way in later', () => {
+    const graph = resolveSetup(items(ALL_STEP_IDS, WITH_GA), CARD);
+
+    expect(find(graph, 'google_business')).toBeDefined();
+  });
+
+  it('is actionable rather than locked or hidden', () => {
+    /*
+     * 'ready' and not 'next': reachable whenever the user wants it, never
+     * put in front of them. A locked or absent row would be the old bug in a
+     * different costume.
+     */
+    const graph = resolveSetup(items(ALL_STEP_IDS, WITH_GA), CARD);
+
+    expect(find(graph, 'google_business')?.state).toBe('ready');
+  });
+
+  it('does not displace real work from the suggestion', () => {
+    /*
+     * The flag must not change which step IS suggested while anything else is
+     * outstanding — only what happens once nothing else is.
+     */
+    const graph = resolveSetup(items([], WITH_GA), CARD);
+
+    expect(nextStep(graph)?.item.id).toBe('services');
+  });
+
+  it('applies to meta as well, which has the same shape', () => {
+    /*
+     * A Facebook Page or Instagram account is equally not ours to create, and
+     * it sat second-to-last in graph order — so it took over as the suggested
+     * next move the moment the Google row stopped being one. Fixing only the
+     * last step would have moved the problem up by one row.
+     */
+    const graph = resolveSetup(items(ALL_STEP_IDS, WITH_GA), CARD);
+
+    expect(find(graph, 'meta_insights')?.state).toBe('ready');
+    expect(nextStep(graph)).toBeNull();
+  });
+
+  it('shows as done once connected', () => {
+    const graph = resolveSetup(items([...ALL_STEP_IDS, 'google_business'], WITH_GA), CARD);
+
+    expect(find(graph, 'google_business')?.state).toBe('done');
   });
 });

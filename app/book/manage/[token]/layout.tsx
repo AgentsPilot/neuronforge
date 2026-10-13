@@ -1,15 +1,40 @@
 // app/book/manage/[token]/layout.tsx
 
-import type { Metadata } from 'next';
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NEVER CACHED, NEVER SHARED.
+ *
+ * Today this is safe by accident: the credential sits in the path, so every
+ * client's URL is unique and nothing can serve one client's booking to
+ * another even if something decided to cache it.
+ *
+ * That accident ends the moment the token moves into a cookie and the address
+ * becomes a plain booking id — one URL rendering different content per caller
+ * is exactly the shape a CDN, a proxy, or a Next.js caching default will
+ * happily share between two people. A mistake here is a cross-client data
+ * leak, which is strictly worse than the address-bar leak the cookie exists to
+ * close.
+ *
+ * So this is declared BEFORE the cookie work, not after, and
+ * `publicPagesAreNeverCached.guard` holds it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
-import { PortalContextProvider } from '@/components/public/PortalContextProvider';
-import type { PortalMeeting } from '@/components/public/PortalMeetings';
-import { PublicBrandFrame } from '@/components/public/PublicBrandFrame';
-import { PortalShell } from '@/components/public/PortalShell';
-import { resolvePublicBranding } from '@/lib/branding/publicBranding';
-import { publicT } from '@/lib/i18n/public-pages';
-import { supabaseServer } from '@/lib/supabaseServer';
-import { generateBookingToken, verifyBookingToken } from '@/lib/services/BookingEmailService';
+import { headers } from 'next/headers';
+import { resolvePortalAccess } from '@/lib/security/portalAccess';
+import type { Metadata } from "next";
+
+import { PortalContextProvider } from "@/components/public/PortalContextProvider";
+import type { PortalMeeting } from "@/components/public/PortalMeetings";
+import { PublicBrandFrame } from "@/components/public/PublicBrandFrame";
+import { PortalShell } from "@/components/public/PortalShell";
+import { resolvePublicBranding } from "@/lib/branding/publicBranding";
+import { publicT } from "@/lib/i18n/public-pages";
+import { supabaseServer } from "@/lib/supabaseServer";
+import { generateBookingToken } from "@/lib/services/bookingToken";
 
 interface PortalContext {
   clientName: string | null;
@@ -58,19 +83,32 @@ const MEETINGS_LIMIT = 60;
  */
 async function portalContextFor(token: string): Promise<PortalContext> {
   try {
-    const decoded = verifyBookingToken(token);
+    /*
+     * Either a signed link or a booking id backed by the grant cookie. The
+     * cookie is read with `next/headers` because this is a server component;
+     * the shared resolver takes the raw header so that API routes, which have
+     * no access to that, can use exactly the same rule.
+     */
+    const decoded = resolvePortalAccess(token, (await headers()).get('cookie'));
     if (!decoded?.bookingId) return EMPTY_CONTEXT;
 
     const { data: booking } = await supabaseServer
-      .from('scheduling_bookings')
-      .select('user_id, contact_id, timezone, contact:crm_contacts(first_name, last_name, email)')
-      .eq('id', decoded.bookingId)
+      .from("scheduling_bookings")
+      .select(
+        "user_id, contact_id, timezone, contact:crm_contacts(first_name, last_name, email)",
+      )
+      .eq("id", decoded.bookingId)
       .maybeSingle();
 
     if (!booking) return EMPTY_CONTEXT;
 
-    const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
-    const clientName = [contact?.first_name, contact?.last_name].filter(Boolean).join(' ').trim();
+    const contact = Array.isArray(booking.contact)
+      ? booking.contact[0]
+      : booking.contact;
+    const clientName = [contact?.first_name, contact?.last_name]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
 
     /*
      * ─────────────────────────────────────────────────────────────────────────
@@ -96,17 +134,26 @@ async function portalContextFor(token: string): Promise<PortalContext> {
      * something the client has, so it is listed, without a date.
      *
      * Scoped to the contact AND the owner, so the list cannot cross a tenant
-     * even if a contact id were ever reused. A package's child meetings carry
-     * their own rows and appear in their own right, which is correct: each is
-     * separately cancellable and separately linkable.
+     * even if a contact id were ever reused.
+     *
+     * A package's child meetings carry their own rows, and this used to list
+     * every one of them in its own right — the reasoning being that each is
+     * separately cancellable and separately linkable. Both of those are true
+     * and neither makes it a separate BOOKING: a client who bought one package
+     * of six sessions opened "my bookings" to six identical lines and a count
+     * of seventeen, which is a transcript rather than a record of what they
+     * have. They are grouped below, and the package card in the portal is
+     * where the individual meetings are listed with their own actions.
      * ─────────────────────────────────────────────────────────────────────────
      */
     const { data: others } = booking.contact_id
       ? await supabaseServer
-          .from('scheduling_bookings')
-          .select('id, start_time, status, service:scheduling_services(service_name)')
-          .eq('contact_id', booking.contact_id)
-          .eq('user_id', booking.user_id)
+          .from("scheduling_bookings")
+          .select(
+            "id, start_time, status, parent_booking_id, occurrence_number, service:scheduling_services(service_name)",
+          )
+          .eq("contact_id", booking.contact_id)
+          .eq("user_id", booking.user_id)
           /*
            * The booking being viewed is IN the list, not excluded from it.
            *
@@ -116,23 +163,41 @@ async function portalContextFor(token: string): Promise<PortalContext> {
            * to them. It is marked as the current one instead and carries no
            * link, because it is the page they are already on.
            */
-          .order('start_time', { ascending: false, nullsFirst: false })
+          .order("start_time", { ascending: false, nullsFirst: false })
           .limit(MEETINGS_LIMIT)
+      : { data: [] };
+
+    /*
+     * Which package each accepted quote created, so the sessions can be folded
+     * into the booking that SOLD them rather than standing on their own. The
+     * same join `foldPackageMeetings` makes in the CRM contact drawer — the
+     * owner and the client have to count the same bookings.
+     */
+    const { data: sold } = booking.contact_id
+      ? await supabaseServer
+          .from("proposals")
+          .select("booking_id, package_booking_id")
+          .eq("contact_id", booking.contact_id)
+          .eq("user_id", booking.user_id)
+          .not("package_booking_id", "is", null)
       : { data: [] };
 
     const now = Date.now();
 
-    return {
-      clientName: clientName || null,
-      clientEmail: contact?.email || null,
-      timeZone: booking.timezone || null,
-      meetings: (others ?? []).map(row => {
-        const service = Array.isArray(row.service) ? row.service[0] : row.service;
-        const startTime = (row.start_time as string) || null;
+    const rows = (others ?? []).map((row) => {
+      const service = Array.isArray(row.service) ? row.service[0] : row.service;
+      const startTime = (row.start_time as string) || null;
 
-        const isCurrent = row.id === decoded.bookingId;
+      const isCurrent = row.id === decoded.bookingId;
 
-        return {
+      /* Grouping facts, kept OUTSIDE the meeting so the public shape is the
+           public shape and nothing has to be stripped back off it. */
+      return {
+        containerId:
+          (row.parent_booking_id as string | null) ?? (row.id as string),
+        isContainer:
+          row.occurrence_number === null || row.occurrence_number === undefined,
+        meeting: {
           id: row.id as string,
           serviceName: (service?.service_name as string) || null,
           startTime,
@@ -144,7 +209,7 @@ async function portalContextFor(token: string): Promise<PortalContext> {
            * coming up, so it is listed as past and simply not ticked.
            */
           status: row.status as string,
-          held: row.status === 'completed',
+          held: row.status === "completed",
           /*
            * Only something still standing can be "coming up". A cancelled
            * booking next week is not an appointment the client has, and
@@ -152,8 +217,8 @@ async function portalContextFor(token: string): Promise<PortalContext> {
            */
           upcoming: Boolean(
             startTime &&
-              new Date(startTime).getTime() > now &&
-              (row.status === 'confirmed' || row.status === 'pending')
+            new Date(startTime).getTime() > now &&
+            (row.status === "confirmed" || row.status === "pending"),
           ),
           /*
            * Its own signed link.
@@ -170,11 +235,115 @@ async function portalContextFor(token: string): Promise<PortalContext> {
            * the row already says.
            */
           token:
-            isCurrent || !decoded.email || row.status === 'cancelled' || row.status === 'no_show'
+            isCurrent ||
+            !decoded.email ||
+            row.status === "cancelled" ||
+            row.status === "no_show"
               ? null
               : generateBookingToken(row.id as string, decoded.email),
-        };
-      }),
+        },
+      };
+    });
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * ONE ROW PER THING THE CLIENT BOUGHT.
+     *
+     * A package is a dateless container booking plus one child per session,
+     * all sharing `parent_booking_id`. Listed flat that is seven rows for one
+     * purchase, repeating the same service name seven times with seven dates —
+     * and the same six meetings are already listed, with their own dates and
+     * their own reschedule and cancel buttons, on the package card.
+     *
+     * They fold one step further than their container, to the booking the
+     * quote came out of: `proposals.package_booking_id` records which package
+     * each accepted quote created, so a consultation on 4 October and the six
+     * sessions it sold are ONE row rather than two. That is the rule
+     * `foldPackageMeetings` applies in the CRM contact drawer, and the two
+     * have to agree — an owner reading ten bookings while the client reads
+     * eleven is one record disagreeing with itself.
+     *
+     * Two fallbacks, both the drawer's:
+     *   · a quote sold COLD has no booking behind it, so its container hosts
+     *     its own sessions and is the row for that purchase.
+     *   · a host missing from this list — beyond `MEETINGS_LIMIT`, or another
+     *     contact's — leaves the container hosting, because a booking that
+     *     vanishes from the list is worse than one that is not folded.
+     *
+     * An ordinary booking has no children and no quote, so it hosts itself and
+     * nothing about its row changes.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const present = new Set(rows.map((r) => r.meeting.id));
+
+    const hostOf = new Map<string, string>();
+    for (const link of sold ?? []) {
+      const container = link.package_booking_id as string;
+      const host = link.booking_id as string | null;
+      if (host && present.has(host)) hostOf.set(container, host);
+    }
+
+    const groups = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const key = hostOf.get(row.containerId) ?? row.containerId;
+      const found = groups.get(key);
+      if (found) found.push(row);
+      else groups.set(key, [row]);
+    }
+
+    const meetings = [...groups.entries()].map(([key, members]) => {
+      /*
+       * The sessions: everything with an occurrence number. That excludes the
+       * container, which has no date and is not a meeting, and the host
+       * booking, which is a meeting in its own right and not one of the
+       * sessions it sold.
+       */
+      const sessions = members
+        .filter((m) => !m.isContainer)
+        .map((m) => m.meeting);
+
+      if (sessions.length === 0) return members[0].meeting;
+
+      /*
+       * The row IS the host booking where there is one — the consultation the
+       * client had, on its own date, with its own status. It is what they
+       * recognise, and it is the row the owner sees in the drawer.
+       *
+       * Sold cold there is no host, so the row falls back to the session that
+       * is next up, and to the most recent one when none is left — a finished
+       * package reads as finished rather than jumping back to its first
+       * session.
+       */
+      const host = members.find((m) => m.meeting.id === key)?.meeting;
+
+      const dated = sessions.filter((m) => m.startTime);
+      const next = dated
+        .filter((m) => m.upcoming)
+        .sort((a, b) => Date.parse(a.startTime!) - Date.parse(b.startTime!))[0];
+      const last = [...dated].sort(
+        (a, b) => Date.parse(b.startTime!) - Date.parse(a.startTime!),
+      )[0];
+
+      const lead = host ?? next ?? last ?? sessions[0];
+
+      return {
+        ...lead,
+        /*
+         * The client is on this page from one of these rows, and the group has
+         * to say so wherever in the package that booking happens to be.
+         */
+        isCurrent: members.some((m) => m.meeting.isCurrent),
+        /* No link out of the page the client is already on. */
+        token: members.some((m) => m.meeting.isCurrent) ? null : lead.token,
+        sessions: sessions.length,
+      };
+    });
+
+    return {
+      clientName: clientName || null,
+      clientEmail: contact?.email || null,
+      timeZone: booking.timezone || null,
+      meetings,
     };
   } catch {
     return EMPTY_CONTEXT;
@@ -202,12 +371,15 @@ export async function generateMetadata({
   params: Promise<{ token: string }>;
 }): Promise<Metadata> {
   const { token } = await params;
-  const brand = await resolvePublicBranding({ by: 'bookingToken', token }, { includeInfo: false });
+  const brand = await resolvePublicBranding(
+    { by: "bookingToken", token, grantCookie: (await headers()).get("cookie") },
+    { includeInfo: false },
+  );
 
   return {
     title: brand
-      ? `${publicT(brand.locale, 'manageBooking')} · ${brand.businessName}`
-      : 'Booking',
+      ? `${publicT(brand.locale, "manageBooking")} · ${brand.businessName}`
+      : "Booking",
     // A booking link identifies a real person's appointment. It must never
     // reach a search index.
     robots: { index: false, follow: false },
@@ -222,8 +394,9 @@ export default async function BookingManageLayout({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+  const cookieHeader = (await headers()).get("cookie");
   const [brand, portal] = await Promise.all([
-    resolvePublicBranding({ by: 'bookingToken', token }),
+    resolvePublicBranding({ by: "bookingToken", token, grantCookie: cookieHeader }),
     portalContextFor(token),
   ]);
 

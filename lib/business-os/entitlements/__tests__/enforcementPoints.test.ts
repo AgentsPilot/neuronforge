@@ -83,10 +83,26 @@ function productFiles(): string[] {
  * Each needs a reason — "it is noisy" is not one.
  */
 const KNOWN_NON_GATES: ReadonlyArray<{ file: string; capability: string; why: string }> = [
+  /*
+   * One entry per language file. They were one entry against
+   * `LanguageContext.tsx` until the dictionaries were split out of it, and the
+   * equality check below is what made that visible rather than letting the
+   * allow-list quietly cover a file with nothing in it.
+   */
   {
-    file: 'lib/business-os/LanguageContext.tsx',
+    file: 'lib/business-os/translations/en.ts',
     capability: 'payments.invoices',
-    why: 'A UI translation dictionary keyed by dotted strings. The key collides with the capability id by coincidence and gates nothing — it maps to the word "Invoices" in three languages.',
+    why: 'A UI translation dictionary keyed by dotted strings. The key collides with the capability id by coincidence and gates nothing — it maps to the word "Invoices".',
+  },
+  {
+    file: 'lib/business-os/translations/es.ts',
+    capability: 'payments.invoices',
+    why: 'The Spanish half of the same coincidence: it maps to "Facturas".',
+  },
+  {
+    file: 'lib/business-os/translations/he.ts',
+    capability: 'payments.invoices',
+    why: 'The Hebrew half of the same coincidence: it maps to "חשבוניות".',
   },
 ];
 
@@ -465,6 +481,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       file: 'lib/business-os/billing/planCheckoutPrice.ts',
       symbols: ['PLAN_STRIPE_PRICES', 'PlanStripePrices', 'TierId'],
       why: 'Plan payments P-3a (SA-P12 b): resolves the tier lookup key (`PLAN_STRIPE_PRICES`) to one Stripe price and compares it with the display price. It compares two prices, resolves no account and refuses nothing by plan; it is the runtime twin of planPriceCheck.ts.',
+    },
+    {
+      // Plan payments P-5a.2 (workplan §3.3, §3.5; SA P5-C11, Q-4).
+      file: 'lib/business-os/billing/heldPaymentView.ts',
+      symbols: ['TIER_MATRIX', 'TierId'],
+      why: 'Plan payments P-5a.2 (SA P5-C11, Q-4): the holding screen\'s model reads the plan NAME and monthly PRICE for display from `TIER_MATRIX.presentation` (G5-7: no literal on the screen), and borrows the `TierId` TYPE. Whether Pay is offered is decided by `heldPaymentOffer` in planCheckoutEligibility.ts (invite policy and switches), not here; this file resolves no plan, calls no `check()` / `decide()` and refuses nothing by plan or capability, so it is not a gate. The holding page itself imports nothing from the module.',
     },
     {
       file: 'components/test-business-os/PlanCheckoutPanel.tsx',

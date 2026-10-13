@@ -99,6 +99,10 @@ export const QUEUE_ITEM_KIND_LABELS: Readonly<Record<BosQueueId, string | Readon
     // already happened as completed, in the owner's own records. Named for what
     // it does rather than who hears about it, because no client does.
     meeting_complete: 'Marking a past meeting complete',
+    // One reminder on a quote the client has not answered. The only kind
+    // addressed to somebody who has not bought anything, which is why its
+    // copy asks rather than chases.
+    quote_chase: 'Quote follow-up to a client',
   },
   insight_actions: {
     chase_invoice: 'Invoice chase',

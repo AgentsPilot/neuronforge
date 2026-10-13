@@ -49,6 +49,15 @@ const StopSchema = z.object({
    * way, in its client-safe phrasing.
    */
   share_note_with_client: z.boolean().optional().default(true),
+  /*
+   * Also call off an unpaid invoice this quote raised outside its stages.
+   *
+   * Defaults to FALSE, unlike the flag above. Stopping is not refunding: an
+   * owner stopping a job half way may still be owed for the half that happened,
+   * so calling the money off is a separate decision they opt into. Only ever
+   * touches an invoice that has not been paid.
+   */
+  cancel_unpaid_invoice: z.boolean().optional().default(false),
 });
 
 export async function POST(
@@ -83,6 +92,7 @@ export async function POST(
       reason: parsed.data.reason,
       note: parsed.data.note,
       shareNoteWithClient: parsed.data.share_note_with_client,
+      cancelUnpaidInvoice: parsed.data.cancel_unpaid_invoice,
     });
 
     if (!result.ok) {

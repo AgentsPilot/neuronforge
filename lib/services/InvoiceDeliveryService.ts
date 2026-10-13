@@ -29,6 +29,7 @@
 import type { NextRequest } from 'next/server';
 import { platformOrigin } from '@/lib/utils/origins';
 import { resolveInvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
+import { invoicePayLink } from '@/lib/payments/invoicePayLink';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { taxLineFor } from '@/lib/payments/taxLine';
@@ -687,9 +688,15 @@ async function sendByEmail(
 
     const paymentOptions = resolveInvoicePaymentOptions({
       canCollectOnline: capability.canCollect,
-      cardUrl:
-        invoice.stripe_hosted_invoice_url ||
-        `${baseUrl}/api/public/invoice/${invoice.id}/pay`,
+      /* Our own surfaces, never `invoice.stripe.com`: the portal where this
+         invoice has a booking behind it, the invoice page where it does not.
+         `/pay` is gone from here too — it only redirects to Stripe. */
+      cardUrl: await invoicePayLink({
+        invoiceId: invoice.id,
+        bookingId: (invoice as { booking_id?: string | null }).booking_id ?? null,
+        userId,
+        baseUrl,
+      }),
       profile: settings,
       // The same answer the pay page reads. An email offering a card that the
       // page it links to will not draw is worse than either on its own.

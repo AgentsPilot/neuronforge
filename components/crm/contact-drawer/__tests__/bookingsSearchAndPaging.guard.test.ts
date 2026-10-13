@@ -31,13 +31,13 @@
 
 import fs from 'fs';
 import path from 'path';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
 const FILE = 'components/crm/contact-drawer/BookingsTab.tsx';
-const CONTEXT = 'lib/business-os/LanguageContext.tsx';
 
 const source = fs.readFileSync(path.join(process.cwd(), FILE), 'utf8');
 const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-const context = fs.readFileSync(path.join(process.cwd(), CONTEXT), 'utf8');
+const context = dictionarySource();
 
 describe('paging', () => {
   it('strips comments before matching, or it fails on its own explanation', () => {

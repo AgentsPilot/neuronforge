@@ -51,7 +51,7 @@ const READERS: PaymentHoldReaders = {
   invites: businessOsInviteRepository,
 };
 
-type SessionHold = { signedIn: false } | { signedIn: true; accountId: string; hold: PaymentHold };
+type SessionHold = { signedIn: false } | { signedIn: true; userId: string; accountId: string; hold: PaymentHold };
 
 async function readSessionHold(): Promise<SessionHold> {
   let user: Awaited<ReturnType<typeof getUser>> = null;
@@ -65,10 +65,10 @@ async function readSessionHold(): Promise<SessionHold> {
 
   const accountId = resolveAccountId(user.id);
   try {
-    return { signedIn: true, accountId, hold: await readPaymentHold(accountId, READERS) };
+    return { signedIn: true, userId: user.id, accountId, hold: await readPaymentHold(accountId, READERS) };
   } catch (error) {
     logger.error({ err: error, accountId }, 'Payment hold read threw');
-    return { signedIn: true, accountId, hold: { ok: false } };
+    return { signedIn: true, userId: user.id, accountId, hold: { ok: false } };
   }
 }
 
@@ -97,12 +97,25 @@ export async function redirectIfAwaitingPayment(): Promise<void> {
  * `language` is the invite's own (the champion's explicit choice for this
  * friend, C-8), falling back to the default; a failed language read does not
  * change the state.
+ *
+ * Plan payments P-5a.2 (workplan A-1, §3.3): `held` also carries the hold
+ * itself (its `source`) and the session's user and account ids, so the screen
+ * can apply the shared `heldPaymentOffer` predicate and read its billing row
+ * without a second hold read. Additive: the four layouts read only
+ * `redirectIfAwaitingPayment()`. Both ids come from the session, never from
+ * the request (tenant isolation).
  */
 export type HoldingScreenState =
   | { state: 'signed_out' }
   | { state: 'not_held' }
   | { state: 'error' }
-  | { state: 'held'; language: string };
+  | {
+      state: 'held';
+      language: string;
+      hold: Extract<PaymentHold, { ok: true; held: true }>;
+      userId: string;
+      accountId: string;
+    };
 
 export async function readHoldForSession(): Promise<HoldingScreenState> {
   const session = await readSessionHold();
@@ -118,5 +131,5 @@ export async function readHoldForSession(): Promise<HoldingScreenState> {
     const invite = await businessOsInviteRepository.findHoldFactsById(session.hold.inviteId);
     if (invite.data && isValidLocale(invite.data.language)) language = invite.data.language;
   }
-  return { state: 'held', language };
+  return { state: 'held', language, hold: session.hold, userId: session.userId, accountId: session.accountId };
 }

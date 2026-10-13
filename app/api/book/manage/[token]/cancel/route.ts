@@ -1,9 +1,10 @@
 // app/api/book/manage/[token]/cancel/route.ts
 // Self-service booking cancellation endpoint
 
+import { resolvePortalAccess } from '@/lib/security/portalAccess';
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
-import { verifyBookingToken } from '@/lib/services/BookingEmailService';
 import { cancelBooking, clientCancellationReason } from '@/lib/services/BookingLifecycleService';
 import { CLIENT_CANCEL_REASONS } from '@/lib/business-os/cancellationReasons';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
@@ -35,17 +36,42 @@ export async function POST(
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
+  /*
+   * Throttled before anything else: no session stands in front of this route.
+   * The `ok` bucket counts volume; a rejected credential counts under the much
+   * tighter failure budget below, which is the one that detects probing.
+   */
+  const throttle = await rateLimit(request, 'booking-cancel', RATE_LIMITS.write);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.write.windowSeconds);
+
   try {
     // Verify token
-    const decoded = verifyBookingToken(token);
-    if (!decoded) {
+    /*
+     * Either a signed link or a booking id backed by the grant cookie.
+     *
+     * The id alone is never enough — it is what sits in the address bar
+     * precisely because holding it grants nothing. `resolvePortalAccess` tells
+     * the two apart by shape and requires a grant naming THIS booking for the
+     * id form, so a cookie for one booking cannot open another.
+     */
+    const access = resolvePortalAccess(token, request.headers.get('cookie'));
+    if (!access) {
+      /*
+       * A rejected token counts under the FAILURE budget, and once that budget
+       * is spent the caller gets 429 instead of 401. This is the half that
+       * detects anything: a client reloading is noise on the `ok` counter, but
+       * a run of rejected tokens from one address is somebody trying keys.
+       */
+      const failures = await rateLimit(request, 'booking-cancel', RATE_LIMITS.write, 'failure');
+      if (!failures.allowed) return tooManyRequests(RATE_LIMITS.write.windowSeconds);
+
       return NextResponse.json(
         { success: false, code: 'invalid_link', error: 'Invalid or expired link' },
         { status: 401 }
       );
     }
 
-    const { bookingId, email } = decoded;
+    const { bookingId, email } = access;
 
     /*
      * The body is NO LONGER optional, and a parse failure must not be swallowed.

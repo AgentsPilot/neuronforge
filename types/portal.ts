@@ -91,6 +91,15 @@ export interface PortalPlanPeriod {
   status: string;
   /** Null for a milestone: it falls due when the work is done. */
   dueDate: string | null;
+  /**
+   * When it was settled. Null while unpaid.
+   *
+   * A different date from `dueDate`, and the one that matters once money has
+   * moved: the card showed "due 23 November" beside "paid" on money that
+   * arrived on 9 October, and showed no date at all for the milestone, which
+   * has no due date by design.
+   */
+  paidAt?: string | null;
   refunded?: number | null;
 }
 
@@ -117,6 +126,23 @@ export interface PortalPayment {
    * correctly yields no link.
    */
   payUrl?: string | null;
+  /**
+   * The invoice behind `payUrl`, so the portal can take the payment in place.
+   *
+   * Same invoice, same conditions — it is set and cleared together with the
+   * URL, because a page offering to collect against an invoice the balance
+   * does not cover would be the portal charging for something it is not
+   * showing.
+   */
+  invoiceId?: string | null;
+  /**
+   * The signed token for that invoice.
+   *
+   * `/invoice/[id]` and its payment endpoint no longer accept a bare id except
+   * while the invoice is new, so the in-portal card presents this the same way
+   * a link from an email does.
+   */
+  invoiceToken?: string | null;
 }
 
 /** Whether there is a form to fill in, and whether it is done. */
@@ -139,6 +165,31 @@ export interface PortalBooking extends PublicBookingSummary {
   hoursUntilBooking: number | null;
   /** False for a product purchase: nothing about it is scheduled. */
   isScheduled?: boolean;
+  /**
+   * The package this meeting belongs to, when it belongs to one.
+   *
+   * A package is a dateless CONTAINER booking plus one child per session, and
+   * neither is the subject: what the client agreed to was the consultation
+   * where the quote was accepted. `proposals.package_booking_id` names the
+   * package each accepted quote created, so this is that proposal's booking —
+   * the same host the CRM drawer's `foldPackageMeetings` folds the sessions
+   * into.
+   *
+   * The container itself where a quote was sold cold and there is no booking
+   * behind it; dateless, which the card renders by leading with the name.
+   *
+   * Null for an ordinary booking and for a product, which are their own
+   * subject and have no parent to defer to.
+   */
+  parent?: {
+    id: string;
+    status: string;
+    startTime: string | null;
+    endTime: string | null;
+    timezone: string | null;
+    serviceName: string | null;
+    durationMinutes: number | null;
+  } | null;
 }
 
 /** The whole successful response. */

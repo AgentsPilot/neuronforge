@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { CalendarPlus, ClipboardCheck, ClipboardList, FileText, Hourglass, Mail, RefreshCw, User, X } from 'lucide-react';
+import { CalendarPlus, ClipboardCheck, ClipboardList, CreditCard, FileText, Hourglass, Mail, RefreshCw, User, X } from 'lucide-react';
 
 /*
  * The TYPE only.
@@ -24,11 +24,20 @@ import type {
 import { PublicPageSpinner } from '@/components/public/PublicSpinner';
 import { StatusCard } from '@/components/public/StatusCard';
 import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
+import { CancelPanel } from '@/components/public/CancelPanel';
 import { IntakePanel } from '@/components/public/IntakePanel';
+import { ReschedulePanel } from '@/components/public/ReschedulePanel';
+import { InvoicePaymentPanel } from '@/components/public/InvoicePaymentPanel';
 import { PortalMeetings } from '@/components/public/PortalMeetings';
+import { ProposalAnswer } from '@/components/public/ProposalAnswer';
 import { usePortalContext } from '@/components/public/PortalContextProvider';
 import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider';
-import { createPublicT, formatPublicDate, formatPublicMoney } from '@/lib/i18n/public-pages';
+import {
+  createPublicT,
+  formatPublicDate,
+  formatPublicDay,
+  formatPublicMoney,
+} from '@/lib/i18n/public-pages';
 
 /*
  * The shapes come from `types/portal.ts`, which the ROUTE also annotates its
@@ -59,7 +68,40 @@ export default function BookingManagePage() {
   const [payment, setPayment] = useState<PortalPayment | null>(null);
   const [loading, setLoading] = useState(true);
   /** The questions, unfolded in place rather than on a page of their own. */
-  const [intakeOpen, setIntakeOpen] = useState(false);
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE TASK OPEN AT A TIME, AND THE TOKEN IT ACTS ON.
+   *
+   * Three booleans were enough while only this booking could be changed. A
+   * package meeting is a DIFFERENT booking with its own token — the route
+   * mints one per sibling for exactly this — so what is open has to say which
+   * booking it is open against, or the panel under the package list would
+   * reschedule the meeting the client is looking at instead of the one they
+   * clicked.
+   *
+   * Clicking the same action twice closes it; clicking another swaps.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [task, setTask] = useState<{
+    kind: 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay';
+    token: string;
+  } | null>(null);
+
+  const openOnly = (
+    kind: 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay',
+    forToken: string = token
+  ) =>
+    setTask(current =>
+      current && current.kind === kind && current.token === forToken ? null : { kind, token: forToken }
+    );
+
+  /* The three the booking card's own buttons read, unchanged in meaning. */
+  const onThisBooking = task && task.token === token ? task.kind : null;
+  const intakeOpen = onThisBooking === 'intake';
+  const quoteOpen = onThisBooking === 'quote';
+  const payOpen = onThisBooking === 'pay';
+  const rescheduleOpen = onThisBooking === 'reschedule';
+  const cancelOpen = onThisBooking === 'cancel';
   const [error, setError] = useState<string | null>(null);
 
   const locale = brand?.locale ?? 'en';
@@ -68,10 +110,26 @@ export default function BookingManagePage() {
      the hour a client turns up at is the business's, not their device's. */
   const intlLocale = brand?.localeCode ?? 'en-US';
 
-  useEffect(() => {
-    fetch(`/api/book/manage/${token}`)
-      .then(res => res.json())
-      .then(data => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE READ OF THE BOOKING, USED TWICE.
+   *
+   * On mount, and again after a task below has changed the appointment. A
+   * client who moves their time watches the card above the form go on showing
+   * the old one otherwise, so the page tells them two different things about
+   * one booking until they reload.
+   *
+   * `quiet` leaves the spinner alone: the booking is already on screen, and
+   * replacing it to refresh a date the client just chose is a worse answer
+   * than the stale one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const loadBooking = useCallback(
+    async (quiet = false) => {
+      if (!quiet) setLoading(true);
+      try {
+        const res = await fetch(`/api/book/manage/${token}`, { cache: 'no-store' });
+        const data = await res.json();
         if (data.success) {
           setBooking(data.booking);
           setMeetings(Array.isArray(data.meetings) ? data.meetings : []);
@@ -79,15 +137,141 @@ export default function BookingManagePage() {
           setAwaitingQuote(Boolean(data.awaitingQuote));
           setIntake(data.intake ?? null);
           setPayment(data.payment ?? null);
+          setError(null);
+        } else if (!quiet) {
+          setError(data.error || t('bookingNotFound'));
         }
-        else setError(data.error || t('bookingNotFound'));
-      })
-      .catch(() => setError(t('bookingNotFound')))
-      .finally(() => setLoading(false));
+      } catch {
+        if (!quiet) setError(t('bookingNotFound'));
+      } finally {
+        if (!quiet) setLoading(false);
+      }
+    },
     // The token is the only input; re-running on locale change would refetch
     // for nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    [token]
+  );
+
+  useEffect(() => {
+    loadBooking();
+  }, [loadBooking]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TOKEN LEAVES THE ADDRESS BAR.
+   *
+   * It arrives in the path because an email can carry nothing else. From the
+   * moment the page has rendered, every further second it spends there is pure
+   * exposure: browser history, a client pasting their address into a support
+   * chat, a screenshot, a shared laptop, and every proxy log between them and
+   * us. `Referer` and search indexing are already closed; the address itself is
+   * what was left.
+   *
+   * So: trade it for a short-lived, HttpOnly grant cookie, then `replaceState`
+   * to `/book/manage/<booking id>`. `replace`, not `push` — it overwrites the
+   * current history entry rather than adding one, so the token is not left
+   * behind a Back button.
+   *
+   * The id that replaces it is an identifier and not a credential: every route
+   * under this tree requires the grant cookie to name that exact booking before
+   * it will answer for it.
+   *
+   * This is the shape `/invite` already uses. The difference is that a fragment
+   * would keep the token off the server entirely, and this portal cannot use
+   * one — the layout resolves the business's colours, language and text
+   * direction server-side from this very segment, which is what stops the page
+   * flashing unbranded and left-to-right before it corrects itself.
+   *
+   * Entirely best-effort. If the exchange fails — cookies refused, offline, a
+   * private window — the page is already rendered and every route still accepts
+   * the token in the path, exactly as before. Nothing is gated on this
+   * succeeding, because a client who cannot store a cookie must still be able
+   * to reach their booking.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    // Already a booking id: this page has been here before, or was reloaded.
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)) {
+      return;
+    }
+
+    let live = true;
+
+    (async () => {
+      try {
+        const res = await fetch('/api/portal/enter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          /* A body, never a query string: a query would put the token straight
+             back into a URL and into the request line of every access log. */
+          body: JSON.stringify({ token }),
+        });
+        const data = await res.json();
+        if (!live || !data?.success || !data.bookingId) return;
+
+        window.history.replaceState(
+          null,
+          '',
+          `/book/manage/${data.bookingId}${window.location.search}`
+        );
+      } catch {
+        /* The link still works. Nothing to tell the client. */
+      }
+    })();
+
+    return () => {
+      live = false;
+    };
   }, [token]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ARRIVING WITH A TASK ALREADY OPEN.
+   *
+   * Two ways in, one mechanism:
+   *
+   *   `?pay=1`      every email that offers to take money
+   *   `?task=quote` the four task routes, which redirect here rather than
+   *                 drawing a screen of their own
+   *
+   * Without this a client follows a button that says Pay, or a link that says
+   * "answer your quote", and lands on a page where they have to find the
+   * control again — which reads as the wrong link.
+   *
+   * Only once, and only when the thing is actually there: the quote card needs
+   * `quote.token`, the payment card needs `payment.invoiceId`, and both arrive
+   * with the booking rather than with the first render. Re-running on every
+   * render would also fight the Close button.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const payInvoiceId = payment?.invoiceId ?? null;
+  const quoteToken = quote?.token ?? null;
+  const [taskAutoOpened, setTaskAutoOpened] = useState(false);
+
+  useEffect(() => {
+    if (taskAutoOpened) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get('pay') === '1' ? 'pay' : params.get('task');
+
+    /* Whether the card this asks for can actually be drawn yet. Anything else
+       — a stale link, a task that no longer applies — is simply ignored, which
+       leaves the client on their portal rather than on an error. */
+    const ready: Record<string, boolean> = {
+      pay: Boolean(payInvoiceId),
+      quote: Boolean(quoteToken),
+      intake: Boolean(intake?.required),
+      cancel: true,
+      reschedule: true,
+    };
+
+    if (!wanted || !(wanted in ready)) return;
+    if (!ready[wanted]) return;
+
+    setTaskAutoOpened(true);
+    setTask({ kind: wanted as 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay', token });
+  }, [taskAutoOpened, payInvoiceId, quoteToken, intake?.required, token]);
 
   if (loading) return <PublicPageSpinner label={t('loading')} />;
 
@@ -102,7 +286,12 @@ export default function BookingManagePage() {
     );
   }
 
-  const isCancelled = booking.status === 'cancelled';
+  /*
+     The package's own status where there is one. A package can be stopped
+     while its remaining sessions still sit at `confirmed`, so reading the
+     session would tell a client their cancelled package is confirmed. */
+  const subjectStatus = booking.parent?.status ?? booking.status;
+  const isCancelled = subjectStatus === 'cancelled';
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
@@ -144,7 +333,7 @@ export default function BookingManagePage() {
     expired: { key: 'portal.quote_expired', open: false },
   };
 
-  const chip = STATUS_CHIP[booking.status] ?? STATUS_CHIP.pending;
+  const chip = STATUS_CHIP[subjectStatus] ?? STATUS_CHIP.pending;
   const statusTone = chip.tone;
   const statusLabel = t(chip.key);
 
@@ -174,8 +363,37 @@ export default function BookingManagePage() {
    * arrangement `/quote` has always had with `ProposalAnswer`.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /* The booking card's three actions share one shape. */
+  const BOOKING_ACTION =
+    'flex h-11 items-center gap-2 px-4 text-sm font-bold transition-opacity hover:opacity-70';
+
   const firstName = booking.clientName?.trim().split(/\s+/)[0] ?? '';
-  const start = booking.startTime ? new Date(booking.startTime) : null;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SUBJECT OF THE LEAD CARD.
+   *
+   * Normally this booking. For a package session it is `booking.parent` — the
+   * consultation the package was sold from, resolved by the route through
+   * `proposals.package_booking_id`, which is the same host the CRM drawer
+   * folds these sessions into.
+   *
+   * Reading it once, here, is what keeps the card from describing two
+   * different bookings: the date from one and the status from another is
+   * exactly the shape that produced "23 October" above a list of all six
+   * sessions.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const subject = booking.parent ?? null;
+  const subjectZone = subject ? subject.timezone : booking.timezone;
+  const subjectService = subject ? subject.serviceName : (booking.service?.service_name ?? null);
+  const subjectDuration = subject
+    ? subject.durationMinutes
+    : (booking.service?.duration_minutes ?? null);
+
+  const startIso = subject ? subject.startTime : booking.startTime;
+  const endIso = subject ? subject.endTime : booking.endTime;
+  const start = startIso ? new Date(startIso) : null;
 
   const money = (amount: number, currency?: string | null) =>
     formatPublicMoney(amount, currency || brand.currency, locale);
@@ -184,12 +402,19 @@ export default function BookingManagePage() {
     value.toLocaleTimeString(intlLocale, {
       hour: '2-digit',
       minute: '2-digit',
-      timeZone: booking.timezone ?? undefined,
+      timeZone: subjectZone ?? undefined,
     });
 
-  const end = booking.endTime ? new Date(booking.endTime) : null;
+  const end = endIso ? new Date(endIso) : null;
   /* Measured from the END, so a meeting still running is not already past. */
   const hasFinished = (end ?? start) !== null && (end ?? start)!.getTime() < Date.now();
+
+  /*
+   * A date where the subject has one. A package sold COLD has no booking
+   * behind it, so the subject is the dateless container and the card leads
+   * with the service name instead of a numeral.
+   */
+  const showDate = start !== null;
   const periods = payment?.plan?.periods ?? [];
 
   /*
@@ -333,7 +558,7 @@ export default function BookingManagePage() {
             booking. `end_time` decides, not the start: a meeting is not in the
             past while it is still running.
           */}
-          {!isCancelled && start && !hasFinished && (
+          {!isCancelled && showDate && !hasFinished && (
             <span
               className="px-2.5 py-1 text-xs font-bold"
               style={{
@@ -353,8 +578,41 @@ export default function BookingManagePage() {
           </span>
         </div>
 
-        {/* A product purchase has no date and must not be given one. */}
-        {start && (
+        {/*
+          ─────────────────────────────────────────────────────────────────────
+          A PURCHASE HAS NO DATE, AND STILL HAS A SUBJECT.
+
+          This card is built around the day of the month: a 6xl numeral, the
+          date under it, the hours under that. A booking with no `start_time` —
+          a product, or a payment plan bought on its own — rendered none of the
+          three and fell straight through to the facts list, so the largest
+          thing on the card was the status chip and the card read as half
+          loaded beside any dated booking. That is the "not like other
+          bookings" shape.
+
+          What it is FOR is the service, so that becomes the lead where there
+          is no date to be one. Smaller than the numeral, because a name is not
+          a number and setting it at 6xl would wrap to three lines.
+
+          It must not then be repeated in the facts list below, which is why
+          the `portal.service` row is now conditional on there being a date.
+          ─────────────────────────────────────────────────────────────────────
+        */}
+        {!showDate && subjectService && (
+          <div
+            className="mt-3 text-3xl font-bold"
+            style={{
+              color: 'var(--ap-text)',
+              fontFamily: 'var(--ap-font-heading)',
+              letterSpacing: '-0.02em',
+              lineHeight: 1.15,
+            }}
+          >
+            <bdi>{subjectService}</bdi>
+          </div>
+        )}
+
+        {showDate && (
           <>
             <div
               className="mt-3 text-6xl font-bold tabular-nums"
@@ -367,14 +625,14 @@ export default function BookingManagePage() {
             >
               {start.toLocaleString(intlLocale, {
                 day: 'numeric',
-                timeZone: booking.timezone ?? undefined,
+                timeZone: subjectZone ?? undefined,
               })}
             </div>
             <div
               className="mt-2 text-xl font-bold"
               style={{ color: 'var(--ap-text)', fontFamily: 'var(--ap-font-heading)' }}
             >
-              {formatPublicDate(start, locale, undefined, booking.timezone)}
+              {formatPublicDate(start, locale, undefined, subjectZone)}
             </div>
             {/* The zone said out loud, because the hour a client turns up at is
                 the business's and not their device's. */}
@@ -382,7 +640,7 @@ export default function BookingManagePage() {
               <bdi>
                 {clock(start)}
                 {end ? ` – ${clock(end)}` : ''}
-                {booking.timezone ? ` (${booking.timezone})` : ''}
+                {subjectZone ? ` (${subjectZone})` : ''}
               </bdi>
             </p>
           </>
@@ -392,19 +650,20 @@ export default function BookingManagePage() {
           className="mt-5 space-y-2.5 border-t pt-4 text-sm"
           style={{ borderColor: 'var(--ap-border)' }}
         >
-          {booking.service?.service_name && (
+          {/* Only where it is not already the lead above. */}
+          {showDate && subjectService && (
             <div className="flex items-baseline justify-between gap-4">
               <dt style={{ color: 'var(--ap-text-muted)' }}>{t('portal.service')}</dt>
               <dd className="font-semibold" style={{ color: 'var(--ap-text)' }}>
-                <bdi>{booking.service.service_name}</bdi>
+                <bdi>{subjectService}</bdi>
               </dd>
             </div>
           )}
-          {typeof booking.service?.duration_minutes === 'number' && (
+          {typeof subjectDuration === 'number' && (
             <div className="flex items-baseline justify-between gap-4">
               <dt style={{ color: 'var(--ap-text-muted)' }}>{t('portal.duration')}</dt>
               <dd className="font-semibold tabular-nums" style={{ color: 'var(--ap-text)' }}>
-                {booking.service.duration_minutes} {t('min')}
+                {subjectDuration} {t('min')}
               </dd>
             </div>
           )}
@@ -465,35 +724,233 @@ export default function BookingManagePage() {
               <CalendarPlus className="h-4 w-4" aria-hidden />
               {t('portal.add_to_calendar')}
             </a>
-            <a
-              href={`/reschedule/${token}`}
-              className="flex h-11 items-center gap-2 px-4 text-sm font-bold transition-opacity hover:opacity-70"
+            {/*
+              OPENS BELOW, rather than navigating. These were links to screens
+              of their own, so changing a time, giving one up, or answering the
+              questions took the client off the booking they were deciding
+              about. The routes still exist for the links in their email.
+            */}
+            <button
+              type="button"
+              onClick={() => openOnly('reschedule')}
+              aria-expanded={rescheduleOpen}
+              className={BOOKING_ACTION}
               style={{
                 border: '1px solid var(--ap-border)',
-                background: 'var(--ap-surface)',
+                background: rescheduleOpen ? 'var(--ap-brand-tint)' : 'var(--ap-surface)',
                 color: 'var(--ap-text)',
                 borderRadius: 'var(--ap-radius-md)',
               }}
             >
               <RefreshCw className="h-4 w-4" style={{ color: 'var(--ap-brand)' }} aria-hidden />
               {t('reschedule')}
-            </a>
-            <a
-              href={`/book/manage/${token}/cancel`}
-              className="flex h-11 items-center gap-2 px-4 text-sm font-bold transition-opacity hover:opacity-70"
+            </button>
+
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              THE QUOTE, ANSWERED FROM THE BOOKING IT IS FOR.
+
+              This was a link on the quote card in the left column, pointing at
+              `/book/manage/{token}/quote` — inside the portal, but still a
+              navigation: the booking the quote is about scrolled off, and
+              accepting meant leaving the page that explains what is being
+              accepted.
+
+              It joins the other actions here, and the quote opens below the
+              booking like the intake form. The card in the left column keeps
+              the figure and the status, which is money and belongs in that
+              column; what moved is the action.
+
+              `open !== false` is the same test the card's link used: a DRAFT
+              has not been sent, and offering a client a button to answer work
+              the business has not finished would be the portal showing them
+              something that does not exist yet.
+              ─────────────────────────────────────────────────────────────────
+            */}
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              PAYING, WITHOUT LEAVING THE BOOKING.
+
+              The only action on this page that still navigated. The amount
+              tile offered a link to `/invoice/{id}`, so a client settling a
+              bill left the appointment it was for — the one thing the invoice
+              page cannot show them — to read it somewhere else.
+
+              `InvoicePaymentPanel` is the component that page already mounts,
+              so there is one payment implementation and the invoice page keeps
+              working for the link in the invoice email.
+
+              `invoiceId` rather than parsing `payUrl`: the route sets and
+              clears the two together, and a page that pulled an id out of a
+              URL string would keep offering to collect the moment that
+              formatting changed.
+              ─────────────────────────────────────────────────────────────────
+            */}
+            {payment?.invoiceId && (
+              <button
+                type="button"
+                /* Opens only. Closing is the card's own × — see the note there. */
+                onClick={() => setTask({ kind: 'pay', token })}
+                aria-expanded={payOpen}
+                className={BOOKING_ACTION}
+                style={{
+                  border: '1px solid var(--ap-border)',
+                  background: payOpen ? 'var(--ap-brand-tint)' : 'var(--ap-surface)',
+                  color: 'var(--ap-text)',
+                  borderRadius: 'var(--ap-radius-md)',
+                }}
+              >
+                <CreditCard className="h-4 w-4" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+                {t('portal.pay_now')}
+              </button>
+            )}
+
+            {quote?.token && QUOTE_STATE[quote.status]?.open !== false && (
+              <button
+                type="button"
+                onClick={() => openOnly('quote')}
+                aria-expanded={quoteOpen}
+                className={BOOKING_ACTION}
+                style={{
+                  border: '1px solid var(--ap-border)',
+                  background: quoteOpen ? 'var(--ap-brand-tint)' : 'var(--ap-surface)',
+                  color: 'var(--ap-text)',
+                  borderRadius: 'var(--ap-radius-md)',
+                }}
+              >
+                <FileText className="h-4 w-4" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+                {t('portal.quote_open')}
+              </button>
+            )}
+
+            {intake?.required && (
+              <button
+                type="button"
+                onClick={() => openOnly('intake')}
+                aria-expanded={intakeOpen}
+                className={BOOKING_ACTION}
+                style={{
+                  border: '1px solid var(--ap-border)',
+                  background: intakeOpen ? 'var(--ap-brand-tint)' : 'var(--ap-surface)',
+                  color: 'var(--ap-text)',
+                  borderRadius: 'var(--ap-radius-md)',
+                }}
+              >
+                {intake.completed ? (
+                  <ClipboardCheck className="h-4 w-4" style={{ color: '#15803D' }} aria-hidden />
+                ) : (
+                  <ClipboardList className="h-4 w-4" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+                )}
+                {t(intake.completed ? 'portal.intake_review' : 'portal.intake_open')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => openOnly('cancel')}
+              aria-expanded={cancelOpen}
+              className={BOOKING_ACTION}
               style={{
                 border: '1px solid var(--ap-border)',
-                background: 'var(--ap-surface)',
+                background: cancelOpen ? 'var(--ap-danger-tint)' : 'var(--ap-surface)',
                 color: '#B3453C',
                 borderRadius: 'var(--ap-radius-md)',
               }}
             >
               <X className="h-4 w-4" aria-hidden />
               {t('cancel')}
-            </a>
+            </button>
           </div>
         )}
       </section>
+
+      {/*
+        THE INTAKE FORM, under the booking it is being filled in for.
+
+        Nested inside the booking card it doubled its height and put a form
+        inside the box describing the appointment. As a sibling the booking
+        keeps its size and stays above, which is the point: what the questions
+        are about is still in view.
+
+        Change and cancel do NOT appear here — they open below the package
+        list further down, so that one meeting's picker and the list of all of
+        them are never on opposite sides of the card they both describe.
+      */}
+      {intakeOpen && (
+        <section className="apc-panel p-5">
+          <IntakePanel token={token} embedded />
+        </section>
+      )}
+
+      {/*
+        THE QUOTE ITSELF, under the booking it prices.
+
+        `quote.token` is the PROPOSAL token, not this page's booking token —
+        two different signatures over two different things. The route mints it
+        server-side, having already proved the caller holds a valid booking
+        token and already refused to sign a draft; this renders what it was
+        given and reimplements none of that.
+      */}
+      {quoteOpen && quote?.token && (
+        <section className="apc-panel p-5">
+          <ProposalAnswer token={quote.token} embedded />
+        </section>
+      )}
+
+      {/*
+        THE CARD FIELDS, under the booking being paid for.
+
+        Stripe still owns the fields themselves — they are its iframe, and
+        nothing about the PCI position moves. What changes is the page around
+        them, which is now the client's own portal rather than a document they
+        were sent to.
+
+        `successUrl` returns here, not to the invoice: the client came from
+        this page and the booking is what they will want to see confirmed.
+      */}
+      {payOpen && payment?.invoiceId && (
+        <section className="apc-panel p-5">
+          {/*
+            The card owns its own close now.
+
+            The amount tile used to toggle, so the primary control beside the
+            figure said "close" while the fields were open. Closing lives here
+            instead, next to the thing it closes, where the word cannot be
+            read as closing the bill.
+          */}
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h3 className="text-sm font-bold" style={{ color: 'var(--ap-text)' }}>
+              {t('portal.payment')}
+            </h3>
+            <button
+              type="button"
+              onClick={() => setTask(null)}
+              /*
+                An icon, not the word "close".
+                
+                On a client's own bill, "close" is read as closing the
+                PROPOSAL or the deal, not as collapsing a panel — which is
+                exactly how it was read when it shipped. An × carries no
+                business meaning in any of the three languages, and the
+                accessible name says what it actually dismisses.
+              */
+              aria-label={t('portal.payment')}
+              className="-me-1 shrink-0 rounded-full p-1 transition-opacity hover:opacity-70"
+              style={{ color: 'var(--ap-text-muted)' }}
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+          <InvoicePaymentPanel
+            invoiceId={payment.invoiceId}
+            locale={locale}
+            isRTL={brand.dir === 'rtl'}
+            primaryColor={brand.theme.colors.primary}
+            borderRadius={brand.theme.borderRadius}
+            successUrl={`/book/manage/${token}?payment=success`}
+            accessToken={payment.invoiceToken}
+          />
+        </section>
+      )}
 
 
       {/*
@@ -539,13 +996,13 @@ export default function BookingManagePage() {
                         <span className="text-sm font-bold tabular-nums">
                           {when.toLocaleString(intlLocale, {
                             day: 'numeric',
-                            timeZone: booking.timezone ?? undefined,
+                            timeZone: subjectZone ?? undefined,
                           })}
                         </span>
                         <span className="mt-0.5 text-[10px] font-semibold opacity-75">
                           {when.toLocaleString(intlLocale, {
                             month: 'short',
-                            timeZone: booking.timezone ?? undefined,
+                            timeZone: subjectZone ?? undefined,
                           })}
                         </span>
                       </>
@@ -573,22 +1030,51 @@ export default function BookingManagePage() {
                     </span>
                   </span>
 
+                  {/*
+                    ─────────────────────────────────────────────────────────
+                    THE SAME TWO ACTIONS THE BOOKING ABOVE OFFERS, THE SAME WAY.
+
+                    These were links, and one of them was broken: `/reschedule/
+                    [token]` was removed when that screen moved into the portal,
+                    so every package row has been offering a 404. The other sent
+                    the client out of the portal to a page of its own.
+
+                    Buttons now, opening the same `ReschedulePanel` and
+                    `CancelPanel` the booking card opens, under this list, and
+                    reporting back so the list and the booking both refresh.
+
+                    `isCurrent` uses the page's OWN token rather than the
+                    freshly minted sibling one: they address the same booking,
+                    and two different strings for it would let this row and the
+                    card above be open against "different" bookings at once.
+                    ─────────────────────────────────────────────────────────
+                  */}
                   {meeting.canModify && (
                     <span className="ms-auto flex items-center gap-2">
-                      <a
-                        href={`/reschedule/${meeting.token}`}
-                        className="rounded-full border px-3 py-1 text-xs font-medium"
-                        style={{ borderColor: 'var(--ap-border)', color: 'var(--ap-text)' }}
-                      >
-                        {t('reschedule')}
-                      </a>
-                      <a
-                        href={`/book/manage/${meeting.token}/cancel`}
-                        className="rounded-full border px-3 py-1 text-xs font-medium"
-                        style={{ borderColor: 'var(--ap-border)', color: 'var(--ap-text-muted)' }}
-                      >
-                        {t('cancel')}
-                      </a>
+                      {(['reschedule', 'cancel'] as const).map(kind => {
+                        const rowToken = meeting.isCurrent ? token : meeting.token;
+                        const open = task?.kind === kind && task.token === rowToken;
+
+                        return (
+                          <button
+                            key={kind}
+                            type="button"
+                            onClick={() => openOnly(kind, rowToken)}
+                            aria-expanded={open}
+                            className="rounded-full border px-3 py-1 text-xs font-medium"
+                            style={{
+                              borderColor: 'var(--ap-border)',
+                              background: open ? 'var(--ap-brand-tint)' : 'transparent',
+                              color:
+                                kind === 'cancel' && !open
+                                  ? 'var(--ap-text-muted)'
+                                  : 'var(--ap-text)',
+                            }}
+                          >
+                            {t(kind)}
+                          </button>
+                        );
+                      })}
                     </span>
                   )}
 
@@ -603,18 +1089,71 @@ export default function BookingManagePage() {
               );
             })}
           </ol>
+
+        </section>
+      )}
+
+      {/*
+        ── CHANGING A TIME, OR CALLING ONE OFF ───────────────────────────────
+        ONE MOUNT, BELOW THE LIST OF MEETINGS, WHICHEVER ROW ASKED FOR IT.
+
+        These opened directly under the booking tile, which put the picker
+        ABOVE the list of meetings it was changing one of — so the row the
+        client clicked scrolled away from the panel acting on it, and a
+        package's own card sat between the two.
+
+        Below the list, both the booking at the top of this column and every
+        row of the package open into the same place. `task.token` is the only
+        thing that differs, and it is what decides which booking is changed:
+        the page's own token from the booking card's buttons, that meeting's
+        token from a package row.
+
+        Named positively, not as "anything but intake": when the quote joined
+        the task union that exclusion silently matched it too, and opening a
+        quote would have drawn the CANCEL panel under the package list. The
+        intake form and the quote both stay under the booking — they belong to
+        the booking this portal is for and never to a sibling.
+
+        `key` on the token so switching rows remounts rather than leaving the
+        previous meeting's slots under the row just opened. `loadBooking(true)`
+        rather than a reload: the booking and the list it refreshes are both on
+        screen.
+      */}
+      {task && (task.kind === 'reschedule' || task.kind === 'cancel') && (
+        <section className="apc-panel p-5">
+          {task.kind === 'reschedule' ? (
+            <ReschedulePanel
+              key={task.token}
+              token={task.token}
+              embedded
+              onChanged={() => loadBooking(true)}
+            />
+          ) : (
+            <CancelPanel
+              key={task.token}
+              token={task.token}
+              embedded
+              onChanged={() => loadBooking(true)}
+            />
+          )}
         </section>
       )}
 
 
-          {portal && (
-            <PortalMeetings brand={brand} meetings={portal.meetings} timeZone={portal.timeZone} />
-          )}
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           {/* Side by side: neither is more than a few lines. */}
-          <div className="grid gap-3 sm:grid-cols-2">
+          {/*
+            PAYMENT AND THE CLIENT, SIDE BY SIDE.
+
+            Payment first, on the reading-start side, because it is what a
+            client opens this page to check. Both are always present: a payment
+            card that disappeared when nothing was owed made the top of this
+            column a different shape on every booking, and left a client
+            guessing whether "no card" meant nothing to pay or nothing loaded.
+          */}
+          <div className="grid items-start gap-3 sm:grid-cols-2">
       {/*
         ── THE MONEY, ONCE ──────────────────────────────────────────────────
         Read from the state the ROUTE derives from the invoices and the plan,
@@ -625,9 +1164,9 @@ export default function BookingManagePage() {
         Solid brand, because it is the one figure most clients open this page
         to check.
       */}
-      {hasMoney && payment && (
+      {hasMoney && payment ? (
         <section
-          className="flex flex-col p-5"
+          className="flex h-full flex-col p-5"
           style={{
             background: 'var(--ap-brand)',
             color: 'var(--ap-on-brand)',
@@ -669,9 +1208,9 @@ export default function BookingManagePage() {
               <div className="flex items-baseline justify-between gap-3">
                 <dt style={{ opacity: 0.85 }}>{t('portal.due_by').replace('{date}', '')}</dt>
                 <dd className="font-semibold tabular-nums">
-                  {/* 'UTC': a due date is a DAY, and reading it in a zone
-                      behind the business moves it to the day before. */}
-                  {formatPublicDate(new Date(payment.dueDate), locale, undefined, 'UTC')}
+                  {/* A DAY, formatted from its own parts: no instant is
+                      constructed, so no clock can move it. */}
+                  {formatPublicDay(payment.dueDate, locale)}
                 </dd>
               </div>
             )}
@@ -707,11 +1246,33 @@ export default function BookingManagePage() {
             </p>
           )}
 
-          {/* Only where money is genuinely outstanding AND there is an invoice
-              behind it. */}
-          {payment.payUrl && (
-            <a
-              href={payment.payUrl}
+          {/*
+            Only where money is genuinely outstanding AND there is an invoice
+            behind it.
+
+            A button, not a link. This was an `<a>` to `/invoice/{id}` — the
+            one action left on this page that took the client somewhere else —
+            and it opens the card fields under the booking instead, beside the
+            same control on the booking card. Both drive one task, so opening
+            from either closes whatever else was open.
+          */}
+          {payment.invoiceId && (
+            <button
+              type="button"
+              /*
+                Opens, never closes. This toggled, so with the card open the
+                primary control on the money tile read "close" — and in Hebrew
+                it read `סגירה`, a noun meaning "closure", which beside an
+                amount can be taken as closing or settling the bill.
+                Reported as "what does this button do?", which is the only
+                answer that matters for a control that moves money.
+
+                Closing belongs to the card itself, below. Here the label is
+                one thing, always, and a second click simply re-opens what is
+                already open.
+              */
+              onClick={() => setTask({ kind: 'pay', token })}
+              aria-expanded={payOpen}
               className="mt-4 flex h-11 items-center justify-center text-sm font-bold transition-opacity hover:opacity-85"
               style={{
                 background: 'var(--ap-surface)',
@@ -720,95 +1281,73 @@ export default function BookingManagePage() {
               }}
             >
               {t('portal.pay_now')}
-            </a>
+            </button>
           )}
         </section>
-      )}
+      ) : (
+        /*
+          NOTHING OWED IS STILL AN ANSWER.
 
-      {/*
-        ── THE INTAKE FORM, and whether it is done ───────────────────────────
-        It had exactly one way in: the link in the email that asked for it. A
-        client who archived that mail, or filled half of it in and came back,
-        could not reach it from here; one who HAD completed it was told so
-        nowhere. Both states are things a client wants to know.
-      */}
+          A free service, and a booking whose price was never set, used to
+          render no card here at all — so the top of this column was one tile
+          wide on those bookings and two on every other, and a client had no
+          way to tell "nothing to pay" apart from "the payment card failed to
+          load". Saying it costs one line and removes the ambiguity.
 
-      {/*
-        ── THE FORM: one card, in both states ───────────────────────────────
-        Briefly the whole form was rendered inline here whenever it was
-        outstanding, which put a page of questions in the middle of a page
-        about an appointment. The card says what is left to do and opens the
-        questions when the client asks for them; `/intake` mounts the same
-        `IntakePanel`, so there is still one implementation of the form.
-
-        Shown in BOTH states deliberately. A client who has filled it in was
-        told so nowhere, and the only way to be sure was to open the old email
-        link and look.
-      */}
-      {intake?.required && (
-        <section className="apc-panel flex flex-col p-5">
-          <div className="flex items-center gap-2.5">
-            <span
-              aria-hidden
-              className="flex h-8 w-8 shrink-0 items-center justify-center"
-              style={{ background: 'var(--ap-brand-tint)', borderRadius: 'var(--ap-radius-md)' }}
-            >
-              {intake.completed ? (
-                <ClipboardCheck className="h-4 w-4" style={{ color: '#15803D' }} />
-              ) : (
-                <ClipboardList className="h-4 w-4" style={{ color: 'var(--ap-brand)' }} />
-              )}
-            </span>
-            <h3 className="text-sm font-bold" style={{ color: 'var(--ap-text)' }}>
-              {t('portal.intake')}
-            </h3>
-          </div>
-          <p className="mt-3 text-sm" style={{ color: 'var(--ap-text-muted)' }}>
-            {t(intake.completed ? 'portal.intake_done' : 'portal.intake_todo')}
+          Quiet, not brand-solid: there is no figure to lead with, and the
+          filled tile is reserved for money that actually moves.
+        */
+        <section className="apc-panel flex h-full flex-col p-5">
+          <h3 className="text-xs font-bold" style={{ color: 'var(--ap-text-muted)' }}>
+            {t('portal.payment')}
+          </h3>
+          <p className="mt-1 text-sm font-bold" style={{ color: 'var(--ap-text)' }}>
+            {t('portal.nothing_due')}
           </p>
-          {/*
-            OPENS HERE, rather than navigating.
-
-            This was a link to `/intake`, so the one thing left before the
-            appointment took the client off the portal and onto a page of its
-            own. The questions belong where the client already is: the button
-            unfolds them into this card, and the card keeps its place in the
-            column. `/intake` still exists for the link in their email, and
-            mounts the same component.
-          */}
-          <button
-            type="button"
-            onClick={() => setIntakeOpen(open => !open)}
-            aria-expanded={intakeOpen}
-            className="mt-4 flex h-10 items-center justify-center self-start px-4 text-sm font-bold transition-opacity hover:opacity-85"
-            style={
-              intake.completed || intakeOpen
-                ? {
-                    border: '1px solid var(--ap-border)',
-                    color: 'var(--ap-text)',
-                    borderRadius: 'var(--ap-radius-md)',
-                  }
-                : {
-                    background: 'var(--ap-brand)',
-                    color: 'var(--ap-on-brand)',
-                    borderRadius: 'var(--ap-radius-md)',
-                  }
-            }
-          >
-            {intakeOpen
-              ? t('portal.close')
-              : t(intake.completed ? 'portal.intake_review' : 'portal.intake_open')}
-          </button>
-
-          {intakeOpen && (
-            <div className="mt-4 border-t pt-4" style={{ borderColor: 'var(--ap-border)' }}>
-              <IntakePanel token={token} embedded />
-            </div>
-          )}
         </section>
       )}
 
+          {/*
+            ───────────────────────────────────────────────────────────────────
+            THE PAIR IS ONE SHAPE, SO IT TAKES THE TALLER CARD'S HEIGHT.
 
+            `h-full`, not `items-stretch` on the grid. The grid keeps its
+            `items-start` — a card grid that stretches by default is the fault
+            `publicCardsKeepTheirPlace` exists for, and it has shipped three
+            times — and these two cards opt IN individually.
+
+            On a `align-self: start` grid item, `height: 100%` still resolves
+            against the grid AREA, which is the row height. So whichever of the
+            two is taller sets it and the other follows, and no third card
+            added to this column can be dragged along by it.
+
+            Why opt in here: a payment card carrying a due date and a Pay
+            button stands about half as tall again as a name and an email, and
+            the two sitting side by side at the top of the column made the
+            whole page look unfinished at its most-read corner.
+            ───────────────────────────────────────────────────────────────────
+          */}
+          {portal && (portal.clientName || portal.clientEmail) && (
+            <section className="apc-panel h-full p-5">
+              <h3 className="mb-3 text-xs font-semibold" style={{ color: 'var(--ap-text-muted)' }}>
+                {t('yourDetails')}
+              </h3>
+              <dl className="space-y-2.5">
+                {portal.clientName && (
+                  <div className="flex items-center gap-2.5">
+                    <User className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+                    <dd className="text-sm"><bdi>{portal.clientName}</bdi></dd>
+                  </div>
+                )}
+                {portal.clientEmail && (
+                  <div className="flex items-center gap-2.5">
+                    <Mail className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+                    <dd className="break-all text-sm"><bdi>{portal.clientEmail}</bdi></dd>
+                  </div>
+                )}
+              </dl>
+            </section>
+          )}
           </div>
       {/*
         ── THE PLAN, PAYMENT BY PAYMENT ──────────────────────────────────────
@@ -861,12 +1400,44 @@ export default function BookingManagePage() {
                 >
                   <bdi>{money(period.amount, payment.currency)}</bdi>
                 </span>
-                {period.dueDate && (
+                {/*
+                  ─────────────────────────────────────────────────────────────
+                  THE DATE THAT IS TRUE OF THIS STAGE RIGHT NOW.
+
+                  Only `dueDate` was shown, whatever the stage's state, which
+                  made a settled payment read "₪1,000 · Monday 23 November ·
+                  paid" about money that arrived on 9 October. The client was
+                  told the wrong date for their own payment.
+
+                  And a milestone has NO due date — it falls due when the work
+                  is done — so the second stage of a two-stage quote showed no
+                  date at all, despite having been paid on a known day.
+
+                  Once money has moved, when it moved is the fact worth
+                  showing. Before then, when it is owed.
+                  ─────────────────────────────────────────────────────────────
+                */}
+                {(period.paidAt ?? period.dueDate) && (
                   <span
                     className="text-xs tabular-nums"
                     style={{ color: 'var(--ap-text-muted)' }}
                   >
-                    {formatPublicDate(new Date(period.dueDate), locale, undefined, 'UTC')}
+                    {/*
+                      The two dates need DIFFERENT zones, and getting that wrong
+                      moves one of them by a day.
+
+                      `dueDate` is a plain DATE column with no time in it. It
+                      is formatted from its own parts, so no clock is involved
+                      and nothing can shift it.
+
+                      `paidAt` is an instant, and an instant needs a clock: the
+                      BUSINESS's. Money taken at 01:00 in Israel is 22:00 the
+                      day before in UTC, so any other clock would tell the
+                      client they paid on a day they did not.
+                    */}
+                    {period.paidAt
+                      ? formatPublicDate(new Date(period.paidAt), locale, undefined, subjectZone)
+                      : formatPublicDay(period.dueDate, locale)}
                   </span>
                 )}
                 <span
@@ -890,8 +1461,6 @@ export default function BookingManagePage() {
         </section>
       )}
 
-
-          <div className="grid gap-3 sm:grid-cols-2">
       {/*
         ── THE QUOTE ─────────────────────────────────────────────────────────
         A `sale_mode: 'proposal'` service is a consultation that ends in a
@@ -951,50 +1520,18 @@ export default function BookingManagePage() {
             {t(QUOTE_STATE[quote.status]?.key ?? 'portal.quote_sent')}
           </p>
 
-          {quote.token && QUOTE_STATE[quote.status]?.open !== false && (
-            <a
-              /* INSIDE the portal. This pointed at `/proposal/{token}`, which
-                 has its own route tree and so inherits none of this frame: the
-                 client was sent to answer their quote on what read as a page
-                 from somewhere else. The BOOKING token, deliberately — the
-                 quote's own is minted server-side by that page. */
-              href={`/book/manage/${token}/quote`}
-              className="mt-4 flex h-10 items-center justify-center self-start px-4 text-sm font-bold transition-opacity hover:opacity-85"
-              style={{
-                background: 'var(--ap-brand)',
-                color: 'var(--ap-on-brand)',
-                borderRadius: 'var(--ap-radius-md)',
-              }}
-            >
-              {t('portal.quote_open')}
-            </a>
-          )}
+          {/* No button here any more: answering moved to the booking card at
+              the top of the right column, where the appointment the quote is
+              for is on screen while the client decides. This card states the
+              figure and where it stands, which is money, and money stays in
+              this column. */}
         </section>
       )}
 
 
-          {portal && (portal.clientName || portal.clientEmail) && (
-            <section className="apc-panel p-5">
-              <h3 className="mb-3 text-xs font-semibold" style={{ color: 'var(--ap-text-muted)' }}>
-                {t('yourDetails')}
-              </h3>
-              <dl className="space-y-2.5">
-                {portal.clientName && (
-                  <div className="flex items-center gap-2.5">
-                    <User className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
-                    <dd className="text-sm"><bdi>{portal.clientName}</bdi></dd>
-                  </div>
-                )}
-                {portal.clientEmail && (
-                  <div className="flex items-center gap-2.5">
-                    <Mail className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
-                    <dd className="break-all text-sm"><bdi>{portal.clientEmail}</bdi></dd>
-                  </div>
-                )}
-              </dl>
-            </section>
+          {portal && (
+            <PortalMeetings brand={brand} meetings={portal.meetings} timeZone={portal.timeZone} />
           )}
-          </div>
           <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address', 'links']} />
           {/* Opening hours last: it is the thing a client checks on the
               morning of the appointment, not while reading the booking. */}

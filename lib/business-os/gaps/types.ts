@@ -90,7 +90,37 @@ export type GapId =
    * can decide when a phase is done. See the definition for why nothing surfaced
    * it before.
    */
-  | 'stage_awaiting_completion';
+  | 'stage_awaiting_completion'
+  /**
+   * A meeting the PLATFORM closed off, still open to being corrected.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `auto_complete_meetings` records every past meeting as having happened,
+   * because `completed` is the only one of the three answers it can give. The
+   * other two — no-show and called off — are judgements about a room it was
+   * not in.
+   *
+   * Completing the booking also removes it from `meeting_unmarked`, so without
+   * this the correction would have nowhere to be made: the row simply vanishes
+   * and a no-show is silently on the books as attendance. That matters beyond
+   * tidiness — a no-show is the basis for a fee, and it feeds the no-show rate
+   * and its baseline.
+   *
+   * Seven days, then it settles. Long enough to survive a week away, short
+   * enough that the card does not fill with history the owner has closed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | 'meeting_auto_completed'
+  /**
+   * A quote carrying a deadline, still unanswered.
+   *
+   * The dated subset of `quote_awaiting_client`, and the owner's move rather
+   * than the client's: an offer that expires is the business's to protect,
+   * because once the date passes the sale is gone at that price. An undated
+   * quote stays where it was — the client has it, and nagging the owner about
+   * it every morning is what `blocksOn` exists to prevent.
+   */
+  | 'quote_deadline_unanswered';
 
 /**
  * What the owner can do about a gap, if anything.
@@ -108,6 +138,8 @@ export type GapAction =
   | 'send_quote'
   | 'chase_intake'
   | 'chase_payment'
+  /** Ask a client whether they need more time or more information on a quote. */
+  | 'chase_quote'
   /**
    * Mark a phase done so it can be invoiced.
    *

@@ -39,7 +39,7 @@
  */
 
 import { useState } from 'react';
-import { AlertTriangle, EyeOff } from 'lucide-react';
+import { AlertTriangle, EyeOff, Ban } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -87,6 +87,15 @@ export function StopQuoteDialog({
   const [note, setNote] = useState('');
   /* Whether the note is emailed to the client. Shared by default. */
   const [shareNote, setShareNote] = useState(true);
+  /*
+   * Whether to call off money that has not arrived. OFF by default.
+   *
+   * Stopping is not refunding. A job stopped half way is often still owed for
+   * the half that happened, so this is the owner's call rather than something
+   * the stop does to them. Left off, the invoice stands and goes on being
+   * chased, which was the old behaviour and is right more often than not.
+   */
+  const [cancelUnpaid, setCancelUnpaid] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -122,6 +131,7 @@ export function StopQuoteDialog({
           reason,
           note: note.trim() || undefined,
           share_note_with_client: shareNote,
+          cancel_unpaid_invoice: cancelUnpaid,
         }),
       });
 
@@ -223,6 +233,34 @@ export function StopQuoteDialog({
               maxLength={1000}
               placeholder={t('crm.quote.stop.note_placeholder') || 'Optional'}
               className="bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)]"
+            />
+          </div>
+
+          {/*
+            MONEY THAT HAS NOT ARRIVED, and whether it still should.
+
+            Off by default and worded as a question about the unpaid invoice
+            only: money already collected is never touched by this, and nor is
+            an invoice the client has paid — the server acts on `draft`, `sent`
+            and `overdue` and nothing else. Giving back what HAS been collected
+            is the refund dialog's job, which the drawer offers straight after
+            when there is something to give back.
+          */}
+          <div className="rounded-lg border border-[var(--v2-border)]">
+            <SwitchRow
+              checked={cancelUnpaid}
+              onChange={setCancelUnpaid}
+              isRTL={isRTL}
+              danger
+              icon={<Ban className="h-3.5 w-3.5 text-[#B54708]" />}
+              label={t('crm.quote.stop.cancel_unpaid_label') || 'Also cancel any unpaid invoice for this job'}
+              description={
+                cancelUnpaid
+                  ? t('crm.quote.stop.cancel_unpaid_on') ||
+                    'The client will no longer be able to pay it. Money already paid is untouched.'
+                  : t('crm.quote.stop.cancel_unpaid_off') ||
+                    'The invoice stands, and the client can still pay it.'
+              }
             />
           </div>
 

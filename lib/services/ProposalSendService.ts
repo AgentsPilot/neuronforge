@@ -32,7 +32,7 @@ import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { proposalRepository, type Proposal } from '@/lib/repositories/ProposalRepository';
 import { splitTotal } from '@/lib/services/ProposalAcceptanceService';
 import { generateProposalToken } from '@/lib/business-os/proposalToken';
-import { generateProposalEmail, generateQuoteStoppedEmail } from '@/lib/email/templates/proposal';
+import { generateProposalEmail, generateQuoteStoppedEmail, generateQuoteReminderEmail } from '@/lib/email/templates/proposal';
 import { resolveEmailBranding } from '@/lib/email/branding';
 import { sendEmail } from '@/lib/notifications/emailTransport';
 import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
@@ -452,4 +452,111 @@ export async function sendQuoteStoppedEmail(
     logger.error({ err, proposalId }, 'Could not email the client that the job stopped');
     return { sent: false };
   }
+}
+
+/**
+ * One reminder on a quote the client has not answered.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * HERE RATHER THAN IN THE DISPATCHER, because everything it needs is already
+ * resolved in this file and nowhere else: the signed view token, the owner's
+ * branding, the owner's locale. A reminder built elsewhere would be a second
+ * place that knows how to address a client about a quote, and the two would
+ * drift the first time either changed.
+ *
+ * NOT `sendProposal`. That is the "here is your quote" verb — it attaches the
+ * document, lists every stage and session, and writes a `proposal_sent`
+ * activity. Running it again produces a second quote, and a client holding two
+ * has a question nobody wanted to answer. The reminder points at the SAME page
+ * with the same token.
+ *
+ * It deliberately does NOT touch `sent_at` or `status`. The quote was sent
+ * once, on the day it says, and the follow-up is not a new issue of it — the
+ * 72-hour window the gap measures must keep meaning what it meant.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function sendQuoteReminder(
+  proposalId: string,
+  userId: string
+): Promise<{ ok: boolean; reason?: string }> {
+  const log = logger.child({ proposalId, userId, kind: 'quote_reminder' });
+
+  const existing = await proposalRepository.findById(proposalId, userId);
+  const proposal = existing.data;
+  if (!proposal) return { ok: false, reason: 'not_found' };
+
+  /*
+   * Re-checked HERE as well as in the dispatcher.
+   *
+   * Three days pass between the quote being reported and this running, and a
+   * client who accepted an hour ago must not receive a nudge about a decision
+   * they have already made. The dispatcher asks the same question; this is the
+   * last place before an email leaves.
+   */
+  if (proposal.status !== 'sent' && proposal.status !== 'viewed') {
+    return { ok: false, reason: 'already_answered' };
+  }
+
+  const { data: contact } = await supabaseServer
+    .from('crm_contacts')
+    .select('first_name, email')
+    .eq('id', proposal.contact_id)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (!contact?.email) return { ok: false, reason: 'no_email' };
+
+  const { data: langRow } = await supabaseServer
+    .from('business_profiles')
+    .select('language')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const locale = resolveUserLanguage({
+    profileLanguage: langRow?.language ?? null,
+  }).language as Locale;
+  const branding = await resolveEmailBranding(userId, locale);
+
+  /* The SAME token and the same page: the client follows the link they
+     already have rather than being given a second one to choose between. */
+  const token = generateProposalToken(proposal.id, contact.email);
+  const viewUrl = `${platformOrigin()}/proposal/${token}`;
+
+  const { subject, html } = generateQuoteReminderEmail({
+    title: proposal.title,
+    total: proposal.total,
+    currency: proposal.currency,
+    validUntil: proposal.valid_until,
+    viewUrl,
+    clientFirstName: contact.first_name,
+    branding,
+    locale,
+  });
+
+  const result = await sendEmail({
+    kind: 'transactional',
+    to: [contact.email],
+    subject,
+    html,
+    ownerUserId: userId,
+  });
+
+  /* Recorded whether or not it landed, for the same reason the quote itself
+     is: a reminder that failed is what somebody comes looking for. */
+  await recordEmailSend({
+    userId,
+    contactId: proposal.contact_id,
+    toEmail: contact.email,
+    subject,
+    bodyHtml: html,
+    result,
+  });
+
+  if (!result.sent) {
+    log.error({ error: result.error }, 'Quote reminder not sent');
+    return { ok: false, reason: result.error || 'send_failed' };
+  }
+
+  log.info('Quote reminder sent');
+  return { ok: true };
 }

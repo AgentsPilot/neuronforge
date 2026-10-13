@@ -469,9 +469,19 @@ export class SmartLinkRepository {
     try {
       const { data, error } = await this.supabase
         .from('smart_link_clicks')
-        .select('smart_link_id, created_at, smart_links ( id, code, name )')
+        /*
+         * `clicked_at`, not `created_at`: this table records WHEN THE CLICK
+         * HAPPENED and names the column for the event, not for the row.
+         *
+         * Naming a column that does not exist makes PostgREST reject the whole
+         * query (42703), and the caller reads that as "no smart link for this
+         * session". So every form submission logged
+         * "Could not resolve a smart link from its session" and attribution was
+         * silently lost -- the failure was total, and looked like an absence.
+         */
+        .select('smart_link_id, clicked_at, smart_links ( id, code, name )')
         .eq('session_id', sessionId)
-        .order('created_at', { ascending: false })
+        .order('clicked_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 

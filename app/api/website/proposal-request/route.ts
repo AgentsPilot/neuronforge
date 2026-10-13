@@ -33,6 +33,7 @@ import { recordConsent } from '@/lib/consent/recordConsent';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { closedDayVerdict } from '@/lib/scheduling/closedDay';
 import { businessDateKey, businessHhmm, safeTimezone } from '@/lib/scheduling/businessTime';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 const logger = createLogger({ module: 'ProposalRequestAPI' });
 
@@ -149,11 +150,7 @@ export async function POST(request: NextRequest) {
     let ownerId: string;
 
     if (data.subdomain) {
-      const { data: page, error } = await supabaseServer
-        .from('website_pages')
-        .select('user_id')
-        .eq('subdomain', data.subdomain)
-        .single();
+      const { data: page, error } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(data.subdomain);
 
       if (error || !page) {
         requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');

@@ -46,6 +46,7 @@ import { recordConsent } from '@/lib/consent/recordConsent';
 import { businessDateKey, businessHhmm, safeTimezone } from '@/lib/scheduling/businessTime';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { closedDayVerdict } from '@/lib/scheduling/closedDay';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 const logger = createLogger({ module: 'WebsiteBookingCreateAPI' });
 
@@ -140,11 +141,7 @@ export async function POST(request: NextRequest) {
     // If userCode is provided, look up business profile owner (standalone booking page)
     // Otherwise, use authenticated user (preview mode)
     if (data.subdomain && data.subdomain.trim()) {
-      const { data: websitePage, error: pageError } = await supabaseServer
-        .from('website_pages')
-        .select('id, user_id')
-        .eq('subdomain', data.subdomain)
-        .single();
+      const { data: websitePage, error: pageError } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(data.subdomain);
 
       if (pageError || !websitePage) {
         requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');
