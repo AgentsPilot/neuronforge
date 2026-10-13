@@ -41,7 +41,7 @@ describe('every action survived the move', () => {
     ['held', /onSetStatus\?\.\('completed'\)/],
     ['no show', /onSetStatus\('no_show'\)/],
     ['cancel', /onSetStatus\('cancelled'\)/],
-    ['reschedule', /run: onReschedule/],
+    ['reschedule', /run: onReschedule/],  // narrowed to not-yet-held; see below
   ])('still offers %s', (_name, pattern) => {
     expect(actions).toMatch(pattern);
   });
@@ -79,10 +79,22 @@ describe('every action survived the move', () => {
     expect(actions).toMatch(/if \(!settled && onSetStatus\) \{/);
   });
 
-  it('lets any meeting be moved, including one already marked', () => {
-    // Unconditional before, unconditional now: it is how a wrong outcome gets
-    // corrected.
-    expect(actions).toMatch(/if \(onReschedule\)/);
+  it('lets a meeting be moved until it has happened', () => {
+    /*
+     * A DELIBERATE NARROWING, and the one exception to "same actions, same
+     * rows" above.
+     *
+     * It was unconditional, on the reasoning that rebooking corrects a
+     * mistaken outcome. It does not: nothing in this menu undoes "held", so
+     * changing the date never un-held anything. And on a package billed per
+     * meeting, marking one held RAISES AND EMAILS ITS INVOICE — moving the
+     * date afterwards leaves the booking and the client's invoice on two
+     * different days.
+     *
+     * Still offered on cancelled and no-show, which is the ordinary
+     * reschedule: the client missed it, so it moves.
+     */
+    expect(actions).toMatch(/if \(onReschedule && status !== 'completed'\)/);
   });
 });
 

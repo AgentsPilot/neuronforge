@@ -10,12 +10,13 @@ import {
   Users as UsersIcon, Phone as PhoneIcon, MessageCircle,
   Plus, X, Check
 } from 'lucide-react';
-import PhoneInput from 'react-phone-number-input';
 import type { Country } from 'react-phone-number-input';
-import { SearchableCountrySelect } from '../SearchableCountrySelect';
-import { applyCountryToPhone, phoneFieldCountry, phoneFieldValue } from '../phoneField';
-import en from 'react-phone-number-input/locale/en';
+// The phone library is fetched after first paint, not with the page (PERF-2):
+// see components/crm/usePhoneLib.ts. The stylesheet stays static so the
+// cascade is unchanged.
 import 'react-phone-number-input/style.css';
+import { usePhoneLib } from '@/components/crm/usePhoneLib';
+import { PhoneFieldPlaceholder } from '@/components/crm/PhoneFieldPlaceholder';
 import { CollapsibleSection } from '../CollapsibleSection';
 
 import type { ContactFormData, CRMPipelineStage } from './types';
@@ -66,9 +67,18 @@ export function ClientDetailsSection({
    * initialiser runs once per mount, which is what a field's starting country
    * should be: an answer, not a value that keeps overriding the owner.
    */
-  const [phoneCountry, setPhoneCountry] = useState<Country>(() =>
-    phoneFieldCountry(formData.phone)
-  );
+  const phoneLib = usePhoneLib();
+  /*
+   * The number the starting country is read from: `formData.phone` as it was
+   * at mount, exactly what the initialiser read before. Held as a plain string
+   * because the reading itself needs the phone library, which may still be
+   * arriving at mount (PERF-2). Until the owner picks a country, the field's
+   * country is `phoneFieldCountry(phoneSeed)`, the same answer as before.
+   */
+  const [phoneSeed] = useState(() => formData.phone);
+  const [chosenPhoneCountry, setPhoneCountry] = useState<Country | undefined>(undefined);
+  const phoneCountry: Country | undefined =
+    chosenPhoneCountry ?? phoneLib?.phoneFieldCountry(phoneSeed);
   /** The chip list is collapsed to the current answer until somebody opens it. */
   const [sourceOpen, setSourceOpen] = useState(false);
   const [newTag, setNewTag] = useState('');
@@ -155,7 +165,9 @@ export function ClientDetailsSection({
             {t('crm.modal.phone')} <span className="text-red-500">*</span>
           </Label>
           <div className="flex gap-2" dir="ltr">
-            <SearchableCountrySelect
+            {phoneLib ? (
+            <>
+            <phoneLib.SearchableCountrySelect
               value={phoneCountry}
               /*
                 Choosing a country is a statement about the NUMBER, so it
@@ -168,18 +180,22 @@ export function ClientDetailsSection({
                 setPhoneCountry(country);
                 setFormData(prev => ({
                   ...prev,
-                  phone: applyCountryToPhone(prev.phone, country) ?? prev.phone,
+                  phone: phoneLib.applyCountryToPhone(prev.phone, country) ?? prev.phone,
                 }));
               }}
-              labels={en}
+              labels={phoneLib.phoneCountryLabelsEn}
             />
-            <PhoneInput
+            <phoneLib.PhoneInput
               countryCallingCodeEditable={false}
               country={phoneCountry}
-              value={phoneFieldValue(formData.phone, phoneCountry)}
+              value={phoneLib.phoneFieldValue(formData.phone, phoneCountry)}
               onChange={(value) => setFormData(prev => ({ ...prev, phone: value || '' }))}
               className="phone-input-crm flex-1"
             />
+            </>
+            ) : (
+              <PhoneFieldPlaceholder className="phone-input-crm flex-1" />
+            )}
           </div>
         </div>
 

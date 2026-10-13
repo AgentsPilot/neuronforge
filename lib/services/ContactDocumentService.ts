@@ -33,19 +33,21 @@ const BUCKET = 'contact-documents';
 export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
 
 /** What the bucket will accept. Kept beside the bucket it configures. */
-export const ALLOWED_MIME_TYPES = [
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'image/jpeg',
-  'image/png',
-  'image/gif',
-  'image/webp',
-  'text/plain',
-  'text/csv',
-];
+/*
+ * Re-exported, not declared here.
+ *
+ * The list moved to `lib/crm/attachableDocumentTypes` so the file PICKER can
+ * read it too: this module imports `supabaseServer`, so a client component
+ * importing the list from here would pull the service-role client into the
+ * browser bundle. Kept as an export because this name is what the upload route
+ * and the chat attachment route already import.
+ */
+import { ATTACHABLE_DOCUMENT_TYPES } from '@/lib/crm/attachableDocumentTypes';
+
+/* Imported AND re-exported, deliberately: a bare `export … from` would not bind
+   the name in this module, and it is used twice below — for the bucket's
+   allow-list and for the check before upload. */
+export const ALLOWED_MIME_TYPES = ATTACHABLE_DOCUMENT_TYPES;
 
 export interface UploadedDocument {
   id: string;

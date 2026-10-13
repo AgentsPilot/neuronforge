@@ -34,112 +34,43 @@ import { REFUND_CLASS, REFUND_HEX } from '@/components/payments/refundTone';
  * Add another date to a package already under way.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * Its own component because it holds state — one date, one answer about the
- * money — and the journey renders many steps: a single set of fields on the tab
- * would be shared by every package on screen and open on all of them at once.
+ * IT OPENS THE BOOKING DIALOG, AND DOES NOT ASK FOR A DATE ITSELF.
  *
- * The money question is only asked where it means anything: on a package billed
- * after each meeting, where the client is already paying session by session. On
- * one paid up front the server refuses a charge outright, because billing more
- * than the agreed sum is selling something else.
+ * This was a bare `datetime-local` beside a checkbox. It accepted any value the
+ * browser allowed, and the owner found out the hour was already sold, or the
+ * day closed, only after pressing Add — as a red sentence under the field. A
+ * make-up session is exactly the case where the diary matters most: the whole
+ * reason for adding one is that something has to fit around what is already
+ * there.
+ *
+ * So the link opens the dialog the rest of the platform books in, which knows
+ * the service's hours, the owner's closed days and the slots already taken.
+ * What it must NOT do is write the booking: a package's meeting is created by
+ * the meetings endpoint, which gives it its parent, its occurrence number and
+ * its charge. See `onPickSlot` on `SchedulingBookingModal`.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 function AddPackageMeeting({
   containerId,
-  billsPerMeeting,
-  onAdd,
+  onOpen,
   t,
 }: {
   containerId: string;
-  billsPerMeeting: boolean;
-  onAdd: (containerId: string, startTime: string, charge: boolean) => Promise<void> | void;
+  onOpen: (containerId: string) => void;
   t: (key: string) => string;
 }) {
-  const [open, setOpen] = useState(false);
-  const [when, setWhen] = useState('');
-  const [charge, setCharge] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={event => {
-          event.stopPropagation();
-          setOpen(true);
-          setWhen('');
-          setCharge(false);
-          setError(null);
-        }}
-        className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#8B5CF6] hover:underline"
-      >
-        <Plus className="h-3.5 w-3.5" />
-        {t('crm.booking.package.add_meeting')}
-      </button>
-    );
-  }
-
   return (
-    <div
-      className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--v2-bg)] px-2.5 py-2"
-      onClick={event => event.stopPropagation()}
+    <button
+      type="button"
+      onClick={event => {
+        event.stopPropagation();
+        onOpen(containerId);
+      }}
+      className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#8B5CF6] hover:underline"
     >
-      <input
-        type="datetime-local"
-        value={when}
-        onChange={event => {
-          setWhen(event.target.value);
-          setError(null);
-        }}
-        className="h-8 rounded-md border border-[var(--v2-border)] bg-[var(--v2-surface)] px-2 text-[12.5px] text-[var(--v2-text-primary)]"
-      />
-
-      {billsPerMeeting && (
-        <label className="flex items-center gap-1.5 text-[11.5px] text-[var(--v2-text-secondary)]">
-          <input type="checkbox" checked={charge} onChange={event => setCharge(event.target.checked)} />
-          {t('crm.booking.package.charge_it')}
-        </label>
-      )}
-
-      <button
-        type="button"
-        disabled={!when || busy}
-        onClick={async () => {
-          setBusy(true);
-          setError(null);
-          try {
-            await onAdd(containerId, when, charge && billsPerMeeting);
-            setOpen(false);
-          } catch (err) {
-            /*
-             * Said here, where the date is: the commonest answers are "that
-             * hour is taken" and "you are closed that day", and both are about
-             * the field being looked at.
-             */
-            setError(err instanceof Error ? err.message : t('crm.booking.package.add_failed'));
-          } finally {
-            setBusy(false);
-          }
-        }}
-        className="rounded-full bg-[#8B5CF6] px-3 py-1 text-[11.5px] font-medium text-white transition-colors hover:bg-[#7C3AED] disabled:opacity-50"
-      >
-        {busy ? t('crm.booking.package.adding') : t('crm.booking.package.add_confirm')}
-      </button>
-
-      <button
-        type="button"
-        onClick={() => {
-          setOpen(false);
-          setError(null);
-        }}
-        className="text-[11.5px] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
-      >
-        {t('button.cancel')}
-      </button>
-
-      {error && <p className="w-full text-[11.5px] text-red-500">{error}</p>}
-    </div>
+      <Plus className="h-3.5 w-3.5" />
+      {t('crm.booking.package.add_meeting')}
+    </button>
   );
 }
 
@@ -266,13 +197,7 @@ interface BookingsTabProps {
    * package billed after each meeting, where the client is already paying
    * session by session.
    */
-  onAddPackageMeeting?: (
-    containerId: string,
-    startTime: string,
-    charge: boolean
-  ) => Promise<void> | void;
-  /** Whether this purchase is billed per meeting, which decides the money question. */
-  packageBillsPerMeeting?: (containerId: string) => boolean;
+  onAddPackageMeeting?: (containerId: string) => void;
   isLoading?: boolean;
   isOpen?: boolean;
   onToggle?: (isOpen: boolean) => void;
@@ -494,7 +419,6 @@ export function BookingsTab({
   onResendConfirmation,
   onSetBookingStatus,
   onAddPackageMeeting,
-  packageBillsPerMeeting,
   isLoading = false,
   isOpen,
   onToggle,
@@ -528,7 +452,22 @@ export function BookingsTab({
    * ───────────────────────────────────────────────────────────────────────────
    */
   const [bookingSearch, setBookingSearch] = useState('');
-  const [bookingPage, setBookingPage] = useState(0);
+  /*
+   * `null` means "nobody has paged yet", which is not the same as page 0.
+   *
+   * A link from the Needs-you card names one booking and this tab expands it,
+   * but expanding a row five pages down shows the owner nothing: the list is
+   * five to a page and the expanded row renders outside the slice. The gap that
+   * raises these is usually weeks old, so the booking it names is very rarely
+   * among the five most recent — the one case where the old behaviour looked
+   * correct is a contact with a single booking, which is exactly the contact
+   * the fault is invisible on.
+   *
+   * Null lets the page FOLLOW the focused booking, including back to it when a
+   * search narrows the list. The moment the owner presses a pager themselves
+   * their choice is stored and wins from then on.
+   */
+  const [bookingPage, setBookingPage] = useState<number | null>(null);
   // Inline intake editing state
   const [editingIntakeBookingId, setEditingIntakeBookingId] = useState<string | null>(null);
   const [editingIntakeResponses, setEditingIntakeResponses] = useState<Record<string, unknown>>({});
@@ -1012,7 +951,19 @@ export function BookingsTab({
    * never point past the end, with no effect to fire and no render in between
    * where the list is empty for a frame.
    */
-  const page = Math.min(bookingPage, pageCount - 1);
+  /*
+   * Where the booking a link named actually sits, in the list as it stands.
+   *
+   * Computed against `filteredSessions` rather than the raw list, so it is the
+   * index the slice below will use. -1 when no booking was named, or when a
+   * search has hidden it — both mean "no opinion", and the list opens at the
+   * top as it always did.
+   */
+  const focusIndex = focusBookingId
+    ? filteredSessions.findIndex(session => session.booking.id === focusBookingId)
+    : -1;
+  const followFocus = focusIndex >= 0 ? Math.floor(focusIndex / PAGE_SIZE) : 0;
+  const page = Math.min(bookingPage ?? followFocus, pageCount - 1);
   const visibleSessions = filteredSessions.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
   // Intake editing helpers
@@ -1494,10 +1445,12 @@ export function BookingsTab({
                   value={bookingSearch}
                   onChange={(e) => {
                     setBookingSearch(e.target.value);
-                    // Back to the first page: the results under the reader have
-                    // just changed, and page 3 of the previous set means nothing
-                    // about this one.
-                    setBookingPage(0);
+                    // Back to no opinion: the results under the reader have just
+                    // changed, and page 3 of the previous set means nothing about
+                    // this one. `null` rather than 0, so a search that still
+                    // contains the booking a link named lands on it again
+                    // instead of on the top of the results.
+                    setBookingPage(null);
                   }}
                   placeholder={t('crm.drawer.search_bookings') || 'Search bookings'}
                   className="w-full rounded-lg border border-[var(--v2-border)] bg-[var(--v2-bg)] ps-9 pe-8 py-2 text-[13px] text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[#8B5CF6] focus:border-transparent"
@@ -1507,7 +1460,7 @@ export function BookingsTab({
                     type="button"
                     onClick={() => {
                       setBookingSearch('');
-                      setBookingPage(0);
+                      setBookingPage(null);
                     }}
                     aria-label={t('common.clear') || 'Clear'}
                     className="absolute end-2 top-1/2 -translate-y-1/2 rounded p-1 text-[var(--v2-text-muted)] hover:bg-[var(--v2-surface)] hover:text-[var(--v2-text-primary)]"
@@ -4412,6 +4365,47 @@ export function BookingsTab({
                                                 row.status === 'cancelled' || row.status === 'no_show';
                                               const meetingStatus = getBookingStatusLabel(row.status, true, false, row.start_time);
 
+                                              /*
+                                                WHETHER THE MONEY FOR THIS MEETING ARRIVED.
+                                                ──────────────────────────────────────────
+                                                On a package billed per meeting, marking one
+                                                held RAISES AN INVOICE and emails it. The row
+                                                then said "held" and nothing else, so the one
+                                                question the owner has next — did they pay? —
+                                                had no answer anywhere on this card. They
+                                                could watch an invoice go out and never see
+                                                it come back in.
+
+                                                The data was here all along: a meeting is a
+                                                `SessionCardData` like any other and carries
+                                                its own `payment`, built by the same pipeline
+                                                as the card above it. Only the row never read
+                                                it.
+
+                                                Absent for a package paid UP FRONT, where the
+                                                meetings have no money of their own and the
+                                                container card holds it. Absent too when the
+                                                service is free. In both cases there is no
+                                                payment fact to state, and inventing a "—"
+                                                for it would imply one is missing.
+                                              */
+                                              const pay = meeting.payment;
+                                              const refunded =
+                                                pay?.status === 'refunded' || Boolean(pay?.refundedAt);
+                                              const payState =
+                                                !pay || pay.status === 'free' || !(pay.amount > 0)
+                                                  ? null
+                                                  : refunded
+                                                    ? /* Orange, not red: the file settles this
+                                                         above — a refund is a completed,
+                                                         deliberate act, not a failure. */
+                                                      { text: t('crm.payment.status.refunded'), tone: '#B54708' }
+                                                    : pay.status === 'paid'
+                                                      ? { text: t('crm.payment.status.paid'), tone: '#22C58B' }
+                                                      : pay.invoiceStatus === 'overdue'
+                                                        ? { text: t('payments.invoice.overdue'), tone: '#D97706' }
+                                                        : { text: t('crm.payment.status.pending'), tone: 'var(--v2-text-muted)' };
+
                                               return (
                                                 <div
                                                   key={row.id}
@@ -4457,6 +4451,33 @@ export function BookingsTab({
                                                     {meetingStatus.text}
                                                   </span>
 
+                                                  {/*
+                                                    The amount AND the word, because either
+                                                    alone leaves the question open: a figure
+                                                    on its own does not say whether it arrived,
+                                                    and "Paid" on its own does not say what
+                                                    was. `ms-auto` puts every one of them on
+                                                    the same edge, so six meetings read as a
+                                                    column of money rather than six sentences
+                                                    of different lengths — and the row already
+                                                    wraps, so on a phone it drops to its own
+                                                    line instead of squeezing the date.
+                                                  */}
+                                                  {payState && (
+                                                    <span
+                                                      className="ms-auto shrink-0 text-[11.5px] tabular-nums"
+                                                      style={{ color: payState.tone }}
+                                                    >
+                                                      {new Intl.NumberFormat(isRTL ? 'he-IL' : 'en-US', {
+                                                        style: 'currency',
+                                                        currency: pay!.currency,
+                                                        maximumFractionDigits: pay!.amount % 1 === 0 ? 0 : 2,
+                                                      }).format(pay!.amount)}
+                                                      {' · '}
+                                                      {payState.text}
+                                                    </span>
+                                                  )}
+
                                                   <MeetingRowActions
                                                     status={row.status}
                                                     startTime={row.start_time ?? null}
@@ -4467,6 +4488,43 @@ export function BookingsTab({
                                                     }
                                                     onReschedule={
                                                       onEditSession ? () => onEditSession(row.id) : undefined
+                                                    }
+                                                    /*
+                                                      THE SAME DIALOG THE PAYMENT STAGES USE.
+                                                      ───────────────────────────────────────
+                                                      `onRefundStage` is named for where it
+                                                      was first needed, but its contract is an
+                                                      INVOICE — an id, what it was for, what
+                                                      has already gone back — and a meeting
+                                                      billed on its own has exactly that. So
+                                                      this reuses the dialog rather than
+                                                      adding a second way to return money,
+                                                      which would be a second place for the
+                                                      rules about partial refunds to drift.
+
+                                                      Labelled with the meeting's date, since
+                                                      that is what distinguishes it: six rows
+                                                      of one package are otherwise identical
+                                                      in a dialog that only names the thing.
+                                                    */
+                                                    refundable={Boolean(
+                                                      pay?.invoiceId
+                                                        && pay.status === 'paid'
+                                                        && pay.amount - Number(pay.refundedAmount || 0) > 0
+                                                    )}
+                                                    onRefund={
+                                                      onRefundStage && pay?.invoiceId
+                                                        ? () =>
+                                                            onRefundStage({
+                                                              invoiceId: pay.invoiceId as string,
+                                                              amount: pay.amount,
+                                                              refunded: Number(pay.refundedAmount || 0),
+                                                              currency: pay.currency,
+                                                              label: row.start_time
+                                                                ? formatDate(row.start_time)
+                                                                : String(row.occurrence_number ?? meetingIndex + 1),
+                                                            })
+                                                        : undefined
                                                     }
                                                     t={t}
                                                   />
@@ -4487,12 +4545,7 @@ export function BookingsTab({
                                                 containerId={
                                                   (step.metadata?.containerId as string) ?? booking.id
                                                 }
-                                                billsPerMeeting={Boolean(
-                                                  packageBillsPerMeeting?.(
-                                                    (step.metadata?.containerId as string) ?? booking.id
-                                                  )
-                                                )}
-                                                onAdd={onAddPackageMeeting}
+                                                onOpen={onAddPackageMeeting}
                                                 t={t}
                                               />
                                             )}
@@ -4610,7 +4663,11 @@ export function BookingsTab({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setBookingPage(p => Math.max(0, p - 1))}
+                    /* From the page being LOOKED AT, which is `page` — the
+                       stored value may still be null, meaning the view is
+                       following the focused booking. Pressing a pager is the
+                       owner taking that over. */
+                    onClick={() => setBookingPage(Math.max(0, page - 1))}
                     disabled={page === 0}
                     className="h-7 px-2 text-[12px]"
                   >
@@ -4629,7 +4686,7 @@ export function BookingsTab({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setBookingPage(p => Math.min(pageCount - 1, p + 1))}
+                    onClick={() => setBookingPage(Math.min(pageCount - 1, page + 1))}
                     disabled={page >= pageCount - 1}
                     className="h-7 px-2 text-[12px]"
                   >

@@ -37,9 +37,17 @@ import {
 import { FileText, Loader2, Paperclip, Plus, Send, Trash2, AlertTriangle, X, CalendarClock } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+/* A leaf with no imports of its own — see the module for why the list cannot be
+   taken from `ContactDocumentService`, which is where it used to live. */
+import { ATTACHABLE_DOCUMENT_TYPES, ATTACHABLE_ACCEPT } from '@/lib/crm/attachableDocumentTypes';
 import { windowsForDate, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
 import { closedDayVerdict } from '@/lib/scheduling/closedDay';
-import { recurringLocalInputs, MAX_OCCURRENCES, type Cadence } from '@/lib/scheduling/recurrence';
+import {
+  recurringLocalInputs,
+  cadenceOf,
+  MAX_OCCURRENCES,
+  type Cadence,
+} from '@/lib/scheduling/recurrence';
 import {
   toBusinessLocalInput,
   fromBusinessLocalInput,
@@ -169,6 +177,23 @@ interface ProposalBuilderModalProps {
       duration_minutes: number;
       bill_per_session?: boolean;
     } | null;
+    /**
+     * The package this version already created, once it was accepted.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WITHOUT IT A QUOTE CLASHED WITH ITSELF.
+     *
+     * Opening an accepted package — `onViewProposal`, which passes the version
+     * to open on — flagged every one of its own meetings as an hour already
+     * sold. Which is true, and useless: the booking holding the hour IS this
+     * quote's. The owner is told their own diary is a conflict, on a screen
+     * they cannot even edit.
+     *
+     * The container's sessions are its children, so one id excludes the whole
+     * series.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    package_booking_id?: string | null;
   } | null;
   /**
    * Show the quote as it was sent, with nothing editable.
@@ -463,6 +488,14 @@ export function ProposalBuilderModal({
         setSessionMinutes(previousSessions.duration_minutes || 60);
         setMinutesFromQuote(Boolean(previousSessions.duration_minutes));
         /*
+         * And the rhythm those dates were spaced at, read back from the dates
+         * themselves — see `cadenceOf`. Nothing else records it, so a
+         * fortnightly package reopened under a chip reading "every week", and
+         * touching the first date or the count would then re-space the whole
+         * series to weekly. A series nobody can name is left on the default.
+         */
+        setCadence(cadenceOf(locals.map(local => local.slice(0, 10))) ?? 'weekly');
+        /*
          * The job-shape state stays untouched: for a package it is derived from
          * `packagePay` at send, and leaving the stage rows of "Meeting 1…6"
          * behind would put them back on screen the moment the switch is turned
@@ -633,9 +666,35 @@ export function ProposalBuilderModal({
    */
   const packageZone = safeTimezone(timezone);
 
+  /* This quote's own package, which is not a conflict with this quote. */
+  const ownPackageId = basedOn?.package_booking_id ?? null;
+
+  /*
+   * A PACKAGE THAT ALREADY EXISTS IS A RECORD, NOT A PLAN.
+   *
+   * Every verdict above is advice about a quote that has not been sent yet —
+   * "move it before sending", "a client cannot accept their way into last
+   * Tuesday". Reading back the accepted quote that created the package, all of
+   * it is false: the client approved these dates, the meetings are in the
+   * diary, and the first one has already happened because the course started.
+   *
+   * What the owner was shown: the first meeting flagged as in the past, four
+   * more flagged as hours already booked (by these very meetings), and a
+   * headline saying five of the six would not be scheduled — on a screen with
+   * nothing to press, about a course that is running.
+   *
+   * `readOnly` is in the condition, not just the package id: it means nothing
+   * here can be sent, so this cannot weaken the gate at line ~808 that blocks
+   * sending on a past or empty date. A revision keeps every warning.
+   */
+  const alreadyBooked = readOnly && Boolean(ownPackageId);
+
   const sessionProblems = useMemo(
     () =>
       sessionDates.map(local => {
+        /* Asked before anything else: see `alreadyBooked` above. */
+        if (alreadyBooked) return null;
+
         if (!local || local.length < 16) return 'empty' as const;
 
         const start = fromBusinessLocalInput(local, packageZone);
@@ -679,7 +738,7 @@ export function ProposalBuilderModal({
 
         return null;
       }),
-    [sessionDates, timeOff, sessionMinutes, packageZone, serviceHours, takenSlots]
+    [sessionDates, timeOff, sessionMinutes, packageZone, serviceHours, takenSlots, alreadyBooked]
   );
 
   /*
@@ -866,7 +925,17 @@ export function ProposalBuilderModal({
               booking =>
                 booking.start_time &&
                 booking.end_time &&
-                ['confirmed', 'pending', 'completed'].includes(String(booking.status))
+                ['confirmed', 'pending', 'completed'].includes(String(booking.status)) &&
+                /*
+                 * Minus this quote's own series — the container and every
+                 * session under it. See `basedOn.package_booking_id`: an
+                 * accepted package otherwise reports all six of its meetings
+                 * as hours already taken.
+                 */
+                !(
+                  ownPackageId &&
+                  (booking.id === ownPackageId || booking.parent_booking_id === ownPackageId)
+                )
             )
             .map(booking => ({ start: String(booking.start_time), end: String(booking.end_time) }))
         );
@@ -882,7 +951,7 @@ export function ProposalBuilderModal({
     return () => {
       cancelled = true;
     };
-  }, [isPackage, seriesFrom, seriesTo, packageZone]);
+  }, [isPackage, seriesFrom, seriesTo, packageZone, ownPackageId]);
 
   /* The closed days, read once: the warning beside each date needs them. */
   useEffect(() => {
@@ -1054,7 +1123,28 @@ export function ProposalBuilderModal({
 
         const uploaded = await uploadRes.json();
         if (!uploaded.success || !uploaded.document?.id) {
-          setError(uploaded.error || t('proposal.error_upload'));
+          /*
+            SAY WHAT WENT WRONG, in the owner's own language.
+
+            ─────────────────────────────────────────────────────────────────
+            This printed whatever the server put in `error`, which for a
+            refused file type was "Failed to upload file" — a sentence that
+            describes the SYSTEM failing rather than the file being
+            unsuitable. There was nothing to act on: no indication that
+            choosing a different file would work.
+
+            A known code is translated here, with the type named. Anything
+            else still falls back to the server's sentence, and then to the
+            generic one, so an unexpected failure is never swallowed.
+            ─────────────────────────────────────────────────────────────────
+          */
+          const refusedType =
+            uploaded.code === 'unsupported_file_type'
+              ? (t('proposal.error_file_type') || 'This kind of file cannot be attached: {type}')
+                  .replace('{type}', uploaded.mime_type || file.type || '')
+              : null;
+
+          setError(refusedType || uploaded.error || t('proposal.error_upload'));
           setSending(false);
           return;
         }
@@ -1262,8 +1352,21 @@ export function ProposalBuilderModal({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
+          {/*
+            ONE COLUMN ON A PHONE, TWO FROM `sm`.
+
+            An amount and a date are a natural pair and read well side by side
+            on a desk. On a phone the pair is about 160px each, and a native
+            date control cannot be squeezed to that: it reserves room for the
+            full date, its separators and the calendar button, so it pushed its
+            own column wider than the dialog and bled off the screen edge —
+            border, picker icon and all. `min-w-0` on both cells is the other
+            half of the same fix: a grid child will not shrink below its
+            intrinsic width unless it is allowed to, so without it the track
+            widens again the moment a date is typed in.
+          */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="min-w-0">
               {/* `htmlFor`/`id`, which this pair never had: the label was not
                   associated with the field, so a screen reader announced an
                   unnamed input and clicking the word did not focus it. */}
@@ -1283,7 +1386,7 @@ export function ProposalBuilderModal({
                 className="tabular-nums"
               />
             </div>
-            <div>
+            <div className="min-w-0">
               {/*
                 Marked required, and told why when it is wrong.
 
@@ -1670,7 +1773,12 @@ export function ProposalBuilderModal({
                                   ? t('proposal.package_date_past')
                                   : problem === 'taken'
                                     ? t('proposal.package_date_taken')
-                                    : 'outside' in problem
+                                    /* Truthiness, not `in`: both verdicts are
+                                       object literals and TypeScript gives the
+                                       union an optional key for each, so `in`
+                                       does not narrow and `.start` reads as
+                                       possibly undefined. */
+                                    : problem.outside
                                       ? t('proposal.package_date_outside')
                                           .replace('{start}', problem.outside.start)
                                           .replace('{end}', problem.outside.end)
@@ -2014,7 +2122,12 @@ export function ProposalBuilderModal({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pdf,.doc,.docx,image/*"
+                  /* From the same list the store enforces. It read
+                     `.pdf,.doc,.docx,image/*`, which was narrower and wider
+                     than the truth at once: it hid the spreadsheets and text
+                     files the store accepts, and offered every image format
+                     in existence including several it refuses. */
+                  accept={ATTACHABLE_ACCEPT}
                   className="hidden"
                   onChange={e => {
                     const chosen = e.target.files?.[0];
@@ -2024,6 +2137,33 @@ export function ProposalBuilderModal({
                     // finished writing the quote.
                     if (chosen.size > MAX_FILE_MB * 1024 * 1024) {
                       setError(t('proposal.error_file_too_big').replace('{max}', String(MAX_FILE_MB)));
+                      e.target.value = '';
+                      return;
+                    }
+                    /*
+                      AND THE TYPE, for the same reason the size is checked here.
+                      ──────────────────────────────────────────────────────────
+                      `accept` above is a FILTER, not a rule: on a phone the
+                      share sheet routinely offers files it does not match, and
+                      "image/*" covers formats the store does not take anyway.
+                      Without this the first word of the refusal came after the
+                      owner had written the whole quote and pressed Send.
+
+                      Only a type the browser actually reported. A file whose
+                      type the browser cannot determine arrives as an empty
+                      string, and guessing from the name here would reject
+                      things the server would have taken — so an unknown type is
+                      allowed through and the server, which has the file, is
+                      left to answer.
+                    */
+                    if (chosen.type && !ATTACHABLE_DOCUMENT_TYPES.includes(chosen.type)) {
+                      /* Naming the kind, because "not supported" on its own
+                         leaves the owner guessing which of the two files they
+                         were about to send is the problem. */
+                      setError(
+                        (t('proposal.error_file_type') || 'This kind of file cannot be attached: {type}')
+                          .replace('{type}', chosen.type)
+                      );
                       e.target.value = '';
                       return;
                     }

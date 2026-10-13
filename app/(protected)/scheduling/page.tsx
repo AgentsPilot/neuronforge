@@ -6,13 +6,21 @@ import { SchedulingCalendarView } from '@/components/scheduling/SchedulingCalend
 import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
 import { SchedulingServiceModal } from '@/components/scheduling/SchedulingServiceModal';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
+import { usePrefetchPhoneLib } from '@/components/crm/usePhoneLib';
 import { parseAvailability, DEFAULT_AVAILABILITY, type WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
 import { Calendar, List, Plus } from 'lucide-react';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'SchedulingPage' });
 
 type ViewMode = 'calendar' | 'services';
 
 export default function SchedulingPage() {
+  // PERF-2: the booking modal mounts only on click, so it cannot start the
+  // phone library's download itself. Started here, after first paint, so the
+  // phone field draws with the rest of the form when the modal opens.
+  usePrefetchPhoneLib();
   const [viewMode, setViewMode] = useState<ViewMode>('calendar');
   const [services, setServices] = useState<SchedulingService[]>([]);
   const [bookings, setBookings] = useState<SchedulingBooking[]>([]);
@@ -56,7 +64,7 @@ export default function SchedulingPage() {
         setTimezone(typeof data.timezone === 'string' && data.timezone ? data.timezone : 'UTC');
       }
     } catch (error) {
-      console.error('Failed to fetch availability:', error);
+      logger.error({ err: error }, 'Failed to fetch availability');
     }
   };
 
@@ -76,7 +84,7 @@ export default function SchedulingPage() {
       if (servicesData.success) setServices(servicesData.services);
       if (bookingsData.success) setBookings(bookingsData.bookings);
     } catch (error) {
-      console.error('Failed to fetch scheduling data:', error);
+      logger.error({ err: error }, 'Failed to fetch scheduling data');
     } finally {
       setLoading(false);
     }
@@ -89,7 +97,7 @@ export default function SchedulingPage() {
       const data = await response.json();
       if (data.success) setBookings(data.bookings);
     } catch (error) {
-      console.error('Failed to refresh bookings:', error);
+      logger.error({ err: error }, 'Failed to refresh bookings');
     }
   };
 

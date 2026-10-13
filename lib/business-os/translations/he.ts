@@ -4057,6 +4057,7 @@ export const he = {
     'proposal.download_to_check': 'הורדה לבדיקה',
     'proposal.error_upload': 'לא הצלחנו להעלות את המסמך. נסו שוב.',
     'proposal.error_file_too_big': 'הקובץ גדול מ-{max}MB. צרפו קובץ קטן יותר.',
+    'proposal.error_file_type': 'אי אפשר לצרף קובץ מסוג כזה ({type}). צרפו PDF, מסמך Word או Excel, סריקה או תמונה.',
     'proposal.new_title': 'שליחת הצעת מחיר',
     'proposal.revise_title': 'עדכון הצעת המחיר',
     'proposal.view_title': 'הצעת מחיר',

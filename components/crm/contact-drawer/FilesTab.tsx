@@ -288,8 +288,31 @@ export function FilesTab({
                     </p>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {/*
+                    ACTIONS THAT APPEAR ON HOVER DO NOT EXIST ON A PHONE.
+
+                    ─────────────────────────────────────────────────────────
+                    These three — download, open, delete — were `opacity-0`
+                    until `group-hover`. A touch screen never hovers, so on a
+                    phone the row showed a document's name, its size and its
+                    date, and offered no way to open it. The file was listed and
+                    unreachable, which reads as a broken feature rather than a
+                    hidden control: there is nothing on screen to suggest
+                    anything is there.
+
+                    Keyed to `hover: hover` rather than to a WIDTH. The question
+                    is whether the device can hover, not how big it is — a touch
+                    laptop and a tablet in landscape are wide and still have no
+                    pointer, and a `sm:` breakpoint would leave both of them
+                    exactly as broken. Visible by default, so any device the
+                    media query does not match is the safe way round.
+
+                    `group-focus-within` as well, so tabbing to the buttons on a
+                    pointer device reveals them instead of moving focus to
+                    something invisible.
+                    ─────────────────────────────────────────────────────────
+                  */}
+                  <div className="flex items-center gap-1 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
                     {onDownloadDocument && (
                       <button
                         type="button"
