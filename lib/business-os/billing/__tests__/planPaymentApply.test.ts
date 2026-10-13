@@ -247,10 +247,30 @@ interface StripeSubscription {
   livemode: boolean;
   metadata: Record<string, string>;
   priceIds: string[];
+  // P-7b.1a (§3.3 a): the additive fields the U-4 guard reads.
+  items: Array<{ id: string; priceId: string | null; currentPeriodStart: number | null; currentPeriodEnd: number | null }>;
+  pendingUpdate: { expiresAt: number; priceIds: string[] } | null;
+  latestInvoiceId: string | null;
 }
 
+/** One item per price unless `items` is given, so a fake that says `priceIds` stays coherent. */
 function subscriptionAt(id: string, overrides: Partial<StripeSubscription> = {}): StripeSubscription {
-  return { id, status: 'active', customerId: CUSTOMER, billingCycleAnchor: ANCHOR, cancelAtPeriodEnd: false, endedAt: null, livemode: false, metadata: {}, priceIds: [PRICE_A], ...overrides };
+  const priceIds = overrides.priceIds ?? [PRICE_A];
+  return {
+    id,
+    status: 'active',
+    customerId: CUSTOMER,
+    billingCycleAnchor: ANCHOR,
+    cancelAtPeriodEnd: false,
+    endedAt: null,
+    livemode: false,
+    metadata: {},
+    priceIds,
+    items: priceIds.map((priceId, index) => ({ id: `si_${index + 1}`, priceId, currentPeriodStart: ANCHOR, currentPeriodEnd: null })),
+    pendingUpdate: null,
+    latestInvoiceId: null,
+    ...overrides,
+  };
 }
 
 function setup(world = new FakeWorld()) {
@@ -303,6 +323,158 @@ function setup(world = new FakeWorld()) {
 
 const paid = (h: ReturnType<typeof setup>, event: Stripe.Event) => applyPaidPlanInvoice(event, h.log, h.deps);
 const historyKinds = (world: FakeWorld) => world.events.map((e) => `${e.kind}${e.refusalReason ? `:${e.refusalReason}` : ''}`);
+
+// ── U-4 (P-7b.1a) ───────────────────────────────────────────────────────────
+
+const UPGRADE_INVOICE = 'in_U1';
+const upgradeEvent = (change: (invoice: Stripe.Invoice) => void = () => undefined) =>
+  invoiceEvent('invoice-paid-proration.json', { invoiceId: UPGRADE_INVOICE }, change);
+
+/** A first invoice paid on PRICE_A, so the account pays for TIER_A on SUB_1. */
+async function payingOnTierA(h: ReturnType<typeof setup>) {
+  await paid(h, paidCreate());
+  expect(h.world.plan?.tier).toBe(TIER_A);
+  h.audits.length = 0;
+}
+
+describe('U-4 (P-7b.1a, SA U-4, V-5, V-6): a paid upgrade invoice writes the plan only when Stripe applied it', () => {
+  it('Stripe bills the upgraded price on its one item: applied as before, billingReason in the audit details (U-9)', async () => {
+    const h = setup();
+    await payingOnTierA(h);
+    h.subscriptions.set(SUB_1, subscriptionAt(SUB_1, { priceIds: [PRICE_B] }));
+    await paid(h, upgradeEvent());
+    expect(h.world.plan?.tier).toBe(TIER_B);
+    expect(h.world.applyCalls[1].assignsPlan).toBe(true);
+    expect(h.audits).toEqual([
+      expect.objectContaining({
+        action: 'BOS_BILLING_INVOICE_PAID',
+        severity: 'info',
+        details: expect.objectContaining({ billingReason: 'subscription_update', planWritten: true }),
+      }),
+    ]);
+    expect((h.audits[0].details as Record<string, unknown>).upgradeNotApplied).toBeUndefined();
+    expect(h.logged('bos_billing_upgrade_paid_not_applied')).toEqual([]);
+  });
+
+  it('a pending update waiting on THIS invoice: released for retry, nothing written (branch 1)', async () => {
+    const h = setup();
+    await payingOnTierA(h);
+    h.subscriptions.set(
+      SUB_1,
+      subscriptionAt(SUB_1, { pendingUpdate: { expiresAt: ANCHOR + 86400, priceIds: [PRICE_B] }, latestInvoiceId: UPGRADE_INVOICE })
+    );
+    await expect(paid(h, upgradeEvent())).rejects.toMatchObject({ name: 'PlanPaymentRetryError', reason: 'upgrade_pending_at_stripe' });
+    expect(h.world.applyCalls).toHaveLength(1);
+    expect(h.world.plan?.tier).toBe(TIER_A);
+    expect(h.audits).toEqual([]);
+    expect(h.logged('bos_billing_upgrade_pending_at_stripe')[0]).toMatchObject({ level: 'warn' });
+  });
+
+  it('V-5: a pending update for a DIFFERENT invoice does not hold this one; it goes on to the item test', async () => {
+    const h = setup();
+    await payingOnTierA(h);
+    h.subscriptions.set(
+      SUB_1,
+      subscriptionAt(SUB_1, { priceIds: [PRICE_B], pendingUpdate: { expiresAt: ANCHOR + 86400, priceIds: [PRICE_A] }, latestInvoiceId: 'in_OTHER' })
+    );
+    await paid(h, upgradeEvent());
+    expect(h.world.plan?.tier).toBe(TIER_B);
+    expect(h.logged('bos_billing_upgrade_pending_at_stripe')).toEqual([]);
+
+    // And with the item NOT on the deciding price, the same invoice is recorded without the plan.
+    const h2 = setup();
+    await payingOnTierA(h2);
+    h2.subscriptions.set(
+      SUB_1,
+      subscriptionAt(SUB_1, { priceIds: [PRICE_A], pendingUpdate: { expiresAt: ANCHOR + 86400, priceIds: [PRICE_B] }, latestInvoiceId: 'in_OTHER' })
+    );
+    await paid(h2, upgradeEvent());
+    expect(h2.world.applyCalls[1].assignsPlan).toBe(false);
+    expect(h2.world.plan?.tier).toBe(TIER_A);
+  });
+
+  it('item on another price: recorded with assignsPlan false, plan untouched, alerted and audited ONCE (branch 2, Q-3)', async () => {
+    const h = setup();
+    await payingOnTierA(h);
+    // Stripe still bills the old price: the upgrade was paid but not applied.
+    await paid(h, upgradeEvent());
+    expect(h.world.applyCalls[1].assignsPlan).toBe(false);
+    expect(h.world.plan?.tier).toBe(TIER_A);
+    expect(historyKinds(h.world)).toEqual(['invoice_paid', 'invoice_paid']);
+    expect(h.logged('bos_billing_upgrade_paid_not_applied')).toEqual([
+      expect.objectContaining({ level: 'error', ctx: expect.objectContaining({ alert: true, invoiceId: UPGRADE_INVOICE }) }),
+    ]);
+    expect(h.audits).toEqual([
+      expect.objectContaining({
+        action: 'BOS_BILLING_INVOICE_PAID',
+        severity: 'warning',
+        invalidatesEntitlements: false,
+        details: expect.objectContaining({ upgradeNotApplied: true, billingReason: 'subscription_update', planWritten: false }),
+      }),
+    ]);
+
+    // Replay (already_applied): no alert, no audit.
+    await paid(h, upgradeEvent());
+    expect(h.logged('bos_billing_upgrade_paid_not_applied')).toHaveLength(1);
+    expect(h.audits).toHaveLength(1);
+    expect(h.logged('bos_billing_invoice_replayed')).toHaveLength(1);
+  });
+
+  it('two items: treated as not applied', async () => {
+    const h = setup();
+    await payingOnTierA(h);
+    h.subscriptions.set(SUB_1, subscriptionAt(SUB_1, { priceIds: [PRICE_B, PRICE_A] }));
+    await paid(h, upgradeEvent());
+    expect(h.world.applyCalls[1].assignsPlan).toBe(false);
+    expect(h.world.plan?.tier).toBe(TIER_A);
+    expect(h.logged('bos_billing_upgrade_paid_not_applied')).toHaveLength(1);
+  });
+
+  it('an upgrade invoice that would not assign anyway (total 0, trial swap) is not alerted', async () => {
+    const h = setup();
+    await payingOnTierA(h);
+    await paid(
+      h,
+      upgradeEvent((invoice) => {
+        invoice.amount_paid = 0;
+        invoice.total = 0;
+        invoice.lines.data = [invoice.lines.data[1]];
+        invoice.lines.data[0].amount = 0;
+      })
+    );
+    expect(h.world.applyCalls[1].assignsPlan).toBe(false);
+    expect(h.logged('bos_billing_upgrade_paid_not_applied')).toEqual([]);
+  });
+
+  it.each([
+    ['subscription_cycle', 'invoice-paid-renewal.json'],
+    ['subscription_create', 'invoice-paid-subscription-create.json'],
+  ])('V-6: a %s invoice takes no U-4 branch, even with a pending update for it and the item elsewhere', async (_reason, fixture) => {
+    const h = setup();
+    h.subscriptions.set(
+      SUB_1,
+      subscriptionAt(SUB_1, { priceIds: [PRICE_B], pendingUpdate: { expiresAt: ANCHOR + 86400, priceIds: [PRICE_B] }, latestInvoiceId: 'in_V6' })
+    );
+    await paid(h, invoiceEvent(fixture, { invoiceId: 'in_V6' }));
+    expect(h.world.applyCalls[0].assignsPlan).toBe(true);
+    expect(h.logged('bos_billing_upgrade_pending_at_stripe')).toEqual([]);
+    expect(h.logged('bos_billing_upgrade_paid_not_applied')).toEqual([]);
+  });
+
+  it('CF-6 end to end: an upgrade paid from the credit balance (amount_paid 0, total > 0) is applied', async () => {
+    const h = setup();
+    await payingOnTierA(h);
+    h.subscriptions.set(SUB_1, subscriptionAt(SUB_1, { priceIds: [PRICE_B] }));
+    await paid(
+      h,
+      upgradeEvent((invoice) => {
+        invoice.amount_paid = 0;
+      })
+    );
+    expect(h.world.applyCalls[1]).toMatchObject({ assignsPlan: true, amountMinor: 0 });
+    expect(h.world.plan?.tier).toBe(TIER_B);
+  });
+});
 
 // ── C-6: the required cases ─────────────────────────────────────────────────
 
@@ -369,6 +541,8 @@ describe('C-6 (SA-P2, SA-P16): the plan row moves only on the newest paid invoic
     const create = paidCreate();
     await paid(h, create);
     h.world.plan!.planVersion = 3;
+    // P-7b.1a (U-4): Stripe now bills the upgraded price on the one item.
+    h.subscriptions.set(SUB_1, subscriptionAt(SUB_1, { priceIds: [PRICE_B] }));
     const upgrade = invoiceEvent('invoice-paid-proration.json', { invoiceId: 'in_U1' });
     await paid(h, upgrade);
     expect(h.world.plan).toMatchObject({ tier: TIER_B, tierExpiresAt: PERIOD_1_END, periodAnchor: ANCHOR_ISO, planVersion: 7 });
