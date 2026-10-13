@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-layout-lf4c`, cut from `feature/admin-layout-lf4b` at `567d7f50` (PR #349 open). Confirmed with `git branch --show-current` in worktree `neuronforge-admin-layout`. Before building: `git fetch origin main`; `origin/main` is `8014ee73` (#346), already contained in the branch (merged into LF-4b as `ccaab0bc`); #347, #348 and #349 not merged, so nothing to merge. **Update (SA F3):** #349 (LF-4b) is now MERGED (`ffb598ac` on `origin/main`, which is at `f302680f` after #352); RM merges `origin/main` into this branch before opening the PR
 **Path:** Full cycle. SA approved this workplan with conditions SA-W1 to SA-W10, applied below (see "SA conditions applied"), plus all three non-blocking suggestions
 **Date:** 2026-10-13
-**Status:** Built, uncommitted, awaiting SA code review + QA
+**Status:** PR #354 open — fast-track (SA code review approved with fixes F1 to F3, applied; QA PASS WITH NOTES). TL browser check QB-4 owed. The user merges
 
 ## Overview
 
@@ -781,7 +781,14 @@ None.
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf4c` |
+| Code commit | `5bc661da` feat(admin): reconcile top-ups moves from the Businesses drawer to Scheduled jobs & queues (LF-4c) |
+| Merge of `origin/main` | `ecc9db37` (clean, no conflicts; brings #349, #350, #351, #352) |
+| PR | [#354](https://github.com/AgentsPilot/neuronforge/pull/354), open, fast-track; the user merges |
+| Runs after the merge | admin set + guards 63 suites / 1,854 tests; `test:bos-entitlements` 254 / 7,367; `lint:hooks` clean; `typecheck:bos-llm` passed (0 new) |
+| Owed | QB-4 (TL browser check, read-only, never Run) |
 
 ---
 
@@ -790,3 +797,4 @@ None.
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-13 | QA report added | QA: PASS WITH NOTES, no bugs. Admin set 58 suites / 1,595 tests, guards 6 / 372, entitlements 253 / 7,363 at default and at 4 workers (no flake recurred), lint:hooks clean, 12 throwaway probes passed and deleted. Two Low notes (OWN-1 names only the old label; guard count wording). QB-4 owed by TL |
+| 2026-10-13 | PR opened (RM) | Code commit `5bc661da`; `origin/main` merged in (`ecc9db37`, clean); PR #354 open, fast-track. Commit Info filled. QB-4 still owed |
