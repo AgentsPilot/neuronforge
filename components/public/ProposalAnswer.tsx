@@ -51,7 +51,19 @@ import { createPublicT } from '@/lib/i18n/public-pages';
  */
 import { DECLINE_REASONS, type DeclineReason } from '@/lib/business-os/cancellationReasons';
 
-type Code = 'not_found' | 'accepted' | 'declined' | 'expired' | 'withdrawn' | 'superseded';
+type Code =
+  | 'not_found'
+  | 'accepted'
+  | 'declined'
+  | 'expired'
+  | 'withdrawn'
+  | 'superseded'
+  /**
+   * The REQUEST failed — offline, a dropped connection, a server restart
+   * mid-flight. Not a statement about the quote, which is why it is its own
+   * code rather than `not_found`.
+   */
+  | 'unreachable';
 
 
 interface QuoteDetail {
@@ -141,7 +153,23 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
         setCode(data.code ?? null);
         setInvoice(data.invoiceUrl ? { url: data.invoiceUrl, paid: Boolean(data.invoicePaid) } : null);
       } catch {
-        setCode('not_found');
+        /*
+         * ─────────────────────────────────────────────────────────────────
+         * A FAILED REQUEST IS NOT A MISSING QUOTE.
+         *
+         * This set `not_found`, so any dropped connection told the client
+         * "we could not find this quote — open the link from your email or
+         * contact the business". They do contact the business, about a quote
+         * that is sitting there perfectly intact, and the business has no way
+         * to tell them anything useful.
+         *
+         * It is the same mistake as the invisible payment spinner earlier in
+         * this portal: reporting a transport failure as an absence. The quote
+         * is the worst place for it, because the client's next move is to
+         * stop trusting the number.
+         * ─────────────────────────────────────────────────────────────────
+         */
+        setCode('unreachable');
       } finally {
         setLoading(false);
       }
@@ -196,10 +224,13 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
       }
 
       // Whatever came back is the truth, including "somebody already answered".
-      setCode(data.code ?? 'not_found');
+      setCode(data.code ?? 'unreachable');
       setShowDecline(false);
     } catch {
+      /* The answer did not reach us. Say so and let them try again, rather
+         than leaving a button that appears to have done nothing. */
       setAnswering(false);
+      setCode('unreachable');
     }
   };
 
@@ -208,12 +239,18 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
   /*
    * The terminal states.
    *
-   * Six of them, and each says something different: "already accepted" is good
-   * news and "expired" is not. One generic "this link is no longer valid" would
-   * leave a client who accepted yesterday wondering whether it worked.
+   * Each says something different: "already accepted" is good news and
+   * "expired" is not. One generic "this link is no longer valid" would leave a
+   * client who accepted yesterday wondering whether it worked.
+   *
+   * `unreachable` is the odd one out and deliberately so — it is the only one
+   * that is NOT terminal. It means the request failed, the quote is untouched,
+   * and refreshing will very likely work. It is `warning`, not `error`,
+   * because nothing has gone wrong with the offer.
    */
   if (code) {
     const states: Record<Code, { tone: 'success' | 'warning' | 'error' | 'info'; icon: typeof Check }> = {
+      unreachable: { tone: 'warning', icon: AlertTriangle },
       accepted: { tone: 'success', icon: Check },
       declined: { tone: 'info', icon: X },
       expired: { tone: 'warning', icon: AlertTriangle },

@@ -15,7 +15,7 @@ import { GAP_DEFINITIONS } from '../definitions';
  * Every kind the queue can hold.
  *
  * Repeated here rather than imported on purpose: the authority is the CHECK
- * constraint on `lead_responses.kind` (latest: `20261006d_auto_complete_meetings.sql`),
+ * constraint on `lead_responses.kind` (latest: `20261048_chase_quotes.sql`),
  * and the TypeScript union can be widened without the database agreeing. A kind
  * the column rejects is queued happily and skipped forever, so this list has to
  * be maintained against the MIGRATION, not against the union.
@@ -27,6 +27,7 @@ const QUEUE_KINDS = [
   'intake_chase',
   'meeting_reminder',
   'meeting_complete',
+  'quote_chase',
 ];
 
 describe('the automation registry', () => {

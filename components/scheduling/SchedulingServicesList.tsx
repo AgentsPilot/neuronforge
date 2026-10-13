@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { serviceShapeValues, collectionToPersist } from '@/lib/business-os/serviceEditValues';
 import { serviceMoneyLine } from '@/lib/business-os/serviceMoneyLine';
+import { serviceJourney, type JourneyStep } from '@/lib/business-os/serviceJourney';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Clock, ChevronLeft, ChevronRight, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
@@ -15,6 +16,74 @@ const logger = createLogger({ module: 'SchedulingServicesList' });
 
 // Configuration theme color: Pink (#D14E97)
 const CONFIG_COLOR = '#D14E97';
+
+/**
+ * One stop on the flow that runs down the inside of the editor.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY BESIDE THE SECTION AND NOT UNDER THE FORM
+ *
+ * The account of what a service does sat at the foot of the panel, so an owner
+ * changing a control had to scroll to find out what they had just done — and by
+ * then the control was off screen and the connection was theirs to make. Here
+ * each consequence is level with the section that causes it, so the sentence
+ * that moves is the one next to their hand.
+ *
+ * A stop with nothing to say renders nothing. An empty one is itself a finding:
+ * it says that part of the service has not been answered yet.
+ *
+ * Desktop only. Below `md:` the panel is a single column and a spine would be a
+ * second column there is no room for, so the stacked account at the foot of the
+ * form stays exactly as it was and carries the same facts.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function FlowStop({
+  head,
+  lines,
+  last = false,
+}: {
+  head: string;
+  lines: React.ReactNode[];
+  /** The last stop ends the line at its own node rather than running past it. */
+  last?: boolean;
+}) {
+  if (!lines.length) return <div className="hidden md:block" aria-hidden="true" />;
+
+  return (
+    <aside className="hidden md:block relative ps-6 pb-5">
+      {/* The spine. Every stop draws its own height, so consecutive stops make
+          one continuous line with nothing spanning the whole panel. */}
+      <span
+        aria-hidden="true"
+        className="absolute start-[6px] w-0.5 bg-[var(--v2-border)]"
+        style={last ? { top: 0, height: '0.5rem' } : { top: 0, bottom: 0 }}
+      />
+      <span
+        aria-hidden="true"
+        className="absolute start-0 top-0.5 h-3.5 w-3.5 rounded-full border-2"
+        style={{ borderColor: CONFIG_COLOR, backgroundColor: CONFIG_COLOR }}
+      />
+      <div className="text-[9.5px] uppercase tracking-[0.12em] text-[var(--v2-text-muted)] mb-1.5">
+        {head}
+      </div>
+      {lines.map((line, i) => (
+        <p key={i} className="text-[12px] leading-relaxed text-[var(--v2-text-secondary)] mb-1.5 last:mb-0">
+          {line}
+        </p>
+      ))}
+    </aside>
+  );
+}
+
+/** A section and the consequence that belongs to it, side by side from `md:` up. */
+function FlowPair({ children, stop }: { children: React.ReactNode; stop: React.ReactNode }) {
+  return (
+    <div className="md:grid md:grid-cols-[minmax(0,1fr)_230px] md:gap-5 md:items-start">
+      <div className="min-w-0">{children}</div>
+      {stop}
+    </div>
+  );
+}
 
 interface SchedulingServicesListProps {
   services: SchedulingService[];
@@ -1222,6 +1291,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     const timeDisabled = values.is_scheduled === false;
     const price = parseFloat(values.price);
 
+
     const effective = service ? { ...service, ...(optimisticUpdates[service.id] || {}) } : null;
     const isDraft = effective ? effective.status === 'draft' : true;
 
@@ -1324,7 +1394,103 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       .split('{rest}').join(String(moneyLine.rest ?? ''))
       .split('{freq}').join(
         moneyLine.freqKey ? t(`scheduling.modal.installment_${moneyLine.freqKey}`) : ''
+      )
+      /* When the one remaining payment falls. A different word from `{freq}`:
+         those are adjectives for a plural ("weekly payments") and read wrong
+         about a single one -- in Hebrew they are not even grammatical. */
+      .split('{after}').join(
+        moneyLine.freqKey ? t(`scheduling.modal.after_${moneyLine.freqKey}`) : ''
       );
+
+    /*
+     * The rest of the journey: what the client does before any money moves.
+     *
+     * Built from this service's own row rather than from prose, so it cannot
+     * drift from the controls above it. `serviceJourney` drops anything that
+     * merely restates a platform default.
+     */
+    /* The editor keeps these as strings, because they are text inputs. An
+       empty one is "not set", not zero. */
+    const toNumber = (text: string) => {
+      const value = parseInt(text, 10);
+      return Number.isFinite(value) ? value : null;
+    };
+
+    const journeySteps = serviceJourney({
+      /*
+       * The duration and buffer come from `values`, which is what the owner is
+       * typing right now, so the sentence moves as they change it. The booking
+       * window comes from the SAVED row: this editor does not offer those
+       * controls, so the live answer is whatever was last saved.
+       */
+      isScheduled: values.is_scheduled,
+      durationMinutes: toNumber(values.duration),
+      bufferMinutes: toNumber(values.buffer),
+      advanceBookingDays: effective?.advance_booking_days ?? null,
+      minNoticeHours: effective?.min_notice_hours ?? null,
+      maxBookingsPerDay: effective?.max_bookings_per_day ?? null,
+    });
+
+    /*
+     * The three stops, from the same resolvers the stacked account uses.
+     *
+     * Split by WHICH SECTION causes each fact, so nothing is said twice: the
+     * diary stop is `serviceJourney`, the money stop is `serviceMoneyLine`,
+     * and only the two sentences with no home elsewhere are their own keys.
+     */
+    const identityStop = [
+      t('scheduling.flow.identity'),
+      // The field the whole platform reads. Worth saying when it is too thin
+      // to do its job, and nowhere else says so.
+      (values.description ?? '').trim().length > 0 && (values.description ?? '').trim().length < 25
+        ? t('scheduling.flow.identity_thin')
+        : null,
+    ].filter(Boolean) as React.ReactNode[];
+
+    const journeyText = (step: JourneyStep) => {
+      let text = t(`scheduling.journey.${step.key}`);
+      for (const [name, value] of Object.entries(step.values ?? {})) {
+        text = text.split(`{${name}}`).join(String(value));
+      }
+      return text;
+    };
+
+    const diaryStop = journeySteps.map(journeyText);
+    const moneyStop = [
+      /*
+       * THE CARD WARNING, ON THE FLOW RATHER THAN UNDER THE PILLS.
+       *
+       * It used to sit beneath the shape choice, which put it inside the block
+       * that now hides when there is no price -- so the one message an owner
+       * must not miss could vanish for a reason that has nothing to do with it.
+       *
+       * FIRST in the stop, and amber, because it is the only line here that
+       * says something is WRONG rather than describing what happens. The
+       * sentence under it already reads "Stripe is not connected, so they
+       * cannot pay by card"; this is the part that looks like a warning.
+       *
+       * The condition is the one it had under the pills, unchanged. Moving it
+       * here, a `price > 0` was added that had never been part of it — so the
+       * warning disappeared on exactly the service most likely to be mid-setup,
+       * which is when an owner most needs telling that card will not work.
+       */
+      saleShape === 'card' && !processorReady ? (
+        <span key="no-processor" className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400">
+          <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+          <span>{t('config.services.collection.no_processor')}</span>
+        </span>
+      ) : null,
+      moneySentence,
+      state_scheduled_after(),
+    ].filter(Boolean) as React.ReactNode[];
+
+    /* What happens once the money is settled. One line, and it is the only part
+       of the account that is about neither the diary nor the price. */
+    function state_scheduled_after() {
+      return values.is_scheduled
+        ? t('scheduling.flow.after_scheduled')
+        : t('scheduling.flow.after_bought');
+    }
 
     /**
      * A choice of two, drawn as a segment rather than as two buttons.
@@ -1474,11 +1640,23 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           )}
 
           <div className="min-w-0">
-            <h3 className="text-[15px] font-semibold text-[var(--v2-text-primary)] truncate">
-              {isNew
-                ? t('scheduling.new_service') || 'Add a service'
-                : values.name || effective?.service_name}
-            </h3>
+            {/*
+              The name, once there is one, and nothing before that.
+
+              This read "Add a service" while the name field directly beneath it
+              was empty and focused — a heading repeating the button just
+              pressed, above the field that answers it. As soon as the owner
+              types, it becomes the name, so the placeholder was only ever on
+              screen for the seconds when it said least.
+
+              Rendered only when there is something to say, so the status line
+              below moves up rather than sitting under a blank row.
+            */}
+            {(values.name || effective?.service_name) && (
+              <h3 className="text-[15px] font-semibold text-[var(--v2-text-primary)] truncate">
+                {values.name || effective?.service_name}
+              </h3>
+            )}
             {/* Published · active · saved a moment ago — one line, because
                 the three are one answer to "where does this stand". A single
                 word could only ever say one of them. */}
@@ -1600,6 +1778,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             </div>
           )}
 
+          <FlowPair stop={<FlowStop head={t('scheduling.flow.head.read')} lines={identityStop} />}>
           <section>
             <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
               {t('scheduling.modal.section.service')}
@@ -1661,6 +1840,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               </label>
             </div>
           </section>
+          </FlowPair>
 
           {/* ──────────────────────────────────────────────────────────────────
               2 · WHAT THE CLIENT GETS
@@ -1670,6 +1850,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               of different kinds in one row, one about the calendar and one
               about money.
               ────────────────────────────────────────────────────────────────── */}
+          <FlowPair stop={<FlowStop head={t('scheduling.flow.head.diary')} lines={diaryStop} />}>
           <section className="border-t border-[var(--v2-border)] pt-4">
             <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
               {t('scheduling.modal.section.client_gets')}
@@ -1685,22 +1866,32 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                 {/* Explained like the shape below it. This pair had no
                     explanation at all, and it is the one that decides whether
                     the client is ever asked for a time. */}
+                {/*
+                  NO `why` AND NO `eg` HERE ANY MORE.
+
+                  They said what the flow beside this section now says, and said
+                  it first: "שום דבר לא נקבע ביומן. קונים ומתחילים" sat under
+                  the control while the identical sentence sat level with it on
+                  the spine. Two answers to one question, a centimetre apart, is
+                  how an owner learns to read neither.
+
+                  The spine wins because it also carries the length, the window
+                  and the day's cap, so the consequence of this choice is told
+                  once and told whole. The `why`/`eg` support stays on
+                  `segmentWithWhy` for the money shape, which still earns it.
+                */}
                 {segmentWithWhy([
                   {
                     value: 'yes',
                     label: t('config.services.needs_time.yes'),
                     active: values.is_scheduled === true,
                     onClick: () => setValues(prev => ({ ...prev, is_scheduled: true })),
-                    why: t('config.services.needs_time.yes.why'),
-                    eg: t('config.services.needs_time.yes.eg'),
                   },
                   {
                     value: 'no',
                     label: t('config.services.needs_time.no'),
                     active: values.is_scheduled === false,
                     onClick: () => setValues(prev => ({ ...prev, is_scheduled: false })),
-                    why: t('config.services.needs_time.no.why'),
-                    eg: t('config.services.needs_time.no.eg'),
                   },
                 ])}
               </div>
@@ -1758,6 +1949,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               )}
             </div>
           </section>
+          </FlowPair>
 
           {/* ──────────────────────────────────────────────────────────────────
               3 · HOW IT IS SOLD AND PAID
@@ -1772,6 +1964,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               is for — testers read "By quote" as a statement about pricing
               policy and chose it for ordinary priced services.
               ────────────────────────────────────────────────────────────────── */}
+          <FlowPair stop={<FlowStop head={t('scheduling.flow.head.money')} lines={moneyStop} last />}>
           <section className="border-t border-[var(--v2-border)] pt-4">
             <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
               {t('scheduling.modal.section.sold_paid')}
@@ -1780,6 +1973,22 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               {t('config.services.q.paid_hint')}
             </p>
 
+            {/*
+              NO `why` AND NO `eg` HERE EITHER.
+
+              The money stop on the spine says what this choice produces, and
+              says it with the real figures: the price, the split, the cadence,
+              whether a payment link goes with the invoice, and — when Stripe is
+              missing — that the card option will not work. These lines said a
+              shape-shaped version of the same thing, one control-height away.
+
+              The processor distinction they carried is not lost. It is the
+              difference between `invoice_once` and `invoice_once_link`, which
+              `serviceMoneyLine` already decides and the stop already shows, so
+              an owner with Stripe still learns their invoice carries a payment
+              link — from the sentence about their own service rather than from
+              a note about the option.
+            */}
             <div className="flex flex-col gap-2.5 mb-3">
               {segmentWithWhy([
                 {
@@ -1787,54 +1996,22 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                   label: t('scheduling.modal.shape.card'),
                   active: saleShape === 'card',
                   onClick: () => pickShape('card'),
-                  why: t('scheduling.modal.collection.online.why'),
-                  eg: t('config.services.shape.card.eg'),
                 },
                 {
                   value: 'invoice',
                   label: t('scheduling.modal.shape.invoice'),
                   active: saleShape === 'invoice',
                   onClick: () => pickShape('invoice'),
-                  /*
-                   * Two different promises, decided by the processor.
-                   *
-                   * With Stripe connected, `InvoiceDeliveryService` raises the
-                   * invoice AT Stripe and sends its hosted payment page, so the
-                   * client can pay by card from the email. "No processor
-                   * needed" is true of the other case and understates this one
-                   * — an owner who read it would go looking for a card option
-                   * they already have.
-                   */
-                  why: processorReady
-                    ? t('config.services.shape.invoice.why_link')
-                    : t('scheduling.modal.collection.invoice.why'),
-                  eg: processorReady
-                    ? t('config.services.shape.invoice.eg_link')
-                    : t('config.services.shape.invoice.eg'),
                 },
                 {
                   value: 'quote',
                   label: t('scheduling.modal.shape.quote'),
                   active: saleShape === 'quote',
                   onClick: () => pickShape('quote'),
-                  why: t('config.services.sale_mode.proposal.why'),
-                  eg: t('config.services.shape.quote.eg'),
                 },
               ])}
 
-              {/*
-                Said HERE, where the choice is made.
-                Card collection needs a connected processor. Without one the
-                client still reaches a payment step that cannot charge them, and
-                the only signal used to be an unready dot in the journey strip
-                below — downstream of the decision that caused it.
-              */}
-              {saleShape === 'card' && !processorReady && (
-                <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px] leading-snug text-amber-600 dark:text-amber-400 max-w-[46ch]">
-                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                  <span>{t('config.services.collection.no_processor')}</span>
-                </p>
-              )}
+
             </div>
 
             {moneyDisabled ? (
@@ -2070,6 +2247,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               </div>
             )}
           </section>
+          </FlowPair>
         </div>
 
         {/* The consequence, on screen with the settings that produce it.
@@ -2104,13 +2282,59 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             first client. It sits beside the strip because they are one thought:
             what the client does, and what you get for it.
           */}
-          <div className="border-t border-[var(--v2-border)] pt-2.5">
+          {/*
+            THE SAME ACCOUNT, STACKED, FOR A PANEL TOO NARROW FOR THE SPINE.
+
+            From `md:` up each fact sits beside the section that causes it and
+            this is hidden, because saying everything twice on one screen is
+            how an owner learns to read neither. Below that there is one column
+            and no room for a second, so this is the whole account — same
+            resolvers, same sentences, different shape.
+          */}
+          <div className="md:hidden border-t border-[var(--v2-border)] pt-2.5">
             <span className="block text-[10.5px] font-semibold tracking-wide uppercase text-[var(--v2-text-muted)] mb-1">
-              {t('scheduling.modal.you_get_paid')}
+              {t('scheduling.modal.how_it_works')}
             </span>
-            <p className="text-[12.5px] leading-relaxed text-[var(--v2-text-primary)]">
-              {moneySentence}
-            </p>
+            {/*
+              THE JOURNEY FIRST, THE MONEY LAST.
+
+              The client's own order: what happens when they find this, then
+              what it costs them. Money last because it is the line the owner
+              already knows and the ones above it are the ones they have never
+              been told.
+
+              Separate lines rather than one paragraph: six facts run together
+              are a wall, and the owner is looking for ONE of them. Lines that
+              merely repeat a platform default are dropped by `serviceJourney`,
+              so this list is short for an ordinary service and only grows where
+              the owner has actually changed something.
+            */}
+            <ul className="space-y-1">
+              {journeySteps.map(step => (
+                <li
+                  key={step.key}
+                  className="text-[12.5px] leading-relaxed text-[var(--v2-text-primary)] flex gap-1.5"
+                >
+                  <span className="text-[var(--v2-text-muted)] flex-shrink-0" aria-hidden="true">
+                    ·
+                  </span>
+                  <span>{journeyText(step)}</span>
+                </li>
+              ))}
+              {/*
+                `moneyStop`, not `moneySentence`: the stop also carries the card
+                warning and what follows the payment, and a phone must not be
+                the one screen that loses the warning.
+              */}
+              {moneyStop.map((line, i) => (
+                <li key={i} className="text-[12.5px] leading-relaxed text-[var(--v2-text-primary)] flex gap-1.5">
+                  <span className="text-[var(--v2-text-muted)] flex-shrink-0" aria-hidden="true">
+                    ·
+                  </span>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
 
@@ -2187,39 +2411,18 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           background-color: rgba(20, 184, 166, 0.08) !important;
         }
       `}</style>
-      {/* The action, above the list.
-          It used to sit under the table, which put it below the fold for any
-          business with more than a screenful of services — and moved further
-          away with every service they added. */}
-      {showAddButton && !isAddingNewRow && services.length > 0 && (
-        <div
-          /*
-           * Belongs to the LIST screen, not to the service open on top of it.
-           *
-           * On a desktop it sits above both panes and reads as an action on the
-           * catalogue. On a phone, where the editor is the whole screen, the
-           * same button floats above the service being edited and offers to
-           * start a different one — so it steps aside with the list and comes
-           * back with it.
-           */
-          className={`flex-shrink-0 justify-end mb-3 ${detailOpen ? 'hidden md:flex' : 'flex'}`}
-        >
-          <button
-            onClick={startAddNewRow}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium border border-dashed transition-all"
-            style={{
-              borderRadius: 'var(--v2-radius-button)',
-              // The tab's own colour. Orange belonged to nothing in this dialog.
-              color: CONFIG_COLOR,
-              borderColor: `${CONFIG_COLOR}70`,
-              backgroundColor: `${CONFIG_COLOR}08`,
-            }}
-          >
-            <Plus className="h-4 w-4" />
-            {t('scheduling.new_service') || 'Add a service'}
-          </button>
-        </div>
-      )}
+      {/*
+        THE ADD BUTTON IS NOT HERE ANY MORE.
+
+        It sat above the list, and there are two others: one with the list
+        itself, and one in the empty state for a business with no services yet.
+        Three ways to start the same thing, two of them on screen at once, above
+        a panel whose own heading already said what it was for.
+
+        The two that remain are the ones with a reason: the in-list control is
+        beside the thing it adds to, and the empty state's is the only way to
+        create a first service at all.
+      */}
 
       {/* ── Two panes ──────────────────────────────────────────────────────
           The list carries identity; the panel carries meaning.

@@ -100,6 +100,66 @@ describe('an amount with no invoice behind it says so', () => {
   });
 });
 
+describe('paying happens in the portal', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE LAST ACTION THAT NAVIGATED.
+   *
+   * Intake, the quote, reschedule and cancel all open as cards in the portal.
+   * Paying did not: the amount tile carried `<a href={payment.payUrl}>` to
+   * `/invoice/{id}`, so a client settling a bill left the appointment it was
+   * for — the one thing the invoice page cannot show them — to read it
+   * somewhere else.
+   *
+   * It mounts `InvoicePaymentPanel`, the same component the invoice page
+   * mounts, so there is one payment implementation. Stripe still owns the card
+   * fields; only the page around them changes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const page = codeOf('app/book/manage/[token]/page.tsx');
+
+  it('never links out to the invoice page', () => {
+    expect(page).not.toMatch(/href=\{payment\.payUrl\}/);
+    expect(page).not.toMatch(/href=\{`\/invoice\//);
+  });
+
+  it('mounts the invoice payment panel in place', () => {
+    expect(page).toMatch(/<InvoicePaymentPanel[\s\S]{0,200}invoiceId=\{payment\.invoiceId\}/);
+  });
+
+  it('returns the client to the booking, not to the invoice', () => {
+    // They came from this page, and the booking is what they want confirmed.
+    expect(page).toMatch(/successUrl=\{`\/book\/manage\/\$\{token\}\?payment=success`\}/);
+  });
+
+  it('offers it on the invoice id, which the route sets with the link', () => {
+    /*
+     * Not parsed out of `payUrl`. The route sets and clears the two together,
+     * so a page pulling an id from a URL string would keep offering to collect
+     * the moment that formatting changed.
+     */
+    const route = codeOf(ROUTE);
+    expect(route).toMatch(/invoiceId: outstanding > 0 \? payInvoiceId : null/);
+    expect(page).toMatch(/\{payment\.invoiceId && \(/);
+  });
+
+  it('says what it is waiting for while the secret is fetched', () => {
+    /*
+     * The panel drew a bare `animate-pulse` box filled with `--ap-surface-2`,
+     * which is the brand's own `surface` — near-white on a pale brand, with
+     * the label only in `aria-label`. The wait read as "this business does not
+     * take cards", directly above the bank details that are the fallback, and
+     * was reported as exactly that.
+     */
+    const panel = codeOf('components/public/InvoicePaymentPanel.tsx');
+    expect(panel).toContain("t('payByCardLoading')");
+    expect(panel).not.toMatch(/animate-pulse[\s\S]{0,120}--ap-surface-2/);
+
+    const copy = read(COPY);
+    expect(copy.match(/payByCardLoading:/g) ?? []).toHaveLength(3);
+  });
+});
+
 describe('the portal reports a partial refund', () => {
   const route = fs.readFileSync(
     path.join(process.cwd(), 'app/api/book/manage/[token]/route.ts'),
@@ -179,16 +239,18 @@ describe('the portal lists the payments themselves', () => {
     expect(card).toMatch(/\(payment\.plan\?\.periods\?\.length \?\? 0\) > 1/);
   });
 
-  it('reads a bare DATE on the clock it was written in', () => {
+  it('reads a bare DATE from its own parts, on no clock at all', () => {
     /*
-     * `due_date` has no time and no zone, so it parses to midnight UTC. Read
-     * west of UTC that midnight is the previous day, and a client is told their
-     * payment fell due a day before the invoice says.
+     * `due_date` has no time and no zone. It used to be stitched into
+     * `${period.dueDate}T00:00:00Z` and read back in UTC — correct, but only
+     * because the Z and the UTC cancelled out, and it meant a client-facing
+     * surface named UTC.
+     *
+     * `formatPublicDay` takes the string and formats its parts, so the day
+     * cannot be moved by any clock and no zone has to be remembered at the
+     * call site.
      */
-    /* Two assertions rather than one window: the call spans several lines at
-       this indentation, and a character count that happens to span them today
-       is a count that breaks on the next reformat. */
-    expect(card).toMatch(/new Date\(`\$\{period\.dueDate\}T00:00:00Z`\)/);
-    expect(card).toMatch(/\{ day: 'numeric', month: 'short' \},\s*'UTC'/);
+    expect(card).toMatch(/formatPublicDay\(period\.dueDate/);
+    expect(card).not.toMatch(/\$\{period\.dueDate\}T00:00:00Z/);
   });
 });

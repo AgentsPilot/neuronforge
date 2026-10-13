@@ -11,10 +11,14 @@
  * and an English string here cannot be translated there.
  */
 
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { DECLINE_REASONS } from '@/lib/business-os/cancellationReasons';
 import { createLogger } from '@/lib/logger';
+import { invoicePayLink } from '@/lib/payments/invoicePayLink';
+import { raiseInvoiceForPayment } from '@/lib/payments/raiseInvoiceForPayment';
+import { platformOrigin } from '@/lib/utils/origins';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { verifyProposalToken } from '@/lib/business-os/proposalToken';
 import { resolveTermsDays } from '@/lib/payments/paymentTerms';
@@ -286,7 +290,21 @@ export async function GET(
       .eq('id', proposal.created_invoice_id)
       .maybeSingle();
 
-    invoiceUrl = `/invoice/${proposal.created_invoice_id}`;
+    /*
+     * Through `invoicePayLink`, not hand-built.
+     *
+     * A quote that created an invoice created it against a BOOKING, so the
+     * client belongs in the portal — the appointment they just agreed to, the
+     * amount, and the card fields on one page. This sent them to the invoice
+     * document instead, which is the fallback for invoices with no booking
+     * behind them.
+     */
+    invoiceUrl = await invoicePayLink({
+      invoiceId: proposal.created_invoice_id,
+      bookingId: proposal.booking_id ?? null,
+      userId: proposal.user_id,
+      baseUrl: platformOrigin(),
+    });
     invoicePaid = invoice?.status === 'paid';
   }
 
@@ -332,6 +350,12 @@ export async function POST(
 ) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
+
+  /*
+   * Accepting or declining a quote commits a client to money. Gated like any other unauthenticated write.
+   */
+  const throttle = await rateLimit(request, 'proposal-answer', RATE_LIMITS.write);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.write.windowSeconds);
   const { token } = await params;
 
   try {
@@ -513,6 +537,24 @@ export async function POST(
     const willRedirect = Boolean(created.invoiceId) && created.dueNow > 0;
 
     /*
+     * Hoisted: signing reads the contact address, so it cannot sit inside the
+     * response object literal below.
+     *
+     * Null when nothing falls due on acceptance — a quote billed entirely on
+     * completion is accepted and simply has nothing to pay yet, which is not a
+     * failure and must not look like one.
+     */
+    const acceptedInvoiceUrl =
+      willRedirect && created.invoiceId
+        ? await invoicePayLink({
+            invoiceId: created.invoiceId,
+            bookingId: proposal.booking_id ?? null,
+            userId: proposal.user_id,
+            baseUrl: platformOrigin(),
+          })
+        : null;
+
+    /*
      * Redirecting IS issuing.
      *
      * `sendInvoice` is what normally moves an invoice out of `draft`, and this
@@ -526,6 +568,36 @@ export async function POST(
      * chased and the client who wandered off would never hear from us again.
      */
     if (created.invoiceId && willRedirect) {
+      /*
+       * RAISE IT AT STRIPE, so the client can actually pay when they land.
+       *
+       * This branch marks the row `sent` and sends the client off to pay —
+       * and until now that was all it did. Stripe was never told, so the
+       * invoice had no PaymentIntent and no `confirmation_secret`, and the
+       * portal's card had nothing to confirm.
+       *
+       * It worked before the portal because the Pay button went to
+       * `/api/public/invoice/[id]/pay`, which built a Checkout Session on the
+       * spot. The embedded card cannot do that: it needs the invoice itself.
+       *
+       * Awaited, not floated: a serverless function freezes the moment it
+       * responds, and a floating promise dies with it — the same reason the
+       * no-money-due branch below awaits its send.
+       *
+       * Non-blocking in effect. It never throws, and a business with no
+       * processor simply gets `cannot_collect` and keeps its bank details.
+       * Acceptance has already happened and must not be undone by a Stripe
+       * hiccup.
+       */
+      const raised = await raiseInvoiceForPayment(created.invoiceId, proposal.user_id);
+
+      if (!raised.ok) {
+        requestLogger.warn(
+          { invoiceId: created.invoiceId, reason: raised.reason },
+          'Accepted, but the invoice could not be raised at Stripe; card payment will be unavailable'
+        );
+      }
+
       const { error: issueError } = await supabaseServer
         .from('payment_invoices')
         .update({ status: 'sent' })
@@ -639,7 +711,7 @@ export async function POST(
          * billed entirely on completion is accepted and simply has nothing to
          * pay yet, which is not a failure and must not look like one.
          */
-        invoiceUrl: willRedirect ? `/invoice/${created.invoiceId}` : null,
+        invoiceUrl: acceptedInvoiceUrl,
       },
     });
   } catch (error) {

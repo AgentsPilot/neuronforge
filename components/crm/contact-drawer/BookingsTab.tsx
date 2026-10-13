@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import {
-  Calendar, Clock, CreditCard, ClipboardList, Mail, CheckCircle2,
+  Calendar, Clock, CreditCard, ClipboardCheck, Mail, CheckCircle2,
   XCircle, AlertCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Search, Plus, Edit2,
   Loader2, ShoppingBag, Package, User, MapPin,
   Phone, AtSign, Eye, ExternalLink, Save, X, RotateCcw, Ban, FileText, Paperclip,
@@ -28,6 +28,7 @@ import { isMeetingPastDue } from '@/lib/business-os/quoteGate';
 import { splitClientCancellationReason } from '@/lib/services/bookingCancellationReason';
 import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
 import { PaymentPlanTotals } from '@/components/payments/PaymentPlanTotals';
+import { REFUND_CLASS, REFUND_HEX } from '@/components/payments/refundTone';
 
 /**
  * Add another date to a package already under way.
@@ -229,6 +230,14 @@ interface BookingsTabProps {
   onViewProposal?: (bookingId: string, proposalId: string) => void;
   onSendInvoice?: (invoiceId: string, bookingId: string) => Promise<void>;
   /**
+   * Send the refund confirmation for one stage again.
+   *
+   * Passed up like every other write this component delegates: the drawer owns
+   * the confirmation dialog and the reload, and the row only says which money
+   * is meant.
+   */
+  onResendRefundEmail?: (invoiceId: string, bookingId: string) => void;
+  /**
    * Send the confirmation email again — the "reminder" action on the journey.
    *
    * Optional and NOT yet wired by the drawer: the button is rendered so the
@@ -279,7 +288,7 @@ interface BookingsTabProps {
 }
 
 // Step status types
-type StepStatus = 'completed' | 'active' | 'pending' | 'failed' | 'skipped';
+type StepStatus = 'completed' | 'active' | 'pending' | 'failed' | 'skipped' | 'refunded';
 
 // Status colors for step indicators
 const STATUS_COLORS: Record<StepStatus, { bg: string; border: string; icon: string; line: string; dot: string }> = {
@@ -311,11 +320,59 @@ const STATUS_COLORS: Record<StepStatus, { bg: string; border: string; icon: stri
     line: 'bg-red-500',
     dot: 'bg-red-500'
   },
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * LEGIBLE. IT WAS A GREY GLYPH ON A GREY DISC.
+   *
+   * `text-slate-400` on `bg-slate-500/50` is slate on slate at half opacity —
+   * barely any contrast, so the icon read as a smudge and an owner could not
+   * tell which step it was. Every other state here puts white on a solid fill
+   * or a muted glyph on the card's own surface; this one did neither.
+   *
+   * Lighter than `refunded`, which also uses slate, so the two stay apart at a
+   * glance: a skipped step is a faint disc with a dark glyph, a refunded one is
+   * a solid disc with a white glyph and its own returned-arrow icon.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   skipped: {
-    bg: 'bg-slate-500/50',
-    border: 'border-slate-500/50',
-    icon: 'text-slate-400',
-    line: 'bg-slate-500/50',
+    bg: 'bg-slate-200 dark:bg-slate-700',
+    border: 'border-slate-300 dark:border-slate-600',
+    icon: 'text-slate-500 dark:text-slate-300',
+    line: 'bg-slate-300 dark:bg-slate-600',
+    dot: 'bg-slate-400'
+  },
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE MONEY WENT BACK.
+   *
+   * Previously folded into `completed`, which is green, so a fully refunded job
+   * looked settled at a glance and only the small print said otherwise.
+   *
+   * SLATE, AND NOT THE RED THE FIGURES USE.
+   *
+   * The rail is a severity channel, not an event log. Red already means five
+   * things on it — overdue money, a declined card, a bounced email, a cancelled
+   * booking, a dead quote — and every one of them is the owner's to act on. A
+   * completed refund is the opposite: closed, nothing owed, nothing to chase.
+   * Put it in red and red stops meaning "do something", which costs more than
+   * this one node gains.
+   *
+   * The glyph changes too (`RotateCcw`), so the node is not merely quieter — it
+   * says what happened. And the figures on the card ARE red: the returned total
+   * and the badge beside it, where there are no failure states to confuse.
+   *
+   * The rule, written here because it is the one that keeps getting re-decided:
+   * THE RAIL SAYS WHAT NEEDS DOING, THE CARD SAYS WHAT HAPPENED.
+   *
+   * A PARTIAL refund does not come here: it leaves `payment.status` at `paid`,
+   * the business is still holding money, and there is still a job in progress.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  refunded: {
+    bg: 'bg-slate-400',
+    border: 'border-slate-400',
+    icon: 'text-white',
+    line: 'bg-slate-400',
     dot: 'bg-slate-400'
   }
 };
@@ -384,7 +441,16 @@ const STEP_ICONS: Record<string, LucideIcon> = {
   // Quote
   proposal: FileText,
   // Intake
-  intake: ClipboardList,
+  /*
+   * `ClipboardCheck`, not `ClipboardList`.
+   *
+   * These render at 12px inside a 22px node. `ClipboardList` draws a clipboard
+   * plus three ruled lines plus three bullet dots — at that size the strokes
+   * land within a pixel of each other, fill in, and the icon reads as a smudge
+   * rather than as anything. `ClipboardCheck` carries two shapes instead of
+   * six and survives the reduction.
+   */
+  intake: ClipboardCheck,
   // Confirmation
   confirmation: Mail,
   email: Mail,
@@ -424,6 +490,7 @@ export function BookingsTab({
   onStopQuote,
   onViewProposal,
   onSendInvoice,
+  onResendRefundEmail,
   onResendConfirmation,
   onSetBookingStatus,
   onAddPackageMeeting,
@@ -1492,11 +1559,57 @@ export function BookingsTab({
                 ? session.journeySteps?.find(s => s.key === 'proposal')
                 : undefined;
               const quoteState = (proposalStep?.metadata?.proposalStatus as string) ?? 'none';
+              /*
+               * ───────────────────────────────────────────────────────────────
+               * `refunded` COUNTS AS PAID HERE, and leaving it out was a bug
+               * introduced by the node colour above.
+               *
+               * This asks "did the money ever arrive", and the answer for a
+               * refunded job is yes — it arrived and then went back. Once the
+               * payment step stopped reporting `completed` for a refund, this
+               * read false, and `getQuotedStatusLabel` fell to "won, awaiting
+               * payment": a job whose money had been returned, inviting the
+               * owner to chase the client for it.
+               * ───────────────────────────────────────────────────────────────
+               */
               const quotePaid = session.journeySteps?.some(
-                s => s.key === 'payment' && s.status === 'completed'
+                s => s.key === 'payment' && (s.status === 'completed' || s.status === 'refunded')
               );
 
-              const statusInfo = isQuoted
+              /**
+               * The money came back, and that outranks "completed".
+               *
+               * ───────────────────────────────────────────────────────────────
+               * The header read "Completed" in green on a job whose every
+               * shekel had been returned — true of the WORK, and the first
+               * thing an owner sees about the sale. The booking's own status
+               * cannot say this: the meeting did happen, so `completed` is
+               * correct and simply answers a different question.
+               *
+               * Read from either side, because for a quoted job the money
+               * lives on the stage invoices rather than the booking row, and
+               * `payment_status` there can lag what the invoices say.
+               *
+               * NOT on a cancelled booking: "Lost" already names that outcome,
+               * and it is the more useful of the two.
+               * ───────────────────────────────────────────────────────────────
+               */
+              const moneyReturned =
+                booking.status !== 'cancelled' &&
+                (booking.payment_status === 'refunded' ||
+                  Boolean(
+                    session.journeySteps?.some(
+                      s => s.key === 'payment' && s.status === 'refunded'
+                    )
+                  ));
+
+              const statusInfo = moneyReturned
+                ? {
+                    text: t('crm.payment.status.refunded') || 'Refunded',
+                    color: REFUND_CLASS.full.text,
+                    bgColor: REFUND_CLASS.full.bg,
+                  }
+                : isQuoted
                 ? getQuotedStatusLabel(
                     booking.status,
                     quoteState,
@@ -1790,14 +1903,58 @@ export function BookingsTab({
                                            * what is missing is worse than no label.
                                            */
                                           ? ''
-                                          : t('crm.journey.undated') || 'Time not recorded'}
+                                          : group.steps.every(s => s.status === 'skipped')
+                                            /*
+                                             * NOTHING HAPPENED HERE, so there is no
+                                             * time that failed to be recorded.
+                                             * ─────────────────────────────────────
+                                             * "Time not recorded" is the honest answer
+                                             * for a step that DID happen and left no
+                                             * timestamp — a payment taken without a
+                                             * `paid_at`, which is the case it was
+                                             * written for.
+                                             *
+                                             * A SKIPPED step is the opposite: it never
+                                             * happened and never will. An intake form
+                                             * on a booking that has already been
+                                             * delivered is skipped, carries no
+                                             * timestamp, and landed in this same
+                                             * undated bucket — so the card announced
+                                             * that the time of a form nobody ever sent
+                                             * had not been recorded.
+                                             *
+                                             * `every`, not `some`: a group holding one
+                                             * skipped step beside a real one that did
+                                             * happen still owes the reader the label.
+                                             */
+                                            ? ''
+                                            : t('crm.journey.undated') || 'Time not recorded'}
                                     </span>
                                   )}
                                   <span className="flex-1 h-px bg-[var(--v2-border)]" aria-hidden="true" />
                                 </div>
 
                                 {group.steps.map((step, index) => {
-                                  const StepIcon = STEP_ICONS[step.key] || CheckCircle2;
+                                  /*
+                                   * ─────────────────────────────────────────────────────
+                                   * THE GLYPH FOLLOWS THE STATUS, NOT ONLY THE STEP.
+                                   *
+                                   * The icon was keyed on the step alone, so a refunded
+                                   * payment wore the same card glyph as one collected and
+                                   * kept — and once the node went red it was telling the
+                                   * owner "a card problem" in the only language a node has.
+                                   *
+                                   * A returned arrow says what happened by itself, which is
+                                   * what separates this node from the genuinely failed ones
+                                   * beside it: red here means money went BACK, red there
+                                   * means money is late or a card was declined, and the
+                                   * glyph is what tells them apart at a glance.
+                                   * ─────────────────────────────────────────────────────
+                                   */
+                                  const StepIcon =
+                                    step.status === 'refunded'
+                                      ? RotateCcw
+                                      : STEP_ICONS[step.key] || CheckCircle2;
 
                                   /*
                                     THE LAST STEP NAMES THE OUTCOME, NOT THE STAGE.
@@ -2008,11 +2165,68 @@ export function BookingsTab({
                                     ? true
                                     : Boolean(payment) && payment?.status !== 'free';
 
+                                  /*
+                                   * Money that is not coming, by either route.
+                                   *
+                                   * ─────────────────────────────────────────────────────
+                                   * This asked only whether the BOOKING was cancelled, and
+                                   * that is one of two ways money stops being owed. The
+                                   * other is the invoice itself being called off — a quote
+                                   * stopped part way, or the owner pressing "Cancel this
+                                   * payment" — which leaves the booking exactly as it was.
+                                   *
+                                   * So a cancelled ₪5,000 invoice on a completed booking
+                                   * went on reading "outstanding ₪5,000", still offered
+                                   * "Manage payment", and still offered to resend the very
+                                   * invoice that had just been voided.
+                                   *
+                                   * `!moneyMoved` still guards both routes: an invoice
+                                   * cancelled after part of it was collected is not money
+                                   * given up on, and belongs in the refunded/kept pair
+                                   * rather than in the Stopped cell.
+                                   * ─────────────────────────────────────────────────────
+                                   */
                                   const cancelledUnpaid =
                                     isPaymentStep &&
-                                    booking.status === 'cancelled' &&
                                     paymentExpected &&
-                                    !moneyMoved;
+                                    !moneyMoved &&
+                                    (booking.status === 'cancelled' ||
+                                      payment?.invoiceStatus === 'cancelled');
+
+                                  /**
+                                   * Nothing left for the payment dialog to do.
+                                   *
+                                   * ─────────────────────────────────────────────────────
+                                   * "Manage payment" opens on a job whose money has all
+                                   * gone back: nothing to collect, nothing left to return.
+                                   * The dialog has no action to offer there, so the button
+                                   * is an invitation to a dead end — and until the fixes
+                                   * beside this one it offered "Mark as paid" on refunded
+                                   * money.
+                                   *
+                                   * BOTH halves are required, and the second is the one
+                                   * that matters. `status: 'refunded'` means everything
+                                   * COLLECTED came back, which on a plan can be true while
+                                   * a later stage has never been billed at all — a deposit
+                                   * taken and returned, the final milestone still owed.
+                                   * Hiding the button there would remove the only way to
+                                   * record that milestone when it is eventually paid in
+                                   * cash, which is the whole purpose of the dialog.
+                                   *
+                                   * So: every stage must be finished too. The same three
+                                   * finished states `hasStoppableWork` uses, for the same
+                                   * reason — duplicated rather than imported because that
+                                   * helper lives in the drawer, which imports THIS file.
+                                   * ─────────────────────────────────────────────────────
+                                   */
+                                  const everyStageFinished = payment?.plan?.stages?.length
+                                    ? payment.plan.stages.every(stage =>
+                                        ['paid', 'cancelled', 'refunded'].includes(String(stage.status))
+                                      )
+                                    : true;
+
+                                  const nothingLeftToManage =
+                                    payment?.status === 'refunded' && everyStageFinished;
 
                                   /**
                                    * Does this step draw its own money account below?
@@ -2480,7 +2694,14 @@ export function BookingsTab({
                                           {nodeLoading ? (
                                             <Loader2 className={`h-3 w-3 ${colors.icon} animate-spin`} />
                                           ) : (
-                                            <StepIcon className={`h-3 w-3 ${colors.icon}`} />
+                                            /*
+                                              A heavier stroke, because these are
+                                              drawn at half the size they are designed
+                                              for. Lucide's default 2px is measured on
+                                              a 24px canvas; scaled to 12 it lands near
+                                              1px and the glyphs go faint and ragged.
+                                            */
+                                            <StepIcon className={`h-3 w-3 ${colors.icon}`} strokeWidth={2.4} />
                                           )}
                                         </button>
 
@@ -3128,6 +3349,18 @@ export function BookingsTab({
 
                                               const stageRefunded = Number(stage.refundedAmount || 0);
 
+                                              /**
+                                                Every shekel of this stage went back.
+                                                ─────────────────────────────────────
+                                                Separate from "was refunded at all": a
+                                                partial refund leaves the business holding
+                                                money, so the stage is still a collection
+                                                that stood. Only a full return changes what
+                                                the row MEANS.
+                                              */
+                                              const fullyReturned =
+                                                stageRefunded > 0 && stageRefunded >= stage.amount;
+
                                               /*
                                                 THE FIGURE IS WHAT THE CLIENT PAID.
                                                 ───────────────────────────────────
@@ -3151,16 +3384,42 @@ export function BookingsTab({
                                                   className="flex flex-col gap-0.5 px-2.5 py-2"
                                                 >
                                                   <div className="flex items-center gap-2">
+                                                  {/*
+                                                    GREEN MEANS THE BUSINESS KEPT IT.
+                                                    ───────────────────────────────────
+                                                    A refunded stage still carries
+                                                    `status: 'paid'` — correctly, because it
+                                                    WAS paid, and the refund is recorded
+                                                    against the invoice rather than the
+                                                    schedule. So the dot read green on a job
+                                                    whose every shekel had gone back, directly
+                                                    above a line saying so.
+
+                                                    Orange, matching the "Refunded" badge on
+                                                    the card and the returned cell in the
+                                                    totals strip, so one event has one colour
+                                                    wherever it appears. Deliberately not red:
+                                                    `PaymentInvoiceList` settled that — "a
+                                                    refund is a completed, deliberate act, not
+                                                    a failure like an overdue invoice".
+
+                                                    Only when ALL of it went back. A partial
+                                                    refund leaves money with the business, and
+                                                    the breakdown line underneath is what says
+                                                    how much.
+                                                  */}
                                                   <span
                                                     className="h-1.5 w-1.5 shrink-0 rounded-full"
                                                     style={{
-                                                      background: paid
-                                                        ? '#22C58B'
-                                                        : stopped
-                                                          ? '#B54708'
-                                                          : billed
-                                                            ? '#F79009'
-                                                            : 'var(--v2-border)',
+                                                      background: fullyReturned
+                                                        ? REFUND_HEX.full
+                                                        : paid
+                                                          ? '#22C58B'
+                                                          : stopped
+                                                            ? '#B54708'
+                                                            : billed
+                                                              ? '#F79009'
+                                                              : 'var(--v2-border)',
                                                     }}
                                                     aria-hidden="true"
                                                   />
@@ -3206,8 +3465,14 @@ export function BookingsTab({
                                                           were two. The word used to sit alone at
                                                           the end of the row, repeating a claim the
                                                           green dot had already made at its start. */}
+                                                      {/* Every date in this block carries the
+                                                          year. They are read against each other
+                                                          — paid, due, refunded — and a stage
+                                                          settled in one year and returned in the
+                                                          next is exactly when the reader needs
+                                                          it most. */}
                                                       {paid && stage.paidAt
-                                                        ? `${t('crm.stage.paid')} ${stageDate(stage.paidAt)}`
+                                                        ? `${t('crm.stage.paid')} ${stageDate(stage.paidAt, true)}`
                                                         : stopped
                                                           // Its old due date is no longer a fact
                                                           // about this period — saying "due 7 Oct"
@@ -3215,7 +3480,7 @@ export function BookingsTab({
                                                           // confusion this fixes.
                                                           ? t('payments.plan.status.cancelled')
                                                         : stage.dueDate
-                                                          ? `${t('crm.payment.due')} ${stageDate(stage.dueDate)}`
+                                                          ? `${t('crm.payment.due')} ${stageDate(stage.dueDate, true)}`
                                                           : ''}
                                                     </span>
                                                   )}
@@ -3294,6 +3559,7 @@ export function BookingsTab({
                                                   <StageRowActions
                                                     invoiceId={stage.invoiceId}
                                                     paid={paid}
+                                                    refunded={stageRefunded}
                                                     remaining={
                                                       stage.amount - Number(stage.refundedAmount || 0)
                                                     }
@@ -3302,6 +3568,15 @@ export function BookingsTab({
                                                       onSendInvoice
                                                         ? () =>
                                                             handleSendInvoice(
+                                                              stage.invoiceId as string,
+                                                              booking.id
+                                                            )
+                                                        : undefined
+                                                    }
+                                                    onResendRefundEmail={
+                                                      onResendRefundEmail && stage.invoiceId
+                                                        ? () =>
+                                                            onResendRefundEmail(
                                                               stage.invoiceId as string,
                                                               booking.id
                                                             )
@@ -3339,6 +3614,11 @@ export function BookingsTab({
                                                   */}
                                                   {stageRefunded > 0 && (
                                                     <span
+                                                      /* Muted, deliberately: the figure that
+                                                         carries the colour is the TOTAL above,
+                                                         and a red line under every stage as
+                                                         well would leave the card shouting the
+                                                         same fact three times. */
                                                       className="text-[11.5px] tabular-nums"
                                                       style={{
                                                         color: 'var(--v2-text-muted)',
@@ -3359,6 +3639,15 @@ export function BookingsTab({
                                                             '{kept}',
                                                             money(Math.max(stage.amount - stageRefunded, 0))
                                                           )}
+                                                        {/*
+                                                          Same format as the paid date directly
+                                                          above it. This asked for the year and
+                                                          that one does not, so a stage paid and
+                                                          refunded on one day read "9 באוק׳" on
+                                                          one line and "9 באוק׳ 2026" on the
+                                                          next — two spellings of the same date,
+                                                          8px apart.
+                                                        */}
                                                         {stage.refundedAt
                                                           ? ` · ${stageDate(stage.refundedAt, true)}`
                                                           : ''}
@@ -3785,7 +4074,13 @@ export function BookingsTab({
 
                                           {isPaymentStep &&
                                             (payment?.status === 'refunded' || refunded > 0) && (
-                                              <span className="px-2.5 py-0.5 rounded-full text-[11.5px] font-medium bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                                              <span
+                                                className={`px-2.5 py-0.5 rounded-full text-[11.5px] font-medium ${
+                                                  payment?.status === 'refunded'
+                                                    ? `${REFUND_CLASS.full.bg} ${REFUND_CLASS.full.text}`
+                                                    : `${REFUND_CLASS.partial.bg} ${REFUND_CLASS.partial.text}`
+                                                }`}
+                                              >
                                                 {payment?.status === 'refunded'
                                                   ? t('crm.payment.status.refunded') || 'Refunded'
                                                   : t('crm.payment.status.partially_refunded_short') || 'Partially refunded'}
@@ -3827,7 +4122,7 @@ export function BookingsTab({
                                           {/* Nothing to manage on a cancelled
                                               booking nobody paid for: the
                                               invoice went with it. */}
-                                          {isPaymentStep && onManagePayment && paymentExpected && !cancelledUnpaid && (
+                                          {isPaymentStep && onManagePayment && paymentExpected && !cancelledUnpaid && !nothingLeftToManage && (
                                             <button
                                               type="button"
                                               onClick={e => {
@@ -3924,6 +4219,13 @@ export function BookingsTab({
                                           {isProposalStep
                                             && onStopQuote
                                             && step.metadata?.proposalStatus === 'accepted'
+                                            /* AND there is something left to stop.
+                                               An accepted quote stays accepted for ever, so this
+                                               alone kept the button on a job whose every stage was
+                                               paid and every invoice settled — inviting an owner to
+                                               press it and discover it does nothing nameable.
+                                               See `hasStoppableWork` where the step is built. */
+                                            && step.metadata?.hasStoppableWork === true
                                             /* `!!`, like `canResend` above: metadata values are
                                                `unknown`, and `unknown && <jsx>` is not a ReactNode. */
                                             && !!step.metadata?.proposalId && (

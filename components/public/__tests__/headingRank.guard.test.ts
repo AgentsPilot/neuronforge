@@ -31,8 +31,8 @@ const withoutComments = (source: string) =>
 const PAGES = [
   ['app', 'proposal', '[token]', 'page.tsx'],
   ['app', 'book', 'manage', '[token]', 'page.tsx'],
-  ['app', 'book', 'manage', '[token]', 'cancel', 'page.tsx'],
-  ['app', 'reschedule', '[token]', 'page.tsx'],
+  ['components', 'public', 'CancelPanel.tsx'],
+  ['components', 'public', 'ReschedulePanel.tsx'],
   ['app', 'book', 'manage', '[token]', 'intake', 'page.tsx'],
 ];
 

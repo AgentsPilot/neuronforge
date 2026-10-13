@@ -31,16 +31,16 @@
 
 import fs from 'fs';
 import path from 'path';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf8');
 
 const SECTION = 'components/crm/contact-drawer/ActivitySection.tsx';
 const ROUTE = 'app/api/website/proposal-request/route.ts';
-const CONTEXT = 'lib/business-os/LanguageContext.tsx';
 
 const section = read(SECTION);
 const route = read(ROUTE);
-const context = read(CONTEXT);
+const context = dictionarySource();
 
 describe('the type the quote request actually writes', () => {
   it('is the one the drawer draws', () => {

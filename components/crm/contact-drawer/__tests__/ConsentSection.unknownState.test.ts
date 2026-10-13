@@ -14,6 +14,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
 const root = process.cwd();
 const source = fs.readFileSync(
@@ -65,7 +66,7 @@ describe('ConsentSection — an unreadable consent state is not a refusal', () =
 });
 
 describe('crm.consent.unavailable is translated everywhere', () => {
-  const locales = fs.readFileSync(path.join(root, 'lib/business-os/LanguageContext.tsx'), 'utf8');
+  const locales = dictionarySource(root);
 
   it('exists in all three locales', () => {
     // `t()` returns the key on a miss and a key is truthy, so a missing key

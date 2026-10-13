@@ -33,10 +33,18 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-const context = readFileSync(
-  join(__dirname, '..', '..', 'LanguageContext.tsx'),
-  'utf8'
-);
+/*
+ * The three dictionaries, read as text.
+ *
+ * They were one block inside `LanguageContext.tsx` until that file was split:
+ * twelve thousand lines of strings inside a `'use client'` component that every
+ * Business OS page imports. Same strings, three modules, and this still reads
+ * them as SOURCE rather than importing them — the point is to assert what the
+ * copy says, and importing the component would pull React in to do it.
+ */
+const context = (['en', 'es', 'he'] as const)
+  .map(lang => readFileSync(join(__dirname, '..', '..', 'translations', `${lang}.ts`), 'utf8'))
+  .join('\n');
 
 /** Every translation of one key, one per language table. */
 function translationsOf(key: string): string[] {

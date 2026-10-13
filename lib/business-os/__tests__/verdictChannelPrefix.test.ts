@@ -19,11 +19,9 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
-const source = readFileSync(
-  join(__dirname, '..', 'LanguageContext.tsx'),
-  'utf8'
-);
+const source = dictionarySource();
 
 /** Every locale's value for one key, in file order: en, es, he. */
 function valuesFor(key: string): string[] {

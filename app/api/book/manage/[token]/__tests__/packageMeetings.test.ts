@@ -37,7 +37,7 @@ jest.mock('@/lib/logger', () => {
 
 const mockVerify = jest.fn();
 const mockGenerate = jest.fn((bookingId: string) => `token-for-${bookingId}`);
-jest.mock('@/lib/services/BookingEmailService', () => ({
+jest.mock('@/lib/services/bookingToken', () => ({
   verifyBookingToken: (...args: unknown[]) => mockVerify(...args),
   generateBookingToken: (...args: unknown[]) => mockGenerate(...(args as [string])),
 }));
@@ -63,6 +63,17 @@ jest.mock('@/lib/supabaseServer', () => ({
           /* The quote lookup filters out superseded versions. It is unrelated to
              the meetings this file is about, and only has to not break. */
           neq: () => chain,
+          /* The money queries address the whole package by id list now, and the
+             pay-link lookup filters on a set of statuses. Neither is what this
+             file is about; both only have to not break the chain. */
+          in: () => chain,
+          /* The lookup for the booking a package was SOLD from: the proposal
+             link, then the host booking. Empty and null here, so these rows
+             report no parent — this file is about the meetings, not the card
+             above them. */
+          not: () => chain,
+          limit: async () => ({ data: [], error: null }),
+          maybeSingle: async () => ({ data: null, error: null }),
           /*
            * Thenable AND chainable.
            *
@@ -130,20 +141,41 @@ beforeEach(() => {
 });
 
 describe('the token minter', () => {
-  it('is actually exported by the email service', () => {
+  it('is actually exported by the module the route imports', () => {
     /*
      * The mock above declares `generateBookingToken` as a named export, so this
      * suite passed green while the real module kept it module-private — and the
      * route failed to import it at runtime, in dev with a warning and a 404 on
      * every client link. A mocked export proves nothing about the real one, so
      * this reads the source.
+     *
+     * It moved: the token now lives in `lib/services/bookingToken`, a leaf over
+     * `jsonwebtoken`, because reaching it through `BookingEmailService` pulled
+     * 27,600 lines of email machinery onto every public page. Mocking the old
+     * path left the real one unmocked, which is the same class of mistake this
+     * test was written for, caught by this test.
      */
     const source = readFileSync(
-      join(process.cwd(), 'lib', 'services', 'BookingEmailService.ts'),
+      join(process.cwd(), 'lib', 'services', 'bookingToken.ts'),
       'utf8'
     );
 
     expect(source).toMatch(/export function generateBookingToken\(/);
+  });
+
+  /*
+   * And that the route takes it from there. A correct export in the leaf plus a
+   * route still importing from the email service would pass the line above and
+   * reintroduce the weight.
+   */
+  it('is imported by the route from the leaf, not the email service', () => {
+    const route = readFileSync(
+      join(process.cwd(), 'app', 'api', 'book', 'manage', '[token]', 'route.ts'),
+      'utf8'
+    );
+
+    expect(route).toMatch(/from '@\/lib\/services\/bookingToken'/);
+    expect(route).not.toMatch(/from '@\/lib\/services\/BookingEmailService'/);
   });
 });
 

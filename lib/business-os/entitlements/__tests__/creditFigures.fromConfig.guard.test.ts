@@ -28,6 +28,7 @@ import { readCodeConfig } from '@/lib/business-os/entitlements/source';
 import { validateBoostCatalogue } from '@/lib/business-os/entitlements/boostCatalogue';
 import { BOOST_PACKAGES, BOOST_PURCHASE_CAP_DEFAULT } from '@/lib/business-os/entitlements/config/boostPackages';
 import { currentRetailRate } from '@/lib/business-os/entitlements/retailRate';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
 /** The user's list (2026-10-01): Essentials, Autopilot / Founding Partner, trial. */
 const USER_LISTED = [19750, 32250, 2000];
@@ -207,7 +208,7 @@ function dictionaryEntries(source: string): Array<{ key: string; value: string }
 }
 
 function dictionaryStringsAboutCredits(): Array<{ key: string; value: string }> {
-  const entries = dictionaryEntries(read('lib/business-os/LanguageContext.tsx'));
+  const entries = dictionaryEntries(dictionarySource());
   return entries.filter(
     ({ key, value }) => key.startsWith('plan.') || key.startsWith('usage.') || /credit|קרדיט|crédito/i.test(value)
   );

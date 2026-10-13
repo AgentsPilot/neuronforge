@@ -256,7 +256,14 @@ const CreateLandingPageSchema = z.object({
   companyName: z.string().optional(),
   // Service details for pricing and booking
   servicePrice: z.number().nullable().optional(),
-  serviceDuration: z.number().optional(),
+  /*
+   * Nullable for the same reason as the generator's: a service that is not
+   * scheduled has a null `duration_minutes`, and this schema refused it. The
+   * generator's copy of this bug is what produced placeholder landing pages;
+   * this copy would have refused to SAVE one for the same services, which is
+   * the next wall the owner would have hit.
+   */
+  serviceDuration: z.number().nullable().optional(),
   serviceCurrency: z.string().optional().default('USD')
 });
 
@@ -716,6 +723,12 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
+      // Paths and codes only, never the values: this body carries the owner's
+      // page copy. Silent 400s on this family of routes cost two days.
+      logger.warn(
+        { issues: error.errors.map((e) => ({ path: e.path.join('.'), code: e.code })) },
+        'Landing page save refused: invalid input'
+      );
       return NextResponse.json(
         { success: false, error: 'Invalid input', details: error.errors },
         { status: 400 }

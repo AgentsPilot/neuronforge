@@ -18,6 +18,8 @@
  */
 
 import '@testing-library/jest-dom';
+import * as fs from 'fs';
+import * as path from 'path';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import type { SchedulingService } from '@/lib/repositories/SchedulingRepository';
 
@@ -47,8 +49,12 @@ const COPY: Record<string, string> = {
   'config.services.needs_time.yes.eg': 'A session, a treatment, a haircut.',
   'config.services.needs_time.no.why': 'Nothing is held in your calendar. They buy it and start.',
   'config.services.needs_time.no.eg': 'A six-week course, a programme, a downloadable plan.',
-  'scheduling.modal.you_get_paid': 'You get paid',
+  'scheduling.modal.how_it_works': 'You get paid',
   'journey.label': 'What your client sees',
+  'scheduling.new_service': 'Add a service',
+  'scheduling.journey.holds_time': 'Booking this holds a time in your diary.',
+  'scheduling.journey.no_time': 'Nothing is held in your diary. They buy it and begin.',
+  'scheduling.journey.runs_for': 'Each booking runs {minutes} minutes.',
   'scheduling.modal.money.invoice_once': 'You send one invoice for {amount}.',
   'scheduling.modal.money.invoice_once_link': 'You send one invoice for {amount}, with a payment link in it.',
   'scheduling.modal.money.card_once': 'They pay {amount} by card at the moment they buy.',
@@ -111,6 +117,25 @@ const SERVICE = {
 
 const settle = () => act(async () => { await Promise.resolve(); });
 
+/**
+ * The account now renders TWICE: beside each section from `md:` up, and
+ * stacked at the foot of the form below that. Only one is ever visible --
+ * Tailwind hides the other with `display:none` -- but jsdom applies no CSS, so
+ * both are in the document here.
+ *
+ * Asserting through this rather than loosening every query, because the real
+ * risk of having two shapes is that they DRIFT. This fails if they ever say
+ * different things.
+ */
+function says(match: RegExp) {
+  const found = screen.getAllByText(match);
+  expect(found.length).toBeGreaterThan(0);
+  const texts = new Set(found.map(el => el.textContent?.replace(/\s+/g, ' ').trim()));
+  expect(texts.size).toBe(1);
+  return found[0];
+}
+
+
 /** Opens the panel for the one service, which is what clicking its row does. */
 async function openEditor(options: { processorReady?: boolean; service?: SchedulingService } = {}) {
   global.fetch = jest.fn(() =>
@@ -151,47 +176,73 @@ describe('the questions it asks', () => {
   it('opens on the shape the service already has, and says what it means', async () => {
     await openEditor();
 
-    expect(screen.getByText(/Billed afterwards/)).toBeInTheDocument();
     // Stripe is connected in this mount, so the invoice carries its link.
-    expect(screen.getByText(/one invoice for ₪300, with a payment link/)).toBeInTheDocument();
+    says(/one invoice for ₪300, with a payment link/);
   });
 
   it('says what an invoice really is on each side of Stripe', async () => {
+    /*
+     * This used to read the `why` note under the chosen shape. That note is
+     * gone -- the flow beside the section says the same thing with the real
+     * figures -- but the DISTINCTION it protected is not: with Stripe the
+     * invoice carries a hosted payment page, and the sentence has to say so.
+     *
+     * `serviceMoneyLine` decides it (`invoice_once` against
+     * `invoice_once_link`), which is why the test now asks the sentence rather
+     * than the note.
+     */
     await openEditor();
-
-    // Connected: the invoice goes out with its hosted payment page, so the
-    // client can pay it by card from the email.
-    expect(screen.getByText(/goes out with a payment link/)).toBeInTheDocument();
-    expect(screen.getByText(/pay the invoice by card/)).toBeInTheDocument();
+    says(/one invoice for ₪300, with a payment link/);
   });
 
   it('and promises no link when there is no processor', async () => {
     await openEditor({ processorReady: false });
 
-    expect(screen.getByText(/No processor needed/)).toBeInTheDocument();
-    expect(screen.getByText(/Bank transfer, Bit, or cash on the day/)).toBeInTheDocument();
+    says(/You send one invoice for ₪300\./);
     expect(screen.queryByText(/payment link/)).not.toBeInTheDocument();
   });
 
-  it('explains the chosen option with a concrete example', async () => {
+  it('changes what it says when the shape changes', async () => {
+    /*
+     * This used to assert the worked example under the pills. The examples are
+     * gone with the notes -- the flow says what the choice produces, with this
+     * service's own figures, which is a better example than an invented one.
+     *
+     * What the test still has to hold is that the account FOLLOWS the choice:
+     * pick quote and the money sentence must stop describing an invoice.
+     */
     await openEditor();
-
-    // Under the pills, naming the option it belongs to, with a real case — the
-    // definition alone is what testers misread.
-    expect(screen.getByText(/pay the invoice by card/)).toBeInTheDocument();
+    says(/one invoice for ₪300/);
 
     fireEvent.click(screen.getByRole('button', { name: 'You quote first' }));
-    expect(screen.getByText(/kitchen renovation priced after a site visit/)).toBeInTheDocument();
-    expect(screen.queryByText(/pay the invoice by card/)).not.toBeInTheDocument();
+    says(/Nothing is charged here/);
+    expect(screen.queryByText(/one invoice for ₪300/)).not.toBeInTheDocument();
   });
 
-  it('explains the appointment question too, which had nothing', async () => {
+  it('answers the appointment question on the flow, not under the control', async () => {
+    /*
+     * This used to assert the `eg` lines under the segmented choice -- "A
+     * session, a treatment, a haircut" / "a six-week course, a programme".
+     * They are gone, and deliberately: the flow beside this section says the
+     * same thing and says it whole, and two answers to one question a
+     * centimetre apart is how an owner learns to read neither.
+     */
     await openEditor();
-
-    expect(screen.getByText(/A session, a treatment, a haircut/)).toBeInTheDocument();
+    says(/holds a time in your diary/);
 
     fireEvent.click(screen.getByRole('button', { name: 'No' }));
-    expect(screen.getByText(/six-week course, a programme/)).toBeInTheDocument();
+    says(/Nothing is held in your diary/);
+  });
+
+  it('and does not also say it under the control', () => {
+    // The removal is the point. If these come back, the section says the same
+    // thing twice, which is what the flow was built to end.
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'components/scheduling/SchedulingServicesList.tsx'),
+      'utf8'
+    );
+    expect(source).not.toContain("config.services.needs_time.yes.why");
+    expect(source).not.toContain("config.services.needs_time.no.eg");
   });
 });
 
@@ -202,7 +253,7 @@ describe('pressing a shape', () => {
     fireEvent.click(screen.getByText('They pay by card'));
 
     expect(screen.getByTestId('journey')).toHaveAttribute('data-collection', 'online');
-    expect(screen.getByText(/They pay ₪300 by card at the moment they buy/)).toBeInTheDocument();
+    says(/They pay ₪300 by card at the moment they buy/);
   });
 
   it('a quote takes the price away and says why', async () => {
@@ -210,8 +261,8 @@ describe('pressing a shape', () => {
 
     fireEvent.click(screen.getByText('You quote first'));
 
-    expect(screen.getByText(/No price here, on purpose/)).toBeInTheDocument();
-    expect(screen.getByText(/Nothing is charged here/)).toBeInTheDocument();
+    says(/No price here, on purpose/);
+    says(/Nothing is charged here/);
   });
 });
 
@@ -221,10 +272,8 @@ describe('the processor the owner cannot see', () => {
 
     fireEvent.click(screen.getByText('They pay by card'));
 
-    expect(screen.getByText(/Card payments need a connected processor/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/While Stripe is not connected you invoice ₪300 after they buy/)
-    ).toBeInTheDocument();
+    says(/Card payments need a connected processor/);
+    says(/While Stripe is not connected you invoice ₪300 after they buy/);
   });
 });
 
@@ -245,7 +294,78 @@ describe('a free service', () => {
   it('keeps its shape and says nothing is collected', async () => {
     await openEditor({ service: { ...SERVICE, price: 0 } as unknown as SchedulingService });
 
-    expect(screen.getByText(/Nothing is collected. This service is free/)).toBeInTheDocument();
+    says(/Nothing is collected. This service is free/);
     expect(screen.getByRole('button', { name: 'You invoice them' })).toBeInTheDocument();
+  });
+});
+
+
+describe('creating a service, where there is no saved row yet', () => {
+  /*
+   * The journey reads the booking window off the SAVED service, and while a
+   * new one is being created there is none -- `effective` is null. The question
+   * is whether the account of what will happen still appears, or whether the
+   * owner creating their first service is the one person who never sees it.
+   *
+   * It should, and it should describe what they are typing: a new service gets
+   * the platform's defaults on save, and a line restating a default is dropped
+   * anyway, so what is left is exactly the part they chose.
+   */
+  const openNew = async () => {
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) } as Response)
+    ) as unknown as typeof fetch;
+
+    render(<SchedulingServicesList services={[]} processorReady showAddButton intakeEnabled={false} />);
+    fireEvent.click(screen.getByText('Add a service'));
+    await settle();
+  };
+
+  it('still explains what will happen', async () => {
+    await openNew();
+    // A new service starts scheduled, so this is the line it opens on.
+    says(/Booking this holds a time in your diary/);
+  });
+
+  it('and does not fall over on the fields that have no saved value', async () => {
+    // `advance_booking_days`, `min_notice_hours` and the day cap are all read
+    // from a row that does not exist yet. Null, not a crash, and no sentence.
+    await openNew();
+    expect(screen.queryByText(/days ahead/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/hours before the start/)).not.toBeInTheDocument();
+  });
+
+  it('describes the money too, from the fields as typed', async () => {
+    // The new row starts with no price, so the one true sentence about money
+    // is that nothing is collected.
+    await openNew();
+    says(/Nothing is collected/);
+  });
+});
+
+
+describe('a service with no price', () => {
+  /*
+   * At a price of nothing `serviceMoneyLine` answers `free` and never consults
+   * the shape -- so card, invoice and quote were offered, one of them lit,
+   * deciding nothing. The payment-plan row already collapsed on the same test.
+   */
+  const FREE = { ...SERVICE, price: 0, collection: 'invoice' } as unknown as SchedulingService;
+
+  it('does not ask how they pay', async () => {
+    await openEditor({ service: FREE });
+    for (const name of ['They pay by card', 'You invoice them', 'You quote first']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it('and says the service is free', async () => {
+    await openEditor({ service: FREE });
+    says(/Nothing is collected/);
+  });
+
+  it('while a priced service still asks', async () => {
+    await openEditor();
+    expect(screen.getByRole('button', { name: 'You quote first' })).toBeInTheDocument();
   });
 });

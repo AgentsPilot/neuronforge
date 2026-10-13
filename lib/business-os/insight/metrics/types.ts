@@ -19,7 +19,11 @@ export type AcquisitionMetricKey =
   | 'acquisition.page_views'
   | 'acquisition.unique_visitors'
   | 'acquisition.form_submissions'
-  | 'acquisition.form_conversion_rate'
+  /* Was `acquisition.form_conversion_rate`, which measured forms alone while
+     most of these sites convert by booking. Renamed rather than kept as a pair:
+     nothing reads this union at runtime, no row was ever written under the old
+     name, and a key nothing writes is a trap for whoever reads it next. */
+  | 'acquisition.website_conversion_rate'
   | 'acquisition.traffic_change'
   | 'acquisition.page_conversion'
   | 'acquisition.mobile_conversion'

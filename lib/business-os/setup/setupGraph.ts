@@ -33,7 +33,7 @@ export type StepId =
   | 'intake'
   | 'service_descriptions'
   | 'meta_insights'
-  | 'google_analytics';
+  | 'google_business';
 
 
 /**
@@ -239,6 +239,27 @@ export interface GraphNode {
    * the chain instead of being scattered by their own dependencies.
    */
   belongsTo?: StepId;
+  /**
+   * Listed, but never offered as the one thing to do next.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * For a step that depends on the business ALREADY HOLDING a third-party
+   * account nothing here can create. `suggested` falls through to the first
+   * ready step in graph order, and these sit last, so a business that finished
+   * everything real was told its next move was connecting Google Analytics —
+   * a product most of them have never opened, and a dead end for anyone who
+   * does not already have a property.
+   *
+   * It stays in the chain rather than being removed by `applies`, because the
+   * chain is the one place that lists what is still configurable: someone who
+   * acquires analytics in week six needs a way back in. The row remains, it
+   * just stops being presented as work.
+   *
+   * Not a substitute for `applies`. That answers "does this business need the
+   * step at all"; this answers "should we be the one to bring it up".
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  neverSuggested?: true;
 }
 
 /**
@@ -450,8 +471,11 @@ export const SETUP_STEPS: GraphNode[] = [
   // Never mandatory and never a prerequisite: a business takes clients end to
   // end without either. All they change is whether we can say where those
   // clients came from.
-  { id: 'meta_insights', requires: [], owner: 'user', mandatory: 'optional' },
-  { id: 'google_analytics', requires: [], owner: 'user', mandatory: 'optional' },
+  // Both carry `neverSuggested`: each waits on an account in somebody else's
+  // product, which nothing here can create. Listed so there is a way in, never
+  // put in front of a business as the thing to do next.
+  { id: 'meta_insights', requires: [], owner: 'user', mandatory: 'optional', neverSuggested: true },
+  { id: 'google_business', requires: [], owner: 'user', mandatory: 'optional', neverSuggested: true },
 ];
 
 /** Where a step stands once the graph is resolved against real data. */
@@ -507,6 +531,8 @@ export interface ResolvedStep {
   belongsTo?: StepId;
   /** Who can actually do this: the platform, or only the person. */
   owner: 'platform' | 'user';
+  /** Listed, but never the suggested next move. See `GraphNode.neverSuggested`. */
+  neverSuggested?: true;
 }
 
 export interface ResolvedGraph {
@@ -577,6 +603,7 @@ export function resolveSetup(
       mandatory: mandatoryRule === true,
       owner: node.owner,
       belongsTo: node.belongsTo,
+      neverSuggested: node.neverSuggested,
     });
   }
 
@@ -602,7 +629,10 @@ export function resolveSetup(
   // the turnings.
   const suggested =
     steps.find(step => step.state === 'ready' && step.mandatory) ??
-    steps.find(step => step.state === 'ready');
+    /* A step waiting on an account we cannot create is never the answer to
+       "what should I do next" — see `neverSuggested`. Compulsory work is
+       checked first regardless, and nothing compulsory carries the flag. */
+    steps.find(step => step.state === 'ready' && !step.neverSuggested);
   if (suggested) suggested.state = 'next';
 
   const outstanding = steps.filter(step => step.state !== 'done' && step.state !== 'ghost');

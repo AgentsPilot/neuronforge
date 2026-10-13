@@ -26,6 +26,7 @@ import {
   type ChargeAccountColumns,
 } from '@/lib/payments/stripeAccountContext';
 import { z } from 'zod';
+import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 
 const logger = createLogger({ module: 'WebsiteBookingFinalizeAPI' });
 
@@ -89,11 +90,7 @@ export async function POST(request: NextRequest) {
 
     // Verify subdomain matches booking owner (if provided)
     if (data.subdomain) {
-      const { data: websitePage, error: pageError } = await supabaseServer
-        .from('website_pages')
-        .select('user_id')
-        .eq('subdomain', data.subdomain)
-        .single();
+      const { data: websitePage, error: pageError } = await getWebsitePageRepository(supabaseServer).findBySubdomainAny(data.subdomain);
 
       if (pageError || !websitePage || websitePage.user_id !== booking.user_id) {
         requestLogger.warn({ subdomain: data.subdomain, bookingUserId: booking.user_id }, 'Subdomain mismatch');

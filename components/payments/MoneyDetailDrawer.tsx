@@ -204,7 +204,7 @@ export function MoneyDetailDrawer({
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-6 space-y-3">
+          <div className="scrollbar-thin flex-1 overflow-y-auto p-6 space-y-3">
             {/* The plan's schedule in full. The row can only say "2 of 3", and
                 the schedule belongs to the booking rather than to any single
                 payment inside it.

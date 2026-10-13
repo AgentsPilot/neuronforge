@@ -23,6 +23,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
+import { settleInvoiceAtStripe } from '@/lib/payments/settleInvoiceAtStripe';
 
 const logger = createLogger({ module: 'InvoiceMarkPaidAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -34,7 +35,27 @@ const MarkPaidSchema = z.object({
    * marked by hand is almost certainly not one.
    */
   payment_method: z.enum(['cash', 'bank_transfer', 'cheque', 'card', 'other']).default('bank_transfer'),
-  /** Defaults to the invoice's own amount; a part payment can say otherwise. */
+  /**
+   * Defaults to the invoice's own amount, and must EQUAL it when given.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THIS ONCE SAID "a part payment can say otherwise". IT COULD NOT.
+   *
+   * `settleInvoicePaid` marks the invoice `paid` and its plan stage `paid`
+   * whatever figure it is handed. So recording ₪200 against a ₪400 invoice
+   * closed the whole ₪400: the remaining ₪200 stopped being owed, vanished
+   * from the client's balance, and nothing anywhere said it was missing.
+   *
+   * Holding a partial needs somewhere to hold it. `payment_invoices` has no
+   * `amount_paid` column — there is nowhere to record "₪200 of ₪400" — so this
+   * refuses the difference rather than silently rounding it up to settled. The
+   * guard below says so in the error, because an owner who tries it is telling
+   * us about money we have no way to keep.
+   *
+   * Still optional, and still defaulted: no caller in the app sends it, and
+   * the common path is unchanged.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   amount: z.number().positive().optional(),
   paid_at: z.string().datetime().optional(),
   notes: z.string().max(500).optional(),
@@ -67,7 +88,7 @@ export async function POST(
     // finds nothing.
     const { data: invoice } = await supabaseServer
       .from('payment_invoices')
-      .select('id, user_id, contact_id, booking_id, amount, currency, status, invoice_number')
+      .select('id, user_id, contact_id, booking_id, amount, currency, status, invoice_number, stripe_invoice_id')
       .eq('id', invoiceId)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -80,6 +101,30 @@ export async function POST(
       return NextResponse.json(
         { success: false, error: 'This invoice was cancelled and cannot be marked paid.' },
         { status: 409 }
+      );
+    }
+
+    /*
+     * A FIGURE THAT IS NOT THE WHOLE INVOICE IS REFUSED, NOT ROUNDED UP.
+     *
+     * Settlement closes the invoice and its plan stage outright, so a smaller
+     * amount would quietly forgive the rest and a larger one would record less
+     * money than arrived. Compared at cent precision: these are NUMERIC values
+     * crossing JSON, and `400 !== 399.9999999` is a rejection no owner could
+     * act on.
+     */
+    const requestedAmount = parsed.data.amount;
+    if (requestedAmount !== undefined && Math.abs(requestedAmount - Number(invoice.amount)) > 0.005) {
+      requestLogger.warn(
+        { invoiceId: invoice.id, requestedAmount, invoiceAmount: invoice.amount },
+        'Refused a mark-paid for part of an invoice'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error: `This records the whole invoice as paid, so it has to be for its full amount (${invoice.amount} ${String(invoice.currency).toUpperCase()}). Part payments are not supported yet.`,
+        },
+        { status: 400 }
       );
     }
 
@@ -105,6 +150,34 @@ export async function POST(
       description: `Invoice ${invoice.invoice_number}`,
       metadata: { source: 'manual_mark_paid', notes: parsed.data.notes ?? null },
     });
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * AND TELL STRIPE, IF STRIPE RAISED IT.
+     *
+     * Without this the invoice stays OPEN at Stripe after the owner records
+     * cash, and in live mode the client still holds Stripe's own emailed link
+     * to a working payment page. They could pay it again — and our own dedupe
+     * would then hide that second charge completely, because `settleInvoicePaid`
+     * finds this manual transaction and reports `alreadySettled`. Money taken
+     * twice, recorded once, unrefundable from our UI.
+     *
+     * Only on a FRESH settlement. `alreadySettled` means a payment was already
+     * recorded against this invoice, quite possibly by Stripe itself, and
+     * paying out of band over the top of a real charge is not a correction.
+     *
+     * Awaited rather than fired and forgotten: it is one call, and the owner's
+     * next move may well be to open Stripe and look. Never fatal — see the
+     * module comment.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const stripeOutcome = result.alreadySettled
+      ? 'skipped'
+      : await settleInvoiceAtStripe({
+          invoiceId: invoice.id,
+          stripeInvoiceId: invoice.stripe_invoice_id as string | null,
+          userId: user.id,
+        });
 
     /*
      * Money arriving by hand is still money arriving.
@@ -139,7 +212,7 @@ export async function POST(
     if (result.alreadySettled) {
       return NextResponse.json({
         success: true,
-        data: { transactionId: result.transactionId, alreadySettled: true },
+        data: { transactionId: result.transactionId, alreadySettled: true, stripe: stripeOutcome },
       });
     }
 
@@ -155,17 +228,20 @@ export async function POST(
           amount: parsed.data.amount ?? invoice.amount,
           paymentMethod: parsed.data.payment_method,
           transactionId: result.transactionId,
+          /* Whether Stripe's copy was closed too, so the trail can answer "why
+             is that invoice still open at Stripe" without a log dive. */
+          stripeSettlement: stripeOutcome,
         },
         request,
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
     requestLogger.info(
-      { invoiceId: invoice.id, transactionId: result.transactionId },
+      { invoiceId: invoice.id, transactionId: result.transactionId, stripe: stripeOutcome },
       'Invoice marked paid'
     );
 
-    return NextResponse.json({ success: true, data: result });
+    return NextResponse.json({ success: true, data: { ...result, stripe: stripeOutcome } });
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to mark invoice paid');
     return NextResponse.json(

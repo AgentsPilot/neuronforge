@@ -241,3 +241,77 @@ describe('the buckets stay apart', () => {
     expect(t.cancelled).toBe(800);
   });
 });
+
+/**
+ * A real job's cancelled invoice counts, even when it was never "sent" here.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `sent_at` is NULL on any invoice that never went through `sendInvoice`, which
+ * includes real ones — an owner who raises an invoice and hands it over outside
+ * the app, or a quote accepted and then stopped. The rule read that NULL as
+ * "nobody was ever asked", so a ₪5,000 cancelled quote showed as `cancelled` in
+ * the money list and was missing from the summary directly above it.
+ *
+ * The fix is the signal the function's own note had already named: a BOOKING
+ * behind the invoice. A binned draft has neither a send date nor a job, and is
+ * still worth nothing.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('a cancelled invoice with no send date', () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    status: 'cancelled',
+    amount: 5000,
+    sentAt: null,
+    ...over,
+  });
+
+  it('counts when a job sits behind it', () => {
+    // The reported case: an accepted quote, stopped, its invoice voided.
+    expect(cancelledMoneyOf(row({ backedByBooking: true }))).toBe(5000);
+  });
+
+  it('still counts for nothing when nothing sits behind it', () => {
+    // A binned draft. This is the protection the rule exists for: counting it
+    // would invent a debt that never existed.
+    expect(cancelledMoneyOf(row({ backedByBooking: false }))).toBe(0);
+    expect(cancelledMoneyOf(row())).toBe(0);
+  });
+
+  it('a send date still counts on its own, with no job behind it', () => {
+    // Unchanged: being asked to pay is sufficient by itself.
+    expect(cancelledMoneyOf(row({ sentAt: '2026-10-01', backedByBooking: false }))).toBe(5000);
+  });
+
+  it('an absent sentAt still reads as sent, for callers that predate the field', () => {
+    expect(cancelledMoneyOf({ status: 'cancelled', amount: 5000 })).toBe(5000);
+  });
+
+  it('a job behind it does not make a non-cancelled invoice count', () => {
+    // The first test in the function, and the widening must not reach past it.
+    for (const status of ['paid', 'sent', 'overdue', 'draft', 'refunded']) {
+      expect(cancelledMoneyOf(row({ status, backedByBooking: true }))).toBe(0);
+    }
+  });
+
+  it('refunds still come off, and it never goes negative', () => {
+    expect(cancelledMoneyOf(row({ backedByBooking: true, refunded: 2000 }))).toBe(3000);
+    expect(cancelledMoneyOf(row({ backedByBooking: true, refunded: 9999 }))).toBe(0);
+  });
+});
+
+describe('the flag reaches the rule', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const source = fs.readFileSync(path.join(process.cwd(), 'lib/payments/moneyItems.ts'), 'utf8');
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+  it('an entry built from an invoice carries whether it has a booking', () => {
+    // Without this the rule above is unreachable from the real data path, and
+    // every test of it would be testing a flag nothing ever sets.
+    expect(code).toContain('backedByBooking: Boolean(invoice.booking_id)');
+  });
+
+  it('and the rule reads it', () => {
+    expect(code).toContain('if (row.sentAt === null && !row.backedByBooking) return 0;');
+  });
+});

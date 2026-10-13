@@ -425,18 +425,27 @@ async function runJob(request: NextRequest) {
                   }
                 }
               } else {
-                // No correlations but we might still want a health summary
+                /*
+                 * No correlations, and the summary is written anyway.
+                 *
+                 * The `allInsights.length > 0` guard that used to sit here was a
+                 * remnant of the insight-penalty health score; the six rates it
+                 * now writes come from `resolveBusinessHealth`, which reads the
+                 * module tables and never looks at an insight. See the matching
+                 * comment in `InsightRepository.correlateAndSummarize`.
+                 *
+                 * A business with no insights is the case that most needs this
+                 * row: nothing is wrong, so nothing else will ever write it.
+                 */
                 const { data: allInsights } = await repository.findActive(userId, 50);
-                if (allInsights && allInsights.length > 0) {
-                  const healthResult = await repository.createOrUpdateHealthSummary(
-                    userId,
-                    correlationSummary,
-                    allInsights,
-                    { runId, groupId: businessGroupId }
-                  );
-                  if (healthResult.data) {
-                    stats.healthSummariesCreated++;
-                  }
+                const healthResult = await repository.createOrUpdateHealthSummary(
+                  userId,
+                  correlationSummary,
+                  allInsights ?? [],
+                  { runId, groupId: businessGroupId }
+                );
+                if (healthResult.data) {
+                  stats.healthSummariesCreated++;
                 }
               }
             }
