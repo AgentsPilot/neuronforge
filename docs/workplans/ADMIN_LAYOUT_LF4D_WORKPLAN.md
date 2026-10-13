@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-layout-lf4d`, cut from `feature/admin-layout-lf4c` at `49e2d7fd` (PR #354 open). Confirmed with `git branch --show-current` in worktree `neuronforge-admin-layout`; working tree clean before this workplan
 **Path:** Full cycle (the slice touches the two money blocks' markup). SA reviews this workplan before any code
 **Date:** 2026-10-14
-**Status:** Code Complete, uncommitted (SA approved the workplan with conditions C1 to C7, applied); awaiting SA code review + QA
+**Status:** PR #356 open — fast-track (SA code review approved with fixes F1 and F2, applied; QA PASS WITH NOTES, no bugs). Read-only browser check owed (session expired)
 
 ## Overview
 
@@ -814,7 +814,14 @@ The unplanned P-3 edit in `businessOsPanel.render` was read: it asserts the purp
 
 ## Commit Info
 
-_RM populates this section. Two commits: Step 1 (the two test files) alone, then the rest._
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf4d` (stacked on `feature/admin-layout-lf4c`, PR #354 open) |
+| Step 1 commit | `51bc982b` test(admin): give two slow Businesses suites a longer wait (LF-4d step 1) |
+| Code commit | `303f792a` feat(admin): every Businesses drawer section gets its own box and a one-line purpose (LF-4d) |
+| `origin/main` merge | not needed, already contained |
+| PR | [#356](https://github.com/AgentsPilot/neuronforge/pull/356), fast-track, the user merges |
+| RM run set | jest users/components/admin + 4 guards: 64 suites / 1,891 pass; `test:bos-entitlements` 255 / 7,401 pass; `lint:hooks` clean; `typecheck:bos-llm` passed (0 new) |
 
 ---
 
@@ -826,3 +833,4 @@ _RM populates this section. Two commits: Step 1 (the two test files) alone, then
 | 2026-10-14 | SA workplan review | APPROVED WITH CONDITIONS C1 to C7: five copy corrections (Account, Sign-in, All products, Connected plugins, AI usage); money-file diff scope; L-12c nested count; MD6 must bite; pin files byte-identical except the OWN-1 addition; §1.3 amendment and BD-16 first; run set. SQ-1 to SQ-10 ruled |
 | 2026-10-14 | Built (Dev) | C1 to C7 applied; Step 1 path-separable; 7 product files (1 new), money diffs within C2; pins.credits `1 0` (OWN-1), the other two pin files untouched; run set green (users and layout 42 suites / 1,255 tests, entitlements 255 / 7,398, lint:hooks clean, scoped tsc clean with canary). MD1 to MD14 all bite; MD6 bites by a runaway re-read loop (OOM), not the C7 assertion, so it is flagged for SA. Unplanned edit: `businessOsPanel.render` P-3 (the C1 plugins sentence contains "active") |
 | 2026-10-14 | QA | PASS WITH NOTES. Users, components and admin tests 60 suites / 1,637 pass; 6 guards / 373 pass; entitlements 255 / 7,399 pass; lint:hooks clean. Step 1 flake files 10 of 10 green under parallel load. Nine probes (copy word for word, slate-400, nesting, five groups, focus, no remount, PIN-k reads, danger, non-BOS, own account) pass; probe deleted. No bugs. Notes: non-BOS copy for Credits & billing and Plan says "this business"; F1 not yet applied at QA time; MD5 does not bite T-R4 |
+| 2026-10-14 | Committed, PR opened (RM) | `51bc982b` (step 1) and `303f792a` (code) on `feature/admin-layout-lf4d`; PR #356 open, fast-track; contains #354. Run set green. Read-only browser check owed |
