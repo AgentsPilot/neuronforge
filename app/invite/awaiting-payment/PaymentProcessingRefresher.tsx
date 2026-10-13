@@ -24,8 +24,11 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-export const PROCESSING_REFRESH_INTERVAL_MS = 4000;
-export const PROCESSING_REFRESH_LIMIT = 15;
+import { PROCESSING_REFRESH_INTERVAL_MS, PROCESSING_REFRESH_LIMIT } from '@/components/business-os/billing/checkoutProcessing';
+
+// Shared with Settings → Plan (P-4.2), so the two screens cannot drift.
+// Re-exported for this file's existing importers.
+export { PROCESSING_REFRESH_INTERVAL_MS, PROCESSING_REFRESH_LIMIT };
 
 export function PaymentProcessingRefresher({
   delay,

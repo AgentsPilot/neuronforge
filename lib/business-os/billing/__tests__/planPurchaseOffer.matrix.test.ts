@@ -11,8 +11,14 @@
  *
  * The checkout side is the REAL `startPlanCheckout`, with fakes only at the
  * edges (hold readers, snapshot, repository, Stripe). "Admitted" means it
- * reached Stripe's session create and returned ok. P-4.2's Settings view will
- * call the same predicate, so this is the agreement it inherits.
+ * reached Stripe's session create and returned ok.
+ *
+ * The view side is the REAL Settings purchase view (`readPlanPurchaseView`,
+ * P-4.2), fed the SAME world through its own ports: the snapshot, the billing
+ * row it reads itself, the switches and the buyable tiers. It is NOT handed
+ * the predicate's facts, so the agreement is a cross-check of two readers of
+ * our data, not a tautology (SA code review P-4.1, follow-up F-C). The
+ * predicate is still asserted directly as a non-vacuity check.
  *
  * Documented exceptions (SA W-2): refusals that need Stripe, which the view
  * can never know (SR-11), and so are not part of the predicate. Each has its
@@ -53,6 +59,7 @@ import {
   type PlanSnapshotLike,
 } from '@/lib/business-os/billing/planCheckout';
 import { displayMonthlyPricesUsd, displayPriceInCents } from '@/lib/business-os/billing/planPriceCheck';
+import { readPlanPurchaseView } from '@/lib/business-os/billing/planPurchaseView';
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const NOW = new Date('2026-10-13T10:00:00.000Z');
@@ -161,6 +168,24 @@ async function checkoutAdmits(tier: TierId, world: World): Promise<{ admitted: b
   return result.ok ? { admitted: true } : { admitted: false, code: result.code };
 }
 
+/** The Settings view's offer for this world, through its OWN reads (SA F-C). */
+async function viewOffers(world: World): Promise<readonly string[]> {
+  const purchase = await readPlanPurchaseView(
+    { userId: USER, accountId: USER, snapshot: world.openEndedFreeAccess ? OPEN_ENDED : ON_A_TIER },
+    {
+      switches: () => ({ checkoutEnabled: world.checkoutEnabled, pricesEnabled: world.pricesEnabled }),
+      billing: { findByUser: async () => ({ data: world.billingRow, error: null }) },
+      mode: () => 'test',
+      buyableTiers: () => world.buyable,
+      now: () => NOW,
+      logger: { warn: () => {} },
+    }
+  );
+  // The view never returns null for a readable plan with a known key mode.
+  expect(purchase).not.toBeNull();
+  return purchase!.offer.kind === 'choose' ? purchase!.offer.tiers : [];
+}
+
 const BOOLS = [false, true] as const;
 const SELLABLE = sellableTiers();
 /** Every subset of the priced tiers, as the `availableToBuy` mask. */
@@ -184,7 +209,7 @@ const CASES = BOOLS.flatMap((checkoutEnabled) =>
   )
 );
 
-describe('planPurchaseOffer ⇔ the real checkout admits a non-held account (P-4.1, SA W-1, W-2)', () => {
+describe('the Settings view offers X ⇔ the real checkout admits a non-held account for X (P-4.1 W-1, W-2; P-4.2 F-C)', () => {
   it('covers every combination of our own data (non-vacuity)', () => {
     expect(SELLABLE.length).toBeGreaterThan(1);
     expect(CASES.length).toBe(2 * 2 * BUYABLE_SETS.length * 2 * BILLING_ROWS.length);
@@ -198,10 +223,13 @@ describe('planPurchaseOffer ⇔ the real checkout admits a non-held account (P-4
       facts.buyable
     );
     const offered = offer.kind === 'choose' ? offer.tiers : [];
+    // The view reaches the same answer from its own reads (F-C).
+    const shown = await viewOffers(world);
+    expect([...shown]).toEqual([...offered]);
 
     for (const tier of TIER_ORDER) {
       const { admitted } = await checkoutAdmits(tier, world);
-      expect({ tier, admitted }).toEqual({ tier, admitted: offered.includes(tier) });
+      expect({ tier, admitted }).toEqual({ tier, admitted: shown.includes(tier) });
     }
 
     // Non-vacuity: Choose appears only when nothing in our data is in the way.
@@ -215,14 +243,17 @@ describe('the documented exceptions: Stripe-side refusals the predicate cannot s
   const ALL_CLEAR = { checkoutEnabled: true, pricesEnabled: true, buyable: SELLABLE, openEndedFreeAccess: false };
   const tier = SELLABLE[0];
 
-  it('baseline: everything clear → offered and admitted', async () => {
+  it('baseline: everything clear → offered (by the view too) and admitted', async () => {
     expect(planPurchaseOffer({ openEndedFreeAccess: false, subscriptionLive: false }, ALL_CLEAR, SELLABLE)).toEqual({ kind: 'choose', tiers: SELLABLE });
+    expect(await viewOffers({ ...ALL_CLEAR, billingRow: row() })).toEqual(SELLABLE);
     expect(await checkoutAdmits(tier, { ...ALL_CLEAR, billingRow: row() })).toEqual({ admitted: true });
   });
 
   it('M-3: the account\'s own open session reads complete → checkout_processing', async () => {
     const billingRow = row({ openCheckoutSessionId: 'cs_test_open', openCheckoutExpiresAt: '2026-10-13T10:20:00.000Z' });
     const world = { ...ALL_CLEAR, billingRow, openSession: { status: 'complete' as const, customerId: 'cus_stored', livemode: false } };
+    // The view makes no Stripe call (SR-11), so it still offers: the exception.
+    expect(await viewOffers(world)).toContain(tier);
     expect(await checkoutAdmits(tier, world)).toEqual({ admitted: false, code: 'checkout_processing' });
   });
 

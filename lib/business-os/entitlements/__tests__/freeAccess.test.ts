@@ -13,7 +13,7 @@ import { join } from 'path';
 import { COHORTS } from '@/lib/business-os/entitlements/config/cohorts';
 import { LIFECYCLE_CONFIG } from '@/lib/business-os/entitlements/config/lifecycle';
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
-import { hasOpenEndedFreeAccess } from '@/lib/business-os/entitlements/freeAccess';
+import { freeAccessEndedByPurchase, hasOpenEndedFreeAccess } from '@/lib/business-os/entitlements/freeAccess';
 import { deriveLifecycle, type LifecycleInputs } from '@/lib/business-os/entitlements/lifecycle';
 import { account } from '@/lib/business-os/entitlements/__fixtures__/accounts';
 import type { CohortConfig } from '@/lib/business-os/entitlements/config/cohorts';
@@ -118,5 +118,54 @@ describe('hasOpenEndedFreeAccess — BQ-P10 "Refuse until end date set"', () => 
   it('writes no cohort id in its source', () => {
     const source = readFileSync(join(process.cwd(), 'lib', 'business-os', 'entitlements', 'freeAccess.ts'), 'utf8');
     for (const id of Object.keys(COHORTS)) expect(source).not.toMatch(new RegExp(`['"\`]${id}['"\`]`));
+  });
+});
+
+describe('freeAccessEndedByPurchase — the sentence beside the Choose list (P-4.2, SA Q-3 / W-7)', () => {
+  const ended = (overrides: Parameters<typeof account>[0]) => {
+    const lifecycle = resolve(overrides);
+    return freeAccessEndedByPurchase({ basis: lifecycle.basis, lifecycle }, NOW);
+  };
+
+  it("'timed': a live timed cohort, including one whose clock has not started", () => {
+    expect(ended({ cohort: TIMED, onboardingStartedAt: '2026-10-10T00:00:00.000Z' })).toBe('timed');
+    expect(ended({ cohort: TIMED })).toBe('timed');
+  });
+
+  it('null: a timed cohort that has ended (in grace or after)', () => {
+    expect(ended({ cohort: TIMED, onboardingStartedAt: '2026-01-01T00:00:00.000Z' })).toBeNull();
+  });
+
+  it("'admin_dated': a live admin-dated cohort with a future end date", () => {
+    expect(ended({ cohort: ADMIN_DATED, cohortExpiresAt: FUTURE })).toBe('admin_dated');
+  });
+
+  it('null: an admin-dated cohort past its end date (grace), or with no end date (BQ-P10 refuses that sale)', () => {
+    expect(ended({ cohort: ADMIN_DATED, cohortExpiresAt: PAST })).toBeNull();
+    expect(ended({ cohort: ADMIN_DATED, cohortExpiresAt: null })).toBeNull();
+  });
+
+  it('null: a tier basis, live or lapsed, and an admin tier over a cohort (nothing free is ended)', () => {
+    expect(ended({ tier: TIER, planVersion: 1, tierExpiresAt: null })).toBeNull();
+    expect(ended({ tier: TIER, planVersion: 1, tierExpiresAt: PAST })).toBeNull();
+    expect(ended({ cohort: ADMIN_DATED, cohortExpiresAt: FUTURE, tier: TIER, planVersion: 1, tierExpiresAt: FUTURE })).toBeNull();
+  });
+
+  it('null: no plan row, and an unreadable end date', () => {
+    const lifecycle = deriveLifecycle(null, INPUTS, NOW);
+    expect(freeAccessEndedByPurchase({ basis: lifecycle.basis, lifecycle }, NOW)).toBeNull();
+    expect(freeAccessEndedByPurchase({ basis: { kind: 'cohort', cohort: ADMIN_DATED }, lifecycle: { accessEndsAt: 'not a date' } }, NOW)).toBeNull();
+  });
+
+  it('reads structure, not names: renamed cohorts give the same answers', () => {
+    const renamed: Record<string, CohortConfig> = {
+      alpha_partner: COHORTS[ADMIN_DATED as keyof typeof COHORTS],
+      beta_preview: COHORTS[TIMED as keyof typeof COHORTS],
+    };
+    const inputs: LifecycleInputs = { ...INPUTS, cohorts: renamed };
+    const dated = deriveLifecycle(account({ cohort: 'alpha_partner', cohortExpiresAt: FUTURE }), inputs, NOW);
+    expect(freeAccessEndedByPurchase({ basis: dated.basis, lifecycle: dated }, NOW, renamed)).toBe('admin_dated');
+    const trial = deriveLifecycle(account({ cohort: 'beta_preview', onboardingStartedAt: '2026-10-10T00:00:00.000Z' }), inputs, NOW);
+    expect(freeAccessEndedByPurchase({ basis: trial.basis, lifecycle: trial }, NOW, renamed)).toBe('timed');
   });
 });
