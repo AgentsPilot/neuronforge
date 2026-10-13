@@ -154,11 +154,20 @@ describe('the card shows it, and says which stage', () => {
      */
     /* A forward window: the menu's comment sits BEFORE this block in the file,
        so bounding the slice with it ran the range backwards and matched an
-       empty string — which passed nothing and failed everything. */
-    const from = tab.indexOf('WHAT BECAME OF IT, under what was paid');
+       empty string — which passed nothing and failed everything.
+
+       BOUNDED BY THE BLOCK, NOT BY A CHARACTER COUNT. This read 2,600
+       characters from the marker, and a comment added inside the element
+       pushed `<bdi>` past the end — a red test about prose, while the markup
+       it guards had not moved. The element's own closing tag is where this
+       block ends however long its explanation grows. */
+    const from = tab.indexOf('{stageRefunded > 0 && (');
     expect(from).toBeGreaterThan(-1);
 
-    const line = tab.slice(from, from + 2600);
+    const end = tab.indexOf('</span>', from);
+    expect(end).toBeGreaterThan(from);
+
+    const line = tab.slice(from, end);
 
     expect(line).toMatch(/<bdi>/);
   });

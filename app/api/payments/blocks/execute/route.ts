@@ -15,6 +15,7 @@
  * - Returns result with events emitted
  */
 
+import { generateInvoiceToken } from '@/lib/payments/invoiceAccessToken';
 import { NextRequest, NextResponse } from 'next/server';
 import { platformOrigin } from '@/lib/utils/origins';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
@@ -76,6 +77,16 @@ async function executeCollectPayment(
   const { invoice_id, booking_id, installment_id, amount, currency, processor, success_url, cancel_url } = params;
 
   // Build checkout request
+  /*
+   * Hoisted: signing an invoice link reads the contact address, so it cannot
+   * sit inside the object literal below. One helper for both outcomes, so the
+   * success and cancel URLs cannot drift apart.
+   */
+  const invoiceToken = invoice_id ? await generateInvoiceToken(String(invoice_id)) : null;
+  const invoiceReturn = (outcome: 'success' | 'cancelled') =>
+    invoice_id && invoiceToken
+      ? `${platformOrigin()}/invoice/${invoice_id}?payment=${outcome}&t=${invoiceToken}`
+      : `${platformOrigin()}/payments/${outcome}`;
   const checkoutRequest = {
     amount: amount as number,
     currency: (currency as string) || 'USD',
@@ -91,16 +102,8 @@ async function executeCollectPayment(
      * any generic screen could be: it is branded, it already renders both
      * outcomes inline, and it shows the customer the bill they just settled.
      */
-    successUrl:
-      (success_url as string) ||
-      (invoice_id
-        ? `${platformOrigin()}/invoice/${invoice_id}?payment=success`
-        : `${platformOrigin()}/payments/success`),
-    cancelUrl:
-      (cancel_url as string) ||
-      (invoice_id
-        ? `${platformOrigin()}/invoice/${invoice_id}?payment=cancelled`
-        : `${platformOrigin()}/payments/cancelled`)
+    successUrl: (success_url as string) || invoiceReturn('success'),
+    cancelUrl: (cancel_url as string) || invoiceReturn('cancelled')
   };
 
   // If invoice_id provided, get invoice amount

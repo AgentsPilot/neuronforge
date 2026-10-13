@@ -28,13 +28,13 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { resolvePortalAccess } from '@/lib/security/portalAccess';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { createLogger } from '@/lib/logger';
 import { generateICSContent, icsSequenceFor } from '@/lib/email/templates/booking-confirmation';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { verifyBookingToken } from '@/lib/services/BookingEmailService';
 
 const logger = createLogger({ module: 'API', service: 'BookingCalendar' });
 
@@ -44,13 +44,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const requestLogger = logger.child({ correlationId });
 
   try {
-    const decoded = verifyBookingToken(token);
-    if (!decoded) {
+    /* Either a signed link or a booking id backed by the grant cookie — the
+       id alone is never enough. See `resolvePortalAccess`. */
+    const access = resolvePortalAccess(token, request.headers.get('cookie'));
+    if (!access) {
       requestLogger.warn('Invalid or expired booking token');
       return NextResponse.json({ success: false, error: 'Invalid or expired link' }, { status: 401 });
     }
 
-    const { bookingId } = decoded;
+    const { bookingId } = access;
 
     const { data: booking, error } = await supabaseServer
       .from('scheduling_bookings')

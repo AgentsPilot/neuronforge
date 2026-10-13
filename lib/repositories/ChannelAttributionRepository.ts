@@ -79,17 +79,38 @@ export class ChannelAttributionRepository {
   }
 
   /**
-   * Bookings and revenue produced by the given contacts, at any time.
+   * Bookings and revenue produced by the given contacts, optionally within a
+   * window.
    *
    * Revenue deliberately avoids the double count that would follow from summing
    * transactions and paid invoices naively: an invoice paid through Stripe is
    * recorded in BOTH tables, linked by `payment_transactions.invoice_id`. We
    * take every succeeded transaction, then add only those paid invoices that no
    * transaction already accounts for.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * `since` SCOPES THE OUTCOMES, NOT THE PEOPLE.
+   *
+   * Without it this returns everything the contacts ever did, which made the
+   * channel table report a cohort: "of the people who arrived in this window,
+   * how much have they ever paid". On a seven-day window that is reliably zero,
+   * because nobody pays the week they arrive — a real account showed an entire
+   * revenue column of zeros while two clients acquired a month earlier were
+   * paying steadily.
+   *
+   * With it, the question becomes "what arrived in this period, and which
+   * channel brought the client who sent it", which is what an owner means and
+   * is non-zero at every window.
+   *
+   * Dates: `paid_at` for an invoice and `created_at` for a transaction, each
+   * being when the money moved rather than when the row was first written.
+   * Bookings use `created_at`, when the booking was placed.
+   * ─────────────────────────────────────────────────────────────────────────
    */
   async findOutcomesForContacts(
     userId: string,
-    contactIds: string[]
+    contactIds: string[],
+    since?: string
   ): Promise<ChannelAttributionResult<ContactOutcomes>> {
     const empty: ContactOutcomes = {
       bookingsByContact: new Map(),
@@ -102,28 +123,48 @@ export class ChannelAttributionRepository {
     }
 
     try {
+      // `since` is applied per table on the column that marks when the thing
+      // happened. Absent, every caller behaves exactly as before.
+      let bookingsQuery = this.supabase
+        .from('scheduling_bookings')
+        .select('contact_id')
+        .eq('user_id', userId)
+        .in('contact_id', contactIds)
+        .neq('status', 'cancelled');
+
+      let transactionsQuery = this.supabase
+        .from('payment_transactions')
+        .select('contact_id, amount, invoice_id')
+        .eq('user_id', userId)
+        .in('contact_id', contactIds)
+        .eq('status', 'succeeded');
+
+      let invoicesQuery = this.supabase
+        // Every invoice, not just the paid ones. A channel that produced
+        // twelve unpaid invoices has produced something, and reporting it as
+        // zero income made the column look broken rather than unpaid.
+        .from('payment_invoices')
+        .select('id, contact_id, amount, status, paid_at')
+        .eq('user_id', userId)
+        .in('contact_id', contactIds)
+        .neq('status', 'cancelled');
+
+      if (since) {
+        bookingsQuery = bookingsQuery.gte('created_at', since);
+        transactionsQuery = transactionsQuery.gte('created_at', since);
+        /*
+         * `paid_at`, not `created_at`: an invoice raised in August and settled
+         * in October is October's money. An unpaid invoice has no `paid_at`, so
+         * `or(...)` keeps it in by its creation date — it still counts toward
+         * `billed`, which is what that column is for.
+         */
+        invoicesQuery = invoicesQuery.or(`paid_at.gte.${since},and(paid_at.is.null,created_at.gte.${since})`);
+      }
+
       const [bookingsResult, transactionsResult, invoicesResult] = await Promise.all([
-        this.supabase
-          .from('scheduling_bookings')
-          .select('contact_id')
-          .eq('user_id', userId)
-          .in('contact_id', contactIds)
-          .neq('status', 'cancelled'),
-        this.supabase
-          .from('payment_transactions')
-          .select('contact_id, amount, invoice_id')
-          .eq('user_id', userId)
-          .in('contact_id', contactIds)
-          .eq('status', 'succeeded'),
-        this.supabase
-          // Every invoice, not just the paid ones. A channel that produced
-          // twelve unpaid invoices has produced something, and reporting it as
-          // zero income made the column look broken rather than unpaid.
-          .from('payment_invoices')
-          .select('id, contact_id, amount, status')
-          .eq('user_id', userId)
-          .in('contact_id', contactIds)
-          .neq('status', 'cancelled'),
+        bookingsQuery,
+        transactionsQuery,
+        invoicesQuery,
       ]);
 
       if (bookingsResult.error) throw bookingsResult.error;

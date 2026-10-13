@@ -30,6 +30,7 @@
  * hash, the code, the password or the email.
  */
 
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { completeSignup } from '@/lib/business-os/invites/inviteRedemption';
@@ -56,6 +57,14 @@ const logger = createLogger({ module: 'PublicInviteSignupCompleteAPI' });
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
+
+  /*
+   * Throttled before anything else: no session stands in front of this route.
+   * The `ok` bucket counts volume; a rejected credential counts under the much
+   * tighter failure budget below, which is the one that detects probing.
+   */
+  const throttle = await rateLimit(request, 'invite-signup-complete', RATE_LIMITS.create);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.create.windowSeconds);
 
   const body = await request.json().catch(() => undefined);
   const parsed = completeSignupSchema.safeParse(body);

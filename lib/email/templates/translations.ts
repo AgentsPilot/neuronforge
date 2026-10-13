@@ -1178,6 +1178,46 @@ export const emailTranslations = {
      * Both fall through to no reason line, which is the honest result.
      */
   },
+  /*
+   * ONE reminder on a quote nobody has answered, and it ASKS.
+   *
+   * It is addressed to a prospect, not a client — the only email in this file
+   * that is — so it must not read as chasing. The question is whether they
+   * need more time or more information, which is a real offer and also the two
+   * things that actually stall a quote. "Just following up" asks for nothing
+   * and reads as pressure wearing a polite hat.
+   *
+   * The deadline is named only where the quote carries one. A reminder that
+   * invents urgency is worse than none.
+   */
+  quoteReminder: {
+    subject: {
+      en: 'Your quote for {title}',
+      es: 'Tu presupuesto para {title}',
+      he: 'הצעת המחיר שלך עבור {title}',
+    },
+    greetingNamed: { en: 'Hello {name},', es: 'Hola {name},', he: 'שלום {name},' },
+    greeting: { en: 'Hello,', es: 'Hola,', he: 'שלום,' },
+    intro: {
+      en: 'We sent you a quote for {title} a few days ago and have not heard back, so this is just to make sure it reached you.',
+      es: 'Te enviamos un presupuesto para {title} hace unos días y no hemos tenido respuesta, así que queremos asegurarnos de que te llegó.',
+      he: 'שלחנו לך הצעת מחיר עבור {title} לפני כמה ימים ולא קיבלנו תשובה, אז רצינו לוודא שהיא הגיעה אליך.',
+    },
+    ask: {
+      en: 'There is no rush from our side. If you need more time, or there is anything in it you would like explained or changed, just reply to this email and tell us.',
+      es: 'No hay ninguna prisa por nuestra parte. Si necesitas más tiempo, o hay algo que quieras que te expliquemos o cambiemos, responde a este correo y cuéntanos.',
+      he: 'אין שום לחץ מצידנו. אם צריך עוד זמן, או שיש משהו שתרצה שנסביר או נשנה, פשוט השב למייל הזה ותכתוב לנו.',
+    },
+    totalLabel: { en: 'Quote total', es: 'Total del presupuesto', he: 'סה״כ בהצעה' },
+    validUntilLabel: { en: 'Open until', es: 'Válido hasta', he: 'בתוקף עד' },
+    /* Named only when the quote has a date. See the note above. */
+    deadline: {
+      en: 'This quote is open until {date}.',
+      es: 'Este presupuesto es válido hasta el {date}.',
+      he: 'ההצעה בתוקף עד {date}.',
+    },
+    cta: { en: 'View the quote', es: 'Ver el presupuesto', he: 'צפייה בהצעה' },
+  },
   quoteStopped: {
     subject: {
       en: 'Update on {title}',

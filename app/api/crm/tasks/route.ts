@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { booleanParam } from '@/lib/validation/booleanParam';
 
 const logger = createLogger({ module: 'CRMTasksAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -44,7 +45,9 @@ const listTasksSchema = z.object({
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
   due_before: z.string().datetime().optional(),
   due_after: z.string().datetime().optional(),
-  include_completed: z.coerce.boolean().optional(),
+  /* NOT `z.coerce.boolean()`: `Boolean('false')` is true, so `?include_completed=false`
+     asked for completed tasks to be INCLUDED. See `lib/validation/booleanParam`. */
+  include_completed: booleanParam(false),
   limit: z.coerce.number().min(1).max(100).optional(),
   offset: z.coerce.number().min(0).optional(),
   orderBy: z.enum(['due_date', 'created_at', 'priority']).optional(),

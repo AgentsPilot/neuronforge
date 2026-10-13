@@ -1,38 +1,40 @@
-'use client';
-
-import { useParams } from 'next/navigation';
-
-import { IntakePanel } from '@/components/public/IntakePanel';
+import { redirect } from 'next/navigation';
 
 /**
- * The intake form, reached from the link in a client's email.
+ * Filling in the intake form, which now happens on the portal itself.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * A MOUNT POINT, NOT A PAGE.
+ * A REDIRECT, NOT A SCREEN.
  *
- * This was 360 lines that drew their own heading band, their own back link and
- * their own column, with the portal's cards stranded below. It was the screen
- * that most obviously did not belong to the section it lived in — and keeping
- * a separate page looking like the portal is work that never finishes, because
- * the two are maintained apart.
+ * This was a standalone mount point: the panel, then the portal's other cards
+ * underneath it, inside the portal shell but without the booking card above —
+ * so the same action looked like a different page depending on whether the
+ * client came from their email or from the portal.
  *
- * The form is `IntakePanel` now, and the portal index renders the same
- * component in place. This route exists because the emails point at it: the
- * confirmation and the reminder both link here, and a link in somebody's inbox
- * has to keep working. What it renders is the same thing they would have seen
- * had they opened the portal instead.
+ * Every task on the index opens as a card under the booking now, so this sends
+ * the client there with the card already open. The route stays because ten
+ * links across the email templates point at these four paths and a link in
+ * somebody's inbox has to keep working; deleting one is the mistake that left
+ * the package rows pointing at a removed `/reschedule/[token]` for weeks.
  *
- * Not `embedded`: a client arriving from an email has none of the portal's
- * context on screen yet, so this mount carries the appointment summary and the
- * way back. The index's mount does not, because both are already there.
+ * It also closes the second half of the same gap. The index trades the token
+ * for a grant cookie and rewrites its address; a task screen did neither, so
+ * arriving here left the credential sitting in the address bar for the whole
+ * visit. Landing on the index means that happens here too.
  *
- * The same shape as `/quote`, which renders `ProposalAnswer` for the same
- * reason — see `quoteAnsweredInThePortal.guard.test.ts`.
+ * The token is carried through unchanged — it is still the credential, and the
+ * index is what exchanges it.
+ *
+ * A server component, so the redirect happens before anything paints: a client
+ * is never shown one screen for a moment and then moved. Same shape as
+ * `/proposal/[token]`, which redirects into the portal for the same reason.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-export default function IntakeFormPage() {
-  const params = useParams();
-  const token = params.token as string;
-
-  return <IntakePanel token={token} />;
+export default async function PortalIntakeRoute({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  const { token } = await params;
+  redirect(`/book/manage/${token}?task=intake`);
 }

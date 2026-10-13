@@ -16,6 +16,15 @@
 import { drainInsightActions, LEASE_SECONDS, MAX_ATTEMPTS } from '../InsightActionDispatchService';
 import { insightActionRepository } from '@/lib/repositories/InsightActionRepository';
 
+/*
+ * The chase email now signs the invoice link it offers, and signing is fatal
+ * without a secret by design — see `bookingTokenSecret`. Without this every
+ * dispatch threw and the queue reported nothing sent, which looked exactly
+ * like a broken claim. Same line as `sendMeetingReminder.test.ts`.
+ */
+process.env.BOOKING_TOKEN_SECRET =
+  process.env.BOOKING_TOKEN_SECRET || 'test-signing-key';
+
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({ warn: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn() }),
 }));

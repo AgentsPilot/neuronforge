@@ -439,6 +439,46 @@ export class AuditTrailRepository {
   }
 
   /**
+   * How many times this owner has done one particular thing lately.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * For the advisor, which offers an automation only once the owner has shown
+   * the work is a habit of theirs — "you closed off twelve of these by hand
+   * this month, want me to do it?". The audit trail already records the
+   * owner's own actions and nothing else writes to it on their behalf, so it
+   * is the honest source for that question.
+   *
+   * `head: true` with an exact count: the rows are never read, only counted,
+   * so this is one cheap aggregate rather than a page of entries to length.
+   *
+   * Returns 0 rather than null on failure. An unreadable count means the offer
+   * is not made, which is the same direction `automationApplies` fails in —
+   * staying quiet costs the owner a suggestion, while guessing yes puts a
+   * recommendation in front of somebody who never asked for it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async countActionSince(
+    userId: string,
+    action: string,
+    since: string
+  ): Promise<number> {
+    try {
+      const { count, error } = await this.supabase
+        .from('audit_trail')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('action', action)
+        .gte('created_at', since);
+
+      if (error) throw error;
+      return count ?? 0;
+    } catch (error) {
+      this.logger.warn({ err: error, userId, action }, 'Could not count owner actions; not offering the automation');
+      return 0;
+    }
+  }
+
+  /**
    * ADMIN ONLY — see the header. The most recent failed Business OS AI actions
    * of one admin-selected account since `since`, newest first, at most `limit`.
    */

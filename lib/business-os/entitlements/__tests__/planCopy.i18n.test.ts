@@ -21,6 +21,7 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
 /** Every key the view, the badge or the section can name. */
 const KEYS = [
@@ -69,10 +70,7 @@ const LANGUAGES = 3;
  * drag a provider into a unit test to read a dictionary. Counting the entries is
  * enough to prove each key is present once per language.
  */
-const source = readFileSync(
-  join(process.cwd(), 'lib/business-os/LanguageContext.tsx'),
-  'utf8'
-);
+const source = dictionarySource();
 
 /** The copy for one key, in the order the file declares its languages. */
 function copyFor(key: string): string[] {

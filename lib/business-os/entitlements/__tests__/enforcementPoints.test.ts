@@ -83,10 +83,26 @@ function productFiles(): string[] {
  * Each needs a reason — "it is noisy" is not one.
  */
 const KNOWN_NON_GATES: ReadonlyArray<{ file: string; capability: string; why: string }> = [
+  /*
+   * One entry per language file. They were one entry against
+   * `LanguageContext.tsx` until the dictionaries were split out of it, and the
+   * equality check below is what made that visible rather than letting the
+   * allow-list quietly cover a file with nothing in it.
+   */
   {
-    file: 'lib/business-os/LanguageContext.tsx',
+    file: 'lib/business-os/translations/en.ts',
     capability: 'payments.invoices',
-    why: 'A UI translation dictionary keyed by dotted strings. The key collides with the capability id by coincidence and gates nothing — it maps to the word "Invoices" in three languages.',
+    why: 'A UI translation dictionary keyed by dotted strings. The key collides with the capability id by coincidence and gates nothing — it maps to the word "Invoices".',
+  },
+  {
+    file: 'lib/business-os/translations/es.ts',
+    capability: 'payments.invoices',
+    why: 'The Spanish half of the same coincidence: it maps to "Facturas".',
+  },
+  {
+    file: 'lib/business-os/translations/he.ts',
+    capability: 'payments.invoices',
+    why: 'The Hebrew half of the same coincidence: it maps to "חשבוניות".',
   },
 ];
 

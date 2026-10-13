@@ -13,6 +13,7 @@ import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
 import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { z } from 'zod';
+import { leadSentence } from '@/lib/website-builder/leadSentence';
 
 const logger = createLogger({ module: 'LandingPageGenerateAPI' });
 
@@ -32,7 +33,19 @@ const GenerateContentSchema = z.object({
   serviceName: z.string().min(1),
   serviceDescription: z.string().nullable().optional(),
   servicePrice: z.number().nullable().optional(),
-  serviceDuration: z.number().optional(),
+  /*
+   * Nullable, because `scheduling_services.duration_minutes` IS null for every
+   * service that is not scheduled -- a course, a product, a quote -- and the
+   * wizard sends the column through verbatim.
+   *
+   * It read `z.number().optional()`, which takes a number or absence but NOT
+   * null, so every one of those services was refused with a 400 before the
+   * model was ever called. The wizard answers a failure by drawing its starting
+   * draft, so the owner saw generic placeholder copy in about a second and no
+   * reason for it. `serviceDescription` and `servicePrice` were already
+   * nullable; this one was missed.
+   */
+  serviceDuration: z.number().nullable().optional(),
   theme: z.object({
     colors: z.object({
       primary: z.string(),
@@ -71,6 +84,41 @@ function configuredLanguage(locale: string | null | undefined): 'hebrew' | 'engl
     case 'en': return 'english';
     default: return null;
   }
+}
+
+/** How long the line beside a price may be and still read as a line. */
+const MAX_PLAN_LINE = 140;
+
+/**
+ * The pricing card gets a line, never the brief.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A service description is the owner's own notes about what they sell: on the
+ * reporting account it is 1,296 characters covering diagnosis rates, the
+ * neurology of the condition and what it is like to parent a child who has it.
+ * It is the BASIS for the page, not a thing to print.
+ *
+ * The preview and save routes already shortened this, but they are not the only
+ * consumer: the wizard also renders its own preview straight from what this
+ * route returns, and that copy never passed through either of them. So the
+ * whole description appeared beside the price in a column one word wide.
+ *
+ * Capping it here fixes every consumer at once, including the two that already
+ * had their own guard.
+ *
+ * Order of preference: the line the model wrote for the card, then the opening
+ * sentence of the description, then nothing. Nothing is deliberate -- an empty
+ * slot beside a price reads as a clean card, a wall of text reads as a fault.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function capPlanLine(parsed: Record<string, unknown>, serviceDescription: string | null | undefined): void {
+  const pricing = parsed.pricing as { plans?: Array<Record<string, unknown>> } | undefined;
+  const plan = pricing?.plans?.[0];
+  if (!plan) return;
+
+  const written = typeof plan.description === 'string' ? plan.description : null;
+  plan.description =
+    leadSentence(written, MAX_PLAN_LINE) ?? leadSentence(serviceDescription, MAX_PLAN_LINE) ?? '';
 }
 
 /**
@@ -255,6 +303,7 @@ export async function POST(request: NextRequest) {
             draftDetail = { returned: Object.keys(parsed), required: ['hero', 'features', 'faq'] };
             return getDefaultContent(validated);
           }
+          capPlanLine(parsed, validated.serviceDescription);
           return parsed;
         } catch (parseError) {
           // A JSON SyntaxError quotes the model's output: name at warn, detail at debug.
@@ -287,6 +336,18 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
+      /*
+       * A rejected request used to leave nothing behind but `400` on the
+       * access line, while the wizard quietly drew its starting draft. The
+       * reason was knowable the whole time and nobody could see it.
+       *
+       * Field paths and Zod's own codes only -- never the values, which are
+       * the owner's service copy.
+       */
+      requestLogger.warn(
+        { issues: error.errors.map((e) => ({ path: e.path.join('.'), code: e.code })) },
+        'Landing page generation refused: invalid input'
+      );
       return NextResponse.json(
         { success: false, error: 'Invalid input', details: error.errors },
         { status: 400 }
@@ -530,7 +591,8 @@ OUTPUT FORMAT (JSON)
     "plans": [
       {
         "name": "${data.serviceName}",
-        "price": "${data.servicePrice || 0}"
+        "price": "${data.servicePrice || 0}",
+        "description": "ONE short line for the price card, UNDER 140 characters: what the buyer gets, in their words. SUMMARISE the description -- never copy it. It is the basis for this page, not copy to reprint."
       }
     ]
   },
@@ -564,7 +626,7 @@ CRITICAL REMINDERS:
 - FAQ questions must be ones a real potential customer would ask about THIS specific offering`;
 }
 
-function getDefaultContent(data: { serviceName?: string; serviceDescription?: string | null; servicePrice?: number | null; serviceDuration?: number }): Record<string, unknown> {
+function getDefaultContent(data: { serviceName?: string; serviceDescription?: string | null; servicePrice?: number | null; serviceDuration?: number | null }): Record<string, unknown> {
   const serviceName = data.serviceName || 'Our Service';
 
   // Format duration

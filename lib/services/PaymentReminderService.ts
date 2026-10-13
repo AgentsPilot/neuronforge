@@ -14,6 +14,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { platformOrigin } from '@/lib/utils/origins';
+import { invoicePayLink } from '@/lib/payments/invoicePayLink';
 import { createLogger } from '@/lib/logger';
 import { emitPaymentEvent, PaymentProcessorType } from '@/lib/services/PaymentEventService';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
@@ -229,19 +230,30 @@ export function overdueCalendarDays(dueDate: string, businessTodayKey: string): 
 /**
  * Where the client can go to settle this.
  *
- * Stripe's hosted page is preferred because it can actually take the money.
- * Failing that, the invoice's own page — which shows the amount, the due date
- * and whatever manual payment instructions the business set. Null only when
- * neither exists, and the template then renders no button at all rather than a
- * dead one.
+ * The PORTAL where the invoice has a booking behind it — the client can see
+ * the appointment they are being chased for — and the invoice's own page where
+ * it does not, which shows the amount, the due date and whatever manual
+ * payment instructions the business set. Null only when there is no origin or
+ * no invoice, and the template then renders no button rather than a dead one.
+ *
+ * It preferred `stripe_hosted_invoice_url`, on the reasoning that Stripe's
+ * page "can actually take the money". Both of ours take it now, in the
+ * business's own frame, so that preference only cost the frame.
  */
-function payLinkFor(entityDetails: Record<string, unknown>): string | null {
-  const hosted = (entityDetails.payUrl as string | null) ?? null;
-  if (hosted) return hosted;
-
+async function payLinkFor(
+  entityDetails: Record<string, unknown>,
+  userId: string
+): Promise<string | null> {
   const appUrl = platformOrigin();
   const invoiceId = entityDetails.invoiceId as string | undefined;
-  return appUrl && invoiceId ? `${appUrl}/invoice/${invoiceId}` : null;
+  if (!appUrl || !invoiceId) return null;
+
+  return invoicePayLink({
+    invoiceId,
+    bookingId: (entityDetails.bookingId as string | null) ?? null,
+    userId,
+    baseUrl: appUrl,
+  });
 }
 
 export class PaymentReminderService {
@@ -720,8 +732,9 @@ export class PaymentReminderService {
           dueDate: invoice.due_date,
           status: invoice.status,
           // Carried so the sender can offer a way to pay rather than only a
-          // request for money.
-          payUrl: invoice.stripe_hosted_invoice_url ?? null,
+          // request for money. The BOOKING, not Stripe's hosted page:
+          // `payLinkFor` turns these two into one of our own surfaces.
+          bookingId: invoice.booking_id ?? null,
           invoiceId: invoice.id,
           clientName: invoice.client_name ?? null,
         };
@@ -891,20 +904,19 @@ export class PaymentReminderService {
         dueDate,
         daysOverdue,
         /*
-         * Stripe's hosted page where there is one, the invoice's own page
-         * otherwise.
+         * One of OUR pages, always: the portal where this invoice has a
+         * booking behind it, the invoice page where it does not.
          *
-         * Only two of eleven invoices on this database carry a Stripe URL —
-         * an invoice raised outside Stripe has none — so keying the button on
-         * it alone meant most chases said "you owe £500" and offered no way to
-         * act on it. `/invoice/[id]` handles the paid, pending and
-         * manual-instructions cases, so it is worth linking to whether or not
-         * card payment is available. Same fallback `BookingEmailService`
-         * already uses for the original invoice email.
+         * This was keyed on Stripe's hosted URL, and only two of eleven
+         * invoices on this database carry one — an invoice raised outside
+         * Stripe has none — so most chases said "you owe £500" and offered no
+         * way to act on it. Both of our pages handle the paid, pending and
+         * manual-instructions cases and both now take the card themselves, so
+         * there is a link to offer on every invoice.
          *
          * Withheld entirely when the owner asked for no link on this reminder.
          */
-        payUrl: includePaymentLink ? payLinkFor(entityDetails) : null,
+        payUrl: includePaymentLink ? await payLinkFor(entityDetails, userId) : null,
         branding,
         locale,
       });

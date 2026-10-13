@@ -155,6 +155,24 @@ export class GoogleBusinessProfilePluginExecutor extends BasePluginExecutor {
           const row = byDate.get(date) || {
             date,
             impressions: 0,
+            /*
+             * THE SPLIT, KEPT.
+             *
+             * The four impression metrics are Search/Maps x desktop/mobile, and
+             * only their sum was retained. Maps and Search are different
+             * questions — a Maps impression is someone looking for a business
+             * near them, a Search impression is someone looking for a thing —
+             * and the sum cannot be taken apart again afterwards.
+             *
+             * Carried alongside the total rather than instead of it. The sync
+             * writes the whole day object into `channel_metrics_daily.raw`, so
+             * these are stored from the first sync onward and surfacing them
+             * later needs no migration and no backfill.
+             */
+            impressions_search: 0,
+            impressions_maps: 0,
+            impressions_mobile: 0,
+            impressions_desktop: 0,
             website_clicks: 0,
             actions_calls: 0,
             actions_directions: 0,
@@ -164,9 +182,21 @@ export class GoogleBusinessProfilePluginExecutor extends BasePluginExecutor {
           const value = Number(point.value ?? 0) || 0;
 
           if (metricName?.startsWith('BUSINESS_IMPRESSIONS_')) {
-            // The four impression metrics are Search/Maps x desktop/mobile.
-            // Summing them gives the total the listing was shown.
+            // Summing all four gives the total the listing was shown; the two
+            // axes are also kept, because neither is recoverable from the sum.
             row.impressions = (row.impressions as number) + value;
+
+            if (metricName.endsWith('_MAPS')) {
+              row.impressions_maps = (row.impressions_maps as number) + value;
+            } else if (metricName.endsWith('_SEARCH')) {
+              row.impressions_search = (row.impressions_search as number) + value;
+            }
+
+            if (metricName.includes('_MOBILE_')) {
+              row.impressions_mobile = (row.impressions_mobile as number) + value;
+            } else if (metricName.includes('_DESKTOP_')) {
+              row.impressions_desktop = (row.impressions_desktop as number) + value;
+            }
           } else if (metricName === 'WEBSITE_CLICKS') {
             row.website_clicks = value;
           } else if (metricName === 'CALL_CLICKS') {

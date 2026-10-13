@@ -15,6 +15,7 @@
  * Public and unauthenticated: the person confirming has no account here.
  */
 
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -29,6 +30,14 @@ const BodySchema = z.object({ token: z.string().min(1).max(4096) });
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
+
+  /*
+   * Throttled before anything else: no session stands in front of this route.
+   * The `ok` bucket counts volume; a rejected credential counts under the much
+   * tighter failure budget below, which is the one that detects probing.
+   */
+  const throttle = await rateLimit(request, 'consent-confirm', RATE_LIMITS.write);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.write.windowSeconds);
 
   try {
     const body = await request.json().catch(() => ({}));

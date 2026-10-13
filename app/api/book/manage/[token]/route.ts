@@ -2,12 +2,15 @@
 // Self-service booking management endpoint
 // Allows clients to view their booking details using a signed token
 
+import { resolvePortalAccess } from '@/lib/security/portalAccess';
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 
 import type { PortalResponse } from '@/types/portal';
 import { createLogger } from '@/lib/logger';
-import { verifyBookingToken, generateBookingToken } from '@/lib/services/BookingEmailService';
+import { generateBookingToken } from '@/lib/services/bookingToken';
 import { generateProposalToken } from '@/lib/business-os/proposalToken';
+import { generateInvoiceToken } from '@/lib/payments/invoiceAccessToken';
 import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
@@ -79,10 +82,32 @@ export async function GET(
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
+  /*
+   * The portal itself. Generous: a client reloads this, and the page calls it again after every change.
+   */
+  const throttle = await rateLimit(request, 'portal-read', RATE_LIMITS.read);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.read.windowSeconds);
+
   try {
     // Verify token
-    const decoded = verifyBookingToken(token);
-    if (!decoded) {
+    /*
+     * Either a signed link or a booking id backed by the grant cookie.
+     *
+     * The id alone is never enough — it is what sits in the address bar
+     * precisely because holding it grants nothing. `resolvePortalAccess` tells
+     * the two apart by shape and requires a grant naming THIS booking for the
+     * id form, so a cookie for one booking cannot open another.
+     */
+    const access = resolvePortalAccess(token, request.headers.get('cookie'));
+    if (!access) {
+      /*
+       * The failure budget. A client reloading is noise on the `ok` counter;
+       * a run of rejected tokens from one address is somebody trying keys, and
+       * this is the only counter that can tell the two apart.
+       */
+      const failures = await rateLimit(request, 'portal-read', RATE_LIMITS.read, 'failure');
+      if (!failures.allowed) return tooManyRequests(RATE_LIMITS.read.windowSeconds);
+
       requestLogger.warn('Invalid or expired booking token');
       return NextResponse.json(
         { success: false, error: 'Invalid or expired link' },
@@ -90,7 +115,7 @@ export async function GET(
       );
     }
 
-    const { bookingId, email } = decoded;
+    const { bookingId, email } = access;
     requestLogger.info({ bookingId }, 'Fetching booking for self-service');
 
     /*
@@ -250,16 +275,121 @@ export async function GET(
      * the only answer anyone has.
      * ─────────────────────────────────────────────────────────────────────────
      */
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE MONEY BELONGS TO THE PACKAGE, NOT TO ONE MEETING OF IT.
+     *
+     * A package writes ONE instalment per child booking — six meetings, six
+     * rows of ₪74.99, each carrying the `booking_id` of the meeting it pays
+     * for. Asking for this booking's rows alone therefore returned exactly
+     * one, and the portal told a client with a six-payment agreement that
+     * their plan was "0 of 1 payments made", listing a single period named
+     * "meeting 3". Every sibling payment they had agreed to was invisible, and
+     * the one number they could see was the one least worth knowing.
+     *
+     * The family is the container plus its children, which is the same set
+     * `packageMeetings` lists further down from the same `containerId`. An
+     * ordinary booking has no children, so `moneyIds` collapses to `[its own
+     * id]` and both queries below are byte-for-byte what they were.
+     *
+     * Invoices are widened with the instalments deliberately: splitting them
+     * would make `paid` count against one set and `total` against another, and
+     * a plan that is 2-of-6 paid would report 0-of-6. `portalMoneyIsOneAnswer`
+     * exists because this page has already said two things about one balance.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const moneyContainerId = booking.parent_booking_id ?? booking.id;
+
+    const { data: familyRows } = await supabaseServer
+      .from('scheduling_bookings')
+      .select('id')
+      .eq('parent_booking_id', moneyContainerId)
+      .eq('user_id', booking.user_id);
+
+    const moneyIds = familyRows?.length
+      ? [moneyContainerId, ...familyRows.map(row => row.id as string)]
+      : [booking.id];
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE BOOKING THE PACKAGE WAS SOLD FROM, WHICH IS WHAT THE CLIENT BOUGHT.
+     *
+     * A package is a dateless CONTAINER booking plus one child per session.
+     * Every child carries its own token, so opening the portal from session
+     * two made session two the lead card — "Friday 23 October" at the top,
+     * above a list of all six, as though the client had bought that one
+     * meeting and happened to have five others.
+     *
+     * The container is not the answer either. It is a delivery vehicle with no
+     * date, no quote and no conversation attached. What the client actually
+     * agreed to was the consultation where the quote was accepted, and
+     * `proposals.package_booking_id` records exactly which package each
+     * accepted quote created — so the host is that proposal's `booking_id`.
+     *
+     * This is the rule `foldPackageMeetings` in the CRM contact drawer already
+     * applies owner-side, and the two must agree: the owner and the client
+     * looking at the same package should be counting the same bookings.
+     *
+     * Falls back to the container, deliberately, for a quote sold COLD — there
+     * is no booking behind it to host the sessions, so the purchase is its own
+     * subject. Dateless, which the card renders by leading with the service
+     * name instead of a numeral.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    let parentRow: {
+      id: string;
+      status: string;
+      start_time: string | null;
+      end_time: string | null;
+      timezone: string | null;
+      service_name: string | null;
+      duration_minutes: number | null;
+    } | null = null;
+
+    if (booking.parent_booking_id) {
+      const { data: sold } = await supabaseServer
+        .from('proposals')
+        .select('booking_id')
+        .eq('package_booking_id', booking.parent_booking_id)
+        .eq('user_id', booking.user_id)
+        .not('booking_id', 'is', null)
+        .limit(1);
+
+      const hostId = (sold?.[0]?.booking_id as string | undefined) ?? booking.parent_booking_id;
+
+      const { data: host } = await supabaseServer
+        .from('scheduling_bookings')
+        .select(
+          'id, status, start_time, end_time, timezone, service:scheduling_services(service_name, duration_minutes)'
+        )
+        .eq('id', hostId)
+        .eq('user_id', booking.user_id)
+        .maybeSingle();
+
+      if (host) {
+        const hostService = Array.isArray(host.service) ? host.service[0] : host.service;
+        parentRow = {
+          id: host.id as string,
+          status: host.status as string,
+          start_time: (host.start_time as string | null) ?? null,
+          end_time: (host.end_time as string | null) ?? null,
+          timezone: (host.timezone as string | null) ?? null,
+          service_name: (hostService?.service_name as string | null) ?? null,
+          duration_minutes: (hostService?.duration_minutes as number | null) ?? null,
+        };
+      }
+    }
+
     const [{ data: invoices }, { data: installments }] = await Promise.all([
       supabaseServer
         .from('payment_invoices')
         .select('id, amount, currency, status, due_date, refunded_amount, refunded_at')
-        .eq('booking_id', booking.id)
+        .in('booking_id', moneyIds)
         .eq('user_id', booking.user_id),
       supabaseServer
         .from('payment_plan_installments')
-        .select('installment_number, label, status, amount, currency, due_date, invoice_id')
-        .eq('booking_id', booking.id)
+        .select('installment_number, label, status, amount, currency, due_date, paid_at, invoice_id')
+        .in('booking_id', moneyIds)
         .eq('user_id', booking.user_id),
     ]);
 
@@ -389,6 +519,22 @@ export async function GET(
                 amount: Number(row.amount ?? 0),
                 status: String(row.status),
                 dueDate: (row.due_date as string | null) ?? null,
+                /*
+                 * ─────────────────────────────────────────────────────────
+                 * WHEN IT WAS ACTUALLY PAID, WHICH IS A DIFFERENT DATE.
+                 *
+                 * Only `dueDate` was sent, so a settled stage showed the day
+                 * it had been DUE: "₪1,000 · Monday 23 November · paid",
+                 * about money that arrived on 9 October. A client reading
+                 * their own record was told the wrong date for their own
+                 * payment.
+                 *
+                 * And a milestone has no due date at all — it falls due when
+                 * the work is done — so the second stage showed no date
+                 * whatsoever despite being paid on a known day.
+                 * ─────────────────────────────────────────────────────────
+                 */
+                paidAt: (row.paid_at as string | null) ?? null,
                 refunded:
                   typeof row.invoice_id === 'string'
                     ? refundByInvoice.get(row.invoice_id) ?? null
@@ -423,12 +569,28 @@ export async function GET(
      * ───────────────────────────────────────────────────────────────────────
      */
     let payUrl: string | null = null;
+    /*
+     * The invoice ITSELF, not only a link to it.
+     *
+     * The portal used to hand the page a `/invoice/{id}` URL and nothing else,
+     * so paying meant navigating: the client left the booking they were
+     * looking at for a page of their own, which is the thing every other task
+     * on this portal stopped doing. With the id, the page can mount the same
+     * payment panel that page mounts, in a card under the booking.
+     *
+     * `payUrl` stays, because the invoice page is still a real surface — the
+     * link in the invoice email points at it, and it prints.
+     */
+    let payInvoiceId: string | null = null;
 
     try {
       const { data: openRows } = await supabaseServer
         .from('payment_invoices')
         .select('id, status, due_date, paid_at, refund_status, amount')
-        .eq('booking_id', booking.id)
+        /* The same family the balance above was summed over. Scoping the link
+           to this meeting alone while the amount beside it covers the package
+           would show a client what they owe and no way to pay it. */
+        .in('booking_id', moneyIds)
         .eq('user_id', booking.user_id)
         .in('status', ['sent', 'overdue'])
         .order('due_date', { ascending: true });
@@ -446,10 +608,21 @@ export async function GET(
           Number(row.amount ?? 0) > 0
       );
 
-      if (payable) payUrl = `/invoice/${payable.id}`;
+      if (payable) {
+        payInvoiceId = payable.id as string;
+        /* Signed. The portal pays in place and rarely follows this, but it is
+           still a client-facing link and must not rely on the invoice being
+           young enough for the bare-URL grace window. */
+        payUrl = `/invoice/${payable.id}?t=${await generateInvoiceToken(payable.id as string)}`;
+      }
     } catch (err) {
       requestLogger.warn({ err, bookingId }, 'Could not resolve a pay link (non-blocking)');
     }
+
+    /* Hoisted: signing reads the contact address, so it cannot sit inside an
+       object literal. Only where something is actually owed. */
+    const payAccessToken =
+      outstanding > 0 && payInvoiceId ? await generateInvoiceToken(payInvoiceId) : null;
 
     const payment = {
       /*
@@ -480,6 +653,19 @@ export async function GET(
        * invoice to pay against, so it correctly yields no link.
        */
       payUrl: outstanding > 0 ? payUrl : null,
+      /** The same invoice, for paying in place rather than navigating. */
+      invoiceId: outstanding > 0 ? payInvoiceId : null,
+      /*
+       * Its access token, so the in-portal panel can present one to
+       * `/api/public/invoice/[id]/intent` exactly as the invoice page does.
+       *
+       * Minted here because this request has already proved the caller holds a
+       * valid booking token, and the invoice is this booking's own — the same
+       * reasoning as signing a sibling meeting. It grants nothing the caller
+       * did not already have, and it means the portal's Pay card does not
+       * depend on the invoice being young enough for the bare-URL window.
+       */
+      invoiceToken: payAccessToken,
     };
 
     /*
@@ -605,12 +791,40 @@ export async function GET(
         hoursUntilBooking:
           hoursUntilBooking === null ? null : Math.max(0, Math.floor(hoursUntilBooking)),
         /** False for a product purchase: nothing about it is scheduled. */
-        isScheduled: Boolean(booking.start_time)
+        isScheduled: Boolean(booking.start_time),
+        /** What this session was sold as; null for everything but a package. */
+        parent: parentRow
+          ? {
+              id: parentRow.id,
+              status: parentRow.status,
+              startTime: parentRow.start_time,
+              endTime: parentRow.end_time,
+              timezone: parentRow.timezone,
+              serviceName: parentRow.service_name,
+              durationMinutes: parentRow.duration_minutes,
+            }
+          : null
       },
       /** The quote raised against this booking, if any was. */
       quote: quote ?? undefined,
-      /** True when a quote is expected and none has been raised yet. */
-      awaitingQuote: quotesExpected && !quote,
+      /*
+       * True when a quote is expected, none has been raised — AND the price is
+       * still open.
+       *
+       * `sale_mode: 'proposal'` says how a service is SOLD, not where this
+       * booking got to. A business that quotes for a job and then agrees the
+       * figure in conversation books the work and writes the plan directly,
+       * and no `proposals` row is ever created. The service still says
+       * 'proposal' forever, so the portal told a client sitting on an agreed
+       * six-payment plan that their quote was "being prepared" and would be
+       * emailed when ready — directly above the plan stating the price.
+       *
+       * `state === 'none'` is the test that distinguishes them: it means
+       * nothing is owed and nothing has been paid, which is the only condition
+       * under which a client is genuinely still waiting on a figure. Once
+       * money exists, whatever raised it has already answered the question.
+       */
+      awaitingQuote: quotesExpected && !quote && payment.state === 'none',
       /** What is owed or has been paid, however this booking was sold. */
       payment,
       /*

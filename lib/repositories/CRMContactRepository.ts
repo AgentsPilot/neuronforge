@@ -308,7 +308,28 @@ export class CRMContactRepository {
       let query = this.supabase
         .from('crm_contacts')
         .select('*, scheduling_bookings(count), crm_tasks(count)')
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        /*
+         * Count PURCHASES, not meetings.
+         *
+         * A package is one booking that contains its sessions: the container
+         * carries no `parent_booking_id`, each session carries the container's.
+         * `SchedulingBookingInsert` says so outright -- "`parent_booking_id IS
+         * NULL` means a purchase for every reader that counts them" -- and this
+         * reader was not applying it.
+         *
+         * So a client who bought one six-session package read as six bookings
+         * on their pipeline card, next to a client who had booked six separate
+         * times. Measured on production 2026-10-08: one contact showed 17 where
+         * 11 is the truth.
+         *
+         * Filtering the EMBEDDED table narrows the count without narrowing the
+         * contacts: a contact with no bookings still comes back, with a count
+         * of nought. Verified against production rather than assumed, because
+         * an embedded filter that behaved like an inner join would quietly drop
+         * every contact who has never booked.
+         */
+        .is('scheduling_bookings.parent_booking_id', null);
 
       // Filter by stage
       if (stage) {
@@ -354,12 +375,54 @@ export class CRMContactRepository {
 
       if (error) throw error;
 
+      /*
+       * A package SOLD BY A QUOTE is one purchase, not two.
+       *
+       * Accepting a quote writes two bookings: the quote's own, and the package
+       * container holding the meetings it bought. Both have a null
+       * `parent_booking_id`, so both survive the filter above -- and the card
+       * read one sale as two.
+       *
+       * The drawer already resolves this. `foldPackageMeetings` moves a
+       * container's meetings onto the quote booking that sold them and drops
+       * the container, which is why the card said 11 where the drawer showed 10
+       * for the same client. The drawer is the one that is right: the client
+       * agreed to one thing.
+       *
+       * Done as a second read rather than in the embedded count, because the
+       * rule needs `proposals` and an embedded aggregate cannot reach another
+       * table. Deduplicated by container, since a superseded quote and the
+       * accepted one can both point at the same package.
+       */
+      const containerOwners = new Map<string, string>();
+      const { data: soldPackages, error: proposalsError } = await this.supabase
+        .from('proposals')
+        .select('contact_id, package_booking_id')
+        .eq('user_id', userId)
+        .not('package_booking_id', 'is', null)
+        .not('booking_id', 'is', null);
+
+      if (proposalsError) {
+        // Never fail a pipeline because a count could not be refined; the
+        // unrefined figure is wrong by at most the number of quoted packages.
+        logger.warn({ err: proposalsError, userId }, 'Could not fold quoted packages into booking counts');
+      }
+      for (const row of soldPackages ?? []) {
+        if (row.package_booking_id && row.contact_id) containerOwners.set(row.package_booking_id, row.contact_id);
+      }
+      const absorbedByContact = new Map<string, number>();
+      for (const contactId of containerOwners.values()) {
+        absorbedByContact.set(contactId, (absorbedByContact.get(contactId) ?? 0) + 1);
+      }
+
       // Transform to flatten counts from nested structure
       const contacts = (data || []).map((row: any) => {
         const { scheduling_bookings, crm_tasks, ...contact } = row;
+        const counted = scheduling_bookings?.[0]?.count ?? 0;
         return {
           ...contact,
-          bookings_count: scheduling_bookings?.[0]?.count ?? 0,
+          // Never below nought, whatever the two reads disagree about.
+          bookings_count: Math.max(0, counted - (absorbedByContact.get(contact.id) ?? 0)),
           tasks_count: crm_tasks?.[0]?.count ?? 0
         } as CRMContact;
       });

@@ -43,7 +43,10 @@ describe('the money route separates what it summarises from what it lists', () =
       route.indexOf('const filtered =')
     );
 
-    expect(searched).toContain('needle');
+    /* `terms` is the parsed search, and the only input `searched` may consult.
+       It was `needle`, a lowercased substring, before the search learned to
+       read amounts and periods; the rule it enforces has not changed. */
+    expect(searched).toContain('terms');
     // `matchesFilter` belongs to the row list, not to the summary.
     expect(searched).not.toContain('matchesFilter');
   });

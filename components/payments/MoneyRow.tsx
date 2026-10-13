@@ -68,6 +68,15 @@ interface MoneyRowProps {
    * nothing.
    */
   onToggleExpand?: () => void;
+  /**
+   * Open this row's client in the CRM contact drawer.
+   *
+   * Given the booking as well, so the drawer can open on the order the owner
+   * was already looking at instead of making them find it again in a list.
+   * Omitted by callers already inside the CRM drawer, where the link would lead
+   * back to the panel it was clicked in.
+   */
+  onOpenContact?: (contactId: string, bookingId: string | null) => void;
 }
 
 export function MoneyRow({
@@ -81,6 +90,7 @@ export function MoneyRow({
   selectable = false,
   expanded = false,
   onToggleExpand,
+  onOpenContact,
 }: MoneyRowProps) {
   const tone = STATUS_TONE[item.status] ?? REPORTS_COLORS.UNATTRIBUTED;
   const chip = statusChipStyle(item.status);
@@ -211,12 +221,43 @@ export function MoneyRow({
              * ─────────────────────────────────────────────────────────────────
              */
             const billed = period.status === 'billed';
+            /*
+             * WHEN IT WAS PAID, once it has been.
+             *
+             * ─────────────────────────────────────────────────────────────────
+             * This showed the due date and only the due date, so a settled
+             * period answered the wrong question — and a MILESTONE has no due
+             * date at all, because it falls due when the work is done. Those
+             * rows printed a dash:
+             *
+             *     Payment 2   —   paid   ₪400.00
+             *
+             * Paid, with no indication of when, next to a row that did show a
+             * date. `paidAt` was already on the period and already being read
+             * by the schedule in the drawer; only this table ignored it.
+             * ─────────────────────────────────────────────────────────────────
+             */
+            const stamp = settled ? period.paidAt ?? period.dueDate : period.dueDate;
+
+            /*
+             * WHAT CAME BACK against this period.
+             *
+             * The row above can say the order was credited and show a negative
+             * total, while every period under it still reads "paid ₪400" with
+             * nothing returned. The refund belongs to the period whose money
+             * went back, which is the only reason to list the periods apart.
+             */
+            const returned = Number(period.refundedAmount || 0);
+
             return {
               key: period.id,
               what: `${t('payments.period') || 'Payment'} ${period.installmentNumber}`,
-              when: period.dueDate ? formatDate(period.dueDate) : '—',
+              when: stamp ? formatDate(stamp) : '—',
+              /* Singular. `paid_lower` reads "שולמו" / "pagados" because it
+                 follows a count ("2/2 שולמו"); against one row it says this
+                 payment "were paid". */
               state: settled
-                ? t('payments.paid_lower') || 'paid'
+                ? t('payments.paid_one') || 'paid'
                 : stopped
                   ? t('payments.period_cancelled') || 'cancelled'
                   : billed
@@ -237,6 +278,7 @@ export function MoneyRow({
                       'var(--v2-text-muted)',
               amount: period.amount,
               struck: stopped,
+              returned,
             };
           })
       : item.entries.map(one => ({
@@ -272,6 +314,14 @@ export function MoneyRow({
           tone: STATUS_INK[one.status] ?? STATUS_TONE[one.status] ?? 'var(--v2-text-muted)',
           amount: one.amount,
           struck: one.status === 'cancelled',
+          /*
+           * A lone invoice is refunded the same way a plan period is, and
+           * `MoneyEntry.refunded` has carried the figure all along. Supplying
+           * it here is not only what makes the union type-check: a standalone
+           * invoice credited in part showed its gross and nothing else, which
+           * is the same silence the schedule had.
+           */
+          returned: one.refunded,
         }))
   );
 
@@ -358,9 +408,41 @@ export function MoneyRow({
           service names with the buyer in the next column is a catalogue.
         */}
         <div className="min-w-0">
-          <div className="truncate text-[13px] font-semibold text-[var(--v2-text-primary)]">
-            {item.contactName ?? item.title}
-          </div>
+          {/*
+            THE NAME IS THE WAY INTO THE CRM.
+            ─────────────────────────────────────────────────────────────────────
+            From here an owner's next question is almost always about the person
+            rather than the order: what else have they booked, what did we agree,
+            when did we last speak. All of it is in the contact drawer, and the
+            only route to it was to leave for the CRM and search the name again.
+
+            On the name itself rather than a button, because the name is already
+            the thing being pointed at and a row this dense has no width for
+            another control. It underlines on hover so it reads as a link, and
+            stops the click from reaching the row — the row opens the order,
+            which is a different destination and would otherwise win.
+
+            Falls back to plain text when there is no contact behind the row: a
+            standalone invoice typed for a walk-in has a name and no record to
+            open, and a link that cannot go anywhere is worse than no link.
+          */}
+          {item.contactName && item.contactId && onOpenContact ? (
+            <button
+              type="button"
+              onClick={event => {
+                event.stopPropagation();
+                onOpenContact(item.contactId!, item.bookingId ?? null);
+              }}
+              title={t('payments.open_in_crm') || 'Open in CRM'}
+              className="block max-w-full truncate text-start text-[13px] font-semibold text-[var(--v2-text-primary)] underline decoration-transparent decoration-dotted underline-offset-2 transition-colors hover:decoration-[var(--v2-text-muted)]"
+            >
+              <bdi>{item.contactName}</bdi>
+            </button>
+          ) : (
+            <div className="truncate text-[13px] font-semibold text-[var(--v2-text-primary)]">
+              {item.contactName ?? item.title}
+            </div>
+          )}
           <div className="truncate text-[11.5px] text-[var(--v2-text-secondary)]">
             {item.contactName ? item.title : '\u00A0'}
             {reference && <span className="text-[var(--v2-text-muted)]"> · {reference}</span>}
@@ -544,6 +626,40 @@ export function MoneyRow({
                       }`}
                     >
                       {formatCurrency(line.amount, item.currency)}
+
+                      {/*
+                        WHAT BECAME OF IT, under what was paid.
+                        ───────────────────────────────────────
+                        The figure above stays GROSS. The row reads "paid on the
+                        22nd", so netting it there would say the client paid
+                        ₪200 on a day they paid ₪400. What happened afterwards
+                        does not change what was paid, and it gets its own line.
+
+                        Same wording as the stage row in the contact drawer, so
+                        one refund cannot be described two ways on two screens.
+
+                        `<bdi>` because it mixes two left-to-right currency runs
+                        into a right-to-left sentence, and left loose the bidi
+                        algorithm reorders the neutrals between them.
+                      */}
+                      {(line.returned ?? 0) > 0 && (
+                        <span
+                          className="mt-0.5 block text-[10px] font-normal"
+                          style={{ color: STATUS_TONE.refunded }}
+                        >
+                          <bdi>
+                            {(t('crm.stage.refund_breakdown') || '{refunded} refunded · {kept} kept')
+                              .replace('{refunded}', formatCurrency(line.returned ?? 0, item.currency))
+                              .replace(
+                                '{kept}',
+                                formatCurrency(
+                                  Math.max(line.amount - (line.returned ?? 0), 0),
+                                  item.currency
+                                )
+                              )}
+                          </bdi>
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

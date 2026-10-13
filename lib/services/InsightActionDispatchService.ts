@@ -30,6 +30,8 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { invoicePayLink } from '@/lib/payments/invoicePayLink';
+import { platformOrigin } from '@/lib/utils/origins';
 import { supabaseServer } from '@/lib/supabaseServer';
 import {
   insightActionRepository,
@@ -230,7 +232,17 @@ async function chaseInvoice(action: InsightAction, ctx: Context): Promise<Outcom
     currency: invoice.currency ?? 'USD',
     dueDate,
     daysOverdue,
-    payUrl: invoice.stripe_hosted_invoice_url ?? null,
+    /* The portal where this invoice has a booking behind it, the invoice page
+       where it does not — never `invoice.stripe.com`. A chase that lands on
+       Stripe's own page shows the client a bill with no sign of the business
+       chasing them, and for an invoice raised outside Stripe there was no
+       hosted URL at all, so the chase offered no way to pay. */
+    payUrl: await invoicePayLink({
+      invoiceId: invoice.id,
+      bookingId: (invoice as { booking_id?: string | null }).booking_id ?? null,
+      userId: action.user_id,
+      baseUrl: platformOrigin(),
+    }),
     branding: ctx.branding,
     locale: ctx.locale,
     tone: ctx.tone,

@@ -109,6 +109,24 @@ const SENTENCES: Record<string, Record<ActivityLocale, string>> = {
     es: 'El cliente no se presentó — {date}',
     he: 'הלקוח לא הגיע — {date}',
   },
+  /*
+   * Marked by the platform, not by the owner — and the wording says so.
+   *
+   * `completed` is one of three answers a meeting can end in, and the other
+   * two, no-show and cancelled, are judgements only the owner can make. The
+   * automation always chooses the first because it is the only one it has. So
+   * the activity records WHO decided, not just what was decided: a timeline
+   * reading "marked complete" for a meeting the client never attended is a
+   * record of something that did not happen, and the owner needs to be able to
+   * tell the two apart a month later.
+   *
+   * Also the marker the triage row reads. One row serves both.
+   */
+  booking_auto_completed: {
+    en: 'Closed off automatically — {date}',
+    es: 'Cerrada automáticamente — {date}',
+    he: 'נסגרה אוטומטית — {date}',
+  },
   booking_confirmed: {
     en: 'Appointment confirmed — {date}',
     es: 'Cita confirmada — {date}',

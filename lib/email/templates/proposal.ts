@@ -439,3 +439,100 @@ export function generateQuoteStoppedEmail(
     html: wrapInBrandedTemplate(content, brandingWithLocale),
   };
 }
+
+/** What a quote reminder needs. Far less than the quote itself, deliberately. */
+export interface QuoteReminderEmailData {
+  title: string;
+  total: number;
+  currency: string;
+  validUntil?: string | null;
+  viewUrl: string;
+  clientFirstName?: string | null;
+  branding: BrandingData;
+  locale?: Locale;
+}
+
+/**
+ * One reminder on a quote nobody has answered.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NOT A SECOND COPY OF THE QUOTE, AND THAT IS THE WHOLE DESIGN.
+ *
+ * `generateProposalEmail` is the quote: every stage, every session, the terms,
+ * the attachment. Sending it again reads as a new quote arriving, and a client
+ * who already has one then has two documents and a question about which is
+ * current. This states the total, the deadline if there is one, and links to
+ * the same page — one door, the one they already have.
+ *
+ * IT ASKS RATHER THAN CHASES. This is the only email in this file addressed to
+ * somebody who has not bought anything. "Do you need more time, or is there
+ * something you would like explained or changed" is a real offer and also the
+ * two things that actually stall a quote; "just following up" asks for nothing
+ * and reads as pressure.
+ *
+ * The deadline appears only where the quote carries one — inventing urgency is
+ * worse than none — and it is read back in UTC at noon for the same reason the
+ * quote's own date is: so it names the stored day rather than the server's
+ * view of it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function generateQuoteReminderEmail(
+  data: QuoteReminderEmailData
+): { subject: string; html: string } {
+  const locale = data.locale || 'en';
+  const t = emailTranslations.quoteReminder;
+  const brandingWithLocale = { ...data.branding, locale };
+  const c = emailPalette(brandingWithLocale);
+
+  const intlLocales: Record<Locale, string> = { en: 'en-US', es: 'es-ES', he: 'he-IL' };
+  const intlLocale = intlLocales[locale] || 'en-US';
+
+  const validLine = data.validUntil
+    ? new Date(`${data.validUntil}T12:00:00Z`).toLocaleDateString(intlLocale, {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+      })
+    : null;
+
+  const greeting = data.clientFirstName
+    ? t.greetingNamed[locale].replace('{name}', escapeHtml(data.clientFirstName))
+    : t.greeting[locale];
+
+  const rows = [
+    emailDetailRow(t.totalLabel[locale], formatCurrency(data.total, data.currency), brandingWithLocale),
+  ];
+  if (validLine) {
+    rows.push(emailDetailRow(t.validUntilLabel[locale], escapeHtml(validLine), brandingWithLocale));
+  }
+
+  const content = `
+    <p style="margin: 0 0 16px;">${greeting}</p>
+
+    <p style="margin: 0 0 16px;">
+      ${t.intro[locale].replace('{title}', escapeHtml(data.title))}
+    </p>
+
+    <p style="margin: 0 0 20px;">${t.ask[locale]}</p>
+
+    ${emailDetailsTable(rows, brandingWithLocale)}
+
+    ${
+      validLine
+        ? `<p style="margin: 18px 0 0; font-size: 14px; color: ${c.inkFaint};">
+             ${t.deadline[locale].replace('{date}', escapeHtml(validLine))}
+           </p>`
+        : ''
+    }
+
+    <div style="margin-top: 24px;">
+      ${emailButton(t.cta[locale], data.viewUrl, { branding: data.branding })}
+    </div>
+  `;
+
+  return {
+    subject: t.subject[locale].replace('{title}', data.title),
+    html: wrapInBrandedTemplate(content, brandingWithLocale),
+  };
+}

@@ -12,6 +12,16 @@ export interface FunnelStation {
   lb: string;      // Label (e.g., 'Lead', 'Active Client')
   off?: boolean;   // Blueprint state (dashed, not yet live)
   color?: string;  // Stage color from pipeline (e.g., '#94A3B8')
+  /**
+   * A second fact about this station, under its label.
+   *
+   * Added for the first station, where the headline number counts people who
+   * arrived at something the business OWNS. Somebody who found them on Google
+   * Maps and tapped the phone number also found them, and is in no page view
+   * anywhere — so the two cannot be added, and leaving the second out said the
+   * discovery never happened. One line, stated separately.
+   */
+  sub?: string;
 }
 
 export interface FunnelGap {
@@ -326,6 +336,21 @@ export function FunnelMap({
               >
                 {station.lb}
               </span>
+
+              {station.sub && (
+                <span
+                  style={{
+                    fontSize: '10.5px',
+                    color: 'var(--v2-text-muted)',
+                    marginTop: '2px',
+                    lineHeight: 1.25,
+                    display: 'block',
+                    fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                  }}
+                >
+                  <bdi>{station.sub}</bdi>
+                </span>
+              )}
 
               {/* Tip badge: .lv-mk */}
               {getTipBadge(station.k) !== null && (

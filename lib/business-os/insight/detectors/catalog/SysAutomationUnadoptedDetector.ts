@@ -32,8 +32,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
-import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
-import { applicableAutomations } from '@/lib/business-os/gaps/automationApplies';
+import { OPERATIONAL_AUTOMATIONS, offerIsEarned } from '@/lib/business-os/gaps/automations';
+import { applicableAutomations, automationEvidence } from '@/lib/business-os/gaps/automationApplies';
 import { findGaps } from '@/lib/business-os/gaps/findGaps';
 import { createLogger } from '@/lib/logger';
 
@@ -150,7 +150,25 @@ export class SysAutomationUnadoptedDetector extends BaseDetector {
      * it rather than re-deriving those rules keeps the card and the settings
      * screen offering the same set.
      */
-    const applicable = await applicableAutomations(userId, unanswered);
+    const usable = await applicableAutomations(userId, unanswered);
+
+    /*
+     * And only the ones the owner has EARNED the offer of.
+     *
+     * `requires` asks whether the machinery exists; `offerOnEvidence` asks
+     * whether this is already a habit of theirs. Nothing here is enabled — the
+     * list is the unanswered ones — so the enabled exemption cannot apply, and
+     * `offerIsEarned` is passed `false` rather than a lookup.
+     *
+     * This is what lets the recommendation be phrased as an observation rather
+     * than a feature tour: the owner is only asked about work the audit trail
+     * shows them doing by hand.
+     */
+    const evidence = await automationEvidence(userId, usable);
+    const applicable = usable.filter(automation =>
+      offerIsEarned(automation, { enabled: false, evidence: evidence.get(automation.id) ?? 0 })
+    );
+
     if (applicable.length === 0) {
       this.logDetection(userId, null);
       return null;

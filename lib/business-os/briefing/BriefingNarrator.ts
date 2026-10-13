@@ -451,8 +451,27 @@ function toPromptShape(facts: BriefingFacts) {
   if (money.receivedToday > 0) {
     // Pre-formatted, like the owed amounts: handing over a number and a
     // currency code produced "500 USD" where a reader expects "$500".
-    shape.receivedToday = formatMoney(money.receivedToday, money.currency);
+    /*
+     * The TAKINGS' currency, not the owed list's.
+     *
+     * `money.currency` follows what is owed, because that list is usually the
+     * longer one. A business owed in ILS that took a dollar payment today had
+     * the dollars printed with a shekel sign. `receivedCurrency` is the one
+     * that belongs to this number.
+     */
+    shape.receivedToday = formatMoney(
+      money.receivedToday,
+      money.receivedCurrency ?? money.currency
+    );
     shape.receivedCount = money.receivedCount;
+    /*
+     * Said out loud when the day spanned more than one currency, so the model
+     * narrates the dominant currency's total as what it is rather than as the
+     * day's takings. There is no FX rate anywhere here to make one number of
+     * two, and a figure that silently covers part of the day is worse than a
+     * figure that says so.
+     */
+    if (money.receivedMixedCurrency) shape.receivedMixedCurrency = true;
   }
 
   if (money.owed.length > 0) {
@@ -962,10 +981,15 @@ function todayStatements(facts: BriefingFacts, language: BriefingLanguage): stri
    */
   if (money.receivedToday > 0) {
     lines.push(
-      phrase.receivedToday(
-        formatMoney(money.receivedToday, money.currency),
-        money.receivedCount
-      )
+      money.receivedMixedCurrency
+        ? phrase.receivedTodayMixed(
+            formatMoney(money.receivedToday, money.receivedCurrency ?? money.currency),
+            money.receivedCount
+          )
+        : phrase.receivedToday(
+            formatMoney(money.receivedToday, money.receivedCurrency ?? money.currency),
+            money.receivedCount
+          )
     );
   }
 
@@ -1314,6 +1338,12 @@ interface FallbackPhrases {
   refunded: (n: number, money?: string) => string;
   /** `money` is already formatted; `n` is how many payments made it up. */
   receivedToday: (money: string, n: number) => string;
+  /*
+   * The same day, in more than one currency. The figure is the DOMINANT
+   * currency's total and the sentence has to say so — there is no rate here to
+   * turn two currencies into one number.
+   */
+  receivedTodayMixed: (money: string, n: number) => string;
   owes: (name: string, amount: string) => string;
   /** Several debts, totalled rather than listed. */
   owedSummary: (people: number, total: string, largest: string) => string;
@@ -1447,6 +1477,7 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     owes: (name, amount) => `${name} still owes ${amount}.`,
     owedSummary: (people, total, largest) => `${people} clients owe you ${total}, ${largest} the most.`,
     receivedToday: (money, n) => (n === 1 ? `${money} came in today.` : `${money} came in today, across ${n} payments.`),
+    receivedTodayMixed: (money, n) => `${money} came in today, plus payments in another currency, across ${n} in all.`,
     cancelledAt: time => `Your ${time} appointment was cancelled, leaving an opening.`,
     cancelled: () => 'An appointment was cancelled, leaving an opening.',
     first: (name, time) => `Your first appointment is ${name} at ${time}.`,
@@ -1528,6 +1559,7 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     owedSummary: (people, total, largest) =>
       `${people} clientes te deben ${total}, y ${largest} es quien más debe.`,
     receivedToday: (money, n) => (n === 1 ? `Entraron ${money} hoy.` : `Entraron ${money} hoy, en ${n} pagos.`),
+    receivedTodayMixed: (money, n) => `Entraron ${money} hoy, más pagos en otra moneda, ${n} en total.`,
     cancelledAt: time => `Tu cita de las ${time} se canceló y dejó un hueco libre.`,
     cancelled: () => 'Se canceló una cita y dejó un hueco libre.',
     first: (name, time) => `Tu primera cita es ${name} a las ${time}.`,
@@ -1606,6 +1638,7 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     owedSummary: (people, total, largest) =>
       `${people} לקוחות חייבים ${total}, ${largest} חייב הכי הרבה.`,
     receivedToday: (money, n) => (n === 1 ? `${money} נכנסו היום.` : `${money} נכנסו היום, ב-${n} תשלומים.`),
+    receivedTodayMixed: (money, n) => `${money} נכנסו היום, ובנוסף תשלומים במטבע אחר, ${n} בסך הכל.`,
     cancelledAt: time => `הפגישה שלך ב-${time} בוטלה ונפתח חלון פנוי.`,
     cancelled: () => 'פגישה בוטלה ונפתח חלון פנוי.',
     first: (name, time) => `הפגישה הראשונה שלך היא ${name} בשעה ${time}.`,

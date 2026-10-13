@@ -91,6 +91,74 @@ describe('the public card layer', () => {
     expect(code).not.toMatch(/lg:row-span-\d/);
   });
 
+  it('never lets a card grid stretch its cards', () => {
+    /*
+     * A grid makes every item as tall as the tallest in its row. For a wall of
+     * cards whose content varies — a two-line "your details" beside a list of
+     * seventeen meetings — that produces a mostly empty box, and it has now
+     * shipped three times: on the index twice, and in `PortalCards`.
+     *
+     * So: any grid that lays out cards must opt out with `items-start`. The
+     * test looks for `grid-cols` declarations in the public layer and requires
+     * `items-start` in the same class string.
+     */
+    /*
+     * Only the files that COMPOSE cards. `AppointmentCard` grids its facts,
+     * `ReschedulePanel` grids time slots, `CancelPanel` grids two buttons —
+     * those are grids of content inside one card, and stretching is often
+     * exactly what they want.
+     */
+    const COMPOSERS = [
+      'app/book/manage/[token]/page.tsx',
+      'components/public/PortalCards.tsx',
+      'components/public/PortalShell.tsx',
+    ].map(f => join(process.cwd(), f));
+
+    const offenders: string[] = [];
+    for (const file of COMPOSERS) {
+      for (const m of codeOf(file).matchAll(/className=[{`"']([^`"'{}]*\bgrid\b[^`"'{}]*)/g)) {
+        const cls = m[1];
+        if (!/(?:sm|md|lg):grid-cols-/.test(cls)) continue;
+        if (!cls.includes('items-start')) offenders.push(`${rel(file)}: ${cls.trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('sizes the payment/details pair as one shape', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────
+     * THE ONE PLACE TWO CARDS ARE MEANT TO MATCH, AND HOW IT IS SPELLED.
+     *
+     * The test above bans stretching because a short card beside a long list
+     * becomes a mostly empty box. The pair at the top of the left column is
+     * the exception: a payment card carrying a due date and a Pay button
+     * stands about half as tall again as a name and an email, and the two
+     * side by side made the page look unfinished at its most-read corner.
+     *
+     * It is spelled `h-full` on each card and NOT `items-stretch` on the
+     * grid, which is what keeps the two rules compatible: the grid still
+     * opts out by default, so a third card added to this column cannot be
+     * dragged to someone else's height, and these two opt in by name.
+     *
+     * `height: 100%` on an `align-self: start` grid item still resolves
+     * against the grid AREA — the row height — so whichever card is taller
+     * sets it and the other follows. That is subtle enough to look like a
+     * redundant class and be tidied away, which is why it is pinned here.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    const code = codeOf(join(process.cwd(), 'app/book/manage/[token]/page.tsx'));
+
+    // Both payment branches — money owed, and nothing owed — and the details
+    // card beside them.
+    expect(code).toMatch(/className="flex h-full flex-col p-5"/);
+    expect(code).toMatch(/className="apc-panel flex h-full flex-col p-5"/);
+    expect(code).toMatch(/className="apc-panel h-full p-5"/);
+
+    // And the grid they sit in still refuses to stretch by default.
+    expect(code).toMatch(/className="grid items-start gap-3 sm:grid-cols-2"/);
+  });
+
   it('never backfills gaps by reordering', () => {
     const offenders = FILES.filter(f => /grid-flow-(?:row-|col-)?dense/.test(codeOf(f))).map(rel);
     expect(offenders).toEqual([]);

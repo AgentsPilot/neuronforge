@@ -20,6 +20,16 @@ export interface PortalMeeting {
   isCurrent: boolean;
   /** Its own signed link into this portal, or null when none could be minted. */
   token: string | null;
+  /**
+   * How many meetings this row stands for.
+   *
+   * 1 for an ordinary booking, and the number of sessions for a package — a
+   * package is ONE thing the client bought, and its six meetings listed
+   * individually turned "my bookings" into a transcript. The row names the
+   * package and says how many; the meetings themselves are listed, with their
+   * own dates and their own actions, on the package card in the portal.
+   */
+  sessions?: number;
 }
 
 interface PortalMeetingsProps {
@@ -55,10 +65,13 @@ const PER_PAGE = 4;
  * decides which four of it to draw, so turning a page costs no request and
  * nothing reloads.
  *
- * Coming up first, soonest at the top; then held, most recent at the top. Each
- * group is ordered the way it is actually read — a diary forwards, a history
- * backwards — so the appointment a client is most likely looking for is the
- * one they see without turning anything.
+ * Ordered by the date of the booking, newest at the top, in one list. Each row
+ * still says whether it is coming up or done — that is a label on the row, and
+ * no longer a reason to move it above or below anything.
+ *
+ * A package is ONE row here, however many sessions it has. The sessions
+ * themselves are listed on the package card in the portal, each with its own
+ * date and its own reschedule and cancel.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProps) {
@@ -71,34 +84,33 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
-   * SOONEST FIRST AMONG WHAT IS COMING, MOST RECENT FIRST AMONG WHAT IS DONE.
+   * ONE LIST, BY THE DATE OF THE BOOKING, NEWEST FIRST.
    *
-   * Upcoming and past were separated here but neither was sorted, so both
-   * inherited the layout query's `start_time DESC` — which is right for a
-   * history and backwards for a diary. A client with four appointments booked
-   * saw 17 December, then 3 December, then 19 November, then 5 November: the
-   * one they need next was last, and on page 1 of 5 it was often not on the
-   * page at all.
+   * This was two blocks: what is still coming, soonest first, then what is
+   * done, most recent first. Each half read correctly on its own and the
+   * seam between them did not — the same date could appear near the top and
+   * again near the bottom depending only on whether it had passed, so the
+   * list had no single order a client could follow. Asked for and settled as
+   * one ordering over every row.
    *
-   * A row with no date is a purchase rather than a meeting. It sorts last
-   * within its group rather than being dropped, because the client still has
-   * it.
+   * `upcoming` is still carried per row, because each one still SAYS which it
+   * is; it just no longer decides where the row sits.
+   *
+   * A row with no date is a purchase rather than a meeting — a product, or a
+   * package container with no sessions. It sorts last rather than being
+   * dropped, because the client still has it.
    * ───────────────────────────────────────────────────────────────────────────
    */
   const ordered = useMemo(() => {
     const at = (value: string | null) => (value ? new Date(value).getTime() : null);
-    const by = (dir: 1 | -1) => (a: PortalMeeting, b: PortalMeeting) => {
+    return [...meetings].sort((a, b) => {
       const left = at(a.startTime);
       const right = at(b.startTime);
       if (left === null && right === null) return 0;
       if (left === null) return 1;
       if (right === null) return -1;
-      return (left - right) * dir;
-    };
-    return [
-      ...meetings.filter(m => m.upcoming).sort(by(1)),
-      ...meetings.filter(m => !m.upcoming).sort(by(-1)),
-    ];
+      return right - left;
+    });
   }, [meetings]);
 
   /**
@@ -207,6 +219,14 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
                         timeZone
                       )
                     : t('portal.no_date')}
+                  {/*
+                    A package says so on its own row, because the date beside
+                    it is one session's and the row stands for all of them.
+                    Without this the client sees a single line where six used
+                    to be and no sign that the other five are still theirs.
+                  */}
+                  {(meeting.sessions ?? 1) > 1 &&
+                    ` · ${t('portal.package_of').replace('{count}', String(meeting.sessions))}`}
                   {label && ` · ${label}`}
                 </span>
               </span>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { CheckCircle } from 'lucide-react';
 
 import { StripePaymentForm } from '@/components/website/blocks/StripePaymentForm';
 import type { Locale } from '@/lib/i18n/config';
@@ -15,6 +16,16 @@ interface InvoicePaymentPanelProps {
   borderRadius?: string;
   /** Where to send the client once Stripe says the payment went through. */
   successUrl: string;
+  /**
+   * The invoice's signed access token.
+   *
+   * The intent endpoint applies the same rule as the invoice page: a signed
+   * `?t=` naming this invoice, or a bare id only while the invoice is newer
+   * than the token window. Both mounts hold one — the invoice page from its
+   * own URL, the portal from `payment.invoiceToken` — so neither has to rely
+   * on the invoice being young.
+   */
+  accessToken?: string | null;
 }
 
 type Phase =
@@ -55,6 +66,7 @@ export function InvoicePaymentPanel({
   primaryColor,
   borderRadius,
   successUrl,
+  accessToken,
 }: InvoicePaymentPanelProps) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +75,11 @@ export function InvoicePaymentPanel({
   useEffect(() => {
     let live = true;
 
-    fetch(`/api/public/invoice/${invoiceId}/intent`)
+    fetch(
+      `/api/public/invoice/${invoiceId}/intent${
+        accessToken ? `?t=${encodeURIComponent(accessToken)}` : ''
+      }`
+    )
       .then(res => res.json())
       .then(data => {
         if (!live) return;
@@ -89,18 +105,96 @@ export function InvoicePaymentPanel({
     return () => {
       live = false;
     };
-  }, [invoiceId]);
+  }, [invoiceId, accessToken]);
 
-  // Nothing to draw: the page's other payment options stand on their own.
-  if (phase.kind === 'unavailable' || phase.kind === 'paid') return null;
+  /*
+    Nothing to draw. The page's other options stand on their own, and every
+    reason here is a complete answer rather than a failure: the business takes
+    no cards, the bill is not billable, or we could not reach Stripe.
 
-  if (phase.kind === 'loading') {
+    `not_billed_yet` is no longer one of them in practice — an invoice is
+    raised at Stripe when the quote is accepted, so by the time a client can
+    open this there is something to confirm.
+  */
+  if (phase.kind === 'unavailable') return null;
+
+  if (phase.kind === 'paid') {
+    /*
+      ─────────────────────────────────────────────────────────────────────────
+      SAID, BECAUSE SILENCE HERE IS WORSE THAN THE BILL.
+
+      This returned null, on the reasoning that the page's other options stand
+      on their own. They do not when the page is simultaneously showing an
+      amount and a Pay button, which it does whenever our invoice row says
+      `overdue` and the processor says settled — ten invoices on this database
+      are in exactly that state, and the client sees a demand for money they
+      have already handed over.
+
+      Stripe's answer is the one that knows whether money moved, so it is said
+      out loud, and it points at the business rather than asserting our own
+      record — our record is the one that may be wrong.
+      ─────────────────────────────────────────────────────────────────────────
+    */
     return (
       <div
-        className="h-28 w-full animate-pulse"
-        style={{ background: 'var(--ap-surface-2)', borderRadius: 'var(--ap-radius-md)' }}
-        aria-label={t('loading')}
-      />
+        className="flex items-start gap-3 p-4"
+        style={{
+          background: 'var(--ap-surface)',
+          border: '1px solid var(--ap-border)',
+          borderRadius: 'var(--ap-radius-md)',
+        }}
+        role="status"
+      >
+        <CheckCircle
+          className="mt-0.5 h-5 w-5 shrink-0"
+          style={{ color: '#15803D' }}
+          aria-hidden
+        />
+        <p className="text-sm" style={{ color: 'var(--ap-text)' }}>
+          {t('payAlreadySettled')}
+        </p>
+      </div>
+    );
+  }
+
+  if (phase.kind === 'loading') {
+    /*
+      ─────────────────────────────────────────────────────────────────────────
+      SAID, NOT MIMED.
+
+      This was a bare `animate-pulse` box filled with `--ap-surface-2`, which
+      `PublicThemeStyle` sets to the brand's own `surface`. On a pale brand
+      that is near-white on a near-white ground: an invisible rectangle, with
+      the label only in `aria-label` where a sighted client never sees it.
+
+      So the gap between paint and the secret arriving — under a second in
+      production, far longer on a cold route — read as "this business does not
+      take cards", directly above the bank details that are the fallback. It
+      was reported as exactly that: "payment option is not available".
+
+      A visible border, a real background and the words. Whatever the wait is,
+      it now says what it is waiting for.
+      ─────────────────────────────────────────────────────────────────────────
+    */
+    return (
+      <div
+        className="flex h-28 w-full items-center justify-center gap-3 px-4"
+        style={{
+          background: 'var(--ap-surface)',
+          border: '1px solid var(--ap-border)',
+          borderRadius: 'var(--ap-radius-md)',
+        }}
+        role="status"
+      >
+        <span
+          className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
+          style={{ color: 'var(--ap-brand)' }}
+          aria-hidden
+        />
+        <span className="text-sm" style={{ color: 'var(--ap-text-muted)' }}>
+          {t('payByCardLoading')}
+        </span>
+      </div>
     );
   }
 

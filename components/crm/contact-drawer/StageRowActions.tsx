@@ -36,11 +36,27 @@ interface StageRowActionsProps {
   paid: boolean;
   /** What is left on this stage after anything already returned. */
   remaining: number;
+  /**
+   * How much of this stage went back to the client.
+   *
+   * Distinct from `remaining`, which a PARTIAL refund leaves above zero: the
+   * document send is refused for a partial refund too, so the amount returned
+   * has to be asked about directly.
+   */
+  refunded?: number;
   /** Sends the invoice while owed, the receipt once paid — the route decides. */
   onSendDocument?: () => void;
   /** Disabled while a send for this booking is in flight. */
   sending?: boolean;
   onRefund?: () => void;
+  /**
+   * Send the refund confirmation again.
+   *
+   * Takes the place of the receipt once money has gone back: the receipt is
+   * refused by the send route, and this is the email that is actually honest
+   * about what happened.
+   */
+  onResendRefundEmail?: () => void;
   t: (key: string) => string;
 }
 
@@ -48,9 +64,11 @@ export function StageRowActions({
   invoiceId,
   paid,
   remaining,
+  refunded = 0,
   onSendDocument,
   sending = false,
   onRefund,
+  onResendRefundEmail,
   t,
 }: StageRowActionsProps) {
   const [open, setOpen] = useState(false);
@@ -107,7 +125,25 @@ export function StageRowActions({
    * the latest — so a client asking for the deposit's invoice could not be
    * served from here at all.
    */
-  if (invoiceId && onSendDocument) {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT ONCE THE MONEY HAS GONE BACK.
+   *
+   * `sendInvoice` REFUSES a refunded invoice — "was paid and then refunded, so
+   * it cannot be sent again" — because the document it would build carries a
+   * live pay button and asks for money the client has just been given. The
+   * guard is right; the menu simply did not know about it, so the item was
+   * offered, pressed, and answered with an error.
+   *
+   * The client is not left without paperwork: the refund confirmation email
+   * goes out when the refund is recorded, and that is the honest artefact
+   * after a refund.
+   *
+   * `refunded > 0` rather than a full-refund test, because the send is refused
+   * for `partially_refunded` as well.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (invoiceId && onSendDocument && refunded <= 0) {
     items.push({
       key: 'document',
       label: paid ? t('crm.invoice.send_receipt') : t('crm.invoice.resend'),
@@ -126,6 +162,29 @@ export function StageRowActions({
       label: t('payments.refund') || 'Refund',
       icon: RotateCcw,
       run: onRefund,
+    });
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE DOCUMENT THAT IS HONEST AFTER A REFUND.
+   *
+   * It replaces the receipt rather than joining it: above, the receipt is
+   * withheld once `refunded > 0`, so without this a refunded stage had an empty
+   * menu and the owner had no way to tell the client anything at all.
+   *
+   * The confirmation itself fires once, when the refund is recorded, and only
+   * if "notify the client" was ticked. A refund that arrived through a webhook,
+   * an automation block or the Stripe dashboard had nobody to tick it — so for
+   * those the client was never told, and until now nothing could put it right.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (refunded > 0 && onResendRefundEmail) {
+    items.push({
+      key: 'refund-email',
+      label: t('crm.refund.resend_confirmation') || 'Resend refund confirmation',
+      icon: Mail,
+      run: onResendRefundEmail,
     });
   }
 

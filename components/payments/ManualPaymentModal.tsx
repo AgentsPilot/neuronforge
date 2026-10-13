@@ -137,7 +137,7 @@ export function ManualPaymentModal({
       />
 
       {/* Modal */}
-      <div className="relative z-10 w-full sm:max-w-md h-full sm:h-auto rounded-none sm:rounded-lg bg-white px-4 sm:px-6 py-4 sm:py-6 shadow-xl dark:bg-gray-900 overflow-y-auto">
+      <div className="relative z-10 w-full sm:max-w-md h-full sm:h-auto rounded-none sm:rounded-lg bg-white px-4 sm:px-6 py-4 sm:py-6 shadow-xl dark:bg-gray-900 overflow-y-auto scrollbar-thin">
         {/* Header */}
         <div className="mb-4 sm:mb-6 flex items-center justify-between">
           <h2 className="text-base sm:text-lg font-semibold">Record Manual Payment</h2>

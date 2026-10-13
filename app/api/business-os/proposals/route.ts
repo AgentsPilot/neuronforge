@@ -52,8 +52,37 @@ const createSchema = z.object({
       (value) => Number(value.slice(0, 4)) <= new Date().getUTCFullYear() + 10,
       'valid_until is implausibly far in the future'
     )
-    .nullable()
-    .optional(),
+    /*
+     * And not already over.
+     *
+     * The ceiling above was added without a floor, so the field accepted any
+     * past date. `proposals/[token]` computes expiry from this rather than
+     * storing it, so a quote dated yesterday is `expired` the moment it is
+     * sent: the client opens the link and reads that the quote is no longer
+     * available, having never seen it. One live quote is in exactly that state
+     * -- b61c4db6, valid until the 11th, sent on the 12th.
+     *
+     * A day of slack, because the owner picks a date in THEIR timezone and
+     * this compares in UTC. The offsets run to ±14 hours, so their "today" can
+     * be the UTC "yesterday"; without the slack a perfectly good same-day quote
+     * would be refused in Honolulu. A day is wide enough to cover every zone
+     * and still narrow enough to catch a date typed in the wrong year.
+     */
+    .refine((value) => {
+      const floor = new Date();
+      floor.setUTCDate(floor.getUTCDate() - 1);
+      // YYYY-MM-DD compares lexicographically exactly as it does chronologically.
+      return value >= floor.toISOString().slice(0, 10);
+    }, 'valid_until is already in the past'),
+  /*
+   * REQUIRED, which it was not.
+   *
+   * Thirteen of the thirty-three live quotes carry no expiry at all, and a
+   * quote with no end is not a quote: it is a price the business is bound to
+   * for ever, and the one lever for getting an answer -- "this holds until the
+   * 30th" -- is missing. `createSchema` serves only POST, and proposals have
+   * no PATCH, so this binds new quotes and leaves every existing row alone.
+   */
   payment_shape: paymentShapeSchema.optional(),
   /**
    * A PACKAGE: the meetings this quote sells, as explicit instants.

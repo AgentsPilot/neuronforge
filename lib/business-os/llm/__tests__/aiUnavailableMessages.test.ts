@@ -18,6 +18,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 import {
   AI_UNAVAILABLE_CHAT,
   AI_UNAVAILABLE_WEBSITE_WRITING,
@@ -115,7 +116,7 @@ describe('the client copies say the same thing as the server copies', () => {
    * outcome, so the owner reads the message that was already written.
    */
   it('the image message already exists in all three languages and was not duplicated here', () => {
-    const source = read('lib/business-os/LanguageContext.tsx');
+    const source = dictionarySource();
     const found = [...source.matchAll(/'media\.generate\.unavailable': '(.*)',/g)].map((match) => match[1]);
 
     expect(found).toHaveLength(3);

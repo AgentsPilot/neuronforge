@@ -227,7 +227,7 @@ export function CancelPlanModal({
         <form
           id="cancel-plan-form"
           onSubmit={handleSubmit}
-          className="flex-1 overflow-y-auto px-5 py-4 space-y-4"
+          className="scrollbar-thin flex-1 overflow-y-auto px-5 py-4 space-y-4"
         >
           {/* What stopping does NOT do. Shown only while the refund is off —
               once it is on, the switch below says what will happen instead, and
