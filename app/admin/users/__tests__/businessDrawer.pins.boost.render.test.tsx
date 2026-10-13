@@ -426,8 +426,8 @@ describe('Take back credits on a top-up (BD-9, PIN-i, PIN-b, PIN-a)', () => {
         confirmPaidCredits: true,
       }),
     ]);
-    // One Credits re-read; today no top-ups re-read and no list re-read (BD-14 adds the list read in LF-4b, by name).
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    // One Credits re-read and one list re-read (BD-14, LF-4b); no top-ups re-read.
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('TOPUP-2 (PIN-a): closing and pressing the top-up opener again opens the dialog again, with a new request id', async () => {
@@ -460,18 +460,37 @@ describe('Take back credits on a top-up (BD-9, PIN-i, PIN-b, PIN-a)', () => {
         confirmPaidCredits: true,
       }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
-  it('TOPUP-3 (folded lot, F-2): with every lot row hidden, as a fold hides them, the top-up opener still opens Take back on its lot', async () => {
+  it("TOPUP-3 (folded lot, BD-8): with the top-up's lot inside the closed lot fold, the top-up opener still opens Take back on its lot", async () => {
+    // Three newer lots first (the route sends newest first), so PAID_LOT is the 4th: inside the fold.
+    // Their figures differ from PAID_LOT's (SA C2), so "13,750 left" can only be the folded lot.
+    const newer = (n: number): CreditLotView => ({
+      ...PAID_LOT,
+      id: `cccccccc-3333-4333-8333-00000000000${n}`,
+      credits: n * 100,
+      remaining: n * 100,
+      createdAt: `2026-10-0${n + 1}T12:05:00.000Z`,
+    });
+    const data = credits([newer(3), newer(2), newer(1), PAID_LOT]);
+    creditsReply = () => ok(data);
     const drawer = await openDrawer();
-    // BD-8: a fold hides, never unmounts. There is no fold control yet, so the rows are hidden by hand.
-    for (const row of within(drawer).getAllByTestId('credits-lot')) row.hidden = true;
+    const toggle = button(drawer, 'credits-lots-more');
+    expect(toggle.textContent).toBe('Show 1 more');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    const rest = within(drawer).getByTestId('credits-lots-more-rest');
+    expect(rest.hidden).toBe(true);
+    const lots = within(drawer).getAllByTestId('credits-lot');
+    expect(lots).toHaveLength(4); // hidden, never unmounted (BD-8)
+    expect(rest.contains(lots[3])).toBe(true);
+    expect(lots[3].textContent).toContain('13,750 left');
     fireEvent.click(button(topUpRow(drawer), 'boost-take-back'));
     const dialog = await screen.findByTestId('credit-form-dialog');
     expect(within(dialog).getByRole('heading').textContent).toBe(`Take back credits from ${BUSINESS}`);
     expect(dialog.textContent).toContain('13,750 left on this gift.');
     expect(within(dialog).getByTestId('paid-credits-confirm')).toBeTruthy();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false'); // the fold was never opened
     expect(posts()).toEqual([]);
   });
 

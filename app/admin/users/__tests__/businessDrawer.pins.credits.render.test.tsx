@@ -429,8 +429,8 @@ describe('Give credits (PIN-c, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'grant_credits', amount: 1000, expiresAt: null, requestId: minted[minted.length - 1], reason: 'goodwill gesture' }),
     ]);
-    // One Credits re-read; today no top-ups re-read and no list re-read (BD-14 adds the list read in LF-4b, by name).
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    // One Credits re-read and one list re-read (BD-14, LF-4b); no top-ups re-read.
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('GIVE-2: a dated gift sends the local end time as an ISO instant; the confirm step shows what is sent; the notice reads the response', async () => {
@@ -451,7 +451,7 @@ describe('Give credits (PIN-c, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'grant_credits', amount: 250, expiresAt: instant, requestId: minted[minted.length - 1], reason: 'loyalty' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('GIVE-3 (PIN-a): one request id per opening, the same id on the retry after a failure, a new id on the next opening', async () => {
@@ -495,7 +495,7 @@ describe('Give credits (PIN-c, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
       opsPost({ op: 'grant_credits', amount: 10, expiresAt: null, requestId: firstId, reason: 'first try' }),
       opsPost({ op: 'grant_credits', amount: 10, expiresAt: null, requestId: secondId, reason: 'second gift' }),
     ]);
-    await expectReads({ credits: 3, boost: 1, list: 1 });
+    await expectReads({ credits: 3, boost: 1, list: 3 });
   });
 
   it('GIVE-4 (PIN-f): a double click sends once; while in flight the dialog refuses Escape and its Back is disabled', async () => {
@@ -529,7 +529,7 @@ describe('Give credits (PIN-c, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'grant_credits', amount: 5, expiresAt: null, requestId: minted[minted.length - 1], reason: 'double click' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('GIVE-5 (PIN-g): a refusal keeps the dialog open with the mapped sentence; no notice, no re-read', async () => {
@@ -583,7 +583,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 50, requestId: minted[mintedBefore], reason: 'mistaken amount' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it("TAKE-2: 'Everything left' sends amount 'rest' and says so on the confirm step", async () => {
@@ -603,7 +603,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 'rest', requestId: minted[minted.length - 1], reason: 'closing the gift' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('TAKE-3: a paid lot blocks Continue until the paid confirmation is ticked, and only then sends confirmPaidCredits', async () => {
@@ -631,7 +631,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
         confirmPaidCredits: true,
       }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('TAKE-4 (PIN-g, PIN-a): exceeds_remaining keeps the dialog open with the remaining figure; the retry reuses the request id', async () => {
@@ -658,7 +658,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 150, requestId: id, reason: 'too much' }),
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 120, requestId: id, reason: 'too much' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 
   it('TAKE-5 (PIN-f): a double click sends once; while in flight the dialog refuses Escape', async () => {
@@ -685,7 +685,7 @@ describe('Take back on a lot (PIN-b, PIN-e, PIN-a, PIN-f, PIN-g)', () => {
     expect(posts().map((p) => requestOf(p))).toStrictEqual([
       opsPost({ op: 'reduce_credit_lot', lotId: ADMIN_LOT.id, amount: 1, requestId: minted[minted.length - 1], reason: 'double click' }),
     ]);
-    await expectReads({ credits: 2, boost: 1, list: 1 });
+    await expectReads({ credits: 2, boost: 1, list: 2 });
   });
 });
 

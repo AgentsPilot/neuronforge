@@ -1,8 +1,10 @@
 'use client';
 
 /**
- * The Businesses drawer's folds outside the money blocks (Admin Layout
- * follow-ups LF-4a.2, BD-8). Local to this screen, not a shared export.
+ * The Businesses drawer's folds (Admin Layout follow-ups, BD-8): outside the
+ * money blocks since LF-4a.2 (failures, All products, Cost by Model), and
+ * inside them since LF-4b (credit lots, top-ups). Local to this screen, not a
+ * shared export.
  *
  * Both hide with the `hidden` attribute and never unmount (the
  * `BusinessAuditSection` precedent, L-4b SA M-2): a folded child that owns a

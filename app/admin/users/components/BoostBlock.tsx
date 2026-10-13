@@ -30,10 +30,19 @@
  *
  * A block the server could not read says so; it never shows zeros. Free text
  * (reasons) is rendered as text only.
+ *
+ * Layout (Admin Layout follow-ups LF-4b): the top-ups show the newest three
+ * and fold the rest, hidden and never unmounted (BD-8); the Spending limit
+ * part opens with a bordered action bar, Set limit and Back to default, above
+ * its figures (BD-5); closing the limit dialog returns focus to its button, or
+ * to the section heading when the button is gone (BD-15, F-108). The
+ * reconcile button is unchanged here (LF-4c moves it).
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ExternalLink, Receipt } from 'lucide-react';
+
+import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
 
 import {
   adminBoostFlagReasonWords,
@@ -49,6 +58,11 @@ import { BOOST_ACTION_COPY, money, perWindow } from '../boostCopy';
 import { formatCredits, formatUtc, shortId } from '../creditCopy';
 import { BoostCapDialog, type BoostCapDialogMode, type CurrentLimit } from './BoostCapDialog';
 import { BoostReconcileDialog } from './BoostReconcileDialog';
+import { ShowMoreList } from './drawerFolds';
+import { MONEY_ACTION_BAR, useReturnFocus } from './moneyBlockUi';
+
+/** The drawer's in-text link style (the panel's `LINK_CLASS`; BD-11, SA C11: no decorative green). */
+const LINK_CLASS = 'text-xs text-blue-300 underline hover:text-blue-200';
 
 export const BOOST_BLOCK_COPY = {
   heading: 'Credit top-ups',
@@ -236,7 +250,7 @@ function StripeRef({ kind, id, livemode, label }: { kind: StripeDashboardKind; i
       target="_blank"
       rel="noopener noreferrer"
       title={id}
-      className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:underline"
+      className={`${LINK_CLASS} inline-flex items-center gap-1`}
     >
       {label}
       <ExternalLink className="h-3 w-3" aria-hidden="true" />
@@ -249,14 +263,15 @@ interface TakeBack {
   lotIds: ReadonlySet<string>;
   /** Every lot the Credits block has loaded (QA6b-L2). */
   loadedLotIds: ReadonlySet<string>;
-  onTakeBack: (lotId: string) => void;
+  /** The lot, and the top-up's button: focus returns to it when the dialog closes (SA-C8). */
+  onTakeBack: (lotId: string, opener: HTMLElement) => void;
 }
 
 function TakeBackAction({ lotId, takeBack }: { lotId: string; takeBack: TakeBack | null }) {
   // Loaded but not take-back-able (expired, used up, not counted yet): nothing to offer (QA6b-L2).
   if (takeBack && takeBack.loadedLotIds.has(lotId) && !takeBack.lotIds.has(lotId)) {
     return (
-      <span data-testid="boost-take-back-none" className="ml-auto text-xs text-slate-500">
+      <span data-testid="boost-take-back-none" className="ml-auto text-xs text-slate-400">
         {BOOST_ACTION_COPY.nothingToTakeBack}
       </span>
     );
@@ -266,7 +281,7 @@ function TakeBackAction({ lotId, takeBack }: { lotId: string; takeBack: TakeBack
       <button
         type="button"
         data-testid="boost-take-back"
-        onClick={() => takeBack.onTakeBack(lotId)}
+        onClick={(event) => takeBack.onTakeBack(lotId, event.currentTarget)}
         className="ml-auto rounded border border-slate-600 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-700/50"
       >
         {BOOST_ACTION_COPY.takeBackButton}
@@ -274,7 +289,7 @@ function TakeBackAction({ lotId, takeBack }: { lotId: string; takeBack: TakeBack
     );
   }
   return (
-    <span data-testid="boost-take-back-above" className="ml-auto text-xs text-slate-500">
+    <span data-testid="boost-take-back-above" className="ml-auto text-xs text-slate-400">
       {BOOST_ACTION_COPY.takeBackAbove}
     </span>
   );
@@ -322,7 +337,7 @@ function PurchaseRow({ row, canChange, takeBack }: { row: AdminBoostPurchaseRow;
         <StripeRef kind="payment" id={row.stripe.paymentIntentId} livemode={row.livemode} label="Payment" />
         <StripeRef kind="dispute" id={row.stripe.disputeId} livemode={row.livemode} label="Dispute" />
         {row.stripe.checkoutSessionId && (
-          <span data-testid="boost-session-id" title={row.stripe.checkoutSessionId} className="text-xs text-slate-500">
+          <span data-testid="boost-session-id" title={row.stripe.checkoutSessionId} className="text-xs text-slate-400">
             Session {row.stripe.checkoutSessionId.slice(0, 14)}…
           </span>
         )}
@@ -332,7 +347,16 @@ function PurchaseRow({ row, canChange, takeBack }: { row: AdminBoostPurchaseRow;
   );
 }
 
-function CapSection({ cap, canChange, onAction }: { cap: AdminBoostCapBlock; canChange: boolean; onAction: (mode: BoostCapDialogMode) => void }) {
+function CapSection({
+  cap,
+  canChange,
+  onAction,
+}: {
+  cap: AdminBoostCapBlock;
+  canChange: boolean;
+  /** The mode, and the button that asked (focus returns to it, F-108). */
+  onAction: (mode: BoostCapDialogMode, opener: HTMLElement) => void;
+}) {
   if (cap.status === 'error') {
     return (
       <p data-testid="boost-cap-error" className="text-sm text-rose-300">
@@ -344,6 +368,32 @@ function CapSection({ cap, canChange, onAction }: { cap: AdminBoostCapBlock; can
   return (
     <div data-testid="boost-cap" className="space-y-1 text-sm text-slate-300">
       <p className="text-slate-400">{BOOST_BLOCK_COPY.limitHeading}</p>
+      {/* BD-5: the Spending limit part opens with its action bar, inside
+          `boost-cap` (CAP-1 / CAP-2 pin that), above the figures. Same
+          conditions as before: not the admin's own account; Back to default
+          only with an admin limit in force. */}
+      {canChange && (
+        <div data-testid="boost-cap-actions" className={MONEY_ACTION_BAR}>
+          <button
+            type="button"
+            data-testid="boost-cap-set"
+            onClick={(event) => onAction('set', event.currentTarget)}
+            className={ADMIN_BUTTON}
+          >
+            {BOOST_ACTION_COPY.setLimitButton}
+          </button>
+          {cap.active && (
+            <button
+              type="button"
+              data-testid="boost-cap-end"
+              onClick={(event) => onAction('end', event.currentTarget)}
+              className={ADMIN_BUTTON}
+            >
+              {BOOST_ACTION_COPY.backToDefaultButton}
+            </button>
+          )}
+        </div>
+      )}
       {cap.active ? (
         <p data-testid="boost-cap-override">
           <span className="font-semibold text-white">Set by an admin: {perWindow(cap.active.amountMinor, cap.active.currency, windowDays)}</span>
@@ -358,28 +408,6 @@ function CapSection({ cap, canChange, onAction }: { cap: AdminBoostCapBlock; can
         <p data-testid="boost-cap-default">
           <span className="font-semibold text-white">Default: {perWindow(cap.default.amountMinor, cap.default.currency, windowDays)}</span>
         </p>
-      )}
-      {canChange && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            data-testid="boost-cap-set"
-            onClick={() => onAction('set')}
-            className="rounded border border-emerald-500/50 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-500/10"
-          >
-            {BOOST_ACTION_COPY.setLimitButton}
-          </button>
-          {cap.active && (
-            <button
-              type="button"
-              data-testid="boost-cap-end"
-              onClick={() => onAction('end')}
-              className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-200 hover:bg-slate-700/50"
-            >
-              {BOOST_ACTION_COPY.backToDefaultButton}
-            </button>
-          )}
-        </div>
       )}
       <details data-testid="boost-cap-history">
         <summary className="cursor-pointer select-none text-xs text-slate-400 hover:text-white">{BOOST_BLOCK_COPY.historyHeading}</summary>
@@ -426,6 +454,9 @@ interface Props {
 }
 
 export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // F-108 (BD-15): Set limit / Back to default return focus to their button.
+  const { remember, onCloseAutoFocus } = useReturnFocus(rootRef);
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [reloadToken, setReloadToken] = useState(0);
   const [capDialog, setCapDialog] = useState<BoostCapDialogMode | null>(null);
@@ -465,11 +496,12 @@ export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props)
       : null;
 
   return (
-    <div data-testid="boost-block">
-      <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+    <div data-testid="boost-block" ref={rootRef}>
+      {/* A label, not a heading: the section's h3 is its only heading (D-20, LF-4b). */}
+      <p className="flex items-center gap-2 text-sm font-semibold text-slate-300">
         <Receipt className="h-4 w-4 text-sky-300" aria-hidden="true" />
         {BOOST_BLOCK_COPY.heading}
-      </h4>
+      </p>
 
       {notice && (
         <div
@@ -520,13 +552,16 @@ export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props)
             </p>
           ) : (
             <>
-              <ul className="space-y-2">
-                {load.data.purchases.rows.map((row) => (
+              {/* BD-8: the newest three (the route sends newest first), the rest hidden, never unmounted. */}
+              <ShowMoreList
+                testId="boost-purchases-more"
+                listClassName="space-y-2"
+                items={load.data.purchases.rows.map((row) => (
                   <PurchaseRow key={row.id} row={row} canChange={canChange} takeBack={takeBack} />
                 ))}
-              </ul>
+              />
               {truncatedNote(load.data.purchases.truncated) && (
-                <p data-testid="boost-truncated" className="text-xs text-slate-500">
+                <p data-testid="boost-truncated" className="text-xs text-slate-400">
                   {truncatedNote(load.data.purchases.truncated)}
                 </p>
               )}
@@ -536,7 +571,8 @@ export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props)
           <CapSection
             cap={load.data.cap}
             canChange={canChange}
-            onAction={(mode) => {
+            onAction={(mode, opener) => {
+              remember(opener);
               setNotice(null);
               setCapDialog(mode);
             }}
@@ -565,6 +601,7 @@ export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props)
       {capDialog && view && current && view.cap.status === 'ok' && (
         <BoostCapDialog
           open
+          onCloseAutoFocus={onCloseAutoFocus}
           onOpenChange={(open) => {
             if (!open) setCapDialog(null);
           }}
