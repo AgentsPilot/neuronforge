@@ -13,6 +13,10 @@
  * Action failures (user decision D-19, SA M-1) show one fixed line next to the
  * action. PATCH and DELETE bodies are never read (`response.ok` only, as
  * before), so a route's error text cannot reach the screen.
+ *
+ * Delete and Mark All Read ask first in an admin dialog (LF-3b, OR-3,
+ * SA-C11), with the words the native confirm box used; the requests behind
+ * them are unchanged.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
@@ -33,6 +37,7 @@ import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 
 import { MessageDetail } from './components/MessageDetail';
+import { MessagesConfirmDialog } from './components/MessagesConfirmDialog';
 import { MessagesTable } from './components/MessagesTable';
 import {
   MARK_ALL_READ_FAILED,
@@ -81,6 +86,13 @@ export default function AdminMessages() {
   const [statusFailure, setStatusFailure] = useState<StatusFailure | null>(null);
   const [deleteFailedId, setDeleteFailedId] = useState<string | null>(null);
   const [markAllFailed, setMarkAllFailed] = useState(false);
+  // LF-3b (OR-3, SA-C11): the two confirmations, as admin dialogs. Held here,
+  // outside the header and the table, so the Mark All Read dialog stays
+  // mounted when its opener leaves (no unread row) mid fan-out.
+  const [deleteTarget, setDeleteTarget] = useState<ContactMessage | null>(null);
+  const [isMarkAllAsked, setIsMarkAllAsked] = useState(false);
+  /** The button that opened the current confirmation: focus goes back to it. */
+  const confirmOpener = useRef<HTMLButtonElement | null>(null);
 
   // Status lives in the URL (`?status=`, `all` omitted); the search text is
   // page state and never reaches the address bar (SA-R-8, D-6 (a)).
@@ -252,9 +264,11 @@ export default function AdminMessages() {
     return true;
   };
 
+  /**
+   * The DELETE, unchanged; it runs only from the Delete dialog's action button
+   * (LF-3b, same words as the native box it replaces; F-10 stays open).
+   */
   const deleteMessage = async (message: ContactMessage) => {
-    // Kept: the native confirm, same words (SA Q-8; F-10 stays open).
-    if (!confirm('Are you sure you want to delete this message?')) return;
     // D-19 (d): a new attempt clears the line.
     setDeleteFailedId(null);
 
@@ -279,9 +293,11 @@ export default function AdminMessages() {
     setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
   };
 
+  /**
+   * The same fan-out and one re-read, unchanged; it runs only from the Mark All
+   * Read dialog's action button (LF-3b; F-12 stays open).
+   */
   const markAllRead = async () => {
-    // Kept: the native confirm, same words, the same fan-out and one re-read (SA Q-8; F-12 stays open).
-    if (!confirm('Mark all messages as read?')) return;
     setMarkAllFailed(false);
     const unread = messages.filter((m) => m.status === 'unread');
     const results = await Promise.all(unread.map((m) => updateMessageStatus(m.id, 'read')));
@@ -348,6 +364,24 @@ export default function AdminMessages() {
     else contentRef.current?.focus();
   };
 
+  // LF-3b: back to the button that asked. A deleted row takes its Delete
+  // button with it, and Mark All Read leaves once nothing is unread; then focus
+  // goes to the content area, as D-6 does for the drawer, never <body>.
+  const returnConfirmFocus = () => {
+    if (confirmOpener.current?.isConnected) confirmOpener.current.focus();
+    else contentRef.current?.focus();
+  };
+
+  const askDelete = (message: ContactMessage, button: HTMLButtonElement) => {
+    confirmOpener.current = button;
+    setDeleteTarget(message);
+  };
+
+  const askMarkAllRead = (button: HTMLButtonElement) => {
+    confirmOpener.current = button;
+    setIsMarkAllAsked(true);
+  };
+
   const headerActions =
     hasUnread || markAllFailed ? (
       <>
@@ -357,7 +391,7 @@ export default function AdminMessages() {
           </p>
         )}
         {hasUnread && (
-          <button type="button" onClick={() => void markAllRead()} className={ADMIN_BUTTON}>
+          <button type="button" onClick={(event) => askMarkAllRead(event.currentTarget)} className={ADMIN_BUTTON}>
             Mark All Read
           </button>
         )}
@@ -436,7 +470,7 @@ export default function AdminMessages() {
               openId={isOpen ? openId : null}
               deleteFailedId={deleteFailedId}
               onOpen={openRow}
-              onDelete={(message) => void deleteMessage(message)}
+              onDelete={askDelete}
             />
           </>
         )}
@@ -463,6 +497,27 @@ export default function AdminMessages() {
           />
         )}
       </AdminDrawer>
+
+      {/* LF-3b: the two confirmations, same words as the native box they replace. */}
+      <MessagesConfirmDialog
+        open={deleteTarget !== null}
+        title="Are you sure you want to delete this message?"
+        confirmLabel="Delete"
+        isDanger
+        testId="delete-confirm-dialog"
+        onConfirm={() => (deleteTarget ? deleteMessage(deleteTarget) : Promise.resolve())}
+        onClose={() => setDeleteTarget(null)}
+        onReturnFocus={returnConfirmFocus}
+      />
+      <MessagesConfirmDialog
+        open={isMarkAllAsked}
+        title="Mark all messages as read?"
+        confirmLabel="Mark All Read"
+        testId="mark-all-confirm-dialog"
+        onConfirm={markAllRead}
+        onClose={() => setIsMarkAllAsked(false)}
+        onReturnFocus={returnConfirmFocus}
+      />
     </div>
   );
 }
