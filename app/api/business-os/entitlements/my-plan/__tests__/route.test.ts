@@ -621,6 +621,33 @@ describe('purchase (plan payments P-4.2; SA M-5, F-2, W-5, W-9)', () => {
     state.checkoutOn = false;
     const body = await (await GET(request())).json();
     expect(body.data.purchase.offer).toEqual({ kind: 'none', reason: 'switches_off' });
+    expect(body.data.purchase.upgrade).toBeNull();
+  });
+
+  it('P-7b.1b: an owner paying for the lowest tier is offered the buyable tiers above it, from our record only', async () => {
+    const [lower, ...above] = buyableTiers();
+    state.billing = {
+      data: billingRow({ subscriptionStatus: 'active', currentPeriodEnd: inAMonth(), boughtTier: lower, stripeSubscriptionId: 'sub_own' }),
+      error: null,
+    };
+    const body = await (await GET(request())).json();
+    expect(above.length).toBeGreaterThan(0);
+    expect(body.data.purchase.upgrade).toEqual({ tiers: above });
+    expect(body.data.purchase.offer).toEqual({ kind: 'none', reason: 'paying' });
+    expect(state.stripeCalls).toBe(0);
+
+    // Cancelling, or the switches off: no upgrade.
+    state.billing = {
+      data: billingRow({ subscriptionStatus: 'active', currentPeriodEnd: inAMonth(), boughtTier: lower, stripeSubscriptionId: 'sub_own', cancelAtPeriodEnd: true }),
+      error: null,
+    };
+    expect((await (await GET(request())).json()).data.purchase.upgrade).toBeNull();
+    state.billing = {
+      data: billingRow({ subscriptionStatus: 'active', currentPeriodEnd: inAMonth(), boughtTier: lower, stripeSubscriptionId: 'sub_own' }),
+      error: null,
+    };
+    state.pricesOn = false;
+    expect((await (await GET(request())).json()).data.purchase.upgrade).toBeNull();
   });
 
   it('a failed billing read never hides the plan: 200, Choose computed as if no record, billing null', async () => {

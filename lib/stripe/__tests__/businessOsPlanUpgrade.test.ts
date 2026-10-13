@@ -10,7 +10,8 @@
  * items with their period (on clover the period lives on the item).
  *
  * The Stripe answers are HAND-BUILT, labelled as such: the sandbox captures
- * (U-7) wait on experiments E-1 to E-6, which have not run yet.
+ * (U-7) of experiments E-1 to E-6 (2026-10-13) run through the real methods in
+ * `lib/business-os/billing/__tests__/planUpgrade.captured.test.ts`.
  */
 
 const mockSubscriptionsRetrieve = jest.fn();
@@ -47,7 +48,7 @@ const sharedLogger = (jest.requireMock('@/lib/logger') as { __logger: Record<str
 const service = () => new StripeService('sk_test_unit');
 const SECRET = 'pi_handbuilt_secret_never_logged';
 
-/** Hand-built: the update's answer with `latest_invoice.confirmation_secret` expanded (shape pending E-1). */
+/** Hand-built: the update's answer with `latest_invoice.confirmation_secret` expanded (the shape E-1 observed). */
 function updated(overrides: Record<string, unknown> = {}, invoice: Record<string, unknown> | null = {}) {
   return {
     id: 'sub_1',
@@ -118,7 +119,7 @@ describe('upgradeBusinessOsPlanSubscription (U-1)', () => {
     expect(mockInvoicePaymentsList).not.toHaveBeenCalled();
   });
 
-  it('3-D Secure: pending update + open invoice → one invoicePayments read (pending E-1), `requires_action`', async () => {
+  it('3-D Secure: pending update + open invoice → one invoicePayments read (E-1b), `requires_action`', async () => {
     mockSubscriptionsUpdate.mockResolvedValue(
       updated({ pending_update: { expires_at: 1_790_180_000, subscription_items: [{ price: { id: 'price_pro' } }] } }, { status: 'open' })
     );
@@ -128,7 +129,7 @@ describe('upgradeBusinessOsPlanSubscription (U-1)', () => {
     expect(mockInvoicePaymentsList).toHaveBeenCalledWith({ invoice: 'in_up_1', limit: 10, expand: ['data.payment.payment_intent'] });
   });
 
-  it('an expanded `payments` list on the invoice is used without the extra read (the other E-1 answer)', async () => {
+  it('an expanded `payments` list on the invoice is used without the extra read (an invoice retrieved with it, as the E-2 capture was)', async () => {
     mockSubscriptionsUpdate.mockResolvedValue(
       updated({ pending_update: { expires_at: 1, subscription_items: [] } }, { status: 'open', payments: { data: [payment('requires_payment_method')] } })
     );

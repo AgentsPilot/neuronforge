@@ -2,7 +2,8 @@
  * planUpgradeEligibility (plan payments P-7b.1a, workplan §3.2; SA U-2, V-2,
  * V-8): the upgrade re-checked against Stripe's fresh answer. Pure. Every
  * rule, in order. Tiers from TIER_ORDER (FR-12); the Stripe shapes are
- * hand-built (captures pending E-1).
+ * hand-built here; the real E-1 / E-4 subscriptions run through the
+ * orchestration in `planUpgrade.captured.test.ts` (U-7, P-7b.1b).
  */
 
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
