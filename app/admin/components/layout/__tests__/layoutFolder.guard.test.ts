@@ -548,13 +548,16 @@ const MIGRATED_PAGES = [
     ],
   },
   {
-    // L-4a (the list) and L-4b (the row detail in the drawer, SA L-4a Q-8). The
-    // panel, credit, top-up and delete components are deliberately NOT listed
-    // (L-4b SA Q-5, the G-6 precedent): BusinessOsPanel, CreditsBlock,
+    // L-4a (the list) and L-4b (the row detail in the drawer, SA L-4a Q-8).
+    // Follow-ups LF-4a.2 adds the drawer layout: BusinessOsPanel joins because
+    // its two reads now go through `readJsonBody` (SA-C12) with the request
+    // unchanged, plus the strip, the folds and the "All products" block, which
+    // read nothing. The credit, top-up and delete components are deliberately
+    // NOT listed (L-4b SA Q-5, the G-6 precedent): CreditsBlock,
     // CreditFormDialog, BoostBlock, BoostCapDialog, BoostReconcileDialog and
     // DeleteBusinessDialog each still read their own route with `.json(`, and
     // their error copy is pinned by their own render and contract tests.
-    // Converting them is not a layout change.
+    // Converting them is money work, not a layout change (LF-4b, LF-4c).
     page: '/admin/users (Businesses)',
     files: [
       'app/admin/users/page.tsx',
@@ -564,6 +567,10 @@ const MIGRATED_PAGES = [
       'app/admin/users/components/BusinessesKpis.tsx',
       'app/admin/users/components/BusinessDetail.tsx',
       'app/admin/users/components/BusinessAuditSection.tsx',
+      'app/admin/users/components/BusinessOsPanel.tsx',
+      'app/admin/users/components/BusinessSummaryStrip.tsx',
+      'app/admin/users/components/drawerFolds.tsx',
+      'app/admin/users/components/AllProductsUsage.tsx',
     ],
   },
   {
