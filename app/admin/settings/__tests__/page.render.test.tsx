@@ -7,6 +7,11 @@
  * W-2: guard rule R4 scans test files too, so absence of role UI is asserted
  * through text and accessible-name queries only, never by writing a role
  * comparison into this file.
+ *
+ * L-12 (Admin Layout Standard): Refresh is renamed "Refresh the admin list",
+ * the error words follow §5.10 (route words, shared fixed sentences), and
+ * dates are UTC. ERROR_TEXT is deleted (SA M-3), so no case can pass on a
+ * sentence the page no longer prints; "no error" means no role="alert".
  */
 
 import '@testing-library/jest-dom';
@@ -29,12 +34,15 @@ jest.mock('@/lib/logger/client', () => {
 });
 
 import AdminUsersPage from '../page';
+import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 import type { AdminListData } from '@/lib/admin/adminList-types';
 
 const OVERLAP_MARKER = 'Also in the environment setting: removing the row alone does not revoke access';
 const TABLE_HEADING = 'From the admin_users table';
 const ENV_HEADING = 'Granted by the ADMIN_EMAILS environment setting';
-const ERROR_TEXT = /Could not load the admin list/;
+const REFRESH = 'Refresh the admin list';
+const ROUTE_ERROR = 'Failed to load admin list';
+const UNUSABLE = 'Could not read the admin list. Try again in a moment.';
 const EMPTY_TABLE_TEXT = 'No active rows in the admin_users table.';
 
 const LIST: AdminListData = {
@@ -70,6 +78,12 @@ async function renderLoaded(data: AdminListData = LIST) {
   return fetchMock;
 }
 
+/** The error box shows exactly these words (SA M-3: never a sentence the page no longer prints). */
+async function expectError(text: string) {
+  await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+  expect(screen.getByTestId('admin-list-error').textContent).toBe(text);
+}
+
 function expectNoList() {
   expect(screen.queryByText(TABLE_HEADING)).not.toBeInTheDocument();
   expect(screen.queryByText(ENV_HEADING)).not.toBeInTheDocument();
@@ -89,11 +103,11 @@ describe('what the page shows', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent('ops@example.com');
     expect(rows[0]).toHaveTextContent('Linked to a login: yes');
-    expect(rows[0]).toHaveTextContent('Added Jul 1, 2026');
+    expect(rows[0]).toHaveTextContent('Added 2026-07-01 10:00 UTC');
     expect(rows[0]).toHaveTextContent('Founder');
     expect(rows[1]).toHaveTextContent('new.admin@example.com');
     expect(rows[1]).toHaveTextContent('Linked to a login: not yet');
-    expect(rows[1]).toHaveTextContent('Added Aug 15, 2026');
+    expect(rows[1]).toHaveTextContent('Added 2026-08-15 09:30 UTC');
   });
 
   it('P-2: the overlap marker is on exactly the overlapping row', async () => {
@@ -120,7 +134,7 @@ describe('what the page shows', () => {
   it('P-8: an empty table, with no error, says so truthfully', async () => {
     await renderLoaded({ tableAdmins: [], envOnlyAdmins: [] });
     expect(screen.getByText(EMPTY_TABLE_TEXT)).toBeInTheDocument();
-    expect(screen.queryByText(ERROR_TEXT)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('P-9: the info box names both sources and the doc path as text, with no /docs link', async () => {
@@ -141,7 +155,7 @@ describe('read-only', () => {
     await renderLoaded();
     const buttons = screen.getAllByRole('button');
     expect(buttons).toHaveLength(1);
-    expect(buttons[0]).toHaveAccessibleName('Refresh');
+    expect(buttons[0]).toHaveAccessibleName(REFRESH);
     expect(screen.queryByRole('button', { name: /add|remove|delete|grant|revoke/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
@@ -152,7 +166,7 @@ describe('read-only', () => {
 
   it('P-5: every request, across mount and a Refresh click, is GET /api/admin/admins', async () => {
     const fetchMock = await renderLoaded();
-    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await userEvent.click(screen.getByRole('button', { name: REFRESH }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByText(TABLE_HEADING)).toBeInTheDocument());
     for (const [url, init] of fetchMock.mock.calls) {
@@ -165,16 +179,16 @@ describe('read-only', () => {
 
 describe('never a list it cannot vouch for (SA W-3)', () => {
   it('P-6: a 500 shows the error state and no list', async () => {
-    stubFetch({ status: 500, body: { success: false, error: 'Failed to load admin list' } });
+    stubFetch({ status: 500, body: { success: false, error: ROUTE_ERROR } });
     render(<AdminUsersPage />);
-    await waitFor(() => expect(screen.getByText(ERROR_TEXT)).toBeInTheDocument());
+    await expectError(ROUTE_ERROR);
     expectNoList();
   });
 
   it('P-6: a 200 with success: false is an error', async () => {
     stubFetch({ status: 200, body: { success: false, error: 'nope' } });
     render(<AdminUsersPage />);
-    await waitFor(() => expect(screen.getByText(ERROR_TEXT)).toBeInTheDocument());
+    await expectError('nope');
     expectNoList();
   });
 
@@ -187,27 +201,27 @@ describe('never a list it cannot vouch for (SA W-3)', () => {
   ])('P-6 (W-3a): a malformed 200 (%s) is an error, not "No active rows"', async (_label, body) => {
     stubFetch({ status: 200, body });
     render(<AdminUsersPage />);
-    await waitFor(() => expect(screen.getByText(ERROR_TEXT)).toBeInTheDocument());
+    await expectError(UNUSABLE);
     expectNoList();
   });
 
   it('P-7: a network rejection shows the error state and logs a warning with no address', async () => {
     stubFetch('reject');
     render(<AdminUsersPage />);
-    await waitFor(() => expect(screen.getByText(ERROR_TEXT)).toBeInTheDocument());
+    await expectError(ADMIN_NETWORK_ERROR);
     expectNoList();
     expect(mockWarn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error) }), 'Admin list request failed');
     for (const args of mockWarn.mock.calls) expect(JSON.stringify(args)).not.toContain('@');
   });
 
   it('P-10 (W-3b): a failed refresh after a good load clears the list', async () => {
-    stubFetch(ok(), { status: 500, body: { success: false, error: 'Failed to load admin list' } });
+    stubFetch(ok(), { status: 500, body: { success: false, error: ROUTE_ERROR } });
     render(<AdminUsersPage />);
     await waitFor(() => expect(screen.getByText(TABLE_HEADING)).toBeInTheDocument());
     expect(screen.getAllByTestId('table-admin')).toHaveLength(2);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => expect(screen.getByText(ERROR_TEXT)).toBeInTheDocument());
+    await userEvent.click(screen.getByRole('button', { name: REFRESH }));
+    await expectError(ROUTE_ERROR);
     expectNoList();
     expect(screen.queryByText('ops@example.com')).not.toBeInTheDocument();
   });
@@ -236,7 +250,7 @@ describe('never a list it cannot vouch for (SA W-3)', () => {
       releaseFirst();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(screen.queryByText(ERROR_TEXT)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getAllByTestId('table-admin')).toHaveLength(2);
     expect(mockWarn).not.toHaveBeenCalled();
   });
@@ -271,5 +285,45 @@ describe('source: properties no render can reach', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '');
     expect(types).not.toMatch(/^\s*import\b/m);
     expect(types).not.toMatch(/export\s+(const|let|var|function|class|enum|default)\b/);
+  });
+
+  // L-12 source cases S-1 to S-4, on the comment-stripped code (SA S-3).
+  const THE_GET = "fetch(ADMIN_LIST_URL, { method: 'GET' })";
+  const count = (text: string, needle: string) => text.split(needle).length - 1;
+  const JSON_CALL = /\.json\(/;
+  const LOCAL_DATE = /formatUtcDate\(|toLocaleDateString|toLocaleString/;
+  const ANY_TYPE = /:\s*any\b|\bas\s+any\b|<any>/;
+  const SHARED_READ_IMPORT =
+    /import\s*\{[^}]*\breadAdminResponse\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/readAdminResponse'/;
+
+  it('S-1: the one request line is byte-identical, and it is the only fetch', () => {
+    expect(count(code, THE_GET)).toBe(1);
+    expect(count(code, 'fetch(')).toBe(1);
+  });
+
+  it('S-2: no direct .json(; the body is read through the shared helper (F-85)', () => {
+    expect(code).not.toMatch(JSON_CALL);
+    expect(code).toMatch(SHARED_READ_IMPORT);
+  });
+
+  it('S-3: dates only through formatUtc, never formatUtcDate or a local-time formatter', () => {
+    expect(code).not.toMatch(LOCAL_DATE);
+    expect(code).toContain('formatUtc(admin.addedAt)');
+  });
+
+  it('S-4: no any type', () => {
+    expect(code).not.toMatch(ANY_TYPE);
+  });
+
+  it('S-1 to S-4 self-tests: each pattern catches its violation and nothing else', () => {
+    expect(count("fetch(ADMIN_LIST_URL, { method: 'POST' })", THE_GET)).toBe(0);
+    expect('const body = await response.json();').toMatch(JSON_CALL);
+    expect('readJsonBody(response)').not.toMatch(JSON_CALL);
+    expect("import { readAdminResponse } from '../../components/layout/readAdminResponse';").not.toMatch(SHARED_READ_IMPORT);
+    expect('formatUtcDate(admin.addedAt)').toMatch(LOCAL_DATE);
+    expect("new Date(v).toLocaleDateString('en-US')").toMatch(LOCAL_DATE);
+    expect('formatUtc(admin.addedAt)').not.toMatch(LOCAL_DATE);
+    for (const bad of ['const x: any = 1;', 'y as any', 'useState<any>(null)']) expect(bad).toMatch(ANY_TYPE);
+    for (const fine of ['company', 'many rows', 'schema.anyOf', 'const x: anyOf = 1;']) expect(fine).not.toMatch(ANY_TYPE);
   });
 });
