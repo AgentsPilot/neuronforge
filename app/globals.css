@@ -52,6 +52,31 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /*
+   * WHAT THE BROWSER PAINTS FOR ITSELF, TOLD ONCE, AT THE ROOT.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Some controls are drawn by the engine rather than by us: the editable parts
+   * of a date or time field, its calendar button, the picker it opens, default
+   * scrollbars. `color-scheme` is the only way to tell it which palette to use,
+   * and it INHERITS — which is why several date inputs already ask for
+   * `color-scheme: inherit` and have been getting nothing, because no ancestor
+   * ever declared it. Inheriting an absent value lands on `normal`, so every one
+   * of those fields has been drawing its internals light-themed inside a dark
+   * dialog.
+   *
+   * Keyed to `.dark`, deliberately, and not to `prefers-color-scheme`: that is
+   * the same rule as the `dark:` variant above, for the same reason. The signed-
+   * in app mounts `V2ThemeProvider`, which puts `.dark` on the document element;
+   * public pages never mount it, so a business on a light template keeps light
+   * form controls for every visitor whatever their phone is set to.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -442,14 +467,37 @@ html[data-public-surface] :focus-visible {
   display: none;                  /* WebKit, Blink */
 }
 
-/* Dark mode date picker icon fix - multiple selectors for compatibility */
+/* The calendar button: a pointer, and NOTHING ELSE.
+   ───────────────────────────────────────────────────────────────────────────
+   THIS RULE USED TO CARRY `filter: invert(1) !important`, AND THAT IS WHAT MADE
+   THE BUTTON BLACK ON BLACK.
+
+   It is a correction of a correction. The rule immediately below sets
+   `color-scheme: dark` on every input under `.dark`, which is the whole
+   mechanism: the engine then draws the date parts, their separators and this
+   calendar button in LIGHT ink and opens the picker dark. By the time the
+   filter ran the icon was already white, so inverting it painted it near-black
+   — on a near-black field. The button was never missing; it was the colour of
+   the surface behind it, which is why the report was "the button that opens the
+   date dialog is black on black" rather than "it is mis-styled".
+
+   `!important` is why it survived every attempt to fix this from a component:
+   no utility class on an input could outrank it, so removing the Tailwind
+   `invert` from `components/ui/input.tsx` changed nothing while this stood.
+
+   The invert made sense once — before anything set `color-scheme`, the engine
+   drew a dark icon for a light UI and flipping it was the only lever available.
+   Setting `color-scheme` replaced the need for it and nobody removed the
+   workaround, so the two have been cancelling each other out since.
+
+   `cursor: pointer` stays: that is not a colour correction, and the engine does
+   not give the indicator a pointer on its own. */
 .dark input[type="date"]::-webkit-calendar-picker-indicator,
 .dark input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 .dark input[type="time"]::-webkit-calendar-picker-indicator,
 html.dark input[type="date"]::-webkit-calendar-picker-indicator,
 html.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 html.dark input[type="time"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) !important;
   cursor: pointer;
 }
 
@@ -459,6 +507,22 @@ html.dark input,
 :root.dark input {
   color-scheme: dark;
 }
+
+/* NO BLANKET BACKGROUND FOR DATE FIELDS HERE, DELIBERATELY.
+   ───────────────────────────────────────────────────────────────────────────
+   A rule setting one background for every date input was tried here and
+   removed, because it is the same mistake it was meant to fix. The field that
+   looked too dark in the quote dialog was being painted by exactly such a rule
+   in `globals-v2.css` — `--v2-bg !important` on any date input inside a Radix
+   dialog — and the reason it was wrong is that no single colour is right: the
+   booking dialog's fields are `--v2-bg` and the quote dialog's are
+   `--v2-surface`, so whichever value is forced, one of the two dialogs comes
+   out mismatched.
+
+   A date input is not a special case. It takes its background from its own
+   class like every other field, and the component knows which surface it is
+   sitting on. The only thing CSS has to say about these controls globally is
+   `color-scheme`, above, which is about the ink the ENGINE draws with. */
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────
