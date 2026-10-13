@@ -20,10 +20,15 @@
  *   2. plan anchors: `findPeriodAnchorsBatch` — one read per 100 accounts;
  *   3. totals: `listTotalsForAccountsInRange` — one read per 200 accounts, over
  *      a bounded day range, `user_id, period_start, credits_total` only.
- * The current period's row is SELECTED among the rows read with
- * `isCurrentPeriodRow` (the card's own display mirror of the period function),
- * never by one period-function call per account. A trial sums its rows from
- * the anchor. The window rule is the owner card's (`creditWindowRule.ts`).
+ * The current period's row is SELECTED among the rows read by EXACT KEY:
+ * `isCurrentPeriodRow` keeps only the row whose `period_start` equals, to the
+ * millisecond, `currentPeriodStartMs(anchor, now)` — a TS mirror of the
+ * database's `business_os_credit_period_start`, pinned to its SQL body, and the
+ * key the owner card reads. It is computed once per account, never by one
+ * period-function call per account. Not a range: after a re-anchor (a plan
+ * payment or an admin tier change) the old anchor's rows must not count. An
+ * unreadable monthly anchor is "unknown". A trial sums its rows from the
+ * anchor. The window rule is the owner card's (`creditWindowRule.ts`).
  *
  * ── FAILURE ISOLATION ────────────────────────────────────────────────────────
  * Never throws. The whole pass runs under a fixed budget (2 s): on a timeout,
@@ -60,7 +65,7 @@ import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { creditAllowanceForDisplay } from '@/lib/business-os/entitlements/creditAllowanceView';
 import { roundToLedger } from './creditBalance';
 import { creditPercentLeft } from './creditBands';
-import { isAtOrAfter, isCurrentPeriodRow, utcDayFloor } from './creditPeriod';
+import { currentPeriodStartMs, isAtOrAfter, isCurrentPeriodRow, utcDayFloor } from './creditPeriod';
 import { creditWindowRule, parseLedgerFigure } from './creditWindowRule';
 
 type Result<T> = { data: T | null; error: Error | null };
@@ -228,8 +233,18 @@ async function computePositions(
     }
 
     for (const [accountId, position] of positions) {
+      // Once per account, not per row: the key the database would give now.
+      const expectedStartMs = position.trial ? null : currentPeriodStartMs(position.anchor, now);
+      // An unreadable monthly anchor is unknown, never "nothing used" (SA W-5),
+      // as the trial branch already refuses an unreadable anchor.
+      if (!position.trial && expectedStartMs === null) {
+        byAccount.set(accountId, UNKNOWN_POSITION);
+        continue;
+      }
       const rows = (rowsByAccount.get(accountId) ?? []).filter((row) =>
-        position.trial ? isAtOrAfter(row.period_start, position.anchor) : isCurrentPeriodRow(position.anchor, row.period_start, now)
+        position.trial
+          ? isAtOrAfter(row.period_start, position.anchor)
+          : isCurrentPeriodRow(position.anchor, row.period_start, now, expectedStartMs)
       );
       let used = 0;
       let readable = true;
