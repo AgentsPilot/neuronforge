@@ -1,6 +1,6 @@
 # Stripe Testing Guide - End-to-End Flow
 
-> **Last Updated**: 2026-10-12
+> **Last Updated**: 2026-10-13
 
 ## Overview
 
@@ -135,8 +135,8 @@ stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,inv
 ### Trigger Events
 
 ```bash
-# Test invoice payment
-stripe trigger invoice.payment_succeeded
+# Test invoice payment (the webhook handles invoice.paid, not invoice.payment_succeeded)
+stripe trigger invoice.paid
 
 # Test checkout completion
 stripe trigger checkout.session.completed
@@ -422,3 +422,4 @@ This gives you confidence that the entire flow works correctly!
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |
+| 2026-10-13 | Invoice trigger corrected | `stripe trigger invoice.payment_succeeded` replaced with `stripe trigger invoice.paid`: the webhook route handles `invoice.paid` and ignores `invoice.payment_succeeded`, so the old trigger exercised nothing. |
