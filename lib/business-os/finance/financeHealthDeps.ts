@@ -11,7 +11,7 @@
  *     response or a log;
  *   - the ledger read repository: the all-accounts and one-account reads by
  *     time, and the charges by action id (declared on its importer guard);
- *   - the finance read repository: live billing status and revenue head counts,
+ *   - the finance read repository: billing status and revenue head counts,
  *     the client payments and refunds (layer B, slice 2a), and the overdue
  *     invoices and instalments, and client plans (layer B, slice 2b): the
  *     named all-accounts reads only when no business is picked, the
@@ -110,9 +110,9 @@ export function financeHealthDeps(): Omit<FinanceHealthDeps, 'findNames' | 'read
       findChargesByActionIds: (actionIds) => businessOsCreditLedgerReadRepository.findChargesByActionIds(actionIds),
     },
     finance: {
-      listLiveBillingStatusesAllAccounts: (opts) => businessOsFinanceReadRepository.listLiveBillingStatusesAllAccounts(opts),
-      findLiveBillingStatusForAccount: (accountId) => businessOsFinanceReadRepository.findLiveBillingStatusForAccount(accountId),
-      countLiveRevenueRows: () => businessOsFinanceReadRepository.countLiveRevenueRows(),
+      listBillingStatusesAllAccounts: (opts) => businessOsFinanceReadRepository.listBillingStatusesAllAccounts(opts),
+      findBillingStatusForAccount: (accountId) => businessOsFinanceReadRepository.findBillingStatusForAccount(accountId),
+      countRevenueRows: () => businessOsFinanceReadRepository.countRevenueRows(),
       listClientPaymentsAllAccountsPaidInRange: (range, opts) =>
         businessOsFinanceReadRepository.listClientPaymentsAllAccountsPaidInRange(range, opts),
       listClientPaymentsForAccountPaidInRange: (accountId, range, opts) =>

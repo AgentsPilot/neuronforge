@@ -49,30 +49,32 @@
 // before querying (CLAUDE.md rule 4). A read that is not scoped to one account
 // is reached only by calling a differently NAMED method, never by leaving an
 // argument out (the TokenUsageRepository convention):
-//   - ALL ACCOUNTS: `listLiveBillingStatusesAllAccounts` (R-c),
+//   - ALL ACCOUNTS: `listBillingStatusesAllAccounts` (R-c),
 //     `listClientPaymentsAllAccountsPaidInRange` (R-e),
 //     `listClientRefundsAllAccountsCreatedInRange` (R-f),
 //     `listOverdueClientInvoicesAllAccounts` (R-g),
 //     `listOverdueClientInstalmentsAllAccounts` (R-h) and
 //     `listClientPlansAllAccounts` (R-i). Logged at info.
-//   - ONE ACCOUNT: `findLiveBillingStatusForAccount` (R-c′),
+//   - ONE ACCOUNT: `findBillingStatusForAccount` (R-c′),
 //     `listClientPaymentsForAccountPaidInRange` (R-e′),
 //     `listClientRefundsForAccountCreatedInRange` (R-f′),
 //     `listOverdueClientInvoicesForAccount` (R-g′),
 //     `listOverdueClientInstalmentsForAccount` (R-h′) and
 //     `listClientPlansForAccount` (R-i′), with `.eq('user_id')` on every page.
-//   - PLATFORM-WIDE EXISTENCE: `countLiveRevenueRows` (R-d), two head counts
+//   - PLATFORM-WIDE EXISTENCE: `countRevenueRows` (R-d), two head counts
 //     that read no account and no amount.
 //
-// ── LIVE MODE (layer A only) ─────────────────────────────────────────────────
-// Test-mode Stripe rows share the billing and boost tables. Every layer-A read
-// here (R-c, R-c′, R-d) filters `livemode = true`, so a test purchase can
-// never count as revenue or as a paying account. The client-payment reads
-// (R-e to R-i′) have no such column and, by decision BD-13, no mode filter:
-// the businesses' test and real client payments are shown together.
+// ── TEST AND LIVE MODE (BD-13, BD-14, BD-16) ─────────────────────────────────
+// No read in this file filters by mode. Layer A (R-c, R-c′, R-d) counts test
+// and real Stripe rows together and treats them as real (BD-14, slice 1c);
+// layer B (R-e to R-i′) has no mode at all (BD-13). One billing record per
+// account is assumed (BD-16): if an account ever has two, R-c and R-c′ return
+// an ERROR, never a figure. This file's code never names the mode column
+// (pinned by the finance source guard).
 //
 // ── PAGING ───────────────────────────────────────────────────────────────────
-// R-c pages by keyset on `user_id`, and reaching its ceiling is an ERROR. The
+// R-c pages by keyset on `user_id` (unique while one row per account holds),
+// and reaching its ceiling, or reading one `user_id` twice, is an ERROR. The
 // layer-B reads page by keyset on `id`, and at their ceiling (the `>=` rule)
 // return the rows read with `reachedCeiling: true`, so the page says "At
 // least". Layer B uses one pager: R-e / R-f filter a range and read every
@@ -86,7 +88,11 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, type Logger } from '@/lib/logger';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
 
-/** One billing-account row, as the finance page reads it: who, which status, ended or not. */
+/**
+ * One billing-account row, as the finance page reads it: who, which status,
+ * ended or not, which tier was bought. Test or real mode (BD-14), one per
+ * account (BD-16).
+ */
 export interface FinanceBillingStatusRow {
   user_id: string;
   /**
@@ -96,16 +102,21 @@ export interface FinanceBillingStatusRow {
    */
   subscription_status: string | null;
   ended_at: string | null;
+  /**
+   * The tier named by the paid price (SA-Q20 fallback). Free text here: the
+   * classifier compares it with the entitlement config's tier order only.
+   */
+  bought_tier: string | null;
 }
 
-/** Whether any live revenue row exists, platform-wide. Counts only, never an amount. */
+/** Whether any revenue row exists, platform-wide (BD-14). Counts only, never an amount. */
 export interface FinanceRevenueCounts {
   planInvoicesPaid: number;
   boostsPaid: number;
 }
 
 /** The only columns the billing-status reads select. Exported for the tests. */
-export const FINANCE_BILLING_STATUS_COLUMNS = 'user_id, subscription_status, ended_at';
+export const FINANCE_BILLING_STATUS_COLUMNS = 'user_id, subscription_status, ended_at, bought_tier';
 
 export const FINANCE_READ_LIMITS = {
   /** PostgREST's default `max-rows`; a larger page would be silently cut. */
@@ -251,8 +262,20 @@ class FinanceReadGuardError extends Error {
  */
 export class FinanceReadCeilingError extends Error {
   constructor(ceiling: number) {
-    super(`Live billing rows reached the read ceiling of ${ceiling}`);
+    super(`Billing rows reached the read ceiling of ${ceiling}`);
     this.name = 'FinanceReadCeilingError';
+  }
+}
+
+/**
+ * SA-WR-27 (BD-16): the all-accounts billing read met one account more than
+ * once. One billing record per account is assumed, so a second row is
+ * returned as an ERROR, never folded into a figure. Counts only, no id.
+ */
+export class FinanceReadDuplicateError extends Error {
+  constructor(duplicateAccounts: number) {
+    super(`Billing rows named ${duplicateAccounts} account(s) more than once; one row per account is assumed`);
+    this.name = 'FinanceReadDuplicateError';
   }
 }
 
@@ -276,19 +299,21 @@ export class BusinessOsFinanceReadRepository {
   }
 
   /**
-   * R-c. The live billing status of EVERY account that has a live billing row,
-   * keyset-paged on `user_id`. Rows detached from a deleted account
-   * (`user_id` NULL) are skipped in the query: keyset paging cannot step over
-   * NULLs, and an unattributable row cannot classify an account.
+   * R-c. The billing status of EVERY account that has a billing row, test or
+   * real mode (BD-14), keyset-paged on `user_id`. Rows detached from a deleted
+   * account (`user_id` NULL) are skipped in the query: keyset paging cannot
+   * step over NULLs, and an unattributable row cannot classify an account.
    *
    * Reaching the ceiling is an ERROR (`FinanceReadCeilingError`), never a
-   * partial list. Logged at info: it is a cross-account read.
+   * partial list. One row per account is assumed (BD-16): a `user_id` read
+   * twice is an ERROR too (`FinanceReadDuplicateError`, SA-WR-27), never a
+   * guess. Logged at info: it is a cross-account read.
    */
-  async listLiveBillingStatusesAllAccounts(opts?: {
+  async listBillingStatusesAllAccounts(opts?: {
     pageSize?: number;
     ceiling?: number;
   }): Promise<RepositoryResult<FinanceBillingStatusRow[]>> {
-    const method = 'listLiveBillingStatusesAllAccounts';
+    const method = 'listBillingStatusesAllAccounts';
     const startedAt = Date.now();
     try {
       const pageSize = opts?.pageSize ?? FINANCE_READ_LIMITS.BILLING_PAGE_SIZE;
@@ -307,7 +332,6 @@ export class BusinessOsFinanceReadRepository {
         let query = this.supabase
           .from('business_os_billing_accounts')
           .select(FINANCE_BILLING_STATUS_COLUMNS)
-          .eq('livemode', true)
           .not('user_id', 'is', null);
         if (last !== null) query = query.gt('user_id', last);
         const { data, error } = await query.order('user_id', { ascending: true }).limit(size);
@@ -320,7 +344,13 @@ export class BusinessOsFinanceReadRepository {
         last = page[page.length - 1].user_id;
       }
 
-      this.logger.info({ method, rows: rows.length, durationMs: Date.now() - startedAt }, 'Live billing statuses of all accounts read');
+      // SA-WR-27. With `.gt('user_id', last)` paging a repeat is caught only
+      // within one page. Residual (recorded in the workplan): a second row just
+      // past a page boundary is skipped by `.gt` and not seen here.
+      const accounts = new Set(rows.map((row) => row.user_id));
+      if (accounts.size !== rows.length) throw new FinanceReadDuplicateError(rows.length - accounts.size);
+
+      this.logger.info({ method, rows: rows.length, durationMs: Date.now() - startedAt }, 'Billing statuses of all accounts read');
       return { data: rows, error: null };
     } catch (error) {
       return this.fail(method, error);
@@ -328,11 +358,13 @@ export class BusinessOsFinanceReadRepository {
   }
 
   /**
-   * R-c′. The live billing status of ONE account, or `null` when it has no
-   * live billing row. One row at most: `(user_id, livemode)` is unique.
+   * R-c′. The billing status of ONE account, test or real mode (BD-14), or
+   * `null` when it has no billing row. One row per account is assumed (BD-16):
+   * with two, `maybeSingle` fails and the error is RETURNED, never thrown, so
+   * the page shows its fallback instead of a figure.
    */
-  async findLiveBillingStatusForAccount(accountId: string): Promise<RepositoryResult<FinanceBillingStatusRow | null>> {
-    const method = 'findLiveBillingStatusForAccount';
+  async findBillingStatusForAccount(accountId: string): Promise<RepositoryResult<FinanceBillingStatusRow | null>> {
+    const method = 'findBillingStatusForAccount';
     try {
       if (typeof accountId !== 'string' || !UUID_PATTERN.test(accountId)) {
         throw new FinanceReadGuardError('An account id (UUID) is required');
@@ -341,12 +373,11 @@ export class BusinessOsFinanceReadRepository {
         .from('business_os_billing_accounts')
         .select(FINANCE_BILLING_STATUS_COLUMNS)
         .eq('user_id', accountId)
-        .eq('livemode', true)
         .maybeSingle();
       if (error) throw error;
 
       const row = (data ?? null) as unknown as FinanceBillingStatusRow | null;
-      this.logger.debug({ method, found: row !== null }, 'Live billing status of one account read');
+      this.logger.debug({ method, found: row !== null }, 'Billing status of one account read');
       return { data: row, error: null };
     } catch (error) {
       return this.fail(method, error);
@@ -354,24 +385,22 @@ export class BusinessOsFinanceReadRepository {
   }
 
   /**
-   * R-d. Whether ANY live revenue row exists, platform-wide: paid plan
-   * invoices and paid boost purchases. Two head counts — no row, no account
-   * and no amount is read. A count PostgREST did not return is an error,
-   * never a 0 (the page then says "Could not check").
+   * R-d. Whether ANY revenue row exists, platform-wide, test or real mode
+   * (BD-14): paid plan invoices and paid boost purchases. Two head counts —
+   * no row, no account and no amount is read. A count PostgREST did not
+   * return is an error, never a 0 (the page then says "Could not check").
    */
-  async countLiveRevenueRows(): Promise<RepositoryResult<FinanceRevenueCounts>> {
-    const method = 'countLiveRevenueRows';
+  async countRevenueRows(): Promise<RepositoryResult<FinanceRevenueCounts>> {
+    const method = 'countRevenueRows';
     try {
       const [invoices, boosts] = await Promise.all([
         this.supabase
           .from('business_os_billing_events')
           .select('id', { count: 'exact', head: true })
-          .eq('livemode', true)
           .eq('kind', 'invoice_paid'),
         this.supabase
           .from('business_os_boost_purchases')
           .select('id', { count: 'exact', head: true })
-          .eq('livemode', true)
           .not('paid_at', 'is', null),
       ]);
       if (invoices.error) throw invoices.error;
@@ -381,7 +410,7 @@ export class BusinessOsFinanceReadRepository {
       }
 
       const counts = { planInvoicesPaid: invoices.count, boostsPaid: boosts.count };
-      this.logger.info({ method, ...counts }, 'Live revenue rows counted');
+      this.logger.info({ method, ...counts }, 'Revenue rows counted');
       return { data: counts, error: null };
     } catch (error) {
       return this.fail(method, error);

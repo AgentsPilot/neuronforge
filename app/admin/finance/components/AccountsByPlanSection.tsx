@@ -6,14 +6,20 @@
  * server (config), so this file holds no tier name. "Now" counts: the section
  * ignores the date window except for "New in the window", and narrows to a
  * picked business (SA-W1), which its subtitle says.
+ *
+ * Slice 1c (BD-15, SA-Q24): a tier group that holds paying Founding Partners
+ * says so: a text note with all businesses, a neutral chip with words for a
+ * picked business. No new column and no section badge.
  */
 
 import type { FinanceAccountsSection, FinanceGroupCount } from '@/lib/business-os/finance/financeTypes';
+import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 import {
   ACCOUNTS_BY_STATE,
   ACCOUNTS_COUNT,
   ACCOUNTS_DORMANT,
   ACCOUNTS_ENDING,
+  ACCOUNTS_FOUNDING_CHIP,
   ACCOUNTS_GRACE,
   ACCOUNTS_GROUP,
   ACCOUNTS_NEW,
@@ -27,6 +33,7 @@ import {
   GROUP_LABELS,
   ORIGIN_NOTES,
   PLANS_PAGE,
+  accountsFoundingNote,
 } from '../financeCopy';
 import { atLeast, formatCount } from '../financeFormat';
 import { FinanceSection } from './FinanceSection';
@@ -79,7 +86,21 @@ export function AccountsByPlanSection({
             <tbody>
               {f.groups.map((g) => (
                 <tr key={g.key} className="border-t border-slate-700/60">
-                  <th scope="row" className={`${TD} font-normal text-left`}>{groupLabel(g)}</th>
+                  <th scope="row" className={`${TD} font-normal text-left`}>
+                    {groupLabel(g)}
+                    {g.foundingPartners > 0 &&
+                      (accounts.scope === 'one' ? (
+                        <span className="ml-2 inline-block align-middle">
+                          <StatusChip tone="neutral" testId={`accounts-founding-chip-${g.key}`}>
+                            {ACCOUNTS_FOUNDING_CHIP}
+                          </StatusChip>
+                        </span>
+                      ) : (
+                        <span className="ml-2 text-xs text-slate-400" data-testid={`accounts-founding-note-${g.key}`}>
+                          {accountsFoundingNote(g.foundingPartners)}
+                        </span>
+                      ))}
+                  </th>
                   <td className={TD}>{n(g.count)}</td>
                   <td className={TD}>{formatCount(g.grace)}</td>
                   <td className={TD}>{formatCount(g.pastDue)}</td>

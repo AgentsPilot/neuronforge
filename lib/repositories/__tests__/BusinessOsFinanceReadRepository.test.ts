@@ -2,8 +2,8 @@
  * BusinessOsFinanceReadRepository — the read-only money-table access of the
  * admin finance & business health page (slice 1a: R-c, R-c′, R-d).
  *
- * Pinned: each method's query (columns, live mode only, account scope, keyset
- * paging, head counts), that bad input is refused BEFORE querying, that the
+ * Pinned: each method's query (columns, account scope, keyset paging, head
+ * counts), that bad input is refused BEFORE querying, that the
  * ceiling is an error and never a partial list, that a missing count is an
  * error and never 0, that the source holds no write verb and does not name the
  * money writers' repositories, and who may import it.
@@ -22,6 +22,12 @@
  * any query, and the plan and reminder writers absent from the source
  * (SA-W40). The pager was generalised (SA-W28): the 2a describes above are
  * unedited and still pass (SA-WR-20).
+ *
+ * Slice 1c (BD-14, BD-16): R-c, R-c′ and R-d are renamed and name no mode
+ * column (test and real rows count together); the reads keep their shape (one
+ * billing row per account). Two rows for one account are an ERROR: R-c's
+ * duplicate check (SA-WR-27) and R-c′'s `maybeSingle` error, returned and never
+ * thrown (SA-WR-28). `bought_tier` joins the billing columns (SA-Q20).
  */
 
 import * as fs from 'fs';
@@ -59,6 +65,8 @@ import {
   FINANCE_CLIENT_INVOICE_DUE_COLUMNS,
   FINANCE_CLIENT_PLAN_COLUMNS,
 } from '../BusinessOsFinanceReadRepository';
+// Slice 1c: a separate import too, so the imports above stay byte-identical.
+import { FinanceReadDuplicateError } from '../BusinessOsFinanceReadRepository';
 
 type Call = { method: string; args: unknown[] };
 type Response = { data?: unknown; error: unknown; count?: number | null };
@@ -97,20 +105,27 @@ const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
 const C = '33333333-3333-4333-8333-333333333333';
 
-const row = (user_id: string, subscription_status: string | null = 'active'): FinanceBillingStatusRow => ({
+// `bought_tier` is a pass-through string, never a real tier id (the tier-literal guard scans this file).
+const row = (
+  user_id: string,
+  subscription_status: string | null = 'active',
+  bought_tier: string | null = null
+): FinanceBillingStatusRow => ({
   user_id,
   subscription_status,
   ended_at: null,
+  bought_tier,
 });
 
 beforeEach(() => jest.clearAllMocks());
 
 describe('column allow-list', () => {
-  it('selects exactly who, which status and whether it ended', () => {
+  it('selects exactly who, which status, whether it ended and which tier was bought', () => {
     expect(FINANCE_BILLING_STATUS_COLUMNS.split(',').map((c) => c.trim())).toEqual([
       'user_id',
       'subscription_status',
       'ended_at',
+      'bought_tier',
     ]);
     expect(FINANCE_READ_LIMITS).toEqual({
       BILLING_PAGE_SIZE: 1000,
@@ -121,22 +136,23 @@ describe('column allow-list', () => {
   });
 });
 
-describe('R-c listLiveBillingStatusesAllAccounts (the one all-accounts billing read)', () => {
-  it('reads live rows only, with no account filter, skipping detached (NULL) rows, keyset on user_id', async () => {
-    const { client, queries } = recordingClient(() => ({ data: [row(A), row(B)], error: null }));
-    const result = await new BusinessOsFinanceReadRepository(client).listLiveBillingStatusesAllAccounts();
+describe('R-c listBillingStatusesAllAccounts (the one all-accounts billing read)', () => {
+  it('reads test and real rows (no mode filter, BD-14), no account filter, skipping detached (NULL) rows, keyset on user_id', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [row(A), row(B, 'active', 'tier-from-price')], error: null }));
+    const result = await new BusinessOsFinanceReadRepository(client).listBillingStatusesAllAccounts();
 
-    expect(result).toEqual({ data: [row(A), row(B)], error: null });
+    expect(result).toEqual({ data: [row(A), row(B, 'active', 'tier-from-price')], error: null });
     const [q] = queries;
     expect(q[0].args).toEqual(['business_os_billing_accounts']);
     expect(argsOf(q, 'select')).toEqual([[FINANCE_BILLING_STATUS_COLUMNS]]);
-    expect(argsOf(q, 'eq')).toEqual([['livemode', true]]);
+    expect(argsOf(q, 'eq')).toEqual([]);
+    expect(JSON.stringify(q)).not.toContain('livemode');
     expect(argsOf(q, 'not')).toEqual([['user_id', 'is', null]]);
     expect(argsOf(q, 'gt')).toEqual([]);
     expect(argsOf(q, 'order')).toEqual([['user_id', { ascending: true }]]);
     expect(argsOf(q, 'limit')).toEqual([[1000]]);
     expect(mockLog.info).toHaveBeenCalledWith(
-      expect.objectContaining({ method: 'listLiveBillingStatusesAllAccounts', rows: 2 }),
+      expect.objectContaining({ method: 'listBillingStatusesAllAccounts', rows: 2 }),
       expect.any(String)
     );
   });
@@ -145,7 +161,7 @@ describe('R-c listLiveBillingStatusesAllAccounts (the one all-accounts billing r
     const { client, queries } = recordingClient((_c, i) =>
       i === 0 ? { data: [row(A), row(B)], error: null } : { data: [row(C)], error: null }
     );
-    const result = await new BusinessOsFinanceReadRepository(client).listLiveBillingStatusesAllAccounts({
+    const result = await new BusinessOsFinanceReadRepository(client).listBillingStatusesAllAccounts({
       pageSize: 2,
       ceiling: 10,
     });
@@ -157,7 +173,7 @@ describe('R-c listLiveBillingStatusesAllAccounts (the one all-accounts billing r
 
   it('reaching the ceiling (>=) is an ERROR, never a partial list', async () => {
     const { client } = recordingClient(() => ({ data: [row(A), row(B)], error: null }));
-    const result = await new BusinessOsFinanceReadRepository(client).listLiveBillingStatusesAllAccounts({
+    const result = await new BusinessOsFinanceReadRepository(client).listBillingStatusesAllAccounts({
       pageSize: 2,
       ceiling: 2,
     });
@@ -171,7 +187,7 @@ describe('R-c listLiveBillingStatusesAllAccounts (the one all-accounts billing r
     ['a ceiling over 20,000', { ceiling: 20_001 }],
   ])('refuses %s before querying', async (_n, opts) => {
     const { client, queries } = recordingClient(() => ({ data: [], error: null }));
-    const result = await new BusinessOsFinanceReadRepository(client).listLiveBillingStatusesAllAccounts(opts);
+    const result = await new BusinessOsFinanceReadRepository(client).listBillingStatusesAllAccounts(opts);
     expect(result.data).toBeNull();
     expect(queries).toHaveLength(0);
     expect(mockLog.warn).toHaveBeenCalled();
@@ -179,30 +195,71 @@ describe('R-c listLiveBillingStatusesAllAccounts (the one all-accounts billing r
 
   it('a read error is { data: null, error } and never throws', async () => {
     const { client } = recordingClient(() => ({ data: null, error: new Error('boom') }));
-    const result = await new BusinessOsFinanceReadRepository(client).listLiveBillingStatusesAllAccounts();
+    const result = await new BusinessOsFinanceReadRepository(client).listBillingStatusesAllAccounts();
     expect(result).toEqual({ data: null, error: expect.objectContaining({ message: 'boom' }) });
     expect(mockLog.error).toHaveBeenCalled();
   });
+
+  it('SA-WR-27 / AC-85: one user_id read twice is an ERROR with no data, logged at error with counts only (BD-16)', async () => {
+    const { client } = recordingClient(() => ({
+      data: [row(A), row(A, 'canceled'), row(B)],
+      error: null,
+    }));
+    const result = await new BusinessOsFinanceReadRepository(client).listBillingStatusesAllAccounts();
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(FinanceReadDuplicateError);
+    expect(mockLog.error).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'listBillingStatusesAllAccounts' }),
+      expect.any(String)
+    );
+    expect(mockLog.info).not.toHaveBeenCalled();
+    // Counts only: no account id in any log line or in the error message.
+    expect(JSON.stringify(mockLog.error.mock.calls)).not.toContain(A);
+    expect((result.error as Error).message).not.toContain(A);
+  });
+
+  // SA-CR-3: this fake IGNORES `.gt`, so it can return a repeat on the next
+  // page. Real `.gt('user_id', last)` paging never returns `last` again, so in
+  // production a repeat is caught only within one page; a second row just past
+  // a page boundary is the recorded residual (BD-16 says it will not exist).
+  it('SA-WR-27: the duplicate check covers every row read (the fake ignores `.gt`; with real keyset paging a repeat can only be on the same page)', async () => {
+    const { client } = recordingClient((_c, i) =>
+      i === 0 ? { data: [row(A), row(B)], error: null } : { data: [row(B)], error: null }
+    );
+    const result = await new BusinessOsFinanceReadRepository(client).listBillingStatusesAllAccounts({
+      pageSize: 2,
+      ceiling: 10,
+    });
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(FinanceReadDuplicateError);
+  });
 });
 
-describe('R-c′ findLiveBillingStatusForAccount (account-scoped, SA-W1)', () => {
-  it('reads ONE account, live mode, at most one row', async () => {
+describe('R-c′ findBillingStatusForAccount (account-scoped, SA-W1)', () => {
+  it('reads ONE account, no mode filter (BD-14), one row (BD-16)', async () => {
     const { client, queries } = recordingClient(() => ({ data: row(A, 'past_due'), error: null }));
-    const result = await new BusinessOsFinanceReadRepository(client).findLiveBillingStatusForAccount(A);
+    const result = await new BusinessOsFinanceReadRepository(client).findBillingStatusForAccount(A);
     expect(result).toEqual({ data: row(A, 'past_due'), error: null });
     const [q] = queries;
     expect(q[0].args).toEqual(['business_os_billing_accounts']);
     expect(argsOf(q, 'select')).toEqual([[FINANCE_BILLING_STATUS_COLUMNS]]);
-    expect(argsOf(q, 'eq')).toEqual([
-      ['user_id', A],
-      ['livemode', true],
-    ]);
+    expect(argsOf(q, 'eq')).toEqual([['user_id', A]]);
+    expect(JSON.stringify(q)).not.toContain('livemode');
     expect(argsOf(q, 'maybeSingle')).toEqual([[]]);
   });
 
-  it('no live row → null data, no error', async () => {
+  it('SA-WR-28 / AC-85: two rows make maybeSingle error, RETURNED as { data: null, error } and never thrown', async () => {
+    const twoRows = Object.assign(new Error('JSON object requested, multiple (or no) rows returned'), { code: 'PGRST116' });
+    const { client } = recordingClient(() => ({ data: null, error: twoRows }));
+    const result = await new BusinessOsFinanceReadRepository(client).findBillingStatusForAccount(A);
+    expect(result.data).toBeNull();
+    expect(result.error).toBe(twoRows);
+    expect(mockLog.error).toHaveBeenCalled();
+  });
+
+  it('no row → null data, no error', async () => {
     const { client } = recordingClient(() => ({ data: null, error: null }));
-    expect(await new BusinessOsFinanceReadRepository(client).findLiveBillingStatusForAccount(A)).toEqual({
+    expect(await new BusinessOsFinanceReadRepository(client).findBillingStatusForAccount(A)).toEqual({
       data: null,
       error: null,
     });
@@ -212,7 +269,7 @@ describe('R-c′ findLiveBillingStatusForAccount (account-scoped, SA-W1)', () =>
     'refuses %p before any query',
     async (id) => {
       const { client, queries } = recordingClient(() => ({ data: null, error: null }));
-      const result = await new BusinessOsFinanceReadRepository(client).findLiveBillingStatusForAccount(id);
+      const result = await new BusinessOsFinanceReadRepository(client).findBillingStatusForAccount(id);
       expect(result.data).toBeNull();
       expect(result.error).toBeInstanceOf(Error);
       expect(queries).toHaveLength(0);
@@ -221,31 +278,30 @@ describe('R-c′ findLiveBillingStatusForAccount (account-scoped, SA-W1)', () =>
 
   it('does not log the account id at info', async () => {
     const { client } = recordingClient(() => ({ data: row(A), error: null }));
-    await new BusinessOsFinanceReadRepository(client).findLiveBillingStatusForAccount(A);
+    await new BusinessOsFinanceReadRepository(client).findBillingStatusForAccount(A);
     expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain(A);
   });
 });
 
-describe('R-d countLiveRevenueRows (platform-wide existence, head counts only)', () => {
-  it('two head counts, live mode only: paid plan invoices and paid boosts', async () => {
+describe('R-d countRevenueRows (platform-wide existence, head counts only)', () => {
+  it('two head counts, test and real rows together (BD-14): paid plan invoices and paid boosts', async () => {
     const { client, queries } = recordingClient((calls) =>
       (calls[0].args[0] as string) === 'business_os_billing_events'
         ? { data: null, error: null, count: 0 }
         : { data: null, error: null, count: 2 }
     );
-    const result = await new BusinessOsFinanceReadRepository(client).countLiveRevenueRows();
+    const result = await new BusinessOsFinanceReadRepository(client).countRevenueRows();
     expect(result).toEqual({ data: { planInvoicesPaid: 0, boostsPaid: 2 }, error: null });
 
     const events = queries.find((q) => q[0].args[0] === 'business_os_billing_events')!;
     const boosts = queries.find((q) => q[0].args[0] === 'business_os_boost_purchases')!;
     expect(argsOf(events, 'select')).toEqual([['id', { count: 'exact', head: true }]]);
-    // AC-23: a test-mode row cannot count — livemode must be true.
-    expect(argsOf(events, 'eq')).toEqual([
-      ['livemode', true],
-      ['kind', 'invoice_paid'],
-    ]);
+    // AC-75 / AC-76: no mode filter on either count.
+    expect(argsOf(events, 'eq')).toEqual([['kind', 'invoice_paid']]);
     expect(argsOf(boosts, 'select')).toEqual([['id', { count: 'exact', head: true }]]);
-    expect(argsOf(boosts, 'eq')).toEqual([['livemode', true]]);
+    expect(argsOf(boosts, 'eq')).toEqual([]);
+    expect(JSON.stringify(events)).not.toContain('livemode');
+    expect(JSON.stringify(boosts)).not.toContain('livemode');
     expect(argsOf(boosts, 'not')).toEqual([['paid_at', 'is', null]]);
     expect(queries).toHaveLength(2);
   });
@@ -258,7 +314,7 @@ describe('R-d countLiveRevenueRows (platform-wide existence, head counts only)',
     const { client } = recordingClient((calls) =>
       calls[0].args[0] === failing ? { data: null, ...failure } : { data: null, error: null, count: 0 }
     );
-    const result = await new BusinessOsFinanceReadRepository(client).countLiveRevenueRows();
+    const result = await new BusinessOsFinanceReadRepository(client).countRevenueRows();
     expect(result.data).toBeNull();
     expect(result.error).toBeInstanceOf(Error);
   });
