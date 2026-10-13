@@ -622,6 +622,8 @@ const MIGRATED_PAGES = [
       'app/admin/messages/messagesFormat.ts',
       'app/admin/messages/components/MessagesTable.tsx',
       'app/admin/messages/components/MessageDetail.tsx',
+      // LF-3b: the Delete and Mark All Read admin dialogs (OR-3).
+      'app/admin/messages/components/MessagesConfirmDialog.tsx',
     ],
   },
   {

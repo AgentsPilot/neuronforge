@@ -72,13 +72,18 @@ describe('fixtures', () => {
   // P-3b.2 (SA Q-9, C-6): a HAND-BUILT fixture is written in the SDK's pinned
   // version; a CAPTURED one keeps the version Stripe rendered it in (the
   // sandbox's account default is 2025-09-30.clover), and its source line says so.
+  // P-7b.1b (U-7): the P-7b.1 captures add SDK answers to our own calls, which
+  // carry no `api_version` and state theirs in `_fixture_api_version` (the
+  // pinned 2025-10-29.clover), and events as the standard sandbox renders them
+  // (2026-09-30.endive, requirement §9.1.2 F-4).
   it.each(fixtureNames)('%s is labelled with its real API version', (name) => {
-    const event = fixture(name) as unknown as { api_version: string; _fixture_source: string };
+    const event = fixture(name) as unknown as { api_version?: string; _fixture_api_version?: string; _fixture_source: string };
     if (event._fixture_source.startsWith('HAND-BUILT')) {
       expect(event.api_version).toBe('2025-10-29.clover');
     } else {
-      expect(['2025-09-30.clover', '2025-10-29.clover']).toContain(event.api_version);
-      expect(event._fixture_source).toContain(event.api_version);
+      const version = event.api_version ?? event._fixture_api_version;
+      expect(['2025-09-30.clover', '2025-10-29.clover', '2026-09-30.endive']).toContain(version);
+      expect(event._fixture_source).toContain(version);
     }
   });
 

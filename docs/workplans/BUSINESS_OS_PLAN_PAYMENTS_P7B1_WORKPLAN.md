@@ -6,8 +6,8 @@
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): F7 (incl. "How (SA)"); §6 (upgrade, credit period); §9.1 P-7b.1 and P-7b.2 rows; §9.4 **CF-6**; SR-5, SR-8, SR-11, SR-12, SR-15, SR-16, SR-17; AC-F7.1, AC-F7.3; and **"SA Ruling — P-4 and P-7b.1 sequencing (2026-10-12)"**, R-1, R-2 and conditions **U-1 to U-10**. Also SA's later notes in the [P-4 workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P4_WORKPLAN.md): the P-4.2 Low note on the admin-assigned plan offered Choose on its own plan, QA P-4.2 note 2 (Stripe Checkout language), and P-4.1 follow-ups F-A and F-B.
 **Depends on:** P-3b merged (#251, #299); P-5a merged (#314, #327); **P-4 merged** (P-4.1 #337, P-4.2 #341), whose purchase view (`planPurchaseView.ts`), `planPurchaseOffer` pattern, Settings → Plan island, shared Stripe.js loader and bounded re-read this slice reuses. **Not P-6a** (SA R-1).
 **Date:** 2026-10-13
-**Branch:** `feature/bos-plan-payments-p7b1`, worktree `neuronforge-invite-s1`, fresh from `origin/main` `103dead2` (#341). Confirmed with `git branch --show-current` on 2026-10-13. Nothing written yet but this workplan and the requirement row.
-**Status:** P-7b.1a **Code Complete** (uncommitted), awaiting SA code review. T1 (sandbox experiments) BLOCKED on the sandbox key; T2 "code done, pending E-1". P-7b.1b not started.
+**Branch:** P-7b.1a on `feature/bos-plan-payments-p7b1` (fresh from `origin/main` `103dead2`, #341), **merged as PR #346**. P-7b.1b on `feature/bos-plan-payments-p7b1b`, worktree `neuronforge-invite-s1`, fresh from `origin/main` `8014ee73` (#346); confirmed with `git branch --show-current` on 2026-10-13.
+**Status:** P-7b.1a **Merged** (PR #346). P-7b.1b **Code Complete** (uncommitted); SA code review 2026-10-13: **APPROVED WITH FIXES** (G-1, G-2 before QA; G-3 docs); **G-1 to G-3 applied by Dev 2026-10-13, awaiting SA re-check**. E-1 to E-6 observed on the sandbox 2026-10-13 (T1 done, T2 done). D-W and T14 are TL's (checklist in Implementation Notes (P-7b.1b)). G-5 (he/es drafts) is the user's.
 
 ## Overview
 
@@ -386,20 +386,20 @@ Placement guards: `planUpgrade.ts` is added to `BILLING_REPOSITORY_IMPORTS` in `
 | # | Task | PR | Est. |
 |---|---|---|---|
 | ✅ T0 | Day-1 checks: branch, `origin/main` still `103dead2` or merged in; highest migration still 20261057; the P-4.2 files as described; SDK types for `invoices.createPreview` and `subscriptions.update` on the pinned version | a | 0.1d |
-| ⛔ T1 | **BLOCKED (no sandbox key yet, TL 2026-10-13). Sandbox experiments E-1 to E-6 and fixture capture (§8).** Standard sandbox; key location from TL. Results and captured, scrubbed fixtures recorded in Implementation Notes. U-6 answered (G-2) | a | 0.5d |
-| 🟡 T2 | **Code done, pending E-1** (Implementation Notes). `StripeService`: additive subscription fields; `previewBusinessOsPlanUpgrade`; `upgradeBusinessOsPlanSubscription` (exact params, idempotency key, facts-only return, card-error mapping); tests incl. "no metadata, no anchor, no trial_end" and "secret never in the facts' logs" | a | 0.5d |
+| ✅ T1 | **Done 2026-10-13** (first BLOCKED on the sandbox key; run on the standard sandbox, evidence in "SA re-check of F-1..F-5 + sandbox evidence"; captures committed in P-7b.1b). Sandbox experiments E-1 to E-6 and fixture capture (§8). Standard sandbox; key location from TL. Results and captured, scrubbed fixtures recorded in Implementation Notes. U-6 answered (G-2) | a | 0.5d |
+| ✅ T2 | **Done**: E-1 observed 2026-10-13 (the update's `expand` accepted; the payment state read by ONE `invoicePayments.list`, the permanent path; preview fields `amount_due`, `total`, `total_taxes`), pinned by the captured fixtures (P-7b.1b). `StripeService`: additive subscription fields; `previewBusinessOsPlanUpgrade`; `upgradeBusinessOsPlanSubscription` (exact params, idempotency key, facts-only return, card-error mapping); tests incl. "no metadata, no anchor, no trial_end" and "secret never in the facts' logs" | a | 0.5d |
 | ✅ T3 | U-3 in `planInvoiceFacts` + `decidingPriceIds`; the U-3 matrix; C-6 field list (`total`) | a | 0.25d |
 | ✅ T4 | U-4 in `planPaymentApply` (pending → retry; not on price → record without plan + alert + audit only on a new row); `billingReason` in details; tests incl. replay silence | a | 0.35d |
 | ✅ T5 | `planUpgradeOffer` + `planUpgradeEligibility` (pure); tests over every rule and order | a | 0.35d |
 | ✅ T6 | `planUpgrade.ts` orchestration: order contract, `prorationDate` window, price check on the target, outcome mapping, refusal table; tests with fakes | a | 0.5d |
 | ✅ T7 | The two routes (`new-api-route`); `BOS_BILLING_UPGRADE_REQUESTED` registration; route tests (happy path per outcome, 401, 400 incl. extra keys, every refusal, double click, flush before 200, secret only in the body) | a | 0.4d |
 | ✅ T8 | Apply-function probe `scripts/probe-bos-upgrade-apply.sql` (U-8 anchor cases), run on local PGlite | a | 0.25d |
-| ⬜ T9 | `purchase.upgrade` in the view + wire type; `my-plan` tests; matrix test view ↔ preview route | b | 0.3d |
-| ⬜ T10 | `PlanUpgrade.tsx` + `PlanSection` wiring + `planUpgradeCopy.ts`: preview, confirm, 3-D Secure via `handleNextAction`, outcomes, bounded re-read, success only from the server; Q-7 wording if ruled in | b | 0.6d |
-| ⬜ T11 | i18n en/he/es (§10), RTL render tests; he/es drafts to the user (G-5) | b | 0.2d |
-| 🟡 T12 | **a: done** (b: P-7b.1b). Registrations + F-B parser fix + placement guards + `test:bos-entitlements` (a: backend files; b: view and UI); ENTITLEMENTS doc § Billing; requirement row, CF-6 closed, Change History | a + b | 0.2d |
-| 🟡 T13 | **a: done** (b: P-7b.1b). Full checks (G-4), `git diff --stat` reviewed (no deletion-only file), Implementation Notes | a + b | 0.2d |
-| ⬜ T14 | Demo on the standard sandbox (§9), subscriptions cancelled the same day (TL / user, Dev assists) | b (D-W rows in a) | 0.4d |
+| ✅ T9 | `purchase.upgrade` in the view + wire type; `my-plan` tests; matrix test view ↔ preview route | b | 0.3d |
+| ✅ T10 | `PlanUpgrade.tsx` + `PlanSection` wiring + `planUpgradeCopy.ts`: preview, confirm, 3-D Secure via `handleNextAction`, outcomes, bounded re-read, success only from the server; Q-7 wording if ruled in | b | 0.6d |
+| ✅ T11 | i18n en/he/es (§10), RTL render tests; he/es drafts to the user (G-5) | b | 0.2d |
+| ✅ T12 | **a: done; b: done** (P-7b.1b: the `planPurchaseView.ts` registration re-checked, no new importer of the module). Registrations + F-B parser fix + placement guards + `test:bos-entitlements` (a: backend files; b: view and UI); ENTITLEMENTS doc § Billing; requirement row, CF-6 closed, Change History | a + b | 0.2d |
+| ✅ T13 | **a: done; b: done** (P-7b.1b checks in Implementation Notes). Full checks (G-4), `git diff --stat` reviewed (no deletion-only file), Implementation Notes | a + b | 0.2d |
+| ⬜ T14 | **TL runs it** (checklist in Implementation Notes (P-7b.1b), with D-W). Demo on the standard sandbox (§9), subscriptions cancelled the same day (TL / user, Dev assists) | b (D-W rows in a) | 0.4d |
 | | **Total** | | **≈ 5.1d** |
 
 ---
@@ -746,6 +746,118 @@ Reviewed in the worktree `neuronforge-invite-s1` on `feature/bos-plan-payments-p
 
 ---
 
+### SA Code Review — P-7b.1b (2026-10-13)
+
+**Code Review by SA — 2026-10-13**
+**Status:** 🔄 **APPROVED WITH FIXES** — G-1 (Medium, behaviour) and G-2 (Medium, tests only) are applied by Dev and re-checked by SA (a diff look, not a new review) before QA starts; G-3 (docs) in the same pass. No business question for the user.
+
+Reviewed in the worktree `neuronforge-invite-s1` on `feature/bos-plan-payments-p7b1b` (`origin/main` `8014ee73`), uncommitted: the 25 modified files, `PlanUpgrade.tsx`, `planUpgradeCopy.ts`, the three new test files and the 39 `captured-p7b1-*.json` fixtures. Read against U-5, V-1, V-3, Q-2, Q-5 to Q-7, the user's E-5 decision, the P-7b.1a review and re-check, and the `business-os-entitlements` review checklist.
+
+#### Checks run by SA
+
+| Check | Result |
+|---|---|
+| Jest: `lib/business-os/billing`, `app/api/business-os/billing`, `app/api/business-os/entitlements`, `components/business-os/settings`, `lib/stripe`, `app/api/stripe`, `lib/repositories/__tests__/BusinessOsBilling*`, `lib/business-os/entitlements` | **110 suites, 5,603 tests, green** |
+| `npm run test:bos-entitlements` | **251 suites, 7,337 tests, green** (matches Dev) |
+| Mutations (each restored from a scratch copy; md5 of `PlanUpgrade.tsx` `4f5b1345…`, `planUpgradeCopy.ts` `dfa8b978…`, `planPurchaseView.ts` `f060e12b…`, `PlanSection.tsx` `98aa7bc2…` identical before and after) | **2 of 5 caught.** Caught: E-5 boundary `<` → `<=` 50 (1 fails); the view's upgrade offer fed hard-coded switches ON instead of the real ones (9 fail across the matrix, view and `my-plan` tests). **Survived:** MB, a Stripe.js throw inside `handleNextAction` read as "not confirmed, nothing changed" (deviation 5 claims "unknown"; no test) → G-1; MS1, the upgrade success without `succeeded` (tier + `renewing`); MS2, the upgrade success without `planId === upgradeTarget` → G-2. Both are U-5 terms |
+| Fixture scrub re-scan (39 files) | ✅ Emails: only `fixture@example.invalid` (26). URLs: only `https://example.invalid/scrubbed` (49). No `sk_` / `rk_` / `pk_` / `whsec_`. Every `client_secret` is `scrubbed_secret` (9); `confirmation_secret` otherwise null. No `bos_*` metadata key or value (every `metadata` is `{}`). Names: `Test Customer` and the restored SDK class name only; `customer_phone` null; no address (the one `country: US` is the test card's issuing country); no IP. Present and harmless: the sandbox account id, test-mode object ids, invoice numbers, the test card `last4` 0341 and its test fingerprint, a 3-D Secure `server_transaction_id`, and the `bos-upgrade:` idempotency keys (sub, price, date only) |
+| "pending E-n" markers | ✅ None left in `lib/`, `app/`, `components/`. The remaining mentions in this workplan are history (the P-7b.1a sections), correct as written |
+| i18n | ✅ 29 keys in each of en / he / es, the same key set (diffed). RTL: the island uses `me-1` (logical), the render test asserts `dir="rtl"` for Hebrew and no English for he / es. he / es remain drafts for the user (G-5) |
+
+#### Conditions verified in code
+
+| # | Verdict | Where |
+|---|---|---|
+| V-1 Secret | ✅ | `PlanUpgrade.tsx`: the secret is read from the confirm body into a `const`, passed as an argument to `authenticate`, and from there only to `stripe.handleNextAction({ clientSecret })`. No `Phase` variant carries it; no storage, router, URL or `history` use in the file; both `logger.warn` calls in the 3-D Secure / confirm paths log `errName` only (the preview's `{ err }` is a fetch `TypeError`, before any secret exists). Render test asserts the DOM, URL and `setItem`; the source guard pins the shape |
+| U-5 success only from the server | ✅ in code, ❌ untested in two of its terms → G-2 | `PlanSection`: `upgradeSucceeded` = target set AND `succeeded` (status ok, kind tier, `renewing`) AND `planId === target` AND the record no longer offers the target. The apply function writes `bought_tier` with the plan (`20261028` line 202), so the last term clears once the webhook lands. The island never claims success |
+| V-3 Try again, same `prorationDate` | ✅ | `confirm(tier, unsure.prorationDate, …)`; pinned by Dev's M3 and the render test's two-post assertion |
+| V-3 unknown never "nothing changed" | ✅ for the route answers (502 `outcomeUnknown`, 5xx without a code, network after send, `action_required` without a secret, an unknown outcome); **❌ for a returned Stripe.js error that is not a payment refusal → G-1** | |
+| Q-2 resume (screen half) | ✅ | Preview `409 upgrade_awaiting_confirmation` → the "waiting" line, the pending amount, Confirm posts the fresh `prorationDate`; never a secret in the preview |
+| Q-5 note | ✅ | `plan.upgrade.own_plan_note`, shown only when the plan in force is a tier equal to the target; wording as ruled |
+| Q-6 | ✅ | `declined` + `retryAfter` → "You can try again after {time}" on the account clock; `upgrade_pending` without a time uses `refusal.pending_no_time`, never an empty `{time}` |
+| Q-7 | ✅ | `currentTierId` set only for `kind === 'tier'`; label "Pay for {plan}" + note; what is offered is still the server's `tiers` |
+| E-5 user decision | ✅ exact | `upgradeDueKey`: `<= 0` → zero line; `< 50` → "Nothing to pay now. {amount} will be added to your next bill."; `>= 50` → "due now, excluding tax". Strictly between 0 and 50, threshold 50 (`STRIPE_MINIMUM_CHARGE_MINOR`); pinned at 0 / 1 / 49 / 50, and the boundary mutation is caught |
+| M-2 / no publishable key | ✅ | `confirm` returns early without `stripeReady`; no Confirm and no Try again rendered |
+| Client-side imports (F-1 guard style, W-6) | ✅ | `PlanUpgrade.tsx` / `planUpgradeCopy.ts`: type-only imports from billing (`PlanUpgradeRefusalCode`, `PlanChoice`), no entitlements import, no `server-only`, repository, `supabaseServer` or `lib/stripe/`; source guard test covers both files. `createLogger` in a client component has its precedent in `PlanSection.tsx` / `PlanPurchase` |
+| Entitlements (V-10, checklist) | ✅ | No new import from `lib/business-os/entitlements/` in any source file. `planPurchaseView.ts` gains `planUpgradeOffer` from `planCheckoutEligibility.ts` (not the module); its registration `why` re-checked honestly (describes, refuses nothing). The new test file's type imports from the module are tests, not enforcement points. Doc § Plan checkout + Change History updated |
+| Repository guards | ✅ | The captured test is listed in both billing repository "only these files name it" lists (type imports only) |
+| C-6 ratchet | ✅ | Five new kinds with the fields the code actually reads (checked against `previewBusinessOsPlanUpgrade`, `upgradeBusinessOsPlanSubscription`, `pendingUpdateFacts`, `upgradePaymentStateOf`, the F-2 catch); `CAPTURED_OBJECTS` equality assertion updated; the version allow-list adds `2026-09-30.endive` for the sandbox events only, each fixture's source line naming its version |
+| Logging | ✅ | Pino throughout; no `console.*` in any touched file |
+| Hooks | ✅ | Every hook in `PlanUpgrade` runs before its early `return null` |
+
+#### Code Review Comments (fixes, Dev applies)
+
+1. **G-1 — `components/business-os/settings/PlanUpgrade.tsx` `authenticate` — a returned Stripe.js error is read as "nothing changed" whatever it is. Priority: Medium.** Today any `result.error`, and any non-success status, becomes `not_confirmed` ("The payment was not confirmed, so nothing changed. You're still on {plan}."). That is true for a refusal (the bank or the owner refused or closed the challenge; E-4 then voids the invoice at expiry), but not for an `api_connection_error` / `api_error` / `rate_limit_error` returned after the challenge may have completed: the payment can have succeeded and the upgrade will land, and the screen has told the owner nothing changed. That is the V-3 rule on the client side. **Fix:** classify by what is known about the PaymentIntent. (a) A PaymentIntent status (from `result.paymentIntent`, or `result.error.payment_intent` when present) of `succeeded` / `processing` / `requires_capture` → `onUpgrading`, as today. (b) `requires_payment_method`, `requires_action` or `canceled`, or `result.error.type === 'card_error'`, or `result.error.code === 'payment_intent_authentication_failure'` (how Stripe.js reports a closed or failed challenge) → `not_confirmed`. (c) Anything else (another error type with no PaymentIntent, a missing or unrecognised status) → `unknown` with Check again / Try again. Keep the existing throw → `unknown`. **Tests (render):** a Stripe.js throw → "We could not confirm your upgrade", never "nothing changed" (kills SA mutation MB); a returned `{ error: { type: 'api_connection_error' } }` → the same; a returned closed-challenge error (`invalid_request_error`, `payment_intent_authentication_failure`, `payment_intent.status: 'requires_payment_method'`) → "not confirmed"; the existing `card_error` and `requires_payment_method` cases stay.
+2. **G-2 — `components/business-os/settings/__tests__/PlanUpgrade.render.test.tsx` — two U-5 success terms are not pinned. Priority: Medium (tests only).** SA mutations MS1 and MS2 both survived the whole `components/business-os/settings` suite (161 tests). **Add:** (a) after Confirm → `upgraded`, the re-read shows the plan in force = the target and the record no longer offers it, but `billing.state` is not `renewing` (for example `cancelling` or `past_due`) → no "You're on …", still "Upgrading…" / then "taking longer"; (b) the re-read shows `renewing`, `purchase.upgrade` null (for example the prices switch turned off meanwhile), and the plan in force still the LOWER tier → no "You're on …" (this case would otherwise read "You're on Essentials" right after an upgrade). Re-run MS1 and MS2: each must fail at least one test.
+3. **G-3 — this workplan, Implementation Notes (P-7b.1b) and the D-W / T14 checklist — docs. Priority: Low.** Record G-1 / G-2 and the SA mutations in the Checks table. In T14 D3b, add: "record what Stripe.js returned when the challenge was closed (error `type`, `code`, PaymentIntent status)", so G-1's classification is confirmed against the real Stripe.js, which the render tests can only mock.
+
+#### Rulings on deviations 1 to 12
+
+| # | Ruling |
+|---|---|
+| 1 Matrix drives `previewPlanUpgrade` | **Accepted.** Same shape as P-4's matrix; the route's front (404, auth, strict body) has its own suite. The documented exceptions are exactly the Stripe-side refusals, which our data cannot predict. The hard-coded-switches mutation is caught by it |
+| 2 Extra success term ("no longer offered") | **Accepted, and required.** Without it the Q-5 case reads "done" before the webhook lands (Dev's M2). It cannot keep success away forever: the apply writes `bought_tier` with the plan. G-2 pins the two other terms |
+| 3 `upgrade_processing` / `not_an_upgrade` → "Upgrading…" + re-read | **Accepted.** Both mean our record or Stripe already moved past the page; the bounded re-read decides, and if it is something else (for example another tab upgraded to a higher tier) it ends in "taking longer than usual" with the reload link, never a false success |
+| 4 `not_subscribed` → the `not_active` line | **Accepted** |
+| 5 Unknown-state mapping | **Accepted for the route answers and for a Stripe.js throw; changed for a returned Stripe.js error → G-1.** A closed challenge and a bank refusal are "not confirmed, nothing changed" (true by E-4); a transport or API error from Stripe.js is not known to be a refusal, so it is "could not confirm". A preview failure reading the generic line is right (a preview writes nothing). Stripe.js unloadable after the confirm answered → "not confirmed" is right (no challenge was shown, so nothing was paid) |
+| 6 Check again = ONE re-read | **Accepted.** V-3 asked for "re-read my-plan"; one read per press is the honest answer to "is it done now?", the island stays unsure unless the server shows success, and "Upgrading…" is never claimed for an unknown result. `onUpgradeCheckAgain` catches its own failure, so the button cannot stay disabled |
+| 7 Three new keys | **Accepted** (`due_later_small` is the user's E-5 decision; `pending_no_time` avoids an unfilled `{time}`; `try_again` is V-3's button). In the G-5 table for the user |
+| 8 "Still on {plan}" names the plan in force | **Accepted** (true in the Q-5 case too) |
+| 9 No publishable key → price, no Confirm | **Accepted** (M-2 pattern). The price is information; the confirm is never posted, and Try again is hidden with it |
+| 10 Q-7 label only | **Accepted.** The P-4.2 render test's new "Pay for" expectation is correct: its default payload is precisely the Q-7 case |
+| 11 Fixture plumbing; one fresh read for all confirm runs | **Accepted; not a weak test for what U-7 requires.** What U-7 / G-3 asks is that OUR parsing runs over Stripe's real answers: each experiment's own update answer, invoice-payments list, preview and error body is parsed by the real `StripeService` and orchestration, and the C-6 ratchet pins the fields. The fresh read is a real capture of exactly the pre-upgrade shape (one basic item, no pending update), and the code's decision on it is the same for every experiment. What it does not prove is anything about ids: the fresh read's subscription and customer differ from the update answer's, which passes only because the code does not compare them. Optimisation below. Classification of SDK answers by file name is accepted: a misnamed file would be checked against the wrong field list and fail, or drop a kind and fail the `CAPTURED_OBJECTS` equality |
+| 12 E-2 earlier retry not acted on | **Accepted** (as ruled in the re-check: conservative and safe; an earlier "fix the card and try now" is a P-7a design point) |
+
+#### Merge gates (D-W, T14)
+
+| Item | Gate for the P-7b.1b merge? | Why |
+|---|---|---|
+| **G-1, G-2 (+ G-3)** | **Yes** | SA re-check of the fix diff, then QA |
+| **T14** (demo D0 to D7) | **Yes** | It is the manual critical-path check CLAUDE.md requires for a new UI flow, and the only run of the island against the real Stripe.js `handleNextAction` (D3a / D3b), which every render test mocks. D3b also confirms G-1's classification (G-3). D8 is optional and does not gate |
+| **D-W** (D-W1 to D-W5) | **Yes, unchanged from the P-7b.1a ruling**, run in the SAME sandbox session as T14 | The captured test runs the real handlers over real events, but with the apply function, the route, signature checking and Stripe's redelivery faked; D-W is the only end-to-end run of them. It costs almost nothing extra: T14 D1b, D3a, D4 and D2 produce the D-W1 to D-W4 events, and D-W5 is one `stripe events resend`. D-W6 is optional and does not gate |
+| **G-5** he / es wording | **Yes** (unchanged) | The user approves the drafts |
+| **All of the above** | Also before either buy-path switch is turned on in production (F-5, unchanged) | |
+
+If D-W or T14 finds a defect in P-7b.1a's code, the fix is its own PR from `origin/main` (as ruled); a defect in the island is fixed on this branch.
+
+#### Optimisation Suggestions
+
+- `planUpgrade.captured.test.ts`: build each confirm run's fresh read as the after-expiry capture re-identified with that experiment's subscription and customer ids (`{ ...AFTER_EXPIRY, id: update.id, customer: update.customer }`), and the row from it. Then a future "the update answer is for the subscription we asked about" check cannot break these tests for the wrong reason.
+- After a successful upgrade the island stays hidden until a reload even if a higher tier is still offered (`!upgradeSucceeded`). Rare (three tiers) and harmless; a later slice can let the island return once "done" has been shown.
+- In the endive / clover note (requirement §9.1.2 F-4): the D-W replay uses `stripe listen`, which delivers in the sandbox's default version (`2026-09-30.endive`), not the production endpoint's pinned version. D-W therefore proves the handlers, not the production endpoint's shape; that stays F-4's item.
+
+#### QA focus
+
+1. G-1: a Stripe.js throw and a returned non-refusal error after the challenge → "We could not confirm your upgrade" with Check again and Try again (same `prorationDate`), never "nothing changed"; a closed challenge and a card refusal → "not confirmed, nothing changed", Upgrade again → the Q-2 "waiting" line.
+2. G-2: "You're on <plan>" only when all four terms hold; each term's absence keeps "Upgrading…" and ends in "taking longer than usual".
+3. The secret: absent from the DOM, URL, `localStorage` / `sessionStorage`, every log call and every refusal body, in the fresh confirm and the Q-2 resume.
+4. E-5 wording at 0, 1, 49, 50 cents; "excluding tax" on the due-now line only.
+5. Refusals: every code reads its localised line in en / he / es, never the server's English; `upgrade_pending` with and without `retryAfter`; `upgrade_processing` / `not_an_upgrade` → "Upgrading…".
+6. No publishable key: the price shows, no Confirm, no POST.
+7. Q-5 note and Q-7 "Pay for" label only where the plan in force is a tier.
+8. The matrix (view ↔ preview) and the captured suite green; rerun `npm run test:bos-entitlements` on the final diff.
+9. T14 and D-W run by TL in one sandbox session, results and clean-up ids recorded (merge gates above).
+
+#### Code Approved for QA: **Yes, after G-1 and G-2** (SA re-check of the fix diff), with G-3 in the same pass.
+
+### SA diff look — P-7b.1b G-fixes (2026-10-14)
+
+**Status:** ✅ **OK**. G-1 to G-3 are applied as asked. QA can start. This was a look at the fix diff only, not a new review.
+
+| Item | Result |
+|---|---|
+| G-1 `classifyNextAction` (`PlanUpgrade.tsx`, exported) | ✅ Matches G-1 exactly. The status is taken from `paymentIntent`, and from `error.payment_intent` when `paymentIntent` is absent. `succeeded` / `processing` / `requires_capture` → `upgrading`. `requires_payment_method` / `requires_action` / `canceled`, `card_error`, or `payment_intent_authentication_failure` → `not_confirmed`. Anything else, including no status and an unrecognised status such as `requires_confirmation`, → `unknown`. A known status is checked before the error type, so an `api_connection_error` that carries a `succeeded` PaymentIntent reads as "Upgrading…", which is correct. A throw → `unknown`, with only `errName` logged. The inconclusive path logs `errType` / `errCode` only and never the result object, the PaymentIntent or the secret |
+| G-1 tests | ✅ 6 render cases for unknown: a throw, `api_connection_error`, `api_error`, `rate_limit_error`, an unknown type and no status. Each asserts that "nothing changed" never shows and that Try again re-posts the same `prorationDate`. 4 render cases for not confirmed, including the closed challenge and a `canceled` PaymentIntent carried on the error. The Q-2 resume after "not confirmed" is covered. A 15-row table runs over the function |
+| G-2 tests | ✅ (a) The target is in force and no longer offered, but billing is `cancelling`: no "You're on…", and it ends in "taking longer". This pins `renewing` (MS1). (b) Billing is `renewing` and the offer is null because the switches are off, but the plan in force is still the lower tier: no "You're on…". This pins `planId === upgradeTarget` (MS2). Each test asserts its premises (`planId`, `upgrade` null, `billing.state`) before it runs, so a fixture drift cannot leave it passing for nothing |
+| Mutations | Dev reports 5 of 5 caught. SA applied MS2 (drop `plan?.planId === upgradeTarget`) with the Edit tool, but **the permission system did not allow the Jest run against the mutated file**. The file was restored by re-editing, and its md5 `98aa7bc2…` matches before and after. MS2 was therefore **not re-run by SA**. By reading the code, G-2 (b) kills it: with the term dropped, `succeeded` holds and the empty offer holds, so "You're on Essentials" would render, and the test asserts it does not. Dev's 5 of 5 is accepted on that reading. QA may re-run MS1 / MS2 if its permissions allow |
+| `planUpgrade.captured.test.ts` (SA optimisation) | ✅ Sound. `freshReadFor(name)` gives the real E-4 after-expiry shape the experiment's own subscription id and customer id. `rowFor`, the `retrieve` mock (which throws on any other id) and `expectWriteTo` now all name the same subscription. The mocks are `mockReset` in `beforeEach`, so `calls[0]` belongs to the current test. The E-6 race reuses the replay's ids, which is correct because both come from the same subscription. Previews still run on `AFTER_EXPIRY` and assert its ids, which is consistent |
+| G-3 docs | ✅ The Checks table has the G-1 / G-2 and mutation rows, deviation 5 is amended, and D3b in T14 records the real Stripe.js close result |
+| Suites (SA run) | `components/business-os/settings` + `lib/business-os/billing`: **34 suites, 3,500 tests, green** |
+
+Remaining merge gates are unchanged: T14 (including the D3b confirmation of G-1 against the real Stripe.js), D-W and G-5.
+
+---
+
 ## Implementation Notes
 
 ### P-7b.1a "Upgrade backend and CF-6" (Dev, 2026-10-13)
@@ -788,20 +900,20 @@ Reviewed in the worktree `neuronforge-invite-s1` on `feature/bos-plan-payments-p
 | Mutation checks (sources md5-restored afterwards) | 3 of 3 caught: `upgrade_processing` turned into a mismatch (V-2); the U-4 retry without the `latestInvoiceId` test (V-5); the confirm route logging its result (V-1) |
 | T8 / G-7 probe on local PGlite (scratch harness from P-5a, migrations 20261025, 20261027, 20261028) | **PASS** twice: without and with a lineage row; every count unchanged afterwards (rolled back); the unedited file refuses with PROBE SKIPPED. U02 INFO: with a lineage row, the dashboard-order upgrade invoice stamps the first payment and the late `basic` invoice does not (V-6 expected, accepted and recorded only). The optional production run on a test account is the user's |
 
-#### Pending E-n (T1 BLOCKED: the standard sandbox key is not available; no Stripe call was made)
+#### E-n: pending at P-7b.1a code complete, observed 2026-10-13 (the right column; first T1 was BLOCKED on the sandbox key and no Stripe call was made)
 
-| # | What is pending | Where the code waits | If the answer differs |
-|---|---|---|---|
-| **E-1** | How the payment state is read on clover. Today: a `paid` invoice is `succeeded` with no read; an `open` invoice uses its `payments` list when expanded, else ONE `invoicePayments.list({ invoice, expand: ['data.payment.payment_intent'] })`. Also unverified: that `expand: ['latest_invoice.confirmation_secret']` is accepted on `subscriptions.update`, the `createPreview` amount fields (`amount_due`, `total`, `total_taxes`), and the `pending_update` shape on the update's answer | `StripeService.upgradeInvoicePaymentState` (private seam), `upgradeBusinessOsPlanSubscription`, `previewBusinessOsPlanUpgrade` | Only the update's `expand` list or the seam changes; the outcome mapping does not. **T2 stays "code done, pending E-1"** |
-| **E-2** | The decline shape: thrown `StripeCardError`, or a returned pending update with `requires_payment_method`. Both are mapped to `declined` and tested (V-7). Whether a returned decline keeps a pending update (and so `retryAfter`, Q-6) is unconfirmed | `confirmPlanUpgrade` | None in code; the UI line "You can try again after" depends on it |
-| **E-3** | Captured $0 credit-balance upgrade invoice (`amount_paid` 0, `total` > 0, `paid`, no pending update) | U-3 matrix uses the hand-built proration fixture | A field not present would show in the C-6 ratchet |
-| **E-4** | **U-6 / G-2**: what happens to an unpaid upgrade invoice when its pending update expires. Holds P-7b.1b's UI (T10). Also decides whether the Q-2 resume is safe up to the expiry | `resumable()` in `planUpgrade.ts` requires the invoice `open` and `requires_action` | If the invoice can be paid after expiry, Dev brings a design to SA before T10 |
-| **E-5** | Captured under-minimum upgrade invoice (`total` small, `amount_paid` 0) | U-3 matrix (hand-built `total: 30`) | As E-3 |
-| **E-6** | The in-flight idempotency conflict: error `type` and `code`. Mapped today (after SA F-2) by `code === 'idempotency_key_in_use'` → `upgrade_busy` whatever the error class; any other `StripeIdempotencyError` → alerted `stripe_error` | `confirmPlanUpgrade` catch | The code string to match (E-6 now confirms, it no longer decides) |
-| **U-7 / G-3** | Captured upgrade objects in the C-6 ratchet: a subscription with `pending_update`, a paid `subscription_update` invoice (negative `basic` line, positive `pro` line via `pricing.price_details.price`), a failed one, the expired-update event. `CAPTURED_OBJECTS` unchanged until then | `planStripeFields.c6.test.ts` | — |
-| **D-W** | The webhook rows of E-1 to E-5 replayed through local `stripe listen` | — | — |
+| # | What was pending | Where the code waits | If the answer differs | Observed 2026-10-13 (sandbox), and where it is pinned |
+|---|---|---|---|---|
+| **E-1** | How the payment state is read on clover. Today: a `paid` invoice is `succeeded` with no read; an `open` invoice uses its `payments` list when expanded, else ONE `invoicePayments.list({ invoice, expand: ['data.payment.payment_intent'] })`. Also unverified: that `expand: ['latest_invoice.confirmation_secret']` is accepted on `subscriptions.update`, the `createPreview` amount fields (`amount_due`, `total`, `total_taxes`), and the `pending_update` shape on the update's answer | `StripeService.upgradeInvoicePaymentState` (private seam), `upgradeBusinessOsPlanSubscription`, `previewBusinessOsPlanUpgrade` | Only the update's `expand` list or the seam changes; the outcome mapping does not. T2 was held at "code done" until E-1 answered | `expand: ['latest_invoice.confirmation_secret']` accepted; applied update: no pending update, invoice `paid` (no read); 3-D Secure: pending update, invoice `open`, no `payments` key, ONE `invoicePayments.list` → default payment, PaymentIntent `requires_action`. Expanding `latest_invoice.payments...payment_intent` is refused (`property_expansion_max_depth`), so the list read is permanent. Preview: `amount_due`, `total`, `total_taxes: []`. No code change. Pinned: `planUpgrade.captured.test.ts` E-1 rows, C-6 kinds `upgrade_response`, `invoice_payment`, `invoice_preview` |
+| **E-2** | The decline shape: thrown `StripeCardError`, or a returned pending update with `requires_payment_method`. Both are mapped to `declined` and tested (V-7). Whether a returned decline keeps a pending update (and so `retryAfter`, Q-6) is unconfirmed | `confirmPlanUpgrade` | None in code; the UI line "You can try again after" depends on it | **Returned, not thrown**: the pending update is kept, invoice `open`, PaymentIntent `requires_payment_method` → `declined` + `retryAfter` = `expires_at`; the screen shows "You can try again after {time}" (Q-6). Stripe allows a second update over a pending one (it voids the first invoice); our `upgrade_pending` refusal is unchanged. Pinned: captured E-2 row |
+| **E-3** | Captured $0 credit-balance upgrade invoice (`amount_paid` 0, `total` > 0, `paid`, no pending update) | U-3 matrix uses the hand-built proration fixture | A field not present would show in the C-6 ratchet | Preview `amount_due` 0 / `total` 3387; update applied, `confirmation_secret` null; invoice `paid`, `amount_paid` 0, `total` 3387 → CF-6 assigns. Pinned: captured E-3 rows (preview, confirm, `planInvoiceFacts`, webhook apply) |
+| **E-4** | **U-6 / G-2**: what happens to an unpaid upgrade invoice when its pending update expires. Holds P-7b.1b's UI (T10). Also decides whether the Q-2 resume is safe up to the expiry | `resumable()` in `planUpgrade.ts` requires the invoice `open` and `requires_action` | If the invoice can be paid after expiry, Dev brings a design to SA before T10 | The unpaid upgrade invoice is **voided exactly at `expires_at`**; paying it or confirming its PaymentIntent afterwards fails; the price stays on the lower tier. **G-2 cleared**: U-4 stays a backstop; the Q-2 resume stays as built (it needs `open`). Pinned: captured E-4 rows (voided_at = expires_at; a void invoice is not resumable, no payment read) |
+| **E-5** | Captured under-minimum upgrade invoice (`total` small, `amount_paid` 0) | U-3 matrix (hand-built `total: 30`) | As E-3 | Preview `amount_due` 14 (the preview applies no minimum); update applied; invoice `paid`, `amount_paid` 0, `total` 14, carried to the next renewal (12914) → CF-6 assigns. **User decision 2026-10-13 (option a)**: the screen reads "Nothing to pay now. {amount} will be added to your next bill." under 50 cents. Pinned: captured E-5 rows and `upgradeDueKey` |
+| **E-6** | The in-flight idempotency conflict: error `type` and `code`. Mapped today (after SA F-2) by `code === 'idempotency_key_in_use'` → `upgrade_busy` whatever the error class; any other `StripeIdempotencyError` → alerted `stripe_error` | `confirmPlanUpgrade` catch | The code string to match (E-6 now confirms, it no longer decides) | In flight: `StripeInvalidRequestError`, `invalid_request_error`, code `idempotency_key_in_use`, 409, `stripe-should-retry: false` (the SDK does not retry it) → `upgrade_busy`; same key, other params: `StripeIdempotencyError` 400 → alerted `stripe_error`; identical replay after completion returns the first answer. Pinned: captured E-6 rows (the SDK rebuilds the class from the captured body) |
+| **U-7 / G-3** | Captured upgrade objects in the C-6 ratchet: a subscription with `pending_update`, a paid `subscription_update` invoice (negative `basic` line, positive `pro` line via `pricing.price_details.price`), a failed one, the expired-update event. `CAPTURED_OBJECTS` unchanged until then | `planStripeFields.c6.test.ts` | — | **Done in P-7b.1b**: 39 `captured-p7b1-*.json` files; `CAPTURED_OBJECTS` gains `invoice_payment`, `invoice_preview`, `pending_update`, `stripe_error`, `upgrade_response` |
+| **D-W** | The webhook rows of E-1 to E-5 replayed through local `stripe listen` | — | — | **Open: TL** (checklist in Implementation Notes (P-7b.1b)). The captured events already run through the real handlers in `planUpgrade.captured.test.ts` |
 
-All Stripe answers in the new tests are hand-built and say so in each file's header.
+All Stripe answers in the P-7b.1a tests are hand-built and say so in each file's header; P-7b.1b adds the captured answers (`planUpgrade.captured.test.ts`) and the headers now point there.
 
 #### Deviations and decisions for SA
 
@@ -873,6 +985,161 @@ Applied from "SA Code Review — P-7b.1a (2026-10-13)". Uncommitted, awaiting SA
 **Carried to 7b.1b:** replace the "pending E-1 / E-2 / E-4 / E-6" markers with the observed answers, and pin E-1 to E-5 as captured fixtures in the C-6 ratchet (U-7). U-7 / G-3 and D-W remain open gates before 7b.1b merges and before either buy-path switch goes on (F-5).
 
 **Code Approved for QA: Yes.**
+
+### P-7b.1b "Upgrade in Settings" (Dev, 2026-10-13)
+
+**Branch:** `feature/bos-plan-payments-p7b1b`, worktree `neuronforge-invite-s1`, fresh from `origin/main` `8014ee73` (P-7b.1a merged, PR #346); confirmed with `git branch --show-current`. Nothing committed (RM's job, after SA, QA and the user). No migration. No Stripe call and no database were used: every Stripe answer in the new tests is either hand-built (labelled) or one of the scrubbed sandbox captures.
+
+#### Files
+
+| File | Change |
+|---|---|
+| `lib/business-os/billing/planPurchaseTypes.ts` | `PlanUpgradeWire { tiers }`; `PlanPurchaseWire.upgrade` (import-free, W-6) |
+| `lib/business-os/billing/planPurchaseView.ts` | `purchase.upgrade` from `planUpgradeOffer` over the SAME billing row, switches and buyable tiers (the routes' step 5). A failed billing read offers nothing. No Stripe, no new entitlements symbol |
+| `components/business-os/settings/PlanUpgrade.tsx` (new) | The island (§3.7): preview, confirm, 3-D Secure via `getStripePromise()` + `handleNextAction`, Q-2 resume, outcomes, refusals by code, V-3 unknown (Check again / Try again on the same `prorationDate`), Q-5 note. The secret lives only in the handler's argument |
+| `components/business-os/settings/planUpgradeCopy.ts` (new) | Refusal → key map typed over `PlanUpgradeRefusalCode` (type import), the re-read codes, `upgradeDueKey` (E-5 rule, `STRIPE_MINIMUM_CHARGE_MINOR` 50), USD and account-clock formatters, the two route paths |
+| `components/business-os/settings/PlanSection.tsx` | Renders `PlanUpgrade`; "Upgrading…" and the bounded re-read on the shared `checkoutProcessing` constants; "You're on <plan>" only from the server; Q-7 `currentTierId` to `PlanPurchase` |
+| `components/business-os/settings/PlanPurchase.tsx` | Q-7: the row of the plan in force (a tier) reads "Pay for {plan}" with the one-line note; label only |
+| `lib/business-os/translations/{en,he,es}.ts` | 29 keys each (below) |
+| `lib/stripe/StripeService.ts`, `lib/business-os/billing/planUpgrade.ts` | Comments only: the "pending E-1 / E-2" markers replaced by the observed answers |
+| `lib/business-os/billing/__tests__/fixtures/stripe/captured-p7b1-*.json` (39 new) | U-7 captures (list below) |
+| `lib/business-os/billing/__tests__/planStripeFields.c6.test.ts` | Loader reads SDK answers, `invoicePayments` lists and a captured error; 5 new object kinds with their field lists; `CAPTURED_OBJECTS` ratchet updated; the version check admits the endive events |
+| `lib/business-os/billing/__tests__/planUpgrade.captured.test.ts` (new) | The real `StripeService`, preview/confirm, `planInvoiceFacts`, `applyPaidPlanInvoice` and `recordFailedPlanInvoice` over the captures (25 tests) |
+| `lib/business-os/billing/__tests__/planUpgradeOffer.matrix.test.ts` (new) | View ↔ real preview, every our-data combination (2,089 tests incl. documented exceptions) |
+| `components/business-os/settings/__tests__/PlanUpgrade.render.test.tsx` (new) | 48 tests (§7 "UI") |
+| Tests touched | `planPurchaseView.test.ts` (+ upgrade block), `my-plan` route test (+1), `PlanPurchase.render.test.tsx` (Q-7 label helper), `planInvoiceResolver.test.ts` (fixture-version check), header comments in `planUpgrade.test.ts`, `planUpgradeEligibility.test.ts`, `planInvoiceFacts.test.ts`, `businessOsPlanUpgrade.test.ts`, the upgrade route test |
+| Guards | `BusinessOsBillingAccountRepository.test.ts` and `BusinessOsBillingEventRepository.test.ts` list the captured test (it imports the row / apply TYPES); `enforcementPoints.test.ts` `planPurchaseView.ts` `why` re-checked (no new symbol) |
+| Docs | This workplan; requirement §9.1 P-7b.1 row, P-6a row, U-10 (extended), Change History; `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` § Plan checkout + Change History |
+
+#### User decision 2026-10-13 (E-5 wording, option a)
+
+When the preview's `amountDueMinor` is above 0 and under 50 (Stripe's minimum charge), the quote reads **"Nothing to pay now. {amount} will be added to your next bill."** instead of "{amount} due now, excluding tax." E-5 showed why: the preview says 14 cents due, Stripe marks the invoice paid with nothing charged and adds the 14 cents to the next renewal. Key `plan.upgrade.due_later_small`; rule in `upgradeDueKey`; pinned at 0 / 1 / 49 / 50 and by a render test. Also recorded in the requirement (§9.1 P-7b.1 row, Change History).
+
+#### U-7 / G-3: the captured fixtures
+
+Copied from the scrubbed experiment output into `lib/business-os/billing/__tests__/fixtures/stripe/` as `captured-p7b1-<name>.json`. Each keeps Stripe's ids, prices, amounts, statuses and timestamps, and states its source and version in `_fixture_source` (starting `CAPTURED`). SDK answers carry no `api_version`, so they state theirs in `_fixture_api_version` (`2025-10-29.clover`, the pinned SDK); events keep their `api_version` (`2026-09-30.endive`, as the sandbox renders them).
+
+| SDK answers (22) | Events (17) |
+|---|---|
+| `e1a-01-preview`, `e1a-02-update-response`, `e1a-04-invoicePayments-list`, `e1a-07-invoice-paid`, `e1b-01-update-response`, `e1b-02-invoicePayments-list`, `e1b-04-subscription-pending`, `e1b-06-subscription-after-pay`, `e2-01-update-response`, `e2-03-invoice`, `e3-01-preview`, `e3-02-update-response`, `e3-03-invoice`, `e4-01-update-response`, `e4-10-subscription-after-expiry`, `e4-11-invoice-after-expiry`, `e5-01-preview`, `e5-02-update-response`, `e5-03-invoice`, `e5-05-renewal-invoice`, `e6a-race-1`, `e6a-replay` | `e1a-event-invoice-paid-no3X5G`, `e1b-event-customer-subscription-pending_update_applied-DUk3sV`, `e1b-event-customer-subscription-updated-nRvRUW`, `e1b-event-customer-subscription-updated-Em1Qcy`, `e1b-event-invoice-paid-bd5SF4`, `e1b-event-invoice-payment_action_required-mSJfzg`, `e1b-event-invoice-payment_failed-PrF4oA`, `e2-event-customer-subscription-pending_update_expired-kVkUDA`, `e2-event-customer-subscription-updated-YXKbps`, `e2-event-invoice-payment_failed-tYXBde`, `e3-event-invoice-paid-Mm9iSs`, `e4-event-customer-subscription-pending_update_expired-zI3ljM`, `e4-event-customer-subscription-updated-fKUahQ`, `e4-event-invoice-payment_action_required-3pxFCe`, `e4-event-invoice-voided-GSGgyh`, `e5-event-invoice-paid-AVZ9jo`, `e5-event-invoice-paid-3OxITR` |
+
+**Scrub re-check (Dev, on the 39 files as committed):** a scanner over every value found **no** email other than `fixture@example.invalid`, **no** URL other than `https://example.invalid/scrubbed`, **no** `sk_` / `rk_` / `pk_` / `whsec_` string, **no** `_secret_` value, every `client_secret` (incl. `confirmation_secret.client_secret`) equal to `scrubbed_secret` or null, no address, phone, IP address or `bos_user_id` value. Names: only `Test Customer` (account and customer name); descriptions are Stripe's proration lines ("Unused time on Essentials after …") and the experiment labels (`p7b1-exp e1a` …); price nicknames `bos basic/pro monthly usd`. The one card detail is the public test card's `last4` 0341 and its test fingerprint. One edit to Stripe's data: in `e6a-race-1` the scrubber's name rule had replaced `err.name` (the SDK class) with "Test Customer"; it is restored to `StripeInvalidRequestError` and the file's source line says so.
+
+**C-6 ratchet:** `CAPTURED_OBJECTS` gains `invoice_payment`, `invoice_preview`, `pending_update`, `stripe_error`, `upgrade_response`, each with the fields the code reads (`invoice_preview`: `amount_due`, `total`, `total_taxes`, `currency`; `upgrade_response`: `id`, `livemode`, `pending_update`, `latest_invoice.{id,status,confirmation_secret}`; `pending_update`: `expires_at`, `subscription_items[].price.id`; `invoice_payment`: `is_default`, `payment.payment_intent.status`; `stripe_error`: `err.{type,code,statusCode}`, `raw.{code,type}`). Every captured invoice, line and subscription also passes the existing webhook field lists.
+
+**The real code over the captures** (`planUpgrade.captured.test.ts`): E-1 preview amounts and the exact `createPreview` call; applied updates (E-1a, E-3, E-5, E-6 replay) → `upgraded` with no payment read; E-1b → one `invoicePayments.list` → `action_required` with the secret in no log or audit; E-2 → `declined` + `retryAfter` = `expires_at`; E-6 → the SDK rebuilds `StripeInvalidRequestError` / `idempotency_key_in_use` from the captured body → `upgrade_busy`, not audited; Q-2 resume over the E-1b pending subscription and open invoice (confirm resumes; preview answers awaiting with 3387, no secret); E-4 `voided_at` = `expires_at`, and a void invoice behind a pending update → `upgrade_pending`, no payment read, no write; `planInvoiceFacts` over all five captured `invoice.paid` events (pro, assigns, deciding price pro, CF-6 at `amount_paid` 0 for E-3 and E-5); webhook apply: E-1b paid with the after-pay subscription → applied with `billingReason`; with ITS pending update → `PlanPaymentRetryError`; E-1a against a captured lower-tier subscription → recorded without the plan, alerted once (U-4 case 2); E-3 / E-5 → applied at `amount_paid` 0; and the P-6a note: the E-1b `invoice.payment_failed` of an upgrade that succeeded records one `invoice_payment_failed` row and moves nothing.
+
+#### Checks (final diff)
+
+| Check | Result |
+|---|---|
+| Jest: `lib/business-os/billing`, `lib/business-os/entitlements`, `app/api/business-os/billing`, `app/api/business-os/entitlements`, `components/business-os`, `app/business-os`, `app/api/stripe`, `lib/stripe`, `lib/client`, `app/invite`, `lib/business-os/__tests__`, `lib/payments`, the two billing repository tests | **228 suites, 7,644 tests, all green** |
+| New files alone | `planStripeFields.c6` 57, `planUpgrade.captured` 25, `planUpgradeOffer.matrix` 2,089, `PlanUpgrade.render` 48 (run 3 times, stable) |
+| `npm run test:bos-entitlements` | **251 suites, 7,337 tests, green** |
+| `npm run typecheck:bos-llm` | **Passed, 0 new** (518 files, 28 baseline; the same one baseline entry reported fixed, `app/api/onboarding/build/route.ts`, untouched) |
+| `tsc` over every touched source and test (scratch tsconfig extending the project's) | 0 new. Reported only pre-existing items: duplicate translation keys at `en.ts` 2040-2054 / 4113 and `es.ts` 1947-1961 / 3872 (on `origin/main` too) and two unused `@ts-expect-error` in the `my-plan` route test (lines 515, 527, on `origin/main`) |
+| ESLint on every touched code and test file | Clean |
+| `npm run lint:hooks` | Clean |
+| Mutations (each restored from a scratch copy; md5 identical before and after) | **3 of 3 caught.** M1 the view without `endedAt` (matrix + view test: 3 fail); M2 the section's success without "no longer offered" (Q-5: 2 fail); M3 Try again re-posting a different `prorationDate` (V-3: 3 fail) |
+| **SA fixes G-1 / G-2 (Dev, 2026-10-13)** | **G-1** `PlanUpgrade.tsx`: `classifyNextAction` reads the `handleNextAction` answer. PaymentIntent status (from `paymentIntent`, else `error.payment_intent`) `succeeded` / `processing` / `requires_capture` → "Upgrading…" + re-read; `requires_payment_method` / `requires_action` / `canceled`, or `error.type === 'card_error'`, or `error.code === 'payment_intent_authentication_failure'` (a closed or failed challenge) → "not confirmed, nothing changed"; anything else (`api_connection_error`, `api_error`, `rate_limit_error`, an unknown type, no status) → unknown with Check again and Try again (same `prorationDate`). A throw from `handleNextAction` stays unknown. The inconclusive case logs `errType` / `errCode` only (never the result object, which can carry the PaymentIntent). Render tests: a throw, returned `api_connection_error` / `api_error` / `rate_limit_error` / unknown type / no status → unknown, never "nothing changed", Try again re-posts the same date (6); closed challenge (`invalid_request_error` + `payment_intent_authentication_failure` + `requires_payment_method`) and an error carrying a `canceled` PaymentIntent → not confirmed (added to the existing `card_error` / `requires_payment_method` cases); after "not confirmed", Upgrade again → the Q-2 "waiting" line, Confirm posts the fresh date and offers the same challenge; a 15-row table over `classifyNextAction`. **G-2** render tests on the U-5 terms: (a) target in force, no longer offered, billing `cancelling` (not `renewing`) → no "You're on…", ends in "taking longer"; (b) billing `renewing`, `purchase.upgrade` null (prices switch off), plan in force still the lower tier → no "You're on…". `PlanUpgrade.render` now 74 tests (was 48) |
+| **SA mutations re-run after G-1 / G-2** (Edit-tool mutations, each restored by re-editing; md5 identical before and after: `PlanUpgrade.tsx` `005afae8…` (post-G-1), `PlanSection.tsx` `98aa7bc2…` (unchanged, as SA recorded)) | **5 of 5 caught** over `components/business-os/settings` (187 tests). **MB** a Stripe.js throw read as not confirmed → 1 fails (the G-1 throw test). **MS1** success without `succeeded` (`renewing`) → 1 fails (G-2 a). **MS2** success without `planId === upgradeTarget` → 1 fails (G-2 b). **MG1** every returned error read as not confirmed (the pre-G-1 behaviour) → 8 fail. **MG2** the `payment_intent_authentication_failure` term dropped → 1 fails (the table row with no PaymentIntent on the error) |
+| **QA note 1: `upgrade_pending` without `retryAfter` pinned (Dev, 2026-10-13)** | New render test in `PlanUpgrade.render.test.tsx`, run on both the preview and the confirm path (2 cases): a 409 `upgrade_pending` with no `retryAfter` shows `plan.upgrade.refusal.pending_no_time` (en text), the line contains no `{`, and never the server's English. Mutations (Edit tool, restored by re-editing; `PlanUpgrade.tsx` md5 `005afae8…` and `planUpgradeCopy.ts` `dfa8b978…` identical before and after): **QA-M1** (branch removed, the timed line filled with an empty time) → 2 fail; **QA-M1b** (the unfilled timed template when there is no time) → 2 fail. `components/business-os/settings`: **4 suites, 189 tests, green** (was 187). `PlanUpgrade.render` now 76 tests |
+| SA optimisation (captured test) | Applied. Each confirm run's fresh read is the E-4 after-expiry subscription re-identified with that experiment's own subscription and customer ids (`freshReadFor(name)`); the E-6 race uses the E-6 replay's ids. Each run now also asserts the write went to that subscription. `planUpgrade.captured` 25 / 25 green |
+| Suites after G-1 / G-2 | `components/business-os/settings`, `lib/business-os/billing`, `app/api/business-os/billing`, `app/api/business-os/entitlements`: **37 suites, 3,634 tests, green**. `npm run test:bos-entitlements`: **251 suites, 7,337 tests, green**. `npm run typecheck:bos-llm`: passed, 0 new. `tsc` over `PlanUpgrade.tsx` and the two touched test files (scratch tsconfig): 0 new (only the pre-existing `en.ts` / `es.ts` duplicate keys). ESLint on the touched files: clean |
+| `git diff --stat` | 25 tracked files modified (622 insertions, 79 deletions, this workplan included), no deletion-only file; new: 2 components, 4 test files, 39 fixtures |
+
+#### he / es drafts for the user (G-5), verbatim
+
+English is final for SA. The Hebrew and Spanish below are **drafts** for the user's approval before P-7b.1b merges.
+
+| Key | English | Hebrew (draft) | Spanish (draft) |
+|---|---|---|---|
+| `plan.choose.button_own` | Pay for {plan} | תשלום עבור {plan} | Pagar {plan} |
+| `plan.choose.own_plan_note` | You are on {plan} by arrangement with us. Paying starts a monthly subscription that replaces that arrangement. | התוכנית {plan} ניתנה לך בהסדר איתנו. תשלום פותח מינוי חודשי שמחליף את ההסדר הזה. | Tienes {plan} por un acuerdo con nosotros. Al pagar empieza una suscripción mensual que sustituye ese acuerdo. |
+| `plan.upgrade.button` | Upgrade to {plan} | שדרוג ל־{plan} | Mejorar a {plan} |
+| `plan.upgrade.previewing` | Working out the price… | מחשבים את המחיר… | Calculando el precio… |
+| `plan.upgrade.due_now` | {amount} due now, excluding tax. | {amount} לתשלום עכשיו, לא כולל מס. | {amount} a pagar ahora, impuestos no incluidos. |
+| `plan.upgrade.due_now_zero` | Nothing to pay now: your account credit covers it. | אין מה לשלם עכשיו: יתרת הזכות בחשבון מכסה את הסכום. | No hay nada que pagar ahora: el saldo a favor de tu cuenta lo cubre. |
+| `plan.upgrade.due_later_small` | Nothing to pay now. {amount} will be added to your next bill. | אין מה לשלם עכשיו. {amount} יתווספו לחשבון הבא. | No hay nada que pagar ahora. Se añadirán {amount} a tu próxima factura. |
+| `plan.upgrade.then` | Your plan renews on {date} at {price} a month. | התוכנית מתחדשת ב־{date} במחיר {price} לחודש. | Tu plan se renueva el {date} a {price} al mes. |
+| `plan.upgrade.immediate` | You move to {plan} as soon as the payment goes through. | המעבר ל־{plan} מתבצע ברגע שהתשלום עובר. | Pasas a {plan} en cuanto se complete el pago. |
+| `plan.upgrade.confirm` | Confirm upgrade | אישור השדרוג | Confirmar la mejora |
+| `plan.upgrade.cancel` | Not now | לא עכשיו | Ahora no |
+| `plan.upgrade.upgrading` | Upgrading… | משדרגים… | Mejorando tu plan… |
+| `plan.upgrade.done` | You're on {plan}. | התוכנית שלך עכשיו: {plan}. | Ya tienes {plan}. |
+| `plan.upgrade.declined` | Your card was declined, so nothing changed. You're still on {plan}. | הכרטיס נדחה, ולכן שום דבר לא השתנה. התוכנית שלך עדיין {plan}. | Tu tarjeta fue rechazada, así que no cambió nada. Sigues con {plan}. |
+| `plan.upgrade.not_confirmed` | The payment was not confirmed, so nothing changed. You're still on {plan}. | התשלום לא אושר, ולכן שום דבר לא השתנה. התוכנית שלך עדיין {plan}. | El pago no se confirmó, así que no cambió nada. Sigues con {plan}. |
+| `plan.upgrade.retry_after` | You can try again after {time}. | אפשר לנסות שוב אחרי {time}. | Puedes volver a intentarlo a partir del {time}. |
+| `plan.upgrade.awaiting_confirmation` | Your upgrade is waiting for you to confirm the payment. | השדרוג ממתין לאישור התשלום שלך. | Tu mejora está esperando a que confirmes el pago. |
+| `plan.upgrade.own_plan_note` | You have {plan} by arrangement with us. Upgrading makes it your paid plan from today. | התוכנית {plan} ניתנה לך בהסדר איתנו. שדרוג הופך אותה לתוכנית בתשלום החל מהיום. | Tienes {plan} por un acuerdo con nosotros. Al mejorar, pasa a ser tu plan de pago desde hoy. |
+| `plan.upgrade.not_sure` | We could not confirm your upgrade. | לא הצלחנו לוודא את השדרוג. | No pudimos confirmar tu mejora. |
+| `plan.upgrade.try_again` | Try again | לנסות שוב | Intentar de nuevo |
+| `plan.upgrade.refusal.pending` | An upgrade is already waiting for payment. You can try again after {time}. | שדרוג כבר ממתין לתשלום. אפשר לנסות שוב אחרי {time}. | Ya hay una mejora pendiente de pago. Puedes volver a intentarlo a partir del {time}. |
+| `plan.upgrade.refusal.pending_no_time` | An upgrade is already waiting for payment. Please try again later. | שדרוג כבר ממתין לתשלום. כדאי לנסות שוב מאוחר יותר. | Ya hay una mejora pendiente de pago. Inténtalo de nuevo más tarde. |
+| `plan.upgrade.refusal.cancelling` | Your plan is set to end, so it cannot be upgraded. | התוכנית שלך מוגדרת להסתיים, ולכן אי אפשר לשדרג אותה. | Tu plan está programado para terminar, así que no se puede mejorar. |
+| `plan.upgrade.refusal.not_active` | Your subscription is not active right now, so it cannot be upgraded. | המינוי שלך לא פעיל כרגע, ולכן אי אפשר לשדרג אותו. | Tu suscripción no está activa en este momento, así que no se puede mejorar. |
+| `plan.upgrade.refusal.preview_expired` | The price needs checking again. Please press Upgrade once more. | צריך לחשב שוב את המחיר. כדאי ללחוץ שוב על השדרוג. | Hay que volver a calcular el precio. Pulsa de nuevo para mejorar. |
+| `plan.upgrade.refusal.busy` | Your upgrade is already being processed. Please wait a moment. | השדרוג כבר בטיפול. כדאי לחכות רגע. | Tu mejora ya se está procesando. Espera un momento. |
+| `plan.upgrade.refusal.unavailable` | Upgrading is not available right now. Please try again later. | שדרוג לא זמין כרגע. כדאי לנסות שוב מאוחר יותר. | La mejora de plan no está disponible ahora. Inténtalo de nuevo más tarde. |
+| `plan.upgrade.refusal.support` | We could not upgrade your plan. Please contact support. | לא הצלחנו לשדרג את התוכנית. יש לפנות לתמיכה. | No pudimos mejorar tu plan. Contacta con soporte. |
+| `plan.upgrade.refusal.generic` | Something went wrong. Please try again. | משהו השתבש. כדאי לנסות שוב. | Algo salió mal. Inténtalo de nuevo. |
+
+"Check again" reuses `plan.purchase.check_again` (already approved). `{time}` is a day and a time on the account clock (for example "October 14, 09:05 AM"; Hebrew and Spanish use their own locale order), `{date}` a day on the account clock, prices in digits and USD (SR-15).
+
+#### Deviations and decisions for SA
+
+1. **The matrix test drives `previewPlanUpgrade`, not the HTTP handler**, as P-4's matrix drove `startPlanCheckout`. The route adds only the 404 switch, auth and the strict body in front of it (pinned by its own suite); "gets past step 5" = it reached Stripe's fresh subscription read. Both sides read the world through their own ports. Documented exceptions pinned: Stripe status `past_due`, Stripe cancelling, a pending update for another target, the late webhook (`upgrade_processing`), a different customer at Stripe, and the price check.
+2. **Success is one term stricter than U-5's three**: the plan in force is the target, the record reads `renewing`, AND `purchase.upgrade` no longer lists the target. Without the last term, the Q-5 case (an admin-assigned top tier on a lower paid tier) would read "You're on Autopilot" before the webhook landed (mutation M2 shows the term is needed).
+3. **`upgrade_processing` and `not_an_upgrade` go to "Upgrading…" and the re-read**, not a line. `not_an_upgrade` after the screen offered the upgrade means our record already pays for the target (the webhook landed between page load and press); the re-read then shows the plan. If it is ever something else, the bounded re-read ends in "This is taking longer than usual", never success.
+4. **`not_subscribed` reads the `not_active` line** (the subscription ended or was never recorded between page load and press).
+5. **Unknown is conservative on the confirm only (V-3)**: a 502 with `outcomeUnknown`, a 5xx without a code, a network failure after sending, an `action_required` without a secret, an unknown outcome, and a Stripe.js throw inside `handleNextAction` all read "We could not confirm your upgrade" with Check again and Try again. A preview failure reads the generic line (a preview writes nothing). A closed or failed challenge, or `requires_payment_method` after it, reads "not confirmed, nothing changed" (true by E-4: the invoice is voided at expiry and the price stays). Stripe.js not loadable after the confirm answered also reads "not confirmed". **Changed by SA G-1:** a returned Stripe.js error is "not confirmed" only when it is known to be a refusal (`card_error`, `payment_intent_authentication_failure`, or a PaymentIntent in `requires_payment_method` / `requires_action` / `canceled`); any other returned error reads "We could not confirm your upgrade" (see Checks).
+6. **Check again (unknown) is ONE server re-read** (`onCheckAgain`), not the bounded loop, and the island stays unsure unless the server shows success; "Upgrading…" is never claimed for an unknown result. Try again re-posts the same `prorationDate` (mutation M3 pins it).
+7. **New keys beyond §10**: `plan.upgrade.due_later_small` (the user's E-5 decision), `plan.upgrade.refusal.pending_no_time` (an `upgrade_pending` without `retryAfter`, so a `{time}` slot is never shown unfilled), `plan.upgrade.try_again` (the V-3 button). All three in the G-5 table.
+8. **"You're still on {plan}"** names the plan in force (`plan.name`). In the rare Q-5 case that is the admin-assigned plan, which is still true.
+9. **No Stripe.js key**: the preview still works (it needs none); the quote shows `plan.choose.not_configured` and no Confirm, so the confirm is never posted (M-2 pattern). Try again is also hidden then.
+10. **Q-7** is a label and note only (`currentTierId`, set only when the plan in force is a tier). The existing P-4.2 render test now expects "Pay for <plan>" on the plan-in-force row (its default payload is an admin-assigned tier with no billing record, exactly the Q-7 case).
+11. **Fixture plumbing**: the C-6 loader and the resolver test's version check were widened for SDK answers (`_fixture_api_version`), `invoicePayments` lists, a captured error, and the sandbox's endive events. Classification of SDK answers is by file name (`-preview`, `-update-response` / `-replay`). The captured test's confirm runs use the E-4 after-expiry subscription as the fresh read for every experiment (no pre-update read was captured for E-1a, E-3, E-5, E-6); each experiment's own update answer is the write's answer. **SA optimisation applied:** that fresh read now carries the experiment's own subscription and customer ids.
+12. **E-2 forward point (SA) not acted on**: Stripe would accept "fix the card and try now" (a second update voids the first invoice), but our `upgrade_pending` refusal until expiry stays, as SA ruled; the declined line shows when.
+
+#### D-W and T14: checklist for TL (not run by Dev)
+
+Run on the **standard sandbox `acct_1UPKR4C7KDUGYIcA`** (test mode) only, the same day as the clean-up.
+
+**Setup (local only, never committed)**
+
+1. TL puts the sandbox keys in `.env.local` (secret key, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` `pk_test_…`, and the `whsec_…` that `stripe listen` prints as `STRIPE_WEBHOOK_SECRET`), and turns on `BUSINESS_OS_PLAN_CHECKOUT_ENABLED=true` and `BUSINESS_OS_PLAN_PRICES_ENABLED=true` locally. `npm run check-bos-plan-prices` passes against the sandbox.
+2. `stripe listen` with explicit events (Stripe CLI 1.53 syntax), forwarding to the local webhook route:
+   `stripe listen --events invoice.paid,invoice.payment_failed,invoice.payment_action_required,invoice.voided,customer.subscription.updated,customer.subscription.deleted,customer.subscription.pending_update_applied,customer.subscription.pending_update_expired,checkout.session.completed,checkout.session.expired --forward-to localhost:3000/api/stripe/webhook`
+3. A designated test owner per scenario, on a non-champion account. Note each customer and subscription id for the clean-up list.
+
+**D-W (webhook replay; P-7b.1a's rows)**
+
+| # | Do | Expect |
+|---|---|---|
+| D-W1 | An owner on Essentials (bought with `4242`) upgrades with `4242` | `invoice.paid` (`subscription_update`) applied: plan row `pro`, `tier_expires_at` and `period_anchor` unchanged; money history one `invoice_paid` row; audit `BOS_BILLING_INVOICE_PAID` with `billingReason: subscription_update` |
+| D-W2 | Card `4000002760003184` (3-D Secure always) set as the **subscription's** default payment method; upgrade; complete the challenge | `invoice.payment_failed` → one `invoice_payment_failed` row, nothing moved (the P-6a note); `invoice.payment_action_required` handled as today; `invoice.paid` → applied once Stripe shows the item on `pro` (if it lands while the pending update still waits on this invoice, the handler answers a retry and Stripe re-delivers) |
+| D-W3 | Credit balance: `stripe customers update cus_… --balance=-20000`, then upgrade | `invoice.paid` with `amount_paid` 0, `total` > 0 → applied (CF-6) |
+| D-W4 | Card `4000000000000341` attached and set as the **subscription's** default payment method; upgrade | `invoice.payment_failed` → one failed row; plan row stays `basic`; no banner (U-10) |
+| D-W5 | Re-deliver an `invoice.paid` already applied (D-W1) through the listener (`stripe events resend <evt_id>`) | Replay: no new row, no alert, no audit |
+| D-W6 (optional) | E-5 near the period end on a test-clock customer (advance to ~2 h before the end, then upgrade) | `invoice.paid` with `amount_paid` 0, `total` under 50 → applied (CF-6); the next renewal carries the cents |
+
+**T14 (demo of P-7b.1b, §9 D0 to D7)**
+
+| # | Do | Expect |
+|---|---|---|
+| D0 | Buy Essentials in Settings → Plan with `4242` | "You're on Essentials", "Renews on <date>" |
+| D1 / D1a | Settings → Plan | "Upgrade to Autopilot"; pressing it shows "$NN.NN due now, excluding tax.", "Your plan renews on <same date> at $129 a month." |
+| D1b | Confirm | "Upgrading…", then "You're on Autopilot." The sandbox charge equals the preview |
+| D2 | `4000000000000341` as the subscription default; Upgrade → Confirm; then Upgrade again | "Your card was declined, so nothing changed. You're still on Essentials." + "You can try again after <time>"; the second press: "An upgrade is already waiting for payment. You can try again after <time>." |
+| D3a | `4000002760003184` as the subscription default; Upgrade → Confirm → complete the challenge | The challenge in place, then "Upgrading…" → "You're on Autopilot." |
+| D3b | Same, close the challenge; press Upgrade again. **Record what Stripe.js actually returns when the challenge is closed** (the `handleNextAction` result: `error.type`, `error.code`, and the PaymentIntent status on `error.payment_intent` or `paymentIntent`; browser devtools, never the client secret) **to confirm G-1's mapping** | "The payment was not confirmed, so nothing changed."; the second press shows "Your upgrade is waiting for you to confirm the payment." and Confirm offers the same challenge (Q-2). If the close reads "We could not confirm your upgrade" instead, G-1's mapping does not match the real Stripe.js: record the values and stop for Dev / SA |
+| D4 | Credit balance covering the proration | "Nothing to pay now: your account credit covers it."; Confirm → Autopilot |
+| D5 | Double click Confirm; then two tabs confirming together | One charge; the second answer is "Upgrading…" (`upgrade_processing` / `not_an_upgrade`) or "Your upgrade is already being processed." (`upgrade_busy`) |
+| D6 | Leave a quote open 16 minutes, then Confirm | "The price needs checking again. Please press Upgrade once more."; a fresh preview works |
+| D7 | Switch to Hebrew, then Spanish | Every new line translated (drafts); Hebrew right to left |
+| D8 (optional) | E-5 near the period end (test clock) | "Nothing to pay now. $0.xx will be added to your next bill." |
+
+**Clean-up, the same day:** cancel every sandbox subscription and delete the test customers and test clocks created for D-W and T14 (`stripe subscriptions cancel sub_…`, `stripe customers delete cus_…`, `stripe test_helpers test_clocks delete clock_…`); turn the local switches off and remove the sandbox keys from `.env.local`; `git diff` shows nothing in env files or `tierMatrix.ts`; record the ids and results in this section (TL).
 
 ---
 
@@ -966,6 +1233,187 @@ QA-M2 (offer without endedAt):            1 failed (planUpgradeOffer not_active 
 - [x] All acceptance criteria in P-7b.1a's scope pass. **Verdict: PASS WITH NOTES.** There is no bug. Note 1 (SA R-1) is a comment fix Dev should make before commit; notes 2 to 5 are forward items. Ready for the user's diff review and RM, under SA's merge gates (U-7 / G-3 and D-W before P-7b.1b merges and before any production switch flip, F-5)
 - [ ] Issues found: Dev must address before commit
 
+### P-7b.1b "Upgrade in Settings"
+
+**QA — 2026-10-13**
+**Test mode:** full
+**Strategy used:** A + B (Jest). Dev's suites, plus a **temporary QA render file of 71 tests** (`components/business-os/settings/__tests__/zzqa.p7b1b.temp.test.tsx`, deleted after the run). It reused the Dev render harness (the real plan view and the real `readPlanPurchaseView`, with routes faked at `fetch`) and added a recording `createLogger` mock, so every log call could be searched for the secret. QA also re-scanned the 39 fixtures and ran two mutations. No browser, no real database, no Stripe call.
+**Focus:** ui, security (V-1 secret), schema (E-5, refusal map), i18n / RTL
+**Skipped:** T14 and D-W (manual, sandbox). TL runs them with the user, from the run-sheet below
+**Input source:** prompt keywords (TL brief) and SA "QA focus" 1 to 8
+
+#### Suites run (worktree `neuronforge-invite-s1`, uncommitted, G-1 to G-3 applied)
+
+| Check | Result |
+|---|---|
+| Jest: `components/business-os`, `lib/business-os/billing`, `lib/business-os/entitlements`, `app/api/business-os/billing`, `app/api/business-os/entitlements`, `app/business-os`, `app/api/stripe`, `lib/stripe`, `lib/client`, `app/invite`, `lib/repositories/__tests__` | **231 suites, 8,250 tests, all green** (final run). A combined md5 of the settings components, the billing sources and `StripeService.ts` was identical before and after this run. The first run of the same scope had **1 failure**, G-2 (b) ("You're on Essentials" shown). It ran while SA's parallel diff look had MS2 applied to `PlanSection.tsx` (mtime 21:00:22, then restored to md5 `98aa7bc2…`). So that run is an accidental **Jest confirmation that G-2 (b) kills MS2**, the run SA could not make. It is not a defect |
+| `components/business-os/settings` alone, on the untouched sources | 4 suites, 187 tests, green |
+| `npm run test:bos-entitlements` | **251 suites, 7,337 tests, green** |
+| `npm run typecheck:bos-llm` | **Passed, 0 new** (518 files, 28 baseline; the same one baseline entry reported fixed, `app/api/onboarding/build/route.ts`, untouched) |
+| `npm run lint:hooks` | **Clean** (exit 0) |
+| QA temporary render file (deleted) | **71 / 71 passed** (coverage table below) |
+| Fixture spot re-scan (39 `captured-p7b1-*.json`) | ✅ Emails: only `fixture@example.invalid` (26). URLs: only `https://example.invalid/scrubbed` (49). No `sk_` / `rk_` / `pk_` / `whsec_` value. `client_secret`: only `scrubbed_secret` (9), and no `_secret_` token. Names: `customer_name` / `account_name` `Test Customer`, plus the restored `StripeInvalidRequestError`. No phone, address line, postal code or IP address. `bos_plan_*` appears only as Stripe `product` ids and `lookup_key`s (configuration, not personal data). Every `metadata` is empty |
+| Client imports | ✅ `PlanUpgrade.tsx` imports `react`, `lucide-react`, `LanguageContext`, `lib/client/stripeJs`, `lib/logger`, `./PlanPurchase` (type only), `./planPurchaseCopy` and `./planUpgradeCopy`. `planUpgradeCopy.ts` has one type-only import from `billing/planUpgrade`. `PlanSection.tsx` / `PlanPurchase.tsx` add no server import. No `server-only`, repository, `supabaseServer`, `lib/stripe/` or `console.*` in any of the four |
+| P-4.2 purchase / P-5a.2 holding screen unchanged | ✅ `PlanEmbeddedCheckout`, `lib/client/stripeJs.ts` and every `app/` source are untouched; only two `app/` test files change. `PlanPurchase.tsx` changes the label and note only (`currentTierId`). The P-4.2 render test's edits only swap the expected label through `chooseLabel` (the Q-7 row), and the POST bodies it asserts are unchanged. The holding-screen suites (`app/business-os`, `app/invite`) are green |
+
+#### Mutations (each by Edit tool, restored by re-editing, md5 identical before and after: `PlanUpgrade.tsx` `005afae8…`, `PlanSection.tsx` `98aa7bc2…`)
+
+| # | Mutation | Dev suites (`components/business-os/settings`, 187) | QA file |
+|---|---|---|---|
+| QA-M1 | `upgrade_pending` without `retryAfter` reads `refusal.pending` with an empty `{time}` (the `pending_no_time` branch removed) | **Survived** (0 fail) | 4 fail (no-time × en / he / es, malformed time) |
+| QA-M2 = SA MS1 | `upgradeSucceeded` without `renewing` (the `succeeded` term replaced by `status ok && kind tier`) | **Caught** (1 fail: G-2 (a)) | — |
+| SA MS2 (incidental, see above) | `upgradeSucceeded` without `planId === upgradeTarget` | **Caught** (1 fail: G-2 (b)) | — |
+
+#### Test Coverage (SA QA focus 1 to 8)
+
+| Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| 1. G-1: a throw or a returned non-refusal error after the challenge → "We could not confirm your upgrade", Try again re-posts the SAME `prorationDate`; a closed challenge or card refusal → "not confirmed", then Upgrade again → the Q-2 waiting line | ✅ | Pass | Dev: 6 unknown cases, 4 not-confirmed cases, the Q-2 case after a close, and a 15-row table. QA added: `card_error` + `card_declined` → not confirmed → Upgrade again → waiting line. Check again with a **failing** re-read stays unsure, its button is enabled again, "nothing changed" is never shown, and Try again re-posts the same date |
+| 2. "You're on <plan>" only when all four U-5 terms hold | ✅ | Pass | Dev's G-2 (a) / (b), Q-5 not-done and done, and failed re-reads. MS1 and MS2 are both caught under Jest (above) |
+| 3. Secret absent from the DOM, URL, storage, logs and refusal bodies, on a fresh confirm and on the resume | ✅ | Pass | QA ran the fresh confirm four ways: completed, closed, transport error, and a throw whose `Error.message` contains the secret. QA also ran the Q-2 resume ending in an `api_error`. Each run asserts: the secret is in no `innerHTML` or `location.href`; no `localStorage` / `sessionStorage` value and no `setItem` call; no `router.replace`; and no recorded `createLogger` call from any module (the throw logs `errName` only, the inconclusive path `errType` / `errCode` only). A `stripe_error` refusal body carrying the secret in `error` and `details` renders the localized generic line only. The server side (refusal bodies, the 200 `awaiting` body) was pinned in the P-7b.1a QA |
+| 4. E-5 wording at 0, 1, 49, 50 cents (decision a) | ✅ | Pass | Rendered in **en, he and es** at each point (12 cases): 0 → the zero line; 1 and 49 → "Nothing to pay now. $0.01 / $0.49 will be added to your next bill."; 50 → "$0.50 due now, excluding tax." No unfilled `{…}`. "Tax" (en `tax`, he `מס`, es `impuestos`) appears **only** on the due-now line |
+| 5. Every refusal localized in en / he / es; `upgrade_pending` with and without a time; Hebrew RTL; `upgrade_processing` / `not_an_upgrade` → "Upgrading…" | ✅ | Pass | QA: every line-mapped code (14, incl. `not_available` and `invalid_input`) as a confirm refusal in each of the 3 languages (42 cases). Each shows the dictionary line and never the server's English. `upgrade_pending` without `retryAfter`, and with a malformed one → `pending_no_time`, no `{time}` (en / he / es). With `retryAfter` → the line with the account-clock time (en / he / es). A 401 → signed out. Hebrew declined line inside `dir="rtl"`, with no English. Dev covers the re-read codes and the he / es button and quote. **Note:** the no-time branch is not pinned by Dev's suite (QA-M1 survived), so see Edge case 1 |
+| 6. No publishable key → price shows, no Confirm, no POST | ✅ | Pass | Dev: the quote. QA added the Q-2 awaiting state without a key: the line and the amount show, there is no Confirm, and nothing is posted |
+| 7. Q-5 note and Q-7 "Pay for" only where the plan in force is a tier | ✅ | Pass | Dev: the Q-5 note on an admin-assigned top tier; Q-7 on an admin-assigned tier with no record; a trial without a record. QA added: the lower tier in force and paying → no note on either list; a trial (a cohort) with a paying record → no Q-5 note and no "Pay for" |
+| 8. Matrix and captured suites green; `test:bos-entitlements` on the final diff | ✅ | Pass | `planUpgradeOffer.matrix` and `planUpgrade.captured` are inside the 231 / 8,250; entitlements 251 / 7,337 |
+| P-4.2 purchase and P-5a.2 holding screen unchanged | ✅ | Pass | See Suites |
+| Happy path + a failure path (CLAUDE.md minimum) | ✅ | Pass | — |
+| Manual critical path (T14) and webhook replay (D-W) | ⬜ | Not run | Merge gates. TL and the user run them, using the run-sheet below |
+
+#### Issues Found
+
+**Bugs (must fix before commit):** none.
+
+**Performance issues:** none. The island makes one POST per press (`inFlight` guard). Check again makes one re-read. The bounded re-read reuses the checkout's limits.
+
+**Edge cases and observations:**
+1. **Test gap: `upgrade_pending` without `retryAfter` is not pinned** (Low, tests only). The behaviour is correct (QA's temporary tests pass in all three languages), but QA-M1 survived all 187 Dev tests in `components/business-os/settings`. The only cover is the key-presence check. Recommend one render test before commit: the preview refuses `upgrade_pending` with no `retryAfter` → `plan.upgrade.refusal.pending_no_time`, and no `{` in the line. QA's version is in this report's history.
+2. **Secret-in-logs is pinned by a source regex only** in the Dev suite (`logger.\w+(…clientSecret`). QA's recording logger confirms nothing leaks today, including a thrown `Error` whose message holds the secret. A behavioural log assertion would be stronger. Optional.
+3. **After "You're on <plan>", the island stays hidden until a reload** (SA optimisation, already recorded). Harmless with two buyable tiers.
+4. **Parallel QA and SA mutation runs share one worktree.** An SA mutation was live during QA's first run, and that run failed for it. Future cycles should run one at a time, or have each check its md5 before and after.
+
+#### Run-sheet: T14 + D-W in one sandbox session (TL with the user)
+
+Refines the Dev checklist above into one order. Every step is test mode on the **standard sandbox `acct_1UPKR4C7KDUGYIcA`** only. **Local development uses the PRODUCTION database**, so use test accounts only (never a champion or a real customer). Start in the morning: cleanup must finish the same day. Record each id in the table at the end of this section.
+
+**Accounts (5 Business OS test owners, each non-champion, with no billing record yet).** A: D0, D1, D1b, D-W1, D-W5, D7. B: D2 / D-W4. C: D3b then D3a / D-W2. E: D4 / D-W3. F: D6 then D5. Each one first buys Essentials through P-4.2 (step 3). If fewer accounts are available, the order below still holds, but every scenario needs an owner who is on a **paid Essentials subscription with no pending update**.
+
+**0. Pre-checks (stop if any fails)**
+1. In the Dashboard, sandbox `acct_1UPKR4C7KDUGYIcA` → Developers → Webhooks: **no hosted endpoint forwards to production**. If one exists, stop: production would receive these events too.
+2. The worktree is on `feature/bos-plan-payments-p7b1b` (`git branch --show-current`), and `git status` shows the uncommitted P-7b.1b diff. Do not stash or check out.
+3. Port 3000 may be in use by another dev server. If it is, use **3100** everywhere below.
+
+**1. Local setup (Git Bash, in `neuronforge-invite-s1`; nothing printed, nothing committed)**
+1. Build `.env.local` from the main checkout, without the Stripe and switch lines, then add the sandbox secret key from the key file (the key is not printed):
+   `grep -vE '^(STRIPE_SECRET_KEY|NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY|STRIPE_WEBHOOK_SECRET|STRIPE_CONNECT_WEBHOOK_SECRET|BUSINESS_OS_PLAN_PRICES_ENABLED|BUSINESS_OS_PLAN_CHECKOUT_ENABLED)=' ../neuronforge/.env.local > .env.local`
+   `grep '^STRIPE_SECRET_KEY=' C:/Users/Barak/stripe-test.env >> .env.local`
+2. **The publishable key must be supplied by the user** (it is not in the key file). In the Dashboard, sandbox → Developers → API keys, copy the `pk_test_…` and add one line to `.env.local` in an editor: `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_…`. It must be the same sandbox as the secret key.
+3. Add `BUSINESS_OS_PLAN_CHECKOUT_ENABLED=true` and `BUSINESS_OS_PLAN_PRICES_ENABLED=true`.
+4. Verify by counts only. Each command must print `1`:
+   `grep -c '^STRIPE_SECRET_KEY=sk_test_' .env.local`
+   `grep -c '^NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_' .env.local`
+   `grep -c 'sk_live_\|pk_live_' .env.local` must print `0`.
+5. Prices match: `npm run check-bos-plan-prices -- --env C:/Users/Barak/stripe-test.env --expect-account acct_1UPKR4C7KDUGYIcA` → VERDICT PASS.
+6. Stripe CLI against the sandbox without printing the key: `export STRIPE_API_KEY="$(sed -n 's/^STRIPE_SECRET_KEY=//p' C:/Users/Barak/stripe-test.env)"`. Then add the CLI's signing secret: `echo "STRIPE_WEBHOOK_SECRET=$(stripe listen --print-secret)" >> .env.local`. This is the CLI `whsec`, not the Dashboard one.
+7. Terminal 1, the listener with explicit events (use port 3100 if 3000 is busy). Keep it open all session:
+   `stripe listen --events invoice.paid,invoice.payment_failed,invoice.payment_action_required,invoice.voided,customer.subscription.updated,customer.subscription.deleted,customer.subscription.pending_update_applied,customer.subscription.pending_update_expired,checkout.session.completed,checkout.session.expired --forward-to localhost:3000/api/stripe/webhook`
+8. Terminal 2: `npm run dev` (or `npx next dev -p 3100`). Browser: `/business-os/settings?section=plan`. Devtools Console open, with **Preserve log** on.
+
+**2. Read-only SQL (Supabase SQL editor, production).** Pasted as written: no `--` comments, no punctuation inside a string literal (the only literal is `'billing'`), and never the word "into" (the editor breaks on it). Run **Q1–Q3 after every scenario** and note the rows of that scenario's owner (match by `user_id`, which you get from Q1 after D0).
+
+```sql
+select user_id, livemode, subscription_status, bought_tier, cancel_at_period_end, current_period_end, last_invoice_id, last_paid_at, failed_attempts, ended_at, updated_at
+from business_os_billing_accounts
+where livemode = false
+order by updated_at desc
+limit 6;
+```
+
+```sql
+select p.user_id, p.tier, p.tier_expires_at, p.period_anchor, p.updated_at
+from business_os_account_plans p
+join business_os_billing_accounts b on b.user_id = p.user_id
+where b.livemode = false
+order by b.updated_at desc
+limit 6;
+```
+
+```sql
+select user_id, kind, tier, plan_written, amount_minor, stripe_invoice_id, stripe_event_id, created_at
+from business_os_billing_events
+where livemode = false and created_at > now() - make_interval(hours => 12)
+order by created_at desc
+limit 30;
+```
+
+Q4 (D-W5 and the end of the session: one row per event, no duplicates):
+
+```sql
+select stripe_invoice_id, kind, count(*)
+from business_os_billing_events
+where livemode = false and created_at > now() - make_interval(hours => 12)
+group by stripe_invoice_id, kind
+order by stripe_invoice_id;
+```
+
+Q5 (audit; `billingReason` on invoice-paid, upgrade requests):
+
+```sql
+select action, user_id, created_at, details
+from audit_trail
+where created_at > now() - make_interval(hours => 12) and position(upper('billing') in action) > 0
+order by created_at desc
+limit 40;
+```
+
+**3. Scenarios, in this order**
+
+| Step | Account | Do | Expect (screen) | Expect (Q1–Q5) |
+|---|---|---|---|---|
+| R0 = D0 | A–F | Buy Essentials in Settings → Plan with `4242 4242 4242 4242` (P-4.2). Note `cus_` and `sub_` from the Stripe Dashboard | "You're on Essentials", "Renews on <date>" | Q1 `active` / `basic`; Q2 tier `basic`; Q3 one `invoice_paid`. **Record A's `tier_expires_at` and `period_anchor`** |
+| R1 = D7 | A | Before upgrading: switch the language to Hebrew, press Upgrade, then Not now; then Spanish, the same | Every new line translated (he / es drafts, G-5); Hebrew right to left; prices in `$` digits | Nothing new |
+| R2 = D1 / D1a | A | English. Press "Upgrade to Autopilot" | "$NN.NN due now, excluding tax." and "Your plan renews on <same date as R0> at $129 a month." | Nothing new (a preview writes nothing) |
+| R3 = D1b = D-W1 | A | Confirm | "Upgrading…", then "You're on Autopilot." In Stripe, the charge equals the preview | Q1 `bought_tier` `pro`; Q2 tier `pro` with **`tier_expires_at` and `period_anchor` unchanged from R0**; Q3 one `invoice_paid` for the `subscription_update` invoice; Q5 `BOS_BILLING_UPGRADE_REQUESTED` and `BOS_BILLING_INVOICE_PAID` with `billingReason` `subscription_update`. **Record the `evt_` of that `invoice.paid`** from the listener output |
+| R4 = D-W5 | A | `stripe events resend <evt_ from R3>` (the listener must be running; if the CLI asks for an endpoint, use Dashboard → Events → the event → Resend to the CLI listener) | Nothing on screen | Listener shows a 200; Q4 still **one** `invoice_paid` for that invoice; no new Q5 row and no alert in the dev log |
+| R5 = D2 = D-W4 | B | `stripe payment_methods attach pm_card_chargeCustomerFail --customer cus_B` (card 0341), then `stripe subscriptions update sub_B --default-payment-method pm_…` (the id returned). Upgrade → Confirm. Then press Upgrade again | "Your card was declined, so nothing changed. You're still on Essentials." and "You can try again after <time>". The second press: "An upgrade is already waiting for payment. You can try again after <time>." | Q1 stays `basic`; Q3 one `invoice_payment_failed`, plan not moved; no banner (U-10) |
+| R6 = D3b | C | `stripe payment_methods attach pm_card_authenticationRequired --customer cus_C` (card 3184), then set it as the **subscription** default as in R5. Upgrade → Confirm → **close the challenge**. In devtools, record what `handleNextAction` returned: `error.type`, `error.code` and the PaymentIntent status. If no value is visible, set a breakpoint in `authenticate` in `PlanUpgrade.tsx` and read `result`. **Never copy the client secret** | "The payment was not confirmed, so nothing changed. You're still on Essentials." **If it reads "We could not confirm your upgrade" instead, stop and give Dev / SA the three recorded values** (G-1 does not match the real Stripe.js) | Q1 still `basic`; Q3 one `invoice_payment_failed` (3-D Secure, harmless per the P-6a note) |
+| R7 = D3b (resume) → D3a = D-W2 | C | Press Upgrade again → Confirm → **complete** the challenge | The waiting line "Your upgrade is waiting for you to confirm the payment." and the amount; Confirm opens the same challenge (Q-2); after completing it, "Upgrading…" then "You're on Autopilot." | Q3 `invoice.payment_action_required` handled, then one `invoice_paid`; Q1 / Q2 `pro`. A retry answer followed by Stripe redelivery is acceptable if the paid event arrives while the pending update still waits |
+| R8 = D4 = D-W3 | E | `stripe customers update cus_E --balance=-20000` (a $200 credit). Upgrade | "Nothing to pay now: your account credit covers it."; Confirm → "You're on Autopilot." | Q3 `invoice_paid` with `amount_minor` 0, plan written (CF-6); Q2 `pro` |
+| R9 = D6 | F | Upgrade, leave the quote open **16 minutes**, then Confirm. Then press Upgrade again but **do not** confirm (press Not now) | "The price needs checking again. Please press Upgrade once more."; the fresh preview shows a price | Nothing written |
+| R10 = D5 | F | Upgrade, then double click Confirm. Then a second tab on the same page: press Upgrade and Confirm in both tabs within a second | One charge in Stripe; the second answer reads "Upgrading…" or "Your upgrade is already being processed." Never two invoices | Q4: one `invoice_paid` for F's upgrade invoice |
+| R11 = D8 / D-W6 (optional, does not gate) | new test-clock customer | E-5 near the period end | "Nothing to pay now. $0.xx will be added to your next bill." | `invoice_paid` with `amount_minor` 0 |
+
+**4. Pass rule.** Every row's screen and SQL expectations hold, R6 reads "not confirmed", and the three Stripe.js values from R6 are recorded. Any mismatch: stop, record it, and do not clean up the failing account until Dev has looked at it (still the same day).
+
+**5. Same-day cleanup**
+1. For each account A to F: `stripe subscriptions cancel sub_…`, then `stripe customers delete cus_…`. Delete any test clock: `stripe test_helpers test_clocks delete clock_…`.
+2. Stop `stripe listen` and the dev server. `unset STRIPE_API_KEY`.
+3. **Delete `neuronforge-invite-s1/.env.local`** (it did not exist before this session). `git status` must show no env file, and `git diff --stat` must show nothing in `tierMatrix.ts` or in any env file.
+4. Q1 after cleanup shows each test row `canceled` or ended, once the `customer.subscription.deleted` events land (keep the listener running until they do).
+5. Record in this section: the account `user_id`s; each `cus_`, `sub_`, `in_` and `evt_` used; the R6 Stripe.js values; and the result of each row.
+
+| Step | Account / ids | Result |
+|---|---|---|
+| R0–R11 | (TL fills in) | |
+
+#### Test Outputs / Logs
+
+```text
+Jest (11 scopes, final):    Test Suites: 231 passed, 231 total   Tests: 8250 passed, 8250 total
+Jest (11 scopes, 1st run):  1 failed (G-2 (b)) while SA's MS2 mutation was live in PlanSection.tsx; not a defect
+settings alone (clean):     Test Suites: 4 passed, 4 total       Tests: 187 passed, 187 total
+test:bos-entitlements:      Test Suites: 251 passed, 251 total   Tests: 7337 passed, 7337 total
+typecheck:bos-llm:          518 files in scope, 28 errors, 0 new (268.5s) - passed
+lint:hooks:                 exit 0
+QA temporary file:          Tests: 71 passed, 71 total (deleted)
+QA-M1 (pending no-time):    Dev settings suites 187/187 PASS (survived); QA file 4 failed; restored md5 005afae8...
+QA-M2 = MS1 (no renewing):  1 failed (G-2 (a)); restored md5 98aa7bc2...
+```
+
+#### Final Status
+- [x] Every acceptance criterion testable without a browser passes. **Verdict: PASS WITH NOTES.** No bug. Edge case 1 (an untested no-time branch) is a test to add before commit, recommended and Low. The merge gates are unchanged: T14 and D-W, run from the run-sheet above in one sandbox session (R6 confirms G-1 against the real Stripe.js), and G-5 (the user approves the he / es drafts)
+- [ ] Issues found: Dev must address before commit
+
 ---
 
 ## Commit Info
@@ -986,3 +1434,8 @@ QA-M2 (offer without endedAt):            1 failed (planUpgradeOffer not_active 
 | 2026-10-13 | SA re-check of F-1 to F-5 and the sandbox evidence: OK (SA) | The F-1 to F-5 diff checked; suites green (73 / 1,954); M8 re-run now caught. E-1 to E-6 matched against the code: no code change needed in 7b.1a. E-4 clears the T10 gate (U-4 stays a backstop, the Q-2 resume stays as built). The 3-D Secure `payment_failed` row is harmless (partial paid index, no reader; U-10 extended for P-6a). R-1 (Low, comment only): the F-2 note that the SDK absorbs the 409 is contradicted by E-6. For 7b.1b: E-2 shows that a re-update before expiry voids the first invoice. Code Approved for QA |
 | 2026-10-13 | QA of P-7b.1a: PASS WITH NOTES (QA) | 204 suites / 5,247 tests green; `test:bos-entitlements` 248 / 7,297; `typecheck:bos-llm` 0 new; `lint:hooks` clean. Real sandbox payloads (E-1 to E-6, `invoice.paid` on `2026-09-30.endive`) run through the real parsers in a temporary test (deleted): 22 / 22, no mismatch. 2 / 2 QA mutations caught and md5-restored. No bug. Open: SA R-1 comment (Low, before commit). Forward: a declined invoice's Smart Retry falls after the void at expiry; our `upgrade_pending` refusal is the only guard against a second open invoice |
 | 2026-10-13 | SA R-1 applied (TL) | Comment-only: the F-2 catch comment in `lib/business-os/billing/planUpgrade.ts` now says `upgrade_busy` is the expected answer to a double click (Stripe sends `stripe-should-retry: false`, so the SDK does not retry the 409; E-6). The F-2 row above that calls it rare is superseded. No behaviour change |
+| 2026-10-13 | P-7b.1b "Upgrade in Settings" code complete (Dev) | On `feature/bos-plan-payments-p7b1b` from `origin/main` `8014ee73` (P-7b.1a merged #346), uncommitted. T9 to T11 done; T12/T13 done for P-7b.1b; T1/T2 marked done (E-1 to E-6 observed 2026-10-13); every "pending E-n" marker in code and this workplan replaced by the observed answer. `purchase.upgrade` in the view (matrix test view ↔ preview, 2,089 cases), `PlanUpgrade` island + `planUpgradeCopy.ts`, `PlanSection` "Upgrading…" re-read, Q-5 and Q-7 notes, en/he/es (he/es drafts, G-5). **User decision 2026-10-13 (E-5 wording, option a)** recorded. U-7 / G-3: 39 scrubbed captures in the C-6 ratchet, the real code run over them (25 tests). P-6a forward note recorded in the requirement (U-10 extended). D-W and T14 checklist written for TL. Deviations for SA in Implementation Notes (P-7b.1b) |
+| 2026-10-13 | SA code review of P-7b.1b: APPROVED WITH FIXES (SA) | Suites rerun green (110 / 5,603; `test:bos-entitlements` 251 / 7,337). Fixture scrub re-scanned clean; no "pending E-n" marker left in code; 29 keys in en / he / es; V-1, V-3 Try again, Q-2, Q-5 to Q-7 and the E-5 rule (0 < amount < 50) verified. 2 of 5 SA mutations caught. G-1 Medium: a returned Stripe.js error that is not a refusal must read "could not confirm", not "nothing changed" (V-3 on the client). G-2 Medium (tests): pin the `renewing` and `planId === target` terms of the upgrade success (mutations MS1 / MS2 survived). G-3 docs, incl. T14 D3b records the real Stripe.js close result. Deviations 1–12 accepted (5 changed by G-1). Merge gates for P-7b.1b: G-1 / G-2, T14 and D-W (one sandbox session; D-W6 / D8 optional), G-5 |
+| 2026-10-13 | P-7b.1b SA fixes G-1 to G-3 applied (Dev) | G-1: `classifyNextAction` in `PlanUpgrade.tsx` (confirmed statuses → "Upgrading…"; `card_error`, `payment_intent_authentication_failure` or a refused / cancelled PaymentIntent → "not confirmed"; any other returned error, no status, or a throw → unknown with Check again / Try again, same `prorationDate`). G-2: two render tests pin the `renewing` and `planId === target` success terms. SA mutations re-run: MB, MS1, MS2 and Dev's MG1 / MG2 all caught (5 / 5), files md5-restored. SA optimisation applied in `planUpgrade.captured.test.ts` (per-experiment fresh-read ids, write target asserted). G-3: Checks table, deviations 5 and 11, T14 D3b now records the real Stripe.js close result. Suites: 37 / 3,634; `test:bos-entitlements` 251 / 7,337; `typecheck:bos-llm` 0 new; ESLint clean. Uncommitted; awaiting SA re-check, then QA |
+| 2026-10-13 | QA of P-7b.1b: PASS WITH NOTES (QA) | 231 suites / 8,250 tests green (11 scopes); `test:bos-entitlements` 251 / 7,337; `typecheck:bos-llm` 0 new; `lint:hooks` clean. A temporary QA render file (71 tests, deleted) covered the secret with a recording logger on the fresh confirm and the resume, E-5 at 0 / 1 / 49 / 50 in en / he / es, every refusal in 3 languages, `upgrade_pending` with and without a time, Check again on a failed re-read, and the no-key Q-2 state. Mutations: MS1 caught; MS2 caught incidentally (SA's live mutation during QA's first run); QA-M1 (`pending_no_time` branch) survived the Dev suite, so the test is recommended before commit (Low). Fixture re-scan clean. No bug. The T14 + D-W run-sheet for TL and the user is in the QA section |
+| 2026-10-13 | QA note 1 applied (Dev) | Test only: one render test (preview and confirm, 2 cases) pins `upgrade_pending` without `retryAfter` → `plan.upgrade.refusal.pending_no_time`, no `{` in the line. QA-M1 now caught (2 fail), as is a variant that shows the unfilled timed template; files md5-restored. `components/business-os/settings` 4 / 189 green. No source change. Uncommitted |

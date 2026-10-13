@@ -345,10 +345,14 @@ export function OperationalStatusCard({ onConfigureClick }: OperationalStatusCar
                   style={{ transform: isRTL ? 'rotate(180deg)' : undefined }}
                   strokeWidth={2}
                 />
-                {/* Dismiss X on hover */}
+                {/* Dismiss X — on hover where there is one, always where there
+                    is not. A touch screen cannot hover, so skipping a setup
+                    step was impossible on a phone: the control was painted at
+                    zero opacity with no way to bring it up. `opacity` keeps its
+                    space either way, so nothing moves when it shows. */}
                 <span
                   onClick={(e) => handleDismissStep(step.id, e)}
-                  className="p-0.5 rounded hover:bg-[var(--v2-border)] opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="p-0.5 rounded hover:bg-[var(--v2-border)] transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
                   title={t('setup.dismiss') || 'Skip'}
                 >
                   <X className="w-3 h-3 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-secondary)]" strokeWidth={2} />

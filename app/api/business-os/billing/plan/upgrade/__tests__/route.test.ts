@@ -9,7 +9,9 @@
  * logger call and every audit entry is captured, so the confirmation secret
  * can be shown to appear only in the confirm's 200 body (V-1).
  *
- * Stripe answers are HAND-BUILT (the sandbox captures wait on E-1 to E-6).
+ * Stripe answers are HAND-BUILT here. The captured sandbox answers of E-1 to
+ * E-6 run through the same orchestration and the real StripeService in
+ * `lib/business-os/billing/__tests__/planUpgrade.captured.test.ts` (U-7).
  */
 
 import { NextRequest } from 'next/server';

@@ -13,6 +13,11 @@
  * The queries are chosen to survive the migration where the behaviour does:
  * requests are asserted on the fetch mock, the detail is found by text that
  * the old modal and the new drawer both show ("No admin notes yet.").
+ *
+ * LF-3b (Admin Layout Follow-ups §3.4, SA-C11) edits B-10 and B-11 on purpose:
+ * the native confirm box they stubbed is now an admin dialog, so they answer
+ * the dialog (found by the same words) instead of a stub. Their request
+ * assertions are unedited. The stub and its setup are removed.
  */
 
 import React from 'react';
@@ -135,18 +140,20 @@ const statusSelect = () => screen.getByLabelText('Status') as HTMLSelectElement;
 /** §6.2 helper 2 (L-7 edit): by its accessible name (by `title` before the migration, when it had none). */
 const deleteButtonFor = (name: string) => within(rowOf(name)).getByRole('button', { name: `Delete message from ${name}` });
 
-let confirmSpy: jest.SpyInstance;
+/** LF-3b: answer the admin dialog that asks `question` with the button named `choice`. */
+async function answerDialog(question: string, choice: string) {
+  const asked = await screen.findByRole('dialog', { name: question });
+  // Inside act: the request it starts settles in microtasks before the next flush.
+  await act(async () => {
+    fireEvent.click(within(asked).getByRole('button', { name: choice }));
+  });
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockSearch = '';
   window.history.replaceState(null, '', '/admin/messages');
   listAnswer = async () => answer(200, { messages: [LIOR, OREN, DANA] });
-  confirmSpy = jest.spyOn(window, 'confirm').mockReturnValue(true);
-});
-
-afterEach(() => {
-  confirmSpy.mockRestore();
 });
 
 describe('L-7 characterisation (B-1 to B-15)', () => {
@@ -265,17 +272,17 @@ describe('L-7 characterisation (B-1 to B-15)', () => {
     expect(await screen.findByText('Called back on Monday')).toBeTruthy();
   });
 
-  it('B-10: Delete with confirm true sends DELETE and drops the row; with confirm false nothing is sent', async () => {
+  // EDITED by LF-3b: the dialog is answered (was: a stubbed native box returning false, then true).
+  it('B-10: Delete confirmed sends DELETE and drops the row; cancelled, nothing is sent', async () => {
     const fetchMock = mockFetch();
     await renderPage();
-    confirmSpy.mockReturnValue(false);
     fireEvent.click(deleteButtonFor('Dana Example'));
+    await answerDialog('Are you sure you want to delete this message?', 'Cancel');
     await flush();
-    expect(confirmSpy).toHaveBeenCalledWith('Are you sure you want to delete this message?');
     expect(writes(fetchMock)).toHaveLength(0);
 
-    confirmSpy.mockReturnValue(true);
     fireEvent.click(deleteButtonFor('Dana Example'));
+    await answerDialog('Are you sure you want to delete this message?', 'Delete');
     await flush();
     const sent = writes(fetchMock);
     expect(sent).toHaveLength(1);
@@ -283,21 +290,21 @@ describe('L-7 characterisation (B-1 to B-15)', () => {
     await waitFor(() => expect(within(table()).queryByText('Dana Example')).toBeNull());
   });
 
-  it('B-11: Mark All Read with confirm true sends one PATCH per unread row then one GET; confirm false sends nothing', async () => {
+  // EDITED by LF-3b: the dialog is answered (was: a stubbed native box returning false, then true).
+  it('B-11: Mark All Read confirmed sends one PATCH per unread row then one GET; cancelled sends nothing', async () => {
     const fetchMock = mockFetch();
     const second = { ...DANA, id: 'msg-4', name: 'Noa Unread', created_at: '2026-10-08T07:00:00Z' };
     listAnswer = async () => answer(200, { messages: [LIOR, OREN, DANA, second] });
     await renderPage();
 
-    confirmSpy.mockReturnValue(false);
     fireEvent.click(screen.getByRole('button', { name: 'Mark All Read' }));
+    await answerDialog('Mark all messages as read?', 'Cancel');
     await flush();
-    expect(confirmSpy).toHaveBeenCalledWith('Mark all messages as read?');
     expect(writes(fetchMock)).toHaveLength(0);
     expect(reads(fetchMock)).toHaveLength(1);
 
-    confirmSpy.mockReturnValue(true);
     fireEvent.click(screen.getByRole('button', { name: 'Mark All Read' }));
+    await answerDialog('Mark all messages as read?', 'Mark All Read');
     await flush();
     await flush();
     const sent = writes(fetchMock);

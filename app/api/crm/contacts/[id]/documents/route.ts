@@ -9,6 +9,11 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { contactDocumentsRepository, DocumentType } from '@/lib/repositories/ContactDocumentsRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+/* The one list of what may be stored in `contact-documents`. Shared with
+   `ContactDocumentService`, which writes to the same bucket from the intake
+   upload: two copies is how a scanned TIFF came to be accepted by one path and
+   refused by the other. */
+import { ALLOWED_MIME_TYPES } from '@/lib/services/ContactDocumentService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
@@ -26,8 +31,27 @@ const uploadDocumentSchema = z.object({
   file_name: z.string().min(1),
   file_size: z.number().min(1).max(50 * 1024 * 1024), // Max 50MB
   mime_type: z.string().min(1),
-  file_content: z.string().min(1) // Base64 encoded file content
-});
+  /**
+   * The file itself, base64 encoded — the ORIGINAL path, still supported.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * It cannot carry a real document. A serverless request body is capped at
+   * 4.5MB by the platform and base64 adds a third, so anything over about
+   * 3.3MB is refused at the edge before this handler runs — which is why the
+   * browser saw a failure with no reason in it while the UI promised 50MB.
+   *
+   * Kept because the V1 drawer still posts this way and a small file still
+   * arrives intact. New callers send `storage_path` instead, having uploaded
+   * straight to Storage on a signed URL.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  file_content: z.string().min(1).optional(),
+  /** Where the browser already put it, from `documents/upload-url`. */
+  storage_path: z.string().min(1).optional(),
+}).refine(
+  body => Boolean(body.file_content) !== Boolean(body.storage_path),
+  { message: 'Send the file or the path it was uploaded to, not both and not neither.' }
+);
 
 const listDocumentsSchema = z.object({
   document_type: z.enum(['contract', 'intake_form', 'invoice', 'receipt', 'proposal', 'id_document', 'medical', 'insurance', 'other']).optional(),
@@ -168,63 +192,152 @@ export async function POST(
       'Uploading contact document'
     );
 
-    // 4. Decode base64 file content
-    const fileBuffer = Buffer.from(validated.file_content, 'base64');
+    /*
+     * 3b. THE FILE TYPE, CHECKED HERE RATHER THAN BY THE STORAGE BUCKET.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The bucket carries its own `allowedMimeTypes`, so an unaccepted file was
+     * already being refused — but by Supabase, several steps later, as an
+     * upload error. That became a 500 reading "Failed to upload file", which
+     * tells the owner nothing: it reads as the system being broken rather than
+     * as this particular file being unsuitable, and there is no hint that
+     * choosing a different one would work. A real report of this said only
+     * "can't save proposal if loading a proposal file".
+     *
+     * Checked explicitly instead of in the Zod schema above, because a
+     * `ZodError` on this route answers with a flat "Invalid input" and hides
+     * its details outside development — so the owner would have traded one
+     * unhelpful message for another. This one names the type it refused.
+     *
+     * Against ALLOWED_MIME_TYPES, the same list `ContactDocumentService`
+     * validates against, so the two routes that write to this bucket cannot
+     * drift. The bucket's own list below is now built from it for the same
+     * reason: it was a second copy, and it is what silently rejected a scan.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (!ALLOWED_MIME_TYPES.includes(validated.mime_type)) {
+      requestLogger.warn(
+        { userId: user.id, mimeType: validated.mime_type },
+        'Document upload refused: unsupported file type'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          /*
+           * A CODE as well as a sentence. The sentence is a fallback for any
+           * caller that just prints `error`; the code is what a caller with a
+           * phrasebook keys off, so a Hebrew owner is not shown an English
+           * refusal. `mime_type` comes back so the message can name the thing
+           * that was actually refused.
+           */
+          code: 'unsupported_file_type',
+          mime_type: validated.mime_type,
+          error: `That file type (${validated.mime_type}) cannot be attached. Use a PDF, a Word or Excel document, a scan, or a photo.`,
+        },
+        { status: 400 }
+      );
+    }
 
-    // 5. Generate storage path
-    const timestamp = Date.now();
-    const sanitizedFileName = validated.file_name.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const storagePath = `${user.id}/${contactId}/${timestamp}_${sanitizedFileName}`;
-
-    // 6. Ensure bucket exists, then upload to Supabase Storage
+    /*
+     * 4. THE FILE IS EITHER ALREADY IN STORAGE, OR IT IS IN THIS REQUEST.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `storage_path` is the path this account was handed by
+     * `documents/upload-url`, which the browser then uploaded to directly. The
+     * file never passes through here, which is the whole point: a serverless
+     * body is capped at 4.5MB and base64 adds a third, so this route could
+     * only ever have taken about 3.3MB of a 50MB allowance.
+     *
+     * It is VERIFIED, not trusted. A path is only accepted inside this user's
+     * and this contact's folder — `upload-url` builds exactly that shape and
+     * signs only that one path, so anything else means the caller wrote the
+     * path itself. And the object has to actually be there: without that check
+     * a caller could record a document row pointing at nothing, which reads as
+     * a successful upload and fails only when somebody opens it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     const bucketName = 'contact-documents';
+    const folder = `${user.id}/${contactId}/`;
 
-    // Check if bucket exists, create if not
-    const { data: buckets } = await supabaseServer.storage.listBuckets();
-    const bucketExists = buckets?.some(b => b.name === bucketName);
+    let storagePath: string;
 
-    if (!bucketExists) {
-      const { error: createBucketError } = await supabaseServer.storage.createBucket(bucketName, {
-        public: false,
-        fileSizeLimit: 52428800, // 50MB
-        allowedMimeTypes: [
-          'application/pdf',
-          'application/msword',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          'application/vnd.ms-excel',
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'image/jpeg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-          'text/plain',
-          'text/csv'
-        ]
-      });
-
-      if (createBucketError) {
-        requestLogger.error({ err: createBucketError }, 'Failed to create storage bucket');
+    if (validated.storage_path) {
+      if (!validated.storage_path.startsWith(folder)) {
+        requestLogger.warn(
+          { userId: user.id, contactId, storagePath: validated.storage_path },
+          'Document record refused: path outside this contact\'s folder'
+        );
         return NextResponse.json(
-          { success: false, error: 'Storage configuration error' },
+          { success: false, error: 'That file does not belong to this contact' },
+          { status: 400 }
+        );
+      }
+
+      const fileName = validated.storage_path.slice(folder.length);
+      const { data: found, error: lookupError } = await supabaseServer.storage
+        .from(bucketName)
+        .list(`${user.id}/${contactId}`, { search: fileName, limit: 1 });
+
+      if (lookupError || !found?.some(entry => entry.name === fileName)) {
+        requestLogger.error(
+          { err: lookupError, userId: user.id, storagePath: validated.storage_path },
+          'Document record refused: no such object in storage'
+        );
+        return NextResponse.json(
+          { success: false, error: 'The upload did not complete' },
+          { status: 400 }
+        );
+      }
+
+      storagePath = validated.storage_path;
+    } else {
+      // The original path: a small file, inline. See `file_content` above.
+      const fileBuffer = Buffer.from(validated.file_content as string, 'base64');
+
+      const timestamp = Date.now();
+      const sanitizedFileName = validated.file_name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      storagePath = `${folder}${timestamp}_${sanitizedFileName}`;
+
+      // Check if bucket exists, create if not
+      const { data: buckets } = await supabaseServer.storage.listBuckets();
+      const bucketExists = buckets?.some(b => b.name === bucketName);
+
+      if (!bucketExists) {
+        const { error: createBucketError } = await supabaseServer.storage.createBucket(bucketName, {
+          public: false,
+          fileSizeLimit: 52428800, // 50MB
+          /* One list, shared. This was a second copy of it, and the copy is what
+             refused a scan while the service that writes to the same bucket
+             would have taken one. Note this applies at CREATION only — an
+             existing bucket keeps whatever it was made with, which is why
+             widening the list also needs the migration that updates it. */
+          allowedMimeTypes: ALLOWED_MIME_TYPES
+        });
+
+        if (createBucketError) {
+          requestLogger.error({ err: createBucketError }, 'Failed to create storage bucket');
+          return NextResponse.json(
+            { success: false, error: 'Storage configuration error' },
+            { status: 500 }
+          );
+        }
+        requestLogger.info({ bucketName }, 'Created storage bucket');
+      }
+
+      const { error: uploadError } = await supabaseServer.storage
+        .from(bucketName)
+        .upload(storagePath, fileBuffer, {
+          contentType: validated.mime_type,
+          upsert: false
+        });
+
+      if (uploadError) {
+        requestLogger.error({ err: uploadError, userId: user.id }, 'Failed to upload file to storage');
+        return NextResponse.json(
+          { success: false, error: 'Failed to upload file' },
           { status: 500 }
         );
       }
-      requestLogger.info({ bucketName }, 'Created storage bucket');
-    }
-
-    const { error: uploadError } = await supabaseServer.storage
-      .from(bucketName)
-      .upload(storagePath, fileBuffer, {
-        contentType: validated.mime_type,
-        upsert: false
-      });
-
-    if (uploadError) {
-      requestLogger.error({ err: uploadError, userId: user.id }, 'Failed to upload file to storage');
-      return NextResponse.json(
-        { success: false, error: 'Failed to upload file' },
-        { status: 500 }
-      );
     }
 
     // 7. Create document record

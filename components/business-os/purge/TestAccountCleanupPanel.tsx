@@ -384,7 +384,8 @@ export interface TestAccountCleanupPanelProps {
   lockedEmail?: string;
   /**
    * Called once after a delete whose report result is CLEAN, never otherwise.
-   * Locked mode: when the admin clicks Done under the report, or on unmount.
+   * Locked mode: when the admin clicks Done under the report, or on unmount,
+   * or when the answer lands after the panel has unmounted (LF-F1).
    */
   onRemoved?: () => void;
   /** Visual tone; 'light' (default) keeps the Danger Zone look, 'admin-dark' matches /admin/users. */
@@ -440,6 +441,16 @@ export function TestAccountCleanupPanel({
     },
     []
   );
+  // LF-F1: a delete can outlive the panel (Escape closes the drawer mid-delete).
+  // Its unmount cleanup has then already run, so a CLEAN answer landing later
+  // must report itself; see runDelete. Set again on a StrictMode re-mount.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -525,8 +536,11 @@ export function TestAccountCleanupPanel({
       if (!isLocked) setEmail('');
       if (json.data.report.total.result === 'CLEAN') {
         // Locked: the report stays until Done (or unmount), so the admin can read and copy it.
-        if (isLocked) cleanPending.current = true;
-        else onRemoved?.();
+        // Unmounted already (LF-F1): no Done and no unmount cleanup is left to
+        // report it, so report it now; this is the only call for this answer.
+        if (!mounted.current) onRemovedRef.current?.();
+        else if (isLocked) cleanPending.current = true;
+        else onRemovedRef.current?.();
       }
     } catch {
       setDeleteError({

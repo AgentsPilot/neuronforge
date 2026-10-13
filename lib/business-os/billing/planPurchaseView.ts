@@ -25,6 +25,12 @@ import 'server-only';
  *              the trial / free-access sentence beside the Choose list (W-7),
  *              decided structurally by `freeAccessEndedByPurchase`; `null`
  *              whenever nothing is offered.
+ *   upgrade    (P-7b.1b, workplan §3.6; SA U-2) `planUpgradeOffer`, the ONE
+ *              predicate both upgrade routes call at their step 5, fed from
+ *              the SAME billing row read: the tiers an owner who already pays
+ *              may upgrade to now, or `null`. The plan row's tier is not an
+ *              input (U-2). `planUpgradeOffer.matrix.test.ts` drives THIS
+ *              function against the real preview orchestration.
  *
  * Returns `null` (nothing to offer, no billing sentence) when the plan cannot
  * be read, when the account has no plan row (the checkout refuses both), or
@@ -57,6 +63,7 @@ import { isLiveSubscriptionStatus, type PlanSnapshotLike } from '@/lib/business-
 import {
   buyableTiers as configBuyableTiers,
   planPurchaseOffer,
+  planUpgradeOffer,
   readHeldPaymentSwitches,
   type HeldPaymentSwitches,
 } from '@/lib/business-os/billing/planCheckoutEligibility';
@@ -173,15 +180,35 @@ export async function readPlanPurchaseView(
   }
 
   const switches = (deps.switches ?? readHeldPaymentSwitches)();
+  // `planPurchaseOffer` / `planUpgradeOffer` type their tiers as `TierId`; the
+  // injected list is a test seam, and production reads the same config
+  // function the checkout and the upgrade routes do.
+  const buyable = (deps.buyableTiers ?? configBuyableTiers)() as ReturnType<typeof configBuyableTiers>;
+  const purchaseSwitches = { checkoutEnabled: switches.checkoutEnabled, pricesEnabled: switches.pricesEnabled };
   const offer = planPurchaseOffer(
     {
       openEndedFreeAccess: hasOpenEndedFreeAccess(resolution),
       subscriptionLive: isLiveSubscriptionStatus(row?.subscriptionStatus),
     },
-    { checkoutEnabled: switches.checkoutEnabled, pricesEnabled: switches.pricesEnabled },
-    // `planPurchaseOffer` types its tiers as `TierId`; the injected list is a
-    // test seam, and production reads the same config function the checkout does.
-    (deps.buyableTiers ?? configBuyableTiers)() as ReturnType<typeof configBuyableTiers>
+    purchaseSwitches,
+    buyable
+  );
+
+  // P-7b.1b: the upgrade, from the same row and the same predicate the routes
+  // call (planUpgrade.ts step 5). A failed billing read reads as no row, so
+  // nothing is offered (`not_subscribed`), never a guess.
+  const upgradeOffer = planUpgradeOffer(
+    row
+      ? {
+          boughtTier: row.boughtTier,
+          subscriptionId: row.stripeSubscriptionId,
+          subscriptionStatus: row.subscriptionStatus,
+          cancelAtPeriodEnd: row.cancelAtPeriodEnd,
+          endedAt: row.endedAt,
+        }
+      : null,
+    purchaseSwitches,
+    buyable
   );
 
   // Only beside a Choose list: with nothing offered there is no sentence to say.
@@ -194,5 +221,6 @@ export async function readPlanPurchaseView(
     offer: offerWire,
     billing: row ? billingStateFromRecord(row, now) : null,
     endsFreeAccessOnPurchase: endsFreeAccess === null ? null : ENDS_FREE_ACCESS[endsFreeAccess],
+    upgrade: upgradeOffer.kind === 'upgrade' ? { tiers: [...upgradeOffer.tiers] } : null,
   };
 }

@@ -7,9 +7,10 @@
  * call) is asserted on the log itself. Every logger call is captured, so the
  * confirmation secret can be shown to appear in none of them (V-1).
  *
- * Stripe answers are HAND-BUILT, labelled as such: E-1 (payment state on the
- * invoice) and E-2 (decline shape) have not run, so BOTH decline shapes are
- * mapped and tested (V-7).
+ * Stripe answers are HAND-BUILT, labelled as such. BOTH decline shapes are
+ * mapped and tested (V-7): E-2 observed the RETURNED shape (pending update
+ * kept, `requires_payment_method`); the thrown card error stays a backstop.
+ * The captured E-1 to E-6 answers run in `planUpgrade.captured.test.ts`.
  */
 
 import { PLAN_STRIPE_PRICES } from '@/lib/business-os/entitlements/config/planPrices';
