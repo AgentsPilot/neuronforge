@@ -35,6 +35,14 @@
  * subscription. It refuses a SALE, never a capability: nothing here calls
  * `check()` / `decide()` or withholds a feature by plan.
  *
+ * `planUpgradeOffer` (P-7b.1a, workplan §3.1, SA U-2) is the third twin, for
+ * an account that already PAYS: whether "Upgrade" is offered and admitted,
+ * from our billing record only. The my-plan view (P-7b.1b) and both upgrade
+ * routes call it; what our record cannot know (a pending update, the live
+ * item price, Stripe's status now) is checked by the routes after a fresh
+ * Stripe read (`planUpgradeEligibility`, planUpgrade.ts). It refuses a SALE,
+ * never a capability.
+ *
  * No tier name is written in this file: tiers come from the config.
  *
  * @module lib/business-os/billing/planCheckoutEligibility
@@ -185,4 +193,60 @@ export function planCheckoutEligibility(hold: PaymentHold, switches: HeldPayment
 
   const offer = heldPaymentOffer(hold, switches);
   return offer.kind === 'pay' ? { ok: true, held: true, tiers: [offer.tier] } : { ok: false, code: offer.code };
+}
+
+// ── Upgrade (plan payments P-7b.1a, workplan §3.1; SA U-2) ─────────────────
+
+/**
+ * The facts `planUpgradeOffer` decides from: OUR billing row only (SR-11, the
+ * view may make no Stripe call). The plan row's tier is deliberately NOT an
+ * input (U-2): an admin override may differ from what Stripe bills.
+ */
+export interface PlanUpgradeFacts {
+  /** The tier the account pays for (`business_os_billing_accounts.bought_tier`). */
+  boughtTier: string | null;
+  subscriptionId: string | null;
+  subscriptionStatus: string | null;
+  cancelAtPeriodEnd: boolean;
+  endedAt: string | null;
+}
+
+export type PlanUpgradeNoneReason = 'switches_off' | 'not_subscribed' | 'not_active' | 'cancelling' | 'top_tier' | 'not_on_sale';
+
+export type PlanUpgradeOffer =
+  | { kind: 'upgrade'; from: TierId; tiers: readonly TierId[] }
+  | { kind: 'none'; reason: PlanUpgradeNoneReason };
+
+/**
+ * Whether an owner who pays may upgrade, and to which tiers (pure). First
+ * reason wins, in this order:
+ *
+ *   switches_off   checkout or price recognition off: nothing is sold
+ *   not_subscribed no billing row, no `boughtTier` (a held account has none:
+ *                  its first paid invoice is what releases it), a
+ *                  `boughtTier` the config does not know, or no subscription
+ *                  id, so an upgrade never races the first payment
+ *   not_active     our record's status is not `active`, or it ended
+ *   cancelling     set to cancel at the period end
+ *   top_tier       no tier above `boughtTier` in `TIER_ORDER`
+ *   not_on_sale    none of the tiers above it is buyable (`buyableTiers()`)
+ *
+ * `tiers` lists the buyable tiers ABOVE `boughtTier`, in tier order.
+ * `buyable` is injectable for tests; production reads `buyableTiers()`.
+ */
+export function planUpgradeOffer(
+  facts: PlanUpgradeFacts | null,
+  switches: PlanPurchaseSwitches,
+  buyable: readonly TierId[] = buyableTiers()
+): PlanUpgradeOffer {
+  if (!switches.checkoutEnabled || !switches.pricesEnabled) return { kind: 'none', reason: 'switches_off' };
+  const from = facts ? TIER_ORDER.find((tier) => tier === facts.boughtTier) : undefined;
+  if (!facts || !from || !facts.subscriptionId) return { kind: 'none', reason: 'not_subscribed' };
+  if (facts.subscriptionStatus !== 'active' || facts.endedAt !== null) return { kind: 'none', reason: 'not_active' };
+  if (facts.cancelAtPeriodEnd) return { kind: 'none', reason: 'cancelling' };
+  const above = TIER_ORDER.slice(TIER_ORDER.indexOf(from) + 1);
+  if (above.length === 0) return { kind: 'none', reason: 'top_tier' };
+  const tiers = above.filter((tier) => buyable.includes(tier));
+  if (tiers.length === 0) return { kind: 'none', reason: 'not_on_sale' };
+  return { kind: 'upgrade', from, tiers };
 }

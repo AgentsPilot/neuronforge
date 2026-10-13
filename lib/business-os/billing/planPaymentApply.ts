@@ -20,6 +20,11 @@
  *   8  tier         not configured → refusal row (RC-1)
  *   9  Stripe       the subscription, fresh: anchor, status; the row's OTHER
  *                   subscription, to prove it ended (re-buy) or not (SA-P14 layer 2)
+ *   9a U-4          `subscription_update` invoices only (P-7b.1a, SA U-4, V-5):
+ *                   a pending update waiting on THIS invoice → retry (throw);
+ *                   Stripe not billing one of the invoice's deciding prices
+ *                   (or more than one item) → recorded WITHOUT the plan
+ *                   (`assignsPlan` false), alerted and audited on a new row only
  *   10 apply        `business_os_apply_plan_payment`, then `recordPlanChange`
  *   failed only:
  *   8  record       one `invoice_payment_failed` history row (SA Q-2); no plan or
@@ -355,6 +360,18 @@ export async function applyPaidPlanInvoice(event: Stripe.Event, log: Logger, dep
   const subscriptionStatus = SUBSCRIPTION_STATUSES.find((s) => s === subscription.status);
   if (!subscriptionStatus) throw new PlanPaymentRetryError('unknown_subscription_status');
 
+  // 9a. U-4 (P-7b.1a): a paid upgrade invoice writes the plan only when Stripe
+  // applied the upgrade. Other invoice kinds never take this branch (SA V-6).
+  const u4 = upgradeGuard(facts, subscription);
+  if (u4 === 'retry') {
+    ctx.log.warn(
+      { event: 'bos_billing_upgrade_pending_at_stripe', accountId, invoiceId: facts.invoiceId, subscriptionId: facts.subscriptionId, livemode: ctx.livemode, stripeEventId: event.id },
+      'Paid upgrade invoice while Stripe still holds its pending update; releasing for retry'
+    );
+    throw new PlanPaymentRetryError('upgrade_pending_at_stripe');
+  }
+  const upgradeNotApplied = u4 === 'not_applied';
+
   // SA-P14 layer 2: a different subscription on the row is replaced only when
   // Stripe says it ended. Otherwise NULL is passed and the function refuses.
   let replacesSubscriptionId: string | null = null;
@@ -382,7 +399,7 @@ export async function applyPaidPlanInvoice(event: Stripe.Event, log: Logger, dep
     stripeInvoiceId: facts.invoiceId,
     tier: facts.tier,
     planVersion: config.matrix.version,
-    assignsPlan: facts.assignsPlan,
+    assignsPlan: upgradeNotApplied ? false : facts.assignsPlan,
     amountMinor: facts.amountMinor,
     amountTaxMinor: facts.amountTaxMinor,
     currency: 'usd',
@@ -398,7 +415,35 @@ export async function applyPaidPlanInvoice(event: Stripe.Event, log: Logger, dep
   await afterApply(deps, ctx, accountId, facts, applied.data, {
     billingCycleAnchor: isoFromUnix(subscription.billingCycleAnchor),
     secondSubscription: held !== null && held !== facts.subscriptionId && replacesSubscriptionId === null,
+    upgradeNotApplied,
   });
+}
+
+/**
+ * U-4 (P-7b.1a, SA U-4, V-5, V-6). Only a `subscription_update` invoice is
+ * judged; every other kind answers `proceed` whatever the subscription holds.
+ *
+ * - `retry`: Stripe holds a pending update that waits on THIS invoice
+ *   (`latestInvoiceId === invoiceId`), so the upgrade may still be applied:
+ *   "could not tell". A pending update for a different invoice does not hold
+ *   this one (V-5), so a replay of an old upgrade invoice is never parked.
+ * - `not_applied`: the invoice would write the plan, but Stripe does not bill
+ *   one of its deciding prices on a single item: the money is recorded, the
+ *   plan row is not touched.
+ */
+type UpgradeGuard = 'proceed' | 'retry' | 'not_applied';
+
+function upgradeGuard(
+  facts: PlanInvoiceFacts,
+  subscription: Awaited<ReturnType<PlanPaymentStripeReads['retrieveBusinessOsSubscription']>>
+): UpgradeGuard {
+  if (facts.billingReason !== 'subscription_update') return 'proceed';
+  if (subscription.pendingUpdate !== null && subscription.latestInvoiceId === facts.invoiceId) return 'retry';
+  if (!facts.assignsPlan) return 'proceed';
+  const items = subscription.items;
+  const onDecidingPrice =
+    items.length === 1 && items[0].priceId !== null && facts.decidingPriceIds.includes(items[0].priceId);
+  return onDecidingPrice ? 'proceed' : 'not_applied';
 }
 
 /**
@@ -441,7 +486,7 @@ async function afterApply(
   accountId: string,
   facts: PlanInvoiceFacts,
   result: BusinessOsApplyPlanPaymentResult,
-  extra: { billingCycleAnchor: string; secondSubscription: boolean }
+  extra: { billingCycleAnchor: string; secondSubscription: boolean; upgradeNotApplied: boolean }
 ): Promise<void> {
   const { event, livemode, log } = ctx;
   const ids = {
@@ -459,6 +504,14 @@ async function afterApply(
         { event: 'bos_billing_invoice_applied', status: result.status, planWritten: result.planWritten, anchorSet: result.anchorSet, tier: facts.tier, ...ids },
         'Business OS plan invoice applied'
       );
+      // U-4 case 2 (SA Q-3): only here, on a NEW money history row, so a
+      // replay (`already_*`) alerts nothing. The alert is this error line.
+      if (extra.upgradeNotApplied) {
+        log.error(
+          { event: 'bos_billing_upgrade_paid_not_applied', tier: facts.tier, eventRowId: result.eventRowId, ...ids, alert: true },
+          'Upgrade paid but not applied at Stripe: money recorded, plan row untouched'
+        );
+      }
 
       // P-5a.1: the stamp entry, built only from the function's own flag and
       // always written when it is true (W-5), whatever the lineage read says.
@@ -507,13 +560,16 @@ async function afterApply(
             subscriptionId: facts.subscriptionId,
             tier: facts.tier,
             amountMinor: facts.amountMinor,
+            // U-9 (P-7b.1a): an upgrade's tier change is visible as such.
+            billingReason: facts.billingReason,
             planWritten: result.planWritten,
             anchorSet: result.anchorSet,
             livemode,
             stripeEventId: event.id,
             eventRowId: result.eventRowId,
+            ...(extra.upgradeNotApplied ? { upgradeNotApplied: true } : {}),
           },
-          severity: 'info',
+          severity: extra.upgradeNotApplied ? 'warning' : 'info',
           // Only a written plan row changes what the account is entitled to.
           invalidatesEntitlements: result.planWritten,
           log,

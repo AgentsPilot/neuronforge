@@ -21,8 +21,13 @@
  * | paidAt        | `status_transitions.paid_at`; required on a paid invoice                 |
  * | assignsPlan   | SA-P8 / SA-P16c: `amount_paid > 0`, or a discounted `subscription_cycle` |
  * |               | invoice (a 100% coupon still renews the plan). A $0 trial invoice does   |
- * |               | not. C-3 carry-forward (requirement CF-6, owner P-4): a $0               |
- * |               | `subscription_update` paid from the credit balance does not either      |
+ * |               | not. P-7b.1a closes CF-6 (SA U-3): a paid `subscription_update` with     |
+ * |               | `total > 0` and a positive plan line assigns too, so an upgrade paid     |
+ * |               | from the credit balance, or one under Stripe's minimum charge carried to |
+ * |               | the balance, is applied. A trial swap (`total` 0, no positive line) and  |
+ * |               | a prorated downgrade credit (`total` < 0) still do not                    |
+ * | decidingPriceIds | The prices of the deciding lines (the positive plan lines, else all   |
+ * |               | plan lines), for the U-4 guard in planPaymentApply                       |
  * | bosUserIdClaim| `bos_user_id` on the subscription snapshot, else on the invoice. A       |
  * |               | CROSS-CHECK only: it never chooses the account (SR-8)                    |
  *
@@ -76,6 +81,12 @@ export interface PlanInvoiceFacts {
   paidAt: string | null;
   assignsPlan: boolean;
   billingReason: string | null;
+  /**
+   * P-7b.1a (U-4): the price ids of the lines that named the tier, in line
+   * order, de-duplicated. The webhook checks Stripe now bills one of these
+   * before a `subscription_update` invoice writes the plan.
+   */
+  decidingPriceIds: string[];
 }
 
 export type PlanInvoiceFactsResult =
@@ -165,7 +176,7 @@ export function planInvoiceFacts(
   }
   if (kind === 'paid' && paidAt === null) return refuse('malformed_invoice');
 
-  const planLines: Array<{ tier: string; amount: number; start: number; end: number }> = [];
+  const planLines: Array<{ tier: string; priceId: string; amount: number; start: number; end: number }> = [];
   for (const line of lines) {
     const priceId = priceIdOfLine(line);
     if (!priceId) continue;
@@ -178,7 +189,7 @@ export function planInvoiceFacts(
     if (typeof start !== 'number' || typeof end !== 'number' || !(end > start) || start <= 0) {
       return refuse('malformed_invoice');
     }
-    planLines.push({ tier, amount, start, end });
+    planLines.push({ tier, priceId, amount, start, end });
   }
   if (planLines.length === 0) return refuse('no_plan_line');
 
@@ -194,9 +205,17 @@ export function planInvoiceFacts(
   if (!periodStart || !periodEnd) return refuse('malformed_invoice');
 
   const billingReason = typeof invoice.billing_reason === 'string' ? invoice.billing_reason : null;
+  // CF-6 (SA U-3): an upgrade whose charge was covered by the credit balance,
+  // or too small for Stripe to charge, is paid with `amount_paid` 0 but is a
+  // real upgrade: `total` > 0 and a positive plan line. Narrow on purpose
+  // (R-4): a trial swap and a downgrade credit are excluded by `total`.
+  const total = (invoice as unknown as { total?: unknown }).total;
+  const paidUpgrade =
+    billingReason === 'subscription_update' && typeof total === 'number' && total > 0 && positive.length > 0;
   const assignsPlan =
     kind === 'paid' &&
-    ((invoice.amount_paid ?? 0) > 0 || (billingReason === 'subscription_cycle' && isDiscounted(invoice)));
+    ((invoice.amount_paid ?? 0) > 0 || (billingReason === 'subscription_cycle' && isDiscounted(invoice)) || paidUpgrade);
+  const decidingPriceIds = [...new Set(deciding.map((l) => l.priceId))];
 
   return {
     ok: true,
@@ -214,6 +233,7 @@ export function planInvoiceFacts(
       paidAt,
       assignsPlan,
       billingReason,
+      decidingPriceIds,
     },
   };
 }
