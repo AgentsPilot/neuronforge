@@ -54,6 +54,7 @@ import type {
   CreditPeriodStartRange,
   CreditTotalsRow,
 } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
+import { calendarMonthStartUtc, currentPeriodStartMs } from './creditPeriod';
 import { resolveEffectiveFields, type EffectiveFieldsInput } from './effectiveFields';
 import type {
   CreditLeakCheckResult,
@@ -119,46 +120,28 @@ export function leakTolerance(calls: number): number {
 // The billing period (S-4): the RPC's own rule, in TypeScript
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** `anchor + months`, day clamped to the target month's last day (Postgres `+ interval 'n months'`). */
-function addMonthsUtc(anchor: Date, months: number): number {
-  const total = anchor.getUTCMonth() + months;
-  const year = anchor.getUTCFullYear() + Math.floor(total / 12);
-  const month = ((total % 12) + 12) % 12;
-  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  return Date.UTC(
-    year,
-    month,
-    Math.min(anchor.getUTCDate(), lastDay),
-    anchor.getUTCHours(),
-    anchor.getUTCMinutes(),
-    anchor.getUTCSeconds(),
-    anchor.getUTCMilliseconds()
-  );
-}
-
 /**
  * The period a charge written at `atMs` would get: `business_os_credit_period_start`
  * (migration 20261015) for an account with a plan anchor, else the UTC calendar
  * month (the RPC's `calendar_month` branch). Null when the anchor is unreadable.
  *
- * A label, at millisecond precision: an anchor's microseconds are not kept.
+ * Delegates to `currentPeriodStartMs`, the one TS mirror of the SQL function:
+ * exact to the SQL for a millisecond `at`, the sub-millisecond tie included.
+ * `at` is a row's millisecond instant, not the recorder's own `now()`, so this
+ * is not a replay of the stored `period_start` — that is read verbatim when a
+ * charge exists.
+ *
+ * A LABEL at millisecond precision, never a key: an anchor's microseconds are
+ * not kept, and nothing here is sent to the database. An anchor string without
+ * a zone, or one that does not parse, gives null.
  */
 export function creditPeriodStartAt(anchorIso: string | null, atMs: number): string | null {
   if (!Number.isFinite(atMs)) return null;
   const at = new Date(atMs);
-  if (anchorIso === null) {
-    return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
-  }
-  const anchorMs = Date.parse(anchorIso);
-  if (Number.isNaN(anchorMs)) return null;
-  const anchor = new Date(anchorMs);
-  let months = (at.getUTCFullYear() - anchor.getUTCFullYear()) * 12 + (at.getUTCMonth() - anchor.getUTCMonth());
-  let candidate = addMonthsUtc(anchor, months);
-  if (candidate > atMs) {
-    months -= 1;
-    candidate = addMonthsUtc(anchor, months);
-  }
-  return new Date(candidate).toISOString();
+  if (Number.isNaN(at.getTime())) return null;
+  if (anchorIso === null) return calendarMonthStartUtc(at);
+  const startMs = currentPeriodStartMs(anchorIso, at);
+  return startMs === null ? null : new Date(startMs).toISOString();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -463,6 +446,8 @@ export function classifyLeakGroups(input: ClassifyLeakInput): LeakClassification
   const seenPeriods = new Map<number, string>();
   for (const { period } of leakPeriods) {
     if (period === null) continue;
+    // A dedupe/sort key over period LABELS (a ms label and a µs stored key of
+    // one period merge). The labels stay verbatim; never a DB key.
     const key = Date.parse(period);
     if (!seenPeriods.has(key)) seenPeriods.set(key, period);
   }
