@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-layout-lf2` (cut from `feature/admin-layout-lf1`, PR #338 open)
 **Path:** UI short path plus `npm run test:bos-entitlements`
 **Date:** 2026-10-13
-**Status:** Code Complete (uncommitted), awaiting SA code review + QA
+**Status:** PR #339 open — fast-track (SA + QA passed); user merges
 
 ## Overview
 
@@ -119,7 +119,11 @@ Not edited, flagged for SA: `app/admin/users/components/BusinessOsPanel.tsx` com
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf2` (cut from `feature/admin-layout-lf1`) |
+| Code commit | `e53e30a3` |
+| PR | [#339](https://github.com/AgentsPilot/neuronforge/pull/339), base `main`; contains #338 (LF-1) while that is open |
 
 ## Change History
 
@@ -127,6 +131,7 @@ Not edited, flagged for SA: `app/admin/users/components/BusinessOsPanel.tsx` com
 |---|---|---|
 | 2026-10-13 | Workplan written and built | Dev: LF-2 per §2.2; two forced test edits recorded as deviations |
 | 2026-10-13 | SA Fix Required applied (Dev) | C-1: the two T-12 cases ported into `accountLookup.contract.test.tsx`, rendering `EntitlementSnapshot` with the recording's data, same assertions. C-2: Health link text "Open Plans & entitlements (plans and account lookup)" to "Open Plans & entitlements" in `lib/admin/health/evaluateHealth.ts` and its pins (`evaluateHealth.test.ts`, `qa-slice5.test.ts`, `health.render.test.tsx` x2, `health.qa-slice5.render.test.tsx`, `health-summary/__tests__/route.test.ts`) and the `healthTypes.ts` example; no other code occurrence (older requirement and workplan docs keep it as history). C-3: `types.ts` comment now describes the snapshot. Step 2 says `div`. `capabilityDisplay.ts` left alone per SA |
+| 2026-10-13 | PR opened (RM) | Code commit `e53e30a3`, PR #339 open (fast-track, SA + QA passed). Scoped Jest 49 suites / 1521 tests, `test:bos-entitlements` 245 / 7239, `lint:hooks` clean, `typecheck:bos-llm` passed |
 
 ## QA Report (TL, browser) — 2026-10-13
 
