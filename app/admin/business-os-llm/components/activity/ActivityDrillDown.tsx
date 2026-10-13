@@ -91,7 +91,7 @@ async function readDrillDown(actionId: string, signal: AbortSignal): Promise<Dra
 
 const shortId = (id: string) => `${id.slice(0, 8)}…`;
 
-const unknownText = <span className="text-slate-500">{ENTRY_FIELD_UNKNOWN}</span>;
+const unknownText = <span className="text-slate-400">{ENTRY_FIELD_UNKNOWN}</span>;
 const countOrUnknown = (value: number | null) => (value === null ? unknownText : formatCount(value));
 
 /** The B1b entry fields (OQ-12), or the entry state when there are none. Never blank. */
@@ -184,7 +184,7 @@ function DrillDownBody({ payload }: { payload: ActivityDrillDownPayload }) {
         <DrawerFields>
           <DrawerField label={DRILL_DOWN_FIELDS.business} testId="drill-down-business">
             {payload.account.companyName ?? NAME_UNAVAILABLE}{' '}
-            <span className="font-mono text-[11px] text-slate-500" title={payload.account.accountId}>
+            <span className="font-mono text-[11px] text-slate-400" title={payload.account.accountId}>
               {shortId(payload.account.accountId)}
             </span>
           </DrawerField>
