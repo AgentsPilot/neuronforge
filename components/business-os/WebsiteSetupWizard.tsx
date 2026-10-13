@@ -23,7 +23,7 @@ import { ServiceDescriptionField } from '@/components/business-os/ServiceDescrip
 import { getTranslatedTemplateName, getTranslatedBrandVoice, getArchetypeLabel } from '@/lib/website-builder/templateLabels';
 import { ArchetypePreview, ArchetypeFontLinks } from '@/components/business-os/ArchetypePreview';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
-import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
+import { LazyConfigurationDialog } from '@/components/business-os/lazyDialogs';
 import type { FlowStepKey } from '@/lib/business-os/clientJourney';
 
 
@@ -1323,7 +1323,7 @@ export function WebsiteSetupWizard({
     behind it.
   */
   const servicesDialog = (
-    <ConfigurationDialog
+    <LazyConfigurationDialog
       isOpen={isServicesDialogOpen}
       onClose={() => {
         setIsServicesDialogOpen(false);
