@@ -1,5 +1,7 @@
 # Stripe Webhook Setup - Step by Step Guide
 
+> **Last Updated**: 2026-10-12
+
 This guide will walk you through setting up Stripe webhooks for both **local development** and **production**.
 
 ---
@@ -81,8 +83,10 @@ Your app should be running at `http://localhost:3000`
 Open a **new terminal window** (keep your app running in the first one) and run:
 
 ```bash
-stripe listen --forward-to localhost:3000/api/stripe/webhook
+stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook
 ```
+
+> **Stripe CLI 1.53+:** a bare `stripe listen --forward-to …` is refused — the CLI now needs an explicit `--events` list or `--all-snapshot`. The list above is every event `app/api/stripe/webhook/route.ts` and its Business OS plan and boost handlers act on; `stripe listen --all-snapshot --forward-to localhost:3000/api/stripe/webhook` forwards everything instead. The CLI prints a `whsec_…` signing secret: put it in `STRIPE_WEBHOOK_SECRET` in `.env.local` (never committed).
 
 **Expected output:**
 ```
@@ -114,7 +118,7 @@ Replace `whsec_xxxxxxxxxxxxxxxxxxxxx` with the actual secret from Step 4.
 
 With both terminals running:
 - Terminal 1: `npm run dev` (your Next.js app)
-- Terminal 2: `stripe listen --forward-to localhost:3000/api/stripe/webhook`
+- Terminal 2: `stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook`
 
 You should see webhook events being forwarded in Terminal 2:
 
@@ -444,7 +448,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000 # Change to production URL in producti
 stripe login
 
 # Forward webhooks to local server
-stripe listen --forward-to localhost:3000/api/stripe/webhook
+stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook
 
 # Test a specific webhook event
 stripe trigger payment_intent.succeeded
@@ -467,3 +471,11 @@ stripe logs tail
 **✅ Setup Complete!**
 
 Once you've completed all steps, your Stripe webhook integration should be fully functional for both local development and production.
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |

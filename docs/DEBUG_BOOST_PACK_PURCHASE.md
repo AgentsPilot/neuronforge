@@ -1,5 +1,7 @@
 # Debugging Boost Pack Purchase
 
+> **Last Updated**: 2026-10-12
+
 ## Issue
 - Purchased a boost pack
 - `boost_pack_purchases` table is empty
@@ -214,7 +216,7 @@ LIMIT 10;
 **Solution**:
 1. Check `.env` has correct `STRIPE_WEBHOOK_SECRET`
 2. Check application logs for errors
-3. Test webhook locally: `stripe listen --forward-to localhost:3000/api/stripe/webhook`
+3. Test webhook locally: `stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook`
 
 ### Issue 3: Credits Not Applied
 **Symptoms**: Webhook succeeded but balance didn't increase
@@ -313,3 +315,11 @@ If still stuck, provide this info:
 7. **Application Logs**: Any error messages from webhook processing
 
 This will help diagnose exactly where the flow is breaking.
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |
