@@ -332,8 +332,36 @@ describe('currentPeriodStartMs — the TS mirror of business_os_credit_period_st
 describe('C-2: the mirror is pinned to the SQL body of business_os_credit_period_start', () => {
   const MIGRATIONS = path.join(process.cwd(), 'supabase/migrations');
   const PIN_FILE = '20261015_business_os_credit_charges.sql';
-  const DEFINITION = /CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\s+public\.business_os_credit_period_start\(/;
+  // Any spelling Postgres accepts: any case and spacing, schema optional, quoted or not. Anchored to
+  // the start of a line so a `-- CREATE FUNCTION ...` comment does not count.
+  const DEFINITION =
+    /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(?:"public"|public)\s*\.\s*)?(?:"business_os_credit_period_start"|business_os_credit_period_start)\s*\(/im;
   const flat = (text: string) => text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ');
+
+  it('the redefinition check catches every spelling of the definition, and nothing else', () => {
+    const caught = [
+      'CREATE FUNCTION public.business_os_credit_period_start(p_anchor timestamptz, p_at timestamptz)',
+      'CREATE OR REPLACE FUNCTION public.business_os_credit_period_start(',
+      'create or replace function public.business_os_credit_period_start (',
+      'CREATE  OR\n  REPLACE\tFUNCTION\n  public . business_os_credit_period_start\n(',
+      'CREATE OR REPLACE FUNCTION "public"."business_os_credit_period_start"(',
+      'CREATE OR REPLACE FUNCTION public."business_os_credit_period_start"(',
+      'CREATE OR REPLACE FUNCTION business_os_credit_period_start(',
+      'CREATE FUNCTION "business_os_credit_period_start"(',
+      '-- header\n  CREATE OR REPLACE FUNCTION business_os_credit_period_start(',
+    ];
+    const ignored = [
+      'CREATE OR REPLACE FUNCTION public.business_os_credit_period_start_v2(',
+      'CREATE FUNCTION public.my_business_os_credit_period_start(',
+      'CREATE FUNCTION other.business_os_credit_period_start(',
+      '-- CREATE OR REPLACE FUNCTION public.business_os_credit_period_start( was moved',
+      '    v_period := public.business_os_credit_period_start(v_anchor, v_now);',
+      'REVOKE ALL ON FUNCTION public.business_os_credit_period_start(timestamptz, timestamptz) FROM PUBLIC;',
+      'DROP FUNCTION public.business_os_credit_period_start(timestamptz, timestamptz);',
+    ];
+    expect(caught.filter((sql) => !DEFINITION.test(sql))).toEqual([]);
+    expect(ignored.filter((sql) => DEFINITION.test(sql))).toEqual([]);
+  });
 
   it('the function is defined in exactly one migration (a redefinition elsewhere: re-pin to the new migration)', () => {
     const defining = fs
