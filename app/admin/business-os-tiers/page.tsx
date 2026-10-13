@@ -40,10 +40,19 @@
  * Nothing here writes. The write operations exist on the accounts route, are
  * audited, and are named on the page rather than silently absent.
  *
+ * ── One account (Admin Layout follow-ups LF-2) ──────────────────────────────
+ * This page used to carry an id-only "Look up an account" box. The Businesses
+ * drawer reads the same route and renders the same `EntitlementSnapshot`, and
+ * Businesses finds an account by name, business name or full id, so the box
+ * was a second, weaker way to the same view (user answer Q-2 (a)). A pointer
+ * line replaces it. How a plan's contents change is documented in
+ * docs/architecture/BUSINESS_OS_ENTITLEMENTS.md, not repeated here (SA V-8).
+ *
  * @see docs/workplans/business-os-tiers-admin-page.md
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 
 import { AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
@@ -51,7 +60,6 @@ import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminSta
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 
-import { AccountLookup } from './components/AccountLookup';
 import { EnforcementBanner } from './components/EnforcementBanner';
 import { NotBuiltPanel } from './components/NotBuiltPanel';
 import { PlanCard } from './components/PlanCard';
@@ -177,20 +185,12 @@ export default function BusinessOsTiersPage() {
 
           <NotBuiltPanel capabilities={payload.notBuilt} />
 
-          <AccountLookup />
-
-          <section className={CARD}>
-            <h2 className="text-sm font-semibold text-slate-300">Changing any of this</h2>
-            <p className="mt-1 max-w-3xl text-sm text-slate-400">
-              Not from here. This page reads. What a plan includes is a configuration change in{' '}
-              <span className="font-mono text-slate-300">
-                lib/business-os/entitlements/config/tierMatrix.ts
-              </span>{' '}
-              — adding a capability to a tier is one line, removing one needs a recorded removal and
-              a version bump. Per-account operations exist as audited API calls and are deliberately
-              not buttons yet:
-            </p>
-            <ul className="mt-2 flex flex-wrap gap-2">
+          {/* Footnote (LF-2): the operations stay named rather than silently
+              absent (the Read-only note above); the long text went to the
+              entitlements doc, which already had it (SA V-8). */}
+          <div data-testid="write-ops-footnote" className="text-xs text-slate-400">
+            <span>This page only reads. Per-account changes are audited API operations, not buttons:</span>
+            <ul className="mt-1 inline-flex flex-wrap gap-2 align-middle sm:ml-2 sm:mt-0">
               {payload.writeOpsNotOnThisPage.map((operation) => (
                 <li
                   key={operation}
@@ -200,7 +200,18 @@ export default function BusinessOsTiersPage() {
                 </li>
               ))}
             </ul>
-          </section>
+          </div>
+
+          {/* In place of the lookup (LF-2, SA-C1): Businesses search matches
+              name, business name and full account id, never email (SA V-3). */}
+          <p data-testid="businesses-pointer" className="text-sm text-slate-400">
+            To see one account&apos;s plan and which layer decided each capability, open the account
+            on{' '}
+            <Link href="/admin/users" className="underline hover:text-slate-300">
+              Businesses
+            </Link>{' '}
+            (Plan &amp; entitlements). Search Businesses by name, business name or account id.
+          </p>
         </div>
       )}
     </div>

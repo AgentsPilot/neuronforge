@@ -59,7 +59,10 @@ export interface PlansPayload {
   writeOpsNotOnThisPage: string[];
 }
 
-/** What the account lookup shows, from the existing accounts endpoint. */
+/**
+ * One account's entitlement snapshot, from the existing accounts endpoint, as
+ * `EntitlementSnapshot` renders it (in the Businesses drawer since LF-2).
+ */
 export interface AccountCapability {
   value: unknown;
   decidedBy: string;

@@ -607,7 +607,7 @@ describe('figures and links', () => {
         'entitlements_mode'
       );
       expect(tile.pageLink).toEqual(ENTITLEMENTS_PAGE_LINK);
-      expect(tile.pageLink?.text).toBe('Open Plans & entitlements (plans and account lookup)');
+      expect(tile.pageLink?.text).toBe('Open Plans & entitlements');
       expect(tile.pageLink?.href).toBe('/admin/business-os-tiers');
       expect(tile.figures[0].href).toBeNull();
       const text = [tile.headline, tile.footnote, tile.pageLink?.text, ...tile.figures.flatMap((f) => [f.value, f.note])].join(' ');

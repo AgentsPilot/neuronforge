@@ -6,6 +6,9 @@
  *
  * Extracted from AccountLookup (admin reorganisation slice 2b) so the
  * Businesses panel shows the SAME rendering, not a second one that could drift.
+ * Admin Layout follow-ups LF-2 removed the lookup from Plans & entitlements, so
+ * the Businesses drawer is now its only user; it stays in this folder, with
+ * `ENTITLEMENT_ERROR_COPY`, because it renders this screen's payload type.
  * Read-only, and it imports nothing but the screen's own types and the shared
  * admin layout folder.
  *
@@ -44,7 +47,8 @@ function endDate(iso: string | null | undefined): string {
  *
  * `accountLookup.contract.test.tsx` now reads the route's source, collects
  * every `error: '…'` it can return, and fails if one has no copy here. A new
- * refusal without a sentence is a red test rather than a code on a screen.
+ * refusal without a sentence is a red test rather than a code on a screen. The
+ * Businesses drawer words its plan-read failures through this table.
  */
 export const ENTITLEMENT_ERROR_COPY: Record<string, string> = {
   not_a_business_os_account:
