@@ -9,12 +9,11 @@ import { notifyCreditUsageChanged } from '@/lib/business-os/client/creditUsageSi
 import { LiveDashboard, GapView, OperationalItem, SetupItem, FunnelStats, WeeklyStats, MilestoneData, PipelineStage, ChannelPerformance } from '@/components/business-os/insight';
 import { shapeFromProfile, UNKNOWN_SHAPE, type BusinessShape } from '@/lib/business-os/setup/setupGraph';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
-import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
+import { LazyConfigurationDialog, LazySchedulingDialog } from '@/components/business-os/lazyDialogs';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 import { CHANNELS_CARD_ID } from '@/components/business-os/insight/ChannelsOverviewCard';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
-import { SchedulingDialog } from '@/components/business-os/SchedulingDialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -1432,7 +1431,7 @@ function BusinessOSContent() {
       </div>
 
       {/* Configuration Dialog (for services, availability, payments) */}
-      <ConfigurationDialog
+      <LazyConfigurationDialog
         isOpen={isConfigOpen}
         onClose={handleConfigClose}
         initialTab={configInitialTab}
@@ -1460,7 +1459,7 @@ function BusinessOSContent() {
       />
 
       {/* Scheduling Dialog (popup calendar from chat) */}
-      <SchedulingDialog
+      <LazySchedulingDialog
         isOpen={isSchedulingDialogOpen}
         onClose={() => {
           setIsSchedulingDialogOpen(false);

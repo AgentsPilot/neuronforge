@@ -10,7 +10,14 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { configure, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+
+// As the pin files (SA F2 on LF-4a.2): the whole page under a parallel Jest run
+// can take more than RTL's 1 s default to settle (QA-P7). Both limits are
+// raised, so the longer wait does not just hit Jest's 5 s test timeout. A
+// longer wait can only turn a pass into a fail.
+jest.setTimeout(30_000);
+configure({ asyncUtilTimeout: 5000 });
 
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({
@@ -25,9 +32,28 @@ jest.mock('@/lib/logger', () => ({
 import UsersPage from '../page';
 import { BusinessOsPanel } from '../components/BusinessOsPanel';
 import recordedAccountBody from '@/app/admin/business-os-tiers/__tests__/__fixtures__/recordedAccountBody.json';
+import type { AdminUserRow } from '../types';
 
 const ACCOUNT = '99999999-9999-4999-8999-999999999999';
 const NO_BUSINESS = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+/**
+ * Admin Layout follow-ups LF-4a.2: the panel takes the open row (it feeds the
+ * summary strip) and the drawer's "All products" block. Same id and name as
+ * the props these tests passed before.
+ */
+function panel(id: string, fullName: string) {
+  const user: AdminUserRow = {
+    id,
+    full_name: fullName,
+    email: 'someone@example.com',
+    email_confirmed: true,
+    created_at: '2026-09-01T00:00:00Z',
+    providers: [],
+    role: 'authenticated',
+  };
+  return <BusinessOsPanel user={user} allProducts={null} />;
+}
 
 const SUMMARY = {
   success: true,
@@ -108,7 +134,7 @@ describe('BusinessOsPanel', () => {
       [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
       [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
     });
-    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+    render(panel(ACCOUNT, 'Dana Cohen'));
 
     await waitFor(() => expect(screen.getByTestId('bos-panel-business').textContent).toBe('Acme Therapy'));
     expect(screen.getByTestId('bos-panel-user').textContent).toBe('Dana Cohen');
@@ -138,7 +164,7 @@ describe('BusinessOsPanel', () => {
       [`/entitlements/accounts/${NO_BUSINESS}`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
       [`/accounts/${NO_BUSINESS}/summary`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
     });
-    render(<BusinessOsPanel accountId={NO_BUSINESS} userName="Agent Only" />);
+    render(panel(NO_BUSINESS, 'Agent Only'));
 
     expect((await screen.findByTestId('bos-panel-not-bos')).textContent).toContain('Not a Business OS account');
     expect(screen.getByTestId('bos-panel-user').textContent).toBe('Agent Only');
@@ -150,7 +176,7 @@ describe('BusinessOsPanel', () => {
       [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
       [`/accounts/${ACCOUNT}/summary`]: { status: 500, body: { success: false, error: 'Internal server error' } },
     });
-    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+    render(panel(ACCOUNT, 'Dana Cohen'));
 
     expect((await screen.findByTestId('bos-panel-summary-error')).textContent).toContain('failed on the server');
     expect(screen.getByTestId('account-result')).toBeTruthy();
@@ -164,7 +190,7 @@ describe('BusinessOsPanel', () => {
       [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
       [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
     });
-    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+    render(panel(ACCOUNT, 'Dana Cohen'));
 
     const credits = await screen.findByTestId('credits-block');
     const fold = screen.getByTestId('bos-panel-plan') as HTMLDetailsElement;
@@ -186,7 +212,10 @@ describe('BusinessOsPanel', () => {
     expect(plan.textContent).toContain('This answer is good for');
     // The one-line summary names the tier the entitlements read already returned.
     const summary = screen.getByTestId('bos-panel-plan-summary');
-    expect(summary.textContent).toContain('Plan & entitlements · basic');
+    // LF-4a.2 (SQ-H): the section heading says "Plan & entitlements"; the line starts at the tier.
+    // The tier comes from the fixture, never a tier name as a literal (FR-12).
+    expect(summary.textContent?.startsWith(`${recordedAccountBody.data.plan.tier} · `)).toBe(true);
+    expect(within(screen.getByTestId('drawer-section-plan')).getAllByRole('heading')[0].textContent).toBe('Plan & entitlements');
     expect(summary.textContent).toContain('Show all capabilities');
   });
 
@@ -196,7 +225,7 @@ describe('BusinessOsPanel', () => {
       [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
       [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
     });
-    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+    render(panel(ACCOUNT, 'Dana Cohen'));
     expect((await screen.findByTestId('bos-panel-plan-error')).textContent).toContain('failed on the server');
     expect(screen.queryByTestId('bos-panel-plan')).toBeNull();
   });
@@ -207,7 +236,7 @@ describe('BusinessOsPanel', () => {
       [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
       [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
     });
-    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+    render(panel(ACCOUNT, 'Dana Cohen'));
 
     const credits = await screen.findByTestId('credits-block');
     await waitFor(() => expect(within(credits).getByTestId('credits-extra-figure').textContent).toBe('0'));
@@ -246,7 +275,7 @@ describe('BusinessOsPanel', () => {
       [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
       [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
     });
-    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+    render(panel(ACCOUNT, 'Dana Cohen'));
 
     const boost = await screen.findByTestId('boost-block');
     await within(boost).findByTestId('boost-no-purchases');
@@ -313,7 +342,7 @@ describe('BusinessOsPanel', () => {
       configurable: true,
       value: { randomUUID: () => '00000000-0000-4000-8000-000000000001' },
     });
-    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+    render(panel(ACCOUNT, 'Dana Cohen'));
 
     const boostBlock = await screen.findByTestId('boost-block');
     const takeBack = await within(boostBlock).findByTestId('boost-take-back');
@@ -329,7 +358,7 @@ describe('BusinessOsPanel', () => {
       [`/entitlements/accounts/${NO_BUSINESS}`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
       [`/accounts/${NO_BUSINESS}/summary`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
     });
-    render(<BusinessOsPanel accountId={NO_BUSINESS} userName="Agent Only" />);
+    render(panel(NO_BUSINESS, 'Agent Only'));
     await screen.findByTestId('bos-panel-not-bos');
     expect(screen.queryByTestId('credits-block')).toBeNull();
   });
@@ -343,7 +372,7 @@ describe('BusinessOsPanel', () => {
       [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
       [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: incomplete },
     });
-    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+    render(panel(ACCOUNT, 'Dana Cohen'));
     const note = (await screen.findByTestId('bos-panel-spend-incomplete')).textContent;
     expect(note).toContain('lower bound');
     expect(note).toContain('1,234');

@@ -1005,9 +1005,10 @@ function BusinessOSSettingsContent() {
 
             First in the list because it is the thing somebody opens settings to
             check, and because a customer who cannot find what they are paying
-            for assumes the worst. Read-only in S-4a step 1: there is no way to
-            buy or change a plan here yet, and the section says so rather than
-            showing a button that does nothing.
+            for assumes the worst. Since plan payments P-4.2 the section also
+            offers Choose for exactly the plans the server would sell
+            (`purchase.offer`), with the embedded checkout; where nothing is on
+            sale it stays read-only and shows no button that does nothing.
           */}
           <div id="settings-section-plan">
             <button
@@ -1022,7 +1023,9 @@ function BusinessOSSettingsContent() {
             </button>
             {expandedSection === 'plan' && (
               <div className="px-4 pb-4">
-                <PlanSection />
+                {/* P-4.2: the checkout return marker (display only; the section
+                    pattern-checks it and only the server re-read shows a plan). */}
+                <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} />
               </div>
             )}
           </div>

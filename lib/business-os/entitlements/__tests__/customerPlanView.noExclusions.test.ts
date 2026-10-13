@@ -121,8 +121,13 @@ describe('no plan is described by what it withholds', () => {
     'whenThisChanges',
     'included',
     'nextPlanUp',
+    // P-4.2 (T5): the plans shown to customers, checked to their own key set below.
+    'plans',
     'problem',
   ].sort();
+
+  /** One plan in `plans` (P-4.2): a name, a price and a flag; no list to hide an exclusion in. */
+  const PLAN_CHOICE_KEYS = ['planId', 'name', 'monthlyPriceUsd', 'availableToBuy'].sort();
 
   const UPGRADE_KEYS = [
     'planId',
@@ -166,6 +171,12 @@ describe('no plan is described by what it withholds', () => {
         for (const feature of row.features) {
           expect(Object.keys(feature).sort()).toEqual(FEATURE_KEYS);
         }
+      }
+
+      // P-4.2: each plan choice carries exactly its own keys.
+      expect(view.plans.length).toBeGreaterThan(0);
+      for (const choice of view.plans) {
+        expect(Object.keys(choice).sort()).toEqual(PLAN_CHOICE_KEYS);
       }
 
       // The other object a page renders — and the one that gained a field this

@@ -979,6 +979,9 @@ describe('what is never named', () => {
     'whenThisChanges',
     'included',
     'nextPlanUp',
+    // P-4.2 (T5): every plan shown to customers, each with exactly
+    // `PLAN_CHOICE_KEYS` below, so it cannot carry an exclusion either.
+    'plans',
     'problem',
   ];
 
@@ -1010,5 +1013,84 @@ describe('what is never named', () => {
         'changes',
       ].sort()
     );
+  });
+});
+
+describe('plans: every plan shown to customers (plan payments P-4.2, T5, M-5)', () => {
+  const shownTiers = config.tierOrder.filter(
+    (planId) => (config.matrix.presentation as Record<string, { shownToCustomers: boolean }>)[planId]?.shownToCustomers
+  );
+
+  it('lists every shown tier, in tier order, with its name, price and availableToBuy', () => {
+    const presentation = config.matrix.presentation as Record<
+      string,
+      { shownToCustomers: boolean; availableToBuy: boolean; monthlyPriceUsd: number; labels: { en: string } }
+    >;
+    // Non-vacuity: more than one plan is shown, so order is a real claim.
+    expect(shownTiers.length).toBeGreaterThan(1);
+    expect(viewFor('basic').plans).toEqual(
+      shownTiers.map((planId) => ({
+        planId,
+        name: presentation[planId].labels.en,
+        monthlyPriceUsd: presentation[planId].monthlyPriceUsd,
+        availableToBuy: presentation[planId].availableToBuy,
+      }))
+    );
+  });
+
+  it('is the same list whatever the account is on: a tier, a trial or a Founding Partner', () => {
+    const expected = viewFor('basic').plans;
+    for (const planId of ['pro', 'trial', 'champion']) {
+      expect(viewFor(planId).plans).toEqual(expected);
+    }
+  });
+
+  it('a PAUSED or EXPIRED tier account lists its OWN plan (it may buy it again)', () => {
+    for (const tier of shownTiers) {
+      const lapsed = resolveEntitlements({
+        config,
+        account: { ...previewAccountFor(config, tier, NOW), tierExpiresAt: '2026-01-01T00:00:00.000Z' },
+        overrides: [],
+        addons: [],
+        now: NOW,
+      });
+      // The resolver keeps the tier as the basis (A-1), so `nextPlanUp` would
+      // offer only the plan ABOVE it. `plans` is what lets it re-buy its own.
+      expect(lapsed.basis).toEqual({ kind: 'tier', tier });
+      const view = buildCustomerPlanView({ resolution: lapsed, unavailable: false, now: NOW, config });
+      expect(view.plans.map((choice) => choice.planId)).toContain(tier);
+    }
+  });
+
+  it('names a plan in the reader\'s language', () => {
+    const resolution = resolveEntitlements({ config, account: previewAccountFor(config, 'basic', NOW), overrides: [], addons: [], now: NOW });
+    const hebrew = buildCustomerPlanView({ resolution, unavailable: false, now: NOW, config, locale: 'he' }).plans;
+    const presentation = config.matrix.presentation as Record<string, { labels: { he: string } }>;
+    expect(hebrew.map((choice) => choice.name)).toEqual(shownTiers.map((planId) => presentation[planId].labels.he));
+  });
+
+  it('a plan with shownToCustomers off is not listed (the flag, not the tier, decides)', () => {
+    const presentation = config.matrix.presentation as Record<string, { shownToCustomers: boolean; availableToBuy: boolean }>;
+    const hidden = shownTiers[shownTiers.length - 1];
+    const saved = { ...presentation[hidden] };
+    presentation[hidden].shownToCustomers = false;
+    presentation[hidden].availableToBuy = false;
+    try {
+      expect(viewFor('basic').plans.map((choice) => choice.planId)).toEqual(shownTiers.filter((planId) => planId !== hidden));
+    } finally {
+      Object.assign(presentation[hidden], saved);
+    }
+  });
+
+  it('never lists a cohort: a cohort is not a product', () => {
+    const cohortIds = Object.keys(config.cohorts);
+    expect(cohortIds.length).toBeGreaterThan(0);
+    for (const choice of viewFor('champion').plans) expect(cohortIds).not.toContain(choice.planId);
+  });
+
+  it('is empty on the failure paths: a plan that cannot be read offers nothing', () => {
+    for (const unavailable of [true, false]) {
+      expect(buildCustomerPlanView({ resolution: null, unavailable, now: NOW, config }).plans).toEqual([]);
+    }
   });
 });

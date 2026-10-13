@@ -40,7 +40,34 @@ const SCREEN_FILES = [
   `${ROOT}/components/BusinessAuditSection.tsx`,
   `${ROOT}/useBusinessDetails.ts`,
   `${ROOT}/usersFormat.ts`,
+  // Admin Layout follow-ups LF-4a.2 (the drawer layout)
+  ...LF4A2_FILES(),
 ];
+
+/**
+ * LF-4a.2: the summary strip, the folds and the "All products" block. They
+ * only show what the drawer already read (BD-1): none of them sends a request.
+ * A function, so the list can sit above `SCREEN_FILES` in reading order.
+ */
+function LF4A2_FILES(): string[] {
+  return [
+    `${ROOT}/components/BusinessSummaryStrip.tsx`,
+    `${ROOT}/components/drawerFolds.tsx`,
+    `${ROOT}/components/AllProductsUsage.tsx`,
+  ];
+}
+
+describe('the LF-4a.2 drawer layout adds no request (BD-1, AC-4.3)', () => {
+  it.each(LF4A2_FILES())('%s calls no fetch', (file) => {
+    expect(codeOf(read(file))).not.toContain('fetch(');
+  });
+
+  it('the strip renders the list cell, not a figure of its own (SQ-9, BD-2)', () => {
+    const strip = codeOf(read(`${ROOT}/components/BusinessSummaryStrip.tsx`));
+    expect(strip).toContain('<CreditsLeftCell business={business} creditsLeft={creditsLeft} />');
+    expect(strip).not.toMatch(/planLeft|extraCredits|creditBands/);
+  });
+});
 
 /** The drawer body that holds the danger area since L-4b (it was the expanded row in `page.tsx`). */
 const DETAIL = `${ROOT}/components/BusinessDetail.tsx`;

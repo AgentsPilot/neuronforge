@@ -298,6 +298,25 @@ export interface PlanSentence {
   date?: string | null;
 }
 
+/**
+ * One plan a customer may be shown as a choice (plan payments P-4.2, T5, M-5).
+ *
+ * Every tier with `presentation.shownToCustomers`, in `tierOrder`, whatever
+ * the account is on: a paused or expired tier account sees its OWN plan here,
+ * so it can buy it again (the "next plan up" alone could not offer that).
+ *
+ * `availableToBuy` is information for the screen only. Whether a Choose button
+ * is shown is decided by the purchase view (`planPurchaseView.ts`, the same
+ * predicate the checkout uses), never by this flag alone.
+ */
+export interface CustomerPlanChoice {
+  planId: string;
+  /** In the reader's language, like every plan name on this surface. */
+  name: string;
+  monthlyPriceUsd: number;
+  availableToBuy: boolean;
+}
+
 export interface CustomerPlanView {
   /** `unavailable` is its own state: never rendered as "you have no plan". */
   status: 'ok' | 'no_plan_record' | 'unavailable';
@@ -351,8 +370,31 @@ export interface CustomerPlanView {
   included: CustomerPlanCategory[];
   /** `null` when there is nothing above this plan. */
   nextPlanUp: CustomerPlanUpgrade | null;
+  /**
+   * Every plan shown to customers (P-4.2, T5). Empty on the failure paths: a
+   * plan that cannot be read offers nothing to choose.
+   */
+  plans: CustomerPlanChoice[];
   /** Plain words for the customer when we cannot answer. `null` when we can. */
   problem: PlanSentence | null;
+}
+
+/**
+ * The plans a customer may be shown as choices, in tier order (P-4.2, T5).
+ *
+ * Read off `tierOrder` and `planCommercialFlags`, the one reader of the two
+ * commercial flags, so no tier is named here and a cohort is never listed (it
+ * is not a product).
+ */
+export function shownPlanChoices(config: EntitlementConfig, locale: Locale = defaultLocale): CustomerPlanChoice[] {
+  return config.tierOrder
+    .filter((planId) => planCommercialFlags(config, planId).shownToCustomers)
+    .map((planId) => ({
+      planId,
+      name: planLabel(config, planId, locale),
+      monthlyPriceUsd: planMonthlyPriceUsd(config, planId),
+      availableToBuy: planCommercialFlags(config, planId).availableToBuy,
+    }));
 }
 
 /**
@@ -746,6 +788,7 @@ export function buildCustomerPlanView(input: {
     whenThisChanges: null,
     included: [],
     nextPlanUp: null,
+    plans: [],
   };
 
   // A read that failed is not a customer without a plan (the S-0 lesson, one
@@ -852,6 +895,7 @@ export function buildCustomerPlanView(input: {
       upgrade && (upgrade.adds.length > 0 || upgrade.improves.length > 0 || upgrade.changes.length > 0)
         ? upgrade
         : null,
+    plans: shownPlanChoices(config, locale),
     problem: null,
   };
 }

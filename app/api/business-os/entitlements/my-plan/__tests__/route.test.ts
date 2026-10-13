@@ -42,6 +42,16 @@ const state = {
     data: { preferredLanguage: string | null; timezone: string | null } | null;
     error: Error | null;
   },
+  // P-4.2: the purchase view's ports, stubbed at the repository and the switches.
+  /** Which (user id, livemode) the billing repository was asked about. */
+  billingReads: [] as Array<[string, boolean]>,
+  billing: { data: null, error: null } as { data: Record<string, unknown> | null; error: Error | null },
+  mode: 'test' as 'test' | 'live',
+  checkoutOn: true,
+  pricesOn: true,
+  switchesThrow: false,
+  /** Any attempt to reach Stripe. Must stay 0: this route makes no Stripe call (SR-11). */
+  stripeCalls: 0,
 };
 
 jest.mock('@/lib/auth', () => ({
@@ -70,6 +80,38 @@ jest.mock('@/lib/repositories/UserPreferencesRepository', () => ({
   },
 }));
 
+// P-4.2: the purchase view reads OUR billing record through the repository,
+// by the session user and the server key's mode. Stubbed at the repository.
+jest.mock('@/lib/repositories/BusinessOsBillingAccountRepository', () => ({
+  businessOsBillingAccountRepository: {
+    findByUser: async (userId: string, livemode: boolean) => {
+      state.billingReads.push([userId, livemode]);
+      return state.billing;
+    },
+  },
+}));
+jest.mock('@/lib/business-os/billing/stripeMode', () => ({
+  ...jest.requireActual('@/lib/business-os/billing/stripeMode'),
+  currentStripeMode: () => state.mode,
+}));
+jest.mock('@/lib/business-os/billing/planCheckoutFlag', () => ({
+  ...jest.requireActual('@/lib/business-os/billing/planCheckoutFlag'),
+  isPlanCheckoutEnabled: () => {
+    if (state.switchesThrow) throw new Error('switch unreadable');
+    return state.checkoutOn;
+  },
+}));
+jest.mock('@/lib/business-os/billing/planPricesFlag', () => ({
+  ...jest.requireActual('@/lib/business-os/billing/planPricesFlag'),
+  isPlanPriceRecognitionEnabled: () => state.pricesOn,
+}));
+jest.mock('@/lib/stripe/StripeService', () => ({
+  getStripeService: () => {
+    state.stripeCalls += 1;
+    throw new Error('my-plan must never call Stripe (SR-11)');
+  },
+}));
+
 // The view builder is `server-only` and real here: this suite is about the
 // route, and stubbing the thing that decides what a customer is told would make
 // a green test say nothing about the endpoint.
@@ -78,6 +120,7 @@ import { buildCustomerPlanView } from '@/lib/business-os/entitlements/customerPl
 import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
+import { buyableTiers } from '@/lib/business-os/billing/planCheckoutEligibility';
 
 const NOW = new Date('2026-09-27T00:00:00.000Z');
 
@@ -102,6 +145,13 @@ function codeOnly(source: string): string {
 }
 
 beforeEach(() => {
+  state.billingReads = [];
+  state.billing = { data: null, error: null };
+  state.mode = 'test';
+  state.checkoutOn = true;
+  state.pricesOn = true;
+  state.switchesThrow = false;
+  state.stripeCalls = 0;
   state.user = { id: CUSTOMER };
   state.askedFor = [];
   state.snapshot = resolutionFor('basic');
@@ -124,6 +174,7 @@ describe('the gate', () => {
     // satisfied its status code.
     expect(state.askedFor).toEqual([]);
     expect(state.prefsAskedFor).toEqual([]);
+    expect(state.billingReads).toEqual([]);
   });
 
   it('does not require an admin — this is a customer route', async () => {
@@ -475,6 +526,140 @@ describe('the answer', () => {
     } finally {
       // @ts-expect-error -- restoring the same readonly field.
       process.env.NODE_ENV = previous;
+    }
+  });
+});
+
+describe('purchase (plan payments P-4.2; SA M-5, F-2, W-5, W-9)', () => {
+  /** A resolution at the REAL clock: the purchase view reads `new Date()`. */
+  function resolutionNow(planId: string) {
+    const config = readCodeConfig();
+    const now = new Date();
+    return resolveEntitlements({ config, account: previewAccountFor(config, planId, now), overrides: [], addons: [], now });
+  }
+  const inAMonth = () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const billingRow = (overrides: Record<string, unknown>) => ({
+    subscriptionStatus: null,
+    cancelAtPeriodEnd: false,
+    currentPeriodEnd: null,
+    endedAt: null,
+    openCheckoutSessionId: null,
+    openCheckoutExpiresAt: null,
+    ...overrides,
+  });
+
+  it("reads the billing row by the SESSION user and the server key's mode, whatever the URL says", async () => {
+    await GET(request(`https://example.test/api/business-os/entitlements/my-plan?userId=${SOMEBODY_ELSE}&accountId=${SOMEBODY_ELSE}`));
+    expect(state.billingReads).toEqual([[CUSTOMER, false]]);
+
+    state.billingReads = [];
+    state.mode = 'live';
+    await GET(request());
+    expect(state.billingReads).toEqual([[CUSTOMER, true]]);
+  });
+
+  it('offers Choose for exactly the tiers the checkout would sell, with every shown plan listed', async () => {
+    const body = await (await GET(request())).json();
+    expect(buyableTiers().length).toBeGreaterThan(0);
+    expect(body.data.purchase.offer).toEqual({ kind: 'choose', tiers: [...buyableTiers()] });
+    expect(body.data.plans.length).toBeGreaterThan(0);
+    // No billing record: an admin-assigned plan keeps "while the plan is paid for" (F4).
+    expect(body.data.purchase.billing).toBeNull();
+    expect(body.data.endsWhen).toEqual({ key: 'plan.ends.while_paid' });
+  });
+
+  it('F-2: an active subscription on our record → "Renews on", and nothing to Choose (paying)', async () => {
+    const periodEnd = inAMonth();
+    state.billing = { data: billingRow({ subscriptionStatus: 'active', currentPeriodEnd: periodEnd }), error: null };
+    const body = await (await GET(request())).json();
+    expect(body.data.endsWhen).toEqual({ key: 'plan.renews_on', date: periodEnd });
+    expect(body.data.purchase.billing).toEqual({ state: 'renewing', date: periodEnd });
+    expect(body.data.purchase.offer).toEqual({ kind: 'none', reason: 'paying' });
+  });
+
+  it('F-2: set to cancel at the period end → "Ends on"', async () => {
+    const periodEnd = inAMonth();
+    state.billing = { data: billingRow({ subscriptionStatus: 'active', cancelAtPeriodEnd: true, currentPeriodEnd: periodEnd }), error: null };
+    const body = await (await GET(request())).json();
+    expect(body.data.endsWhen).toEqual({ key: 'plan.ends_on_paid', date: periodEnd });
+  });
+
+  it('W-5: past_due keeps the dateless sentence (its period end has not moved)', async () => {
+    state.billing = { data: billingRow({ subscriptionStatus: 'past_due', currentPeriodEnd: inAMonth() }), error: null };
+    const body = await (await GET(request())).json();
+    expect(body.data.endsWhen).toEqual({ key: 'plan.ends.while_paid' });
+    expect(body.data.purchase.billing).toBeNull();
+    expect(body.data.purchase.offer).toEqual({ kind: 'none', reason: 'paying' });
+  });
+
+  it('a free plan keeps its own sentence even if a billing row says active (only a TIER is replaced)', async () => {
+    const trial = resolutionNow('trial');
+    state.snapshot = trial;
+    state.billing = { data: billingRow({ subscriptionStatus: 'active', currentPeriodEnd: inAMonth() }), error: null };
+    const expected = buildCustomerPlanView({ resolution: trial, unavailable: false }).endsWhen;
+    const body = await (await GET(request())).json();
+    expect(body.data.kind).toBe('cohort');
+    expect(body.data.endsWhen).toEqual(JSON.parse(JSON.stringify(expected)));
+  });
+
+  it('BQ-P10: an open-ended Founding Partner is offered nothing', async () => {
+    state.snapshot = resolutionNow('champion');
+    const body = await (await GET(request())).json();
+    expect(body.data.accessEndsAt).toBeNull();
+    expect(body.data.purchase.offer).toEqual({ kind: 'none', reason: 'free_access_no_end_date' });
+    expect(body.data.purchase.endsFreeAccessOnPurchase).toBeNull();
+  });
+
+  it('a live trial is told buying ends it today (W-7)', async () => {
+    state.snapshot = resolutionNow('trial');
+    const body = await (await GET(request())).json();
+    expect(body.data.purchase.offer.kind).toBe('choose');
+    expect(body.data.purchase.endsFreeAccessOnPurchase).toBe('trial');
+  });
+
+  it('switches off → nothing offered (production today)', async () => {
+    state.checkoutOn = false;
+    const body = await (await GET(request())).json();
+    expect(body.data.purchase.offer).toEqual({ kind: 'none', reason: 'switches_off' });
+  });
+
+  it('a failed billing read never hides the plan: 200, Choose computed as if no record, billing null', async () => {
+    state.billing = { data: null, error: new Error('db down') };
+    const response = await GET(request());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.data.status).toBe('ok');
+    expect(body.data.purchase.offer.kind).toBe('choose');
+    expect(body.data.purchase.billing).toBeNull();
+  });
+
+  it('a purchase view that throws still answers 200 with the plan and purchase null', async () => {
+    state.switchesThrow = true;
+    const response = await GET(request());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.data.status).toBe('ok');
+    expect(body.data.purchase).toBeNull();
+    expect(body.data.endsWhen).toEqual({ key: 'plan.ends.while_paid' });
+  });
+
+  it('an unreadable plan carries no purchase and reads no billing', async () => {
+    state.snapshot = null;
+    state.unavailable = true;
+    const body = await (await GET(request())).json();
+    expect(body.data.purchase).toBeNull();
+    expect(state.billingReads).toEqual([]);
+  });
+
+  it('never calls Stripe, and neither the route nor the view imports a Stripe client (SR-11)', async () => {
+    state.billing = { data: billingRow({ subscriptionStatus: 'active', currentPeriodEnd: inAMonth() }), error: null };
+    await GET(request());
+    state.billing = { data: null, error: null };
+    await GET(request());
+    expect(state.stripeCalls).toBe(0);
+    for (const file of ['app/api/business-os/entitlements/my-plan/route.ts', 'lib/business-os/billing/planPurchaseView.ts']) {
+      const code = codeOnly(readFileSync(join(process.cwd(), file), 'utf8'));
+      expect(code).not.toMatch(/StripeService|getStripeService|from 'stripe'|lib\/stripe\//);
     }
   });
 });

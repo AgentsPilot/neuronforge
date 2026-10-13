@@ -735,6 +735,9 @@ describe('source guards', () => {
       // Plan payments P-3a: the checkout route's integration test fakes the
       // repository module by name. The route itself does not name it.
       'app/api/business-os/billing/plan/checkout/__tests__/route.test.ts',
+      // Plan payments P-4.2: the my-plan route suite fakes the repository module
+      // by name for the purchase view's billing read. The route does not name it.
+      'app/api/business-os/entitlements/my-plan/__tests__/route.test.ts',
       // Not a caller: the P1-C6 / M-1 placement guard names the repository's
       // module path to assert the allow-listed billing files are its only billing importers.
       'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
@@ -765,6 +768,9 @@ describe('source guards', () => {
       'lib/business-os/billing/planCheckout.ts',
       'lib/business-os/billing/planCheckoutSessionEvents.ts',
       'lib/business-os/billing/planPaymentApply.ts',
+      // Plan payments P-4.2 (SA W-8): the Settings → Plan purchase view reads
+      // the SESSION user's billing row for the current mode (findByUser only).
+      'lib/business-os/billing/planPurchaseView.ts',
       'lib/business-os/billing/planSubscriptionMirror.ts',
       // Admin delete AD-1b (SC-5): R-3 reads BOTH livemode rows of the target's
       // plan billing account (findByUser only); the evaluator imports the status
