@@ -27,15 +27,17 @@ const LANG_PATH = path.join(
   '..',
   'lib',
   'business-os',
-  'LanguageContext.tsx'
+  'translations',
+  'en.ts'
 );
 
 /**
  * Parse `'key': 'value'` / `'key':\n  'value'` pairs out of a source region.
  *
- * Deliberately source-parsing rather than importing: importing
- * `LanguageContext.tsx` would pull in React context and a ~10,000-line module
- * into a unit test, and `translations` is not exported anyway.
+ * Deliberately source-parsing rather than importing: the English dictionary
+ * now has its own module, but reaching it through `LanguageContext` would still
+ * pull React context into a unit test. Reading the one file is cheaper and says
+ * the same thing.
  */
 function parsePairs(source: string, keys: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -62,11 +64,15 @@ describe('DangerZonePanel copy', () => {
     (m) => m[1]
   );
 
-  // The `en` block is the first translations block in LanguageContext.
-  const enBlock = langSource.slice(
-    langSource.indexOf('const translations'),
-    langSource.indexOf("  es: {")
-  );
+  /*
+   * The whole file IS the English block now.
+   *
+   * It used to be sliced out of `LanguageContext.tsx` between `const
+   * translations` and `  es: {` — a slice that silently became empty the day
+   * the dictionaries moved into modules of their own, which is what this
+   * comment is here to stop happening twice.
+   */
+  const enBlock = langSource;
 
   it('parses a non-empty fallback set (guards against a vacuous pass)', () => {
     // Without this, a regex that matched nothing would make every assertion

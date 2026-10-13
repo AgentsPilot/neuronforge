@@ -434,19 +434,81 @@ export abstract class BaseDetector implements Detector {
    *
    * NULL when there is too little traffic to divide by.
    */
+  /**
+   * How many distinct people visited this account's site.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE ONE PLACE THAT COUNTS VISITORS, because four things have to be right at
+   * once and a detector that rolls its own gets some of them wrong:
+   *
+   *   1. THE OWNER IS NOT A VISITOR. `is_owner_view` rows are theirs, and on a
+   *      young account they are most of the traffic — somebody checking the
+   *      site they just published. Counted, they inflate every denominator and
+   *      make a healthy site look like it converts nobody.
+   *
+   *      Filtered in TypeScript on `=== true`, not with `.eq('is_owner_view',
+   *      false)`: the column is nullable, and in Postgres that comparison drops
+   *      NULL rows as well, silently discarding real visits.
+   *
+   *   2. SCOPED BY `user_id`, not by subdomain. An account can own several
+   *      subdomains, so one of them is not the whole site — and a subdomain
+   *      filter alone is scoped by a name another account could later hold.
+   *
+   *   3. A SESSION BEFORE AN IP. `ip_hash` alone merges an office behind one
+   *      address into a single person, and merges every row missing a hash into
+   *      one more. Anonymous rows are counted individually instead.
+   *
+   *   4. BOUNDED EXPLICITLY. PostgREST caps an unbounded select and says
+   *      nothing, which would quietly stop the count at the cap on exactly the
+   *      busy sites where the number matters.
+   *
+   * Returns null only when the read failed, so a caller can tell "no traffic"
+   * (0) from "cannot say" (null) and refuse to divide by the latter.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  protected async resolveUniqueVisitors(userId: string, days = 30): Promise<number | null> {
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+    try {
+      const { data: views } = await this.supabase
+        .from('website_page_views')
+        .select('session_id, ip_hash, is_owner_view')
+        .eq('user_id', userId)
+        .gte('viewed_at', since)
+        .limit(5000);
+
+      const identities = new Set<string>();
+      let anonymous = 0;
+      for (const row of views || []) {
+        const r = row as {
+          session_id?: string | null;
+          ip_hash?: string | null;
+          is_owner_view?: boolean | null;
+        };
+        if (r.is_owner_view === true) continue;
+        const id = r.session_id || r.ip_hash;
+        if (id) identities.add(id);
+        else anonymous += 1;
+      }
+
+      return identities.size + anonymous;
+    } catch (error) {
+      logger.warn({ err: error, userId }, 'Visitor count failed');
+      return null;
+    }
+  }
+
   protected async resolveVisitorToLeadRate(userId: string, days = 30): Promise<number | null> {
     /** Below this, the fraction is an accident of a small denominator. */
     const MIN_VISITORS = 50;
     const since = new Date(Date.now() - days * 86_400_000).toISOString();
 
     try {
-      const [{ data: views }, { count: contacts }] = await Promise.all([
-        this.supabase
-          .from('website_page_views')
-          .select('session_id, ip_hash, is_owner_view')
-          .eq('user_id', userId)
-          .gte('viewed_at', since)
-          .limit(5000),
+      /* The visitor half is `resolveUniqueVisitors`, not a second copy of it.
+         Two implementations of "how many people visited" drift, and the drift
+         shows up as two insights disagreeing about the same traffic. */
+      const [visitors, { count: contacts }] = await Promise.all([
+        this.resolveUniqueVisitors(userId, days),
 
         this.supabase
           .from('crm_contacts')
@@ -455,18 +517,7 @@ export abstract class BaseDetector implements Detector {
           .gte('created_at', since),
       ]);
 
-      const identities = new Set<string>();
-      let anonymous = 0;
-      for (const row of views || []) {
-        const r = row as { session_id?: string | null; ip_hash?: string | null; is_owner_view?: boolean | null };
-        if (r.is_owner_view === true) continue;
-        const id = r.session_id || r.ip_hash;
-        if (id) identities.add(id);
-        else anonymous += 1;
-      }
-
-      const visitors = identities.size + anonymous;
-      if (visitors < MIN_VISITORS || !contacts) return null;
+      if (visitors === null || visitors < MIN_VISITORS || !contacts) return null;
 
       // Capped: more new contacts than visitors means people arriving by a
       // route the website never saw, which is not a conversion above 100%.

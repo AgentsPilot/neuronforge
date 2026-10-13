@@ -43,8 +43,8 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { findGaps, ownerGaps } from '@/lib/business-os/gaps/findGaps';
-import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
-import { applicableAutomations } from '@/lib/business-os/gaps/automationApplies';
+import { OPERATIONAL_AUTOMATIONS, offerIsEarned } from '@/lib/business-os/gaps/automations';
+import { applicableAutomations, automationEvidence } from '@/lib/business-os/gaps/automationApplies';
 import { leadResponseRepository } from '@/lib/repositories/LeadResponseRepository';
 
 const logger = createLogger({ module: 'BusinessGapsAPI' });
@@ -209,7 +209,24 @@ async function operationalAutomations(
    */
   const applicable = await applicableAutomations(userId, OPERATIONAL_AUTOMATIONS);
 
-  return applicable.map(automation => ({
+  /*
+   * And only what this owner has earned the offer of.
+   *
+   * `applicableAutomations` answers "could this business use it". This answers
+   * "has this owner shown they do it by hand" — the gate `auto_complete_meetings`
+   * carries, because saying yes to that one records an answer the platform
+   * cannot verify on up to ninety days of past meetings. An automation already
+   * switched ON is never hidden: it has to stay reachable to switch off.
+   */
+  const evidence = await automationEvidence(userId, applicable);
+  const offered = applicable.filter(automation =>
+    offerIsEarned(automation, {
+      enabled: Boolean(approvals[automation.column]),
+      evidence: evidence.get(automation.id) ?? 0,
+    })
+  );
+
+  return offered.map(automation => ({
     id: automation.id,
     enabled: Boolean(approvals[automation.column]),
     declined: declined.has(automation.id),
@@ -257,15 +274,45 @@ export async function GET(request: NextRequest) {
      * claimed cannot be stopped and offering a Cancel button for it would
      * promise something the database refuses a second later.
      */
-    const enquiryIds = mine
-      .filter(gap => gap.id === 'enquiry_unanswered')
+    const queuedFor = mine
+      .filter(gap => gap.id === 'enquiry_unanswered' || gap.id === 'meeting_unmarked')
       .flatMap(gap => gap.items.map(item => item.contactId));
 
-    const queued = await leadResponseRepository.listForContacts(user.id, enquiryIds);
+    const queued = await leadResponseRepository.listForContacts(user.id, queuedFor);
     const pendingByContact = new Map(
       queued
         .filter(row => row.kind === 'invite' && row.status === 'pending')
         .map(row => [row.contact_id, row])
+    );
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND WHAT THE PLATFORM IS ABOUT TO DO WITHOUT BEING ASKED AGAIN.
+     *
+     * `auto_complete_meetings` marks a meeting completed twelve hours after it
+     * was due. The unmarked gap claims the same meeting after two. So for ten
+     * hours the card asked the owner to answer a question the platform was
+     * about to answer for them, said nothing about it, and then the row
+     * vanished when the automation ran.
+     *
+     * Nothing was broken. The row simply never mentioned it, and a task
+     * disappearing with no explanation is how an owner stops trusting the list.
+     *
+     * KEYED BY BOOKING, not by contact. One client can have three unmarked
+     * meetings and the queue carries one row per booking — keying this the way
+     * the enquiry map above is keyed would put the wrong time on two of them.
+     * That difference is why this is a second map rather than a widening of
+     * the first.
+     *
+     * No button. The seven-day triage row already lets the owner correct an
+     * auto-completed meeting, so a Cancel here would buy ten hours of
+     * prevention on top of a week of cure. What was missing is the sentence.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const closingByBooking = new Map(
+      queued
+        .filter(row => row.kind === 'meeting_complete' && row.status === 'pending')
+        .map(row => [row.entity_id, row])
     );
 
     const gaps = mine.map(gap => ({
@@ -307,6 +354,24 @@ export async function GET(request: NextRequest) {
                 dueAt: pending.next_attempt_at,
               }
             : null,
+          /*
+           * When the platform will answer this one itself, if the owner does
+           * not. A time and nothing else: no label, no buttons, nothing to
+           * press. See the note where `closingByBooking` is built.
+           */
+          closingAt: item.entityId
+            ? closingByBooking.get(item.entityId)?.next_attempt_at ?? null
+            : null,
+          /*
+           * When THIS one's moment is: a quote's `valid_until`, an
+           * appointment's start.
+           *
+           * Computed by the gaps for as long as they have existed and dropped
+           * here, so the card could say "9 days since you sent it" and never
+           * "open until the 14th" — the half that decides what to do first.
+           * `mostUrgent` ranks on it.
+           */
+          eventAt: item.eventAt ?? null,
         };
       }),
     }));

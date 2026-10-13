@@ -210,7 +210,15 @@ describe('sendMeetingReminder', () => {
       notifyOwner: false,
     });
 
-    expect(clientMail()!.html).toContain('https://app.example.test/reschedule/');
+    /*
+       `/book/manage/<token>/reschedule`, not `/reschedule/<token>`.
+
+       The standalone route was removed when that screen moved into the portal,
+       and this assertion was left naming it — so it asserted a URL the product
+       no longer builds, and went on failing unnoticed because the portal work
+       was verified against `components/public` and `app/book` rather than
+       `lib/services`. The link in the reminder is the portal's. */
+    expect(clientMail()!.html).toContain('https://app.example.test/book/manage/');
     expect(clientMail()!.html).toContain('/reschedule');
   });
 
@@ -429,7 +437,7 @@ describe('the reschedule link is only offered while it would work', () => {
       notifyOwner: false,
     });
 
-    expect(clientHtml()).toContain('/reschedule/');
+    expect(clientHtml()).toContain('/book/manage/');
   });
 
   it('withholds it inside the window', async () => {
@@ -487,7 +495,7 @@ describe('the reschedule link is only offered while it would work', () => {
       notifyOwner: false,
     });
 
-    expect(clientHtml()).toContain('/reschedule/');
+    expect(clientHtml()).toContain('/book/manage/');
   });
 
   it('falls back to 24 hours when the service is unreadable', async () => {

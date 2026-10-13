@@ -21,13 +21,14 @@ import {
 } from '../emailSendStatus';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
 /*
  * Read from source rather than imported: `LanguageContext` is a `'use client'`
  * module holding a React context, and `translations` is not exported. Same
  * approach as `verdictChannelPrefix.test.ts`.
  */
-const languageSource = readFileSync(join(__dirname, '..', 'LanguageContext.tsx'), 'utf8');
+const languageSource = dictionarySource();
 
 /** How many times a key is defined — one per locale block when complete. */
 function localeCount(key: string): number {

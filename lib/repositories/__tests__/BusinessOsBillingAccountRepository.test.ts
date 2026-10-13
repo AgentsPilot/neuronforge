@@ -739,6 +739,9 @@ describe('source guards', () => {
       // module path to assert the allow-listed billing files are its only billing importers.
       'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
       'lib/business-os/billing/__tests__/businessOsStripeCustomer.test.ts',
+      // P-5a.2 (SA W-8): the switch-matrix test fakes the repository module by
+      // name, for the real checkout route and the real holding-screen model.
+      'lib/business-os/billing/__tests__/heldPaymentOffer.matrix.test.ts',
       // P-3a: imports the billing row TYPE to build fakes.
       'lib/business-os/billing/__tests__/planCheckout.test.ts',
       // P-3b.2: the webhook use-case tests import the billing row TYPE to build fakes.
@@ -748,6 +751,9 @@ describe('source guards', () => {
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       'lib/business-os/billing/__tests__/planSubscriptionMirror.test.ts',
       'lib/business-os/billing/businessOsStripeCustomer.ts',
+      // Plan payments P-5a.2 (workplan §3.3): the holding screen's model reads
+      // the SESSION user's billing row for the current mode (findByUser only).
+      'lib/business-os/billing/heldPaymentView.ts',
       // Plan payments P-3b.2 (workplan §3.1, §3.5): the plan webhook handler
       // wires the singleton; its three use cases take it as a port TYPE
       // (findByStripeSubscription, findByStripeCustomer, linkCheckoutSession,

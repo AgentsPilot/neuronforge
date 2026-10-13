@@ -97,6 +97,134 @@ describe('completeMeeting', () => {
   });
 });
 
+/**
+ * Every completion it writes stays answerable.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `completed` is one of three answers and this can only give the first. The
+ * moment it writes that answer the booking leaves `meeting_unmarked`, so the
+ * owner's prompt disappears at the same instant the assumption is recorded.
+ * The `booking_auto_completed` marker is what puts a correction back in front
+ * of them, via the `meeting_auto_completed` gap, for seven days.
+ *
+ * So the marker is not decoration and the ORDER is the safety: written first,
+ * and a failure to write it stops the completion. A marker with no completion
+ * is invisible (the gap requires the booking to actually be `completed`); a
+ * completion with no marker is a no-show silently on the books as attendance
+ * with no surface left to correct it on.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('the correction it leaves behind', () => {
+  it('records who decided, with the marker the triage row reads', () => {
+    expect(fn).toContain("activity_type: 'booking_auto_completed'");
+    expect(fn).toContain('source_entity_id: booking.id');
+  });
+
+  it('writes the marker BEFORE completing, not after', () => {
+    const marker = fn.indexOf("activity_type: 'booking_auto_completed'");
+    const complete = fn.indexOf('schedulingBookingRepository.complete');
+
+    expect(marker).toBeGreaterThan(-1);
+    expect(complete).toBeGreaterThan(-1);
+    expect(marker).toBeLessThan(complete);
+  });
+
+  it('does not complete the meeting when the marker cannot be written', () => {
+    // Leaving it on the Needs You card is the status quo, and harmless.
+    expect(fn).toMatch(/marker\.error[\s\S]{0,400}?return \{ sent: false, reason: 'marker_failed' \}/);
+  });
+
+  it('writes the owner their own language, not English', () => {
+    expect(fn).toContain('getBusinessLocale(row.user_id)');
+  });
+});
+
+/**
+ * The row says what is about to happen to it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The unmarked gap claims a meeting two hours after it ends; the automation
+ * answers at twelve. So for ten hours the Needs You row asked the owner to
+ * decide something the platform was about to decide, said nothing about it, and
+ * then disappeared when the queue drained.
+ *
+ * Nothing was broken. But a task vanishing with no explanation is how somebody
+ * stops trusting the list, and the owner could not tell the automation having
+ * run from the row having been a mistake.
+ *
+ * A sentence, not a control — the seven-day triage row above already lets them
+ * correct an auto-completed meeting, so a Cancel here would add ten hours of
+ * prevention to a week of cure.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('the warning before it happens', () => {
+  const route = readFileSync(
+    join(__dirname, '..', '..', '..', 'app', 'api', 'business-os', 'gaps', 'route.ts'),
+    'utf8'
+  );
+
+  it('looks up the queued close, not only the queued reply', () => {
+    expect(route).toContain("row.kind === 'meeting_complete' && row.status === 'pending'");
+  });
+
+  /*
+   * Keyed by BOOKING. One client can have three unmarked meetings and the
+   * queue carries one row per booking, so keying this the way the enquiry map
+   * is keyed would put the wrong time on two of them.
+   */
+  it('keys it by the booking rather than the contact', () => {
+    expect(route).toMatch(/closingByBooking[\s\S]{0,200}?row\.entity_id/);
+    expect(route).toContain('closingByBooking.get(item.entityId)');
+  });
+
+  it('carries a time and nothing else', () => {
+    const card = readFileSync(
+      join(__dirname, '..', '..', '..', 'components', 'business-os', 'insight', 'NeedsYouCard.tsx'),
+      'utf8'
+    );
+
+    expect(card).toContain("t('gaps.closing_at')");
+    // No action: a button here would be a second way to do what the triage
+    // row already does, on a row that is about to resolve itself.
+    expect(card).not.toMatch(/closingAt[\s\S]{0,400}?onClick/);
+  });
+});
+
+/**
+ * The gap that carries the correction, and the window it lives in.
+ */
+describe('the triage row', () => {
+  const definitions = readFileSync(
+    join(__dirname, '..', '..', 'business-os', 'gaps', 'definitions.ts'),
+    'utf8'
+  );
+
+  it('is an owner errand, so it reaches the dashboard', () => {
+    expect(definitions).toMatch(/id: 'meeting_auto_completed',\s*\n\s*blocksOn: 'owner',/);
+  });
+
+  it('reads the marker the automation writes', () => {
+    expect(definitions).toContain(".eq('activity_type', 'booking_auto_completed')");
+  });
+
+  /*
+   * The filter that makes the row disappear once answered. Without it, an
+   * owner who corrected a meeting to `no_show` would keep being asked about it
+   * for the rest of the week.
+   */
+  it('drops a meeting the owner has already corrected', () => {
+    const gap = definitions.slice(
+      definitions.indexOf("id: 'meeting_auto_completed'"),
+      definitions.indexOf('export const GAP_DEFINITIONS')
+    );
+    expect(gap).toContain(".eq('status', 'completed')");
+  });
+
+  it('settles after a week rather than accumulating', () => {
+    expect(definitions).toContain('const MEETING_TRIAGE_DAYS = 7');
+  });
+});
+
 describe('the registry entry', () => {
   const automations = readFileSync(
     join(__dirname, '..', '..', 'business-os', 'gaps', 'automations.ts'),

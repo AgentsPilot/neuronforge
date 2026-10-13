@@ -7,6 +7,7 @@ import { createLogger } from '@/lib/logger';
 import { InvoiceModal } from './InvoiceModal';
 import { RefundModal } from './RefundModal';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { REFUND_CLASS } from './refundTone';
 import {
   FileText,
   Plus,
@@ -453,20 +454,31 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
         dot: 'bg-slate-400',
         accent: 'slate'
       },
-      // Money went back. Orange rather than red: a refund is a completed,
-      // deliberate act, not a failure like an overdue invoice.
+      /*
+       * From the shared tone, not decided here.
+       *
+       * This file argued the case itself — "orange rather than red: a refund is
+       * a completed, deliberate act" — while three other surfaces decided it
+       * differently, so one event was orange here, grey in the transactions
+       * list and slate in the payment dialog. The argument now lives in
+       * `refundTone` and every surface reads the answer.
+       *
+       * FULL is red: everything came back, and it must not be mistakable for a
+       * completed sale.
+       */
       refunded: {
-        bg: 'bg-orange-50 dark:bg-orange-900/20',
-        text: 'text-orange-700 dark:text-orange-300',
-        border: 'border-orange-200 dark:border-orange-800',
-        dot: 'bg-orange-500',
-        accent: 'orange'
+        bg: REFUND_CLASS.full.panel,
+        text: REFUND_CLASS.full.panelText,
+        border: REFUND_CLASS.full.border,
+        dot: REFUND_CLASS.full.dot,
+        accent: 'red'
       },
+      /* PARTIAL stays amber: money is still with the business. */
       partially_refunded: {
-        bg: 'bg-amber-50 dark:bg-amber-900/20',
-        text: 'text-amber-700 dark:text-amber-300',
-        border: 'border-amber-200 dark:border-amber-800',
-        dot: 'bg-amber-500',
+        bg: REFUND_CLASS.partial.panel,
+        text: REFUND_CLASS.partial.panelText,
+        border: REFUND_CLASS.partial.border,
+        dot: REFUND_CLASS.partial.dot,
         accent: 'amber'
       },
     };
@@ -1145,7 +1157,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
             /* Capped to the visible screen. A centred fixed panel taller
                than the viewport overflows in both directions and the part
                above the top edge cannot be scrolled to. */
-            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-2xl w-full max-w-md mx-4 max-h-[calc(100dvh-2rem)] overflow-y-auto"
+            className="scrollbar-thin relative bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-2xl w-full max-w-md mx-4 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
             dir={isRTL ? 'rtl' : 'ltr'}
           >

@@ -49,6 +49,8 @@ export interface MoneyLine {
     | 'card_no_stripe'
     | 'card_once'
     | 'card_plan'
+    /** Exactly two payments: one at the start and one more, so not plural. */
+    | 'card_plan_one'
     /** Invoiced with no processor: transfer, Bit or cash. */
     | 'invoice_once'
     | 'invoice_plan'
@@ -105,9 +107,23 @@ export function serviceMoneyLine(input: MoneyLineInput): MoneyLine {
     // is an invoice, so that is what it says.
     if (processorReady === false) return { key: 'card_no_stripe', amount: price };
 
-    return onPlan
-      ? { key: 'card_plan', each, count, rest: count - 1, freqKey }
-      : { key: 'card_once', amount: price };
+    /*
+     * Two payments means ONE more after the first, and "1 more weekly
+     * payments" is not a sentence. Hebrew is worse than English here: the
+     * frequency words are plural adjectives written to agree with תשלומים
+     * (שבועיים, חודשיים), so the singular cannot reuse them at all and needs
+     * its own phrasing -- "a week later" rather than "weekly".
+     *
+     * Two payments is the commonest plan there is, so this was the likeliest
+     * sentence on the screen, not an edge case.
+     */
+    if (onPlan) {
+      return count === 2
+        ? { key: 'card_plan_one', each, count, rest: 1, freqKey }
+        : { key: 'card_plan', each, count, rest: count - 1, freqKey };
+    }
+
+    return { key: 'card_once', amount: price };
   }
 
   /*

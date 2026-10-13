@@ -2,13 +2,25 @@
 
 import { useState, useEffect, useRef } from 'react';
 import {
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
+import {
   contactOrigin,
   originOption,
   type ContactSourceMetadata,
 } from '@/components/crm/contactSources';
 import { isContactInactive } from '@/components/crm/contactStatus';
 import { Badge } from '@/components/ui/badge';
-import { Mail, Phone, Calendar, GripVertical, User, Clock, CheckSquare } from 'lucide-react';
+import { Mail, Phone, Calendar, GripVertical, User, Clock, CheckSquare, MoveRight, X } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { localizeStageLabel, type StageLanguage } from '@/lib/business-os/stageLabels';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
@@ -18,11 +30,14 @@ import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepos
 function PipelineFlowHeader({
   stages,
   contactCounts,
-  language
+  language,
+  onStageSelect
 }: {
   stages: CRMPipelineStage[];
   contactCounts: Record<string, number>;
   language: StageLanguage;
+  /** Bring one stage's column to the middle of the board. */
+  onStageSelect?: (index: number) => void;
 }) {
   const total = Object.values(contactCounts).reduce((sum, c) => sum + c, 0);
 
@@ -31,12 +46,28 @@ function PipelineFlowHeader({
       className="mb-6 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden"
       style={{ borderRadius: 'var(--v2-radius-card)' }}
     >
-      {/* Stage labels and counts */}
-      <div className="flex items-center justify-between mb-3">
+      {/*
+        Stage labels and counts.
+
+        ───────────────────────────────────────────────────────────────────────
+        These were `flex-1` across the full width, which is fine for five
+        stages on a desktop and unreadable on a phone: at 375px each of five
+        gets about 70px, and a sales pipeline's seven get 50 — not enough for a
+        name and a number, so every label truncated to nothing.
+
+        Below `sm:` they become a scrolling row of fixed-width taps instead,
+        and tapping one brings its column to the middle of the board. That is
+        what makes a five-screen board navigable with a thumb rather than only
+        by swiping through it.
+        ───────────────────────────────────────────────────────────────────────
+      */}
+      <div className="flex items-center justify-between mb-3 overflow-x-auto sm:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {stages.map((stage, index) => (
-          <div
+          <button
             key={stage.stage_key}
-            className="flex-1 text-center relative"
+            type="button"
+            onClick={() => onStageSelect?.(index)}
+            className="flex-none w-[88px] sm:flex-1 sm:w-auto text-center relative rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6]"
             style={{ minWidth: 0 }}
           >
             <div className="flex flex-col items-center">
@@ -58,7 +89,7 @@ function PipelineFlowHeader({
                 {contactCounts[stage.stage_key] || 0}
               </span>
             </div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -162,6 +193,9 @@ interface CRMPipelineViewProps {
   onContactUpdated: () => void;
 }
 
+/** Remembers that this browser has been told how to pick a card up. */
+const HOLD_HINT_KEY = 'crm.pipeline.hold-hint.dismissed';
+
 // Helper to generate Tailwind-compatible color classes from hex color
 function getStageColors(hexColor: string | null) {
   // Default colors if no color specified
@@ -189,14 +223,249 @@ function getStageColors(hexColor: string | null) {
   };
 }
 
+/**
+ * A card you can pick up with a finger, a mouse, or the keyboard.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * It was `draggable` with the HTML5 drag events, which never fire on touch. So
+ * the one thing a board is for could not be done on a phone at all, and could
+ * not be done from a keyboard anywhere. `useDraggable` replaces both, and the
+ * arrow keys below are the explicit path: one press, one stage.
+ *
+ * `listeners` must sit on the whole card rather than on the grip, because the
+ * grip is `opacity-0 group-hover` and a finger has no hover.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function PipelineCard({
+  contact,
+  onClick,
+  onNudge,
+  label,
+  children,
+}: {
+  contact: CRMContact;
+  onClick: () => void;
+  onNudge: (contact: CRMContact, direction: -1 | 1) => void;
+  label: string;
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: contact.id,
+    data: { contact },
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      tabIndex={0}
+      {...(label ? { 'aria-label': label } : {})}
+      onClick={onClick}
+      onKeyDown={event => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        /*
+         * Reading order, not screen order. In Hebrew the next stage is to the
+         * LEFT, and an arrow that moved a card by pixels rather than by
+         * sequence would run the pipeline backwards for half the accounts.
+         */
+        const forward = document.dir === 'rtl' ? 'ArrowLeft' : 'ArrowRight';
+        onNudge(contact, event.key === forward ? 1 : -1);
+      }}
+      className={`
+        bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4
+        cursor-grab active:cursor-grabbing touch-manipulation
+        hover:border-[#8B5CF6]/50 hover:shadow-lg hover:shadow-[#8B5CF6]/10
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6]
+        transition-all duration-200 group
+        ${isDragging ? 'opacity-40' : ''}
+      `}
+      style={{ borderRadius: 'var(--v2-radius-card)' }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Moving a card without a gesture at all.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Dragging is the quick way and the only way, which fails three readers: a
+ * thumb carrying a card from the first stage to the last across five screens
+ * of auto-scroll, anyone on a keyboard, and anyone on a screen reader.
+ *
+ * Every handler here stops propagation. The card above is a dnd-kit draggable
+ * listening on the whole surface, so without that a press on this button would
+ * arm a drag, and a tap would open the contact drawer underneath.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function MoveToMenu({
+  stages,
+  currentStage,
+  label,
+  language,
+  onPick,
+}: {
+  stages: CRMPipelineStage[];
+  currentStage: string;
+  label: string;
+  language: StageLanguage;
+  onPick: (stageKey: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [open]);
+
+  const stop = (event: React.SyntheticEvent) => {
+    event.stopPropagation();
+  };
+
+  return (
+    <div ref={box} className="relative flex-shrink-0" onPointerDown={stop} onClick={stop}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={label}
+        title={label}
+        onClick={() => setOpen(v => !v)}
+        className="p-1 -m-1 rounded text-[var(--v2-text-muted)] hover:text-[#8B5CF6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6]"
+      >
+        <MoveRight className="h-4 w-4 rtl:rotate-180" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute z-30 mt-1 min-w-[170px] max-h-[220px] overflow-y-auto border border-[var(--v2-border)] bg-[var(--v2-surface)] shadow-xl end-0"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+        >
+          <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-[var(--v2-text-muted)]">{label}</div>
+          {stages.map(stage => {
+            const here = stage.stage_key === currentStage;
+            return (
+              <button
+                key={stage.stage_key}
+                type="button"
+                role="menuitem"
+                disabled={here}
+                onClick={() => {
+                  setOpen(false);
+                  if (!here) onPick(stage.stage_key);
+                }}
+                className={`flex w-full items-center gap-2 px-3 py-2 text-start text-sm transition-colors ${
+                  here
+                    ? 'text-[var(--v2-text-muted)] cursor-default'
+                    : 'text-[var(--v2-text-primary)] hover:bg-[#8B5CF6]/10'
+                }`}
+              >
+                <span
+                  className="h-2 w-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: stage.color || '#8B5CF6' }}
+                />
+                <span className="truncate">
+                  {localizeStageLabel(stage.stage_key, stage.stage_label, language, stage.stage_type)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One stage, and the area a card can be let go over. */
+function StageColumn({
+  stageKey,
+  children,
+}: {
+  stageKey: string;
+  children: (isOver: boolean) => React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: stageKey });
+
+  return (
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * ONE STAGE PER SCREEN ON A PHONE, THE WHOLE BOARD ON A DESKTOP.
+     *
+     * This was `flex-1` with an inline `minWidth: 200px`, which no breakpoint
+     * can reach. Five stages made the board 1,012px wide and a sales pipeline's
+     * seven made it 1,418px, so a 375px phone showed about one and a half
+     * columns and scrolled a metre sideways.
+     *
+     * 85% leaves the next column visibly peeking, which is what tells a reader
+     * there is more board to the side. `snap-center` makes a swipe land on a
+     * stage rather than between two.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    <div
+      ref={setNodeRef}
+      className="flex w-[85%] flex-none snap-center flex-col sm:w-auto sm:flex-1 sm:snap-align-none sm:min-w-[200px]"
+    >
+      {children(isOver)}
+    </div>
+  );
+}
+
 export function CRMPipelineView({ contacts, stages, stageTotals, onLoadMore, onContactClick, onContactUpdated }: CRMPipelineViewProps) {
   const { t, language } = useLanguage();
   const [draggedContact, setDraggedContact] = useState<CRMContact | null>(null);
-  const [dragOverStage, setDragOverStage] = useState<string | null>(null);
   // Optimistic updates: track contacts being moved (id -> new stage)
   const [pendingMoves, setPendingMoves] = useState<Record<string, string>>({});
   // Track previous contacts to detect when data has been refreshed
   const prevContactsRef = useRef<CRMContact[]>(contacts);
+  /** The scrolling row of columns, so the header can bring one into view. */
+  const boardRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * Teaching the hold, once.
+   *
+   * Dragging on touch only begins after 250ms of stillness, so that a swipe
+   * can still scroll the board. That is the right trade, and it is also
+   * undiscoverable: a gesture nobody is told about is the same as no gesture.
+   *
+   * Read in an effect rather than in the initial state, because the server
+   * renders this too and has no `localStorage` — reading it during render
+   * makes the first client paint disagree with the server's.
+   */
+  const [hintDismissed, setHintDismissed] = useState(true);
+  useEffect(() => {
+    try {
+      setHintDismissed(localStorage.getItem(HOLD_HINT_KEY) === '1');
+    } catch {
+      // Private browsing, or storage refused. Show it: a hint seen twice is a
+      // smaller failure than one nobody ever sees.
+      setHintDismissed(false);
+    }
+  }, []);
+
+  const dismissHint = () => {
+    setHintDismissed(true);
+    try {
+      localStorage.setItem(HOLD_HINT_KEY, '1');
+    } catch {
+      // Nothing to do. It returns on the next load, which is survivable.
+    }
+  };
 
   // Clear pending moves when contacts data is refreshed from server
   useEffect(() => {
@@ -232,42 +501,59 @@ export function CRMPipelineView({ contacts, stages, stageTotals, onLoadMore, onC
     });
   };
 
-  const handleDragStart = (e: React.DragEvent, contact: CRMContact) => {
-    setDraggedContact(contact);
-    e.dataTransfer.effectAllowed = 'move';
-    // Add a slight delay to show the dragging state
-    setTimeout(() => {
-      (e.target as HTMLElement).style.opacity = '0.5';
-    }, 0);
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * TELLING A DRAG FROM A SCROLL, WHICH IS THE WHOLE PROBLEM ON A PHONE.
+   *
+   * A finger landing on a card is ambiguous: scrolling the board sideways and
+   * picking a card up begin identically. The activation constraints settle it.
+   *
+   *   touch   hold still for 250ms. Move more than 8px before that and the
+   *           gesture was a scroll, so it is never claimed and the browser
+   *           keeps it. Without this every swipe would lift a card.
+   *   mouse   8px of travel, the same figure the intake editor and the website
+   *           page already use. A mouse has no scroll-versus-drag ambiguity, so
+   *           it needs distance rather than patience.
+   *
+   * MouseSensor and TouchSensor rather than one PointerSensor, so each input
+   * gets its own rule and `touch-action` need not be disabled on the card --
+   * which would have stopped the column scrolling under a finger.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } })
+  );
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setDraggedContact((event.active.data.current?.contact as CRMContact) ?? null);
   };
 
-  const handleDragEnd = (e: React.DragEvent) => {
-    (e.target as HTMLElement).style.opacity = '1';
+  const handleDragEnd = (event: DragEndEvent) => {
+    const contact = event.active.data.current?.contact as CRMContact | undefined;
+    const stage = event.over?.id;
     setDraggedContact(null);
-    setDragOverStage(null);
+    if (contact && typeof stage === 'string') void moveContact(contact, stage);
   };
 
-  const handleDragOver = (e: React.DragEvent, stage: string) => {
-    e.preventDefault();
-    setDragOverStage(stage);
+  /** One stage along, for a reader who is not holding a mouse. */
+  const nudgeContact = (contact: CRMContact, direction: -1 | 1) => {
+    const current = pendingMoves[contact.id] ?? contact.stage;
+    const index = stages.findIndex(stage => stage.stage_key === current);
+    const next = stages[index + direction];
+    if (index === -1 || !next) return;
+    void moveContact(contact, next.stage_key);
   };
 
-  const handleDragLeave = () => {
-    setDragOverStage(null);
-  };
+  const moveContact = async (contact: CRMContact, stage: string) => {
+    const currentStage = pendingMoves[contact.id] ?? contact.stage;
+    if (currentStage === stage) return;
 
-  const handleDrop = async (stage: string) => {
-    if (!draggedContact || draggedContact.stage === stage) {
-      setDragOverStage(null);
-      return;
-    }
-
-    const contactId = draggedContact.id;
+    const contactId = contact.id;
 
     // Optimistic update: immediately move in UI
     setPendingMoves(prev => ({ ...prev, [contactId]: stage }));
     setDraggedContact(null);
-    setDragOverStage(null);
 
     try {
       const response = await fetch(`/api/crm/contacts/${contactId}`, {
@@ -346,22 +632,60 @@ export function CRMPipelineView({ contacts, stages, stageTotals, onLoadMore, onC
         stages={stages}
         contactCounts={contactCounts}
         language={language as StageLanguage}
+        onStageSelect={index => {
+          // `inline: 'center'` lands on the snap point; `block: 'nearest'`
+          // stops the page itself jumping to bring the board into view.
+          const column = boardRef.current?.children[index];
+          column?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        }}
       />
 
+      {/*
+        Said only where it is true and only until it is known.
+
+        `sm:hidden` because the hold is a touch rule: a mouse picks a card up
+        after 8px of travel and needs no telling. Hidden too when the board is
+        empty, where there is nothing to practise on.
+      */}
+      {!hintDismissed && contacts.length > 0 && (
+        <div className="sm:hidden -mt-3 mb-3 flex items-start gap-2 px-3 py-2 bg-[#8B5CF6]/10 border border-[#8B5CF6]/30 text-[12px] text-[var(--v2-text-secondary)]"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+        >
+          <GripVertical className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-[#8B5CF6]" />
+          <span className="flex-1">{t('crm.pipeline.hold_hint')}</span>
+          <button
+            type="button"
+            onClick={dismissHint}
+            aria-label={t('common.dismiss')}
+            className="p-0.5 -m-0.5 rounded text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6] flex-shrink-0"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Kanban Columns - matches flow header segments */}
-      <div className="flex flex-1 overflow-x-auto" style={{ gap: '3px' }}>
+      <DndContext
+        sensors={sensors}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={() => setDraggedContact(null)}
+      >
+      {/*
+        `snap-x snap-mandatory` below `sm:` so a swipe lands on a stage rather
+        than between two. Off from `sm:` up, where the whole board is visible
+        and snapping would fight an ordinary scroll.
+      */}
+      <div ref={boardRef} className="flex flex-1 overflow-x-auto snap-x snap-mandatory sm:snap-none" style={{ gap: '3px' }}>
       {stages.map(stage => {
         const stageContacts = getContactsByStage(stage.stage_key);
-        const isDropTarget = dragOverStage === stage.stage_key && draggedContact?.stage !== stage.stage_key;
 
         return (
-          <div
-            key={stage.stage_key}
-            className="flex-1 flex flex-col" style={{ minWidth: '200px' }}
-            onDragOver={(e) => handleDragOver(e, stage.stage_key)}
-            onDragLeave={handleDragLeave}
-            onDrop={() => handleDrop(stage.stage_key)}
-          >
+          <StageColumn key={stage.stage_key} stageKey={stage.stage_key}>
+          {(isOver) => {
+          const isDropTarget = isOver && draggedContact?.stage !== stage.stage_key;
+          return (
+            <>
             {/* Drop Zone */}
             <div
               className={`flex-1 space-y-3 overflow-y-auto p-1 transition-all duration-200 ${
@@ -379,20 +703,15 @@ export function CRMPipelineView({ contacts, stages, stageTotals, onLoadMore, onC
                   : contact;
 
                 return (
-                <div
+                <PipelineCard
                   key={contact.id}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, contact)}
-                  onDragEnd={handleDragEnd}
+                  contact={contactWithCurrentStage}
                   onClick={() => onContactClick(contactWithCurrentStage)}
-                  className={`
-                    bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4
-                    cursor-grab active:cursor-grabbing
-                    hover:border-[#8B5CF6]/50 hover:shadow-lg hover:shadow-[#8B5CF6]/10
-                    transition-all duration-200 group
-                    ${draggedContact?.id === contact.id ? 'opacity-50 scale-95' : ''}
-                  `}
-                  style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  onNudge={nudgeContact}
+                  /* Their own name, never a translation key: an unknown key
+                     renders as itself, which is how a screen reader ends up
+                     reading "crm.pipeline.contact" out loud. */
+                  label={`${contact.first_name ?? ''} ${contact.last_name ?? ''}`.trim() || contact.email || ''}
                 >
                   <div className="space-y-3">
                     {/* Header with Avatar and Grip */}
@@ -449,8 +768,22 @@ export function CRMPipelineView({ contacts, stages, stageTotals, onLoadMore, onC
                           })()}
                         </div>
                       </div>
-                      {/* Drag Handle */}
-                      <GripVertical className="h-4 w-4 text-[var(--v2-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                      {/*
+                        Drag handle.
+
+                        `group-hover` is how it used to appear, and a finger
+                        never hovers — so on a phone the only hint that a card
+                        could be moved was invisible. `pointer-coarse` shows it
+                        wherever hovering is not a thing.
+                      */}
+                      <GripVertical className="h-4 w-4 text-[var(--v2-text-muted)] opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity flex-shrink-0" />
+                      <MoveToMenu
+                        stages={stages}
+                        currentStage={contactWithCurrentStage.stage}
+                        label={t('crm.pipeline.move_to')}
+                        language={language as StageLanguage}
+                        onPick={stageKey => void moveContact(contact, stageKey)}
+                      />
                     </div>
 
                     {/* Contact Info */}
@@ -514,7 +847,7 @@ export function CRMPipelineView({ contacts, stages, stageTotals, onLoadMore, onC
                       </div>
                     </div>
                   </div>
-                </div>
+                </PipelineCard>
               );})}
 
               {/* Empty State */}
@@ -561,10 +894,47 @@ export function CRMPipelineView({ contacts, stages, stageTotals, onLoadMore, onC
                 </div>
               )}
             </div>
-          </div>
+            </>
+          );
+          }}
+          </StageColumn>
         );
       })}
       </div>
+
+      {/*
+        The card in hand, drawn above everything.
+
+        The column scrolls vertically and the board horizontally, so a card
+        dragged in place is clipped by both. `DragOverlay` renders it in a
+        portal at the top level, where neither can cut it off.
+      */}
+      <DragOverlay dropAnimation={null}>
+        {draggedContact && (
+          <div
+            className="bg-[var(--v2-surface)] border-2 border-[#8B5CF6] p-4 shadow-2xl shadow-[#8B5CF6]/20 cursor-grabbing"
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold text-white flex-shrink-0"
+                style={{ backgroundColor: '#8B5CF6' }}
+              >
+                {getInitials(draggedContact)}
+              </div>
+              <div className="min-w-0">
+                <div className="font-medium text-[var(--v2-text-primary)] truncate">
+                  {`${draggedContact.first_name ?? ''} ${draggedContact.last_name ?? ''}`.trim() || draggedContact.email}
+                </div>
+                {draggedContact.email && (
+                  <div className="text-xs text-[var(--v2-text-muted)] truncate">{draggedContact.email}</div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </DragOverlay>
+      </DndContext>
     </div>
   );
 }

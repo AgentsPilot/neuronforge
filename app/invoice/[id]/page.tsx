@@ -8,11 +8,15 @@
 
 import { Metadata } from 'next';
 import { resolveInvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
+import { mayViewInvoice } from '@/lib/payments/invoiceAccessToken';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { notFound } from 'next/navigation';
+import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CheckCircle, Clock, CreditCard, Building2, AlertCircle } from 'lucide-react';
 import { PortalShell } from '@/components/public/PortalShell';
+import { PublicErrorScreen } from '@/components/public/PublicErrorScreen';
+import { getRequestLocale } from '@/lib/i18n/requestLocale';
 import { InvoicePaymentPanel } from '@/components/public/InvoicePaymentPanel';
 import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
@@ -44,6 +48,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
+const pageLogger = createLogger({ module: 'public-invoice-page' });
+
 export default async function InvoicePage({ params, searchParams }: PageProps) {
   const { id } = await params;
   const query = await searchParams;
@@ -59,6 +65,75 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
 
   if (error || !invoice) {
     notFound();
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * MAY THIS VISITOR SEE THIS BILL?
+   *
+   * The invoice id used to be the whole authorisation. It cannot be guessed —
+   * it is a v4 UUID — but it never expired and was bound to nobody, so the URL
+   * was a bearer credential that worked forever for anyone it was ever
+   * forwarded to. What it discloses is the client's name, postal address,
+   * email, every line item, the amounts and the business's bank details.
+   *
+   * `mayViewInvoice` applies one rule, shared with `/api/public/invoice/[id]/
+   * intent` so the page and the payment endpoint cannot disagree about who is
+   * allowed in: a signed `?t=` naming this invoice, or — for the links already
+   * sitting in inboxes — a bare URL while the invoice is younger than the same
+   * window a token would have granted.
+   *
+   * `notFound()` rather than a page explaining the rule: an expired link should
+   * not confirm that an invoice with this id exists.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const access = await mayViewInvoice({
+    invoiceId: id,
+    token: typeof query.t === 'string' ? query.t : null,
+    issuedAt: (invoice.sent_at as string | null) ?? (invoice.created_at as string | null),
+  });
+
+  /* See the note in the intent route: this count is what decides when bare
+     URLs stop being honoured, and it is made entirely of links sent before
+     signing shipped. */
+  if (access.reason === 'fresh') {
+    pageLogger.info({ invoiceId: id }, 'Invoice page served to a bare URL');
+  }
+
+  if (!access.allowed) {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A DEAD END, MADE INTO AN INSTRUCTION.
+     *
+     * This was `notFound()`, which renders the unstyled English 404 and tells a
+     * client nothing — on a page they reached by clicking Pay on their own
+     * bill.
+     *
+     * The way back already exists and needs no new endpoint: the business can
+     * re-send any UNPAID invoice (`/api/payments/invoices/[id]/send`, refused
+     * only for paid, cancelled, or no address), and every send now mints a
+     * fresh signed link. So the honest answer is "ask them to send it again",
+     * which is what this says.
+     *
+     * No form here deliberately. A public "email me a link" endpoint would
+     * accept an address from a stranger and send mail from this domain, which
+     * is a worse thing to own than the problem it solves — especially on
+     * self-hosted SMTP, where the reputational damage lands on the sending
+     * domain. The owner is authenticated; let the authenticated path do it.
+     *
+     * Carries no brand and names no amount, client or business: the screen a
+     * stranger sees must not describe the invoice behind the link.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const requestLocale = await getRequestLocale();
+
+    return (
+      <PublicErrorScreen
+        kind="expired"
+        locale={requestLocale}
+        description={publicT(requestLocale, 'invoiceLinkExpiredDesc')}
+      />
+    );
   }
 
   // Fetch business profile
@@ -544,7 +619,12 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
                     isRTL={isRTL}
                     primaryColor={brand?.theme.colors.primary ?? '#6366F1'}
                     borderRadius={brand?.theme.borderRadius}
-                    successUrl={`/invoice/${invoice.id}?payment=success`}
+                    successUrl={`/invoice/${invoice.id}?payment=success${
+                      typeof query.t === 'string' ? `&t=${encodeURIComponent(query.t)}` : ''
+                    }`}
+                    /* The token this page was opened with, so the endpoint
+                       applies the same rule to the payment as to the view. */
+                    accessToken={typeof query.t === 'string' ? query.t : null}
                   />
                 </div>
               )}

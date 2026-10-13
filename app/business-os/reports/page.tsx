@@ -1,45 +1,109 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { MetricCard } from '@/components/business-os/reports/MetricCard';
-import { RevenueSourcesSection } from '@/components/business-os/reports/RevenueSourcesSection';
-import { FinancialHealthGrid } from '@/components/business-os/reports/FinancialHealthGrid';
-import { RevenueByServicesSection } from '@/components/business-os/reports/RevenueByServicesSection';
-import {
-  BarChart3,
-  LayoutDashboard,
-  List,
-  FileText,
-  Search,
-  Download,
-  Plus,
-  Banknote,
-  TrendingUp,
-  Clock,
-  Receipt
-} from 'lucide-react';
+import { Band } from '@/components/business-os/reports/Band';
+import { VerdictLine } from '@/components/business-os/reports/VerdictLine';
+import { MoneyFigures } from '@/components/business-os/reports/MoneyFigures';
+import { FinancialDetail } from '@/components/business-os/reports/FinancialDetail';
+import { HealthRows } from '@/components/business-os/reports/HealthRows';
+import { ChannelTable } from '@/components/business-os/reports/ChannelTable';
+import { ServiceTable, type ServiceRow } from '@/components/business-os/reports/ServiceTable';
+import { ClientCounts } from '@/components/business-os/reports/ClientCounts';
+import { CHANNEL_LABELS, type ChannelRow } from '@/components/business-os/insight/ChannelSourcesSection';
+import { BarChart3, Download, ChevronRight } from 'lucide-react';
 import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 import { LedgerExportModal } from '@/components/payments/LedgerExportModal';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
-
-import {
-  PERFORMANCE_THRESHOLDS,
-  REPORTS_COLORS
-} from '@/lib/business-os/reports/constants';
+import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
+import type { HealthMeasures } from '@/hooks/useInsights';
 
 /**
- * Money moved to /business-os/orders and this page is charts again.
+ * An overview of the business, not a ledger.
  *
- * It used to carry both, switched by a `ViewMode`, which meant every toolbar
- * control was wrapped in `viewMode === 'money' &&` and neither half could be
- * linked to honestly. The old `?tab=invoices|transactions|money` links still
- * work — they redirect below — because one of them is built by the Stripe
- * Connect callback and is where somebody lands returning from onboarding.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THIS PAGE USED TO BE
+ *
+ * Titled "Cash Flow & Financials", and it meant it: eleven tiles, every one of
+ * them money. Revenue, collected, owed, refunded, processor fees, fees kept on
+ * refunds, average invoice, collection rate, success rate, refund rate, lost
+ * potential. A good accounting page.
+ *
+ * It never said whether people were finding the business, whether enquiries got
+ * answered, whether clients came back, or whether the calendar was filling. An
+ * owner reading it learned what happened to the money and nothing about what
+ * produced it — while the platform computed all of that nightly and showed it
+ * nowhere.
+ *
+ * SIX BANDS, EACH ONE QUESTION
+ *
+ *   1. the verdict      how did it go              (stored narrative)
+ *   2. money            did I get paid             (3 figures, detail folded)
+ *   3. health           how is the business doing   (6 rates vs last period)
+ *   4. channels         who sent the clients
+ *   5. clients          where those people are now (right now, no period)
+ *   6. services         what people buy
+ *
+ * Money is still here and still first after the verdict. It is three figures
+ * instead of eleven tiles, with the other eight one click away — the bookkeeper
+ * loses nothing, the owner stops having to read a ledger to learn how the month
+ * went.
+ *
+ * ONE VISUAL LANGUAGE, WHICH COST FOUR COMPONENTS
+ *
+ * The first attempt reused `MetricCard`, `RevenueSourcesSection`,
+ * `FinancialHealthGrid` and `RevenueByServicesSection`. Each was correct and
+ * each brought its own look — bar charts, five colour-coded tiles, a table with
+ * its own header style — so the page read as three products stacked up. They are
+ * gone; every band now wears `Band` and supplies only rows. `ChannelSourcesSection`
+ * survives because the DASHBOARD uses it, and that surface wants the two extra
+ * columns ("Saw you", "Billed") that this page deliberately drops.
+ *
+ * NO TABS, deliberately. The whole point is that one scroll answers "how is my
+ * business doing", and a tab is a place for an answer to hide.
+ *
+ * FIVE MONEY BASES ON ONE PAGE, AND EACH ONE SAYS WHICH IT IS
+ *
+ * They cannot be reconciled by arithmetic and must never be presented as if
+ * they could. Verified against the routes, 2026-10-08:
+ *
+ *   band 2  money that ARRIVED in the period, every source.
+ *           `gross_revenue_30d`, and `banked_revenue_30d` for what was kept.
+ *
+ *   band 4  money that ARRIVED in the period, attributed to the channel that
+ *           brought the client whenever they first arrived. `leads` alone keeps
+ *           the acquisition window. This was a cohort figure — all-time money
+ *           from contacts acquired in the period — which reported an entire
+ *           revenue column of zeros on week and month, because nobody pays the
+ *           week they arrive. Changed 2026-10-09.
+ *
+ *   band 6  collected PLUS still owed, in the period, service-attributable only.
+ *           `serviceRevenueMap` adds transactions AND every unsettled invoice.
+ *
+ *   detail  QUOTED and undecided (`open_proposals_amount`) — proposals sent or
+ *           viewed, all time, drafts excluded because nobody saw them.
+ *
+ *   detail  ORDERED in the period (`booked_value_period`) — bookings created in
+ *           the window at the service's list price, paid or not. The only
+ *           measure here on an order basis rather than a payment one.
+ *
+ * Bands 4 and 6 each carry a caption naming their basis, and the two detail
+ * tiles carry theirs in their notes. Band 2 is the
+ * plain one and needs none. Deleting those captions reintroduces the confusion
+ * an owner reported: three figures that look like they should add up.
+ *
+ * THREE FETCHES, NO NEW ENDPOINTS. Bands 2 and 5 come from the stats route this
+ * page already used; 1 and 3 from the insights route, asked for lean; 4 from
+ * channel insights, which is slow and therefore never allowed to block the rest.
+ *
+ * The old `?tab=invoices|transactions|money` links still work — they redirect
+ * below — because one of them is built by the Stripe Connect callback and is
+ * where somebody lands returning from onboarding.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
-/** Reporting window, passed straight through to /api/business-os/stats. */
+/** Reporting window, passed straight through to the routes that take one. */
 type ReportPeriod = 'week' | 'month' | 'year' | 'all';
 
 const logger = createLogger({ module: 'ReportsPage' });
@@ -54,6 +118,80 @@ const REPORT_PERIODS: { value: ReportPeriod; key: string; fallback: string }[] =
   { value: 'all', key: 'reports.period_all', fallback: 'All time' }
 ];
 
+/** Bands 1 and 3, as little of the insights payload as the route will return. */
+interface HealthState {
+  measures: HealthMeasures | null;
+  narrative: string | null;
+}
+
+/** Band 4. */
+/**
+ * Band 6. Every one of these is a "right now" count with no date filter, so
+ * none of them move when the period selector does — which is why the band says
+ * so rather than leaving four static figures looking broken.
+ */
+interface CrmState {
+  activeClients: number;
+  activeLeads: number;
+  wentQuiet: number;
+  totalContacts: number;
+}
+
+interface ChannelState {
+  rows: ChannelRow[];
+  totals: { leads: number };
+  untracked: { leads: number; bookings: number; revenue: number };
+}
+
+interface PaymentStats {
+  gross_revenue_30d: number;
+  refunds_amount_30d: number;
+  processor_fees_30d: number;
+  /**
+   * How many of the period's payments have no known fee.
+   *
+   * Fees are backfilled from Stripe, so above zero the fee total is incomplete
+   * and `banked_revenue_30d` is an over-estimate. The money band says so.
+   */
+  processor_fees_unknown: number;
+  /** gross − refunds − fees, computed server-side. What the bank actually saw. */
+  banked_revenue_30d: number;
+  refund_fees_kept_30d: number;
+  revenue_owed_30d: number;
+  /** Quoted and undecided: proposals sent or viewed, never drafts. All time. */
+  open_proposals_amount: number;
+  open_proposals_count: number;
+  /** Ordered in the period at list price, paid or not. Follows the selector. */
+  booked_value_period: number;
+  pending_invoices: number;
+  invoices_overdue: number;
+  invoices_overdue_amount: number;
+  plan_pending_count: number;
+  lost_potential_amount: number;
+  lost_potential_count: number;
+  charged_transactions_30d: number;
+  failed_transactions_30d: number;
+  invoices_paid_30d: number;
+  invoices_sent_30d: number;
+  average_invoice_amount: number;
+  source_plans_paid: number;
+  source_plans_outstanding: number;
+  /**
+   * Gross and net per currency — the only figures that may honestly be added.
+   * Every headline total here is a sum ACROSS currencies, which is meaningful
+   * only while there is one.
+   */
+  revenue_by_currency: { currency: string; gross: number; net: number }[];
+  /**
+   * The currency the figures above are denominated in.
+   *
+   * Null when nothing was collected. Never inferred from the interface
+   * language — that is how a business billing in dollars and reading in Hebrew
+   * saw every amount stamped ₪.
+   */
+  primary_currency: string | null;
+}
+
 export default function ReportsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -67,123 +205,190 @@ export default function ReportsPage() {
   // and fade slightly instead of the page collapsing into the full-page spinner.
   const [isRefreshing, setIsRefreshing] = useState(false);
   const hasLoadedOnceRef = useRef(false);
-
-  // Stats from the API
   /*
-   * Money is rendered in ITS OWN currency, never the reader's.
+   * The eight money figures that are not one of the three headline ones.
    *
-   * `formatCurrency` from the language context defaults to a currency chosen
-   * from the interface language — Hebrew means shekels. Every figure on this
-   * page is a total the API computed from rows that carry their own currency,
-   * and this account bills in dollars, so the page was printing ₪ over USD
-   * amounts. At roughly 3.7 to 1 that is not a rounding difference, it is a
-   * different number.
-   *
-   * `primary_currency` is what the API says those totals are in. The language
-   * default survives only for the case where nothing was collected and there
-   * is genuinely no currency to name.
+   * Collapsed by default and remembered for the session only. An owner who
+   * opens it once is usually reconciling, which is a sitting, not a preference.
    */
-  const [stats, setStats] = useState<{
-    payments: {
-      revenue_30d: number;
-      revenue_paid_30d: number;
-      /** Refunds issued in the period, from the ledger. Net of nothing else. */
-      refunds_amount_30d: number;
-      /** Collected before refunds, so the card's figures add up. */
-      gross_revenue_30d: number;
-      /** What the processor kept out of the period's payments. */
-      processor_fees_30d: number;
-      /** Of those, the part spent collecting money that was later refunded. */
-      refund_fees_kept_30d: number;
-      /**
-       * Billed or agreed and then called off, ALL TIME and net of refunds.
-       *
-       * The only figure in this block that is not a 30-day window, which is why
-       * its card names its own period. Net of refunds so it cannot restate
-       * `refunds_amount_30d` beside it.
-       */
-      lost_potential_amount: number;
-      /** How many cancelled invoices and stopped plan phases make up that sum. */
-      lost_potential_count: number;
-      /**
-       * Gross, refunds and net per currency — the only figures that may
-       * honestly be added. Every headline total on this page is a sum ACROSS
-       * currencies, which is meaningful only while there is one.
-       */
-      revenue_by_currency: { currency: string; gross: number; net: number }[];
-      /**
-       * The currency the figures above are denominated in.
-       *
-       * Null when nothing was collected. Never inferred from the interface
-       * language — that is how a business billing in dollars and reading in
-       * Hebrew saw every amount stamped ₪.
-       */
-      primary_currency: string | null;
-      revenue_owed_30d: number;
-      pending_invoices: number;
-      pending_invoices_amount: number;
-      /** Unpaid plan installments — owed money that is not an invoice. */
-      plan_owed_amount: number;
-      plan_pending_count: number;
-      /** Revenue by origin, each payment counted once; these sum to revenue_30d. */
-      source_direct_amount: number;
-      source_direct_count: number;
-      source_invoices_paid: number;
-      source_invoices_outstanding: number;
-      source_plans_paid: number;
-      source_plans_outstanding: number;
-      revenue_this_week: number;
-      revenue_last_week: number;
-      successful_transactions_30d: number;
-      failed_transactions_30d: number;
-      /** Charges accepted, refunded ones included — the success rate's numerator. */
-      charged_transactions_30d: number;
-      refunded_30d: number;
-      invoices_sent_30d: number;
-      invoices_paid_30d: number;
-      invoices_overdue: number;
-      invoices_overdue_amount: number;
-      average_invoice_amount: number;
-      transactions_revenue_30d: number;
-      invoices_paid_amount_30d: number;
-    };
-    scheduling: {
-      total_revenue_30d: number;
-      completed_30d: number;
-      service_revenue: Array<{
-        service_id: string;
-        service_name: string;
-        revenue: number;
-        count: number;
-      }>;
-    };
-  } | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
+
+  const [payments, setPayments] = useState<PaymentStats | null>(null);
+  const [services, setServices] = useState<ServiceRow[]>([]);
+  const [health, setHealth] = useState<HealthState>({ measures: null, narrative: null });
+  const [crm, setCrm] = useState<CrmState | null>(null);
+  const [channels, setChannels] = useState<ChannelState | null>(null);
 
   /**
    * Every amount on this page, in the currency the money is actually in.
    *
-   * Wrapped once rather than passed at each of the eleven call sites, so a new
-   * figure added later cannot quietly fall back to the language default.
+   * Wrapped once and passed down, so a new figure added later cannot quietly
+   * fall back to the language default. `formatCurrency` picks its symbol from
+   * the interface LANGUAGE when not told otherwise — Hebrew means shekels — and
+   * this account bills in dollars, so the page was printing ₪ over USD amounts.
+   * At roughly 3.7 to 1 that is not a rounding difference, it is a different
+   * number.
    */
-  // Only currencies the app can actually render. An unrecognised one falls back
-  // to the language default rather than being forced into the type.
   const moneyCurrency: CurrencyCode | undefined = SUPPORTED_CURRENCIES.includes(
-    (stats?.payments.primary_currency ?? '') as CurrencyCode
+    (payments?.primary_currency ?? '') as CurrencyCode
   )
-    ? (stats?.payments.primary_currency as CurrencyCode)
+    ? (payments?.primary_currency as CurrencyCode)
     : undefined;
 
-  const money = (amount: number | null, options?: { showFree?: boolean }) =>
-    formatCurrency(amount, { ...options, currencyOverride: moneyCurrency });
+  const money = useCallback(
+    (amount: number) =>
+      formatCurrency(amount, { showFree: false, currencyOverride: moneyCurrency }),
+    [formatCurrency, moneyCurrency]
+  );
 
-  // Invoice modal state
+  /*
+   * Bands 1 and 3.
+   *
+   * The insights route defaults to returning correlated insights, vector
+   * maturity and a page of insight rows, none of which this page shows. Turned
+   * off explicitly and `limit=1`, because the payload is the cost, not the call.
+   */
+  const fetchHealth = useCallback(async () => {
+    try {
+      const response = await fetch(
+        '/api/business-os/insights?limit=1&includeCorrelated=false&includeVectorMaturity=false&includeProjection=false',
+        { cache: 'no-store' }
+      );
+      const data = await response.json();
+      const summary = data?.data?.healthSummary;
 
-  // Fetch stats on mount and whenever the reporting window changes.
-  // Only the very first load blocks the page; period changes refresh silently.
+      setHealth({
+        /*
+         * Null on summaries written before 2026-09-23 and on any account whose
+         * nightly run has not happened. Null rather than an empty array: bands 1
+         * and 3 hide themselves on null, and six rows of dashes would imply the
+         * figures are on their way.
+         */
+        measures: summary?.health_measures ?? null,
+        narrative: summary?.summary_narrative ?? null,
+      });
+    } catch (error) {
+      // A missing verdict costs its own two bands and nothing else.
+      logger.error({ err: error }, 'Failed to fetch business health');
+      setHealth({ measures: null, narrative: null });
+    }
+  }, []);
+
+  /*
+   * Band 4, on its own and never awaited with the rest.
+   *
+   * This route was measured at 25s and 53s in development. Some of that is this
+   * machine's cold compile, but not all of it, and the question it answers is
+   * the least urgent on the page. Bands 1 to 3 must not wait behind it.
+   */
+  const fetchChannels = useCallback(async (forPeriod: ReportPeriod) => {
+    try {
+      const response = await fetch(`/api/business-os/channel-insights?period=${forPeriod}`, {
+        cache: 'no-store',
+      });
+      const data = await response.json();
+      if (!data?.success || !data?.data) {
+        setChannels(null);
+        return;
+      }
+      setChannels({
+        rows: data.data.rows ?? [],
+        totals: data.data.totals ?? { leads: 0 },
+        untracked: data.data.untracked ?? { leads: 0, bookings: 0, revenue: 0 },
+      });
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to fetch channel insights');
+      setChannels(null);
+    }
+  }, []);
+
+  const fetchStats = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    try {
+      if (silent) setIsRefreshing(true);
+      else setLoading(true);
+
+      const response = await fetch(`/api/business-os/stats?period=${period}`, { cache: 'no-store' });
+      const data = await response.json();
+
+      if (data.success && data.stats) {
+        const p = data.stats.payments ?? {};
+        setPayments({
+          gross_revenue_30d: p.gross_revenue_30d || 0,
+          refunds_amount_30d: p.refunds_amount_30d || 0,
+          processor_fees_30d: p.processor_fees_30d || 0,
+          processor_fees_unknown: p.processor_fees_unknown || 0,
+          /*
+           * Taken, never recomputed. Subtracting the three figures client-side
+           * drifts by cents (they arrive already rounded) and forks a definition
+           * the stats route owns.
+           */
+          banked_revenue_30d: p.banked_revenue_30d || 0,
+          refund_fees_kept_30d: p.refund_fees_kept_30d || 0,
+          revenue_owed_30d: p.revenue_owed_30d || 0,
+          open_proposals_amount: p.open_proposals_amount || 0,
+          open_proposals_count: p.open_proposals_count || 0,
+          booked_value_period: data.stats.scheduling?.booked_value_period || 0,
+          pending_invoices: p.pending_invoices || 0,
+          invoices_overdue: p.invoices_overdue || 0,
+          invoices_overdue_amount: p.invoices_overdue_amount || 0,
+          plan_pending_count: p.plan_pending_count || 0,
+          lost_potential_amount: p.lost_potential_amount || 0,
+          lost_potential_count: p.lost_potential_count || 0,
+          /*
+           * Charges ACCEPTED, refunded ones included. Built on `charged` rather
+           * than `succeeded`, which drops a sale the moment it is refunded —
+           * that made refunds disappear from both sides of the success ratio.
+           */
+          charged_transactions_30d:
+            p.charged_transactions_30d ?? p.successful_transactions_30d ?? 0,
+          failed_transactions_30d: p.failed_transactions_30d || 0,
+          invoices_paid_30d: p.invoices_paid_30d || 0,
+          invoices_sent_30d: p.invoices_sent_30d || 0,
+          average_invoice_amount: p.average_invoice_amount || 0,
+          source_plans_paid: p.source_plans_paid || 0,
+          source_plans_outstanding: p.source_plans_outstanding || 0,
+          revenue_by_currency: p.revenue_by_currency || [],
+          primary_currency: p.primary_currency ?? null,
+        });
+        setServices(data.stats.scheduling?.service_revenue || []);
+
+        /*
+         * `new_this_week` and `became_clients_this_week` are deliberately not
+         * read. Both are hardcoded to seven days in the stats route, so on a
+         * page set to Year they would report a week beside figures that honour
+         * the selector. See the note in ClientCounts.
+         */
+        const c = data.stats.crm ?? {};
+        setCrm({
+          activeClients: c.active_clients || 0,
+          activeLeads: c.active_leads || 0,
+          wentQuiet: c.went_quiet || 0,
+          totalContacts: c.total_contacts || 0,
+        });
+      }
+    } catch (error) {
+      logger.error({ err: error, period }, 'Failed to fetch stats');
+    } finally {
+      hasLoadedOnceRef.current = true;
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [period]);
+
+  /*
+   * Money and channels follow the period; health does not.
+   *
+   * The nightly summary covers whatever window it covers, so refetching it on
+   * every period change would return the same row three more times.
+   */
   useEffect(() => {
     fetchStats({ silent: hasLoadedOnceRef.current });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period]);
+    fetchChannels(period);
+  }, [period, fetchStats, fetchChannels]);
+
+  useEffect(() => {
+    fetchHealth();
+  }, [fetchHealth]);
 
   // Money asked for here now lives at /business-os/orders.
   //
@@ -205,72 +410,8 @@ export default function ReportsPage() {
     router.replace(`/business-os/orders${query ? `?${query}` : ''}`);
   }, [searchParams, router]);
 
-  const fetchStats = async ({ silent = false }: { silent?: boolean } = {}) => {
-    try {
-      if (silent) {
-        setIsRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      const response = await fetch(`/api/business-os/stats?period=${period}`, { cache: 'no-store' });
-      const data = await response.json();
-
-      if (data.success && data.stats) {
-        setStats({
-          payments: {
-            revenue_30d: data.stats.payments?.revenue_30d || 0,
-            revenue_paid_30d: data.stats.payments?.revenue_paid_30d || 0,
-            refunds_amount_30d: data.stats.payments?.refunds_amount_30d || 0,
-            gross_revenue_30d: data.stats.payments?.gross_revenue_30d || 0,
-            processor_fees_30d: data.stats.payments?.processor_fees_30d || 0,
-            refund_fees_kept_30d: data.stats.payments?.refund_fees_kept_30d || 0,
-            revenue_by_currency: data.stats.payments?.revenue_by_currency || [],
-            primary_currency: data.stats.payments?.primary_currency ?? null,
-            revenue_owed_30d: data.stats.payments?.revenue_owed_30d || 0,
-            pending_invoices: data.stats.payments?.pending_invoices || 0,
-            pending_invoices_amount: data.stats.payments?.pending_invoices_amount || 0,
-            plan_owed_amount: data.stats.payments?.plan_owed_amount || 0,
-            plan_pending_count: data.stats.payments?.plan_pending_count || 0,
-            source_direct_amount: data.stats.payments?.source_direct_amount || 0,
-            source_direct_count: data.stats.payments?.source_direct_count || 0,
-            source_invoices_paid: data.stats.payments?.source_invoices_paid || 0,
-            source_invoices_outstanding: data.stats.payments?.source_invoices_outstanding || 0,
-            source_plans_paid: data.stats.payments?.source_plans_paid || 0,
-            source_plans_outstanding: data.stats.payments?.source_plans_outstanding || 0,
-            revenue_this_week: data.stats.payments?.revenue_this_week || 0,
-            revenue_last_week: data.stats.payments?.revenue_last_week || 0,
-            successful_transactions_30d: data.stats.payments?.successful_transactions_30d || 0,
-            charged_transactions_30d: data.stats.payments?.charged_transactions_30d ?? data.stats.payments?.successful_transactions_30d ?? 0,
-            failed_transactions_30d: data.stats.payments?.failed_transactions_30d || 0,
-            refunded_30d: data.stats.payments?.refunded_30d || 0,
-            lost_potential_amount: data.stats.payments?.lost_potential_amount || 0,
-            lost_potential_count: data.stats.payments?.lost_potential_count || 0,
-            invoices_sent_30d: data.stats.payments?.invoices_sent_30d || 0,
-            invoices_paid_30d: data.stats.payments?.invoices_paid_30d || 0,
-            invoices_overdue: data.stats.payments?.invoices_overdue || 0,
-            invoices_overdue_amount: data.stats.payments?.invoices_overdue_amount || 0,
-            average_invoice_amount: data.stats.payments?.average_invoice_amount || 0,
-            transactions_revenue_30d: data.stats.payments?.transactions_revenue_30d || 0,
-            invoices_paid_amount_30d: data.stats.payments?.invoices_paid_amount_30d || 0
-          },
-          scheduling: {
-            total_revenue_30d: data.stats.scheduling?.total_revenue_30d || 0,
-            completed_30d: data.stats.scheduling?.completed_30d || 0,
-            service_revenue: data.stats.scheduling?.service_revenue || []
-          }
-        });
-      }
-    } catch (error) {
-      logger.error({ err: error, period }, 'Failed to fetch stats');
-    } finally {
-      hasLoadedOnceRef.current = true;
-      setLoading(false);
-      setIsRefreshing(false);
-    }
-  };
-
   /*
-   * The period the dialog opens on.
+   * The period the ledger dialog opens on.
    *
    * Mirrors the stats API's rolling windows (7/30/365 days, "all" = no start),
    * so the file starts out matching the figures it was launched from. The user
@@ -287,514 +428,278 @@ export default function ReportsPage() {
     };
   };
 
-  // Export all transactions to CSV
-  const handleExportAllTransactions = async () => {
-    try {
-      // Fetch all transactions (no pagination limit)
-      const response = await fetch('/api/payments/transactions?limit=10000&offset=0');
-      const result = await response.json();
-
-      if (!result.success || !result.data || result.data.length === 0) {
-        return;
-      }
-
-      const transactions = result.data;
-
-      // Define CSV headers
-      const headers = [
-        t('payments.export.date') || 'Date',
-        t('payments.export.client') || 'Client',
-        t('payments.export.email') || 'Email',
-        t('payments.export.amount') || 'Amount',
-        t('payments.export.currency') || 'Currency',
-        t('payments.export.status') || 'Status',
-        t('payments.export.payment_method') || 'Payment Method',
-        t('payments.export.description') || 'Description',
-        t('payments.export.refund_status') || 'Refund Status',
-        t('payments.export.refunded_amount') || 'Refunded Amount',
-        t('payments.export.transaction_id') || 'Transaction ID'
-      ];
-
-      // Map transactions to CSV rows
-      const rows = transactions.map((tx: {
-        paid_at?: string | null;
-        created_at: string;
-        contact?: { first_name?: string | null; last_name?: string | null; email?: string | null } | null;
-        amount: number;
-        currency: string;
-        status: string;
-        payment_method?: string | null;
-        description?: string | null;
-        refund_status?: string | null;
-        refunded_amount?: number | null;
-        stripe_payment_intent_id?: string | null;
-        stripe_charge_id?: string | null;
-        id: string;
-      }) => {
-        const contactName = tx.contact
-          ? `${tx.contact.first_name || ''} ${tx.contact.last_name || ''}`.trim()
-          : '-';
-        const hasRefund = tx.refund_status === 'partial' || tx.refund_status === 'full';
-        return [
-          tx.paid_at || tx.created_at ? new Date(tx.paid_at || tx.created_at).toLocaleDateString() : '',
-          contactName,
-          tx.contact?.email || '-',
-          tx.amount.toFixed(2),
-          tx.currency,
-          t(`payments.status.${tx.status}`) || tx.status,
-          tx.payment_method ? (t(`payments.payment_method.${tx.payment_method}`) || tx.payment_method) : '-',
-          tx.description || '-',
-          hasRefund ? (t(`payments.refund_status.${tx.refund_status}`) || tx.refund_status) : '-',
-          tx.refunded_amount ? tx.refunded_amount.toFixed(2) : '-',
-          tx.stripe_payment_intent_id || tx.stripe_charge_id || tx.id
-        ];
-      });
-
-      // Create CSV content
-      const csvContent = [
-        headers.join(','),
-        ...rows.map((row: string[]) => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-      ].join('\n');
-
-      // Create and trigger download
-      const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `all_payments_${new Date().toISOString().split('T')[0]}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(link.href);
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to export transactions');
-    }
-  };
-
   const isRTL = language === 'he';
+
+  /*
+   * What the "Direct / unknown" row means, named rather than left to inference.
+   *
+   * `untracked` from the API is the SAME bucket as that row (it is literally
+   * `buckets.get('direct')`), so it is used only to write this sentence — never
+   * rendered as a row of its own. Doing both printed the same leads and money
+   * twice, which is what an owner spotted on the live page.
+   */
+  const channelCaption =
+    channels && channels.untracked.leads > 0
+      ? t('reports.arrived_caption')
+          .replace('{leads}', String(channels.totals.leads))
+          .replace('{untracked}', String(channels.untracked.leads))
+          .replace(
+            '{direct}',
+            CHANNEL_LABELS.direct?.[language] || CHANNEL_LABELS.direct?.en || 'Direct / unknown'
+          )
+      : undefined;
 
   return (
     <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`${PAGE_CONTAINER} py-4 sm:py-6`}>
 
-      {/* Main Content */}
-      <div className={`${PAGE_CONTAINER} py-4 sm:py-6 space-y-4`}>
-
-        {/* Page Header - Compact */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <div
-              className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-              style={{ backgroundColor: 'rgba(34, 197, 139, 0.2)' }}
-            >
-              <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: REPORTS_COLORS.PRIMARY }} />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] truncate">
-                {t('reports.title') || 'Cash Flow & Financials'}
-              </h1>
-              <p className="text-xs text-[var(--v2-text-secondary)] hidden sm:block">
-                {t('reports.subtitle') || 'Your business financial overview'}
-              </p>
-            </div>
+        {/* Page head */}
+        <div className="flex items-center gap-3 mb-4">
+          <div
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: 'rgba(34, 197, 139, 0.2)' }}
+          >
+            <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: REPORTS_COLORS.PRIMARY }} />
           </div>
-
-          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
-            {/* Back to Dashboard */}
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] truncate">
+              {t('reports.overview_title')}
+            </h1>
+            <p className="text-xs text-[var(--v2-text-secondary)]">
+              {t('reports.overview_subtitle')}
+            </p>
           </div>
         </div>
 
-        {/* Loading state */}
         {loading ? (
           <div className="flex items-center justify-center min-h-[300px]">
             <div className="text-center space-y-3">
               <div
-                className="w-12 h-12 border-3 border-t-transparent rounded-full animate-spin mx-auto"
+                className="w-12 h-12 border-[3px] border-t-transparent rounded-full animate-spin mx-auto"
                 style={{ borderColor: REPORTS_COLORS.PRIMARY, borderTopColor: 'transparent' }}
               />
               <p className="text-sm text-[var(--v2-text-secondary)]">{t('reports.loading') || 'Loading...'}</p>
             </div>
           </div>
         ) : (
-          /* Financial Dashboard */
-          <div className="space-y-4 max-w-7xl mx-auto">
+          <div className="max-w-7xl mx-auto flex flex-col gap-4">
+
             {/* Reporting window, and the file that window makes. */}
             <div className="flex flex-wrap items-center justify-between gap-2">
-            <div
-              className="inline-flex items-center gap-1 p-1 border border-[var(--v2-border)] bg-[var(--v2-surface)]"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              role="group"
-              aria-label={t('reports.period_label') || 'Reporting period'}
-            >
-              {REPORT_PERIODS.map(({ value, key, fallback }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setPeriod(value)}
-                  disabled={isRefreshing && period !== value}
-                  aria-pressed={period === value}
-                  className={`px-3 py-1.5 text-sm font-medium transition-all border disabled:cursor-default ${
-                    period === value
-                      ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
-                      : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
-                  }`}
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {t(key) || fallback}
-                </button>
-              ))}
+              <div
+                className="inline-flex items-center gap-0.5 p-1 border border-[var(--v2-border)] bg-[var(--v2-surface)]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                role="group"
+                aria-label={t('reports.period_label') || 'Reporting period'}
+              >
+                {REPORT_PERIODS.map(({ value, key, fallback }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setPeriod(value)}
+                    disabled={isRefreshing && period !== value}
+                    aria-pressed={period === value}
+                    className={`px-3 py-1.5 text-sm font-medium transition-all border disabled:cursor-default ${
+                      period === value
+                        ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
+                        : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
+                    }`}
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {t(key) || fallback}
+                  </button>
+                ))}
+              </div>
+
+              {/* The accountant's copy of the window above.
+                  Server-side and unpaginated, and it lists refunds as their own
+                  dated rows — the one thing an on-screen export cannot do, since
+                  folding a refund into the sale's row dates it to the sale. */}
+              <button
+                type="button"
+                onClick={() => setShowLedgerExport(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <Download className="w-4 h-4" />
+                {t('reports.export_ledger')}
+              </button>
             </div>
 
-            {/* The accountant's copy of the window above.
-                Server-side and unpaginated, and it lists refunds as their own
-                dated rows — the one thing the on-screen export cannot do, since
-                folding a refund into the sale's row dates it to the sale. */}
-            <button
-              type="button"
-              onClick={() => setShowLedgerExport(true)}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-60"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              <Download className="w-4 h-4" />
-              {t('reports.export_ledger')}
-            </button>
-            </div>
-
-            {/* Numbers stay on screen while the new window loads, dimmed so it's
-                clear they're the previous period's figures. */}
+            {/* Figures stay on screen while the new window loads, dimmed so it's
+                clear they're the previous period's. */}
             <div
-              className="space-y-4 transition-opacity duration-200"
+              className="flex flex-col gap-4 transition-opacity duration-200"
               style={{ opacity: isRefreshing ? 0.45 : 1 }}
               aria-busy={isRefreshing}
             >
 
-            {/* Key Financial Metrics - 4 Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Total Revenue (30d) */}
-              <MetricCard
-                icon={Banknote}
-                iconColor={REPORTS_COLORS.PRIMARY}
-                label={t('reports.total_revenue') || 'Total Revenue'}
-                value={money(stats?.payments.revenue_30d || 0, { showFree: false })}
-                subtitle={(() => {
-                  /*
-                   * Three figures that do not overlap, so the owner can check
-                   * them: collected, minus refunded, is what was kept; owed is
-                   * what has not arrived yet.
-                   *
-                   * GROSS here rather than `revenue_paid_30d`, which is already
-                   * net — showing a net figure beside a refunds figure reads as
-                   * though the refund is about to be taken off twice.
-                   */
-                  const collected = stats?.payments.gross_revenue_30d || 0;
-                  const owed = stats?.payments.revenue_owed_30d || 0;
-                  const refunded = stats?.payments.refunds_amount_30d || 0;
-                  const fees = stats?.payments.processor_fees_30d || 0;
+              {/* ── BAND 1 · the verdict ──────────────────────────────────
+                  No band header: a one-line answer does not need a label
+                  telling the reader it is the answer.
 
-                  /*
-                   * Refunds are shown, not just subtracted.
-                   *
-                   * A revenue figure that fell tells the owner nothing about
-                   * WHY — selling less and refunding more are entirely
-                   * different problems. Only when there were any: a business
-                   * that has never refunded anything should not be shown a
-                   * zero it has to interpret.
-                   */
-                  const parts = [
-                    `${t('reports.collected') || 'Collected'}: ${money(collected, { showFree: false })}`,
-                    `${t('reports.owed') || 'Owed'}: ${money(owed, { showFree: false })}`,
-                  ];
-
-                  if (refunded > 0) {
-                    parts.push(
-                      `${t('reports.refunded_amount') || 'Refunded'}: ${money(refunded, { showFree: false })}`
-                    );
-                  }
-
-                  /*
-                   * What Stripe kept.
-                   *
-                   * Collected minus refunded minus fees is what the bank
-                   * balance actually moved by, and the fee line was the piece
-                   * that had never appeared anywhere in this product. Only when
-                   * it is known — a business mid-backfill should not be shown a
-                   * zero that means "not fetched yet".
-                   */
-                  if (fees > 0) {
-                    parts.push(
-                      `${t('reports.fees') || 'Fees'}: ${money(fees, { showFree: false })}`
-                    );
-                  }
-
-                  return parts.join(' • ');
-                })()}
-                // The money it is summarising now lives on its own page.
-                onAction={() => router.push('/business-os/orders')}
-                actionLabel={t('reports.view_money') || 'View orders'}
+                  Always rendered. With no stored summary it holds its place and
+                  says when it will fill, rather than leaving a gap that reads as
+                  an unfinished page. */}
+              <VerdictLine
+                narrative={health.narrative}
+                improved={health.measures?.improved ?? 0}
+                declined={health.measures?.declined ?? 0}
+                steady={health.measures?.steady ?? 0}
+                unavailable={health.measures?.unavailable ?? 0}
               />
 
-              {/* Revenue This Week */}
-              <MetricCard
-                icon={TrendingUp}
-                iconColor={REPORTS_COLORS.PRIMARY}
-                label={t('reports.this_week') || 'This Week'}
-                value={money(stats?.payments.revenue_this_week || 0, { showFree: false })}
-                subtitle={t('reports.last_7_days') || 'Last 7 days'}
-                trend={{
-                  value: money(Math.abs((stats?.payments.revenue_this_week || 0) - (stats?.payments.revenue_last_week || 0)), { showFree: false }),
-                  isPositive: (stats?.payments.revenue_this_week || 0) >= (stats?.payments.revenue_last_week || 0),
-                  text: t('reports.from_last_week') || 'from last week'
-                }}
-              />
+              {/* ── BAND 2 · money ─────────────────────────────────────── */}
+              {payments && (
+                <Band name={t('reports.band_money')} question={t('reports.q_money')}>
+                  <MoneyFigures
+                    collected={payments.gross_revenue_30d}
+                    refunded={payments.refunds_amount_30d}
+                    fees={payments.processor_fees_30d}
+                    banked={payments.banked_revenue_30d}
+                    feesUnknown={payments.processor_fees_unknown}
+                    owed={payments.revenue_owed_30d}
+                    pendingInvoices={payments.pending_invoices}
+                    overdueInvoices={payments.invoices_overdue}
+                    pendingInstallments={payments.plan_pending_count}
+                    writtenOff={payments.lost_potential_amount}
+                    writtenOffCount={payments.lost_potential_count}
+                    money={money}
+                    onOpenOrders={() => router.push('/business-os/orders')}
+                  />
 
-              {/* Everything still owed — invoices AND plan installments.
-                  Named "Outstanding" with the same word the payments page uses,
-                  because it is now the same figure: the card said "Pending
-                  Invoices" and showed only invoices, so a business owed money on
-                  a payment plan read zero here and a full total one page over. */}
-              <MetricCard
-                icon={Clock}
-                iconColor={REPORTS_COLORS.WARNING}
-                label={t('payments.outstanding') || 'Outstanding'}
-                value={money(stats?.payments.revenue_owed_30d || 0, { showFree: false })}
-                subtitle={[
-                  `${stats?.payments.pending_invoices || 0} ${t('reports.invoices') || 'invoices'}`,
-                  `${stats?.payments.invoices_overdue || 0} ${t('reports.overdue') || 'overdue'}`,
-                  // Only when there is plan money, so a business without plans
-                  // reads exactly as it did before.
-                  ...((stats?.payments.plan_pending_count || 0) > 0
-                    ? [`${stats?.payments.plan_pending_count} ${t('reports.installments') || 'installments'}`]
-                    : []),
-                ].join(' • ')}
-                // The money it is summarising now lives on its own page.
-                onAction={() => router.push('/business-os/orders')}
-                actionLabel={t('reports.view_money') || 'View orders'}
-              />
+                  <button
+                    type="button"
+                    onClick={() => setShowDetail(v => !v)}
+                    aria-expanded={showDetail}
+                    aria-controls="reports-financial-detail"
+                    className="w-full flex items-center gap-1.5 px-[18px] py-3 text-sm font-semibold text-start bg-[var(--v2-bg)] border-t border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
+                  >
+                    <ChevronRight
+                      className={`w-3.5 h-3.5 transition-transform ${showDetail ? 'rotate-90' : ''}`}
+                    />
+                    {t('reports.financial_detail')}
+                  </button>
 
-              {/* Average Invoice */}
-              <MetricCard
-                icon={Receipt}
-                iconColor={REPORTS_COLORS.ACCENT}
-                label={t('reports.average_invoice') || 'Average Invoice'}
-                value={money(stats?.payments.average_invoice_amount || 0, { showFree: false })}
-                subtitle={t('reports.per_paid_invoice') || 'Per paid invoice'}
-              />
-            </div>
+                  {showDetail && (
+                    <div id="reports-financial-detail">
+                      <FinancialDetail
+                        charged={payments.charged_transactions_30d}
+                        failed={payments.failed_transactions_30d}
+                        invoicesPaid={payments.invoices_paid_30d}
+                        invoicesSent={payments.invoices_sent_30d}
+                        overdueAmount={payments.invoices_overdue_amount}
+                        overdueCount={payments.invoices_overdue}
+                        refunded={payments.refunds_amount_30d}
+                        gross={payments.gross_revenue_30d}
+                        refundFeesKept={payments.refund_fees_kept_30d}
+                        averageInvoice={payments.average_invoice_amount}
+                        plansPaid={payments.source_plans_paid}
+                        plansOutstanding={payments.source_plans_outstanding}
+                        quoted={payments.open_proposals_amount}
+                        quotedCount={payments.open_proposals_count}
+                        ordered={payments.booked_value_period}
+                        money={money}
+                      />
+                    </div>
+                  )}
+                </Band>
+              )}
 
-            {/* Revenue Sources */}
-            <RevenueSourcesSection
-              payments={{
-                type: 'payments',
-                // Direct money only — not every succeeded payment. Invoice and
-                // plan payments have their own rows now, and counting them here
-                // too made the three bars sum to more than the revenue card.
-                amount: stats?.payments.source_direct_amount || 0,
-                count: stats?.payments.source_direct_count || 0
-              }}
-              invoices={{
-                type: 'invoices',
-                // What invoices actually brought in, including the ones settled
-                // by card. The old figure subtracted those to avoid counting
-                // them twice under "direct payments" — so an invoice paid by
-                // card showed here as "1 invoice, 0.00" while its money sat in
-                // the direct row. Each payment is now attributed once, upstream.
-                amount: (stats?.payments.source_invoices_paid || 0) + (stats?.payments.source_invoices_outstanding || 0),
-                count: (stats?.payments.invoices_paid_30d || 0) + (stats?.payments.pending_invoices || 0),
-                paid: stats?.payments.source_invoices_paid || 0,
-                outstanding: stats?.payments.source_invoices_outstanding || 0
-              }}
-              plans={{
-                type: 'plans',
-                amount: (stats?.payments.source_plans_paid || 0) + (stats?.payments.source_plans_outstanding || 0),
-                count: stats?.payments.plan_pending_count || 0,
-                paid: stats?.payments.source_plans_paid || 0,
-                outstanding: stats?.payments.source_plans_outstanding || 0
-              }}
-              currency={moneyCurrency}
-            />
-
-
-            {/* Financial Health */}
-            {/*
-              * Say so when the totals are adding unlike things.
-              *
-              * Every headline figure on this page is summed across whatever
-              * currencies the period contained, and the symbol beside it names
-              * only the largest of them. With one currency that is exactly
-              * right. With two it is dollars and shekels added together and
-              * labelled with whichever there was more of — a number that is not
-              * wrong by a rounding error but by an exchange rate.
-              *
-              * Not silently fixed by converting: this product holds no rate and
-              * inventing one would replace a visible problem with an invisible
-              * one. The breakdown is already computed per currency, so the
-              * honest move is to name the currencies and point at it.
-              */}
-            {(stats?.payments.revenue_by_currency?.length ?? 0) > 1 && (
-              <div
-                className="mb-3 px-3 py-2 text-[12px] leading-relaxed"
-                style={{
-                  borderRadius: '10px',
-                  background: 'rgba(217, 119, 6, 0.08)',
-                  color: '#8A5B12',
-                }}
-              >
-                {t('reports.mixed_currency') || 'Totals below add amounts in different currencies.'}
-                {' '}
-                {stats?.payments.revenue_by_currency
-                  .map(row => `${row.currency} ${row.gross.toLocaleString()}`)
-                  .join(' · ')}
-              </div>
-            )}
-
-            <FinancialHealthGrid
-              /*
-               * Did the charge go through — nothing about what happened after.
+              {/*
+               * Say so when the totals are adding unlike things.
                *
-               * Built on `charged` (accepted, refunded ones included) rather
-               * than on `succeeded`, which drops a sale the moment it is
-               * refunded. That made refunds disappear from both sides of the
-               * ratio: an account with two clean sales and two refunded ones
-               * read "2 of 2" when four charges were accepted, and one with
-               * failures alongside refunds got a rate that was plainly wrong.
-               */
-              successRate={(() => {
-                const charged = stats?.payments.charged_transactions_30d || 0;
-                const failed = stats?.payments.failed_transactions_30d || 0;
-                const attempted = charged + failed;
-                const rate = attempted > 0 ? charged / attempted : 0;
-
-                return {
-                  // Nobody tried to pay is not a 100% success rate.
-                  value: attempted > 0 ? `${Math.round(rate * 100)}%` : '—',
-                  subtitle: language === 'he'
-                    ? `${t('reports.transactions')} ${charged} ${t('reports.of')} ${attempted}`
-                    : `${charged} ${t('reports.of')} ${attempted} ${t('reports.transactions')}`,
-                  status: rate >= PERFORMANCE_THRESHOLDS.SUCCESS_RATE_GOOD ? 'success' : 'warning',
-                };
-              })()}
-              /*
-               * Of everything billed, how much came back.
+               * Every headline figure on this page is summed across whatever
+               * currencies the period contained, and the symbol beside it names
+               * only the largest of them. With one currency that is exactly
+               * right. With two it is dollars and shekels added together and
+               * labelled with whichever there was more of — a number that is not
+               * wrong by a rounding error but by an exchange rate.
                *
-               * The counts behind this are fixed in the stats route: an overdue
-               * invoice used to be counted as neither sent nor paid, so it left
-               * the denominator as it aged and the rate climbed toward 100%
-               * precisely as collection got worse.
-               */
-              collectionRate={(() => {
-                const paid = stats?.payments.invoices_paid_30d || 0;
-                const sent = stats?.payments.invoices_sent_30d || 0;
-                const rate = sent > 0 ? paid / sent : 0;
+               * Not silently fixed by converting: this product holds no rate and
+               * inventing one would replace a visible problem with an invisible
+               * one. The breakdown is already computed per currency, so the
+               * honest move is to name the currencies and point at it.
+               */}
+              {(payments?.revenue_by_currency.length ?? 0) > 1 && (
+                <div
+                  className="px-3 py-2 text-xs leading-relaxed tabular-nums"
+                  style={{
+                    borderRadius: '10px',
+                    background: 'rgba(217, 119, 6, 0.08)',
+                    color: '#8A5B12',
+                  }}
+                >
+                  {t('reports.mixed_currency') || 'Totals above add amounts in different currencies.'}
+                  {' '}
+                  {payments?.revenue_by_currency
+                    .map(row => `${row.currency} ${row.gross.toLocaleString()}`)
+                    .join(' · ')}
+                </div>
+              )}
 
-                return {
-                  // No invoices sent is not perfect collection.
-                  value: sent > 0 ? `${Math.min(100, Math.round(rate * 100))}%` : '—',
-                  subtitle: language === 'he'
-                    ? `${t('reports.invoices_paid')} ${paid} ${t('reports.of')} ${sent}`
-                    : `${paid} ${t('reports.of')} ${sent} ${t('reports.invoices_paid')}`,
-                  status: rate >= PERFORMANCE_THRESHOLDS.COLLECTION_RATE_GOOD ? 'success' : 'warning',
-                };
-              })()}
-              outstanding={{
-                value: money(stats?.payments.invoices_overdue_amount || 0, { showFree: false }),
-                subtitle: `${stats?.payments.invoices_overdue || 0} ${t('reports.overdue_invoices')}`,
-                status: (stats?.payments.invoices_overdue || 0) === PERFORMANCE_THRESHOLDS.OUTSTANDING_GOOD ? 'success' : (stats?.payments.invoices_overdue || 0) <= PERFORMANCE_THRESHOLDS.OUTSTANDING_WARNING ? 'warning' : 'danger'
-              }}
-              /*
-               * Refunded money over money collected — not refund EVENTS over
-               * surviving transactions, which is what this was and why it read
-               * 350%.
-               *
-               * Two faults compounded. The numerator counted rows in the refund
-               * ledger, so one sale refunded in three instalments counted three
-               * times. The denominator counted transactions still sitting at
-               * `succeeded` — and a fully refunded sale moves to `refunded`, so
-               * it left the denominator while its refund stayed in the
-               * numerator. Seven refund rows against two surviving sales is not
-               * a percentage of anything.
-               *
-               * Both figures are money, from the same period, and gross is
-               * collected BEFORE refunds — so the ratio cannot exceed 100% and
-               * means what a business owner assumes it means.
-               */
-              refundRate={(() => {
-                const refunded = stats?.payments.refunds_amount_30d || 0;
-                const gross = stats?.payments.gross_revenue_30d || 0;
-                const rate = gross > 0 ? refunded / gross : 0;
+              {/* ── BAND 3 · how the business is doing ────────────────────
+                  Always rendered, all six rows, with the value slot empty where
+                  there is no figure. A measured zero still shows as 0% — that is
+                  an answer, and the most actionable one on the page. */}
+              <Band name={t('reports.band_health')} question={t('reports.q_health')}>
+                <HealthRows categories={health.measures?.categories ?? null} />
+              </Band>
 
-                /*
-                 * The fee is part of what the refund cost.
-                 *
-                 * Stripe keeps its processing fee on a refunded payment, so a
-                 * full refund leaves the business down the fee as well as the
-                 * sale. Naming it here stops the card reading as though a
-                 * refund merely returns things to where they were.
-                 *
-                 * Shown only when there is one: a business refunding money it
-                 * collected outside Stripe pays no fee, and a zero would imply
-                 * a fee that was returned rather than one never charged.
-                 */
-                const feesKept = stats?.payments.refund_fees_kept_30d || 0;
+              {/* ── BAND 4 · where clients came from ─────────────────────
+                  Arrives on its own schedule; absent until it does. */}
+              {channels && (channels.rows.length > 0 || channels.untracked.leads > 0) && (
+                <Band
+                  name={t('reports.band_channels')}
+                  question={t('reports.q_channels')}
+                  caption={channelCaption}
+                >
+                  <ChannelTable rows={channels.rows} money={money} />
+                </Band>
+              )}
 
-                return {
-                  // No collections in the period is not a 0% refund rate — it
-                  // is no rate at all, and a dash says so without implying a
-                  // clean record the business has not earned.
-                  value: gross > 0 ? `${Math.round(rate * 100)}%` : '—',
-                  subtitle: feesKept > 0
-                    ? `${money(refunded, { showFree: false })} ${t('reports.refunded')} · ${money(feesKept, { showFree: false })} ${t('reports.fees_kept') || 'in fees'}`
-                    : `${money(refunded, { showFree: false })} ${t('reports.refunded')}`,
-                  status: rate <= PERFORMANCE_THRESHOLDS.REFUND_RATE_GOOD ? 'success' : 'warning',
-                };
-              })()}
-              /*
-               * Potential money lost: billed or agreed, then called off.
-               *
-               * Here and NOT on the orders page, deliberately. That list is
-               * money in and out, and a write-off is neither — it is money that
-               * was never going to move. This card answers the other question:
-               * how much business did I agree and then not get.
-               *
-               * ── Why it cannot contradict the refund card beside it ─────────
-               * Refunding with "cancel booking" on VOIDS the unpaid invoices as
-               * it goes, so one booking can end with a refunded payment next to
-               * a cancelled invoice. The server nets refunds out of this figure
-               * (`cancelledMoneyOf`), so refunded money is reported by Refund
-               * Rate and never restated here. The two cards can sit side by side
-               * and be added up without counting the same money twice.
-               *
-               * ── All time, and it says so ──────────────────────────────────
-               * Every other card here is 30 days. This one is not: a loss does
-               * not stop being a loss on day 31, and the owner asked for the
-               * accumulated figure. Unlabelled that would be a trap, so the
-               * subtitle carries the period rather than leaving the reader to
-               * assume it matches its neighbours.
-               */
-              lostPotential={(() => {
-                const lost = stats?.payments.lost_potential_amount || 0;
-                const count = stats?.payments.lost_potential_count || 0;
+              {/* ── BAND 5 · clients ─────────────────────────────────────
+                  Beside the channels band on purpose: that one says where
+                  people came from, this one says where they are now. Both are
+                  about people, and splitting them with a money band would read
+                  as two unrelated sections. */}
+              {crm && (
+                <Band name={t('reports.band_clients')} question={t('reports.q_clients')}>
+                  <ClientCounts
+                    activeClients={crm.activeClients}
+                    activeLeads={crm.activeLeads}
+                    wentQuiet={crm.wentQuiet}
+                    totalContacts={crm.totalContacts}
+                  />
+                </Band>
+              )}
 
-                return {
-                  value: money(lost, { showFree: false }),
-                  subtitle: `${count} ${t('reports.cancelled_count') || 'cancelled'} · ${t('reports.all_time') || 'all time'}`,
-                  /*
-                   * Nothing lost is a real success, unlike a 0% refund rate on
-                   * no collections: this business genuinely wrote nothing off.
-                   * Anything above zero is worth the owner's eye but is not a
-                   * failure — work gets cancelled — so warning, never danger.
-                   */
-                  status: lost === 0 ? 'success' : 'warning',
-                };
-              })()}
-            />
+              {/* ── BAND 6 · what people buy ────────────────────────────
+                  The caption is not decoration: these figures are on a
+                  DIFFERENT BASIS from band 2's, and without saying so the two
+                  cannot be reconciled by anyone reading them.
 
-              {/* Revenue by Services */}
-              <RevenueByServicesSection
-                services={stats?.scheduling.service_revenue || []}
-                currency={moneyCurrency}
-              />
+                  Band 2 counts money that ARRIVED, from every source.
+                  `service_revenue` sums transactions AND every invoice not yet
+                  settled by one (stats/route.ts, `serviceRevenueMap`), so it is
+                  received PLUS owed, and only the part tied to a service. An
+                  owner comparing ₪3,800 here with ₪15,145 above has no way to
+                  know either of those things, and the honest fix is to state
+                  them rather than to quietly align two different questions. */}
+              {services.length > 0 && (
+                <Band
+                  name={t('reports.band_services')}
+                  question={t('reports.q_services')}
+                  caption={t('reports.services_caption')}
+                >
+                  <ServiceTable services={services} money={money} />
+                </Band>
+              )}
             </div>
           </div>
         )}
       </div>
+
       <LedgerExportModal
         isOpen={showLedgerExport}
         onClose={() => setShowLedgerExport(false)}

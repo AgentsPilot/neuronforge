@@ -33,6 +33,7 @@
  * in-memory limiter here, which would not survive serverless scaling (C-4).
  */
 
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { AUDIT_EVENTS } from '@/lib/audit/events';
@@ -61,6 +62,14 @@ const RESPONSE_HEADERS = {
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
+
+  /*
+   * Throttled: this route is reachable with no session and it reads an invitation.
+   * `ok` bucket here — the credential check, where there is one, counts its own
+   * failures under the tighter budget.
+   */
+  const throttle = await rateLimit(request, 'invite-validate', RATE_LIMITS.create);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.create.windowSeconds);
 
   const body = await request.json().catch(() => undefined);
   const parsed = validateInviteBodySchema.safeParse(body);

@@ -33,7 +33,7 @@
 import { redirect } from 'next/navigation';
 
 import { ProposalAnswer } from '@/components/public/ProposalAnswer';
-import { generateBookingToken } from '@/lib/services/BookingEmailService';
+import { generateBookingToken } from '@/lib/services/bookingToken';
 import { verifyProposalToken } from '@/lib/business-os/proposalToken';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';

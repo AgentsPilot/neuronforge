@@ -1,5 +1,28 @@
 // app/invoice/[id]/layout.tsx
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NEVER CACHED, NEVER SHARED.
+ *
+ * Today this is safe by accident: the credential sits in the path, so every
+ * client's URL is unique and nothing can serve one client's booking to
+ * another even if something decided to cache it.
+ *
+ * That accident ends the moment the token moves into a cookie and the address
+ * becomes a plain booking id — one URL rendering different content per caller
+ * is exactly the shape a CDN, a proxy, or a Next.js caching default will
+ * happily share between two people. A mistake here is a cross-client data
+ * leak, which is strictly worse than the address-bar leak the cookie exists to
+ * close.
+ *
+ * So this is declared BEFORE the cookie work, not after, and
+ * `publicPagesAreNeverCached.guard` holds it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
+
 import { PublicBrandFrame } from '@/components/public/PublicBrandFrame';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 

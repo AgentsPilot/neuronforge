@@ -38,6 +38,7 @@ import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
 // the two would drift the first time an action was added.
 import type { GapAction } from '@/lib/business-os/gaps/types';
 import { RefundModal } from '@/components/payments/RefundModal';
+import { mostUrgent, tasksOf } from '@/lib/business-os/gaps/mostUrgent';
 
 export interface GapItemView {
   contactId: string;
@@ -67,6 +68,29 @@ export interface GapItemView {
     chosenBy: string | null;
     dueAt: string | null;
   } | null;
+  /**
+   * When `auto_complete_meetings` will answer this row itself.
+   *
+   * Present only on an unmarked meeting, and only while the automation is on
+   * and the work is still queued. A TIME and nothing else — there is no button,
+   * because the seven-day triage row already lets the owner correct an
+   * auto-completed meeting and a Cancel here would buy ten hours of prevention
+   * on top of a week of cure.
+   *
+   * What it fixes is silence: the card claimed the meeting two hours after it
+   * ended and the automation answered at twelve, so for ten hours the row asked
+   * the owner to do something the platform was about to do, said nothing about
+   * it, and then disappeared.
+   */
+  closingAt?: string | null;
+  /**
+   * When this one's own moment is: a quote's deadline, an appointment's start.
+   *
+   * What `mostUrgent` promotes on — a decision about to be taken away outranks
+   * one that is merely old. Absent on most gaps, where `since` is the whole
+   * story.
+   */
+  eventAt?: string | null;
 }
 
 export interface GapView {
@@ -154,7 +178,83 @@ const VALUE_LABEL: Record<string, string> = {
   invoice_unpaid: 'gaps.value.owed',
   quote_unsent: 'gaps.value.quoted',
   quote_awaiting_client: 'gaps.value.quoted',
+  quote_deadline_unanswered: 'gaps.value.quoted',
 };
+
+/**
+ * The lead task, said as a sentence rather than labelled as a category.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The grouped list had to be terse: a heading, a name, a clock. Showing ONE
+ * task buys room for the half that was always missing — not "Phase ready to
+ * bill" but "Ofir's phase B is done and nobody has billed it".
+ *
+ * Built from the copy keys rather than composed here, so the three languages
+ * stay in the dictionaries with every other string. `{name}` and `{what}` are
+ * substituted; a gap with no sentence of its own falls back to its existing
+ * `gaps.kind.*` label, which is what the card said before and is never wrong.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function leadSentence(
+  gapId: string,
+  item: GapItemView,
+  t: (key: string) => string,
+  money: (amount: number, currency?: string | null) => string
+): string {
+  const key = `gaps.lead.say.${gapId}`;
+  const say = t(key);
+  /* `t` returns the key itself when there is none. */
+  const template = say === key ? t(`gaps.kind.${gapId}`) : say;
+
+  /*
+   * `{what}` IS NOT SUBSTITUTED, AND THAT IS THE POINT.
+   *
+   * `note` is a service name or a proposal title — arbitrary text the owner
+   * typed. The first version of these sentences slotted it in as a grammatical
+   * object ("{name} cancelled {what}"), which produced
+   *
+   *     "דויד המלך ביטל את הצעת מחיר לשיפוץ"
+   *
+   * on an account whose SERVICE is called "הצעת מחיר לשיפוץ" — read as a
+   * cancelled proposal rather than a cancelled appointment for a service with
+   * that name. Hebrew made it worse: the templates carried prefixes like
+   * `ל{what}`, which assume whatever follows takes that preposition.
+   *
+   * So the sentence says what the gap IS, in words this module controls, and
+   * the owner's own text is rendered beside it as a detail. A name the platform
+   * did not write never has to be grammatical.
+   */
+  return template
+    .replace('{name}', item.name)
+    .replace('{amount}', moneyHeld(item) ? money(item.value as number, item.currency) : '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * The second line: the consequence of leaving it, where there is one.
+ *
+ * Deliberately separate from the sentence above. "Her card is still being
+ * charged" is not a description of the task, it is the reason it leads the
+ * card — and an owner who has read it once does not need it restated inside
+ * the sentence every time.
+ *
+ * Absent for most gaps, and then nothing is rendered rather than a blank line.
+ */
+function leadQualifier(gapId: string, item: GapItemView, t: (key: string) => string): string | null {
+  if (item.planLive) return t('gaps.lead.why.plan_live');
+
+  if (gapId === 'meeting_unmarked' && item.closingAt) {
+    return t('gaps.lead.why.closing').replace(
+      '{time}',
+      new Date(item.closingAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    );
+  }
+
+  const key = `gaps.lead.why.${gapId}`;
+  const why = t(key);
+  return why === key ? null : why;
+}
 
 /**
  * Identifies ONE row, for React and for the working/done/refused state.
@@ -190,6 +290,20 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
   };
   const router = useRouter();
   const [rows, setRows] = useState<Record<string, RowState>>({});
+  /*
+   * The card leads with ONE task and keeps the rest behind a line.
+   *
+   * Eight tasks used to cost a heading, three lines and a button each, so a
+   * quiet day read as a wall and the owner picked by position rather than by
+   * importance. Showing one makes the ORDER the product — see `mostUrgent`,
+   * which is why that lives in its own tested module rather than in a sort
+   * here.
+   *
+   * The full list is not replaced, it is folded: opening this renders exactly
+   * what the card rendered before, so nothing an owner could do yesterday is
+   * gone.
+   */
+  const [expanded, setExpanded] = useState(false);
   /** The booking whose refund dialog is open, if any. */
   const [refunding, setRefunding] = useState<{
     bookingId: string;
@@ -217,6 +331,13 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
         return item.entityId ? `/api/scheduling/bookings/${item.entityId}/intake` : null;
       case 'chase_payment':
         return item.entityId ? `/api/payments/invoices/${item.entityId}/send` : null;
+      /*
+       * The same reminder the automation sends, sent now because the owner
+       * pressed it rather than because three days passed. One endpoint for
+       * both, so a quote cannot be followed up in two different voices.
+       */
+      case 'chase_quote':
+        return item.entityId ? `/api/business-os/proposals/${item.entityId}/remind` : null;
       case 'cancel_booking':
         return item.entityId ? `/api/scheduling/bookings/${item.entityId}/cancel` : null;
       /*
@@ -448,6 +569,37 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
 
   const total = gaps.reduce((sum, gap) => sum + gap.count, 0);
 
+  /*
+   * The one task the card leads with.
+   *
+   * Ranked in `mostUrgent`, not here: the ordering is the whole product once
+   * only one task is visible, and it needs to be pure and tested rather than a
+   * comparator inside a component that also does fetches and modals.
+   */
+  /*
+   * A task the platform is already answering does not lead.
+   *
+   * `queued` means an automatic reply is pending on this row, with its own
+   * "send now / cancel" strip inside the list. Leading with one would put the
+   * owner's attention on the one thing nobody needs to do — and the lead block
+   * has no room for that strip, so the Cancel control would vanish for as long
+   * as the task happened to rank first.
+   *
+   * They stay in the list, with the strip, exactly as before. They simply do
+   * not get the headline.
+   */
+  const leadCandidates = gaps.map(g => ({
+    id: g.id as never,
+    items: g.items.filter(item => !item.queued) as never,
+  }));
+  const lead = mostUrgent(tasksOf(leadCandidates));
+  const leadGap = lead ? gaps.find(g => g.id === lead.gapId) ?? null : null;
+  /* Amber for the one thing that is worse tomorrow than today. */
+  const leadUrgent = Boolean(lead?.item.planLive);
+
+  const openContact = (contactId: string) =>
+    router.push(`/business-os/crm?contact=${contactId}`);
+
   return (
     <div
       style={{
@@ -489,7 +641,108 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
         </span>
       </div>
 
-      <div className="flex flex-col gap-3">
+      {/*
+        ─────────────────────────────────────────────────────────────────────
+        THE ONE THING, AND THE LINE THAT HOLDS THE REST.
+
+        `lead` is whatever `mostUrgent` ranks first across every gap: money
+        still leaving an account, then a decision about to expire, then
+        somebody waiting, then work that can sit. The sentence beside it says
+        what it IS rather than labelling a category, which is what the card
+        has room for now that it shows one.
+
+        Opening the fold renders the original grouped list underneath,
+        untouched. Nothing an owner could do yesterday is gone; it is one tap
+        further away, and the tap is the point.
+        ─────────────────────────────────────────────────────────────────────
+      */}
+      {lead && !expanded && (
+        <div className="mb-1">
+          <p className="text-[11px] font-semibold mb-2" style={{ color: leadUrgent ? 'var(--v2-warning)' : 'var(--v2-primary)' }}>
+            {leadUrgent ? t('gaps.lead.urgent') : t('gaps.lead.next')}
+          </p>
+
+          <p className="text-[15px] leading-relaxed font-medium text-[var(--v2-text-primary)] mb-1">
+            {leadSentence(lead.gapId, lead.item, t, money)}
+          </p>
+
+          {/*
+            The owner's own words for the thing — a service name, a quote title.
+            Its own line, never inside the sentence: see `leadSentence`.
+          */}
+          {lead.item.note && (
+            <p className="text-[12.5px] text-[var(--v2-text-secondary)] mb-1 truncate">
+              {lead.item.note}
+            </p>
+          )}
+
+          {leadQualifier(lead.gapId, lead.item, t) && (
+            <p className="text-[12.5px] text-[var(--v2-text-muted)] mb-3">
+              {leadQualifier(lead.gapId, lead.item, t)}
+            </p>
+          )}
+
+          <div className="flex gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => act(leadGap!, lead.item as GapItemView)}
+              className="text-[13px] font-semibold px-4 py-2 rounded-lg text-white"
+              style={{ background: 'var(--v2-primary)' }}
+            >
+              {t(`gaps.action.${actionFor(leadGap!, lead.item as GapItemView)}`)}
+            </button>
+            <button
+              type="button"
+              onClick={() => openContact(lead.item.contactId)}
+              className="text-[13px] font-semibold px-4 py-2 rounded-lg"
+              style={{
+                background: 'transparent',
+                color: 'var(--v2-text-secondary)',
+                border: '1px solid var(--v2-border)',
+              }}
+            >
+              {t('gaps.lead.open_contact')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/*
+        The fold. Hidden entirely when this is the only task, because "and 0
+        more" is a control that does nothing.
+      */}
+      {/*
+        Only where there is a headline to fold BACK to. With no lead — every
+        task already being answered automatically — the list is the card, and a
+        control offering to hide it would leave the card blank.
+      */}
+      {lead && total > 1 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          className="w-full flex items-center justify-between text-[13px] mt-3 pt-3"
+          style={{
+            borderTop: '1px solid color-mix(in srgb, var(--v2-border) 50%, transparent)',
+            color: 'var(--v2-text-secondary)',
+            background: 'transparent',
+          }}
+        >
+          <span>
+            {expanded
+              ? t('gaps.lead.collapse')
+              : t('gaps.lead.more').replace('{n}', String(total - 1))}
+          </span>
+          <span aria-hidden="true" className="text-[var(--v2-text-muted)]">
+            {expanded ? '×' : (isRTL ? '←' : '→')}
+          </span>
+        </button>
+      )}
+
+      {/*
+        Shown when the owner opens it, and ALWAYS when there is no lead: a card
+        that has tasks must never render nothing.
+      */}
+      <div className="flex flex-col gap-3" hidden={Boolean(lead) && !expanded}>
         {gaps.map(gap => (
           <div key={gap.id}>
             {/*
@@ -628,6 +881,34 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                               : t(`gaps.since.${gap.id}`)
                             ).replace('{t}', waitedFor(item.since, t))}
                           </span>
+                          {/*
+                            * When the platform will answer this itself.
+                            *
+                            * Only an unmarked meeting carries it, and only
+                            * while `auto_complete_meetings` is on. Without it
+                            * the row asked the owner to decide, said nothing
+                            * about the automation due in ten hours, and then
+                            * vanished when it ran — a task disappearing with
+                            * no explanation is how somebody stops trusting
+                            * the list.
+                            *
+                            * A sentence, not a control: the seven-day triage
+                            * row already lets them correct it afterwards.
+                            */}
+                          {item.closingAt && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-[var(--v2-text-muted)] truncate">
+                                {t('gaps.closing_at').replace(
+                                  '{time}',
+                                  new Date(item.closingAt).toLocaleTimeString(undefined, {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                )}
+                              </span>
+                            </>
+                          )}
                           {/*
                             * Said even when nothing is held, because this is
                             * not a detail about the row — it is money STILL

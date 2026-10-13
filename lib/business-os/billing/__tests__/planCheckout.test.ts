@@ -41,6 +41,7 @@ import {
   type PlanCheckoutResult,
 } from '@/lib/business-os/billing/planCheckout';
 import { displayMonthlyPricesUsd, displayPriceInCents, type StripePriceLike } from '@/lib/business-os/billing/planPriceCheck';
+import type { HeldPaymentSwitches } from '@/lib/business-os/billing/planCheckoutEligibility';
 import type { BusinessOsBillingAccount } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import type { BusinessOsAccountHoldFacts, BusinessOsInviteHoldFacts } from '@/lib/repositories/types';
 
@@ -53,6 +54,7 @@ const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
 /** Stripe's own expiry differs from the one we asked for, so tests can tell which one the lock stores (C-1). */
 const STRIPE_EXPIRES = NOW_SECONDS + PLAN_CHECKOUT_SESSION_LIFETIME_SECONDS + 7;
 const SECRET = 'cs_test_secret_never_logged';
+const HELD_SWITCHES_ON: HeldPaymentSwitches = { checkoutEnabled: true, pricesEnabled: true, paidInvitesAvailable: true };
 
 function account(overrides: Partial<BusinessOsBillingAccount> = {}): BusinessOsBillingAccount {
   return {
@@ -100,6 +102,8 @@ const missingCustomer = () => Object.assign(new Error('No such customer'), { typ
 
 interface Options {
   pricesEnabled?: boolean;
+  /** P-5a.2: the held-payment switches; default all on, so the held rules decide. */
+  heldSwitches?: HeldPaymentSwitches;
   modeThrows?: boolean;
   lineage?: BusinessOsAccountHoldFacts | null | 'error';
   invite?: BusinessOsInviteHoldFacts | null;
@@ -199,6 +203,7 @@ function harness(options: Options = {}) {
     repo: repo as unknown as PlanCheckoutDeps['repo'],
     stripe: stripe as unknown as PlanCheckoutDeps['stripe'],
     pricesEnabled: () => options.pricesEnabled ?? true,
+    heldPaymentSwitches: () => options.heldSwitches ?? HELD_SWITCHES_ON,
     mode: () => {
       if (options.modeThrows) throw new Error('stripe_key_mode_unknown');
       return 'test';
@@ -363,6 +368,39 @@ describe('startPlanCheckout — early refusals make NO Stripe call (C-4)', () =>
     const { deps, log } = harness({ lineage: friendLineage });
     await startPlanCheckout({ ...INPUT, tier: HIGHER_TIER }, deps);
     expect(log).toEqual(['db:lineage']);
+  });
+
+  // P-5a.2 (S5-1, D5-3, G5-5): the held path needs `paidInvitesAvailable` too.
+  it('held + paidInvitesAvailable off → held_payment_unavailable (409), warn with no alert, no Stripe call, nothing read after the hold', async () => {
+    const { deps, log, logger, stripeCalls } = harness({
+      lineage: friendLineage,
+      heldSwitches: { checkoutEnabled: true, pricesEnabled: true, paidInvitesAvailable: false },
+    });
+    const result = await startPlanCheckout({ ...INPUT, tier: INVITE_ISSUANCE_POLICY.account.grantId as typeof FRIEND_TIER }, deps);
+    expectRefused(result, 'held_payment_unavailable');
+    expect(PLAN_CHECKOUT_REFUSALS.held_payment_unavailable.status).toBe(409);
+    expect(log).toEqual(['db:lineage']);
+    expect(stripeCalls()).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'bos_billing_checkout_refused', code: 'held_payment_unavailable' }),
+      expect.any(String)
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('"alert":true');
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('held admin invitee + a switch off → held_payment_unavailable (the switches come first)', async () => {
+    const { deps } = harness({
+      lineage: adminLineage,
+      invite: { grant_kind: 'tier', language: 'en' },
+      heldSwitches: { checkoutEnabled: true, pricesEnabled: true, paidInvitesAvailable: false },
+    });
+    expectRefused(await startPlanCheckout(INPUT, deps), 'held_payment_unavailable');
+  });
+
+  it('NOT held is unaffected by the held-payment switches', async () => {
+    const { deps } = harness({ heldSwitches: { checkoutEnabled: false, pricesEnabled: false, paidInvitesAvailable: false } });
+    expect(await startPlanCheckout({ ...INPUT, tier: HIGHER_TIER }, deps)).toMatchObject({ ok: true, held: false });
   });
 });
 

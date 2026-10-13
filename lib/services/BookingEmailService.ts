@@ -51,9 +51,9 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
 import { hasBeenRefunded } from '@/lib/payments/invoiceSettlement';
 import { resolveInvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
+import { invoicePayLink } from '@/lib/payments/invoicePayLink';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
-import * as jwt from 'jsonwebtoken';
 
 const logger = createLogger({ service: 'BookingEmailService' });
 
@@ -80,66 +80,31 @@ const logger = createLogger({ service: 'BookingEmailService' });
  */
 const appUrl = (): string => platformOrigin();
 
-/**
- * What signs a booking manage link.
+/*
+ * The booking-link token now lives in `./bookingToken`, a leaf that imports
+ * `jsonwebtoken` and nothing else.
  *
- * ─────────────────────────────────────────────────────────────────────────────
- * FATAL WHEN UNSET, and read lazily so it is the send that fails rather than
- * the import of this module.
+ * It was here, and that put THIS module — 38 static imports, every email
+ * template, five repositories, the mail transport — into the graph of every
+ * public page on the platform, because `portalAccess` and `publicBranding`
+ * needed `verifyBookingToken`. Four fifths of the portal's server source was
+ * arriving for an HMAC over two strings.
  *
- * It used to end `|| 'fallback-secret-change-in-prod'`. The token IS the
- * authorisation on `/book/manage/[token]` — it is what tells cancel and
- * reschedule which booking the caller may act on — so in any environment where
- * neither variable was set, every one of those links was signed with a string
- * printed in this repository. Anyone reading the source could mint a token for
- * any booking id and cancel a stranger's appointment.
- *
- * A link that cannot be signed is an email that does not go out, which is
- * strictly better than one that anybody can forge. `lib/consent/confirmToken.ts`
- * reached the same conclusion for the same reason; this matches it.
- *
- * `NEXTAUTH_SECRET` remains as a fallback only because it is what production
- * has been signing with — dropping it would invalidate every link already in a
- * client's inbox. It is NOT an auth secret: nothing in this app authenticates
- * with NextAuth, and it survives purely as the value these three token systems
- * inherited. Set `BOOKING_TOKEN_SECRET` explicitly and the fallback stops
- * mattering.
- * ─────────────────────────────────────────────────────────────────────────────
+ * Re-exported rather than moved silently: a dozen call sites in this file and
+ * elsewhere import it from here, and the point was to shed the WEIGHT, not to
+ * rename a function.
  */
-function bookingTokenSecret(): string {
-  const configured = process.env.BOOKING_TOKEN_SECRET || process.env.NEXTAUTH_SECRET;
+import { generateBookingToken, verifyBookingToken } from './bookingToken';
 
-  if (!configured) {
-    throw new Error(
-      'BOOKING_TOKEN_SECRET (or NEXTAUTH_SECRET) must be set to sign booking management links'
-    );
-  }
-
-  return configured;
-}
-
-// Token expiry for booking management links (30 days)
-const TOKEN_EXPIRY_DAYS = 30;
+/* Imported as well as re-exported: this file mints tokens in eight places,
+   and a bare `export … from` would not bring the names into scope here. */
+export { generateBookingToken, verifyBookingToken };
 
 interface EmailResult {
   sent: boolean;
   error?: string;
 }
 
-/**
- * Generate a signed token for booking management URLs.
- *
- * Exported because a route that has already verified one token may need to mint
- * a sibling — the package manage page signs each meeting of the block for the
- * same address, which grants nothing the caller did not already hold.
- */
-export function generateBookingToken(bookingId: string, email: string): string {
-  return jwt.sign(
-    { bookingId, email },
-    bookingTokenSecret(),
-    { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
-  );
-}
 
 /**
  * The reschedule link, or nothing at all.
@@ -156,7 +121,7 @@ function manageUrlFor(
   if (!appUrl()) return null;
 
   try {
-    return `${appUrl()}/reschedule/${generateBookingToken(bookingId, clientEmail)}`;
+    return `${appUrl()}/book/manage/${generateBookingToken(bookingId, clientEmail)}/reschedule`;
   } catch (err) {
     log.warn({ err, bookingId }, 'Could not sign a manage link; sending the reminder without one');
     return null;
@@ -184,27 +149,6 @@ function outstandingOnBooking(booking: {
   return formatCurrency(amount, booking.payment_currency || 'USD');
 }
 
-/**
- * Verify and decode a booking management token
- */
-export function verifyBookingToken(token: string): { bookingId: string; email: string } | null {
-  /*
-   * Resolved OUTSIDE the try on purpose.
-   *
-   * A missing secret and a forged token are different failures and must not
-   * produce the same answer. Inside the try, the throw would be swallowed and
-   * returned as `null` — so a misconfigured deployment would tell every real
-   * client their valid link was invalid, and nothing would say why.
-   */
-  const secret = bookingTokenSecret();
-
-  try {
-    const decoded = jwt.verify(token, secret) as { bookingId: string; email: string };
-    return decoded;
-  } catch {
-    return null;
-  }
-}
 
 // Branding now comes from `resolveEmailBranding` (lib/email/branding.ts), which
 // reads the user's website theme. The local builder that used to live here read
@@ -530,9 +474,21 @@ export class BookingEmailService {
       }, 'Checking payment URL conditions');
 
       if (hasInvoice && isPending && hasPrice) {
-        // Prefer Stripe hosted invoice URL if available (allows direct payment)
-        // Otherwise fall back to local invoice page
-        paymentUrl = options?.stripeHostedInvoiceUrl || `${appUrl()}/invoice/${options?.invoiceId}`;
+        /*
+         * Our own page, never Stripe's.
+         *
+         * This preferred `stripeHostedInvoiceUrl`, so a client paying from
+         * their confirmation landed on `invoice.stripe.com` — nothing on the
+         * screen belonging to the business, and no sign of the appointment the
+         * bill was for. Both of our surfaces mount Stripe's Payment Element
+         * themselves now, so the hosted page buys nothing and costs the frame.
+         */
+        paymentUrl = await invoicePayLink({
+          invoiceId: options!.invoiceId!,
+          bookingId,
+          userId,
+          baseUrl: appUrl(),
+        });
         requestLogger.info({ paymentUrl }, 'Payment URL generated for email');
       } else {
         requestLogger.info({
@@ -1684,9 +1640,15 @@ export class BookingEmailService {
            */
           const options = resolveInvoicePaymentOptions({
             canCollectOnline: capability.canCollect,
-            cardUrl:
-              invoice.stripe_hosted_invoice_url ||
-              `${appUrl()}/api/public/invoice/${invoice.id}/pay`,
+            /* The portal, where the moved appointment is on screen beside
+               the amount — not Stripe's hosted page, and not `/pay`, which
+               only redirects there. */
+            cardUrl: await invoicePayLink({
+              invoiceId: invoice.id as string,
+              bookingId,
+              userId,
+              baseUrl: appUrl(),
+            }),
             profile: profileResult.data as never,
             allowOnlinePayment: (invoice as { allow_online_payment?: boolean | null })
               .allow_online_payment,

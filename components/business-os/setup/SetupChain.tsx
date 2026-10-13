@@ -54,7 +54,7 @@ export const STEP_ICONS: Record<string, LucideIcon> = {
   invoicing: FileText,
   design: Palette,
   meta_insights: Share2,
-  google_analytics: BarChart3,
+  google_business: BarChart3,
 };
 
 const INK = '#131A2B';
@@ -87,7 +87,7 @@ const STEP_COLORS: Record<string, string> = {
   invoicing: '#22C58B',
   profile: '#8B5CF6',
   meta_insights: '#8B5CF6',
-  google_analytics: '#4F6EF7',
+  google_business: '#4F6EF7',
 };
 
 export const stepColor = (id: string): string => STEP_COLORS[id] || MUTED;
@@ -124,7 +124,7 @@ export function useStepLabel() {
       invoicing: t('checklist.invoicing') || 'Invoice details',
       design: t('checklist.design') || 'Brand look',
       meta_insights: t('checklist.meta') || 'Facebook & Instagram',
-      google_analytics: t('checklist.analytics') || 'Google',
+      google_business: t('checklist.google') || 'Google',
     };
     return labels[id] || id;
   };

@@ -43,6 +43,7 @@ import {
   type LedgerRow,
 } from '@/lib/payments/ledgerExport';
 import type { TaxLineSettings } from '@/lib/payments/taxLine';
+import { toCsv } from '@/lib/payments/csv';
 
 const logger = createLogger({ module: 'LedgerService' });
 
@@ -276,11 +277,15 @@ export function toMatrix(
 }
 
 /** RFC 4180: everything quoted, quotes doubled, so a comma in a name survives. */
-export function toCsv(rows: (string | number | null)[][]): string {
-  return rows
-    .map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
-    .join('\r\n');
-}
+/**
+ * Re-exported, not re-implemented.
+ *
+ * This built the same quoted row by hand, which is valid CSV and no defence
+ * against a cell a spreadsheet evaluates. The accountant's file carries exactly
+ * the same publicly-submitted client names as the orders export, so both go
+ * through one serialiser — see `lib/payments/csv`.
+ */
+export { toCsv };
 
 /**
  * The ledger as a CSV string, ready to attach or download.

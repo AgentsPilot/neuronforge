@@ -86,6 +86,16 @@ export interface SetupItem {
 export interface FunnelStats {
   /** Website visitors, rolling 30 days. */
   found: number;
+  /**
+   * Calls and direction requests taken off a Google listing in the window.
+   *
+   * Deliberately NOT part of `found`. That counts people who arrived at
+   * something the business owns; this counts people who found them and never
+   * arrived — the call replaced the visit. Added together the top of the funnel
+   * inflates and every conversion rate below it deflates, which is the
+   * denominator mistake `acq_low_conversion` was just fixed for.
+   */
+  offSiteActions?: number;
   /** Contacts in the CRM, all-time — a snapshot of who exists, not a flow. */
   touch: number;
   /** Bookings within the stats period (a month by default). */
@@ -714,7 +724,7 @@ export function LiveDashboard({
    * already computes them from `s.channels` on the stats call.
    */
   const hasConnectedChannel = setupItems.some(
-    item => (item.id === 'meta_insights' || item.id === 'google_analytics') && item.completed
+    item => (item.id === 'meta_insights' || item.id === 'google_business') && item.completed
   );
 
   /**
@@ -963,7 +973,7 @@ export function LiveDashboard({
   // Derive funnel data from REAL stats
   // ===========================
 
-  const stats = funnelStats || { found: 0, touch: 0, booked: 0, paid: 0, paidAmount: 0 };
+  const stats = funnelStats || { found: 0, touch: 0, booked: 0, paid: 0, paidAmount: 0, offSiteActions: 0 };
   /*
    * Memoised, unlike `stats` above: it is a dependency of the verdict memo, and
    * a fresh `{...}` literal every render would make that memo re-run on every
@@ -1165,7 +1175,18 @@ export function LiveDashboard({
        * number that genuinely cannot exist yet — arrivals at a page nobody can
        * reach.
        */
-      const awaitingSite = node.key === 'found' && !hasPublished;
+      const offSite = node.key === 'found' ? stats.offSiteActions ?? 0 : 0;
+
+      /*
+       * The dash is for a station that CANNOT have a number yet: arrivals at a
+       * page nobody can reach.
+       *
+       * Except a Google listing is reachable without any page at all. A
+       * business with a verified listing and no website is genuinely being
+       * found, and dashing that out told them nothing was happening while
+       * people were calling them.
+       */
+      const awaitingSite = node.key === 'found' && !hasPublished && offSite === 0;
 
       return {
         k: node.key,
@@ -1173,9 +1194,17 @@ export function LiveDashboard({
         lb: node.label,
         off: awaitingSite,
         color: node.color,
+        /* Its own line, never added in. See `FunnelStats.offSiteActions`. */
+        sub:
+          offSite > 0
+            ? (t('station.found.off_site') || '{n} called from Google').replace(
+                '{n}',
+                offSite.toLocaleString()
+              )
+            : undefined,
       };
     });
-  }, [funnelNodes, hasPublished]);
+  }, [funnelNodes, hasPublished, stats.offSiteActions, t]);
 
   /**
    * The two numbers a connector compares.

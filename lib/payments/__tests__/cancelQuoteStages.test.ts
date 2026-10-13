@@ -686,3 +686,95 @@ describe('telling the client', () => {
     expect(result.stagesClosed).toBe(1);
   });
 });
+
+/**
+ * Calling off an invoice no stage points at — the owner's choice, never the stop's.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A single-payment quote raises one invoice against its BOOKING and has no
+ * stages, so the stage walk above cannot see it. Stopping such a quote left the
+ * invoice `sent`: owed, chased, and still payable by the client, because the
+ * public page refuses only invoices already settled. Two live quotes were in
+ * that state, one of them ₪5,000.
+ *
+ * Off unless asked for, because stopping is not refunding.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('the unpaid invoice outside the stages', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const source = fs.readFileSync(path.join(process.cwd(), 'lib/payments/cancelQuoteStages.ts'), 'utf8');
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+  it('strips comments first, or it passes on its own explanation', () => {
+    expect(source).toContain('stopping is not refunding');
+    expect(code).not.toContain('stopping is not refunding');
+  });
+
+  it('does nothing unless the caller asks', () => {
+    // The default is the decision: an owner stopping half way is often still
+    // owed for the half that happened.
+    expect(code).toContain('cancelUnpaidInvoice = false');
+    expect(code).toContain('if (cancelUnpaidInvoice && proposal.booking_id)');
+  });
+
+  it('only ever touches money that has not arrived', () => {
+    // `draft`, `sent`, `overdue` — never paid, refunded or partially refunded.
+    const sweep = code.slice(code.indexOf('if (cancelUnpaidInvoice'), code.indexOf('if (cancelUnpaidInvoice') + 900);
+    expect(sweep).toContain(".in('status', LIVE_INVOICE_STATUSES)");
+    expect(code).toContain("const LIVE_INVOICE_STATUSES = ['draft', 'sent', 'overdue']");
+    expect(code).toContain("const SETTLED_INVOICE_STATUSES = ['paid', 'refunded', 'partially_refunded']");
+  });
+
+  it('stays inside this quote and this owner', () => {
+    const sweep = code.slice(code.indexOf('if (cancelUnpaidInvoice'), code.indexOf('if (cancelUnpaidInvoice') + 900);
+    expect(sweep).toContain(".eq('user_id', userId)");
+    expect(sweep).toContain(".eq('booking_id', proposal.booking_id)");
+  });
+
+  it('does not void the same invoice twice', () => {
+    // A stage invoice has already been handled by the loop above, and would
+    // otherwise be counted again in `invoicesVoided`.
+    const sweep = code.slice(code.indexOf('if (cancelUnpaidInvoice'), code.indexOf('if (cancelUnpaidInvoice') + 900);
+    expect(sweep).toContain('if (stageInvoiceIds.includes(invoice.id)) continue;');
+  });
+
+  it('one invoice refusing to void does not abandon the rest', () => {
+    const sweep = code.slice(code.indexOf('if (cancelUnpaidInvoice'), code.indexOf('if (cancelUnpaidInvoice') + 1100);
+    expect(sweep).toMatch(/if \(voidError\) \{[\s\S]*logger\.warn[\s\S]*continue;/);
+  });
+});
+
+describe('the surfaces that drive it', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const read = (p: string) =>
+    fs.readFileSync(path.join(process.cwd(), p), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+  it('the route defaults the flag to false', () => {
+    const route = read('app/api/business-os/proposals/[id]/stop-payments/route.ts');
+    expect(route).toContain('cancel_unpaid_invoice: z.boolean().optional().default(false)');
+    expect(route).toContain('cancelUnpaidInvoice: parsed.data.cancel_unpaid_invoice');
+  });
+
+  it('the stop dialog offers it as a toggle, off by default', () => {
+    const dialog = read('components/crm/contact-drawer/StopQuoteDialog.tsx');
+    expect(dialog).toContain('const [cancelUnpaid, setCancelUnpaid] = useState(false)');
+    expect(dialog).toContain('cancel_unpaid_invoice: cancelUnpaid');
+    expect(dialog).toContain("t('crm.quote.stop.cancel_unpaid_label')");
+  });
+
+  it('the payment dialog can call one off on its own', () => {
+    // For an invoice stranded before this existed, and for anything stopped by
+    // a route that does not pass through the dialog.
+    const modal = read('components/crm/contact-drawer/PaymentManagementModal.tsx');
+    expect(modal).toContain("body: JSON.stringify({ status: 'cancelled' })");
+    expect(modal).toContain('{!isPaid && voidableInvoiceId && (');
+  });
+
+  it('and asks twice before doing it', () => {
+    const modal = read('components/crm/contact-drawer/PaymentManagementModal.tsx');
+    expect(modal).toContain('setConfirmingVoid(true)');
+    expect(modal).toContain("t('crm.payment.cancel_invoice_confirm')");
+  });
+});

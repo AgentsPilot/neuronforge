@@ -20,9 +20,12 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Search, Download, Plus, Receipt, FileSpreadsheet } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Download, Plus, Receipt, FileSpreadsheet } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { MoneyList } from '@/components/payments/MoneyList';
+import { MoneySearchField } from '@/components/payments/MoneySearchField';
+import { businessDayFor } from '@/lib/business-os/businessDay';
 import { InvoiceModal } from '@/components/payments/InvoiceModal';
 import { LedgerExportModal } from '@/components/payments/LedgerExportModal';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
@@ -36,9 +39,40 @@ interface PaymentsViewProps {
 }
 
 export function PaymentsView({ highlightId = null, openCreate = false }: PaymentsViewProps) {
-  const { t } = useLanguage();
+  const router = useRouter();
+  const { t, language } = useLanguage();
+  /* The parser speaks these three; anything else reads as English. */
+  const searchLanguage = language === 'he' || language === 'es' ? language : 'en';
 
   const [searchQuery, setSearchQuery] = useState('');
+
+  /*
+   * The business's own date, for reading "october" and "last 30 days".
+   *
+   * The BROWSER's zone, which is the closest thing the client has to the
+   * business clock and is right for the overwhelming majority of owners: they
+   * are sitting in the timezone they trade in. The ROUTE resolves the real one
+   * from `user_preferences` and parses the same string again, so the filter
+   * that actually runs is always on the authoritative clock. A traveller would
+   * see a chip whose label is a day out from the rows it returns, and the rows
+   * are the ones that are right.
+   */
+  const today = businessDayFor(
+    new Date(),
+    Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  ).date;
+
+  /*
+   * The vocabulary is no longer listed here.
+   *
+   * There was a row of example tokens under the box, and the ⊕ panel now shows
+   * the same periods as buttons that also report whether they are ON. Keeping
+   * both would put two teaching surfaces under one input, and the hint row was
+   * the one that could not say what was already applied.
+   *
+   * `relativePeriods` in the parser's module is where that list lives now, so
+   * the picker cannot offer a phrase the reader does not understand.
+   */
   /** The money list's own actions, so Export can sit in the page header. */
   const [moneyApi, setMoneyApi] = useState<{
     exportCsv: () => void;
@@ -62,6 +96,13 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
   const canExportLedger = !moneyApi || !moneyApi.knownEmpty;
   const [showInvoiceModal, setShowInvoiceModal] = useState(openCreate);
   const [showLedgerExport, setShowLedgerExport] = useState(false);
+  /*
+   * The view export now FETCHES every matching row before writing the file,
+   * rather than serialising the page it already had. That is a round trip, so
+   * the button has to say it is working — a download that appears to do nothing
+   * gets clicked again, and then twice more.
+   */
+  const [exportingView, setExportingView] = useState(false);
   const [invoiceListKey, setInvoiceListKey] = useState(0);
 
   // `?action=create` can arrive after mount — the chat pushes this route with
@@ -97,25 +138,30 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
 
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
             {/* Search Input */}
-            <div className="relative hidden md:block">
-              <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
-              <input
-                type="text"
-                placeholder={t('payments.search_money_placeholder') || 'Search bookings and invoices...'}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-10 pe-4 py-2 w-48 lg:w-64 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#22C58B] transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              />
-            </div>
+            <MoneySearchField
+              className="hidden md:block w-56 lg:w-80"
+              value={searchQuery}
+              onChange={setSearchQuery}
+              today={today}
+              placeholder={t('payments.search_money_placeholder') || 'Search bookings and invoices...'}
+              language={searchLanguage}
+              t={t}
+            />
 
             {/* Two exports, deliberately, because they answer different
                 questions. This one saves WHAT IS ON SCREEN — the rows loaded,
                 filtered as the user filtered them. It stays exactly as it was. */}
             {moneyApi && (
               <button
-                onClick={() => moneyApi.exportCsv()}
-                disabled={!canExportView}
+                onClick={async () => {
+                  setExportingView(true);
+                  try {
+                    await moneyApi.exportCsv();
+                  } finally {
+                    setExportingView(false);
+                  }
+                }}
+                disabled={!canExportView || exportingView}
                 className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--v2-surface)] disabled:hover:text-[var(--v2-text-secondary)]"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
                 title={
@@ -124,8 +170,12 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
                     : t('payments.export.nothing')
                 }
               >
-                <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                <span className="hidden sm:inline">{t('payments.bulk.export') || 'Export'}</span>
+                <Download className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${exportingView ? 'animate-pulse' : ''}`} />
+                <span className="hidden sm:inline">
+                  {exportingView
+                    ? t('payments.export.working') || 'Preparing…'
+                    : t('payments.bulk.export') || 'Export'}
+                </span>
               </button>
             )}
 
@@ -157,17 +207,15 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
         </div>
 
         {/* Mobile Search Bar */}
-        <div className="md:hidden relative">
-          <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
-          <input
-            type="text"
-            placeholder={t('payments.search_placeholder') || 'Search transactions...'}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="ps-10 pe-4 py-2 w-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#22C58B] transition-all"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          />
-        </div>
+        <MoneySearchField
+          className="md:hidden"
+          value={searchQuery}
+          onChange={setSearchQuery}
+          today={today}
+          placeholder={t('payments.search_placeholder') || 'Search transactions...'}
+          language={searchLanguage}
+          t={t}
+        />
 
         {/* Transactions / Invoices view */}
         <div
@@ -175,6 +223,20 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
           style={{ borderRadius: 'var(--v2-radius-card)' }}
         >
           <MoneyList
+            /*
+             * Into the CRM, on the client's own name.
+             *
+             * `section=payments` and the booking id, so the drawer opens on
+             * Payments & Invoices with the order already expanded rather than
+             * on Details with a list to hunt through. The CRM page has read
+             * these three params since it was built; nothing here is new
+             * machinery, it was simply never linked to from the orders page.
+             */
+            onOpenContact={(contactId, bookingId) => {
+              const params = new URLSearchParams({ contact: contactId, section: 'payments' });
+              if (bookingId) params.set('booking', bookingId);
+              router.push(`/business-os/crm?${params.toString()}`);
+            }}
             searchQuery={searchQuery}
             highlightId={highlightId}
             refreshKey={invoiceListKey}

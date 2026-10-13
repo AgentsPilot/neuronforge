@@ -20,6 +20,26 @@ jest.mock('@/lib/repositories/SchedulingRepository', () => ({
   schedulingServiceRepository: { listAll: jest.fn() },
 }));
 
+/*
+ * `sends_quotes` asks the proposals table directly rather than through a
+ * repository — the question is "has this business ever sent one", which is a
+ * count, not a row anybody reads. Mocked at the client so the chain
+ * `.from().select().eq().not()` resolves to a count.
+ */
+const proposalCount = { value: 0 };
+jest.mock('@/lib/supabaseServer', () => ({
+  supabaseServer: {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          not: () => Promise.resolve({ count: proposalCount.value, error: null }),
+        }),
+      }),
+    }),
+  },
+}));
+
 const getSettings = intakeRepository.getSettings as jest.Mock;
 const getPublished = intakeFormRepository.getPublished as jest.Mock;
 const listServices = schedulingServiceRepository.listAll as jest.Mock;
@@ -27,6 +47,11 @@ const listServices = schedulingServiceRepository.listAll as jest.Mock;
 function intakeState({ enabled, published }: { enabled: boolean; published: boolean }) {
   getSettings.mockResolvedValue({ data: { is_enabled: enabled }, error: null });
   getPublished.mockResolvedValue({ data: published ? { id: 'form-1' } : null, error: null });
+}
+
+/** How many quotes this business has ever sent. */
+function quotesSent(count: number) {
+  proposalCount.value = count;
 }
 
 function bookableServices(count: number) {
@@ -42,6 +67,9 @@ const remindAboutMeeting = OPERATIONAL_AUTOMATIONS.find(a => a.id === 'remind_ab
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Reset the quote count too: it lives outside the jest mock registry, so
+  // `clearAllMocks` does not touch it and it would leak between tests.
+  proposalCount.value = 0;
   // The default for the tests that are not about scheduling.
   bookableServices(1);
 });
@@ -147,23 +175,26 @@ describe('applicableAutomations', () => {
     );
   });
 
-  it('keeps every entry for a business with a form and a bookable service', async () => {
+  it('keeps every entry for a business with a form, a bookable service and a quote sent', async () => {
     intakeState({ enabled: true, published: true });
     bookableServices(1);
+    quotesSent(1);
 
     const result = await applicableAutomations('user-1', OPERATIONAL_AUTOMATIONS);
 
     expect(result).toHaveLength(OPERATIONAL_AUTOMATIONS.length);
   });
 
-  it('drops both gated entries for a business with neither', async () => {
+  it('drops every gated entry for a business with none of the machinery', async () => {
     intakeState({ enabled: false, published: false });
     bookableServices(0);
+    quotesSent(0);
 
     const result = await applicableAutomations('user-1', OPERATIONAL_AUTOMATIONS);
 
     // The two ungated ones remain: every business can receive an enquiry and
-    // every business can issue an invoice.
+    // every business can issue an invoice. Intake, meetings and quotes all
+    // need machinery this business does not have.
     expect(result.map(a => a.id)).toEqual(['reply_to_enquiries', 'chase_invoices']);
   });
 

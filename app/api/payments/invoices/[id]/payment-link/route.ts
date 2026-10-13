@@ -7,6 +7,7 @@
  * - If no Stripe: Creates a Stripe Checkout session for the invoice
  */
 
+import { generateInvoiceToken } from '@/lib/payments/invoiceAccessToken';
 import { NextRequest, NextResponse } from 'next/server';
 import { platformOrigin } from '@/lib/utils/origins';
 import { getUser } from '@/lib/auth';
@@ -155,6 +156,9 @@ export async function GET(
     const baseUrl = platformOrigin();
 
     try {
+      /* Hoisted: signing reads the contact address, so it cannot sit inside the
+         Stripe session literal below. One token, both return URLs. */
+      const invoiceToken = await generateInvoiceToken(invoiceId);
       const session = await stripe.checkout.sessions.create(
         {
           mode: 'payment',
@@ -170,8 +174,8 @@ export async function GET(
             },
             quantity: item.quantity
           })),
-          success_url: `${baseUrl}/invoice/${invoiceId}?payment=success`,
-          cancel_url: `${baseUrl}/invoice/${invoiceId}?payment=cancelled`,
+          success_url: `${baseUrl}/invoice/${invoiceId}?payment=success&t=${invoiceToken}`,
+          cancel_url: `${baseUrl}/invoice/${invoiceId}?payment=cancelled&t=${invoiceToken}`,
           metadata: {
             invoice_id: invoice.id,
             invoice_number: invoice.invoice_number,

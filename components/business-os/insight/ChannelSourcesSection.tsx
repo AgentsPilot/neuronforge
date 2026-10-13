@@ -48,6 +48,14 @@ export interface ChannelRow {
   awaitingData?: boolean;
   /** Connected, but the platform doesn't publish reach — Meta retired it for Pages. */
   reachUnavailable?: boolean;
+  /**
+   * Calls and direction requests taken straight off a Google listing.
+   *
+   * Demand that never touched the website, so it appears in no other figure on
+   * this card: not in `reach`, which is exposure, and not in `leads`, which
+   * counts CRM contacts this anonymous tap never created.
+   */
+  offSiteActions?: number | null;
 }
 
 /** Where a visit landed. Not where it came from — that is the channel. */
@@ -171,6 +179,10 @@ const COPY: Record<string, Record<string, string>> = {
     he: 'מאיפה מגיעים הלקוחות',
   },
   reach: { en: 'Saw you', es: 'Te vieron', he: 'נחשפו' },
+  /* The taps on a listing's phone number and its directions button. "Called or
+     asked the way" is accurate and too long for the tile; the phone call is the
+     half that matters. */
+  offSiteActions: { en: 'called you', es: 'te llamaron', he: 'התקשרו אליכם' },
   reachHelp: {
     en: 'People who saw your posts on a connected account. Not visits.',
     es: 'Personas que vieron tus publicaciones en una cuenta conectada. No son visitas.',
@@ -326,6 +338,7 @@ export function ChannelSourcesSection({
         logo: CHANNEL_LOGOS[row.channel],
         Icon: CHANNEL_ICONS[row.channel],
         reach: row.reach,
+        offSiteActions: row.offSiteActions ?? null,
         awaitingData: row.awaitingData,
         reachUnavailable: row.reachUnavailable,
       }));
@@ -463,6 +476,8 @@ export function ChannelSourcesSection({
                   title={
                     !quiet
                       ? `${tile.label} — ${formatCount(tile.leads)} ${t('leads').toLowerCase()}`
+                      : (tile.offSiteActions ?? 0) > 0
+                        ? `${tile.label} — ${t('offSiteActions')}: ${formatCount(tile.offSiteActions!)}`
                       : tile.reach !== null
                         ? `${tile.label} — ${t('reach')}: ${formatCount(tile.reach)}`
                         : tile.awaitingData
@@ -527,7 +542,19 @@ export function ChannelSourcesSection({
                       it was the whole reason the silent strip existed. */}
                   {quiet ? (
                     <div className="mt-1.5 truncate text-[10px] leading-tight text-[var(--v2-text-muted)]">
-                      {tile.reach !== null
+                      {/*
+                        ACTIONS BEFORE REACH, where there are any.
+
+                        Both are the fallback for a channel with no leads, and
+                        they are not equally useful: "3.4K saw you" is exposure,
+                        "38 called" is somebody deciding to pick up the phone.
+                        The second is the better answer to "did this channel do
+                        anything", and on a listing the call often REPLACED the
+                        visit rather than preceding it.
+                      */}
+                      {(tile.offSiteActions ?? 0) > 0
+                        ? `${formatCompact(tile.offSiteActions!)} ${t('offSiteActions').toLowerCase()}`
+                        : tile.reach !== null
                         ? `${formatCompact(tile.reach)} ${t('reach').toLowerCase()}`
                         : tile.awaitingData
                           ? '⏳'

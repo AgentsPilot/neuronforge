@@ -35,10 +35,11 @@
  * @module app/api/book/manage/[token]/intake/upload
  */
 
+import { resolvePortalAccess } from '@/lib/security/portalAccess';
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { verifyBookingToken } from '@/lib/services/BookingEmailService';
 import { contactDocumentsRepository } from '@/lib/repositories/ContactDocumentsRepository';
 import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
 import {
@@ -78,11 +79,20 @@ export async function POST(
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
+  /*
+   * Throttled: this route is reachable with no session and it puts a file in object storage.
+   * `ok` bucket here — the credential check, where there is one, counts its own
+   * failures under the tighter budget.
+   */
+  const throttle = await rateLimit(request, 'intake-upload', RATE_LIMITS.create);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.create.windowSeconds);
+
   try {
     const { token } = await params;
-    const payload = verifyBookingToken(token);
-
-    if (!payload) {
+    /* Either a signed link or a booking id backed by the grant cookie — the
+       id alone is never enough. See `resolvePortalAccess`. */
+    const access = resolvePortalAccess(token, request.headers.get('cookie'));
+    if (!access) {
       return NextResponse.json({ success: false, error: 'Invalid or expired link' }, { status: 401 });
     }
 
@@ -99,7 +109,7 @@ export async function POST(
     const { data: booking, error: bookingError } = await supabaseServer
       .from('scheduling_bookings')
       .select('id, user_id, contact_id, status, intake_completed_at, contact:crm_contacts(email)')
-      .eq('id', payload.bookingId)
+      .eq('id', access.bookingId)
       .maybeSingle<{
         id: string;
         user_id: string;
@@ -113,7 +123,7 @@ export async function POST(
       // Never a 404. A query that failed is not a booking that is absent, and
       // saying so cost an afternoon.
       requestLogger.error(
-        { err: bookingError, bookingId: payload.bookingId },
+        { err: bookingError, bookingId: access.bookingId },
         'Could not read the booking for an intake upload'
       );
       return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
@@ -125,7 +135,7 @@ export async function POST(
 
     // The token names an email; the contact names an email. They have to agree,
     // or a token is a key to more than the one booking it was minted for.
-    if (booking.contact?.email !== payload.email) {
+    if (booking.contact?.email !== access.email) {
       requestLogger.warn({ bookingId: booking.id }, 'Token email does not match the booking');
       return NextResponse.json({ success: false, error: 'Invalid link' }, { status: 401 });
     }

@@ -40,7 +40,8 @@ export type OperationalAutomationId =
   | 'chase_invoices'
   | 'chase_intake'
   | 'remind_about_meeting'
-  | 'auto_complete_meetings';
+  | 'auto_complete_meetings'
+  | 'chase_quotes';
 
 export interface OperationalAutomation {
   id: OperationalAutomationId;
@@ -56,7 +57,8 @@ export interface OperationalAutomation {
     | 'chase_invoices_enabled'
     | 'chase_intake_enabled'
     | 'meeting_reminder_enabled'
-    | 'auto_complete_meetings_enabled';
+    | 'auto_complete_meetings_enabled'
+    | 'chase_quotes_enabled';
 
   /** The gap this clears, so the advisor can count what is waiting. */
   gapId: GapId;
@@ -64,8 +66,15 @@ export interface OperationalAutomation {
   /**
    * How long after the gap appears before the platform acts.
    *
-   * Never zero. Every one of these writes to somebody's client, and a delay is
-   * what gives the owner room to do it themselves first — or to stop it.
+   * Every one of these writes to somebody, and a delay is what gives the owner
+   * room to do it themselves first — or to stop it.
+   *
+   * ZERO ONLY WHERE THE GAP ITSELF ALREADY WAITED. `chase_quotes` is the one
+   * case: `quote_awaiting_client` has `staleAfterHours: 72`, so by the time it
+   * reports anything the owner has had three days. A delay on top would make
+   * the follow-up land on day six, and nothing on the card would say so. The
+   * grace period is still three days; it is simply held in the gap rather than
+   * here.
    *
    * Ignored when `timing` is `before_event`, where the schedule runs from the
    * appointment rather than from us noticing something.
@@ -181,7 +190,65 @@ export interface OperationalAutomation {
    * enquiry, so nothing gates the reply.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  requires?: 'intake_reaches_client' | 'takes_bookings';
+  requires?: 'intake_reaches_client' | 'takes_bookings' | 'sends_quotes';
+
+  /**
+   * Not offered until the owner has shown they already do this work by hand.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `requires` asks whether the machinery exists. This asks something harder
+   * and more useful: whether this is a habit the owner would recognise as
+   * theirs. The two are independent — a business can take bookings (so the
+   * machinery is there) and never once have marked a meeting complete.
+   *
+   * WHY ANY AUTOMATION NEEDS THIS
+   *
+   * A standing switch can be found cold, by somebody who has never used the
+   * feature, and switched on over a history the platform knows nothing about.
+   * `auto_complete_meetings` is the sharp case: saying yes to it sweeps up to
+   * ninety days of past meetings and records every one as having happened,
+   * including the no-shows nobody marked. An owner who has marked a dozen
+   * meetings complete themselves is making a different, informed decision —
+   * they have seen what the answer looks like and know which ones are wrong.
+   *
+   * So the offer is EARNED rather than listed, and the recommendation can be
+   * phrased as what it is: "you have closed off twelve of these by hand this
+   * month — want me to do it?"
+   *
+   * The count comes from the audit trail, which records the owner's OWN action
+   * only. The automation's completions are never audited, so this can never
+   * feed on its own output.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  offerOnEvidence?: {
+    /** The audit action that proves the owner does this themselves. */
+    action: string;
+    /** How many, inside the window, before the offer is earned. */
+    minCount: number;
+    /** How far back to look. */
+    windowDays: number;
+  };
+
+  /**
+   * How late is too late to act on a piece of work at all.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Absent for the chasers, and deliberately: a chase is still worth sending a
+   * week late, and the sweep's own comment says so.
+   *
+   * Present for the one automation that RECORDS rather than sends. Switching
+   * `auto_complete_meetings` on used to sweep the ninety days its gap looks
+   * back over and close every meeting in them — two hundred of them, every one
+   * marked as having gone ahead, including the no-shows nobody marked. That is
+   * not the automation catching up; it is answering a question about meetings
+   * the owner was never asked about.
+   *
+   * It costs nothing in steady state: the work becomes due twelve hours after
+   * a meeting and the sweep runs every five minutes, so what it sees is hours
+   * old. The bound only ever excludes a backlog.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  actsWithinHours?: number;
 
   /**
    * A notification to the OWNER that travels with this automation on the card
@@ -345,10 +412,99 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
      * practice should never be shown this card at all.
      */
     requires: 'takes_bookings',
+    /*
+     * Earned, not listed — the only entry in the registry that is.
+     *
+     * Five in thirty days is a habit rather than a try: enough that the owner
+     * recognises the work as theirs, low enough that a business with a handful
+     * of meetings a week reaches it inside a month.
+     *
+     * It matters most here because this is the one automation that resolves a
+     * judgement it cannot make. `completed` is one of three answers — the
+     * others are no-show and cancelled — and it always picks the first. An
+     * owner who has made that call by hand five times knows what they are
+     * handing over; a stranger to the feature does not.
+     */
+    offerOnEvidence: {
+      action: 'SCHEDULING_BOOKING_COMPLETED',
+      minCount: 5,
+      windowDays: 30,
+    },
+    /*
+     * From here on, never the owner's past meetings.
+     *
+     * The work is due twelve hours after a meeting; forty-eight is two days of
+     * slack for a cron that stalled or a deploy that paused the sweep, and
+     * still far short of the ninety days the gap looks back over. The card goes
+     * on offering every one of those ninety days to the owner by hand — what
+     * this stops is the platform answering for them in bulk the moment the
+     * switch moves. The hint on the card promises exactly this.
+     */
+    actsWithinHours: 48,
     labelKey: 'automation.auto_complete_meetings',
     hintKey: 'automation.auto_complete_meetings_hint',
   },
+  {
+    /*
+     * The gap that had nothing behind it.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * Of the four client-blocked gaps, three had a chaser and this one did not:
+     * an unpaid invoice is chased on days 1/3/7, an outstanding intake form
+     * after a day, an upcoming meeting before it happens. An unanswered quote
+     * reached nobody. Its only reader was the briefing's `quotesOut`, which is
+     * opt-in and had sent nothing in thirty days.
+     *
+     * That is the wrong one to have missed. An unpaid invoice is money already
+     * earned; an unanswered quote is a sale still winnable, and it decays
+     * fastest of anything in the registry.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    id: 'chase_quotes',
+    column: 'chase_quotes_enabled',
+    gapId: 'quote_awaiting_client',
+    /*
+     * ZERO, and this is the one number here that is easy to get wrong.
+     *
+     * Every other entry hangs off a gap that is stale immediately, so its
+     * `delayHours` IS the grace period. This gap waits 72 hours of its own
+     * (`staleAfterHours: 72`, measured from `sent_at`) before it reports
+     * anything at all. Any delay on top would silently make the follow-up land
+     * on day six, and nothing on the card would say so.
+     */
+    delayHours: 0,
+    covers: ['quote_chase'],
+    sweepQueues: 'quote_chase',
+    /*
+     * A business that has never sent a quote has nothing to follow up, and
+     * offering it the switch is a request for permission to do something that
+     * cannot happen. Same reasoning as the intake gate, different fact.
+     */
+    requires: 'sends_quotes',
+    labelKey: 'automation.chase_quotes',
+    hintKey: 'automation.chase_quotes_hint',
+  },
 ];
+
+/**
+ * Should this automation be put in front of the owner at all?
+ *
+ * Pure, and separate from `automationApplies` because that one asks the
+ * database and this one only weighs facts it is handed — so both call sites
+ * can reach the same verdict without either re-deriving the rule.
+ *
+ * ALREADY ENABLED ALWAYS SHOWS. An automation the owner has switched on must
+ * stay reachable to switch OFF; hiding it because the evidence window has
+ * since gone quiet would trap them in a behaviour they agreed to once.
+ */
+export function offerIsEarned(
+  automation: OperationalAutomation,
+  facts: { enabled: boolean; evidence: number }
+): boolean {
+  if (!automation.offerOnEvidence) return true;
+  if (facts.enabled) return true;
+  return facts.evidence >= automation.offerOnEvidence.minCount;
+}
 
 /** Look one up. Returns undefined for an id that is not in the registry. */
 export function automationById(

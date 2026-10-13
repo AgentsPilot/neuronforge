@@ -1,9 +1,11 @@
 // app/api/book/manage/[token]/intake/route.ts
 // Self-service intake form endpoint for booking clients
 
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { resolvePortalAccess } from '@/lib/security/portalAccess';
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
-import { verifyBookingToken, BookingEmailService } from '@/lib/services/BookingEmailService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
@@ -32,17 +34,25 @@ export async function GET(
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
+  /*
+   * Throttled: no session stands in front of this route.
+   */
+  const throttle = await rateLimit(request, 'intake-read', RATE_LIMITS.read);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.read.windowSeconds);
+
   try {
     // Verify token
-    const decoded = verifyBookingToken(token);
-    if (!decoded) {
+    /* Either a signed link or a booking id backed by the grant cookie — the
+       id alone is never enough. See `resolvePortalAccess`. */
+    const access = resolvePortalAccess(token, request.headers.get('cookie'));
+    if (!access) {
       return NextResponse.json(
         { success: false, error: 'Invalid or expired link' },
         { status: 401 }
       );
     }
 
-    const { bookingId, email } = decoded;
+    const { bookingId, email } = access;
 
     // Fetch booking with service and contact details
     // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
@@ -230,17 +240,25 @@ export async function POST(
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
+  /*
+   * The write, gated apart from the read above: answering the form is a thing a client does once.
+   */
+  const throttle = await rateLimit(request, 'intake-submit', RATE_LIMITS.write);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.write.windowSeconds);
+
   try {
     // Verify token
-    const decoded = verifyBookingToken(token);
-    if (!decoded) {
+    /* Either a signed link or a booking id backed by the grant cookie — the
+       id alone is never enough. See `resolvePortalAccess`. */
+    const access = resolvePortalAccess(token, request.headers.get('cookie'));
+    if (!access) {
       return NextResponse.json(
         { success: false, error: 'Invalid or expired link' },
         { status: 401 }
       );
     }
 
-    const { bookingId, email } = decoded;
+    const { bookingId, email } = access;
 
     // Parse and validate body
     const body = await request.json();

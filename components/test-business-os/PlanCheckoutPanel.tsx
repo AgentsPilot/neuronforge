@@ -17,16 +17,21 @@
  *
  * The tier list is `TIER_ORDER` from the entitlements config, so this file
  * holds no tier name. It imports nothing else from that module and decides
- * nothing by plan (a recorded non-gate). The client secret is never shown in
- * the shared response viewer: it is replaced by a marker before `onResponse`.
+ * nothing by plan (a recorded non-gate).
+ *
+ * P-5a.2 (workplan §3.4): the Stripe.js loader, the POST to the route, the
+ * session state and the embedded mount moved to the shared
+ * `PlanEmbeddedCheckout` (which the holding screen and P-4 reuse). This panel
+ * keeps its UI: the tier select, the status line, Close, and the debug log.
+ * The client secret never reaches this file: the shared component hands
+ * `onResponse` a body with the secret replaced by a marker.
  */
 
-import { useMemo, useState } from 'react';
-import { loadStripe, type Stripe } from '@stripe/stripe-js';
-import { EmbeddedCheckout, EmbeddedCheckoutProvider } from '@stripe/react-stripe-js';
+import { useState } from 'react';
 
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import { harnessButton } from '@/components/test-business-os/harnessButton';
+import { PlanEmbeddedCheckout } from '@/components/business-os/billing/PlanEmbeddedCheckout';
 
 type DebugLogType = 'info' | 'error' | 'success';
 
@@ -35,74 +40,16 @@ export interface PlanCheckoutPanelProps {
   onResponse?: (payload: unknown) => void;
 }
 
-interface CheckoutResponse {
-  success: boolean;
-  error?: string;
-  code?: string;
-  expiresAt?: string;
-  data?: { clientSecret: string; sessionId: string; expiresAt: string; tier: string };
-}
-
-let stripePromise: Promise<Stripe | null> | null = null;
-
-/** One Stripe.js instance per page; `null` when no publishable key is configured. */
-function getStripePromise(): Promise<Stripe | null> | null {
-  const key = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-  if (!key) return null;
-  if (!stripePromise) stripePromise = loadStripe(key);
-  return stripePromise;
-}
-
 export function PlanCheckoutPanel({ onLog, onResponse }: PlanCheckoutPanelProps) {
   const [tier, setTier] = useState<string>(TIER_ORDER[0]);
   const [loading, setLoading] = useState(false);
-  const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const stripe = useMemo(() => getStripePromise(), []);
-
-  const start = async () => {
-    setLoading(true);
-    setStatus(null);
-    setClientSecret(null);
-    setSessionId(null);
-    onLog?.('info', `Plan checkout: requesting a session for tier "${tier}"...`);
-    try {
-      const response = await fetch('/api/business-os/billing/plan/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tier, returnTo: 'test_harness' }),
-      });
-      const json = (await response.json().catch(() => ({ success: false, error: 'Unreadable response' }))) as CheckoutResponse;
-      // Never put the client secret in the shared viewer.
-      onResponse?.({
-        httpStatus: response.status,
-        ...json,
-        ...(json.data ? { data: { ...json.data, clientSecret: '[redacted: mounted below]' } } : {}),
-      });
-
-      if (!response.ok || !json.success || !json.data) {
-        const line = `HTTP ${response.status} ${json.code ?? ''} ${json.error ?? ''}`.trim();
-        setStatus(`Refused: ${line}${json.expiresAt ? ` (open until ${json.expiresAt})` : ''}`);
-        onLog?.('error', `Plan checkout refused: ${line}`);
-        return;
-      }
-
-      setSessionId(json.data.sessionId);
-      setClientSecret(json.data.clientSecret);
-      setStatus(`Session ${json.data.sessionId} open until ${json.data.expiresAt}`);
-      onLog?.('success', `Plan checkout session ${json.data.sessionId} opened`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus(`Request failed: ${message}`);
-      onLog?.('error', `Plan checkout request failed: ${message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Bumped by Close: a fresh shared component, so the old session is unmounted.
+  const [instance, setInstance] = useState(0);
 
   const reset = () => {
-    setClientSecret(null);
+    setInstance((current) => current + 1);
     setSessionId(null);
     setStatus(null);
   };
@@ -125,7 +72,7 @@ export function PlanCheckoutPanel({ onLog, onResponse }: PlanCheckoutPanelProps)
           id="plan-checkout-tier"
           value={tier}
           onChange={(event) => setTier(event.target.value)}
-          disabled={loading || clientSecret !== null}
+          disabled={loading || sessionId !== null}
           style={{ padding: '6px' }}
         >
           {TIER_ORDER.map((id) => (
@@ -134,15 +81,7 @@ export function PlanCheckoutPanel({ onLog, onResponse }: PlanCheckoutPanelProps)
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          onClick={start}
-          disabled={loading || clientSecret !== null}
-          className={harnessButton('primary', 'md')}
-        >
-          {loading ? 'Starting...' : 'Start checkout'}
-        </button>
-        {clientSecret !== null && (
+        {sessionId !== null && (
           <button type="button" onClick={reset} className={harnessButton('secondary', 'md')}>
             Close checkout
           </button>
@@ -151,29 +90,47 @@ export function PlanCheckoutPanel({ onLog, onResponse }: PlanCheckoutPanelProps)
 
       {status && <div style={{ fontSize: '13px', marginBottom: '12px', fontFamily: 'monospace' }}>{status}</div>}
 
-      {clientSecret !== null && stripe === null && (
-        <div style={{ color: '#dc3545', fontSize: '13px' }}>
-          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is not set, so the embedded checkout cannot be shown.
-        </div>
-      )}
-
-      {clientSecret !== null && stripe !== null && (
-        <div style={{ border: '1px solid #ddd', borderRadius: '5px', padding: '10px' }}>
-          <EmbeddedCheckoutProvider
-            key={sessionId ?? 'none'}
-            stripe={stripe}
-            options={{
-              clientSecret,
-              onComplete: () => {
-                setStatus(`Session ${sessionId} completed. The plan switches once the paid invoice reaches the webhook.`);
-                onLog?.('success', `Plan checkout ${sessionId} completed (plan switches on the paid invoice)`);
-              },
-            }}
-          >
-            <EmbeddedCheckout />
-          </EmbeddedCheckoutProvider>
-        </div>
-      )}
+      <PlanEmbeddedCheckout
+        key={instance}
+        tier={tier}
+        returnTo="test_harness"
+        labels={{
+          start: 'Start checkout',
+          starting: 'Starting...',
+          notConfigured: 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is not set, so the embedded checkout cannot be shown.',
+        }}
+        buttonClassName={harnessButton('primary', 'md')}
+        frameClassName="rounded-md border border-gray-300 p-2.5"
+        testId="plan-checkout-panel"
+        onResponse={onResponse}
+        onRequest={() => {
+          setLoading(true);
+          setStatus(null);
+          setSessionId(null);
+          onLog?.('info', `Plan checkout: requesting a session for tier "${tier}"...`);
+        }}
+        onStarted={({ sessionId: opened, expiresAt }) => {
+          setLoading(false);
+          setSessionId(opened);
+          setStatus(`Session ${opened} open until ${expiresAt}`);
+          onLog?.('success', `Plan checkout session ${opened} opened`);
+        }}
+        onRefused={({ httpStatus, code, expiresAt, serverMessage }) => {
+          setLoading(false);
+          const line = `HTTP ${httpStatus} ${code ?? ''} ${serverMessage ?? ''}`.trim();
+          setStatus(`Refused: ${line}${expiresAt ? ` (open until ${expiresAt})` : ''}`);
+          onLog?.('error', `Plan checkout refused: ${line}`);
+        }}
+        onRequestFailed={(message) => {
+          setLoading(false);
+          setStatus(`Request failed: ${message}`);
+          onLog?.('error', `Plan checkout request failed: ${message}`);
+        }}
+        onComplete={(completed) => {
+          setStatus(`Session ${completed} completed. The plan switches once the paid invoice reaches the webhook.`);
+          onLog?.('success', `Plan checkout ${completed} completed (plan switches on the paid invoice)`);
+        }}
+      />
     </div>
   );
 }

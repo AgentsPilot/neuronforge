@@ -1343,8 +1343,19 @@ export function LandingPageWizard({
         }
         setGeneratedContent(data.content);
       } else {
-        console.warn('[LandingPageWizard] API failed, using local defaults');
-        // Use default content if API fails
+        console.warn('[LandingPageWizard] API failed, using local defaults', data.error, data.details);
+        /*
+         * The third way to end up with the starting draft, and the only one
+         * that used to say nothing.
+         *
+         * `data.warning` covers a draft the route chose; the `catch` below
+         * covers a request that never completed. A refusal -- `success: false`,
+         * which is what a 400 is -- landed here and drew placeholder copy in
+         * silence, so the owner read generic benefits about their own service
+         * and had no reason to doubt them. Every route out of this function
+         * must either produce generated copy or say that it did not.
+         */
+        setGenerationFailed(labels.generation_failed);
         setGeneratedContent(getDefaultGeneratedContent(selectedService));
       }
     } catch (error) {

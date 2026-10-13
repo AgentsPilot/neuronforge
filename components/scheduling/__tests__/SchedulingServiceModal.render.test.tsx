@@ -48,7 +48,7 @@ const COPY: Record<string, string> = {
   'scheduling.modal.price': 'Price',
   'scheduling.modal.length': 'Length',
   'scheduling.modal.length_optional': 'Length (optional)',
-  'scheduling.modal.you_get_paid': 'You get paid',
+  'scheduling.modal.how_it_works': 'You get paid',
   'scheduling.modal.buffer_time': 'Buffer Time (min)',
   'scheduling.modal.payment_full': 'One Payment',
   'scheduling.modal.payment_installments': 'Payment Plan',
@@ -56,6 +56,10 @@ const COPY: Record<string, string> = {
   'scheduling.modal.money.invoice_once_link': 'You send one invoice for {amount}, with a payment link in it.',
   'scheduling.modal.money.card_once': 'They pay {amount} by card at the moment they buy.',
   'scheduling.modal.money.card_plan': 'They pay {each} by card, then {rest} more {freq} payments of {each}.',
+  /* Two payments is ONE more, and "1 more monthly payments" is not a sentence.
+     This assertion used to pin that bug. */
+  'scheduling.modal.money.card_plan_one': 'They pay {each} by card, then one more payment of {each} {after}.',
+  'scheduling.modal.after_monthly': 'a month later',
   'scheduling.modal.money.card_no_stripe': 'While Stripe is not connected you invoice {amount} after they buy.',
   'scheduling.modal.money.quote': 'Nothing is charged here.',
   'scheduling.modal.money.free': 'Nothing is collected. This service is free.',
@@ -228,7 +232,7 @@ describe('pressing a shape', () => {
 
     // Seeded at 2 by the plan button, so ₪150 and one more payment.
     expect(
-      screen.getByText(/They pay ₪150 by card, then 1 more monthly payments of ₪150/)
+      screen.getByText(/They pay ₪150 by card, then one more payment of ₪150 a month later/)
     ).toBeInTheDocument();
   });
 });
