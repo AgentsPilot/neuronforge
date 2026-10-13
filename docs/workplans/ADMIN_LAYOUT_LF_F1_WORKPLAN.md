@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md) §14 LF4A1-F1, §1 LF-F1 row
 **Branch:** `fix/admin-layout-lf-f1` (from `origin/main`, LF-1 to LF-4a.2 merged)
 **Date:** 2026-10-13
-**Status:** Code Complete (awaiting SA + QA)
+**Status:** PR #347 open — fast-track (SA + QA passed)
 
 ## Overview
 
@@ -214,6 +214,13 @@ The QA probe files (`zzLfF1Drawer.probe.test.tsx`, `zzLfF1Panel.probe.test.tsx`)
 
 ## Commit Info
 
+| Item | Value |
+|---|---|
+| Branch | `fix/admin-layout-lf-f1` |
+| Code commit | `a200816c` |
+| `origin/main` merge | Not needed (already up to date) |
+| PR | [#347](https://github.com/AgentsPilot/neuronforge/pull/347), open, fast-track; the user merges |
+
 ## Change History
 
 | Date | Change | Details |
@@ -221,3 +228,4 @@ The QA probe files (`zzLfF1Drawer.probe.test.tsx`, `zzLfF1Panel.probe.test.tsx`)
 | 2026-10-13 | Created and built (Dev) | One-file fix plus two new test files |
 | 2026-10-13 | SA code review | APPROVED WITH FIXES F1 (StrictMode pin; SA mutation S1 survived) and F2 (harness header). S2 bit. Fourth harness copy accepted here; extraction to `tests/admin/` is LF-4b's first step |
 | 2026-10-13 | QA report (QA) | PASS WITH NOTES: no bugs; 9 drawer orders and 8 panel probes pass, StrictMode included; 3 Low notes |
+| 2026-10-13 | PR opened (RM) | Code commit `a200816c`, PR #347 open (fast-track). Jest subset 51 suites / 1409 tests, `test:bos-entitlements` 252 / 7334, `lint:hooks` clean |
