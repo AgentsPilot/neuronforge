@@ -29,8 +29,14 @@ const logger = createLogger({ service: 'ContactDocumentService' });
 
 const BUCKET = 'contact-documents';
 
-/** 50MB, matching the bucket's own limit. */
-export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
+/*
+ * Re-exported, not declared here — the same reasoning as the type list below.
+ * The file picker has to enforce this limit before it uploads, and it cannot
+ * import anything from this module without dragging `supabaseServer` into the
+ * browser bundle.
+ */
+import { MAX_DOCUMENT_BYTES } from '@/lib/crm/attachableDocumentTypes';
+export { MAX_DOCUMENT_BYTES };
 
 /** What the bucket will accept. Kept beside the bucket it configures. */
 /*
