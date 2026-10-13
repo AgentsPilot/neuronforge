@@ -605,6 +605,7 @@ describe("the admin's own account (PIN-h)", () => {
     for (const name of ['Give credits', 'Take back', 'Take back credits', 'Set limit', 'Back to default', 'Run billing reconcile now (all accounts)']) {
       expect(within(drawer).queryByRole('button', { name })).toBeNull();
     }
+    expect(within(drawer).queryByRole('button', { name: 'Reconcile top-ups now (all accounts)' })).toBeNull();
     expect(within(drawer).getByTestId('credits-own-account').textContent).toBe(
       'You cannot change credits on your own account. Another admin has to do it.'
     );

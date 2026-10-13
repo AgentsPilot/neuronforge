@@ -575,6 +575,8 @@ const MIGRATED_PAGES = [
       'app/admin/users/components/BusinessSummaryStrip.tsx',
       'app/admin/users/components/drawerFolds.tsx',
       'app/admin/users/components/AllProductsUsage.tsx',
+      // Follow-ups LF-4d: the section and part boxes (BD-16); reads nothing.
+      'app/admin/users/components/DrawerBox.tsx',
     ],
   },
   {

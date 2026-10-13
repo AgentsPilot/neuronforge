@@ -15,6 +15,7 @@ import { DrawerField, DrawerFields } from '@/app/admin/components/layout/AdminDr
 import { formatCost, formatNumber } from '@/app/admin/users/usersFormat';
 import type { UserDetailedStats } from '@/app/admin/users/types';
 import { Fold, ShowMoreList } from './drawerFolds';
+import { PART_BOX, PartPurpose } from './DrawerBox';
 
 export const ALL_PRODUCTS_COPY = {
   title: 'All products, token records (30 days; may be incomplete above 1,000 calls)',
@@ -30,9 +31,10 @@ export function AllProductsUsage({ stats }: { stats: UserDetailedStats }) {
   const tokens = stats.tokens;
 
   return (
-    <div data-testid="ai-spend-card" className="space-y-2">
+    <div data-testid="ai-spend-card" className={`${PART_BOX} space-y-2`}>
       {/* Not a heading: each DrawerSection has exactly one (L-1d M-4; SA C2). */}
       <p className="text-sm font-semibold text-slate-300">{ALL_PRODUCTS_COPY.title}</p>
+      <PartPurpose part="ai-all" />
       {tokens === null ? (
         <p className="text-sm text-red-300">{ALL_PRODUCTS_COPY.unreadable}</p>
       ) : (

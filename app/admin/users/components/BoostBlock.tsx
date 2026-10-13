@@ -62,6 +62,7 @@ import { formatCredits, formatUtc, shortId } from '../creditCopy';
 import { BoostCapDialog, type BoostCapDialogMode, type CurrentLimit } from './BoostCapDialog';
 import { ShowMoreList } from './drawerFolds';
 import { MONEY_ACTION_BAR, useReturnFocus } from './moneyBlockUi';
+import { PART_BOX, PartPurpose } from './DrawerBox';
 
 /** The drawer's in-text link style (the panel's `LINK_CLASS`; BD-11, SA C11: no decorative green). */
 const LINK_CLASS = 'text-xs text-blue-300 underline hover:text-blue-200';
@@ -368,8 +369,9 @@ function CapSection({
   }
   const windowDays = cap.default.windowDays;
   return (
-    <div data-testid="boost-cap" className="space-y-1 text-sm text-slate-300">
+    <div data-testid="boost-cap" className={`space-y-1 text-sm text-slate-300 ${PART_BOX}`}>
       <p className="text-slate-400">{BOOST_BLOCK_COPY.limitHeading}</p>
+      <PartPurpose part="limit" />
       {/* BD-5: the Spending limit part opens with its action bar, inside
           `boost-cap` (CAP-1 / CAP-2 pin that), above the figures. Same
           conditions as before: not the admin's own account; Back to default
@@ -496,12 +498,13 @@ export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props)
       : null;
 
   return (
-    <div data-testid="boost-block" ref={rootRef}>
+    <div data-testid="boost-block" ref={rootRef} className={PART_BOX}>
       {/* A label, not a heading: the section's h3 is its only heading (D-20, LF-4b). */}
       <p className="flex items-center gap-2 text-sm font-semibold text-slate-300">
         <Receipt className="h-4 w-4 text-sky-300" aria-hidden="true" />
         {BOOST_BLOCK_COPY.heading}
       </p>
+      <PartPurpose part="topups" />
 
       {notice && (
         <div
