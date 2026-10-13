@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-layout-lf4a1` (cut from `feature/admin-layout-lf2`; PRs #338 and #339 open)
 **Path:** Test-only PR. SA reviews the pin list below before merge (SA-C4)
 **Date:** 2026-10-13
-**Status:** Code Complete (uncommitted) — awaiting SA pin-list review + QA
+**Status:** PR #340 open — fast-track (SA pin review passed); the user merges
 
 ## Overview
 
@@ -268,7 +268,13 @@ S3 is applied as a single-line edit (`setNotice(lines); setTimeout(reload, 150);
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf4a1` (cut from `feature/admin-layout-lf2`) |
+| Code commit | `14ef6d46` test(admin): pin every money and danger action in the Businesses drawer (LF-4a.1) |
+| `origin/main` | Already contained (`808939ef`), nothing to merge |
+| PR | [#340](https://github.com/AgentsPilot/neuronforge/pull/340), base `main`; contains #338 and #339 while those are open |
+| Checks before push | Admin Jest scope 41 suites / 1,282 tests pass; `test:bos-entitlements` 248 suites / 7,273 tests pass; `lint:hooks` clean; pin files alone `--runInBand` 34 tests, about 37 s of suite time (credits 16.1 s, boost 12.5 s, dangerReads 8.3 s) |
 
 ## Change History
 
@@ -277,3 +283,4 @@ S3 is applied as a single-line edit (`setNotice(lines); setTimeout(reload, 150);
 | 2026-10-13 | Workplan written; suite built | Dev: pin list PIN-a to PIN-k mapped to tests; three test files, 34 tests; 15 mutations bite; no product file edited; findings F-1 to F-5 |
 | 2026-10-13 | SA pin-list review | SA: APPROVED WITH FIXES 1 to 4. SA mutations S1 (an extra list read at report time on removal) and S3 (delayed second Credits re-read) survived; S2 and S4 bit. F-1 to its own fix slice LF-F1; F-2 a named LF-4b edit; F-3 to F-5 accepted as pinned; duplicated harness acceptable until a fourth file |
 | 2026-10-13 | SA fixes 1 to 4 applied (Dev) | Whole-request `toStrictEqual` on every POST incl. retries; `quiet()` and exact final read counts; DANGER-2 baseline before Delete; unexpected POST on an empty queue; console spies restored in `finally`. S1 and S3 now bite (DANGER-2; 11 Credits success paths); M1, M6, M14 still bite. 41 suites / 1,282 tests green |
+| 2026-10-13 | Committed, PR opened (RM) | Code commit `14ef6d46`; PR #340 open — fast-track (SA pin review passed); the user merges |
