@@ -16,6 +16,7 @@ import { windowsForDate, type TimeOffEntry } from '@/lib/scheduling/availability
 import { closedDayVerdict, type ClosedDayVerdict } from '@/lib/scheduling/closedDay';
 import { JourneyGapNotice } from '@/components/business-os/setup/JourneyGapNotice';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Clock, User, Mail, Phone, Calendar, FileText, CheckCircle, XCircle, AlertCircle, Search, X, Plus, Globe, Facebook, MessageCircle, Users as UsersIcon, Check, Trash2, CreditCard, Tag, ClipboardList, Loader2 } from 'lucide-react';
@@ -112,6 +113,61 @@ interface SchedulingBookingModalProps {
    * thing about that wait that reads as broken.
    */
   servicesLoading?: boolean;
+  /**
+   * PICK A TIME AND HAND IT BACK, instead of writing a booking.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Adding a meeting to a running package needs everything this dialog knows —
+   * the hours the service keeps, the days the owner closed, which slots are
+   * already sold — and none of what it writes. A package's meeting is created
+   * by `POST /api/scheduling/bookings/[id]/meetings`, which is what gives it a
+   * `parent_booking_id`, an occurrence number, the container's service and
+   * contact, and the charge decision. A booking written the ordinary way from
+   * here would be a standalone appointment belonging to no purchase, and it
+   * would not appear in the package's list at all.
+   *
+   * So the caller supplies this, and submit calls it with the chosen wall-clock
+   * instants rather than posting. Throwing from it leaves the dialog open with
+   * the message, exactly as a failed save does.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  onPickSlot?: (start: Date, end: Date) => Promise<void>;
+  /** The service to open on and keep, where the caller has already decided it. */
+  prefilledServiceId?: string;
+  /**
+   * The hour to open on, as the business's own wall clock (`YYYY-MM-DDTHH:MM`).
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Not `prefilledDateTime`, which carries a calendar CELL — a date and a whole
+   * hour, because that is what a grid click means. A package's next meeting is
+   * not on an hour boundary: it is a fortnight after the last one at 09:30, and
+   * rounding that to 09:00 would offer an hour the series does not use.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  prefilledStartLocal?: string;
+  /**
+   * The dates THIS SERIES would fall on next, as business wall clocks.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The quick-pick chips offer the next six free slots from today, which is the
+   * right answer when someone is booking an appointment and the wrong one when
+   * they are adding a seventh session to a fortnightly course: today and
+   * tomorrow are not candidates, and clicking one breaks the rhythm the client
+   * is planning around.
+   *
+   * Given these, the chips become the series' own next dates instead. Absent
+   * everywhere else, and the generic slots are offered exactly as before.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  seriesSlots?: string[];
+  /**
+   * One more yes/no the caller needs answered beside the date.
+   *
+   * Used for "bill this meeting like the others", which only a package can ask
+   * and only this dialog is in a position to ask at the same moment as the
+   * date. Absent everywhere else, and nothing renders.
+   */
+  extraToggle?: { label: string; checked: boolean; onChange: (next: boolean) => void };
 }
 
 // Source options for new clients (use existing CRM source keys)
@@ -466,6 +522,11 @@ export function SchedulingBookingModal({
   availability,
   prefilledDateTime,
   prefilledContact,
+  onPickSlot,
+  prefilledServiceId,
+  prefilledStartLocal,
+  seriesSlots,
+  extraToggle,
   existingBookings = [],
   timezone
 }: SchedulingBookingModalProps) {
@@ -799,13 +860,15 @@ export function SchedulingBookingModal({
       setFormData({
         service_id: booking.service_id,
         contact_id: booking.contact_id || null,
-        client_first_name: booking.client_first_name,
+        /* Both are nullable on the row and neither is on the form: a booking
+           taken with only a phone number has no name and no email, and the
+           inputs hold '' for "not given". */
+        client_first_name: booking.client_first_name ?? '',
         client_last_name: booking.client_last_name || '',
-        client_email: booking.client_email,
+        client_email: booking.client_email ?? '',
         client_phone: booking.client_phone || '',
         start_time: formatDateTimeLocal(new Date(booking.start_time), zone),
         end_time: formatDateTimeLocal(new Date(booking.end_time), zone),
-        timezone: booking.timezone || 'UTC',
         notes: booking.notes || '',
         status: booking.status
       });
@@ -822,14 +885,26 @@ export function SchedulingBookingModal({
     } else {
       // Get first active service for defaults
       const activeServices = services.filter(s => s.status === 'active');
-      const defaultService = activeServices[0];
+      /* The caller's service where it named one — see `prefilledServiceId`. */
+      const defaultService =
+        activeServices.find(item => item.id === prefilledServiceId) ?? activeServices[0];
       const serviceDuration = defaultService?.duration_minutes || 60;
 
       let startTime: string;
       let endTime: string;
 
-      // If prefilled from calendar slot click, use that
-      if (prefilledDateTime) {
+      /*
+       * The caller's own hour, where it named one — see `prefilledStartLocal`.
+       * Asked first: it is the most specific thing anyone has said about when
+       * this booking should be.
+       */
+      if (prefilledStartLocal) {
+        startTime = prefilledStartLocal;
+        endTime = formatDateTimeLocal(
+          new Date(parseDateTimeLocal(prefilledStartLocal, zone).getTime() + serviceDuration * 60 * 1000),
+          zone
+        );
+      } else if (prefilledDateTime) {
         /*
          * The calendar cell the owner clicked, as the instant it means.
          *
@@ -939,7 +1014,7 @@ export function SchedulingBookingModal({
      * Re-running is safe: it only replaces the DEFAULT, and the zone resolves
      * once, immediately after open, well before anyone has typed.
      */
-  }, [booking, services, availability, prefilledDateTime, prefilledContact, zone, zoneReady]);
+  }, [booking, services, availability, prefilledDateTime, prefilledContact, prefilledServiceId, prefilledStartLocal, zone, zoneReady]);
 
   /*
    * Does THIS service's client journey include picking a time?
@@ -974,7 +1049,8 @@ export function SchedulingBookingModal({
   useEffect(() => {
     if (!booking && !formData.service_id && services.length > 0) {
       const activeServices = services.filter(s => s.status === 'active');
-      const defaultService = activeServices[0];
+      const defaultService =
+        activeServices.find(item => item.id === prefilledServiceId) ?? activeServices[0];
       if (defaultService) {
         const serviceDuration = defaultService.duration_minutes || 60;
         // Update service_id and recalculate end time based on service duration
@@ -1387,7 +1463,7 @@ export function SchedulingBookingModal({
      * notice above already says why, so this returns silently rather than
      * raising a second complaint about the same thing.
      */
-    if (!isSettled && serviceGaps.length > 0) return;
+    if (!onPickSlot && !isSettled && serviceGaps.length > 0) return;
 
     // Validate form using custom validation
     const errors = validateForm();
@@ -1401,6 +1477,22 @@ export function SchedulingBookingModal({
     setLoading(true);
 
     try {
+      /*
+       * THE CALLER ONLY WANTED THE TIME — see `onPickSlot`.
+       *
+       * Returned before the request body is built, because none of it applies:
+       * the client, the service and the status all come from the package this
+       * meeting is joining, not from these fields.
+       */
+      if (onPickSlot) {
+        await onPickSlot(
+          parseDateTimeLocal(formData.start_time, zone),
+          parseDateTimeLocal(formData.end_time, zone)
+        );
+        onClose();
+        return;
+      }
+
       const url = booking ? `/api/scheduling/bookings/${booking.id}` : '/api/scheduling/bookings';
       const method = booking ? 'PUT' : 'POST';
 
@@ -1520,7 +1612,18 @@ export function SchedulingBookingModal({
       }
     } catch (err) {
       logger.error({ err, bookingId: booking?.id }, 'Saving the booking failed');
-      setFormErrors({ submit: t('scheduling.booking.save_failed') });
+      /*
+       * A slot handler's own words, where it has any. "That hour is taken" and
+       * "you are closed that day" are the two commonest answers and both are
+       * about the field being looked at — replacing them with a generic
+       * "could not save" would throw away the only useful part.
+       */
+      setFormErrors({
+        submit:
+          onPickSlot && err instanceof Error && err.message
+            ? err.message
+            : t('scheduling.booking.save_failed'),
+      });
     } finally {
       setLoading(false);
     }
@@ -1720,7 +1823,10 @@ export function SchedulingBookingModal({
               <Select
                 value={formData.service_id}
                 onValueChange={handleServiceChange}
-                disabled={!!booking}
+                /* Locked while editing one booking, and while picking a slot
+                   for a package: the meeting inherits the container's service
+                   whatever this said, so offering a choice would be a lie. */
+                disabled={!!booking || Boolean(onPickSlot)}
               >
                 <SelectTrigger
                   className={`w-full bg-[var(--v2-bg)] text-[var(--v2-text-primary)] rtl:flex-row-reverse rtl:text-right ${
@@ -2249,9 +2355,37 @@ export function SchedulingBookingModal({
               const serviceDuration = services.find(s => s.id === formData.service_id)?.duration_minutes || 60;
               // Not offered until the zone is known: a chip labelled from the
               // UTC placeholder names the wrong day. See `zoneReady`.
-              const quickSlots = zoneReady
-                ? getNextAvailableSlots(availability, serviceDuration, zone, 6, existingBookings, externalBusySlots, timeOff)
-                : [];
+              /*
+                The series' own next dates, where the caller named them — see
+                `seriesSlots`. Ones already sold are dropped rather than shown
+                struck through: a chip is an offer, and offering an hour that
+                cannot be taken is worse than offering one fewer.
+              */
+              const seriesPicks: QuickPickSlot[] = (seriesSlots ?? [])
+                .map(local => {
+                  const start = parseDateTimeLocal(local, zone);
+                  const end = new Date(start.getTime() + serviceDuration * 60 * 1000);
+                  const todayKey = formatDateTimeLocal(new Date(), zone).slice(0, 10);
+                  const dayKey = local.slice(0, 10);
+                  const tomorrow = new Date(parseDateTimeLocal(`${todayKey}T12:00`, zone).getTime() + 86_400_000);
+                  /* Only the two labels that are words need the offset; every
+                     other distance formats as a date, so 2 stands for "later". */
+                  const dayOffset =
+                    dayKey === todayKey
+                      ? 0
+                      : dayKey === formatDateTimeLocal(tomorrow, zone).slice(0, 10)
+                        ? 1
+                        : 2;
+                  return { dayOffset, start, end };
+                })
+                .filter(slot => !isSlotBooked(slot.start, slot.end, existingBookings, booking?.id))
+                .slice(0, 6);
+
+              const quickSlots = !zoneReady
+                ? []
+                : seriesSlots?.length
+                  ? seriesPicks
+                  : getNextAvailableSlots(availability, serviceDuration, zone, 6, existingBookings, externalBusySlots, timeOff);
 
               if (quickSlots.length === 0) return null;
 
@@ -2381,8 +2515,21 @@ export function SchedulingBookingModal({
               )}
             </h3>
 
+            {/*
+              `min-w-0` on the cells, not just one column on a phone.
+
+              The row already stacked below `sm`, which is why this looked
+              right in a narrow viewport and wrong on a real handset: a
+              `datetime-local` control has a wide INTRINSIC width — it reserves
+              room for the whole date, the time, the separators and the picker —
+              and a grid item will not shrink below that unless it is allowed
+              to. The track was already `minmax(0, 1fr)` and could shrink; the
+              DIV inside it could not, so the field burst out of its own column
+              and ran to both screen edges while every other control on the
+              dialog stayed inset.
+            */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-              <div>
+              <div className="min-w-0">
                 <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
                   {t('scheduling.booking.start_time')} <span className="text-red-500">*</span>
                 </label>
@@ -2452,7 +2599,7 @@ export function SchedulingBookingModal({
                   </p>
                 ) : null}
               </div>
-              <div>
+              <div className="min-w-0">
                 <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
                   {t('scheduling.booking.end_time')} <span className="text-red-500">*</span>
                 </label>
@@ -2507,20 +2654,37 @@ export function SchedulingBookingModal({
           </div>
 
           {/* Intake Form Toggle - Show for new bookings OR existing bookings without intake data */}
+          {/*
+            THE SWITCH HOLDS ITS WIDTH; THE TEXT HAS TO BE ALLOWED TO GIVE.
+
+            `justify-between` positions these two, it does not stop them
+            meeting. The switch is already `flexShrink: 0`, so when the row is
+            narrower than its contents the only thing that can give is the text
+            — and a flex child will not shrink below its min-content width
+            unless `min-w-0` says it may. Without it the description kept its
+            full width and simply ran UNDER the switch, which on a phone put the
+            last words of the sentence behind the control.
+
+            `gap-4` as well: once the text can shrink, `justify-between` has
+            nothing left to space them with, and a sentence ending flush against
+            a switch reads as touching it.
+          */}
           {formData.service_id && (!booking || (booking && !booking.intake_responses && !booking.intake_completed_at)) && (
               <div
-                className={`flex items-center justify-between p-4 bg-[var(--v2-surface)] border ${
+                className={`flex items-center justify-between gap-4 p-4 bg-[var(--v2-surface)] border ${
                   intakeConfigured === false ? 'border-amber-500/50' : 'border-[var(--v2-border)]'
                 }`}
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                <div className="flex items-center gap-3 min-w-0">
+                  {/* `shrink-0`: it is a 40px square, and letting it squash to
+                      make room for text turns the icon into an oval. */}
+                  <div className={`w-10 h-10 shrink-0 rounded-lg flex items-center justify-center ${
                     intakeConfigured === false ? 'bg-amber-500/10 text-amber-500' : 'bg-[#14B8A6]/10 text-[#14B8A6]'
                   }`}>
                     <ClipboardList className="h-5 w-5" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className={`font-medium text-sm ${
                       intakeConfigured === false ? 'text-[var(--v2-text-muted)]' : 'text-[var(--v2-text-primary)]'
                     }`}>
@@ -2718,6 +2882,42 @@ export function SchedulingBookingModal({
                   )}
                 </div>
 
+                {/* The caller's own question, asked where the date is — see
+                    `extraToggle`. In the footer because it is part of the
+                    decision being confirmed, not part of describing the
+                    appointment. */}
+                {extraToggle && (
+                  /*
+                    `me-auto`, which is the whole placement rule.
+                    ─────────────────────────────────────────────────────────
+                    The footer is `justify-between`, and for a NEW booking the
+                    quick-actions group beside it is empty — so three children
+                    spread out left the question floating near the middle. A
+                    margin on the inline END pins it to the inline START, which
+                    is the LEFT in English and the RIGHT in Hebrew, without
+                    either side being named.
+
+                    A switch rather than a checkbox: it is a setting being
+                    turned on, next to two buttons, and `Switch` already knows
+                    which way its thumb travels in each script. No `dir`
+                    wrapper here — that would neutralise the `:dir(rtl)` rule
+                    the component carries and correct the same thing twice.
+                  */
+                  <div className="me-auto flex items-center gap-2.5">
+                    <Switch
+                      id="booking-extra-toggle"
+                      checked={extraToggle.checked}
+                      onCheckedChange={extraToggle.onChange}
+                    />
+                    <label
+                      htmlFor="booking-extra-toggle"
+                      className="cursor-pointer text-sm text-[var(--v2-text-secondary)]"
+                    >
+                      {extraToggle.label}
+                    </label>
+                  </div>
+                )}
+
                 {/* Right side - Cancel and Save */}
                 <div className="flex items-center gap-2">
                   <button
@@ -2733,12 +2933,19 @@ export function SchedulingBookingModal({
                     /* `serviceGaps` only ever holds BLOCKING gaps — the route
                        filters the advisory processor out — so anything in it is
                        a reason this booking cannot be honoured. */
+                    /* Choosing a slot asks for a TIME and nothing else: the
+                       client and the service come from the package, and a
+                       contact with only a phone number has neither a first
+                       name nor an email — which would have left this button
+                       permanently dead. */
                     disabled={
-                      loading ||
-                      !formData.service_id ||
-                      !formData.client_first_name ||
-                      !formData.client_email ||
-                      serviceGaps.length > 0
+                      onPickSlot
+                        ? loading || !formData.start_time
+                        : loading ||
+                          !formData.service_id ||
+                          !formData.client_first_name ||
+                          !formData.client_email ||
+                          serviceGaps.length > 0
                     }
                     className="px-4 py-2 text-sm font-medium text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -2807,12 +3014,28 @@ export function SchedulingBookingModal({
             color-scheme: dark;
           }
 
+          /*
+            NO "filter: invert(1)" HERE -- it is the same correction twice.
+
+            "color-scheme: dark" above is what tells the engine to draw its own
+            calendar button in light ink; that is the whole purpose of the
+            property. Inverting it afterwards turned that light ink back to
+            near-black, on a near-black field, so the button looked ABSENT
+            rather than mis-styled -- and an invisible control is
+            indistinguishable from a missing feature.
+
+            The same pair cancelled each other in the quote dialog's date
+            fields; components/ui/input.tsx carries the fix and
+            dateFieldInDarkMode.guard.test.ts the reasoning.
+
+            (No backticks in here: this block is a template literal, and one
+            would end the string.)
+          */
           :root.dark .datetime-input-scheduling::-webkit-calendar-picker-indicator,
           html.dark .datetime-input-scheduling::-webkit-calendar-picker-indicator,
           .dark .datetime-input-scheduling::-webkit-calendar-picker-indicator {
-            filter: invert(1) brightness(0.8);
             cursor: pointer;
-            opacity: 0.7;
+            opacity: 0.8;
           }
 
           :root.dark .datetime-input-scheduling::-webkit-calendar-picker-indicator:hover,

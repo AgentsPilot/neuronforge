@@ -216,7 +216,33 @@ const quoteUnwritten: GapDefinition = {
        * handled before: a refused price is a different conversation from one
        * never given, and the drawer already routes it back to the owner.
        */
-      const LIVE_PROPOSAL = ['draft', 'sent', 'viewed', 'accepted'];
+      /*
+       * `stopped` AND `withdrawn` BELONG HERE, AND LEAVING THEM OUT WAS THE BUG.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * This set answers one question: has a price already been written for
+       * this person? Not "is a price still live" — the row's own sentence is
+       * "they asked for a price, and nothing has been written yet", and that is
+       * false the moment any quote exists.
+       *
+       * `stopped` means ACCEPTED, started, and ended early. The migration that
+       * added it says so outright: "Acceptance stays a historical fact… this
+       * records how the job ENDED, never that it was not agreed." So a client
+       * whose job was agreed and later stopped was being reported as somebody
+       * waiting for a first price. On the reporting account `stopped` is the
+       * MOST COMMON proposal status — 12 rows of 35 — so this was not an edge
+       * case, it was the common one.
+       *
+       * `withdrawn` is the owner taking back a quote they wrote. Also written.
+       *
+       * The three still absent are deliberate and unchanged: `declined` and
+       * `expired` are a refused or lapsed price, which is a different
+       * conversation from one never given, and `superseded` means a revision
+       * replaced this version — `markSuperseded` only ever writes it alongside
+       * creating the successor, so the successor is what counts.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const LIVE_PROPOSAL = ['draft', 'sent', 'viewed', 'accepted', 'stopped', 'withdrawn'];
 
       const { data: proposals } = await supabaseServer
         .from('proposals')
@@ -268,6 +294,18 @@ const quoteUnwritten: GapDefinition = {
           /* The meeting, not the contact's creation date: that is when the
              owner started owing them an answer. */
           since: b.start_time as string,
+          /*
+           * THE CONSULTATION THE QUOTE IS FOR.
+           *
+           * Omitted until now, though it was sitting in `b` the whole time. The
+           * "write a quote" button navigates to the contact's bookings, and the
+           * control it is sending the owner to — the proposal builder — is a
+           * prop of the booking ROW, reachable only once that row is expanded.
+           * With no booking named, the link opened an unexpanded list five rows
+           * to a page and left the owner to find a consultation that, by the
+           * time this gap is worth showing, is usually not on the first page.
+           */
+          entityId: b.id as string,
         });
       }
 
@@ -983,6 +1021,17 @@ const stageAwaitingCompletion: GapDefinition = {
          */
         since: row.created_at as string,
         entityId: row.id as string,
+        /*
+         * The JOB this phase belongs to, which is what the button opens.
+         *
+         * `entityId` above is the stage, because that is what
+         * `payment-stages/[id]/complete` bills. It is not a booking, and the
+         * card was passing it as one — so `&booking=` named a row that does not
+         * exist in the bookings list and nothing expanded. Null where the stage
+         * hangs off a proposal with no appointment behind it, in which case the
+         * link degrades to the contact's list rather than naming a phantom.
+         */
+        bookingId: (row.booking_id as string | null) ?? undefined,
         value: Number(row.amount) || undefined,
         currency: str(row.currency) || undefined,
       }));

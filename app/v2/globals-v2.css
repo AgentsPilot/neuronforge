@@ -585,6 +585,10 @@ html.dark {
   color-scheme: dark;
 }
 
+/* No background rule for date fields here either — see the dialog-portal block
+   further down for why a blanket fill is the wrong answer: each component
+   already knows which surface it sits on. */
+
 /* Native select dropdown styling for dark mode */
 .dark select option {
   background-color: rgb(30 41 59); /* slate-800 */
@@ -602,7 +606,21 @@ html.dark {
 html.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 html.dark input[type="date"]::-webkit-calendar-picker-indicator,
 html.dark input[type="time"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) brightness(0.8);
+  /* NO `filter: invert(1) brightness(0.8)` — that is what made this button
+     black on black. `color-scheme: dark` is already set on every input in this
+     stylesheet, and that IS the mechanism: the engine then draws the calendar
+     button in LIGHT ink. Inverting afterwards painted it near-black on a
+     near-black field, and `brightness(0.8)` darkened it further — so the button
+     was never missing, it was the colour of the surface behind it.
+
+     The invert was right ONCE, before anything set `color-scheme`, when the
+     engine would only give a dark glyph for a light UI. Setting `color-scheme`
+     replaced it and the workaround stayed. The same pair sat in
+     `app/globals.css` and in `components/ui/input.tsx`, which is why fixing any
+     one of them alone changed nothing visible.
+
+     `opacity` stays — a deliberate de-emphasis, lifted by the `:hover` rule.
+     It is not a colour correction. */
   cursor: pointer;
   opacity: 0.7;
 }
@@ -619,10 +637,16 @@ html.dark input[type="time"]::-webkit-calendar-picker-indicator:hover {
   opacity: 1;
 }
 
-/* Number input spinners in dark mode */
+/* Number input spinners in dark mode.
+
+   The same double-correction as the calendar button above, found while fixing
+   it rather than reported: `color-scheme: dark` already draws these arrows in
+   light ink, so inverting them put them back to near-black on a dark field.
+   Nothing is needed here at all now — the rule is kept, empty of the filter,
+   because the selector is the record of which control this was about. */
 .dark input[type="number"]::-webkit-inner-spin-button,
 .dark input[type="number"]::-webkit-outer-spin-button {
-  filter: invert(1);
+  cursor: pointer;
 }
 
 /* Radix UI Select dropdown portal dark mode support */
@@ -675,7 +699,25 @@ html.dark [role="dialog"] input[type="datetime-local"],
 html.dark [role="dialog"] input[type="date"],
 html.dark [role="dialog"] input[type="time"] {
   color-scheme: dark;
-  background-color: var(--v2-bg) !important;
+  /* NO `background-color` HERE — THAT IS WHAT MADE A DATE FIELD DARKER THAN
+     THE FIELD BESIDE IT.
+     ─────────────────────────────────────────────────────────────────────────
+     This set `var(--v2-bg) !important`: the PAGE background (#0F172A), while
+     every other control in the quote dialog is `--v2-surface` (#1E293B). So the
+     "valid until" field sat a shade darker than the amount field next to it —
+     two inputs built from the same component, with the same classes, in the
+     same row. The `!important` meant no component class could correct it.
+
+     Removing it rather than changing it to `--v2-surface`, because no single
+     colour is right for every dialog: the booking dialog's fields are
+     `--v2-bg` (17 of them) and the quote dialog's are `--v2-surface` (12), so
+     forcing either value fixes one dialog and breaks the other. A blanket
+     override cannot know which surface a field is sitting on; the component
+     already does, and its own class says so.
+
+     `color-scheme` stays, which is this rule's actual purpose — Radix renders
+     these dialogs into a portal, and the comment above is about the portal
+     inheriting the dark theme, not about picking a fill. */
   border-color: var(--v2-border) !important;
   color: var(--v2-text-primary) !important;
 }
@@ -693,7 +735,21 @@ html.dark [data-radix-dialog-content] input[type="time"]::-webkit-calendar-picke
 html.dark [role="dialog"] input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 html.dark [role="dialog"] input[type="date"]::-webkit-calendar-picker-indicator,
 html.dark [role="dialog"] input[type="time"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) brightness(0.8);
+  /* NO `filter: invert(1) brightness(0.8)` — that is what made this button
+     black on black. `color-scheme: dark` is already set on every input in this
+     stylesheet, and that IS the mechanism: the engine then draws the calendar
+     button in LIGHT ink. Inverting afterwards painted it near-black on a
+     near-black field, and `brightness(0.8)` darkened it further — so the button
+     was never missing, it was the colour of the surface behind it.
+
+     The invert was right ONCE, before anything set `color-scheme`, when the
+     engine would only give a dark glyph for a light UI. Setting `color-scheme`
+     replaced it and the workaround stayed. The same pair sat in
+     `app/globals.css` and in `components/ui/input.tsx`, which is why fixing any
+     one of them alone changed nothing visible.
+
+     `opacity` stays — a deliberate de-emphasis, lifted by the `:hover` rule.
+     It is not a colour correction. */
   cursor: pointer;
   opacity: 0.7;
 }
