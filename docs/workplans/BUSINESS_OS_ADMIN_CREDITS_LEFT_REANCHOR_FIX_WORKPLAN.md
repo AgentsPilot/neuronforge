@@ -1,6 +1,6 @@
 # Workplan: Admin "Credits left" wrong after a re-anchor
 
-> **Last Updated**: 2026-10-12
+> **Last Updated**: 2026-10-13
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_ADMIN_CREDITS_LEFT_REANCHOR_FIX.md](/docs/requirements/BUSINESS_OS_ADMIN_CREDITS_LEFT_REANCHOR_FIX.md) (SA conditions C-1..C-4 and workplan conditions W-1..W-6 binding)
@@ -219,3 +219,4 @@ _RM to populate._
 | 2026-10-12 | Created | Dev workplan against SA conditions C-1..C-4 |
 | 2026-10-12 | SA workplan review | Approved with conditions W-1..W-6: D-3 deferred (test-only parity table), second tie flip at L210, guard list unchanged for creditLeakCheck, C-2 pin guards against redefinition, unreadable monthly anchor → unknown |
 | 2026-10-12 | Implemented | W-1..W-6 applied; code complete, uncommitted; task list and test results updated |
+| 2026-10-13 | Follow-up: C-2 redefinition regex widened | SA/QA Low finding closed: the "defined in exactly one migration" check now matches any case/spacing, optional `public`/`"public"` schema and quoted name, anchored to line start (comments ignored); inline fixtures prove each variant is caught and `_v2`, other-schema, call, REVOKE/GRANT/DROP lines are not. Still scans `supabase/migrations` only |
