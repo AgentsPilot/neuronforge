@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-10-09
+> **Last Updated**: 2026-10-13
 
 ## Overview
 
@@ -613,7 +613,7 @@ There is no button for this. The `/admin/settings` "Admin users" page is read-on
 
    Check that the `UPDATE` reports **1 row**, then refresh the Admin users page. A row inserted by hand can be stored in mixed case, so matching on the stored value alone could revoke nothing without any error.
 
-2. If the address is also in `ADMIN_EMAILS` (Vercel, and any `.env.local`), remove it there and **redeploy**. Until then the person **still has access**: the access check grants an `ADMIN_EMAILS` address on its own, even with the row deactivated. The Admin users page marks such admins ("Also in the environment setting: removing the row alone does not revoke access") and lists a deactivated-but-still-in-env address under "Granted by the ADMIN_EMAILS environment setting".
+2. If the address is also in `ADMIN_EMAILS` (Vercel, and any `.env.local`), remove it there and **redeploy**. Until then the person **still has access**: the access check grants an `ADMIN_EMAILS` address on its own, even with the row deactivated. The Admin users page marks such admins ("Also in the environment setting: removing the row alone does not revoke access") and lists a deactivated-but-still-in-env address under "Admins set in the server configuration".
 3. **Remove the address from both add paths, or it comes back.** The seed script and `supabase/migrations/20260701_seed_admin_users.sql` both upsert `is_active = true` (`ON CONFLICT … SET is_active = true`). Re-running either with the address still in `.env.local`'s `ADMIN_EMAILS` or in the migration's `VALUES` list silently re-activates the row. Delete it from the migration's `VALUES` list and from every `ADMIN_EMAILS`.
 
 **Timing:** a table change reaches every server within about 60 seconds in the app (the access service's cache) and immediately in the database predicate. An `ADMIN_EMAILS` change takes effect only on redeploy, because the variable is read when the service is constructed.
@@ -709,3 +709,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-09 | Credits boost slice 4b.2: register rows 99–102, census 99 = 93 + 6 + 0, 69 files | Row **102** `business-os/credits/boost/reconcile#POST` (run the boost reconcile pass now), gated from birth with `requireAdmin` as its first statement. Rows **99–101**, the three test-account cleanup handlers (OX-1r, gated from birth on `main` but unregistered), added doc-only. Census re-measured from disk on `88b1938f` plus this slice: **99 / 93 + 6 + 0 open / 69 files** (was 98 / 92 + 6 / 68 on the base). `adminGate.writes` 64 → 65. No cap moved, no exemption |
 | 2026-10-09 | Credits boost slice 6a: register row 103, census 100 = 94 + 6 + 0, 70 files | Row **103** `business-os/credits/accounts/[accountId]/boost#GET` (the read-only admin "Credit top-ups" view), gated from birth with `requireAdmin` as its first statement. Census re-measured on `90c33582` plus this slice: **100 / 94 + 6 + 0 open / 70 files** (was 99 / 93 + 6 / 69). `adminGate.writes` unchanged. No cap moved, no exemption |
 | 2026-10-10 | Credits boost slice 6b: row 74 text names the two cap ops | `business-os/entitlements/accounts/[accountId]#POST` gains `set_boost_cap` / `end_boost_cap`. **No handler added by this slice**: `adminGate.writes` unchanged, no cap moved. Census note: a scratch count on `origin/main` `7e5964ec` plus this slice finds **101 handlers / 95 + 6 + 0 open / 71 files**, one more than the 100 registered at 6a; the extra handler landed on `main` from another change and is not registered here (flagged to TL, not this slice's scope) |
+| 2026-10-13 | Admin users page wording (LF-5) | The revoke step quotes the page's new section title "Admins set in the server configuration" (was "Granted by the ADMIN_EMAILS environment setting"). Doc text only |

@@ -195,7 +195,10 @@ describe('A-1: header', () => {
     const headings = screen.getAllByRole('heading', { level: 1 });
     expect(headings).toHaveLength(1);
     expect(headings[0]).toHaveTextContent('Admin users');
-    expect(screen.getByText('Who can open admin.')).toBeInTheDocument();
+    // LF-5 (user-approved copy, 2026-10-13).
+    expect(
+      screen.getByText('People who can sign in to this admin area, and where their access comes from.'),
+    ).toBeInTheDocument();
     const badge = screen.getByTestId('read-only-badge');
     expect(badge).toHaveTextContent('Read-only');
     expect(badge).toHaveAttribute('data-tone', 'neutral');

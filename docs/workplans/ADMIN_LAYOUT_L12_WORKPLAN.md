@@ -1,6 +1,6 @@
 # Workplan: Admin Layout Standard — Slice L-12 (Admin users)
 
-> **Last Updated**: 2026-10-12
+> **Last Updated**: 2026-10-13
 
 **Developer:** Dev
 **Requirement:** [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md): §1 (row 18), §3 (rules 1 to 9), §4.13, §5.2 (T-5, T-7), §5.3, §5.4 K-1 (no strip), §5.5 (Refresh-only bar, part 6; "Admin users deliberately clears"), §5.7 (non-table content), §5.9, §5.10, §5.11, §5.12, §6.1, §6.2 C-2, C-3, C-4, C-5, C-8, C-12, C-14, §7.15, §9 F-85, §10 D-3 (a), D-5 (a), §12.3
@@ -8,6 +8,7 @@
 **Branch:** `feature/admin-layout-l12`, cut by RM from `origin/main` at 82469a8a, the merge commit of the L-10 PR #324, so L-10 had already merged. Confirmed by Dev with `git branch --show-current`. **M-4 resolved:** not a stacked PR; the L-12 PR targets `main` and carries nothing from an open branch. The branch also carries three doc edits that record the L-10 merge (requirement, retrospective, L-10 workplan); they are kept
 **Date:** 2026-10-12
 **Status:** Committed — PR #328 open (fast-track; SA code review APPROVED WITH FIXES, F-1 applied; QA PASS WITH NOTES); awaiting checks + user merge. Commits 621224eb (L-10 merge records) and f95031da (L-12), merged with origin/main (8a5ef71c; clean). Built 2026-10-12. SA workplan review 2026-10-12: APPROVED WITH CONDITIONS; M-1 to M-5 and S-1 to S-5 applied to this file before coding (task 1)
+**Copy superseded (LF-5, 2026-10-13):** the purpose "Who can open admin.", the section title "Granted by the ADMIN_EMAILS environment setting" and the empty sentence "No addresses beyond the table." quoted below are the L-12 copy. LF-5 replaced them with user-approved wording and added a note line; see [ADMIN_LAYOUT_LF5_WORKPLAN.md](/docs/workplans/ADMIN_LAYOUT_LF5_WORKPLAN.md). This file is left as the L-12 record.
 **Path:** **UI short path** by classification: no shared source file changes. The only shared-folder edit is the registry entry in the shared guard's test file (the L-5, L-6, L-7, L-10 precedent). Under the user's fast-track for this standard: SA workplan review → Dev → SA code review + QA → RM
 
 ## Overview
@@ -653,3 +654,4 @@ QB-1 to QB-11 are **owed** (no browser tools in this session). All are read-only
 | 2026-10-12 | QA | QA: PASS WITH NOTES. settings + components jest 24 suites / 735; authz guard 119; tailwind guard 6; admins route 15; test:bos-llm 625; typecheck:bos-llm 0 new; lint:hooks clean. 24 throwaway probes green and deleted (happy path, error-copy matrix incl. 401 / 403 / non-JSON / malformed, failed Refresh clears lists and Read at, held Try again shows no list, empty lists, read-only and one GET in every state, stale answer never wins, colours). Fetch call identical to HEAD; git status = Dev's 8 entries. Open: SA F-1 (A-7b) not yet in the suite (Medium, test-only). Known shared follow-up: focus to body after Try again. QB-1 to QB-11 owed |
 | 2026-10-12 | SA F-1 applied | Dev: A-7b added to `adminUsersLayout.render.test.tsx` (good load, failed Refresh, held Try again: no list, no Read at, loading text; then the lists return). Mutation (c) re-run: A-7b fails (1 failed, 53 passed), restored, checksum matched; the "survived by design" note replaced. The `notJson` helper's escaped quotes rewritten as a template literal, so the test file holds no backslash. No page change. Settings folder 54 tests |
 | 2026-10-12 | Committed + PR (RM) | Commit A 621224eb (L-10 merge records) and commit B f95031da (L-12) on `feature/admin-layout-l12`; origin/main merged (8a5ef71c; clean). Scoped jest 27 suites / 876, test:bos-llm 625, typecheck:bos-llm 0 new, test:bos-entitlements 7,167, lint:hooks clean. PR #328 open, awaiting checks + user merge |
+| 2026-10-13 | LF-5 copy note | Header note: the quoted page copy was superseded by LF-5 (user-approved wording); the rest of this file kept as the L-12 record |

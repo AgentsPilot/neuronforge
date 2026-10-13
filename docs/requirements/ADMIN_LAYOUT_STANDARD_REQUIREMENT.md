@@ -1,6 +1,6 @@
 # Requirement: Admin Layout Standard
 
-> **Last Updated**: 2026-10-12
+> **Last Updated**: 2026-10-13
 
 **Created by:** BA
 **Date:** 2026-10-09
@@ -938,6 +938,8 @@ KPI strip: **none** (D-5 (a)). Its candidate counts (rows in the table, not yet 
 
 **As built in L-12 (code complete 2026-10-12, Dev):** header as above with purpose "Who can open admin." (the trailing "Read-only." moved into the badge, SA Q-1); the Refresh-only bar, button "Refresh the admin list", "Read at HH:mm UTC" from the client clock of the last good read; first load `AdminLoading` "Reading the admin list…"; a refresh keeps the lists and sets `aria-busy`; errors in `AdminError` with Try again. **Error words (SA Q-7, §5.10, no page deviation):** the route's own string ("Failed to load admin list"; a 200 `success: false` shows its `error`), "Could not read the admin list. Try again in a moment." for a non-JSON body or a `success: true` body whose lists are not both arrays (W-3a; a page literal pinned equal to the shared fallback, SA S-5), the session-ended words for 401 / 403, `ADMIN_NETWORK_ERROR` for a rejected fetch. The old sentence "Nothing is shown rather than a list that may be wrong" is kept by behaviour, not words: every failure clears the lists and "Read at" (SA Q-3). "Added" prints through `formatUtc` ("2026-07-01 10:00 UTC"; it was the browser's local date). Cards on the §5.7 shell, `h2` `text-sm`; blue icons and text to slate-400 / sky-300; the access note a neutral card, words unchanged. **Test edits:** `page.render` P-1 (UTC dates), P-4 / P-5 / P-10 (the button name), P-6 / P-7 / P-10 (exact words), P-8 and P-11 ("no error" is no `role="alert"`; `ERROR_TEXT` deleted, SA M-3); new source cases S-1 to S-4; new `adminUsersLayout.render` (A-1 to A-10, A-11i / A-12i invariants written first, A-11x / A-12x). **Page deviations:** cards stay one column, not the §5.7 grid (SA Q-5); the row metadata stays inline spans, not a `dl` (SA Q-6). **Not built, by design:** KPI strip (D-5 (a)), filters, table, drawer, dialogs; the page has no write path.
 
+**Copy changed in LF-5 (2026-10-13, user-approved; [ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md) §1 LF-5):** purpose "People who can sign in to this admin area, and where their access comes from." (was "Who can open admin."); second section title "Admins set in the server configuration" (was "Granted by the ADMIN_EMAILS environment setting"); a new note under that title, `text-sm text-slate-400`: "Added through the ADMIN_EMAILS setting, not through the list above. Changing it needs a redeploy."; its empty state "No extra admins come from the server configuration. Everyone with access is in the list above." (was "No addresses beyond the table."). The L-12 text above records the copy as it was built. No request, data or behaviour change.
+
 ---
 
 ## 8. Page order
@@ -1542,3 +1544,4 @@ Doc corrections made by SA: §1 path note and rows L-2a, L-2b, L-8; §3 short-pa
 | 2026-10-12 | L-10 merged | §1 row 16: PR #324 merged by the user 2026-10-12 (merge commit 82469a8a; head 07e308d3). Rows 14, 14b, 15, 15b, 16 (L-8a, L-8b, L-9a, L-9b, L-10) all merged: #319, #320, #321, #322, #324. The RM docs commit 3395d69f was pushed after the merge and did not reach `main`; its edits ship with the L-12 PR |
 | 2026-10-12 | L-12 implemented | Dev: SA L-12 workplan review M-1 to M-5 and S-1 to S-5 applied to the workplan before coding; branch `feature/admin-layout-l12` cut from `origin/main` 82469a8a after #324 merged (M-4 resolved). §1 row 18 (built, uncommitted, awaiting SA code review + QA); §7.15 as built (Q-7: the route's words per §5.10, no page deviation; deviations: one-column cards, inline row metadata); §9: F-85 done, F-124 to F-127 added (F-126 / F-127 as restated by SA M-5), count 121 → 125 |
 | 2026-10-12 | L-12 committed (RM) | §1 row 18: commit A 621224eb (L-10 merge records) and commit B f95031da (L-12) on `feature/admin-layout-l12`, merged with origin/main (8a5ef71c; clean). PR #328 open (fast-track; SA + QA passed), awaiting checks + user merge. Row 17 (L-11): skipped for now at user request, waits on the model price review |
+| 2026-10-13 | LF-5 copy note | §7.15: Admin users copy changed by LF-5 (purpose line, second section title, new note line, empty sentence); the L-12 as-built text kept as history |
