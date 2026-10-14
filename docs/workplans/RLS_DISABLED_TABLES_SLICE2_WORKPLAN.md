@@ -1,6 +1,6 @@
 # Workplan: RLS-disabled tables, slice 2
 
-> **Last Updated**: 2026-10-11
+> **Last Updated**: 2026-10-13
 
 **Developer:** Dev
 **Branch:** `fix/rls-disabled-tables-slice-2` (off `origin/main` @ `a585f6a7`)
@@ -439,6 +439,13 @@ Each rollback is the exact inverse of its migration (Q-SA-6). Its first statemen
   - An insert with your own `user_id` and a foreign `agent_id` fails `WITH CHECK` (C-4).
   - An insert into `shared_agent_imports` as authenticated raises 42501, which is expected (SA ruling 2).
 - **Route changes first:** the route changes must be deployed before `20261058` is applied (C-6).
+- **Starting state (SA ruling Q-SA-1 condition, slice 1b workplan, 2026-10-13).** Full 2c's pre-guard must assume that exposed views slice 1b (`20261059`) and the 2c anon stopgap (`20261060`) are **already applied**, even if 2c's number sorts earlier. So it must not pin the Q6 grants above. Pin this state instead, and make 2c's rollback return to it, not to `GRANT ALL` to anon:
+  - on the six tables, anon and PUBLIC hold none of the 8 privileges, and nothing on the sequences the tables own;
+  - authenticated holds SELECT, INSERT, UPDATE and DELETE only (TRUNCATE, REFERENCES, TRIGGER and MAINTAIN were removed);
+  - service_role is unchanged, and row security is still off;
+  - `agent_executions_with_details` is `security_invoker = true` with no client grant.
+  If the stopgap was never applied, the pre-guard refuses and Dev/SA decide; it must not silently accept both states.
+- **Number:** `20261058` is **no longer free**. `origin/main` now holds `20261058_contact_documents_accept_scans_and_phone_photos.sql` (commit `a6990f77`, 2026-10-13). Full 2c takes the next free number when it is written (`20261061` or later; re-check every ref first), and every `20261058` reference to 2c in this workplan then needs updating.
 
 ---
 
@@ -739,3 +746,4 @@ PR #313: commit `762caf28` (2a + 2b package), merge with main `be1e59f5`; merged
 | 2026-10-11 | SA code review (2a, 2b) | Code approved with nits. C-1 to C-3 and C-8 to C-11 verified in the code. The md5 pins were recomputed and confirmed consistent with `pg_policies` (pg_get_expr). No client-role UPDATE or DELETE on `token_usage` found. Static test 103/103 and authz guard 203/203 pass. Nits: the StepExecutor insert error is unchecked (follow-up); pin the new policies by md5 in the post-assert; the rollbacks restore MAINTAIN unconditionally; R-6 goes in the PR body |
 | 2026-10-11 | SA nits handled | Nit 2 applied: the 2b post-assert and the 2b checker now pin both owner policies by md5 `ff452c766f1dd1d84c376129b36406c1`, which is the md5 of `(( SELECT auth.uid() AS uid) = user_id)`, the PG 17 rendering, with the other side NULL. Static test 103/103, authz guard 203/203, PGlite 2b dry run PASS 11/0 with an exact rollback round trip. Nit 1 is a backlog follow-up. Nit 3: TL's prod 2a pre-check (CLEAN; 8 of 8 incl. MAINTAIN for anon, authenticated and service_role on all 8 tables; PUBLIC none; grantor postgres; no column ACLs or policies; `server_version_num` 170004) and the 2b pins (all six match `19300d15…586c`) are the MAINTAIN record. Nit 4: PR-body notes for C-11 and R-6 recorded |
 | 2026-10-12 | 2a and 2b applied and merged (TL) | Applied on prod by TL via the Supabase connector with the user's authorization, in order 2a then 2b; checkers 64/0 and 11/0; anon refusals, ais read-only, token_usage owner visibility and cross-user insert refusal proven (QA section). PR #313 merged `08722970`. Next: exposed-views slice 1b, then 2c (`20261058`) |
+| 2026-10-13 | 2c starting state noted | The 2c anon stopgap (`20261060`, written in the slice 1b workplan, not applied) and slice 1b (`20261059`) are to be applied before full 2c. Recorded in 2c acceptance that full 2c's pre-guard must assume both are applied (SA ruling Q-SA-1 condition), and that `20261058` is now taken on main, so 2c needs a new number |
