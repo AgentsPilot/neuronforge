@@ -374,8 +374,9 @@ describe('the payment tables are never written with a caller\'s own credentials'
 
   it('only the documented agent pages build RewardService with the browser client', () => {
     // RewardService INSERTs `credit_transactions` (and upserts user_subscriptions).
-    // These two client pages are the known, deliberate exception — that path IS
-    // the vulnerability. A third caller must fail here.
+    // This client page is the known, deliberate exception — that path IS the
+    // vulnerability. The v2 agent page's caller went when sharing was switched
+    // off (RLS slice 2c-1, BQ-2, 2026-10-14). A new caller must fail here.
     const callers = sourceFiles
       .filter((f) => /new RewardService\s*\(/.test(readFileSync(f, 'utf8')))
       .map(rel)
@@ -383,7 +384,6 @@ describe('the payment tables are never written with a caller\'s own credentials'
 
     expect(callers).toEqual([
       'app/(protected)/agents/[id]/page.tsx',
-      'app/v2/agents/[id]/page.tsx',
     ]);
   });
 

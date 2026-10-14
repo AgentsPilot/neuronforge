@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS public.helpbot_page_contexts (
 - `/v2/agents/[id]` - Agent Details help
 - `/v2/agents/[id]/run` - Run Agent help
 - `/v2/agents/new` - Create Agent help
-- `/v2/templates` - Templates help
+- `/v2/templates` - Templates help (page removed 2026-10-14 when agent sharing was switched off, RLS slice 2c-1; the seeded row may remain in the database, FU-14)
 - `/v2/analytics` - Analytics help
 - `/v2/billing` - Billing help
 - `/v2/monitoring` - Monitoring help

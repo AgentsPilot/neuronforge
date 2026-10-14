@@ -25,8 +25,7 @@ import {
   X,
   Zap,
   BarChart3,
-  Activity,
-  Workflow
+  Activity
 } from 'lucide-react'
 
 const SidebarLink = ({
@@ -137,7 +136,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const [agentCount, setAgentCount] = useState<number | null>(null)
-  const [templateCount, setTemplateCount] = useState<number | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -146,7 +144,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   
   // Use refs to prevent race conditions
   const fetchAgentCountRef = useRef<AbortController | null>(null)
-  const fetchTemplateCountRef = useRef<AbortController | null>(null)
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Fetch user profile data
@@ -219,43 +216,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     }
   }, [user?.id])
 
-  // Template count fetching with proper cleanup
-  const fetchTemplateCount = useCallback(async () => {
-    // Cancel any existing request
-    if (fetchTemplateCountRef.current) {
-      fetchTemplateCountRef.current.abort()
-    }
-
-    // Create new abort controller
-    const controller = new AbortController()
-    fetchTemplateCountRef.current = controller
-
-    try {
-      const { count, error } = await supabase
-        .from('shared_agents')
-        .select('*', { count: 'exact', head: true })
-
-      // Check if request was aborted
-      if (controller.signal.aborted) return
-
-      if (error) {
-        clientLogger.error({ err: error }, 'Template count fetch failed')
-        setTemplateCount(null)
-      } else {
-        setTemplateCount(count ?? 0)
-      }
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        clientLogger.error({ err }, 'Template count fetch threw')
-        setTemplateCount(null)
-      }
-    } finally {
-      if (fetchTemplateCountRef.current === controller) {
-        fetchTemplateCountRef.current = null
-      }
-    }
-  }, [])
-
   // Improved search functionality
   const handleSearch = useCallback(async (query: string) => {
     if (!user?.id) return
@@ -312,17 +272,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   // Function to refresh counts - can be called from other parts of the app
   const refreshCounts = useCallback(() => {
     fetchAgentCount()
-    fetchTemplateCount()
-  }, [fetchAgentCount, fetchTemplateCount])
+  }, [fetchAgentCount])
 
   // Individual refresh functions
   const refreshAgentCount = useCallback(() => {
     fetchAgentCount()
   }, [fetchAgentCount])
-
-  const refreshTemplateCount = useCallback(() => {
-    fetchTemplateCount()
-  }, [fetchTemplateCount])
 
   /*
    * Sign out through `signOutUser`, like every other control that does this.
@@ -341,7 +296,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
       // Clear any cached data
       setAgentCount(null)
-      setTemplateCount(null)
       setSearchQuery('')
       setSearchResults([])
       setShowSearchResults(false)
@@ -378,7 +332,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   // Effect for fetching counts and profile
   useEffect(() => {
     fetchAgentCount()
-    fetchTemplateCount()
     fetchProfile()
     
     // Cleanup on unmount
@@ -387,12 +340,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         fetchAgentCountRef.current.abort()
         fetchAgentCountRef.current = null
       }
-      if (fetchTemplateCountRef.current) {
-        fetchTemplateCountRef.current.abort()
-        fetchTemplateCountRef.current = null
-      }
     }
-  }, [fetchAgentCount, fetchTemplateCount, fetchProfile])
+  }, [fetchAgentCount, fetchProfile])
 
   // Debounced search effect
   useEffect(() => {
@@ -611,15 +560,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             label="Analytics"
             icon={BarChart3}
             isActive={pathname === '/analytic'}
-            onClick={() => setIsMobileOpen(false)}
-            isCollapsed={isCollapsed}
-          />
-          <SidebarLink
-            href="/templates"
-            label="Templates"
-            icon={Workflow}
-            badge={templateCount !== null ? templateCount : undefined}
-            isActive={pathname === '/templates'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
           />
