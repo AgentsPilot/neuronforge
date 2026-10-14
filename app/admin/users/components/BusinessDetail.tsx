@@ -20,13 +20,14 @@
 
 import { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { DrawerField, DrawerFields, DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
+import { DrawerField, DrawerFields } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminLoading } from '@/app/admin/components/layout/AdminStates';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { BusinessOsPanel } from './BusinessOsPanel';
 import { BusinessAuditSection } from './BusinessAuditSection';
 import { AllProductsUsage } from './AllProductsUsage';
 import { DeleteBusinessDialog } from './DeleteBusinessDialog';
+import { DrawerBox, PART_BOX, PartPurpose } from './DrawerBox';
 import { TestAccountCleanupPanel } from '@/components/business-os/purge/TestAccountCleanupPanel';
 import { ageLine } from '@/app/admin/users/usersFormat';
 import type {
@@ -107,10 +108,12 @@ export function BusinessDetail({
 
       {/* 4. Account & security (BD-10): the four former sections as three
           groups, same fields and words. Group labels are not headings: the
-          section has exactly one (L-1d M-4). */}
-      <DrawerSection title="Account & security" testId="drawer-section-account">
-        <div data-testid="account-group-account" className="space-y-1">
+          section has exactly one (L-1d M-4). LF-4d (BD-16): the section and
+          each group in a box; a group's purpose line follows its label. */}
+      <DrawerBox section="account" title="Account & security" testId="drawer-section-account">
+        <div data-testid="account-group-account" className={`${PART_BOX} space-y-1`}>
           <p className={GROUP_LABEL}>Account</p>
+          <PartPurpose part="account-account" />
           <DrawerFields>
             <DrawerField label="Full Name">{user.full_name || 'N/A'}</DrawerField>
             {user.company && <DrawerField label="Company">{user.company}</DrawerField>}
@@ -130,8 +133,9 @@ export function BusinessDetail({
           </DrawerFields>
         </div>
 
-        <div data-testid="account-group-signin" className="space-y-1 pt-2">
+        <div data-testid="account-group-signin" className={`${PART_BOX} space-y-1`}>
           <p className={GROUP_LABEL}>Sign-in</p>
+          <PartPurpose part="account-signin" />
           <DrawerFields>
             <DrawerField label="Email Verified">{user.email_confirmed ? '✓ Yes' : '✗ No'}</DrawerField>
             <DrawerField label="Auth Providers">
@@ -177,8 +181,9 @@ export function BusinessDetail({
             ADMIN_BOS_CLEANUP slice 5a: their reads named columns that do not exist. */}
 
         {detailedStats && (
-          <div data-testid="plugins-card" className="space-y-2 pt-2">
+          <div data-testid="plugins-card" className={`${PART_BOX} space-y-2`}>
             <p className={GROUP_LABEL}>Connected plugins</p>
+            <PartPurpose part="account-plugins" />
             {detailedStats.plugins === null ? (
               <p className="text-sm text-red-300">The connected plugins could not be read.</p>
             ) : (
@@ -216,7 +221,7 @@ export function BusinessDetail({
             )}
           </div>
         )}
-      </DrawerSection>
+      </DrawerBox>
 
       <BusinessAuditSection logs={auditLogs} filter={auditFilter} onFilterChange={onAuditFilterChange} />
 

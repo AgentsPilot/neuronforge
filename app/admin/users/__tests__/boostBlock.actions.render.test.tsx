@@ -5,8 +5,10 @@
 /**
  * The "Credit top-ups" block's actions (credits boost slice 6b; workplan §3.4;
  * SA C-2, C-3, C-5, C-6; BQ-1): Set limit / Back to default with a two-step
- * confirm and one submit at a time, the reconcile button with its confirm and
- * counts, and Take back on a purchase's lot.
+ * confirm and one submit at a time, and Take back on a purchase's lot. The
+ * reconcile button's cases MOVED to the Jobs page in Admin Layout LF-4c
+ * (`app/admin/__tests__/jobsQueues.reconcile.render.test.tsx`, same
+ * assertions; BD-6); here the block shows only the pointer line.
  *
  * Fetch is stubbed per URL and method; a POST can be held open to test double
  * submits.
@@ -23,7 +25,6 @@ const ACCOUNT = '99999999-9999-4999-8999-999999999999';
 const ADMIN_ID = 'abcdef12-3456-4789-8abc-def012345678';
 const GET_URL = `/api/admin/business-os/credits/accounts/${ACCOUNT}/boost`;
 const OPS_URL = `/api/admin/business-os/entitlements/accounts/${ACCOUNT}`;
-const RECONCILE_URL = '/api/admin/business-os/credits/boost/reconcile';
 const BUSINESS = 'Acme Therapy';
 const LOT = '77777777-7777-4777-8777-777777777777';
 
@@ -76,7 +77,6 @@ type Answer = { status: number; body: unknown } | Promise<{ status: number; body
 interface Routes {
   get: () => Answer;
   ops?: (body: Record<string, unknown>) => Answer;
-  reconcile?: (body: string) => Answer;
 }
 
 function mockFetch(routes: Routes) {
@@ -87,7 +87,6 @@ function mockFetch(routes: Routes) {
     let answer: Answer = { status: 404, body: { success: false, error: 'not mocked' } };
     if (method === 'GET' && url === GET_URL) answer = routes.get();
     else if (method === 'POST' && url === OPS_URL && routes.ops) answer = routes.ops(JSON.parse(init!.body!));
-    else if (method === 'POST' && url === RECONCILE_URL && routes.reconcile) answer = routes.reconcile(init!.body!);
     const { status, body } = await answer;
     return { ok: status < 400, status, json: async () => body };
   });
@@ -117,11 +116,15 @@ function deferred<T>() {
 }
 
 describe('the buttons', () => {
-  it('Set limit and the reconcile button for another account; Back to default only with an override', async () => {
+  it('Set limit for another account, Back to default only with an override; no reconcile button, the pointer line instead (LF-4c)', async () => {
     await mount(view());
     expect(screen.getByTestId('boost-cap-set').textContent).toBe('Set limit');
     expect(screen.queryByTestId('boost-cap-end')).toBeNull();
-    expect(screen.getByTestId('boost-reconcile').textContent).toBe('Run billing reconcile now (all accounts)');
+    expect(screen.queryByTestId('boost-reconcile')).toBeNull();
+    expect(screen.getByTestId('boost-reconcile-pointer').textContent).toBe(
+      `${BOOST_ACTION_COPY.reconcilePointer} ${BOOST_ACTION_COPY.reconcilePointerLink}`
+    );
+    expect(screen.getByRole('link', { name: BOOST_ACTION_COPY.reconcilePointerLink }).getAttribute('href')).toBe('/admin/jobs-queues');
   });
 
   it('with an active override, Back to default is offered', async () => {
@@ -135,6 +138,10 @@ describe('the buttons', () => {
     expect(screen.queryByTestId('boost-reconcile')).toBeNull();
     expect(screen.queryByTestId('boost-take-back')).toBeNull();
     expect(screen.getByTestId('boost-own-account').textContent).toBe(BOOST_ACTION_COPY.ownAccount);
+    // The pointer is a link, not a money action: it shows on the admin's own account too (SA SQ-7).
+    expect(screen.getByTestId('boost-reconcile-pointer').textContent).toBe(
+      `${BOOST_ACTION_COPY.reconcilePointer} ${BOOST_ACTION_COPY.reconcilePointerLink}`
+    );
   });
 });
 
@@ -271,79 +278,6 @@ describe('Back to default', () => {
     fireEvent.click(screen.getByTestId('boost-cap-continue'));
     fireEvent.click(screen.getByTestId('boost-cap-confirm'));
     expect((await screen.findByTestId('boost-cap-dialog-error')).textContent).toBe('This business is already on the default limit.');
-  });
-});
-
-describe('Run billing reconcile now (SA C-6)', () => {
-  const COUNTS = {
-    boostExamined: 3,
-    boostCredited: 1,
-    boostExpired: 1,
-    boostFailed: 0,
-    boostFlagged: 1,
-    boostDeferred: 0,
-    boostDisputesExamined: 0,
-    boostReceiptsFilled: 2,
-    boostDeadlineHit: 0,
-  };
-
-  it('the confirm says it covers every business; Run posts an EMPTY body (no account id) and shows the counts in words', async () => {
-    const calls = await mount(view(), { reconcile: () => ok({ runId: 'r1', counts: COUNTS, passesRun: 1, passesFailed: 0, durationMs: 12 }) });
-    fireEvent.click(screen.getByTestId('boost-reconcile'));
-    expect((await screen.findByTestId('boost-reconcile-description')).textContent).toBe(BOOST_ACTION_COPY.reconcileDescription);
-    expect(screen.getByTestId('boost-reconcile-dialog').textContent).toContain('not only this one');
-    expect(posts(calls, RECONCILE_URL)).toHaveLength(0);
-    fireEvent.click(screen.getByTestId('boost-reconcile-run'));
-    const notice = await screen.findByTestId('boost-notice');
-    expect(notice.textContent).toContain('Reconcile finished: 3 stuck top-ups examined, 1 credited, 1 expired, 0 marked failed, 1 need a person, 0 left for the next run.');
-    expect(notice.textContent).toContain('2 missing receipts filled.');
-    const sent = posts(calls, RECONCILE_URL);
-    expect(sent).toHaveLength(1);
-    expect(sent[0].body).toBe('{}');
-    expect(sent[0].body).not.toContain(ACCOUNT);
-  });
-
-  it('a run cut by its deadline, or with Stripe unreadable, says so', async () => {
-    await mount(view(), { reconcile: () => ok({ counts: { ...COUNTS, boostDeadlineHit: 1, boostRowsLeft: 4, boostStripeUnavailable: 1 } }) });
-    fireEvent.click(screen.getByTestId('boost-reconcile'));
-    fireEvent.click(await screen.findByTestId('boost-reconcile-run'));
-    const notice = await screen.findByTestId('boost-notice');
-    expect(notice.textContent).toContain('It stopped at its time limit with 4 top-ups left; the nightly run picks them up.');
-    expect(notice.textContent).toContain('Stripe could not be read, so nothing was checked.');
-  });
-
-  it.each([
-    ['a pass that failed (passesFailed > 0)', { runId: 'r1', counts: {}, passesRun: 1, passesFailed: 1, durationMs: 3 }],
-    ['counts without boostExamined', { runId: 'r1', counts: { passesRun: 1 }, passesRun: 1, passesFailed: 0, durationMs: 3 }],
-    ['no counts at all', { runId: 'r1', passesRun: 1, passesFailed: 0 }],
-  ])('QA6b-M1: a 200 with %s is the failure line, never "0 examined"', async (_name, data) => {
-    await mount(view(), { reconcile: () => ok(data) });
-    fireEvent.click(screen.getByTestId('boost-reconcile'));
-    fireEvent.click(await screen.findByTestId('boost-reconcile-run'));
-    expect((await screen.findByTestId('boost-reconcile-error')).textContent).toBe(
-      'The reconcile could not run. Nothing is lost: the nightly run will try again.'
-    );
-    expect(screen.queryByTestId('boost-notice')).toBeNull();
-  });
-
-  it('a list read that failed is mentioned', async () => {
-    await mount(view(), { reconcile: () => ok({ counts: { ...COUNTS, boostListFailed: 1 }, passesRun: 1, passesFailed: 0 }) });
-    fireEvent.click(screen.getByTestId('boost-reconcile'));
-    fireEvent.click(await screen.findByTestId('boost-reconcile-run'));
-    expect((await screen.findByTestId('boost-notice')).textContent).toContain('Some top-ups could not be listed; the nightly run tries again.');
-  });
-
-  it('one run at a time, and a failure says it could not run', async () => {
-    const held = deferred<{ status: number; body: unknown }>();
-    const calls = await mount(view(), { reconcile: () => held.promise });
-    fireEvent.click(screen.getByTestId('boost-reconcile'));
-    fireEvent.click(await screen.findByTestId('boost-reconcile-run'));
-    fireEvent.click(screen.getByTestId('boost-reconcile-run'));
-    expect(posts(calls, RECONCILE_URL)).toHaveLength(1);
-    expect(screen.getByTestId('boost-reconcile-run').textContent).toBe('Running…');
-    await act(async () => held.resolve({ status: 500, body: { success: false, error: 'reconcile_failed' } }));
-    expect((await screen.findByTestId('boost-reconcile-error')).textContent).toBe(BOOST_ACTION_COPY.reconcileFailed);
-    expect(screen.queryByTestId('boost-notice')).toBeNull();
   });
 });
 
