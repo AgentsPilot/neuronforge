@@ -509,8 +509,10 @@ describe('U-11 / U-12', () => {
   it('U-12 the view header is the 7c sentence; with panels closed the page buttons are unchanged (no Retry item)', async () => {
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('queue-lead_responses');
+    // Amended deliberately by Admin Layout follow-ups LF-4c (G-3): the sentence
+    // also names the reconcile button; the 7c retry clause is unchanged.
     expect(document.body.textContent).toContain(
-      "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; everything else here is read-only."
+      "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has a Reconcile top-ups now button; everything else here is read-only."
     );
     expect(screen.queryByRole('button', { name: 'Retry item' })).toBeNull();
   });

@@ -9,8 +9,12 @@
  *
  * Characterisation, not specification: every assertion is what the unchanged
  * code does on 2026-10-13. LF-4b may edit these tests only where an opener
- * moves or a fold appears (F-2 in the workplan); LF-4c moves the reconcile
- * cases to the Jobs page with the SAME request assertions (BD-6). Pin list:
+ * moves or a fold appears (F-2 in the workplan). LF-4c MOVED the reconcile
+ * cases REC-1 to REC-3 to the Jobs page with the SAME request assertions
+ * (`app/admin/__tests__/jobsQueues.reconcile.render.test.tsx`; BD-6, SA ruling
+ * on SQ-9) and left REC-0 here: the drawer has no reconcile button, only the
+ * pointer line. This file's route table knows no reconcile URL, so a reconcile
+ * POST from the drawer fails every test as an unexpected request. Pin list:
  * docs/workplans/ADMIN_LAYOUT_LF4A1_WORKPLAN.md.
  *
  * The shared pin harness (`tests/admin/drawerPinHarness.ts`, LF-4b Step 12):
@@ -75,7 +79,6 @@ const OPS_URL = `/api/admin/business-os/entitlements/accounts/${DANA_ID}`;
 const SUMMARY_URL = `/api/admin/business-os/accounts/${DANA_ID}/summary`;
 const CREDITS_URL = `/api/admin/business-os/credits/accounts/${DANA_ID}`;
 const BOOST_URL = `${CREDITS_URL}/boost`;
-const RECONCILE_URL = '/api/admin/business-os/credits/boost/reconcile';
 const ARCHIVING_URL = '/api/admin/archiving';
 const CLEANUP_CHECK_URL = '/api/admin/test-account-cleanup/check';
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
@@ -180,17 +183,11 @@ function boost(overrides: Partial<AdminBoostView> = {}): AdminBoostView {
   };
 }
 
-const RECONCILE_OK = {
-  counts: { boostExamined: 3, boostCredited: 1, boostExpired: 0, boostFailed: 0, boostFlagged: 0, boostDeferred: 0 },
-  passesFailed: 0,
-};
-
 // ── The route table (the recording stub is the shared pin harness) ──────────
 
 let creditsReply: () => Queued;
 let boostData: AdminBoostView;
 let opsQueue: Queued[] = [];
-let reconcileQueue: Queued[] = [];
 
 const ok = (data: unknown): Reply => ({ status: 200, body: { success: true, data } });
 const refused = (status: number, error: string): Reply => ({ status, body: { success: false, error } });
@@ -214,7 +211,6 @@ function routeGet(url: string): Queued {
 
 function routePost(url: string): Queued {
   if (url === OPS_URL) return fromQueue(opsQueue, url);
-  if (url === RECONCILE_URL) return fromQueue(reconcileQueue, url);
   unexpected.push(`POST ${url}`);
   return refused(404, 'not mocked');
 }
@@ -258,8 +254,6 @@ function fillCap(dialog: HTMLElement, amount: string | null, reason: string) {
 
 /** The whole expected request of an entitlements op (PIN-e: URL, method, headers, cache, body). */
 const opsPost = (body: Record<string, unknown>) => ({ url: OPS_URL, method: 'POST', headers: JSON_HEADERS, cache: 'no-store', body });
-/** The whole expected reconcile request: the body is the literal string '{}'. */
-const RECONCILE_POST = { url: RECONCILE_URL, method: 'POST', headers: JSON_HEADERS, cache: 'no-store', body: '{}' };
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -270,7 +264,6 @@ installPinLifecycle({ countUuids: true });
 
 beforeEach(() => {
   opsQueue = [];
-  reconcileQueue = [];
   const data = credits();
   creditsReply = () => ok(data);
   boostData = boost();
@@ -575,82 +568,22 @@ describe('Set limit and Back to default (PIN-d, PIN-e, PIN-f, PIN-g)', () => {
   });
 });
 
-// ── Run billing reconcile ───────────────────────────────────────────────────
+// ── Reconcile: moved to Scheduled jobs & queues (LF-4c) ─────────────────────
 
-describe('Run billing reconcile (PIN-e, PIN-f, PIN-g; moves to Jobs in LF-4c with the same request assertions)', () => {
-  it("REC-1: opener, words, confirm step; POST, the header, the literal body '{}', cache no-store; the counts as the notice; one top-ups re-read", async () => {
+describe('Reconcile is gone from the drawer (LF-4c, BD-6; REC-1 to REC-3 moved to jobsQueues.reconcile.render)', () => {
+  it('REC-0: no reconcile button or dialog in the drawer; the pointer line links to Scheduled jobs & queues; no reconcile request', async () => {
     const drawer = await openDrawer();
-    const opener = button(drawer, 'boost-reconcile');
-    expect(opener.textContent).toBe('Run billing reconcile now (all accounts)');
-    expect(within(drawer).getByTestId('boost-block').contains(opener)).toBe(true);
-
-    fireEvent.click(opener);
-    const dialog = await screen.findByTestId('boost-reconcile-dialog');
-    expect(within(dialog).getByRole('heading').textContent).toBe('Run billing reconcile now');
-    expect(within(dialog).getByTestId('boost-reconcile-description').textContent).toBe(
-      'This checks Stripe for unfinished credit top-ups of every business, not only this one. It may add credits, close expired checkouts or mark failed payments, exactly as the nightly run at 05:41 UTC does.'
-    );
-    expect(button(dialog, 'boost-reconcile-run').textContent).toBe('Run now');
-    expect(posts()).toEqual([]);
-
-    reconcileQueue.push(ok(RECONCILE_OK));
-    fireEvent.click(button(dialog, 'boost-reconcile-run'));
-    const notice = await within(drawer).findByTestId('boost-notice');
-    expect(noticeLines(notice)).toEqual([
-      'Reconcile finished: 3 stuck top-ups examined, 1 credited, 0 expired, 0 marked failed, 0 need a person, 0 left for the next run.',
-    ]);
+    expect(within(drawer).queryByTestId('boost-reconcile')).toBeNull();
     expect(screen.queryByTestId('boost-reconcile-dialog')).toBeNull();
+    expect(within(drawer).queryByRole('button', { name: /reconcile/i })).toBeNull();
 
-    expect(posts().map((p) => requestOf(p, true))).toStrictEqual([RECONCILE_POST]);
-    // One top-ups re-read, no Credits re-read, no list re-read.
-    await expectReads({ credits: 1, boost: 2, list: 1 });
-  });
+    const block = within(drawer).getByTestId('boost-block');
+    const pointer = within(block).getByTestId('boost-reconcile-pointer');
+    expect(pointer.textContent).toBe('Reconcile top-ups for all accounts: Scheduled jobs & queues');
+    const link = within(pointer).getByRole('link', { name: 'Scheduled jobs & queues' });
+    expect(link.getAttribute('href')).toBe('/admin/jobs-queues');
 
-  it('REC-2 (PIN-f): a double click on Run sends once; while running, Run says Running…, Close is disabled and Escape is refused', async () => {
-    const drawer = await openDrawer();
-    fireEvent.click(button(drawer, 'boost-reconcile'));
-    const dialog = await screen.findByTestId('boost-reconcile-dialog');
-    const held = deferred<Reply>();
-    reconcileQueue.push(held.promise);
-    const run = button(dialog, 'boost-reconcile-run');
-    act(() => {
-      run.click();
-      run.click();
-    });
-    expect(posts()).toHaveLength(1);
-    expect(button(dialog, 'boost-reconcile-run').textContent).toBe('Running…');
-    expect(button(dialog, 'boost-reconcile-run').disabled).toBe(true);
-    expect(button(dialog, 'boost-reconcile-close').disabled).toBe(true);
-    fireEvent.keyDown(dialog, { key: 'Escape' });
-    await act(async () => undefined);
-    expect(screen.getByTestId('boost-reconcile-dialog')).toBe(dialog);
-    expect(screen.getByTestId('users-drawer').getAttribute('data-state')).toBe('open');
-    await act(async () => {
-      held.resolve(ok(RECONCILE_OK));
-    });
-    await waitFor(() => expect(screen.queryByTestId('boost-reconcile-dialog')).toBeNull());
-    expect(posts().map((p) => requestOf(p, true))).toStrictEqual([RECONCILE_POST]);
-    await expectReads({ credits: 1, boost: 2, list: 1 });
-  });
-
-  it('REC-3 (PIN-g, QA6b-M1): a 200 whose pass failed shows the failure words and stays open; no notice, no re-read; Run again sends the same body', async () => {
-    const drawer = await openDrawer();
-    fireEvent.click(button(drawer, 'boost-reconcile'));
-    const dialog = await screen.findByTestId('boost-reconcile-dialog');
-    reconcileQueue.push(ok({ ...RECONCILE_OK, passesFailed: 1 }));
-    fireEvent.click(button(dialog, 'boost-reconcile-run'));
-    expect((await within(dialog).findByTestId('boost-reconcile-error')).textContent).toBe(
-      'The reconcile could not run. Nothing is lost: the nightly run will try again.'
-    );
+    expect(posts()).toEqual([]);
     await expectReads({ credits: 1, boost: 1, list: 1 });
-    expect(screen.getByTestId('boost-reconcile-dialog')).toBe(dialog);
-    expect(within(drawer).queryByTestId('boost-notice')).toBeNull();
-    expect(posts().map((p) => requestOf(p, true))).toStrictEqual([RECONCILE_POST]);
-
-    reconcileQueue.push(ok(RECONCILE_OK));
-    fireEvent.click(button(dialog, 'boost-reconcile-run'));
-    await waitFor(() => expect(screen.queryByTestId('boost-reconcile-dialog')).toBeNull());
-    expect(posts().map((p) => requestOf(p, true))).toStrictEqual([RECONCILE_POST, RECONCILE_POST]);
-    await expectReads({ credits: 1, boost: 2, list: 1 });
   });
 });
