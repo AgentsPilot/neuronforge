@@ -10,6 +10,13 @@
  * jsdom like the sibling suites (Playwright is not installed: CLAUDE.md
  * § Testing). `next/navigation` is mocked with a settable search string, and
  * the real jsdom `history.replaceState` is spied on (the Businesses way).
+ *
+ * LF-3b (Admin Layout Follow-ups §3.4, SA-C11): the native confirm box stub is
+ * removed. Every Delete and Mark All Read click now answers the admin dialog
+ * through `answerDialog` (T-12, T-14, T-17, T-21, T-22, T-24); T-12's
+ * "confirm false" case becomes "Delete asks, Cancel sends nothing". No request
+ * assertion is edited. The dialog's own rules are in
+ * `messages.confirmDialog.render.test.tsx`.
  */
 
 import React from 'react';
@@ -169,13 +176,24 @@ async function openWithButton(name: string) {
   return screen.findByRole('dialog', { name: new RegExp(`^Message from ${name}`) });
 }
 
+const DELETE_QUESTION = 'Are you sure you want to delete this message?';
+const MARK_ALL_QUESTION = 'Mark all messages as read?';
+
+/** LF-3b: answer the admin dialog that asks `question` with the button named `choice`. */
+async function answerDialog(question: string, choice: string) {
+  const asked = await screen.findByRole('dialog', { name: question });
+  // Inside act: the request it starts settles in microtasks before the next flush.
+  await act(async () => {
+    fireEvent.click(within(asked).getByRole('button', { name: choice }));
+  });
+}
+
 async function closeWithEscape() {
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 }
 
 let replaceSpy: jest.SpyInstance;
-let confirmSpy: jest.SpyInstance;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -184,12 +202,10 @@ beforeEach(() => {
   patchAnswer = async () => answer(200, { message: {} });
   deleteAnswer = async () => answer(200, { success: true });
   replaceSpy = jest.spyOn(window.history, 'replaceState');
-  confirmSpy = jest.spyOn(window, 'confirm').mockReturnValue(true);
 });
 
 afterEach(() => {
   replaceSpy.mockRestore();
-  confirmSpy.mockRestore();
 });
 
 const replacedUrls = (): string[] => replaceSpy.mock.calls.map((call) => String(call[2]));
@@ -500,11 +516,14 @@ describe('T-12 the whole-row click (D-17, SA M-3)', () => {
     expect(writes(fetchMock)).toHaveLength(1);
   });
 
-  it('a click on Delete with confirm false opens nothing and sends nothing', async () => {
+  // EDITED by LF-3b: was "with confirm false opens nothing"; Delete now opens its own question, never the drawer.
+  it('a click on Delete opens only the delete question, not the drawer; Cancel sends nothing', async () => {
     const fetchMock = mockFetch();
     await renderPage();
-    confirmSpy.mockReturnValue(false);
     fireEvent.click(deleteButtonFor('Dana Example'));
+    await flush();
+    expect(screen.getAllByRole('dialog').map((d) => d.getAttribute('data-testid'))).toEqual(['delete-confirm-dialog']);
+    await answerDialog(DELETE_QUESTION, 'Cancel');
     await flush();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(writes(fetchMock)).toHaveLength(0);
@@ -568,6 +587,7 @@ describe('T-14 close when gone', () => {
     await renderPage();
     await openWithButton('Oren Sample');
     fireEvent.click(deleteButtonFor('Oren Sample'));
+    await answerDialog(DELETE_QUESTION, 'Delete');
     await flush();
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
@@ -674,11 +694,14 @@ describe('T-17 logging is facts only (SA M-4)', () => {
     // A failed DELETE, a rejected one, a failed open, and Mark All Read failing.
     deleteAnswer = async () => answer(500, { error: 'x' });
     fireEvent.click(deleteButtonFor('Dana Example'));
+    await answerDialog(DELETE_QUESTION, 'Delete');
     await flush();
     deleteAnswer = () => Promise.reject(new TypeError('Failed to fetch'));
     fireEvent.click(deleteButtonFor('Dana Example'));
+    await answerDialog(DELETE_QUESTION, 'Delete');
     await flush();
     fireEvent.click(screen.getByRole('button', { name: 'Mark All Read' }));
+    await answerDialog(MARK_ALL_QUESTION, 'Mark All Read');
     await flush();
 
     // A search, then failing reads.
@@ -740,6 +763,7 @@ describe('T-21 D-19 Delete failure', () => {
     await renderPage();
     deleteAnswer = async () => answer(500, { error: 'route_error_probe' });
     fireEvent.click(deleteButtonFor('Dana Example'));
+    await answerDialog(DELETE_QUESTION, 'Delete');
     await flush();
     expect(within(table()).getByText('Dana Example')).toBeTruthy();
     expect(screen.getAllByTestId('delete-failed')).toHaveLength(1);
@@ -752,11 +776,13 @@ describe('T-21 D-19 Delete failure', () => {
     await renderPage();
     deleteAnswer = () => Promise.reject(new TypeError('Failed to fetch'));
     fireEvent.click(deleteButtonFor('Dana Example'));
+    await answerDialog(DELETE_QUESTION, 'Delete');
     await flush();
     expect(within(rowOf('Dana Example')).getByTestId('delete-failed').textContent).toBe('Could not delete the message. Try again.');
     const pending = deferred<ResponseLike>();
     deleteAnswer = () => pending.promise;
     fireEvent.click(deleteButtonFor('Dana Example'));
+    await answerDialog(DELETE_QUESTION, 'Delete');
     await waitFor(() => expect(screen.queryByTestId('delete-failed')).toBeNull());
     await act(async () => pending.resolve(answer(200, { success: true })));
   });
@@ -771,6 +797,7 @@ describe('T-22 D-19 Mark All Read failure', () => {
     patchAnswer = async (id) => (id === 'msg-4' ? answer(500, { error: 'x' }) : answer(200, { message: {} }));
     const before = reads(fetchMock).length;
     fireEvent.click(screen.getByRole('button', { name: 'Mark All Read' }));
+    await answerDialog(MARK_ALL_QUESTION, 'Mark All Read');
     await flush();
     await flush();
     expect(writes(fetchMock)).toHaveLength(2);
@@ -812,9 +839,11 @@ describe('T-24 D-19 success shows nothing new', () => {
     noAlerts();
     await closeWithEscape();
     fireEvent.click(deleteButtonFor('Oren Sample'));
+    await answerDialog(DELETE_QUESTION, 'Delete');
     await flush();
     noAlerts();
     fireEvent.click(screen.getByRole('button', { name: 'Mark All Read' }));
+    await answerDialog(MARK_ALL_QUESTION, 'Mark All Read');
     await flush();
     await flush();
     noAlerts();

@@ -42,7 +42,7 @@ import { DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import type { AccountSummaryPayload, AdminUserRow } from '../types';
-import { CreditsBlock } from './CreditsBlock';
+import { CreditsBlock, type TakeBackRequest } from './CreditsBlock';
 import { BoostBlock } from './BoostBlock';
 import {
   BusinessSummaryStrip,
@@ -126,9 +126,14 @@ interface Props {
    * Presentational: it holds no read.
    */
   allProducts: ReactNode;
+  /**
+   * BD-14 (LF-4b): the drawer's list re-read, called by the Credits block once
+   * after a successful Give or Take back.
+   */
+  onCreditsChanged: () => void;
 }
 
-export function BusinessOsPanel({ user, allProducts }: Props) {
+export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) {
   const accountId = user.id;
   const userName = user.full_name;
   const [plan, setPlan] = useState<Load<AccountPayload>>({ state: 'loading' });
@@ -136,7 +141,8 @@ export function BusinessOsPanel({ user, allProducts }: Props) {
   // Credits boost 6b (SA C-5): Take back from a top-up opens the Credits block's dialog.
   const [takeBackableLots, setTakeBackableLots] = useState<string[]>([]);
   const [loadedLots, setLoadedLots] = useState<string[]>([]);
-  const [takeBackRequest, setTakeBackRequest] = useState<{ lotId: string; seq: number } | null>(null);
+  // The top-up's button travels with the request, so focus can return to it (SA-C8, SA C5).
+  const [takeBackRequest, setTakeBackRequest] = useState<TakeBackRequest | null>(null);
   const onTakeBackableLots = useCallback((lotIds: string[], loadedLotIds: string[]) => {
     setTakeBackableLots(lotIds);
     setLoadedLots(loadedLotIds);
@@ -145,7 +151,8 @@ export function BusinessOsPanel({ user, allProducts }: Props) {
     () => ({
       lotIds: new Set(takeBackableLots),
       loadedLotIds: new Set(loadedLots),
-      onTakeBack: (lotId: string) => setTakeBackRequest((previous) => ({ lotId, seq: (previous?.seq ?? 0) + 1 })),
+      onTakeBack: (lotId: string, opener: HTMLElement) =>
+        setTakeBackRequest((previous) => ({ lotId, seq: (previous?.seq ?? 0) + 1, opener })),
     }),
     [takeBackableLots, loadedLots]
   );
@@ -250,8 +257,8 @@ export function BusinessOsPanel({ user, allProducts }: Props) {
         lastSignInAt={user.last_sign_in_at ?? null}
       />
 
-      {/* 1. Credits & billing: the two money blocks, moved whole and unedited
-          (LF-4b owns their insides). Today's gate: mounted only after both
+      {/* 1. Credits & billing: the two money blocks (their action bars, folds
+          and focus return are LF-4b's, inside them). Today's gate: mounted only after both
           reads settle, and only for a Business OS account (BD-13). */}
       <DrawerSection title="Credits & billing" testId="drawer-section-credits">
         {loading && <p className="text-sm text-slate-400">Loading Business OS details…</p>}
@@ -270,6 +277,7 @@ export function BusinessOsPanel({ user, allProducts }: Props) {
               businessLabel={businessLabel}
               takeBackRequest={takeBackRequest}
               onTakeBackableLots={onTakeBackableLots}
+              onCreditsChanged={onCreditsChanged}
             />
 
             {/* Credit top-ups (credits boost slice 6a): its own read, after Credits.

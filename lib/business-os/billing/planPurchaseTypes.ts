@@ -40,9 +40,24 @@ export interface PlanPurchaseBillingWire {
 /** What free access a purchase would end today (SA W-7). */
 export type EndsFreeAccessOnPurchaseWire = 'trial' | 'free_access' | null;
 
+/**
+ * What an owner who already PAYS may upgrade to now (plan payments P-7b.1b;
+ * workplan §3.6; SA U-2). `planUpgradeOffer`'s answer, from our billing record
+ * only: the buyable tiers above the tier the account pays for, in tier order.
+ * The upgrade routes call the same predicate, so the screen shows "Upgrade"
+ * exactly where the server would get past our own data. What only Stripe knows
+ * (a pending update, the live item price) is checked by the routes after a
+ * fresh read, and answered by code.
+ */
+export interface PlanUpgradeWire {
+  tiers: readonly string[];
+}
+
 export interface PlanPurchaseWire {
   offer: PlanPurchaseOfferWire;
   billing: PlanPurchaseBillingWire | null;
   /** Set only when `offer.kind` is `choose`: the sentence goes beside the Choose list. */
   endsFreeAccessOnPurchase: EndsFreeAccessOnPurchaseWire;
+  /** P-7b.1b: `null` unless `planUpgradeOffer` answers `upgrade`. */
+  upgrade: PlanUpgradeWire | null;
 }

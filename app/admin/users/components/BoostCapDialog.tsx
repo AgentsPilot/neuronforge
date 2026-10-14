@@ -52,6 +52,8 @@ interface Props {
   current: CurrentLimit;
   defaultLimit: { amountMinor: number; currency: string };
   onSuccess: (lines: string[]) => void;
+  /** F-108 (LF-4b, BD-15): where focus goes on close; the block returns it to the opener. */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 type PostResult = { ok: true; data: Record<string, unknown> } | { ok: false; code: string };
@@ -93,7 +95,7 @@ function describeCurrent(current: CurrentLimit, windowDays: number): string {
   return `${perWindow(current.amountMinor, current.currency, windowDays)} (${current.source === 'default' ? 'the default' : 'set by an admin'})`;
 }
 
-export function BoostCapDialog({ open, onOpenChange, mode, accountId, businessLabel, limits, current, defaultLimit, onSuccess }: Props) {
+export function BoostCapDialog({ open, onOpenChange, mode, accountId, businessLabel, limits, current, defaultLimit, onSuccess, onCloseAutoFocus }: Props) {
   const ids = useId();
   const [step, setStep] = useState<'form' | 'confirm'>('form');
   const [amountText, setAmountText] = useState('');
@@ -166,7 +168,7 @@ export function BoostCapDialog({ open, onOpenChange, mode, accountId, businessLa
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent data-testid="boost-cap-dialog" className={ADMIN_DIALOG_CLASS}>
+      <DialogContent data-testid="boost-cap-dialog" className={ADMIN_DIALOG_CLASS} onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>{title}</DialogTitle>
           <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>{description}</DialogDescription>

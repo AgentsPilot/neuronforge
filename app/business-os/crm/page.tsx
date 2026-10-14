@@ -16,6 +16,7 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+import { usePhoneLibSettled } from '@/components/crm/usePhoneLib';
 
 const logger = createLogger({ module: 'CRMPage' });
 
@@ -113,10 +114,24 @@ export default function CRMPage() {
     }
   }, []);
 
+  /*
+   * PERF-2: the phone library is fetched after first paint instead of with
+   * the page. Mounting this hook starts that download (the new-contact modal
+   * and the drawer mount only on click, so they cannot start it themselves).
+   *
+   * A deep link (`?contact=`) opens the drawer at load, with its details
+   * section, phone field included, already expanded. It waits for the
+   * library to SETTLE, so the field is drawn with the rest of the section and
+   * never arrives a moment late (AC-2.3). Settled includes a failed download,
+   * so a network error can never stop the drawer opening; it only means the
+   * field shows its placeholder.
+   */
+  const phoneLibSettled = usePhoneLibSettled();
+
   // Handle contact query parameter - open specific contact drawer
   useEffect(() => {
     const contactId = searchParams.get('contact');
-    if (contactId && contacts.length > 0) {
+    if (contactId && contacts.length > 0 && phoneLibSettled) {
       // `?section=` decides which part of the record opens. Absent or unknown
       // falls back to details, which is what every link did before it existed.
       const section = sectionFromUrl(searchParams.get('section'));
@@ -137,7 +152,7 @@ export default function CRMPage() {
         fetchContactById(contactId, section, bookingId);
       }
     }
-  }, [searchParams, contacts]);
+  }, [searchParams, contacts, phoneLibSettled]);
 
   // Handle task query parameter - fetch task to get contact_id, then open drawer with tasks tab
   useEffect(() => {

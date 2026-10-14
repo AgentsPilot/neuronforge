@@ -52,7 +52,8 @@ function panel(id: string, fullName: string) {
     providers: [],
     role: 'authenticated',
   };
-  return <BusinessOsPanel user={user} allProducts={null} />;
+  // LF-4b (BD-14): the drawer's list re-read; these tests do not assert it.
+  return <BusinessOsPanel user={user} allProducts={null} onCreditsChanged={jest.fn()} />;
 }
 
 const SUMMARY = {

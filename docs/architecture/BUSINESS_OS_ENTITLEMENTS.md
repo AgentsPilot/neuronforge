@@ -367,7 +367,7 @@ None of these refuses a capability: they refuse a **sale**, so `planCheckout.ts`
 | `my-plan` route | Still takes no input. Adds `purchase`, and for a **tier** replaces `endsWhen` with the record's sentence when the record knows the date |
 | The matrix test | `planPurchaseOffer.matrix.test.ts` drives the Settings view through its own reads against the real checkout, so "Choose X shown ⇔ the checkout admits X" is a cross-check, not a tautology (SA F-C). The Stripe-side refusals (M-3 `complete`, layer 1b, price) remain the documented exceptions |
 
-**Upgrade now, backend (P-7b.1a)** ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P7B1_WORKPLAN.md), SA V-1 to V-12). Code complete 2026-10-13, awaiting review. Inert in production: both routes answer 404 while `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` is off, and refuse while `BUSINESS_OS_PLAN_PRICES_ENABLED` is off. No Settings change until P-7b.1b.
+**Upgrade now, backend (P-7b.1a)** ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P7B1_WORKPLAN.md), SA V-1 to V-12). Merged (PR #346). Inert in production: both routes answer 404 while `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` is off, and refuse while `BUSINESS_OS_PLAN_PRICES_ENABLED` is off. The Settings screen is P-7b.1b (below).
 
 | Piece | What it does |
 |---|---|
@@ -376,6 +376,15 @@ None of these refuses a capability: they refuse a **sale**, so `planCheckout.ts`
 | CF-6 (`planInvoiceFacts.ts`) | A paid `subscription_update` invoice with `total > 0` and a positive plan line assigns the plan even at `amount_paid` 0 (credit balance, under-minimum charge). Every other invoice kind is unchanged |
 | U-4 (`planPaymentApply.ts`) | A paid `subscription_update` invoice writes the plan only when Stripe applied it: a pending update waiting on THIS invoice releases the claim for retry (V-5); a single item not on one of the invoice's deciding prices records the money without the plan, alerted and audited (`BOS_BILLING_INVOICE_PAID`, `upgradeNotApplied`, severity warning) on a new row only |
 | Registrations | `planUpgrade.ts` and both routes are recorded non-gate importers (V-10); the guard's import parser now strips an inline `type` modifier (P-4.1 follow-up F-B) |
+
+**Upgrade in Settings (P-7b.1b)** (same workplan). Code complete 2026-10-13, awaiting review. Inert in production for the same two switches.
+
+| Piece | What it does |
+|---|---|
+| `purchase.upgrade` (`planPurchaseView.ts`) | `planUpgradeOffer` over the SAME billing row the view already reads, with the same switches and buyable tiers: `{ tiers }` or `null`. No new entitlements symbol; no Stripe call (SR-11). A failed billing read offers nothing (the routes answer `billing_row_unreadable`) |
+| `PlanUpgrade.tsx` + `planUpgradeCopy.ts` | The Settings island: preview, confirm, 3-D Secure through Stripe.js `handleNextAction`, the Q-2 resume, refusals localised by code. Success only from the section's server re-read: the plan in force is the target, `renewing`, and our record no longer offers it. Imports no entitlements value and no server code (types only) |
+| The matrix test | `planUpgradeOffer.matrix.test.ts` drives the view through its own reads against the real preview orchestration: "Upgrade to X shown ⇔ the preview gets past our own data for X". The Stripe-side refusals (status or cancel at Stripe, pending update, late webhook, record mismatch, price check) are the documented exceptions |
+| Captured fixtures (U-7) | `captured-p7b1-*.json`: the scrubbed sandbox answers and events of E-1 to E-6, in the C-6 ratchet, with the real `StripeService`, orchestration, `planInvoiceFacts` and webhook apply run over them (`planUpgrade.captured.test.ts`) |
 
 ### Money history, the apply function and the anchor rule (P-3b.1)
 
@@ -441,3 +450,4 @@ Plan payments P-3b.1 ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P3B_W
 | 2026-10-13 | `availableToBuy` on for both tiers (testing) | User decision: `presentation.basic.availableToBuy` and `presentation.pro.availableToBuy` set to `true` ("switch the plans on for now, as we are all testing, i want to see it work"). Both were already `shownToCustomers`, so the schema refinement holds. Production still sells nothing while both plan payment switches are off; re-checked per plan at go-live (plan payments requirement §9.5 row 16). § Plan checkout P-4.1 paragraph updated. No capability, tier or snapshot change |
 | 2026-10-13 | Billing: Buy in Settings (plan payments P-4.2) | New paragraph and table under § Plan checkout: `customerPlanView.plans` (every plan shown to customers; a paused or expired tier account lists its own plan), `freeAccessEndedByPurchase` (structural trial / free-access sentence, SA W-7), the `server-only` `planPurchaseView.ts` behind the input-free `my-plan` route (billing row by session user and key mode, no Stripe call, F-2 as SA W-5 words it), and the matrix test driven through the view (SA F-C). New non-gate importer registered; no capability or tier change |
 | 2026-10-13 | Billing: upgrade now, backend (plan payments P-7b.1a) | New paragraph and table under § Plan checkout: `planUpgradeOffer` (our data) and `planUpgradeEligibility` (fresh read), the preview and confirm routes, CF-6 in `planInvoiceFacts`, the U-4 guard in `planPaymentApply`. Three non-gate importers registered; F-B parser fix (inline `type` modifiers stripped, four existing entries renamed to the bare symbol). No capability, tier or snapshot change |
+| 2026-10-13 | Billing: upgrade in Settings (plan payments P-7b.1b) | New paragraph and table under § Plan checkout: `purchase.upgrade` from `planUpgradeOffer` in the purchase view (no new entitlements symbol; the `planPurchaseView.ts` registration's `why` re-checked), the `PlanUpgrade` island (no entitlements import), the view ↔ preview matrix test, and the U-7 captured fixtures. P-7b.1a marked merged (#346) |

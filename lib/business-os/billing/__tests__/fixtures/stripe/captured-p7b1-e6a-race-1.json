@@ -1,0 +1,22 @@
+{
+  "_fixture_source": "CAPTURED (2025-10-29.clover, SDK response) P-7b.1 sandbox experiment, acct_1UPKR4C7KDUGYIcA test mode, 2026-10-13. E-6 in-flight idempotency conflict, maxNetworkRetries 0: StripeInvalidRequestError, code idempotency_key_in_use, 409. Scrubbed before commit: emails, names, addresses, phones, hosted URLs and every client/confirmation secret replaced with placeholders (err.name restored to the SDK class name, which the generic name scrubber had replaced). Ids, prices, amounts, statuses and timestamps as Stripe sent them.",
+  "_fixture_api_version": "2025-10-29.clover",
+  "err": {
+    "name": "StripeInvalidRequestError",
+    "type": "StripeInvalidRequestError",
+    "rawType": "invalid_request_error",
+    "code": "idempotency_key_in_use",
+    "statusCode": 409,
+    "message": "There is currently another in-progress request using this Idempotent Key (that probably means you submitted twice, and the other request is still going through): bos-upgrade:sub_1UQ6nyC7KDUGYIcAYtxR6WBc:price_1UPKt5C7KDUGYIcAU9USgAv7:1792766146. Please try again later.",
+    "requestId": "req_D1K77z1kGA06Lm"
+  },
+  "raw": {
+    "code": "idempotency_key_in_use",
+    "doc_url": "https://example.invalid/scrubbed",
+    "message": "There is currently another in-progress request using this Idempotent Key (that probably means you submitted twice, and the other request is still going through): bos-upgrade:sub_1UQ6nyC7KDUGYIcAYtxR6WBc:price_1UPKt5C7KDUGYIcAU9USgAv7:1792766146. Please try again later.",
+    "request_log_url": "https://example.invalid/scrubbed",
+    "type": "invalid_request_error",
+    "statusCode": 409,
+    "requestId": "req_D1K77z1kGA06Lm"
+  }
+}

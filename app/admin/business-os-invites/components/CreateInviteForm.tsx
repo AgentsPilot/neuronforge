@@ -20,17 +20,65 @@
  * shared `readJsonBody` (C-4); the fields, defaults, request body and error map
  * are unchanged. This form never touches the URL or the shared URL hook (SA-R-5
  * (2)): the link it produces is shown once and must not survive a reload.
+ *
+ * ── Admin Layout Follow-ups LF-3a (OR-2, SA-C9) ─────────────────────────────
+ * The form is the body of the page's "New invite" drawer. Its draft is held by
+ * the page (`draft`, `onDraftChange`), so Escape or an overlay click, which
+ * close the drawer and unmount this form, never lose what the admin typed; only
+ * Cancel or a success clears it. `submitting` and the error stay here: they are
+ * about one attempt. The drawer's title is the heading, so the form has none.
+ *
+ * One send per Create (SA C5 a): a ref is checked first and set before any
+ * await, so a second submit in the same tick returns at once. `onBusyChange`
+ * tells the page a request is in flight, so it can refuse to close the drawer;
+ * Cancel is disabled for the same reason. The request bytes are unchanged and
+ * pinned by `__tests__/invites.requestPins.render.test.tsx`.
  */
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 
 import type { CreateInviteRequest, CreatedInvite, InviteFormOptions } from '../types';
 
+/** What the admin has typed and chosen so far: the ten values the form edits. */
+export interface InviteDraft {
+  email: string;
+  inviteType: string;
+  grantId: string;
+  accessKind: '' | 'open_ended' | 'months';
+  months: string;
+  expiryDays: number;
+  language: string;
+  note: string;
+  reason: string;
+  sendEmail: boolean;
+}
+
+/** A fresh draft: the same starting values the form always had. */
+export function initialInviteDraft(options: InviteFormOptions): InviteDraft {
+  const firstAvailable = options.inviteTypes.find((type) => type.available) ?? null;
+  return {
+    email: '',
+    inviteType: firstAvailable?.type ?? '',
+    grantId: '',
+    accessKind: '',
+    months: '12',
+    expiryDays: options.defaultExpiryDays,
+    language: options.defaultLanguage,
+    note: '',
+    reason: '',
+    sendEmail: true,
+  };
+}
+
 interface Props {
   options: InviteFormOptions;
+  draft: InviteDraft;
+  onDraftChange: (draft: InviteDraft) => void;
+  /** True from the moment a create is sent until it has settled. Writes a page ref only. */
+  onBusyChange: (isBusy: boolean) => void;
   onCreated: (created: CreatedInvite) => void;
   onCancel: () => void;
 }
@@ -48,21 +96,14 @@ const REASON_MIN = 3;
 
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
 
-export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
-  const firstAvailable = options.inviteTypes.find((type) => type.available) ?? null;
-
-  const [email, setEmail] = useState('');
-  const [inviteType, setInviteType] = useState<string>(firstAvailable?.type ?? '');
-  const [grantId, setGrantId] = useState<string>('');
-  const [accessKind, setAccessKind] = useState<'' | 'open_ended' | 'months'>('');
-  const [months, setMonths] = useState('12');
-  const [expiryDays, setExpiryDays] = useState(options.defaultExpiryDays);
-  const [language, setLanguage] = useState(options.defaultLanguage);
-  const [note, setNote] = useState('');
-  const [reason, setReason] = useState('');
-  const [sendEmail, setSendEmail] = useState(true);
+export function CreateInviteForm({ options, draft, onDraftChange, onBusyChange, onCreated, onCancel }: Props) {
+  const { email, inviteType, grantId, accessKind, months, expiryDays, language, note, reason, sendEmail } = draft;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set synchronously on the first submit: the guard a same-tick second submit cannot pass. */
+  const isSending = useRef(false);
+
+  const update = (patch: Partial<InviteDraft>) => onDraftChange({ ...draft, ...patch });
 
   const selected = useMemo(
     () => options.inviteTypes.find((type) => type.type === inviteType) ?? null,
@@ -82,6 +123,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (isSending.current) return;
     if (!selected || !canSubmit) return;
 
     const request: CreateInviteRequest = {
@@ -97,6 +139,8 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
         : { grantId: effectiveGrant }),
     };
 
+    isSending.current = true;
+    onBusyChange(true);
     setSubmitting(true);
     setError(null);
     try {
@@ -115,6 +159,8 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
     } catch {
       setError(ERROR_TEXT.could_not_create_invite);
     } finally {
+      isSending.current = false;
+      onBusyChange(false);
       setSubmitting(false);
     }
   };
@@ -123,13 +169,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
   const label = 'mb-1 block text-xs font-medium text-slate-300';
 
   return (
-    <form
-      data-testid="create-invite-form"
-      onSubmit={(event) => void submit(event)}
-      className="space-y-4 rounded-xl border border-slate-700 bg-slate-800/40 p-4"
-    >
-      <h2 className="text-sm font-semibold text-white">New invite</h2>
-
+    <form data-testid="create-invite-form" onSubmit={(event) => void submit(event)} className="space-y-4">
       <div>
         <label htmlFor="invite-email" className={label}>
           Email
@@ -139,7 +179,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
           type="email"
           autoComplete="off"
           value={email}
-          onChange={(event) => setEmail(event.target.value)}
+          onChange={(event) => update({ email: event.target.value })}
           className={field}
         />
       </div>
@@ -155,10 +195,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
                 value={type.type}
                 checked={inviteType === type.type}
                 disabled={!type.available}
-                onChange={() => {
-                  setInviteType(type.type);
-                  setGrantId('');
-                }}
+                onChange={() => update({ inviteType: type.type, grantId: '' })}
               />
               {type.label}
               {!type.available && type.unavailableReason && (
@@ -174,7 +211,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
           <label htmlFor="invite-grant" className={label}>
             Plan
           </label>
-          <select id="invite-grant" value={effectiveGrant} onChange={(event) => setGrantId(event.target.value)} className={field}>
+          <select id="invite-grant" value={effectiveGrant} onChange={(event) => update({ grantId: event.target.value })} className={field}>
             {selected.grants.map((grant) => (
               <option key={grant.id} value={grant.id}>
                 {grant.label}
@@ -194,7 +231,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
                 name="invite-access"
                 value="open_ended"
                 checked={accessKind === 'open_ended'}
-                onChange={() => setAccessKind('open_ended')}
+                onChange={() => update({ accessKind: 'open_ended' })}
               />
               No end date
             </label>
@@ -204,7 +241,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
                 name="invite-access"
                 value="months"
                 checked={accessKind === 'months'}
-                onChange={() => setAccessKind('months')}
+                onChange={() => update({ accessKind: 'months' })}
               />
               A number of months from signup
             </label>
@@ -215,7 +252,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
                 min={1}
                 max={options.championAccessMonthsMax}
                 value={months}
-                onChange={(event) => setMonths(event.target.value)}
+                onChange={(event) => update({ months: event.target.value })}
                 className={`${field} max-w-[8rem]`}
               />
             )}
@@ -231,7 +268,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
           <select
             id="invite-expiry"
             value={expiryDays}
-            onChange={(event) => setExpiryDays(Number(event.target.value))}
+            onChange={(event) => update({ expiryDays: Number(event.target.value) })}
             className={field}
           >
             {options.expiryDays.map((days) => (
@@ -245,7 +282,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
           <label htmlFor="invite-language" className={label}>
             Invitee language
           </label>
-          <select id="invite-language" value={language} onChange={(event) => setLanguage(event.target.value)} className={field}>
+          <select id="invite-language" value={language} onChange={(event) => update({ language: event.target.value })} className={field}>
             {options.languages.map((code) => (
               <option key={code} value={code}>
                 {code}
@@ -259,7 +296,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
         <label htmlFor="invite-note" className={label}>
           Personal note (optional, shown to the invitee)
         </label>
-        <textarea id="invite-note" rows={3} maxLength={1000} value={note} onChange={(event) => setNote(event.target.value)} className={field} />
+        <textarea id="invite-note" rows={3} maxLength={1000} value={note} onChange={(event) => update({ note: event.target.value })} className={field} />
       </div>
 
       <div>
@@ -271,7 +308,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
           type="text"
           maxLength={500}
           value={reason}
-          onChange={(event) => setReason(event.target.value)}
+          onChange={(event) => update({ reason: event.target.value })}
           className={field}
         />
       </div>
@@ -282,7 +319,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
             data-testid="invite-send-email"
             type="checkbox"
             checked={sendEmail}
-            onChange={(event) => setSendEmail(event.target.checked)}
+            onChange={(event) => update({ sendEmail: event.target.checked })}
             className="mt-1"
           />
           <span>
@@ -314,7 +351,8 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
         <button
           type="button"
           onClick={onCancel}
-          className={`rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700/50 ${FOCUS_RING}`}
+          disabled={submitting}
+          className={`rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700/50 disabled:opacity-40 ${FOCUS_RING}`}
         >
           Cancel
         </button>
