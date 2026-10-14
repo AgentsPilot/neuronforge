@@ -28,6 +28,15 @@
  * none (R-6). A drawer that owns a read keeps its state in `useDrawerResource`
  * (L-8b) and renders `AdminLoading` / `AdminError` / its body as `children`,
  * so this shell stays fetch-free and state-free.
+ *
+ * A create form as the body (OR-2, Admin Layout Follow-ups LF-3a, SA-C9; first
+ * use: Signup Invites "New invite"). The shell does not change: the page owns
+ * `open`, so it may ignore `onClose` while its create request is in flight
+ * (Escape, the overlay and X then do nothing, because `open` stays true), and
+ * it keeps the form's draft in its own state, so a close by Escape or overlay
+ * does not lose what was typed. A success closes the drawer through the page's
+ * state, and `onReturnFocus` may send focus to what the form produced rather
+ * than to the opener.
  */
 
 import { useId, type ReactNode } from 'react';

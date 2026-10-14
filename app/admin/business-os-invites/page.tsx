@@ -45,27 +45,49 @@
  * The shared header (h1 = the sidebar label, "New invite" in its actions, the
  * plan-enforcement badge), the KPI strip, the filter bar, then the content:
  * the shared error and loading states, the stopped-halfway banner, the created
- * link, the form and the list. A failed Refresh keeps the list on screen under
- * the error (an existing choice) and hides the strip (K-10).
+ * link and the list. A failed Refresh keeps the list on screen under the error
+ * (an existing choice) and hides the strip (K-10).
+ *
+ * ── New invite and Revoke (Admin Layout Follow-ups LF-3a, OR-2, OR-3) ───────
+ * "New invite" opens a drawer whose body is the create form (OR-2, a new use of
+ * `AdminDrawer`, SA-C9). The page owns three things about it:
+ * - the draft. Escape, an overlay click or the corner close shut the drawer and
+ *   keep what was typed; only Cancel or a success clears it, and only once the
+ *   close has finished, so the drawer never blanks on its way out. A kept draft
+ *   whose type is no longer offered (after a Refresh) reopens as a fresh one.
+ * - the in-flight lock. While the create request is in flight the page ignores
+ *   the drawer's close, and the form disables Cancel. A success closes the
+ *   drawer through page state, never through that guarded path.
+ * - focus. After a success it goes to the created-link panel's heading, so the
+ *   shown-once link is announced and Copy is one Tab away; otherwise back to
+ *   "New invite"; failing both, the content area, never the page body.
+ * The link panel stays here on the page, outside the drawer, so no drawer close
+ * can lose it. Revoke asks in a dialog (OR-3) the page renders once, so it
+ * outlives the row's button, which leaves as soon as the row is Revoked; focus
+ * goes back to that button, else to the content area. Neither surface writes
+ * the URL, history or storage (D-7 (a)).
  *
  * @see docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_0_WORKPLAN.md
  * @see docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md §3.3
  * @see docs/workplans/ADMIN_LAYOUT_L6_WORKPLAN.md
+ * @see docs/workplans/ADMIN_LAYOUT_LF3A_WORKPLAN.md
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Plus } from 'lucide-react';
 
+import { AdminDrawer } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 import { AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { ADMIN_COUNT_LINE } from '@/app/admin/components/layout/adminTable';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 
-import { CreateInviteForm } from './components/CreateInviteForm';
+import { CreateInviteForm, initialInviteDraft, type InviteDraft } from './components/CreateInviteForm';
 import { CreatedLinkPanel } from './components/CreatedLinkPanel';
 import { InviteFilters, INVITES_WHAT } from './components/InviteFilters';
 import { InviteKpis } from './components/InviteKpis';
 import { InviteList } from './components/InviteList';
+import { RevokeDialog } from './components/RevokeDialog';
 import { EMPTY_INVITE_FILTER, filterInvites, isFilterActive, type InviteListFilter } from './inviteFilter';
 import type { CreatedInvite, EnforcementMode, InviteRow, InvitesPayload } from './types';
 
@@ -98,6 +120,17 @@ const ENFORCEMENT_BADGE: Readonly<Record<EnforcementMode, string>> = {
 
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
 
+/**
+ * Focus `target` only when it can take focus now: present, still in the page
+ * and not disabled. True only if focus really landed there (SA C4 b).
+ */
+function focusIfAble(target: HTMLElement | null): boolean {
+  if (!target || !target.isConnected) return false;
+  if (target instanceof HTMLButtonElement && target.disabled) return false;
+  target.focus();
+  return document.activeElement === target;
+}
+
 export default function BusinessOsInvitesPage() {
   const [payload, setPayload] = useState<InvitesPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,6 +139,24 @@ export default function BusinessOsInvitesPage() {
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<CreatedInvite | null>(null);
   const [filter, setFilter] = useState<InviteListFilter>(EMPTY_INVITE_FILTER);
+  const [draft, setDraft] = useState<InviteDraft | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<InviteRow | null>(null);
+  const [isRevokeOpen, setIsRevokeOpen] = useState(false);
+  const [revokeKey, setRevokeKey] = useState(0);
+
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const newInviteRef = useRef<HTMLButtonElement | null>(null);
+  const panelHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const revokeOpenerRef = useRef<HTMLButtonElement | null>(null);
+  /** The drawer is meant to be open: read by the close-finished callback. */
+  const isCreateOpen = useRef(false);
+  /** A create request is in flight: the drawer refuses to close (SA-C9). */
+  const isCreateBusy = useRef(false);
+  /** Set by a success: focus the link panel once the drawer has closed. */
+  const focusPanelNext = useRef(false);
+  /** Set by Cancel or a success: clear the draft once the drawer has closed. */
+  const clearDraftNext = useRef(false);
+  const isRevokeOpenRef = useRef(false);
 
   const filterActive = isFilterActive(filter);
   const visibleInvites = useMemo(
@@ -155,6 +206,80 @@ export default function BusinessOsInvitesPage() {
 
   const clearFilter = () => setFilter(EMPTY_INVITE_FILTER);
 
+  const openCreate = () => {
+    if (!payload) return;
+    const options = payload.formOptions;
+    // Read the ref now: a state updater may run after it has been reset.
+    const startFresh = clearDraftNext.current;
+    clearDraftNext.current = false;
+    setDraft((current) => {
+      if (startFresh || !current) return initialInviteDraft(options);
+      const stillOffered = options.inviteTypes.some((type) => type.type === current.inviteType && type.available);
+      return stillOffered ? current : initialInviteDraft(options);
+    });
+    isCreateOpen.current = true;
+    setCreating(true);
+  };
+
+  const shutCreate = () => {
+    isCreateOpen.current = false;
+    setCreating(false);
+  };
+
+  /** Escape, an overlay click or the corner close: never in flight, and the draft stays. */
+  const onCreateClose = () => {
+    if (isCreateBusy.current) return;
+    shutCreate();
+  };
+
+  const onCreateCancel = () => {
+    if (isCreateBusy.current) return;
+    clearDraftNext.current = true;
+    shutCreate();
+  };
+
+  const onCreated = (result: CreatedInvite) => {
+    setCreated(result);
+    setPayload((current) => (current ? { ...current, invites: [result.invite, ...current.invites] } : current));
+    focusPanelNext.current = true;
+    clearDraftNext.current = true;
+    // Through page state, not `onCreateClose`: the busy ref is still set until the form's finally.
+    shutCreate();
+  };
+
+  const onCreateClosed = () => {
+    const toPanel = focusPanelNext.current;
+    focusPanelNext.current = false;
+    if (clearDraftNext.current) {
+      clearDraftNext.current = false;
+      setDraft(null);
+    }
+    // Reopened while the close was still running: leave focus in the drawer.
+    if (isCreateOpen.current) return;
+    if (toPanel && focusIfAble(panelHeadingRef.current)) return;
+    if (focusIfAble(newInviteRef.current)) return;
+    contentRef.current?.focus();
+  };
+
+  const openRevoke = (invite: InviteRow, button: HTMLButtonElement) => {
+    revokeOpenerRef.current = button;
+    isRevokeOpenRef.current = true;
+    setRevokeTarget(invite);
+    setRevokeKey((key) => key + 1);
+    setIsRevokeOpen(true);
+  };
+
+  const shutRevoke = () => {
+    isRevokeOpenRef.current = false;
+    setIsRevokeOpen(false);
+  };
+
+  const onRevokeClosed = () => {
+    if (isRevokeOpenRef.current) return;
+    if (focusIfAble(revokeOpenerRef.current)) return;
+    contentRef.current?.focus();
+  };
+
   // SA M-5: one number for the banner and the tile, so the two cannot drift.
   const stoppedCount = payload?.stoppedHalfway?.count ?? 0;
   const total = payload?.invites.length ?? 0;
@@ -174,7 +299,8 @@ export default function BusinessOsInvitesPage() {
         actions={
           <button
             type="button"
-            onClick={() => setCreating(true)}
+            ref={newInviteRef}
+            onClick={openCreate}
             disabled={!payload || creating}
             className={`flex items-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-40 ${FOCUS_RING}`}
           >
@@ -198,7 +324,13 @@ export default function BusinessOsInvitesPage() {
         readAt={readAt}
       />
 
-      <div data-testid="invites-content" aria-busy={loading && payload !== null} className="space-y-6">
+      <div
+        ref={contentRef}
+        tabIndex={-1}
+        data-testid="invites-content"
+        aria-busy={loading && payload !== null}
+        className="space-y-6 focus:outline-none"
+      >
         {error && <AdminError message={error} testId="page-error" onRetry={() => void load()} />}
 
         {!payload && loading && <AdminLoading what={INVITES_WHAT} />}
@@ -233,18 +365,7 @@ export default function BusinessOsInvitesPage() {
                 email={created.invite.email}
                 emailStatus={created.email?.status}
                 onDismiss={() => setCreated(null)}
-              />
-            )}
-
-            {creating && (
-              <CreateInviteForm
-                options={payload.formOptions}
-                onCancel={() => setCreating(false)}
-                onCreated={(result) => {
-                  setCreating(false);
-                  setCreated(result);
-                  setPayload((current) => (current ? { ...current, invites: [result.invite, ...current.invites] } : current));
-                }}
+                headingRef={panelHeadingRef}
               />
             )}
 
@@ -265,7 +386,7 @@ export default function BusinessOsInvitesPage() {
               )}
               <InviteList
                 invites={visibleInvites}
-                onRevoked={replaceRow}
+                onRevoke={openRevoke}
                 emptyMessage={filterActive ? 'No invites match these filters.' : 'No invites yet.'}
                 onClearFilters={filterActive ? clearFilter : undefined}
               />
@@ -273,6 +394,41 @@ export default function BusinessOsInvitesPage() {
           </>
         )}
       </div>
+
+      <AdminDrawer
+        open={creating}
+        onClose={onCreateClose}
+        onReturnFocus={onCreateClosed}
+        title="New invite"
+        testId="create-invite-drawer"
+      >
+        {payload && draft && (
+          <CreateInviteForm
+            options={payload.formOptions}
+            draft={draft}
+            onDraftChange={setDraft}
+            onBusyChange={(isBusy) => {
+              isCreateBusy.current = isBusy;
+            }}
+            onCancel={onCreateCancel}
+            onCreated={onCreated}
+          />
+        )}
+      </AdminDrawer>
+
+      {revokeTarget && (
+        <RevokeDialog
+          open={isRevokeOpen}
+          invite={revokeTarget}
+          openKey={revokeKey}
+          onClose={shutRevoke}
+          onRevoked={(updated) => {
+            replaceRow(updated);
+            shutRevoke();
+          }}
+          onReturnFocus={onRevokeClosed}
+        />
+      )}
     </div>
   );
 }
