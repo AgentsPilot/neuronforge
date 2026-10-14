@@ -734,3 +734,70 @@ describe('every refusal shows its sentence (W11c-7)', () => {
     expect((await screen.findByTestId('credit-form-error')).textContent).toBe(GENERIC_ERROR_COPY);
   });
 });
+
+describe('BD-14: onCreditsChanged, once per success (Admin Layout follow-ups LF-4b, SA-C7)', () => {
+  function mount(replies: Reply[]) {
+    const state: FetchState = { getBody: { status: 200, body: { success: true, data: payload() } }, posts: replies, calls: [] };
+    stubFetch(state);
+    const onCreditsChanged = jest.fn();
+    render(<CreditsBlock accountId={ACCOUNT} businessLabel={BUSINESS} onCreditsChanged={onCreditsChanged} />);
+    return { state, onCreditsChanged };
+  }
+
+  /** The expected number of Credits reads sent, then a short window for anything late. */
+  async function quietly(state: FetchState, getCount: number) {
+    await waitFor(() => expect(gets(state)).toHaveLength(getCount));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(gets(state)).toHaveLength(getCount);
+  }
+
+  it('a Give success calls it once, the re-read does not call it again, and a replayed success calls it once more', async () => {
+    const { state, onCreditsChanged } = mount([grantOk(50), grantOk(50, null, true)]);
+    await loaded();
+    await giveFlow();
+    await confirmAndSettle();
+    await screen.findByTestId('credits-success');
+    await quietly(state, 2);
+    expect(onCreditsChanged).toHaveBeenCalledTimes(1);
+    await giveFlow();
+    await confirmAndSettle();
+    await quietly(state, 3);
+    expect(onCreditsChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it('a Take back success calls it once', async () => {
+    const reduce = {
+      status: 200,
+      body: { success: true, data: { accountId: ACCOUNT, op: 'reduce_credit_lot', lotId: LOT_A.id, drawId: 'd1', credits: 5, lotRemainingAfter: 195, replayed: false } },
+    };
+    const { state, onCreditsChanged } = mount([reduce]);
+    await loaded();
+    fireEvent.click(within(screen.getAllByTestId('credits-lot')[0]).getByTestId('credits-take-back'));
+    const dialog = await screen.findByTestId('credit-form-dialog');
+    fireEvent.change(within(dialog).getByTestId('credit-amount'), { target: { value: '5' } });
+    fireEvent.change(within(dialog).getByTestId('credit-reason'), { target: { value: 'too much' } });
+    fireEvent.click(within(dialog).getByTestId('credit-form-continue'));
+    await confirmAndSettle();
+    await screen.findByTestId('credits-success');
+    await quietly(state, 2);
+    expect(onCreditsChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('a refusal, a network error and an Escape close never call it', async () => {
+    const { state, onCreditsChanged } = mount([{ status: 409, body: { success: false, error: 'awaiting_payment' } }, 'network_error']);
+    await loaded();
+    await giveFlow();
+    await confirmAndSettle();
+    await screen.findByTestId('credit-form-error');
+    fireEvent.click(screen.getByTestId('credit-form-continue'));
+    await confirmAndSettle();
+    await waitFor(() => expect(posts(state)).toHaveLength(2));
+    await screen.findByTestId('credit-form-error');
+    fireEvent.keyDown(screen.getByTestId('credit-form-dialog'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('credit-form-dialog')).toBeNull());
+    await quietly(state, 1);
+    expect(onCreditsChanged).not.toHaveBeenCalled();
+  });
+});

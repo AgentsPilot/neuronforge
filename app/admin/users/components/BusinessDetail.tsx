@@ -98,6 +98,11 @@ export function BusinessDetail({
       <BusinessOsPanel
         user={user}
         allProducts={detailedStats ? <AllProductsUsage stats={detailedStats} /> : null}
+        onCreditsChanged={() => {
+          // BD-14 (LF-4b, SA-C7): once after a successful Give or Take back, so
+          // the strip, the list row and the Credits block agree.
+          void refreshList();
+        }}
       />
 
       {/* 4. Account & security (BD-10): the four former sections as three

@@ -740,7 +740,9 @@ export async function confirmPlanUpgrade(input: PlanUpgradeConfirmInput, deps: P
     }
     const type = errorType(err);
     if (type === 'StripeCardError') {
-      // V-7: a decline thrown by the call (E-2 tells whether Stripe does this).
+      // V-7: a decline thrown by the call. A backstop: E-2 observed Stripe
+      // RETURNING the decline (pending update kept, `requires_payment_method`),
+      // which is the `declined` case of `outcomeOf` below.
       const audit = requested({ ...auditBase, outcome: 'declined', invoiceId: null });
       log.warn({ event: 'bos_billing_upgrade_declined', userId, tier, declineShape: 'thrown', subscriptionId: row.stripeSubscriptionId }, 'Plan upgrade declined');
       return { ok: true, outcome: 'declined', audit };

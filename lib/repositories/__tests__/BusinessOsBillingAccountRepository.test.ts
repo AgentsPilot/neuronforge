@@ -758,6 +758,8 @@ describe('source guards', () => {
       'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       'lib/business-os/billing/__tests__/planSubscriptionMirror.test.ts',
+      // P-7b.1b (U-7): the captured-payload test imports the billing row TYPE to build its fakes.
+      'lib/business-os/billing/__tests__/planUpgrade.captured.test.ts',
       // P-7b.1a: the upgrade orchestration test imports the billing row TYPE to build fakes.
       'lib/business-os/billing/__tests__/planUpgrade.test.ts',
       'lib/business-os/billing/businessOsStripeCustomer.ts',

@@ -3,29 +3,61 @@
 /**
  * FR-6: revoke one invite, with a reason of at least 3 characters.
  *
- * Inline rather than modal: it sits under the row it acts on, so there is no
- * doubt which invite is being withdrawn. The server decides whether the invite
- * can still be revoked (409 when it was accepted or already revoked).
+ * The server decides whether the invite can still be revoked (409 when it was
+ * accepted or already revoked). The reply is read through the shared
+ * `readJsonBody` (L-6, C-4), so a non-JSON reply falls to this form's own
+ * sentence. The request and the code-to-sentence map are unchanged since L-6
+ * and pinned by `__tests__/invites.requestPins.render.test.tsx`.
  *
- * Admin Layout Standard L-6: the reply is read through the shared
- * `readJsonBody` (C-4), so a non-JSON reply falls to this form's own sentence;
- * the code-to-sentence map is unchanged. A-1 focus rings on the buttons. Still
- * an inline form under its row (D-8); its name stays (SA Q-8, F-41).
+ * ── A real dialog since Admin Layout Follow-ups LF-3a (OR-3, SA-C10) ────────
+ * Until LF-3a this was an inline form under its row, named a dialog (F-41, now
+ * closed). It is a modal `ui/dialog` with the shared admin dialog classes, the
+ * one file of this screen allowed to import the primitive (source guard G-8).
+ * It is screen-local on purpose (SA ruling LF3B-F1): no shared confirm dialog
+ * exists, and the Messages one does not fit (no reason field). It copies that
+ * dialog's discipline:
+ *
+ * - Initial focus is the reason field, so typing starts at once; Enter on an
+ *   empty or short reason sends nothing (the confirm stays disabled).
+ * - One send per confirmation: a ref is checked first and set before any await,
+ *   so a second submit in the same tick returns at once.
+ * - While the request is in flight it cannot be dismissed (Escape, an outside
+ *   click, the corner close or "Keep it").
+ * - On a refusal it stays open with the sentence and the reason, so the admin
+ *   can fix the reason and try again (today's behaviour, SA SQ-H).
+ * - It opens from a row button, not a Radix trigger, so focus goes back by hand
+ *   through `onReturnFocus`; the page picks the opener or its content area.
+ *
+ * The page owns it, one instance, so it outlives its opener, which always
+ * leaves when the row becomes Revoked (SA SQ-G). The page keeps the last invite
+ * after closing, so the closing frame still has its title (SA C5 b), and bumps
+ * `openKey` on every open: the inner part remounts, so the reason, the error and
+ * the in-flight ref start fresh, even on reopening the same row (SA C5 c).
  */
 
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Loader2 } from 'lucide-react';
 
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ADMIN_DIALOG_CLASS, ADMIN_DIALOG_TITLE_CLASS } from '@/app/admin/components/layout/adminDialog';
+import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 
 import type { InviteRow } from '../types';
 
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
 
-interface Props {
+export interface RevokeDialogProps {
+  open: boolean;
+  /** The invite asked about; kept by the page after closing, never null. */
   invite: InviteRow;
+  /** Bumped by the page on every open, so each open starts fresh. */
+  openKey: number;
   onRevoked: (invite: InviteRow) => void;
-  onCancel: () => void;
+  /** Keep it, Escape, an outside click or the corner close, never while in flight. */
+  onClose: () => void;
+  /** Called once the dialog has closed. */
+  onReturnFocus: () => void;
 }
 
 const REASON_MIN = 3;
@@ -37,16 +69,30 @@ const ERROR_TEXT: Record<string, string> = {
   could_not_revoke_invite: 'The invite could not be revoked. Try again.',
 };
 
-export function RevokeDialog({ invite, onRevoked, onCancel }: Props) {
+export function RevokeDialog({ openKey, ...rest }: RevokeDialogProps) {
+  return <RevokeDialogOpenOnce key={openKey} {...rest} />;
+}
+
+function RevokeDialogOpenOnce({ open, invite, onRevoked, onClose, onReturnFocus }: Omit<RevokeDialogProps, 'openKey'>) {
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set synchronously on the first submit: the guard a same-tick second submit cannot pass. */
+  const isSending = useRef(false);
+  const reasonRef = useRef<HTMLInputElement | null>(null);
 
   const canSubmit = !submitting && Array.from(reason.trim()).length >= REASON_MIN;
 
+  const onOpenChange = (next: boolean) => {
+    if (next || isSending.current) return;
+    onClose();
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (isSending.current) return;
     if (!canSubmit) return;
+    isSending.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -65,49 +111,72 @@ export function RevokeDialog({ invite, onRevoked, onCancel }: Props) {
     } catch {
       setError(ERROR_TEXT.could_not_revoke_invite);
     } finally {
+      isSending.current = false;
       setSubmitting(false);
     }
   };
 
+  const reasonId = `revoke-reason-${invite.id}`;
+
   return (
-    <form
-      data-testid="revoke-dialog"
-      onSubmit={(event) => void submit(event)}
-      className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3"
-    >
-      <label htmlFor={`revoke-reason-${invite.id}`} className="block text-xs font-medium text-rose-100">
-        Why are you revoking the invite for {invite.email}? (at least {REASON_MIN} characters)
-      </label>
-      <input
-        id={`revoke-reason-${invite.id}`}
-        type="text"
-        maxLength={500}
-        value={reason}
-        onChange={(event) => setReason(event.target.value)}
-        className={`w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-white ${FOCUS_RING}`}
-      />
-      {error && (
-        <p role="alert" className="text-sm text-rose-300">
-          {error}
-        </p>
-      )}
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className={`flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-40 ${FOCUS_RING}`}
-        >
-          {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-          Revoke invite
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className={`rounded-lg border border-slate-600 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700/50 ${FOCUS_RING}`}
-        >
-          Keep it
-        </button>
-      </div>
-    </form>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        data-testid="revoke-dialog"
+        className={ADMIN_DIALOG_CLASS}
+        aria-describedby={undefined}
+        aria-busy={submitting}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          reasonRef.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          onReturnFocus();
+        }}
+        onEscapeKeyDown={(event) => {
+          if (isSending.current) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          if (isSending.current) event.preventDefault();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>Revoke the invite for {invite.email}?</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={(event) => void submit(event)} className="space-y-3">
+          <label htmlFor={reasonId} className="block text-xs font-medium text-slate-300">
+            Why are you revoking the invite for {invite.email}? (at least {REASON_MIN} characters)
+          </label>
+          <input
+            ref={reasonRef}
+            id={reasonId}
+            type="text"
+            maxLength={500}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            className={`w-full rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-white ${FOCUS_RING}`}
+          />
+          {error && (
+            <p role="alert" className="text-sm text-rose-300">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => onOpenChange(false)} disabled={submitting} className={ADMIN_BUTTON}>
+              Keep it
+            </button>
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              aria-busy={submitting}
+              className={`flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-40 ${FOCUS_RING}`}
+            >
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              Revoke invite
+            </button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

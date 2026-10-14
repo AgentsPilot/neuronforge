@@ -30,8 +30,18 @@
  * success, and after the last one "This is taking longer than usual" links to
  * the section without the marker, which shows Choose again if nothing is live.
  *
- * The plan above is still information (what it would add). Upgrading a plan
- * that is already paid for is P-7b.1, not here.
+ * The plan above is information (what it would add).
+ *
+ * UPGRADING (plan payments P-7b.1b)
+ *
+ * An owner who already pays sees "Upgrade to <plan>" (`PlanUpgrade`) exactly
+ * for the tiers in `purchase.upgrade`, the predicate both upgrade routes refuse
+ * on. When the upgrade went through or is landing, this section says
+ * "Upgrading…" and re-reads `my-plan` on the same bounded schedule as the
+ * checkout return. "You're on <plan>" is shown ONLY when the re-read says the
+ * plan in force is that tier, our billing record reads `renewing`, and the
+ * record no longer offers that tier as an upgrade (it now pays for it). A
+ * failed re-read never claims success (U-5).
  *
  * Also not here: **anything about chat.** The chat capabilities are withheld from
  * Essentials in config and nothing enforces them yet, so a line saying "your plan
@@ -58,6 +68,7 @@ import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
 import { createLogger } from '@/lib/logger';
 
 import { PlanPurchase, type PlanChoice } from './PlanPurchase';
+import { PlanUpgrade } from './PlanUpgrade';
 import { SETTINGS_PLAN_PATH } from './planPurchaseCopy';
 
 const logger = createLogger({ module: 'BusinessOsPlanSection' });
@@ -289,6 +300,9 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
   /** Stripe completed in THIS page, before the URL caught up (P-4.2). */
   const [completedSession, setCompletedSession] = useState<string | null>(null);
   const [refreshes, setRefreshes] = useState(0);
+  /** P-7b.1b: the tier an upgrade was made to in THIS page, and whether the section is re-reading for it. */
+  const [upgradeTarget, setUpgradeTarget] = useState<string | null>(null);
+  const [upgradeWatching, setUpgradeWatching] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -301,12 +315,41 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
   const marker = isCheckoutReturnMarker(checkoutMarker) ? checkoutMarker : completedSession;
   // M-6: success comes ONLY from the server's own answer.
   const succeeded = plan?.status === 'ok' && plan.kind === 'tier' && plan.purchase?.billing?.state === 'renewing';
-  const processing = marker !== null && !succeeded;
+  const checkoutProcessing = marker !== null && !succeeded;
+  // U-5: the upgrade's success, from the server only: the plan in force is the
+  // target, renewing, and our record no longer offers it (it pays for it now).
+  // The last term keeps an admin-assigned plan equal to the target (Q-5) from
+  // reading as done before the webhook lands.
+  const upgradeSucceeded =
+    upgradeTarget !== null && succeeded && plan?.planId === upgradeTarget && !(plan?.purchase?.upgrade?.tiers ?? []).includes(upgradeTarget);
+  const upgradeProcessing = upgradeWatching && !upgradeSucceeded;
+  const processing = checkoutProcessing || upgradeProcessing;
   const exhausted = refreshes >= PROCESSING_REFRESH_LIMIT;
 
   const onCheckoutComplete = useCallback((sessionId: string) => {
     setRefreshes(0);
     setCompletedSession(sessionId);
+  }, []);
+
+  /** P-7b.1b: the upgrade went through or is landing. "Upgrading…" and the bounded re-read. */
+  const onUpgrading = useCallback((tier: string) => {
+    setRefreshes(0);
+    setUpgradeTarget(tier);
+    setUpgradeWatching(true);
+  }, []);
+
+  /** P-7b.1b (SA V-3 "Check again"): ONE server re-read; success still only from its answer. */
+  const onUpgradeCheckAgain = useCallback(async (tier: string) => {
+    setUpgradeTarget(tier);
+    try {
+      const data = await fetchPlan();
+      if (mounted.current && data) {
+        setPlan(data);
+        setFailed(false);
+      }
+    } catch (error) {
+      logger.warn({ err: error }, 'Plan re-read after an unconfirmed upgrade failed');
+    }
   }, []);
 
   /*
@@ -326,7 +369,7 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
           }
         })
         .catch((error) => {
-          logger.warn({ err: error }, 'Plan re-read after checkout failed');
+          logger.warn({ err: error }, 'Plan re-read after checkout or upgrade failed');
         })
         .finally(() => {
           if (mounted.current) setRefreshes((count) => count + 1);
@@ -417,7 +460,18 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
           {fill(t('plan.purchase.done'), { plan: plan.name })}
         </p>
       )}
-      {processing && !exhausted && (
+      {upgradeSucceeded && plan.name && (
+        <p role="status" className="text-sm text-[var(--v2-text-primary)]" data-testid="plan-upgrade-done">
+          {fill(t('plan.upgrade.done'), { plan: plan.name })}
+        </p>
+      )}
+      {upgradeProcessing && !checkoutProcessing && !exhausted && (
+        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-muted)]" data-testid="plan-upgrade-upgrading">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>{t('plan.upgrade.upgrading')}</span>
+        </p>
+      )}
+      {checkoutProcessing && !exhausted && (
         <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-muted)]" data-testid="plan-purchase-processing">
           <Loader2 className="w-4 h-4 animate-spin" />
           <span>{t('plan.purchase.processing')}</span>
@@ -469,6 +523,17 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
           unknown) offers nothing either, so it must not bring the line back. */}
       {plan.nextPlanUp && <NextPlanUp upgrade={plan.nextPlanUp} purchaseKnown={plan.purchase !== undefined} />}
 
+      {/* Upgrading (P-7b.1b): only what the server offers, and not while a change is landing. */}
+      {marker === null && !upgradeWatching && !upgradeSucceeded && (plan.purchase?.upgrade?.tiers.length ?? 0) > 0 && (plan.plans?.length ?? 0) > 0 && (
+        <PlanUpgrade
+          plans={plan.plans ?? []}
+          tiers={plan.purchase?.upgrade?.tiers ?? []}
+          currentPlan={{ planId: plan.planId, name: plan.name, isTier: plan.kind === 'tier' }}
+          onUpgrading={onUpgrading}
+          onCheckAgain={onUpgradeCheckAgain}
+        />
+      )}
+
       {/* Buying (P-4.2): only what the server offers, and not while a payment is landing. */}
       {marker === null && plan.purchase?.offer.kind === 'choose' && (plan.plans?.length ?? 0) > 0 && (
         <PlanPurchase
@@ -476,6 +541,8 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
           tiers={plan.purchase.offer.tiers}
           endsFreeAccess={plan.purchase.endsFreeAccessOnPurchase}
           onComplete={onCheckoutComplete}
+          // SA Q-7: the plan in force, when it is a tier, labels its own row "Pay for".
+          currentTierId={plan.kind === 'tier' ? plan.planId : null}
         />
       )}
     </div>
