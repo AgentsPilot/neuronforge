@@ -106,6 +106,7 @@ function stored(overrides: Partial<BusinessOsInvitePublicView> = {}): BusinessOs
   return {
     id: INVITE_ID,
     issuer_kind: 'admin',
+    invite_type: CHAMPION_INVITE_TYPE,
     grant_kind: 'cohort',
     grant_id: INVITE_TYPES[CHAMPION_INVITE_TYPE].defaultGrantId,
     access_open_ended: true,

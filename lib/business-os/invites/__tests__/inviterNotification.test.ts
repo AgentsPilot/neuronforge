@@ -289,6 +289,15 @@ describe('status (SA Q-5): from the landing, worded with the FR-31 list label', 
     await notifyInviter(adminInput, h.deps);
     expect(h.sent[0].text).toContain('Status: Joined');
   });
+
+  it('plan payments P-9.1: an admin Paid invitee (held) goes to the ISSUING admin and reads "Signed up — not subscribed yet"', async () => {
+    const h = harness();
+    expect(await notifyInviter({ ...adminInput, landing: 'awaiting_payment' }, h.deps)).toEqual({ outcome: 'sent', recipientKind: 'admin' });
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0].to).toEqual([ADMIN_EMAIL]);
+    expect(h.sent[0].text).toContain('Signed up — not subscribed yet');
+    expect(h.audits[0].details).toMatchObject({ recipientKind: 'admin', status: 'not_subscribed_yet', outcome: 'sent' });
+  });
 });
 
 describe('language (test 8; N7)', () => {
