@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Admin users: who can open admin. Read-only.
+ * Admin users: people who can sign in to admin, and where their access comes from. Read-only.
  *
  * ADMIN_BOS_CLEANUP slice 1 (FR-AU1 to FR-AU5; conditions C-3, C-4; SA W-3, W-5).
  *
@@ -129,7 +129,7 @@ export default function AdminUsersPage() {
     <div className="space-y-6">
       <AdminPageHeader
         title="Admin users"
-        purpose="Who can open admin."
+        purpose="People who can sign in to this admin area, and where their access comes from."
         badge={{ label: 'Read-only', testId: 'read-only-badge' }}
       />
 
@@ -182,10 +182,16 @@ export default function AdminUsersPage() {
             <section className={CARD}>
               <h2 className={CARD_TITLE}>
                 <Shield className="h-4 w-4 text-slate-400" aria-hidden="true" />
-                Granted by the ADMIN_EMAILS environment setting
+                Admins set in the server configuration
               </h2>
+              {/* LF-5: says where these come from, so no one looks for them in the list above. */}
+              <p className="mb-3 text-sm text-slate-400">
+                Added through the ADMIN_EMAILS setting, not through the list above. Changing it needs a redeploy.
+              </p>
               {data.envOnlyAdmins.length === 0 ? (
-                <p className="text-sm text-slate-400">No addresses beyond the table.</p>
+                <p className="text-sm text-slate-400">
+                  No extra admins come from the server configuration. Everyone with access is in the list above.
+                </p>
               ) : (
                 <ul className="space-y-3">
                   {data.envOnlyAdmins.map((admin) => (
