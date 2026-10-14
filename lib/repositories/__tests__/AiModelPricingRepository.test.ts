@@ -193,6 +193,41 @@ describe('listActive (the billing reader, Step 1)', () => {
   });
 });
 
+// AI model price review slice 3 (SA O-10): additive. listActive above is unchanged.
+describe('listActiveExact (admin price comparison, exact text)', () => {
+  it('selects the prices cast to text, with the same filter and order as listActive', async () => {
+    recorder.results.push({ data: [], error: null });
+
+    await repo.listActiveExact();
+
+    const query = recorder.queries[0];
+    expect(query.table).toBe('ai_model_pricing');
+    expect(query.calls.find((c) => c.method === 'select')?.args[0]).toBe(
+      'id, provider, model_name, input_cost_per_token::text, output_cost_per_token::text, cached_input_cost_per_token::text, effective_date, created_at'
+    );
+    expect(query.calls.filter((c) => c.method === 'is').map((c) => c.args)).toEqual([['retired_date', null]]);
+    expect(query.calls.filter((c) => c.method === 'lte').map((c) => c.args)).toEqual([
+      ['effective_date', new Date().toISOString().slice(0, 10)],
+    ]);
+    expect(query.calls.filter((c) => c.method === 'order').map((c) => c.args)).toEqual([
+      ['effective_date', { ascending: false }],
+      ['created_at', { ascending: false }],
+    ]);
+    expect(methodsOf(query)).not.toEqual(expect.arrayContaining(['insert']));
+  });
+
+  it('returns the text values untouched, [] for none, and the error instead of throwing', async () => {
+    const exact = { id: 'x', provider: 'openai', model_name: 'm', input_cost_per_token: '0.000000075', output_cost_per_token: '0.0000003', cached_input_cost_per_token: null, effective_date: '2026-10-11', created_at: 'x' };
+    recorder.results.push({ data: [exact], error: null }, { data: null, error: null }, { data: null, error: new Error('boom') });
+
+    expect((await repo.listActiveExact()).data).toEqual([exact]);
+    expect((await repo.listActiveExact()).data).toEqual([]);
+    const failed = await repo.listActiveExact();
+    expect(failed.data).toBeNull();
+    expect(failed.error).toBeInstanceOf(Error);
+  });
+});
+
 describe('findById', () => {
   it('returns { null, null } for a missing row rather than an error', async () => {
     recorder.results.push({ data: null, error: null });

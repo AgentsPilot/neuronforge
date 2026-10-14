@@ -3,14 +3,17 @@
 
 // Repositories
 export { AgentRepository, agentRepository } from './AgentRepository';
-export { ExecutionRepository, executionRepository } from './ExecutionRepository';
-export { SharedAgentRepository, sharedAgentRepository } from './SharedAgentRepository';
+// No singleton (RLS slice 2c-1, SA R-8): its old default was the browser
+// client, which on the server talks to the database as `anon`. Construct it
+// with the caller's client.
+export { ExecutionRepository } from './ExecutionRepository';
 export { AgentMetricsRepository, agentMetricsRepository } from './AgentMetricsRepository';
 export { ConfigRepository, configRepository } from './ConfigRepository';
 export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
 export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
+export { AiPriceProposalRepository, aiPriceProposalRepository } from './AiPriceProposalRepository';
 export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
@@ -362,6 +365,11 @@ export type {
   CreateAiModelPricingInput,
   AiModelPricingSyncEntry,
   AiModelPricingSyncResult,
+  AiModelPricingExactRow,
+  AiPriceSubmitLine,
+  AiPriceSubmitInput,
+  AiPriceSubmitResultLine,
+  AiPricePendingLine,
   // Boost pack (agent-platform catalog) types
   BoostPack,
   BoostPackWriteInput,

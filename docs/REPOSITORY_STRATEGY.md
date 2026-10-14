@@ -131,7 +131,6 @@ lib/repositories/
 ├── PaymentRefundRepository.ts     # Refund ledger (payment_refunds): the Stripe webhook's upsert; unscoped by design
 ├── PluginConnectionRepository.ts  # Plugin connection persistence (OAuth tokens, status)
 ├── ProcessedWebhookEventRepository.ts # Stripe webhook idempotency claim (processed_webhook_events); unscoped by design
-├── SharedAgentRepository.ts       # Shared/template agents for marketplace
 └── SystemConfigRepository.ts      # System-wide settings configuration
 ```
 
@@ -174,19 +173,6 @@ lib/repositories/
 | `findRunningByAgentId(agentId)` | Find pending/running executions |
 | `findForStatusQuery(options)` | Lightweight query for status polling |
 | `getTokenUsageByExecutionIds(ids)` | Batch fetch token usage data |
-
----
-
-### SharedAgentRepository
-**Location:** `lib/repositories/SharedAgentRepository.ts`
-
-**Purpose:** Manages shared agent templates for the agent marketplace/sharing feature.
-
-**Key Responsibilities:**
-- Create shared agent entries
-- Check if agent has been shared
-- Query shared agents by user
-- Store quality scores and metrics snapshots
 
 ---
 
@@ -495,7 +481,6 @@ All shared types are centralized in `lib/repositories/types.ts`:
 // Import singleton instances for convenience
 import {
   agentRepository,
-  executionRepository,
   configRepository
 } from '@/lib/repositories';
 
@@ -504,6 +489,11 @@ import {
   AgentRepository,
   ExecutionRepository
 } from '@/lib/repositories';
+
+// ExecutionRepository has no singleton: the client is a required argument
+// (RLS slice 2c-1). Pass the caller's cookie client, or the service role where
+// that is intended and documented.
+const executions = new ExecutionRepository(await createAuthenticatedServerClient());
 ```
 
 ### Standard Result Pattern
@@ -643,7 +633,6 @@ try {
 |------------|----------------------|
 | `AgentRepository` | create, updateStatus, softDelete, hardDelete, restore, duplicate, updateDetails |
 | `ExecutionRepository` | create, findByAgentId, updateLogs, findRunningByAgentId, findForStatusQuery |
-| `SharedAgentRepository` | create |
 | `AgentMetricsRepository` | findByAgentId |
 | `ConfigRepository` | getSystemConfig (on cache miss) |
 | `MemoryRepository` | findByAgentId (on large queries) |
@@ -696,15 +685,13 @@ For client components (`'use client'`), use the **Client API service** instead o
 | Service | Description |
 |---------|-------------|
 | `agentApi` | Agent CRUD, status updates, executions, memory count |
-| `sharedAgentApi` | Check if agent is shared, share an agent |
-| `metricsApi` | Get agent performance metrics |
 | `systemConfigApi` | Access system configuration values |
 
 ### Usage Example
 
 ```typescript
 'use client'
-import { agentApi, sharedAgentApi, metricsApi } from '@/lib/client/agent-api';
+import { agentApi } from '@/lib/client/agent-api';
 
 export function AgentDetailPage({ agentId, userId }: Props) {
   const fetchAgent = async () => {
@@ -720,18 +707,6 @@ export function AgentDetailPage({ agentId, userId }: Props) {
     const result = await agentApi.getExecutions(agentId, userId, { includeTokens: true });
     if (result.success) {
       setExecutions(result.data);
-    }
-  };
-
-  const handleShare = async () => {
-    // Share agent with quality scores
-    const result = await sharedAgentApi.share(agentId, userId, {
-      quality_score: 85,
-      reliability_score: 90,
-      base_executions: 100,
-    });
-    if (result.success) {
-      console.log('Shared with ID:', result.data.id);
     }
   };
 }
@@ -750,17 +725,6 @@ export function AgentDetailPage({ agentId, userId }: Props) {
 | `getExecutions(agentId, userId, options?)` | Get executions with optional token enrichment |
 | `getMemoryCount(agentId, userId)` | Get count of agent memories |
 
-**sharedAgentApi:**
-| Method | Description |
-|--------|-------------|
-| `existsByOriginalAgent(agentId, userId)` | Check if agent has been shared |
-| `share(agentId, userId, shareData?)` | Share agent with optional quality scores |
-
-**metricsApi:**
-| Method | Description |
-|--------|-------------|
-| `getBasicMetrics(agentId, userId)` | Get execution counts, success rate, avg duration |
-
 ## API Routes Using Repositories
 
 The following API routes use the repository layer. **Client components should use the Client API service above rather than calling these directly.**
@@ -773,13 +737,10 @@ The following API routes use the repository layer. **Client components should us
 | `/api/agents/[id]` | DELETE | `agentRepository.softDelete()` | Soft delete agent |
 | `/api/agents/[id]/status` | POST | `agentRepository.updateStatus()` | Update agent status |
 | `/api/agents/[id]/duplicate` | POST | `agentRepository.duplicate()` | Duplicate agent |
-| `/api/agents/[id]/executions` | GET | `executionRepository.findByAgentId()` | Get executions with token enrichment |
+| `/api/agents/[id]/executions` | GET | `ExecutionRepository(supabaseServer).findByAgentId()` | Get executions with token enrichment |
 | `/api/agents/[id]/memory/count` | GET | `memoryRepository.countByAgentId()` | Get memory count |
-| `/api/agents/[id]/metrics` | GET | `agentMetricsRepository.findByAgentId()` | Get performance metrics |
 | `/api/run-agent` | POST | Multiple repositories | Execute agent (uses 7 repositories) |
-| `/api/run-agent` | GET | `executionRepository.findForStatusQuery()` | Get execution status |
-| `/api/shared-agents` | POST | `sharedAgentRepository.create()` | Share an agent |
-| `/api/shared-agents/exists` | GET | `sharedAgentRepository.existsByOriginalAgent()` | Check if agent is shared |
+| `/api/run-agent` | GET | `ExecutionRepository(client).findForStatusQuery()` | Get execution status |
 | `/api/system-config` | GET | `systemConfigRepository.getByCategory()` | Get system config |
 
 **`/api/run-agent` POST uses:**
@@ -787,8 +748,8 @@ The following API routes use the repository layer. **Client components should us
 - `agentStatsRepository.getLastRunCost()` - Estimate cost
 - `agentStatsRepository.incrementStats()` - Track execution stats
 - `agentConfigurationRepository.getInputValues()` - Get saved inputs
-- `executionRepository.create()` - Create execution record
-- `executionRepository.updateLogs()` - Store adjusted tokens
+- `ExecutionRepository(client).create()` - Create execution record
+- `ExecutionRepository(client).updateLogs()` - Store adjusted tokens
 - `agentLogsRepository.create()` - Log execution output
 - `executionLogRepository.create()` - Step-by-step logs (legacy path)
 - `systemConfigRepository.getBoolean()` - Check pilot enabled
@@ -815,7 +776,7 @@ When creating a new repository:
 2. Add types to `types.ts`
 3. Export from `index.ts`
 4. Follow the established patterns:
-   - Constructor with optional Supabase client injection
+   - Constructor with Supabase client injection. Never default to the browser client (`@/lib/supabaseClient`): on the server it runs as `anon` (C-7 guard, `lib/repositories/__tests__/anon-default-repositories.guard.test.ts`)
    - Logger initialization with service name
    - Consistent `AgentRepositoryResult<T>` return type
    - Export both class and singleton instance
@@ -839,3 +800,4 @@ When creating a new repository:
 | 2026-10-08 | `PaymentTransactionRepository`: Stripe webhook section; added `PaymentRefundRepository` | CF-5 PR 3: the webhook's 11 `payment_transactions` queries and its `payment_refunds` upsert moved behind seven purpose methods and `upsertFromStripe`, with exact chains and typed insert rows. Added to the structure tree; recorded that the dispute and refund paths have no `accountOwns` (FU-3) |
 | 2026-10-08 | Plans and bookings: `PaymentPlanRepository`, `PaymentPlanSubscriptionRepository`, `SchedulingBookingRepository` | CF-5 PR 4: the webhook's 4 `payment_plan_installments`, 2 `payment_plan_subscriptions` and 4 `scheduling_bookings` queries, and `bindPlanSubscription`'s 5 direct `supabaseServer` queries, moved behind 15 purpose methods with exact chains. Queries that had a `user_id` filter keep it, in an owner-scoped section; F-3 and the Fix-1 / Fix-1b scoping are unchanged |
 | 2026-10-09 | Legacy tables and the owner lookup; added `BillingEventRepository`, `LegacyBoostPackPurchaseRepository` | CF-5 PR 5: the webhook's 11 agent-platform queries (`user_subscriptions` 6, `billing_events` 2, `credit_transactions`, `boost_pack_purchases`, `system_settings_config`) and `resolveAccountOwner`'s 2 reads moved behind 12 purpose methods with exact chains (10 for the route, `BillingEventRepository.insert` serving both its inserts; 2 for the resolver). The webhook route now issues no query of its own. `CreditTransactionRepository` gains its one write. Added to the structure tree |
+| 2026-10-14 | Agent sharing switched off; `ExecutionRepository` singleton removed | RLS slice 2c-1 (user decision BQ-2): removed `SharedAgentRepository`, the `sharedAgentApi` and `metricsApi` client services, and the deleted `/api/shared-agents`, `/api/shared-agents/exists` and `/api/agents/[id]/metrics` routes from this doc. `ExecutionRepository` now takes a required client (no browser-client default, no singleton). Noted the C-7 guard under Adding New Repositories |
