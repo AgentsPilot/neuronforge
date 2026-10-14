@@ -13,6 +13,7 @@ export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
 export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
+export { AiPriceProposalRepository, aiPriceProposalRepository } from './AiPriceProposalRepository';
 export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
@@ -364,6 +365,11 @@ export type {
   CreateAiModelPricingInput,
   AiModelPricingSyncEntry,
   AiModelPricingSyncResult,
+  AiModelPricingExactRow,
+  AiPriceSubmitLine,
+  AiPriceSubmitInput,
+  AiPriceSubmitResultLine,
+  AiPricePendingLine,
   // Boost pack (agent-platform catalog) types
   BoostPack,
   BoostPackWriteInput,
