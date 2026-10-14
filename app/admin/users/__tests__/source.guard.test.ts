@@ -473,7 +473,8 @@ describe('the dialogs use the shared admin class (Admin Layout Standard L-4a; D-
     `${ROOT}/components/CreditFormDialog.tsx`,
     `${ROOT}/components/DeleteBusinessDialog.tsx`,
     `${ROOT}/components/BoostCapDialog.tsx`,
-    `${ROOT}/components/BoostReconcileDialog.tsx`,
+    // BoostReconcileDialog.tsx moved to app/admin/components/jobs/ReconcileTopUpsDialog.tsx
+    // in Admin Layout LF-4c; the Jobs source guard carries these checks for it (SA-W7).
   ];
 
   /** What keeps a file off the shared dialog class; empty when it is on it. */

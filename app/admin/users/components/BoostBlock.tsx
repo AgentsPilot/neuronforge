@@ -24,8 +24,9 @@
  *     dialog on that purchase's lot, through the panel (SA C-5). When the lot
  *     is not among the Credits block's lots that can be taken back (expired,
  *     used up, or not loaded yet), the row says "Take back in Credits above";
- *   - "Run billing reconcile now (all accounts)" (`BoostReconcileDialog`, the
- *     4b.2 route with an empty body; SA C-6).
+ *   - a pointer line to Scheduled jobs & queues, where "Reconcile top-ups now
+ *     (all accounts)" lives since Admin Layout LF-4c (BD-6): a run over every
+ *     business is not an action on this account.
  * A success shows its sentence as a status line and reads the block again.
  *
  * A block the server could not read says so; it never shows zeros. Free text
@@ -35,11 +36,13 @@
  * and fold the rest, hidden and never unmounted (BD-8); the Spending limit
  * part opens with a bordered action bar, Set limit and Back to default, above
  * its figures (BD-5); closing the limit dialog returns focus to its button, or
- * to the section heading when the button is gone (BD-15, F-108). The
- * reconcile button is unchanged here (LF-4c moves it).
+ * to the section heading when the button is gone (BD-15, F-108). LF-4c moved
+ * the reconcile button to Scheduled jobs & queues; the block keeps only the
+ * pointer line, last, when the top-ups read succeeded.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { ExternalLink, Receipt } from 'lucide-react';
 
 import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
@@ -57,7 +60,6 @@ import type { AdminBoostCapBlock, AdminBoostPurchaseRow, AdminBoostView } from '
 import { BOOST_ACTION_COPY, money, perWindow } from '../boostCopy';
 import { formatCredits, formatUtc, shortId } from '../creditCopy';
 import { BoostCapDialog, type BoostCapDialogMode, type CurrentLimit } from './BoostCapDialog';
-import { BoostReconcileDialog } from './BoostReconcileDialog';
 import { ShowMoreList } from './drawerFolds';
 import { MONEY_ACTION_BAR, useReturnFocus } from './moneyBlockUi';
 
@@ -460,7 +462,6 @@ export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props)
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [reloadToken, setReloadToken] = useState(0);
   const [capDialog, setCapDialog] = useState<BoostCapDialogMode | null>(null);
-  const [reconcileOpen, setReconcileOpen] = useState(false);
   // The last action's sentences. Outside the `ok` branch, so a failed re-read cannot hide them.
   const [notice, setNotice] = useState<string[] | null>(null);
   const url = `/api/admin/business-os/credits/accounts/${encodeURIComponent(accountId)}/boost`;
@@ -481,7 +482,6 @@ export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props)
 
   function finished(lines: string[]) {
     setCapDialog(null);
-    setReconcileOpen(false);
     setNotice(lines);
     reload();
   }
@@ -578,23 +578,20 @@ export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props)
             }}
           />
 
-          {load.data.isOwnAccount ? (
+          {load.data.isOwnAccount && (
             <p data-testid="boost-own-account" className="text-sm text-slate-400">
               {BOOST_ACTION_COPY.ownAccount}
             </p>
-          ) : (
-            <button
-              type="button"
-              data-testid="boost-reconcile"
-              onClick={() => {
-                setNotice(null);
-                setReconcileOpen(true);
-              }}
-              className="rounded border border-sky-500/50 px-3 py-1.5 text-sm text-sky-200 hover:bg-sky-500/10"
-            >
-              {BOOST_ACTION_COPY.reconcileButton}
-            </button>
           )}
+
+          {/* LF-4c (BD-6): the run over every business lives on Scheduled jobs & queues.
+              A link, not a money action, so it shows on every account (SA SQ-7). */}
+          <p data-testid="boost-reconcile-pointer" className="text-xs text-slate-400">
+            {BOOST_ACTION_COPY.reconcilePointer}{' '}
+            <Link href="/admin/jobs-queues" className={LINK_CLASS}>
+              {BOOST_ACTION_COPY.reconcilePointerLink}
+            </Link>
+          </p>
         </div>
       )}
 
@@ -612,16 +609,6 @@ export function BoostBlock({ accountId, businessLabel, takeBack = null }: Props)
           current={current}
           defaultLimit={{ amountMinor: view.cap.default.amountMinor, currency: view.cap.default.currency }}
           onSuccess={finished}
-        />
-      )}
-
-      {reconcileOpen && (
-        <BoostReconcileDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setReconcileOpen(false);
-          }}
-          onFinished={finished}
         />
       )}
     </div>

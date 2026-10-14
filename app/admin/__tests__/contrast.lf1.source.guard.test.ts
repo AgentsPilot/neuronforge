@@ -103,6 +103,9 @@ describe('LF-1 contrast guard: the walk', () => {
         'app/admin/components/jobs/DrainNowDialog.tsx',
         'app/admin/components/jobs/CancelQueueItemDialog.tsx',
         'app/admin/components/jobs/RetryQueueItemDialog.tsx',
+        // LF-4c: the reconcile moved here from Businesses.
+        'app/admin/components/jobs/ReconcileTopUpsDialog.tsx',
+        'app/admin/components/jobs/reconcileCopy.ts',
       ]),
     );
     expect(PAGES['Audit trail']).toContain('app/admin/audit-trail/page.tsx');
