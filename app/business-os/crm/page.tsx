@@ -60,6 +60,13 @@ export default function CRMPage() {
    * stages (or a failed stage request) sat behind the spinner forever.
    */
   const [stagesLoaded, setStagesLoaded] = useState(false);
+  /**
+   * The stage request failed, as opposed to answering "none".
+   *
+   * Without it a failed request read as an empty pipeline, and the owner was
+   * told they had no stages when they had six and the server had a bad moment.
+   */
+  const [stagesFailed, setStagesFailed] = useState(false);
   const [enabledCapabilities, setEnabledCapabilities] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   /**
@@ -136,10 +143,19 @@ export default function CRMPage() {
    */
   const phoneLibSettled = usePhoneLibSettled();
 
-  // Handle contact query parameter - open specific contact drawer
+  /*
+   * Handle contact query parameter - open specific contact drawer.
+   *
+   * Waits for the first list load to FINISH, not for it to return rows. It
+   * used to wait on `contacts.length > 0`, so on a list that loads empty — a
+   * board with no stages, a business with no contacts on page one — the link
+   * was never followed and `?contact=` sat in the address bar. `loading` comes
+   * down in the same render the rows land in, so the in-list lookup below
+   * still sees them; an empty list just goes straight to the direct fetch.
+   */
   useEffect(() => {
     const contactId = searchParams.get('contact');
-    if (contactId && contacts.length > 0 && phoneLibSettled) {
+    if (contactId && !loading && phoneLibSettled) {
       // `?section=` decides which part of the record opens. Absent or unknown
       // falls back to details, which is what every link did before it existed.
       const section = sectionFromUrl(searchParams.get('section'));
@@ -160,7 +176,7 @@ export default function CRMPage() {
         fetchContactById(contactId, section, bookingId);
       }
     }
-  }, [searchParams, contacts, phoneLibSettled]);
+  }, [searchParams, contacts, loading, phoneLibSettled]);
 
   // Handle task query parameter - fetch task to get contact_id, then open drawer with tasks tab
   useEffect(() => {
@@ -363,9 +379,14 @@ export default function CRMPage() {
       const data = await response.json();
       if (data.success) {
         setPipelineStages(data.stages || []);
+        setStagesFailed(false);
+      } else {
+        logger.warn({ status: response.status, error: data.error }, 'Pipeline stages request was refused');
+        setStagesFailed(true);
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch pipeline stages');
+      setStagesFailed(true);
     } finally {
       setStagesLoaded(true);
     }
@@ -705,7 +726,32 @@ export default function CRMPage() {
           </div>
         ) : (
           <>
-            {viewMode === 'pipeline' && !pipelineStages.length && (
+            {viewMode === 'pipeline' && !pipelineStages.length && stagesFailed && (
+              <div className="flex items-center justify-center min-h-[400px]">
+                <div className="text-center space-y-3 max-w-md">
+                  <p className="text-[var(--v2-text-primary)] font-medium">{t('crm.stages_failed_title')}</p>
+                  <p className="text-sm text-[var(--v2-text-secondary)]">{t('crm.stages_failed_body')}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Back behind the spinner until the board has its rows.
+                      // The fetch effect re-runs on `stagesLoaded` and fetchBoard
+                      // clears `loading` either way — rows or no stages.
+                      // Raising `loading` too stops a one-frame empty board
+                      // between the stages arriving and fetchBoard starting.
+                      setLoading(true);
+                      setStagesLoaded(false);
+                      void fetchPipelineStages();
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all hover:bg-[var(--v2-surface-hover)]"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {t('crm.stages_failed_retry')}
+                  </button>
+                </div>
+              </div>
+            )}
+            {viewMode === 'pipeline' && !pipelineStages.length && !stagesFailed && (
               <div className="flex items-center justify-center min-h-[400px]">
                 <div className="text-center space-y-2 max-w-md">
                   <p className="text-[var(--v2-text-primary)] font-medium">{t('crm.no_stages_title')}</p>
