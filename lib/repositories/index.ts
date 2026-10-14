@@ -3,8 +3,10 @@
 
 // Repositories
 export { AgentRepository, agentRepository } from './AgentRepository';
-export { ExecutionRepository, executionRepository } from './ExecutionRepository';
-export { SharedAgentRepository, sharedAgentRepository } from './SharedAgentRepository';
+// No singleton (RLS slice 2c-1, SA R-8): its old default was the browser
+// client, which on the server talks to the database as `anon`. Construct it
+// with the caller's client.
+export { ExecutionRepository } from './ExecutionRepository';
 export { AgentMetricsRepository, agentMetricsRepository } from './AgentMetricsRepository';
 export { ConfigRepository, configRepository } from './ConfigRepository';
 export { MemoryRepository, memoryRepository } from './MemoryRepository';

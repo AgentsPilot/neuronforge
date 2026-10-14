@@ -529,7 +529,6 @@ async function callGroq(
 - [Agent Details](/v2/agents/[id]): View/edit specific agent, execution history, settings
 - [Run Agent](/v2/agents/[id]/run): Execute agents, provide input, view real-time logs
 - [Create Agent](/v2/agents/new): Conversational builder for new agents
-- [Templates](/v2/templates): Pre-built agent templates for common use cases
 - [Analytics](/v2/analytics): Performance metrics, cost breakdowns, usage trends
 - [Billing](/v2/billing): Manage Pilot Credits, subscriptions, payment methods
 - [Monitoring](/v2/monitoring): Real-time execution logs and system health

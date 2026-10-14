@@ -2,7 +2,6 @@
 // Repository for managing agent executions and token usage
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import { supabase as defaultSupabase } from '@/lib/supabaseClient';
 import { createLogger, Logger } from '@/lib/logger';
 import type {
   Execution,
@@ -33,8 +32,14 @@ export class ExecutionRepository {
   private supabase: SupabaseClient;
   private logger: Logger;
 
-  constructor(supabaseClient?: SupabaseClient) {
-    this.supabase = supabaseClient || defaultSupabase;
+  /**
+   * The client is required (RLS slice 2c-1, SA R-8). The old default was the
+   * browser client, which on the server runs as `anon`: every server caller
+   * must say whose rights it reads with (the caller's cookie client, or the
+   * service role where that is intended and documented).
+   */
+  constructor(supabaseClient: SupabaseClient) {
+    this.supabase = supabaseClient;
     this.logger = createLogger({ service: 'ExecutionRepository' });
   }
 
@@ -260,6 +265,3 @@ export class ExecutionRepository {
     }
   }
 }
-
-// Export singleton instance for convenience
-export const executionRepository = new ExecutionRepository();

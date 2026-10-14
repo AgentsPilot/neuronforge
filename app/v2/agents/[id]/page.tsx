@@ -10,8 +10,6 @@ import { supabase } from '@/lib/supabaseClient'
 import {
   agentApi,
   systemConfigApi,
-  sharedAgentApi,
-  metricsApi,
 } from '@/lib/client/agent-api'
 import { requestDeduplicator } from '@/lib/utils/request-deduplication'
 import type { Agent, Execution } from '@/lib/repositories/types'
@@ -28,10 +26,7 @@ import {
   Activity,
   Clock,
   CheckCircle,
-  CheckCircle2,
-  AlertCircle,
   AlertTriangle,
-  Shield,
   Bot,
   Copy,
   Check,
@@ -39,15 +34,12 @@ import {
   TrendingUp,
   XCircle,
   X,
-  Zap,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   Download,
-  Share2,
   Gauge,
   Rocket,
-  Brain,
   PlayCircle,
   Settings,
   AlertOctagon
@@ -253,8 +245,6 @@ export default function V2AgentDetailPage() {
 
   // Modals
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [showShareConfirm, setShowShareConfirm] = useState(false)
-  const [showShareSuccess, setShowShareSuccess] = useState(false)
   const [showHourlyRateDialog, setShowHourlyRateDialog] = useState(false)
 
   // Execution Modal state (Run Now)
@@ -266,16 +256,6 @@ export default function V2AgentDetailPage() {
   const [userHourlyRate, setUserHourlyRate] = useState<number | null>(null) // null = not fetched yet
   const [pendingInsightsToggle, setPendingInsightsToggle] = useState(false) // True when waiting to enable insights after hourly rate dialog
   const [orgSettingsComplete, setOrgSettingsComplete] = useState<boolean | null>(null) // null = not checked yet
-
-  // Sharing data
-  const [shareCreditsAwarded, setShareCreditsAwarded] = useState(0)
-  const [shareQualityScore, setShareQualityScore] = useState(0)
-  const [sharingRewardAmount, setSharingRewardAmount] = useState(500)
-  const [sharingValidation, setSharingValidation] = useState<any>(null)
-  const [sharingStatus, setSharingStatus] = useState<any>(null)
-  const [sharingConfig, setSharingConfig] = useState<any>(null)
-  const [shareRewardActive, setShareRewardActive] = useState(true)
-  const [hasBeenShared, setHasBeenShared] = useState(false)
 
   // Other
   const [memoryCount, setMemoryCount] = useState(0)
@@ -353,14 +333,10 @@ export default function V2AgentDetailPage() {
       // Parallel fetch all data
       // PERFORMANCE: Skip token enrichment for faster load
       // Also pre-fetch form metadata and global schema metadata for input config drawer
-      const [agentResult, executionsResult, configResult, rewardStatus, insightsResult, formMetadataResult, globalSchemaResult, profileResult, intensityResult, baselineResult] = await Promise.all([
+      const [agentResult, executionsResult, configResult, insightsResult, formMetadataResult, globalSchemaResult, profileResult, intensityResult, baselineResult] = await Promise.all([
         agentApi.getById(agentId, user.id),
         agentApi.getExecutions(agentId, user.id, { includeTokens: false }),
-        systemConfigApi.getByKeys(['tokens_per_pilot_credit', 'agent_sharing_reward_amount']),
-        // Customer-facing projection, not `/api/admin/reward-config`: that
-        // admin route is gated and returns the full reward ruleset (amounts,
-        // thresholds, anti-abuse caps). This returns a single boolean.
-        fetch('/api/rewards/agent-sharing').then(r => r.json()).catch(() => ({ success: false })),
+        systemConfigApi.getByKeys(['tokens_per_pilot_credit']),
         fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] })),
         fetch(`/api/v2/agents/${agentId}/form-metadata`).then(r => r.json()).catch(() => ({ metadata: [] })),
         fetch('/api/plugins/schema-metadata').then(r => r.json()).catch(() => ({ data: { metadata: {} } })),
@@ -393,15 +369,7 @@ export default function V2AgentDetailPage() {
         if (tokensValue > 0 && tokensValue <= 1000) {
           setTokensPerPilotCredit(tokensValue)
         }
-        const rewardValue = Number(configResult.data['agent_sharing_reward_amount'])
-        if (rewardValue) {
-          setSharingRewardAmount(rewardValue)
-        }
       }
-
-      // Process reward status. Same fallback as before: anything other than an
-      // explicit `true` hides the prompt.
-      setShareRewardActive(rewardStatus?.data?.isActive === true)
 
       // Process insights
       console.log('[AgentPage] Insights result:', insightsResult)
@@ -587,16 +555,6 @@ export default function V2AgentDetailPage() {
       }
     }
   }, [user?.id, agentId])
-
-  // Pre-fetch sharing eligibility when agent data is loaded (NON-BLOCKING)
-  // PERFORMANCE: Defer this call to reduce initial load time - sharing info is not critical
-  useEffect(() => {
-    if (agentId && user && shareRewardActive && agent) {
-      // Delay by 1 second to let page render first
-      const timer = setTimeout(() => checkSharingEligibility(), 1000)
-      return () => clearTimeout(timer)
-    }
-  }, [agentId, user?.id, shareRewardActive, agent?.id])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -983,26 +941,6 @@ export default function V2AgentDetailPage() {
       alert('Failed to save hourly rate. Please try again.')
     } finally {
       setSavingHourlyRate(false)
-    }
-  }
-
-  const checkSharingEligibility = async () => {
-    if (!user?.id || !agent?.id) return
-
-    try {
-      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
-      const validator = new AgentSharingValidator(supabase)
-
-      const validation = await validator.validateSharing(user.id, agent.id)
-      setSharingValidation(validation)
-
-      const status = await validator.getSharingStatus(user.id)
-      setSharingStatus(status)
-
-      const config = validator.getConfig()
-      setSharingConfig(config)
-    } catch (error) {
-      clientLogger.error('Error checking sharing eligibility', error as Error)
     }
   }
 
@@ -1830,115 +1768,6 @@ export default function V2AgentDetailPage() {
     }
   }
 
-  const handleShareAgentClick = () => {
-    if (!agent || !user || agent.status !== 'active') {
-      clientLogger.debug('Share validation failed', { hasAgent: !!agent, hasUser: !!user, status: agent?.status })
-      return
-    }
-
-    clientLogger.debug('Opening share modal', { agentId: agent.id })
-    setShowShareConfirm(true)
-  }
-
-  const handleShareAgent = async () => {
-    if (!agent || !user || agent.status !== 'active') {
-      return
-    }
-
-    setShowShareConfirm(false)
-    setActionLoading('share')
-    try {
-      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
-      const { RewardService } = await import('@/lib/credits/rewardService')
-      const { AgentScoreService } = await import('@/lib/services/AgentScoreService')
-
-      const validator = new AgentSharingValidator(supabase)
-      const rewardService = new RewardService(supabase)
-      const scoreService = new AgentScoreService(supabase)
-
-      const validation = await validator.validateSharing(user.id, agent.id)
-      if (!validation.valid) {
-        alert(validation.reason || 'This agent does not meet sharing requirements')
-        return
-      }
-
-      const existsResult = await sharedAgentApi.existsByOriginalAgent(agent.id, user.id)
-      if (existsResult.success && existsResult.data) {
-        alert('This agent has already been shared!')
-        return
-      }
-
-      const qualityScore = await scoreService.calculateQualityScore(agent.id)
-      const diversityPenalty = await scoreService.getExecutionDiversityPenalty(agent.id)
-
-      const finalScore = {
-        ...qualityScore,
-        overall_score: qualityScore.overall_score * diversityPenalty
-      }
-
-      const metricsResult = await metricsApi.getBasicMetrics(agent.id, user.id)
-      const metrics = metricsResult.data
-
-      const shareResult = await sharedAgentApi.share(agent.id, user.id, {
-        description: agent.description || undefined,
-        quality_score: finalScore.overall_score,
-        reliability_score: finalScore.reliability_score,
-        efficiency_score: finalScore.efficiency_score,
-        adoption_score: finalScore.adoption_score,
-        complexity_score: finalScore.complexity_score,
-        base_executions: metrics?.total_executions || 0,
-        base_success_rate: metrics?.successful_executions && metrics?.total_executions
-          ? (metrics.successful_executions / metrics.total_executions) * 100
-          : 0,
-      })
-
-      if (!shareResult.success) {
-        clientLogger.error('Error sharing agent', new Error(shareResult.error))
-        alert(`Failed to share agent: ${shareResult.error}`)
-        return
-      }
-
-      const rewardResult = await rewardService.awardAgentSharingReward(
-        user.id,
-        agent.id,
-        agent.agent_name
-      )
-
-      if (rewardResult.success) {
-        setShareCreditsAwarded(rewardResult.creditsAwarded || 0)
-        setShareQualityScore(Math.round(finalScore.overall_score))
-        setShowShareSuccess(true)
-        setHasBeenShared(true)
-        clientLogger.info('Agent shared successfully', { agentId: agent.id, qualityScore: finalScore.overall_score, creditsAwarded: rewardResult.creditsAwarded })
-
-        setTimeout(() => setShowShareSuccess(false), 5000)
-      } else {
-        // P0-FT-RLS (SA RC9-7): the reward upsert writes `user_subscriptions`
-        // from the browser, which the lock-down migration blocks
-        // (supabase/migrations/20261001_user_subscriptions_write_lockdown.sql).
-        // The share itself already succeeded, and RewardService returns before
-        // writing any `credit_transactions` / `user_rewards` row, so state stays
-        // clean and the reward can be back-filled. Never fall through silently:
-        // that left the Share button enabled and the next click claimed the
-        // agent was already shared.
-        setHasBeenShared(true)
-        clientLogger.error(
-          { err: new Error(rewardResult.error || rewardResult.message), agentId: agent.id },
-          'Agent shared but the sharing reward could not be applied'
-        )
-        alert('Agent shared. The credit reward could not be applied right now and will be credited later.')
-      }
-
-      await fetchAllData()
-    } catch (error) {
-      clientLogger.error('Error in handleShareAgent', error as Error)
-      alert('Failed to share agent. Please try again.')
-    } finally {
-      setActionLoading(null)
-      setShowShareConfirm(false)
-    }
-  }
-
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return date.toLocaleString('en-US', {
@@ -2723,18 +2552,6 @@ export default function V2AgentDetailPage() {
               </button>
 
               <button
-                onClick={handleShareAgentClick}
-                disabled={agent.status !== 'active' || actionLoading === 'share'}
-                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-border)] transition-all disabled:opacity-50"
-              >
-                {actionLoading === 'share' ? <Loader2 className="w-5 h-5 animate-spin text-[var(--v2-text-secondary)]" /> : <Share2 className="w-5 h-5 text-[var(--v2-text-secondary)]" />}
-                <div className="text-left flex-1">
-                  <h5 className="text-sm font-semibold text-[var(--v2-text-primary)]">Share to Templates</h5>
-                  <p className="text-xs text-[var(--v2-text-muted)]">Share with community and earn credits</p>
-                </div>
-              </button>
-
-              <button
                 onClick={handleExportConfiguration}
                 className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-border)] transition-all"
               >
@@ -2893,142 +2710,6 @@ export default function V2AgentDetailPage() {
                 ) : (
                   'Delete Agent'
                 )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Share Confirmation Modal - Keep existing implementation */}
-      {showShareConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-md w-full p-6 border border-[var(--v2-border)]">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-[var(--v2-primary)]/10 rounded-full flex items-center justify-center">
-                <Share2 className="w-6 h-6 text-[var(--v2-primary)]" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">Share Agent</h3>
-                <p className="text-sm text-[var(--v2-text-muted)]">Share with the community</p>
-              </div>
-            </div>
-
-            {!shareRewardActive ? (
-              <div className="bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-lg p-4 mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertCircle className="h-5 w-5 text-[var(--v2-text-secondary)]" />
-                  <span className="font-semibold text-[var(--v2-text-primary)]">Sharing Temporarily Unavailable</span>
-                </div>
-                <p className="text-[var(--v2-text-secondary)] text-sm">
-                  The agent sharing feature is currently disabled by the administrator.
-                </p>
-              </div>
-            ) : hasBeenShared || (sharingValidation?.details?.alreadyShared) ? (
-              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Shield className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-                  <span className="font-semibold text-amber-800 dark:text-amber-200">Already Shared</span>
-                </div>
-                <p className="text-amber-700 dark:text-amber-300 text-sm">
-                  This agent has already been shared with the community.
-                </p>
-              </div>
-            ) : sharingValidation && !sharingValidation.valid ? (
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
-                  <span className="font-semibold text-red-800 dark:text-red-200">Cannot Share Yet</span>
-                </div>
-                <p className="text-red-700 dark:text-red-300 text-sm mb-3">
-                  {sharingValidation.reason}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3 mb-4">
-                {sharingValidation && sharingValidation.valid && (
-                  <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                      <span className="font-semibold text-emerald-800 dark:text-emerald-200 text-sm">Quality Requirements Met ✓</span>
-                    </div>
-                  </div>
-                )}
-                <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-[var(--v2-primary)]/10 rounded-full flex items-center justify-center">
-                        <Zap className="w-5 h-5 text-[var(--v2-primary)]" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold text-[var(--v2-text-primary)]">Share Reward</div>
-                        <div className="text-xs text-[var(--v2-text-muted)]">Help the community grow</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-[var(--v2-primary)]">{sharingRewardAmount}</div>
-                      <div className="text-xs text-[var(--v2-text-muted)]">credits</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowShareConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors font-medium text-sm"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {(hasBeenShared || sharingValidation?.details?.alreadyShared) ? 'Close' : 'Cancel'}
-              </button>
-              {!hasBeenShared && !sharingValidation?.details?.alreadyShared && (sharingValidation && !sharingValidation.valid ? null : (
-                <button
-                  onClick={handleShareAgent}
-                  disabled={actionLoading === 'share' || (sharingValidation && !sharingValidation.valid) || !shareRewardActive}
-                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {actionLoading === 'share' ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> Sharing...</>
-                  ) : (
-                    'Share & Earn Credits'
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Share Success Notification */}
-      {showShareSuccess && (
-        <div className="fixed top-4 right-4 z-50 max-w-md animate-in slide-in-from-top-5">
-          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl p-6">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center flex-shrink-0">
-                <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
-              </div>
-              <div className="flex-1">
-                <h3 className="font-semibold text-[var(--v2-text-primary)] text-lg mb-1">Agent Shared Successfully!</h3>
-                <p className="text-sm text-[var(--v2-text-secondary)] mb-3">
-                  Your agent is now available in the community templates.
-                </p>
-                <div className="flex items-center gap-4 text-sm">
-                  <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-                    <Zap className="w-4 h-4" />
-                    <span className="font-semibold">{shareCreditsAwarded} credits earned</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[var(--v2-primary)]">
-                    <Brain className="w-4 h-4" />
-                    <span className="font-semibold">Score: {shareQualityScore}/100</span>
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowShareSuccess(false)}
-                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
-              >
-                <X className="w-5 h-5" />
               </button>
             </div>
           </div>

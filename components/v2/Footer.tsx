@@ -23,7 +23,6 @@ import {
   AlertCircle,
   PlugZap,
   XCircle,
-  Sparkles,
   Search,
   ChevronLeft,
   ChevronRight
@@ -1225,16 +1224,6 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
                   >
                     <List className="w-4 h-4 text-[var(--v2-text-secondary)]" />
                     <span className="text-sm font-medium text-[var(--v2-text-primary)]">Agent List</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      router.push('/v2/templates')
-                      setMenuOpen(false)
-                    }}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                  >
-                    <Sparkles className="w-4 h-4 text-[var(--v2-text-secondary)]" />
-                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Templates</span>
                   </button>
                   <button
                     onClick={() => {
