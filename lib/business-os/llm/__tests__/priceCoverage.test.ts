@@ -126,6 +126,28 @@ describe('3. images, through the real resolver', () => {
     }
   });
 
+  it('the default image model meets the price-coverage requirement from the in-code fallback alone, xhigh and max included', () => {
+    // The guardrail (checkImageModel) needs every configured size priced at
+    // low, medium and high. Prod has no `image_generation_prices_usd`, so the
+    // fallback map alone must carry the default model. `xhigh` and `max` are
+    // the 2.5 models' extra levels: if the provider ever reports one, the
+    // image must not be recorded at $0.
+    const model = IMAGE_GENERATION_CONFIG_DEFAULTS.model;
+    const sizes = Array.from(new Set(Object.values(IMAGE_GENERATION_CONFIG_DEFAULTS.sizes)));
+    for (const size of sizes) {
+      for (const quality of [...IMAGE_PRICE_REQUIRED_QUALITIES, 'xhigh', 'max']) {
+        const price = IMAGE_FALLBACK_PRICING[`${model}:${size}:${quality}`];
+        expect({ size, quality, priced: typeof price === 'number' && Number.isFinite(price) && price > 0 }).toEqual({
+          size,
+          quality,
+          priced: true,
+        });
+      }
+    }
+    // The pinned request quality is one that is priced, never `auto`.
+    expect(IMAGE_GENERATION_CONFIG_DEFAULTS.quality).toBe('high');
+  });
+
   it('every IMAGE_FALLBACK_PRICING value is finite and > 0 (the image signal reads 0 as unpriced, D-0 S-2)', () => {
     const values = Object.entries(IMAGE_FALLBACK_PRICING);
     expect(values.length).toBeGreaterThan(0);

@@ -1714,6 +1714,9 @@ export const es = {
     'crm.loading': 'Cargando contactos...',
     'crm.no_stages_title': 'Tu pipeline aún no tiene etapas',
     'crm.no_stages_body': 'El tablero necesita etapas para mostrar sus columnas. Tus contactos siguen en la pestaña Contactos.',
+    'crm.stages_failed_title': 'No se pudo cargar tu pipeline',
+    'crm.stages_failed_body': 'Algo salió mal de nuestro lado. Tus contactos están a salvo y siguen en la pestaña Contactos.',
+    'crm.stages_failed_retry': 'Intentar de nuevo',
 
     // Pipeline stages - generic
     'crm.stage.lead': 'Prospecto',

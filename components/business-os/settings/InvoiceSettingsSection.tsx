@@ -30,6 +30,9 @@ import {
   defaultDocumentType,
   type DocumentType,
 } from '@/lib/payments/documentType';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'InvoiceSettingsSection' });
 
 interface InvoiceAddress {
   line1?: string;
@@ -230,7 +233,7 @@ export function InvoiceSettingsSection({
         }
       }
     } catch (error) {
-      console.error('Error loading invoice settings:', error);
+      logger.error({ err: error }, 'Failed to load invoice settings');
     } finally {
       setLoading(false);
     }
@@ -286,7 +289,7 @@ export function InvoiceSettingsSection({
         setErrorMessage(data.error || 'Failed to save settings');
       }
     } catch (error) {
-      console.error('Error saving invoice settings:', error);
+      logger.error({ err: error }, 'Failed to save invoice settings');
       setErrorMessage('Failed to save settings');
     } finally {
       setSaving(false);
@@ -776,7 +779,6 @@ export function InvoiceSettingsSection({
                       // Typing an address of your own ends the claim that one of
                       // the saved ones is what is in these fields.
                       setReusedAddress(null);
-                      setAddressPicked(false);
                       setSettings(prev => ({
                         ...prev,
                         invoice_address: { ...prev.invoice_address, ...address },

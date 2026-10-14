@@ -70,16 +70,19 @@ const BUCKET = 'website-images';
 const IMAGE_SIZES: ReadonlyArray<ImageGenerationParams['size']> = ['1024x1024', '1536x1024', '1024x1536'];
 
 /**
- * Qualities that may be requested. `auto` (the default) lets the provider
- * choose; every image is priced by the quality the provider REPORTS it used,
- * so `auto` needs no price of its own.
+ * Qualities that may be requested. The default is `high` (pinned 2026-10-14);
+ * `auto` lets the provider choose. Every image is priced by the quality the
+ * provider REPORTS it used, so `auto` needs no price of its own. `xhigh` and
+ * `max` are deliberately not requestable: they cost several times `high`.
  */
 const IMAGE_QUALITIES: ReadonlyArray<ImageGenerationParams['quality']> = ['auto', 'low', 'medium', 'high'];
 
 /**
- * The quality an image is priced at when the provider does not report one.
- * `high` is the most expensive level, so the recorded price is an upper bound
- * rather than an understatement (user decision CR-1, option C, 2026-09-18).
+ * The quality an image is priced at when the provider does not report one
+ * (user decision CR-1, option C, 2026-09-18). For the previous default model
+ * `high` was the most expensive level, an upper bound. The current default adds
+ * `xhigh` and `max`, but the request is pinned to `high` (2026-10-14), so `high` is
+ * the level that was asked for.
  */
 export const UNREPORTED_QUALITY_PRICED_AS = 'high';
 

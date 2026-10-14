@@ -263,16 +263,21 @@ describe('the seeded rows reproduce today exactly (T1-9, AC-2)', () => {
     }
   });
 
-  it('resolves every call to its code default — the seed changes nothing', async () => {
+  it('resolves every call to its code default — the seed changes nothing (images: its own model)', async () => {
     for (const area of BOS_LLM_AREAS) {
       for (const callName of bosLlmSettingsCallNames(area)) {
         // eslint-disable-next-line no-await-in-loop
         const resolved = await resolveBosLlmSettings(area as never, callName as never);
-        expect({ area, callName, resolved }).toEqual({
-          area,
-          callName,
-          resolved: bosLlmCodeDefaults(area, callName),
-        });
+        // The one intended difference. The seed wrote `gpt-image-1`, which WAS
+        // the image code default when it ran (2026-10-03). The default moved to
+        // the successor model on 2026-10-14 (gpt-image-1 retires 23 Oct 2026),
+        // so the seeded row now resolves to the model it names, not the default.
+        // Every other field still equals the default.
+        const expected =
+          area === 'images'
+            ? { ...bosLlmCodeDefaults(area, callName), model: SEEDED_ROWS.images.model }
+            : bosLlmCodeDefaults(area, callName);
+        expect({ area, callName, resolved }).toEqual({ area, callName, resolved: expected });
       }
     }
   });
