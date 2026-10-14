@@ -174,6 +174,88 @@ ROLLBACK;
 
 **Manual checks owed (A-6, signed in, on `/business-os/settings`, `/settings` → Security and `/v2/settings` → Security):** (1) with a plugin connected, export. The file has no `access_token` / `refresh_token` / `credentials` / `profile_data`, and the success message shows. (2) DevTools Network shows only `GET /api/user/data-export`: no `/rest/v1/plugin_connections`, `profiles`, `user_preferences` or `notification_settings`, and no `/api/audit/log`. (3) Signed out (or with the session cookie removed), click Export. The error message shows and nothing downloads. (4) An offline network shows the error message. (5) `audit_trail` gets one `DATA_EXPORTED` row per export.
 
+**QA — DE-0b — 2026-10-14 (uncommitted, branch `fix/data-export-de0b-token-column-lockdown`; SA reviewed in parallel): ✅ Pass. No bugs. Ready for the user's diff review. The B-9 manual flows below are owed before and after the PROD apply.** Mode: full. Strategy: A (Jest), C (the migration and the four scripts executed on a local PGlite 0.5.8 / PG 18.3 replica, in session scratch space outside the repo; prod was never contacted), plus source reading.
+
+| Check | Result |
+|---|---|
+| New suites: `PluginConnectionRepository.updateRefreshedToken`, `PluginCoordinator.repository`, `plugin-connections-token-column-lockdown.migration` + DE-0a guard `pluginConnectionsBrowserAccess.guard` | ✅ 4 suites, 76/76 |
+| data-export route + characterization, `lib/client`, `lib/plugins/__tests__`, settings components, PluginConnection repository suites | ✅ 12 suites, 146/146 |
+| `npm run test:plugins:unit` | ✅ 27 suites, 590/590 |
+| `npm run test:authz-guard` | ✅ 2 suites, 203/203 |
+| Planted regressions: `select('*')` back on C5, and a `plugin_connections` read re-added to `/v2/settings` (C4). Both files were restored and `cmp` showed them byte-identical | ✅ guard red (3 failures) |
+| Full `npm test` | 16 suites fail. 11 are quarantined. 4 are the known Windows/dev-env failures (`oneAddressPolicy.guard`, `bookingsSearchAndPaging.guard`, `supabaseFetch`, `publicEndpointsAreThrottled.guard`). The 16th, `finance.source.guard` (DF-5, 2 tests), touches no DE-0b file. It is the slice 4a guard that is new on this base (`392a9b53`). It reads CRLF-checked-out sources, so it is most likely the same Windows-only class, but this was not proven. **Not a DE-0b defect**, so check it on CI |
+| Entitlements | n/a: no import from `lib/business-os/entitlements/` |
+| `console.*` in the 4 touched source files | ✅ 0 (PluginCoordinator's 15 and the `/settings` page's calls converted to Pino) |
+
+**Replica run.** I rebuilt `plugin_connections` in the prod shape: 19 columns, `access_token NOT NULL`, no `credentials`. Roles `anon` / `authenticated` / `service_role` (BYPASSRLS); all 7 table privileges for `anon` and `authenticated`; RLS on, with own-row policies through `auth.uid()`; one row each for two users.
+
+| Step | Result |
+|---|---|
+| Pre-check (3 result sets) | 19 columns; 7 table privileges each for `anon` and `authenticated`; no column grants |
+| Checker **before** | ✅ VERDICT **FAIL** (19 pass, 27 fail): C2 table privileges held, C3 token columns held |
+| Probe before | both SELECTs succeed (the token read is open, as expected) |
+| Migration | applies; the DO post-condition block does not raise |
+| Checker **after** | ✅ VERDICT **PASS** (46 pass, 0 fail) |
+| Probe after | first SELECT ok; `SELECT access_token` → **42501** |
+| `authenticated` (sub = user 1) | ✅ SELECT the 13 columns ok (1 row; RLS still scopes). ✅ `UPDATE status, disconnected_at` ok. Another user's row: 0 rows (RLS). **Denied 42501:** `SELECT *`, `access_token`, `refresh_token`, `settings` / `profile_data` / `expires_at` / `last_refreshed_at`, `UPDATE … RETURNING access_token`, `UPDATE access_token`, `UPDATE updated_at`, INSERT and DELETE |
+| `anon` | SELECT and UPDATE → 42501 |
+| `service_role` | ✅ SELECT tokens, UPDATE `access_token` / `expires_at`, INSERT and DELETE all work |
+| Rollback | applies; checker back to FAIL 19/27; probe token read open again; **pre-check output byte-identical to before** |
+| Re-apply, then apply a third time | ✅ PASS 46/0 both times (idempotent) |
+
+**Reading.** Every remaining non-service-role access uses only granted columns:
+
+- C5 is narrowed to 8 columns, and those are exactly the fields `PluginsTab` reads.
+- C6 updates `status` + `disconnected_at`, filtered on `.eq('id')`, with no `.select()`.
+- C7 and C8 select `plugin_key`.
+- S2 (the 5 generate-agent routes) selects `plugin_key` with `.eq('user_id')`.
+- S3 updates `disconnected_at` with `.eq('plugin_key')` + `.eq('user_id')`.
+- C9, C10, C11 and S4 are dead code and fail closed with 42501, as ruled.
+
+No `.update(...).select()` exists on an `authenticated` path; that form would need SELECT on returned columns. The PluginCoordinator refresh calls `updateRefreshedToken(context.userId, pluginKey, {accessToken, expiresAt})`. The repository uses the service role, scoped by `.eq('user_id')` + `.eq('plugin_key')`, with a fixed patch and `count: 'exact'`. It returns nothing token-bearing. None of the new or converted log lines carry a token or the prompt: the prompt is logged as length only, and errors as `{ err }`.
+
+**Edge cases (non-blocking):**
+
+- (E1) The refresh patch also sets `updated_at`, besides `access_token` / `expires_at`. This is harmless housekeeping on the service-role path, but it is wider than the S1 wording.
+- (E2) The rollback re-grants all 7 privileges to `anon` and `authenticated` (B-4: "exactly what the pre-check recorded"). That is correct only if the user's PROD pre-check showed all 7 for both roles and nothing for PUBLIC. Compare the rollback with the pasted pre-check before applying.
+- (E3) The migration is `20261067`, not `20261059` as in B-3. That follows B-3's own "re-check at PR time". Re-check again at PR time.
+- (E3a, 2026-10-14) **Renumbered to `20261068`** at PR time: PR #378 (gpt-image-1 retirement) merged `20261067_bos_llm_images_model_gpt_image_2_5_flare.sql` to main first. No other branch or worktree holds `20261068`. Content unchanged.
+- (E4) S3 sets `disconnected_at` but not `status`. This was already true before DE-0b and is out of scope.
+- (E5) After the apply, `authenticated` can no longer UPDATE `updated_at`. Any future browser write that sets it will get 42501. No current caller does.
+
+**Manual flows owed (B-9; signed in; run on the deployed DE-0b code, then again after applying 20261068 to PROD):**
+
+1. Connect a V2 OAuth plugin. The callback saves it, and the plugin shows as connected.
+2. Run a legacy AgentKit agent through `/api/agent-stream` with an expired token. The run succeeds, and the row's `expires_at` / `updated_at` move forward. Look for no "Refreshed token was not saved" log line.
+3. `/settings` → Plugins tab lists the connections, and Disconnect works (`status = disconnected`).
+4. On the agent page (`/agents/[id]`), the sandbox plugin check shows the connected plugins.
+5. Generate an agent through `/api/generate-agent*`. The connected plugins are detected.
+6. `/v2/settings` loads, with no `plugin_connections` request in DevTools.
+7. The three DE-0a exports still download, and the files are token-free.
+8. On PROD, run the checker (VERDICT PASS) and the negative probe (`SELECT access_token` → 42501).
+
+**SA code review DE-0b — 2026-10-14 (uncommitted, branch `fix/data-export-de0b-token-column-lockdown`, base `392a9b53`): ✅ Code Approved for QA.** B-1…B-6 and B-8 are met. B-7 is no-op by ruling. B-9 is QA's manual list above.
+
+| Check | Finding |
+|---|---|
+| C4 (`app/v2/settings/page.tsx`) | The page still exists and still loads profile, preferences and notifications. Only the `plugin_connections` read, the `setConnections` state and the unused `PluginConnection` import were removed. Its one `console.*` was converted |
+| C5 (`app/(protected)/settings/page.tsx`) | `PLUGINS_TAB_COLUMNS` = the 8 columns in B-3 (a subset of the 13 granted). `PluginsTab` reads only `id, plugin_key, plugin_name, username, email, status, connected_at, last_used` (checked field by field). The filter (`status`) and the order (`connected_at`) are granted columns too. 8 `console.*` → Pino |
+| S1 client and tenant scope | `pluginConnectionRepository` is the singleton built on `supabaseServer` (service role). All three calls are scoped by `user_id` from `context.userId`. The refresh write adds `.eq('plugin_key')` and a fixed 3-field patch, with `count: 'exact'` (not `.select()`, see the PostgREST update+select gotcha). Nothing token-bearing is returned or logged. This meets `tenant-isolation-guard` Step 3 |
+| S1 callers pass a server-derived user | `/api/agent-stream` and `/api/run-agent` pass `user.id` from `auth.getUser()`. `cron/process-queue` passes the job's `user_id` behind the QStash signature, and was already service role before this change. `run-scheduled-agents-direct` passes `agent.user_id` behind `CRON_SECRET`. No caller takes the id from the body or a header. Before, a cookie client gave an RLS backstop. That backstop is gone, so a server-derived id is now the only control, and it holds |
+| S1 behaviour | `findAllByUser` = the same rows as before (every status), now ordered. `findByUserAndPlugin` = the same `.single()`, and a miss gives `data: null`, as before. A failed token save is logged as a warning and the run continues, using the in-memory token. Before, the result was ignored silently. Accepted |
+| Other paths that are not service role | Re-grepped all `.from('plugin_connections')`. Every token or `profile_data` reader (BOS stats/setup-status, the payments, invoice and website checkout routes, `stripeAccountContext` callers, `/api/plugin-connections`, admin stats) uses `supabaseServer`, `createServerSupabaseClient` or a service-role `createClient`. Cookie or browser paths: C5–C8, S2 and S3 touch only granted columns. C9–C11 and S4 are dead and fail closed. No `authenticated` `.update().select()` exists. The only SQL functions in migrations that name the table are the SECURITY DEFINER operator-cleanup functions |
+| Migration `20261067` | It is the next free number. No ref on origin or any remote branch adds `20261067`+, and no worktree holds one apart from this one. One transaction, `lock_timeout`, a table-level `REVOKE ALL` from PUBLIC, anon and authenticated (this also drops any column grants). There are two column grants. 13 + 6 = the 19 prod columns. `credentials` is correctly absent (prod has no such column). Nothing touches `service_role`, RLS or policies. The post-condition **cannot pass while a token column is still granted**: `has_column_privilege` is true for a table-level grant as well as a column-level one, and PUBLIC-inherited grants count for anon and authenticated. It checks all 6 token columns × anon/authenticated × SELECT/INSERT/UPDATE/REFERENCES, every table privilege for PUBLIC/anon/authenticated, anon/PUBLIC with no column privilege, and the exact SELECT and UPDATE sets for authenticated |
+| Rollback | It revokes the two column grants, then re-grants exactly the 7 table privileges to anon and authenticated, which matches the coordinator's prod pre-check. It is not `GRANT ALL`, and grants nothing to PUBLIC. QA showed the pre-check output is byte-identical after a rollback |
+| Checker / probe / "into" | 46 rows + VERDICT, read-only. It reports FAIL before and PASS after (QA replica). The probe is separate. No migration or script contains the word "into" |
+| Logging, tests | 0 `console.*` left in the 4 touched files. The prompt is logged by length only. The 4 DE-0b suites pass (76/76, re-run by SA). `oneAddressPolicy.guard` fails here on absolute Windows backslash paths that do not match its allowlist: an environment failure, not DE-0b. Entitlements: n/a |
+
+**Non-blocking notes:**
+
+- (N1) Before applying the rollback, check that the pasted pre-check showed all 7 privileges for `service_role` as well. The rollback asserts that `service_role` holds TRUNCATE and TRIGGER too. If prod lacks them, the rollback aborts safely but cannot be applied as written.
+- (N2) Tables created in the dashboard can carry functions that no migration shows. Before the apply, the user runs one read-only query: `SELECT p.proname, p.prosecdef FROM pg_proc p WHERE p.prosrc ILIKE '%plugin_connections%';`. Any row with `prosecdef = false` that `authenticated` calls and that reads a token column would get 42501. Send such a row to SA.
+- (N3) Already true before DE-0b, not a regression: `/api/agent-chains/run` calls `runAgentWithContext` with `user_id` / `agent_id`, not `userId` / `agent`. It throws before it reaches the coordinator.
+- (N4) QA E1 is accepted: also setting `updated_at` on the refresh is correct housekeeping.
+
 ---
 
 ## 1. Discovery: what exists today

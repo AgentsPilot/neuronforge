@@ -278,6 +278,48 @@ export class PluginConnectionRepository {
   }
 
   /**
+   * Save a refreshed OAuth access token for ONE connection of ONE user.
+   *
+   * Legacy AgentKit refresh (PluginCoordinator, DE-0b S1). Runs as the service
+   * role because `authenticated` no longer holds the token columns. Tenant
+   * scope is `user_id` from the authenticated run context plus `plugin_key`
+   * (unique per user), and the patch is a fixed field list: the caller cannot
+   * widen it or move the row (tenant-isolation-guard Step 3). No trigger or
+   * upsert is involved. Nothing token-bearing is selected back or logged.
+   * `data` is false when no row matched.
+   */
+  async updateRefreshedToken(
+    userId: string,
+    pluginKey: string,
+    token: { accessToken: string; expiresAt: string | null }
+  ): Promise<AgentRepositoryResult<boolean>> {
+    try {
+      if (!userId || !pluginKey) throw new Error('userId and pluginKey are required');
+      if (!token.accessToken) throw new Error('accessToken is required');
+
+      const { error, count } = await this.supabase
+        .from('plugin_connections')
+        .update(
+          {
+            access_token: token.accessToken,
+            expires_at: token.expiresAt,
+            updated_at: new Date().toISOString(),
+          },
+          { count: 'exact' }
+        )
+        .eq('user_id', userId)
+        .eq('plugin_key', pluginKey);
+
+      if (error) throw error;
+      if (!count) this.logger.warn({ userId, pluginKey }, 'Refreshed token matched no connection');
+      return { data: (count ?? 0) > 0, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId, pluginKey }, 'Failed to save refreshed token');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Mark all active connections with expired tokens as 'expired'
    */
   async markExpired(): Promise<AgentRepositoryResult<number>> {
