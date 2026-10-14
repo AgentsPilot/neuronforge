@@ -120,6 +120,7 @@ import {
   getRefundability,
   resolveStripeRefundTarget,
 } from '../RefundService';
+import { REFUND_ROW_ID_METADATA_KEY } from '../stripeRefundLedger';
 
 const settledTransaction = (over: Record<string, unknown> = {}) => ({
   id: 'tx-1',
@@ -318,6 +319,53 @@ describe('refund — the Stripe call', () => {
     await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app' });
 
     expect(stripeRefundsCreate.mock.calls[0][0]).toMatchObject({ charge: 'ch_9' });
+  });
+});
+
+/**
+ * Slice 1 (STRIPE_CONNECT_REFUND_WEBHOOK, FR 15): the Stripe refund names our
+ * ledger row, so the webhook can find it before our own write lands (F1).
+ */
+describe('refund — the Stripe refund carries the ledger row id (S1)', () => {
+  it('S1-1: metadata holds the ledger row id under the shared key, and nothing else', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_s1', status: 'succeeded' });
+
+    await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 's1' });
+
+    const [payload] = stripeRefundsCreate.mock.calls[0];
+    expect(REFUND_ROW_ID_METADATA_KEY).toBe('refund_row_id');
+    // The harness's ledger insert answers with id `refund-row-1`.
+    expect(payload.metadata).toEqual({ [REFUND_ROW_ID_METADATA_KEY]: 'refund-row-1' });
+  });
+
+  it('S1-2: nothing else about the call changes (target, amount, reason, key, account)', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_s1', status: 'succeeded' });
+
+    await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 's1' });
+
+    const [payload, options] = stripeRefundsCreate.mock.calls[0];
+    expect(payload).toEqual({
+      payment_intent: 'pi_123',
+      amount: 20000,
+      reason: 'requested_by_customer',
+      metadata: { refund_row_id: 'refund-row-1' },
+    });
+    expect(Object.keys(options).sort()).toEqual(['idempotencyKey', 'stripeAccount']);
+  });
+
+  it('S1-3: a manual refund still makes no Stripe call', async () => {
+    dbState.transaction = settledTransaction({
+      processor_type: 'manual',
+      stripe_payment_intent_id: null,
+      stripe_charge_id: null,
+      stripe_connect_account_id: null,
+      account_resolution: null,
+    });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', manual: true });
+
+    expect(result.ok).toBe(true);
+    expect(stripeRefundsCreate).not.toHaveBeenCalled();
   });
 });
 

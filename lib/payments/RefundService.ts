@@ -39,6 +39,7 @@ import { createLogger } from '@/lib/logger';
 import { resolveRefundAccount, stripeRequestOptions } from './stripeAccountContext';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 import { fromMinorUnits, resolveRefundAmount } from './refundMath';
+import { REFUND_ROW_ID_METADATA_KEY } from './stripeRefundLedger';
 
 const logger = createLogger({ module: 'RefundService' });
 
@@ -1074,6 +1075,10 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
         ...stripeTarget!,
         amount: amount.amountMinor,
         reason: request.stripeReason ?? 'requested_by_customer',
+        // Our ledger row's id, so the webhook can match Stripe's `refund.*`
+        // event to this row even if it arrives before the write below (F1).
+        // The row id only: nothing else of ours goes into Stripe metadata.
+        metadata: { [REFUND_ROW_ID_METADATA_KEY]: ledgerRow.id },
       },
       {
         // Two layers of the same guarantee. The database key stops a second row;
