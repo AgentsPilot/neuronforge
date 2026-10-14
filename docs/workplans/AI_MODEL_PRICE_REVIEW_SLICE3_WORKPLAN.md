@@ -6,7 +6,7 @@
 **Requirement:** [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md): §8a UF-1..UF-4; MP-FR-2/3/4/5/8/12 as amended; R-1 precision, R-2 storage pattern, R-4 flags; SA Re-review RR-1 (validation, bounds, manual entry), RR-2 (pending area), RR-3 (area tags), RR-4 (colour), RR-6 (index on `proposal_line_id`); R-9 row 3; O-6 (FKs in slice 3)
 **Branch:** `feature/ai-model-price-review-slice3` (worktree `neuronforge-model-pricing-s3`, off origin/main `799f8018`)
 **Date:** 2026-10-14
-**Status:** Code complete, uncommitted: awaiting SA code review (workplan SA-approved with changes C-1 to C-13, 2026-10-14).
+**Status:** COMPLETE: merged 2026-10-14 (PR #368, commit fc9bb844, merge 99fb09a0); migration `20261066` applied to production 2026-10-14, checker VERDICT PASS 68/0 (see [Production apply record](#production-apply-record)). SA hunk check: code approved; QA re-pass: ready for merge.
 
 ## Overview
 
@@ -516,6 +516,24 @@ Same as the Dev's: may an admin record a provider price for a model Business OS 
 
 ### Code Approved for QA: No. Yes once CR-1 to CR-3 are fixed (SA hunk check only)
 
+#### SA hunk check (2026-10-14)
+
+**Checked on commit `fc9bb844` (PR #368), read-only.** The slice suites ran: 10 suites, 187 tests pass.
+**Verdict: ✅ Code approved.** No fixes remain.
+
+| Item | Result |
+|---|---|
+| CR-1 `pendingLineSchema.ts` | ✅ `HTTPS_PREFIX` is built with `String.fromCharCode(58)`, and `/^[!-~]+$/` is used. The `superRefine` checks both before `isOfficialSourceUrl`, with the message "Paste the full https address with no spaces". The schema tests refuse a leading space, `HTTPS://`, `https:` without slashes, a tab and an inner space, and they assert the message. The route tests expect a 400 for an upper-case scheme and a leading space, with no snapshot, submit or audit call |
+| CR-2 `formatGapPercent` | ✅ It uses `toFixed(2)`. The pins are -1 → "-0.01%", -4 → "-0.04%", -1200 → "-12.00%" and 0 → "0.00%". A gap that rounds to 0 bps but is below still reads "less than -0.01%" and is red (pinned) |
+| CR-3 guard | ✅ It has an `it.each` allow-list: `systemConfigRepository` may call only `getByKeys` and `getImageGenerationConfig`, and `adminUserRepository` only `listActive`. It runs over every `SLICE_FILES` file, and `calls > 0` stops it passing when nothing matches |
+| `NEW_MODEL_LABEL` | ✅ It is `'not used yet'` in `lineFlags.ts` and is mapped in `FLAG_LABELS.new_model` (pinned) |
+| `imageCurrent` | ✅ A key counts as known only when its setting is a finite number > 0, or when it is in the fallback |
+| Checker V-4 | ✅ It asserts `indisunique` and `indpred IS NOT NULL` (pinned in the migration test) |
+| §2.2 text | ✅ `derived` is removed from the `current_basis` list, and the slice 8 cached-input note is added |
+| Charging files | ✅ `git diff origin/main` is empty for `lib/ai/pricing.ts`, `chargePricing.ts`, `SystemConfigRepository.ts`, `EmbeddingService.ts` and `modelSettings.ts` |
+
+**Code Approved for QA: Yes.** Carried forward from apply-order step 1: rebase on origin/main, then re-run `lib/audit/__tests__` and `test:authz-guard`.
+
 ## QA Testing Report
 
 **QA, 2026-10-14**, worktree `neuronforge-model-pricing-s3`, uncommitted, base `799f8018` (origin/main is now `5e44871d`). Tested the code as SA reviewed it, **before** the CR-1 to CR-3 fixes.
@@ -670,13 +688,61 @@ check-bos-llm-literals: 64 files in scope, 2 exempt, 0 violations
 - **`GET /comparison`:** 200, 401, 403, 400 (unknown parameter) and 500.
 - **Repositories:** every method has a unit test (`submitPending`, `listPendingLines`, `listActiveExact`).
 
+### QA re-pass (2026-10-14)
+
+**Tested commit `fc9bb844` (PR #368)** in worktree `neuronforge-model-pricing-s3`, after the CR-1 to CR-3 fixes and SA's hunk check. No source file was edited, nothing was staged, and no database was touched. Mutants ran on scratch copies through a Jest `moduleNameMapper` override (the guard ran on a mirrored copy of the slice files). Each mutant had an unmutated control run, and every control passed.
+**Note:** after `git fetch`, origin/main is `99fb09a0`, which is the merge of PR #368 itself. `git diff HEAD...origin/main` is empty, so what was tested is what landed on main.
+
+**Step 1: suite reruns (counts verbatim)**
+
+| Command | Suites | Tests | Result |
+|---|---|---|---|
+| Slice suites: `lib/ai/pricing-research`, `app/api/admin/model-pricing`, `ai-model-pricing-slice3.migration`, `AiPriceProposalRepository`, `AiModelPricingRepository` | 12 passed, 12 total | 216 passed, 216 total | ✅ |
+| `npx jest lib/audit/__tests__ --ci` | 15 passed, 15 total | 180 passed, 180 total | ✅ |
+| `npm run test:authz-guard` | 2 passed, 2 total | 203 passed, 203 total | ✅ |
+| `npm run test:bos-entitlements` | 261 passed, 261 total | 7681 passed, 7681 total | ✅ |
+| Tailwind escape guard (`app/__tests__/tailwind-css-escape.guard.test.ts`) | 1 passed, 1 total | 6 passed, 6 total | ✅ |
+
+**Step 2: mutants for the fixes**
+
+| Mutant | Control | Killed? | Tests that failed |
+|---|---|---|---|
+| CR-1: drop **only** the `startsWith(HTTPS_PREFIX)` check | 32/32 pass | ✅ Killed (2) | Schema "CR-1: refuses what new URL() would forgive…" and route "Z: … an upper-case scheme". The leading-space cases still pass, because the printable-ASCII check also refuses a space. That is a second defence, not a gap |
+| CR-1: drop the whole guard (prefix and printable check) | 32/32 pass | ✅ Killed (3) | The two above, plus route "Z: … a leading space" |
+| CR-2: `formatGapPercent` back to `toFixed(1)` | 133/133 pass | ✅ Killed (7) | Including "formatGapPercent prints two decimals, so 1 to 4 bps never reads 0 (CR-2)" and "a red unit 1 to 4 bps under never reads as zero (CR-2)" |
+| CR-3: an `areaTags.ts` call becomes `systemConfigRepository.upsert(…)` | 27/27 pass | ✅ Killed (1) | "the only systemConfigRepository methods this slice calls are read methods" |
+| CR-3: a `comparisonModel.ts` call becomes `adminUserRepository.deactivate()` | 27/27 pass | ✅ Killed (1) | "the only adminUserRepository methods this slice calls are read methods" |
+| `NEW_MODEL_LABEL` changed to `'not used'` | 133/133 pass | ✅ Killed (2) | `lineFlags` "the new_model flag is labelled with the wording the user chose" and `comparisonModel` "a new_model flag carries the label the user chose, 'not used yet', beside the code" |
+
+**Step 3: charging untouched.** `git diff origin/main` (`99fb09a0`) and `git diff HEAD` are both **empty (0 lines)** for `lib/ai/pricing.ts`, `lib/business-os/llm/chargePricing.ts`, `lib/repositories/SystemConfigRepository.ts`, `lib/services/EmbeddingService.ts` and `lib/business-os/llm/modelSettings.ts`. ✅
+
+**Re-pass coverage update:** RR-1 (CR-1), RR-4 (CR-2) and RR-3 "not used yet" (E-1, through `NEW_MODEL_LABEL`) now **Pass**. CR-3 is fixed and mutation-tested. No new bugs. Still owed by the user: U-1 to U-5 (checker, migration, optional probe, comparison GET), as listed in Step 6.
+
 ### Final Status
-- [ ] All acceptance criteria pass, ready for commit
-- [x] Issues found: Dev must fix CR-1 (Medium), CR-2 and CR-3 (Low) before commit. QA then re-runs the affected suites and these mutants: schema `state`, colour `>=`, the D-3 branch, and the route gate. Then rebase on origin/main and re-run `lib/audit/__tests__` and `test:authz-guard` (C-10). No High-severity bug is open
+- [x] All acceptance criteria pass. **Ready for merge** (QA re-pass 2026-10-14). CR-1 to CR-3 are fixed and mutation-tested, and no bug is open. Note: PR #368 is already merged on origin/main (`99fb09a0`). The user's live steps U-1 to U-5 are still owed
+- [ ] Issues found
+
+## Production apply record
+
+Run by TL on 2026-10-14 through the Supabase connector (project `jgccgkyhpwirgknnceoh`), with the user's explicit go-ahead, from the committed files. The checker was run without its leading `SET default_transaction_read_only` (it can persist on a pooled connection); the rest is SELECT only.
+
+| Step | Result |
+|---|---|
+| U-1 checker before | New tables absent (expected). V-5: token active 42, token retired 12, image rows 0. V-6 fingerprint F0 `76c7cfe8e89e2464f9fa866668682426` |
+| U-2 migration `20261066` | Committed, no error |
+| U-3 checker after | **VERDICT PASS, 68 pass 0 fail.** V-2 column updates exactly `state decided_by decided_at superseded_by` for service_role; V-5 42 / 12 / 0 (unchanged); V-6 `76c7cfe8e89e2464f9fa866668682426` = F0 |
+| U-4 probe | **PROBE PASS** P01..P06: 0.075 per 1M stored as exactly 0.000000075 per token; second submit supersedes the first; one pending line per unit; superseded cannot return to pending; service_role cannot change a price or delete a line; authenticated cannot run the submit function. Rolled back; afterwards 0 proposals, 0 lines |
+| U-5 comparison GET as admin after deploy | Owed by the user |
 
 ## Commit Info
 
-_To be completed by RM._
+| Item | Value |
+|---|---|
+| PR | #368, merged 2026-10-14 |
+| Commit | `fc9bb844` feat(pricing): pending model-price storage, manual entry and comparison API (price review slice 3) |
+| Merge | `99fb09a0` |
+| Migration | `20261066` |
+| Note | The SA hunk check and the QA re-pass after CR-1..CR-3 were recorded after the merge (follow-up docs PR); both passed |
 
 ## Change History
 
@@ -686,3 +752,4 @@ _To be completed by RM._
 | 2026-10-14 | SA changes folded in; user decision recorded | C-1 narrowed column grant, C-2 transition trigger, C-3 CHECKs, C-4 lock order and rollback timeout, C-5 printed counts, C-6 no EmbeddingService edit, C-7 image resolver only on known keys, C-8 decimal rules, C-9 census from disk, C-10 pins measured, C-11 probe, C-12 strict body, C-13 number note; generated columns (O-2); `entity_kind` (O-14). User: manual entry for a model not used yet is allowed (`new_model`, "not used yet"). Implementation started |
 | 2026-10-14 | Code complete, uncommitted | T-0 to T-12 done: migration `20261066`, rollback, read-only checker, optional rolled-back probe, `lib/ai/pricing-research/` (decimal, schema, bounds, sources, flags, colour, area tags, comparison), `AiPriceProposalRepository` and `listActiveExact()`, the two admin routes, `AI_PRICE_MANUAL_ENTRY` (pins 200 / 62 shared), authz register rows 104 to 107 (census 104 = 98 + 6 + 0, 74 files). Charging files show an empty diff. Deviations D-1 to D-7 in 10.1. Awaiting SA code review |
 | 2026-10-14 | SA code review and QA fixes; merged origin/main | CR-1 source URL must start with the exact `https://` and be printable ASCII with no space (400, not 500; schema and route tests). CR-2 gaps print two decimals; a red unit under 1 bp reads "less than -0.01%" (QA E-2). CR-3 guard pins the `systemConfigRepository` and `adminUserRepository` methods the slice may call. `NEW_MODEL_LABEL = 'not used yet'` returned beside the `new_model` code (`flagLabels`). `imageCurrent` counts a setting key only when it holds a finite number above 0. QA E-3 pin past 15 digits. Checker V-4 asserts the one-pending index is unique and partial (U-3 now 68 pass; U-1 3 pass 23 fail). §2.2 basis text corrected; slice 8 notes recorded in the requirement. Fast-forward to origin/main `97f75df4`; `lib/repositories/types.ts` re-applied cleanly beside main's change; no new audit event or admin handler on main (census still 104 in 74 files); `20261066` still free. Uncommitted |
+| 2026-10-14 | Merged and applied | PR #368 merged (fc9bb844 / 99fb09a0). SA hunk check: code approved; QA re-pass: ready for merge (both recorded after the merge). Migration `20261066` applied to production: checker VERDICT PASS 68/0, fingerprint unchanged, probe PASS 6/6. Status COMPLETE; U-5 owed by the user |

@@ -1784,6 +1784,8 @@ export const en = {
     'crm.subscribers.origin': 'Newsletter subscriber since {date}',
     'crm.tab_activity': 'Activity',
     'crm.loading': 'Loading contacts...',
+    'crm.no_stages_title': 'Your pipeline has no stages yet',
+    'crm.no_stages_body': 'The board needs stages to show its columns. Your contacts are still on the Contacts tab.',
 
     // Pipeline stages - generic
     'crm.stage.lead': 'Lead',
