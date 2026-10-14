@@ -1,5 +1,5 @@
 /**
- * Every user-facing string of the admin finance page (slices 1a, 1b, 1c, 2a and 2b). The
+ * Every user-facing string of the admin finance page (slices 1a, 1b, 1c, 2a, 2b and 4a). The
  * render test asserts against these constants, so a wording change is one edit.
  *
  * Slice 1c (BD-14, S1C-FR-7): our revenue counts test and real payments together, with
@@ -41,6 +41,8 @@ export const TILE_LABELS = {
   k4: 'Gifted credits outstanding',
   k4Sub: 'Credits, now',
   k5: 'Our revenue',
+  /** K-5's caption (S4-FR-7); the window is appended. */
+  k5Sub: 'Credit boosts; plans in a later update',
 } as const;
 /** K-2's subtitle: the line comes from the payload (data, SA-W10), never typed here. */
 export function k2Subtitle(percent: number | null): string {
@@ -53,11 +55,74 @@ export const SECTION_COULD_NOT_LOAD = 'Could not load this section';
 export const SECTION_PARTIAL = 'At least';
 export const SECTION_OK = 'Loaded';
 
+// ── Our revenue (slice 4a, S4-FR-1 to S4-FR-13) ──
+// Our own money: credit boosts paid in the window, per currency, never a total
+// across currencies. Plan revenue amounts come later (slice 5). No mode wording.
 export const REVENUE_TITLE = 'Our revenue';
-export const REVENUE_NONE_YET = 'None yet. No plan payment or credit boost has been recorded.';
-export const REVENUE_RECORDED = 'Revenue has been recorded. Amounts are shown in a later update.';
-export const REVENUE_COULD_NOT_CHECK = 'Could not check';
-export const REVENUE_SUBTITLE = 'Paid plan invoices and paid boosts, all businesses';
+export const REVENUE_SUBTITLE_ALL = (windowLabel: string) => `Credit boosts paid, all businesses · ${windowLabel}`;
+export const REVENUE_SUBTITLE_ONE = (windowLabel: string) => `Credit boosts paid, this business · ${windowLabel}`;
+/** K-5's caption with the window (SA-Q25: K-5 follows the filter window). */
+export const k5Caption = (windowLabel: string) => `${TILE_LABELS.k5Sub} · ${windowLabel}`;
+/** S4-FR-7: K-5 with several currencies, never a sum. */
+export const k5SeveralCurrencies = (count: number) => `${count} currencies, see Our revenue`;
+export const K5_UNKNOWN = 'Unknown';
+
+/** S4-FR-4: the plans line, from the platform-wide existence check. No plan amount is read. */
+export const REVENUE_PLANS_RECORDED = 'Plan payments: amounts are shown in a later update';
+export const REVENUE_PLANS_NONE = 'No plan payment recorded';
+export const REVENUE_PLANS_UNKNOWN = 'Plan payments: could not check';
+/** SA-WR-33 / E-32: with a business picked the plans line still covers all businesses (R-d reads no account). */
+export const REVENUE_PLANS_ALL_PREFIX = 'Plan payments, all businesses:';
+export const REVENUE_PLANS_ALL_RECORDED = `${REVENUE_PLANS_ALL_PREFIX} amounts are shown in a later update`;
+export const REVENUE_PLANS_ALL_NONE = `${REVENUE_PLANS_ALL_PREFIX} none recorded`;
+export const REVENUE_PLANS_ALL_UNKNOWN = `${REVENUE_PLANS_ALL_PREFIX} could not check`;
+
+export const REVENUE_BOOSTS = 'Credit boosts per currency';
+export const REVENUE_BY_PACKAGE = 'Credit boosts by package';
+export const REVENUE_CURRENCY = 'Currency';
+export const REVENUE_PACKAGE = 'Package';
+export const REVENUE_PURCHASES = 'Purchases';
+export const REVENUE_GROSS = 'Gross charged';
+export const REVENUE_TAX = 'Of which tax';
+export const REVENUE_REFUNDED = 'Refunded';
+export const REVENUE_HELD = 'Held in open disputes';
+export const REVENUE_LOST = 'Lost in disputes';
+/** S4-W-6: what net is, and what it is not. */
+export const REVENUE_NET = 'Net of refunds and disputes (Stripe fees not deducted; includes any tax)';
+export const REVENUE_NET_SHORT = 'Net';
+export const REVENUE_CREDITS_SOLD = 'Credits sold';
+export const REVENUE_PACKAGE_NOT_RECORDED = 'Not recorded';
+export const revenuePackageLabel = (packageId: string, version: number) => `${packageId} v${version}`;
+export const REVENUE_NO_BOOSTS = 'No credit boosts paid in this window';
+export const REVENUE_BOOSTS_FAILED = 'Could not load';
+export const REVENUE_UNKNOWN = 'Unknown';
+export const REVENUE_CUT_OFF = 'Unknown (a read was cut off)';
+export const REVENUE_EXCLUDES_UNREADABLE = (count: number) => `excludes ${count} unreadable`;
+export const REVENUE_DELETED_NONE = 'No purchases from deleted accounts';
+export const revenueDeletedLine = (purchases: number, net: string) =>
+  `Deleted accounts: ${purchases} ${purchases === 1 ? 'purchase' : 'purchases'}, net ${net}`;
+export const REVENUE_OTHER_STATUS = (count: number) =>
+  `${count} ${count === 1 ? 'purchase' : 'purchases'} with another status not counted`;
+export const REVENUE_NOTICE_CUT =
+  'The boost purchases were read only up to their limit: counts and amounts are "at least", and net and the dispute amounts are unknown.';
+export const REVENUE_NOTICE_UNREADABLE = (count: number) =>
+  `${count} ${count === 1 ? 'purchase has an amount' : 'purchases have amounts'} that could not be read: left out of the sums, net unknown on that line.`;
+export const REVENUE_NOTICE_UNREADABLE_CREDITS = (count: number) =>
+  `${count} ${count === 1 ? 'purchase has credits' : 'purchases have credits'} that could not be read: credits sold is "at least".`;
+/**
+ * DF-5 / S4-W-3 (SA-W53): the ONE sentence about when a refund or dispute
+ * counts. Shown only by the revenue panel, whenever a refund or dispute amount
+ * is non-zero. Pinned by the finance source guard (SA-WR-35).
+ */
+export const REVENUE_REFUND_TIMING_NOTE =
+  'Refunds and disputes are counted in the month of the purchase, as recorded today, so a past month can still change.';
+export const REVENUE_CANNOT_TITLE = 'Not shown here';
+export const REVENUE_CANNOT: readonly string[] = [
+  'Real Stripe fees (none are recorded for our payments yet)',
+  'The date of a refund or dispute',
+  'Plan revenue (a later update)',
+  'One total across currencies',
+];
 
 export const ACCOUNTS_TITLE = 'Accounts by plan';
 export const ACCOUNTS_SUBTITLE_ALL = 'Business OS plan rows, all businesses, now';

@@ -84,12 +84,14 @@ export type {
   ChargeListPage,
 } from './BusinessOsCreditLedgerReadRepository';
 // Admin finance & business health page (slice 1a): read-only, service role,
-// live-mode billing status and revenue head counts; slice 2a adds the
-// businesses' client payments and refunds (layer B). No write method.
+// billing status and revenue head counts, test and real mode together (BD-14,
+// slice 1c); slice 2a adds the businesses' client payments and refunds
+// (layer B); slice 4a adds the platform's boost purchases. No write method.
 export {
   BusinessOsFinanceReadRepository,
   businessOsFinanceReadRepository,
   FINANCE_BILLING_STATUS_COLUMNS,
+  FINANCE_BOOST_PURCHASE_COLUMNS,
   FINANCE_CLIENT_INSTALMENT_DUE_COLUMNS,
   FINANCE_CLIENT_INVOICE_DUE_COLUMNS,
   FINANCE_CLIENT_PAYMENT_COLUMNS,
@@ -100,6 +102,7 @@ export {
 } from './BusinessOsFinanceReadRepository';
 export type {
   FinanceBillingStatusRow,
+  FinanceBoostPurchaseRow,
   FinanceClientDueRow,
   FinanceClientPaymentRow,
   FinanceClientPlanRow,

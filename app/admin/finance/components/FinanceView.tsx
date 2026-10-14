@@ -93,8 +93,8 @@ export function FinanceView() {
 
       {data && !error && (
         <div className="space-y-4">
-          <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} />
-          <RevenuePanel revenue={data.revenue} />
+          <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} windowLabel={windowLabel} />
+          <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
           <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
           <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
           <AiCostSection aiCost={data.aiCost} accountId={data.accountId} windowLabel={windowLabel} onRetry={reload} />
