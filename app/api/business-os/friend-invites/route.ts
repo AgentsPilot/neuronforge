@@ -76,6 +76,8 @@ export async function GET(request: NextRequest) {
       accountId,
       plans: friendInviteRepositories.plans,
       repository: friendInviteRepositories.repository,
+      // P-5b.2 (FR-31): "Subscribed", status only, scoped to this account.
+      lineage: friendInviteRepositories.lineage,
       preferences: friendInviteRepositories.preferences,
       listLimit: friendInviteRepositories.listLimit,
       now: new Date(),

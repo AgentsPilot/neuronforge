@@ -463,6 +463,10 @@ describe('source rules', () => {
 
   it('only the listed files name the repository', () => {
     const ALLOWED = [
+      // P-5b.2 (S5-8, SA C-7): the admin invites route wires the singleton
+      // (behind requireAdmin) for the paid line; its test mocks it.
+      'app/api/admin/business-os/invites/__tests__/route.test.ts',
+      'app/api/admin/business-os/invites/route.ts',
       // Not a caller: the P1-C6 / M-1 placement guard names this repository's
       // module path to pin which billing files import it (P-3b.2).
       'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
@@ -484,6 +488,8 @@ describe('source rules', () => {
       // this file's path, because it imports that repository's status type.
       'lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts',
       'lib/repositories/__tests__/BusinessOsBillingEventRepository.test.ts',
+      // P-5b.2: the tests and caller guards of the paid-line read (and its sibling reads).
+      'lib/repositories/__tests__/BusinessOsPaymentVisibilityReads.test.ts',
     ];
     const SYMBOLS = ['BusinessOsBillingEventRepository', 'businessOsBillingEventRepository'];
     const found = ['app', 'lib', 'components', 'hooks', 'scripts']
