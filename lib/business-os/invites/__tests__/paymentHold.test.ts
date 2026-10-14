@@ -5,7 +5,11 @@
  *   - keyed on LINEAGE, never on `origin`, and mode-independent;
  *   - an unpaid friend is held on the lineage read ALONE (R-3);
  *   - fail open only when a DECIDING read fails (Q-2), logged;
- *   - the gate is the first statement of all four layouts (R-1, R-2);
+ *   - the gate is the first AWAITED statement of all four layouts (R-1, R-2);
+ *     the only permitted predecessor is the un-awaited BR-1a language start
+ *     (`const initialLanguagePending = readInitialLanguage()`), in the three
+ *     layouts that mount the language provider. `/test-business-os` stays
+ *     strictly gate-first;
  *   - the holding screen's read never turns an error into "not held" (R-4).
  */
 
@@ -250,17 +254,42 @@ describe('where the gate runs (SA R-1, R-2) and what it never reads', () => {
   const read = (relative: string) => readFileSync(join(ROOT, relative), 'utf8');
   const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
+  /** The first two statements of the layout's default export. */
+  const leadingStatements = (file: string): string[] => {
+    const text = code(read(file));
+    expect(text).toContain("import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';");
+    const body = text.slice(text.indexOf('export default async function'));
+    return body
+      .slice(body.indexOf('{', body.indexOf(')')) + 1)
+      .split(';')
+      .slice(0, 2)
+      .map((s) => s.trim());
+  };
+
+  /*
+   * BR-1a (SA ruling on RC-6b): the three layouts that mount the language
+   * provider START the language read before the gate, so its round trip
+   * overlaps the hold's. That un-awaited start is the ONLY statement allowed
+   * ahead of the gate, and the gate must come right after it.
+   */
+  const LANGUAGE_START = 'const initialLanguagePending = readInitialLanguage()';
+
   it.each([
     'app/onboarding-chat/layout.tsx',
     'app/onboarding-build/layout.tsx',
     'app/business-os/layout.tsx',
-    'app/test-business-os/layout.tsx',
-  ])('%s awaits the gate as the first statement of its default export', (file) => {
-    const text = code(read(file));
-    expect(text).toContain("import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';");
-    const body = text.slice(text.indexOf('export default async function'));
-    const firstStatement = body.slice(body.indexOf('{', body.indexOf(')')) + 1).trim().split(';')[0];
-    expect(firstStatement).toBe('await redirectIfAwaitingPayment()');
+  ])('%s awaits the gate as its first awaited statement; only the language start may precede it', (file) => {
+    const [first, second] = leadingStatements(file);
+    if (first === LANGUAGE_START) {
+      expect(second).toBe('await redirectIfAwaitingPayment()');
+    } else {
+      expect(first).toBe('await redirectIfAwaitingPayment()');
+    }
+  });
+
+  it('app/test-business-os/layout.tsx awaits the gate as the first statement of its default export', () => {
+    const [first] = leadingStatements('app/test-business-os/layout.tsx');
+    expect(first).toBe('await redirectIfAwaitingPayment()');
   });
 
   it.each([

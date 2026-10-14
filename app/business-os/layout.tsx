@@ -13,6 +13,8 @@ import { Space_Grotesk, Inter } from 'next/font/google';
 
 import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
 import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';
+import { readInitialLanguage } from '@/lib/business-os/readInitialLanguage';
+import { OwnerDirScript } from '@/components/business-os/OwnerDirScript';
 
 // SA N-2: the payment hold reads the session on every request, so this segment
 // is never prerendered (a static render would skip the gate, or swallow the
@@ -56,17 +58,29 @@ export default async function BusinessOSLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Slice 5b (T-13 layer 2, F5b-4): the payment hold runs FIRST, before any
-  // plan read. A friend who has not paid never reaches Business OS. It keys on
-  // lineage, not on the entitlements mode, so `shadow` cannot open it.
+  // BR-1a (SA ruling on RC-6b): STARTED before the payment hold so its round
+  // trip overlaps the hold's lineage read rather than following it. Nothing
+  // awaits or uses it until the gate has returned. Safe to leave dangling when
+  // the gate redirects, because readInitialLanguage never rejects (its
+  // contract, readInitialLanguage.test.ts). The plan read stays after the gate (F5b-4).
+  const initialLanguagePending = readInitialLanguage();
+
+  // Slice 5b (T-13 layer 2, F5b-4): the payment hold is the first AWAITED
+  // statement. No plan read and no render happens before it decides. A friend
+  // who has not paid never reaches Business OS. It keys on lineage, not on the
+  // entitlements mode, so `shadow` cannot open it.
   await redirectIfAwaitingPayment();
 
-  const planBadge = await readPlanBadge();
+  const [planBadge, initialLanguage] = await Promise.all([readPlanBadge(), initialLanguagePending]);
 
   return (
+    <>
+    {/* First, outside every provider: V2ThemeProvider renders nothing on the
+        server, so a script inside it would never reach the HTML (SA RC-2). */}
+    <OwnerDirScript language={initialLanguage.language} />
     <UserProvider>
       <V2ThemeProvider>
-        <LanguageProvider>
+        <LanguageProvider initial={initialLanguage}>
           {/*
             Inside LanguageProvider, because the configuration dialog it holds is
             translated. Outside the sticky chrome below, because a modal rendered
@@ -100,5 +114,6 @@ export default async function BusinessOSLayout({
         </LanguageProvider>
       </V2ThemeProvider>
     </UserProvider>
+    </>
   );
 }

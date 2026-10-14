@@ -15,7 +15,10 @@ import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import ProfileTabV2 from '@/components/v2/settings/ProfileTabV2'
 import SecurityTabV2 from '@/components/v2/settings/SecurityTabV2'
 import OrganisationTabV2 from '@/components/v2/settings/OrganisationTabV2'
-import { UserProfile, NotificationSettings, PluginConnection } from '@/types/settings'
+import { UserProfile, NotificationSettings } from '@/types/settings'
+import { createLogger } from '@/lib/logger'
+
+const logger = createLogger({ module: 'V2SettingsPage' })
 
 export default function V2SettingsPage() {
   const { user } = useAuth()
@@ -28,7 +31,6 @@ export default function V2SettingsPage() {
   // Data states
   const [, setProfile] = useState<UserProfile | null>(null)
   const [, setNotifications] = useState<NotificationSettings | null>(null)
-  const [, setConnections] = useState<PluginConnection[]>([])
 
   // Form states
   const [profileForm, setProfileForm] = useState<Partial<UserProfile>>({})
@@ -75,11 +77,10 @@ export default function V2SettingsPage() {
       setLoading(true)
 
       // Load all data in parallel (including organisation via join)
-      const [profileRes, preferencesRes, notificationsRes, connectionsRes] = await Promise.all([
+      const [profileRes, preferencesRes, notificationsRes] = await Promise.all([
         supabase.from('profiles').select('*, organizations:org_id(id, name)').eq('id', user.id).single(),
         supabase.from('user_preferences').select('*').eq('user_id', user.id).single(),
-        supabase.from('notification_settings').select('*').eq('user_id', user.id).single(),
-        supabase.from('plugin_connections').select('*').eq('user_id', user.id).neq('status', 'disconnected').order('connected_at', { ascending: false })
+        supabase.from('notification_settings').select('*').eq('user_id', user.id).single()
       ])
 
       // Set profile data - merge profile and preferences
@@ -113,12 +114,8 @@ export default function V2SettingsPage() {
         setNotifications(notificationsRes.data)
       }
 
-      if (connectionsRes.data) {
-        setConnections(connectionsRes.data)
-      }
-
     } catch (error) {
-      console.error('Error loading user data:', error)
+      logger.error({ err: error }, 'Error loading user data')
     } finally {
       setLoading(false)
     }
