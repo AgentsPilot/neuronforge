@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-layout-lf7-shared-confirm` (from `origin/main` `3b300f58`)
 **Path:** SA reviews this workplan (new file in the shared layout folder), then Dev builds, then SA code review and QA, then user diff, then RM
 **Date:** 2026-10-14
-**Status:** In Progress — SA approved with C-1 to C-6 (folded in below); built, awaiting SA code review + QA, uncommitted
+**Status:** PR #374 open — fast-track (SA passed). SA approved the workplan with C-1 to C-6 and the code with no fixes; no separate QA (SA ruling). Code commit `1f2cadc6`
 
 ## Overview
 
@@ -397,3 +397,4 @@ _RM populates._
 | 2026-10-14 | Workplan written (Dev) | Shared `AdminConfirmDialog`, two users migrated, G-2 and G-8 exceptions removed; awaiting SA |
 | 2026-10-14 | SA approved; built (Dev) | C-1 to C-6, SQ rulings and M14 folded in; built uncommitted; §11 results. Awaiting SA code review + QA |
 | 2026-10-14 | SA code review: APPROVED | C-1 to C-6 met; D-1 to D-4 accepted; SA mutations: 1 bites, 1 equivalent; no separate QA needed |
+| 2026-10-14 | PR opened (RM) | PR #374 open, fast-track; code commit `1f2cadc6`, merged `origin/main` `8bf86fd2` cleanly; 36 suites / 1,278 tests passed, `lint:hooks` clean |
