@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md) §14 LF4B-F1, §1 LF-F2 row. Background: [ADMIN_LAYOUT_LF4B_WORKPLAN.md](/docs/workplans/ADMIN_LAYOUT_LF4B_WORKPLAN.md) R-1, SQ-7, SA C9
 **Branch:** `fix/admin-layout-lf4b-f1-double-give` (from `origin/main` `799f8018`; every follow-up slice merged)
 **Date:** 2026-10-14
-**Status:** Code Complete — built, awaiting SA code review + QA, uncommitted. SA approved the workplan with conditions C1 to C7, all applied. Money UI, so full cycle; commit timing per user fast-track rule (TL, see C7).
+**Status:** PR #366 open — fast-track (SA + QA passed). SA code review approved, no fixes; QA PASS WITH NOTES, no bugs. Awaiting the user's merge. Read-only browser checks owed.
 
 ## Overview
 
@@ -470,7 +470,13 @@ Baseline run by SA: `businessDrawer.money.render`, `source.guard`, `businessDeta
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `fix/admin-layout-lf4b-f1-double-give` |
+| Code commit | `2c52355a` fix(admin): a failed list refresh after Give or Take back no longer closes the Businesses drawer (LF-F2) |
+| Merge of `origin/main` | `c7e3787f` (#360 to #363; one conflict in the follow-ups requirement, docs only, all rows kept) |
+| PR | [#366](https://github.com/AgentsPilot/neuronforge/pull/366), open, merge commit only |
+| RM run | Targeted Jest 50 suites / 1,529 tests; `test:bos-entitlements` 259 / 7,612; `lint:hooks` clean; `typecheck:bos-llm` passed (0 new) |
 
 ---
 
@@ -483,3 +489,4 @@ Baseline run by SA: `businessDrawer.money.render`, `source.guard`, `businessDeta
 | 2026-10-14 | SA workplan review | APPROVED WITH CONDITIONS C1 to C7: version B; Refresh unchanged; T-K8 required; URL equality pin in T-K1; drawer copy made true in any drawer; page copy; logger as its own slice LF-F3 (user decides); G-1 recorded as Low residual; full cycle, no fast-track |
 | 2026-10-14 | SA code review | APPROVED, no required fixes. C1 to C5 verified; deviation 1 (T-K8 via Status change) accepted; MF8 line kept as state hygiene; protected files byte-identical to `origin/main`; fast-track commit timing per TL ruling. SA-M1 bites, SA-M2 survives: N-1 follow-up (network-branch ordering unpinned, pre-existing). Two Low test suggestions |
 | 2026-10-14 | QA (full, Jest only) | PASS WITH NOTES, no bugs. 52 suites / 1,650 tests; `test:bos-entitlements` 255 / 7,443; `lint:hooks` clean; `businessDrawer.money.render` 26 / 26 three times. Probe (29 tests, deleted): 3 actions x (500, network) keep rows, drawer, notice, focus and both lines with exact copy, 2 list reads; refused / failed Give sends no read; Remove still empties on failure; 401 / 403 hidden by design (QA-N1); line in another drawer reads true (QA-N2); older failed read (500 and network) after a newer good one changes nothing |
+| 2026-10-14 | PR opened (RM) | Code commit `2c52355a`, `origin/main` merged in `c7e3787f`, PR #366 open (fast-track: SA + QA passed; the user merges). SA N-1 recorded in the requirement §14 as LF-F2-N1, for LF-F3 |
