@@ -192,7 +192,7 @@ const navigationSections: NavSection[] = [
         name: 'Admin users',
         href: '/admin/settings',
         icon: Settings,
-        description: 'Who can open admin'
+        description: 'People who can sign in to admin'
       },
     ]
   },
