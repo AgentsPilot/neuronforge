@@ -31,6 +31,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ImageIcon, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { notifyCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
+import { ImageGenerationProgress } from '@/components/website/ImageGenerationProgress';
 
 interface LibraryItem {
   id: string;
@@ -68,14 +69,47 @@ export function MediaLibraryPicker({
   const [prompt, setPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  // When Generate was pressed, for the progress panel (BR-3). Set in the same
+  // handler as `generating`, before the request starts, so the panel paints in
+  // the next frame rather than when the answer arrives.
+  const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
+  /*
+   * CLOSING CANCELS THE PLACEMENT, NOT THE PICTURE (BR-3 FR-3.10).
+   *
+   * A generation outlives the picker: the request is never aborted, so the
+   * server still finishes, saves the picture to the library and charges for
+   * it. What must not survive is the placement. The pending `generate()` still
+   * holds the host's `onSelect`, and the host is still mounted, so without this
+   * a picture the owner walked away from would land in the slot a minute later
+   * (or in whichever block they were editing by then).
+   *
+   * Set by every close path below, and by unmount. The effect sets `false` in
+   * its body as well as `true` in its cleanup, because React StrictMode runs
+   * mount, cleanup, mount in development: a cleanup-only flag would stay `true`
+   * and swallow every placement. A `true` flag can never leak into a reopened
+   * picker, because the picker has no `open` prop: every host hides it by
+   * unmounting, so reopening is a fresh instance.
+   */
+  const closedRef = useRef(false);
+  useEffect(() => {
+    closedRef.current = false;
+    return () => {
+      closedRef.current = true;
+    };
+  }, []);
+
+  const close = () => {
+    closedRef.current = true;
+    onClose();
+  };
   /*
    * How many generations are left today.
    *
    * Held here and refreshed from every answer the server gives, because a
-   * picture can be generated from this picker on any block, on any page, and
-   * from the wizard. A count this component worked out for itself would be
-   * wrong the moment a second surface was used; the server is the only place
-   * that knows.
+   * picture can be generated from this picker on any image slot of the website
+   * editor, and in any open tab. A count this component worked out for itself
+   * would be wrong the moment a second slot or tab was used; the server is the
+   * only place that knows.
    *
    * `null` means not yet known or not readable — the row simply is not drawn,
    * rather than promising an allowance nobody has verified.
@@ -185,6 +219,7 @@ export function MediaLibraryPicker({
   const generate = async () => {
     if (!prompt.trim() || generating) return;
     setGenerating(true);
+    setGenerationStartedAt(Date.now());
     setGenerateError(null);
 
     try {
@@ -200,6 +235,11 @@ export function MediaLibraryPicker({
       if (result.allowance) setAllowance(result.allowance);
 
       if (result.success) {
+        // Closed while it was being made: the picture is in the library, and
+        // the owner chooses it from there if they still want it (FR-3.10).
+        // `onClose` already ran on the close path; calling it again would
+        // reach into a host that has moved on.
+        if (closedRef.current) return;
         onSelect(result.data.url as string);
         onClose();
         return;
@@ -214,10 +254,12 @@ export function MediaLibraryPicker({
       setGenerateError(t('media.generate.failed'));
     } finally {
       setGenerating(false);
+      setGenerationStartedAt(null);
       // An owner AI action finished, success or failure: the credits card may
       // re-read (S-8, W6-2). Raised here, in the shared picker, so every host is
-      // covered: the dashboard's configuration dialog reaches it through the
-      // logo uploader. With no card mounted it is a no-op.
+      // covered, including a picker the owner closed before the picture arrived
+      // (it is still charged). Today the picker is reached only from the website
+      // editor's image slots. With no card mounted it is a no-op.
       notifyCreditUsageChanged();
     }
   };
@@ -226,7 +268,7 @@ export function MediaLibraryPicker({
     <div
       dir={isRTL ? 'rtl' : 'ltr'}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
+      onClick={close}
       role="presentation"
     >
       <div
@@ -247,7 +289,7 @@ export function MediaLibraryPicker({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={close}
             className="p-1.5 rounded-lg text-[var(--v2-text-muted)] hover:bg-[var(--v2-surface-2)] transition-colors"
             aria-label={t('media.library.close')}
           >
@@ -276,7 +318,7 @@ export function MediaLibraryPicker({
                   type="button"
                   onClick={() => {
                     onSelect(item.url);
-                    onClose();
+                    close();
                   }}
                   className={`group relative aspect-[4/3] overflow-hidden rounded-xl border transition-colors hover:border-[#4F6EF7] ${
                     item.url === justAdded
@@ -352,6 +394,9 @@ export function MediaLibraryPicker({
                 : t('media.generate.limit_reached', { limit: String(allowance.limit) })}
             </p>
           )}
+
+          {/* Always mounted, so its live region exists before the text changes. */}
+          <ImageGenerationProgress aspect={aspect} startedAt={generationStartedAt} />
 
           <div className="flex gap-2">
             <input
