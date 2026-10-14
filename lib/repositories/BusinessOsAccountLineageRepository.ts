@@ -19,7 +19,10 @@
 //     `planBillingHandler.ts`), right after the apply function reported that
 //     it stamped the first payment, to name the lineage `source` in the audit
 //     entry. There the id is the account resolved from OUR billing record by
-//     the invoice's Stripe ids (SR-8), never from Stripe metadata.
+//     the invoice's Stripe ids (SR-8), never from Stripe metadata. From
+//     P-5b.1 (N-2) the same read's `invite_id` also names the invite whose
+//     champion is told the friend subscribed; the read is bounded by N-2's
+//     clock and is still the only one (SA O-4).
 //
 // There is deliberately NO write method. The first payment stamp
 // (`first_paid_at`, `first_payment_ref`) is written only inside the SQL

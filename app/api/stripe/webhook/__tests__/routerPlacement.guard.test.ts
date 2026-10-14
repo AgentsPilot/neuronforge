@@ -49,10 +49,14 @@ function walk(node: ts.Node, visit: (n: ts.Node) => void): void {
 const BILLING_ACCOUNTS = '@/lib/repositories/BusinessOsBillingAccountRepository';
 const BILLING_EVENTS = '@/lib/repositories/BusinessOsBillingEventRepository';
 const ACCOUNT_LINEAGE = '@/lib/repositories/BusinessOsAccountLineageRepository';
+// P-5b.1 (workplan BUSINESS_OS_PLAN_PAYMENTS_P5B_WORKPLAN.md §3.2; SA C-5, C-7):
+// the handler also wires the invite repository's ONE N-2 read
+// (`findInviterNotificationFactsById`) into the champion notifier it builds.
+const INVITES = '@/lib/repositories/BusinessOsInviteRepository';
 const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   'businessOsStripeCustomer.ts': [BILLING_ACCOUNTS],
   'planCheckout.ts': [BILLING_ACCOUNTS],
-  'planBillingHandler.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE],
+  'planBillingHandler.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE, INVITES],
   'planPaymentApply.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE],
   'planCheckoutSessionEvents.ts': [BILLING_ACCOUNTS],
   'planSubscriptionMirror.ts': [BILLING_ACCOUNTS],
@@ -1072,5 +1076,21 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     expect(repositoryImportsOf(file, `// see @/lib/repositories\nconst s = 'lib/repositories';\n${real}`)).toEqual([]);
     expect(repositoryImportsOf(file, "import { x } from '@/lib/repositoriesExtra';")).toEqual([]);
     expect(repositoryImportsOf(file, "import { x } from '../../../repositories/AgentRepository';")).toEqual([]);
+  });
+
+  // P-5b.1 QA Edge Case 2 (SA C-3): the post-commit chain (stamp audit, N-2
+  // email, its audit) is budgeted against a pinned limit; a silent removal or
+  // lowering would let the platform default cut it between commit and flush.
+  it('exports `maxDuration = 60` at the top level, exactly once (P-5b.1, SA C-3)', () => {
+    const found: string[] = [];
+    for (const statement of sf.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      const isExported = statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+      if (!isExported || !(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+      for (const decl of statement.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name) && decl.name.text === 'maxDuration') found.push(decl.initializer?.getText(sf) ?? '');
+      }
+    }
+    expect(found).toEqual(['60']);
   });
 });
