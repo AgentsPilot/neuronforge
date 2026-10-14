@@ -210,32 +210,6 @@ export function applyCountryToPhone(
   return valid ?? candidates[0];
 }
 
-/**
- * Where a PUBLIC form's phone field should start.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * A visitor filling in a website contact form has no record to answer from, so
- * this is the one place a country is genuinely guessed. It is guessed from the
- * page's own language, which is the business's: a Hebrew page belongs to a
- * business whose callers are overwhelmingly Israeli, and starting it on US made
- * every one of them correct the dropdown before typing.
- *
- * Deliberately NOT read from the business's own phone number. That number may
- * itself be one of the malformed ones this module exists for — `+2013643030`
- * parses as Egypt — and seeding a visitor's field from corrupt data would turn
- * one bad record into many.
- *
- * English stays US because `en` spans the US, the UK, Australia and more, and
- * there is nothing here to separate them. A visitor can always change it.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-export function publicFormCountry(locale: string | null | undefined): Country {
-  switch (locale) {
-    case 'he':
-      return 'IL';
-    case 'es':
-      return 'ES';
-    default:
-      return 'US';
-  }
-}
+// `publicFormCountry` lives in `./publicFormCountry` (BR-2): it runs at the
+// public contact form's first render, before the phone library has arrived,
+// so it must not sit in a module that imports the library.

@@ -24,6 +24,10 @@
 //      table; never `profiles.role`):
 //        - `app/api/admin/system-config/pricing/route.ts`      (GET/PUT/POST/DELETE)
 //        - `app/api/admin/system-config/pricing/sync/route.ts` (POST)
+//        - `app/api/admin/model-pricing/comparison/route.ts` and
+//          `app/api/admin/model-pricing/manual-entries/route.ts`, through
+//          `lib/ai/pricing-research/comparisonModel.ts` (`listActiveExact()`
+//          only, read-only; AI model price review slice 3)
 //        - `scripts/**` operator scripts, run by hand with `.env.local`.
 //
 //   2. THE BILLING READER — exactly one, ungated by design:
@@ -55,6 +59,7 @@ import { createLogger, Logger } from '@/lib/logger';
 import type {
   AgentRepositoryResult as RepositoryResult,
   AiModelPricing,
+  AiModelPricingExactRow,
   AiModelPricingSyncEntry,
   AiModelPricingSyncResult,
   CreateAiModelPricingInput,
@@ -155,6 +160,44 @@ export class AiModelPricingRepository {
     } catch (error) {
       const duration = Date.now() - startTime;
       methodLogger.error({ err: error, duration }, 'Failed to fetch active pricing rows');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The same active rows as `listActive()` (same filter, same order), with the
+   * three price columns cast to TEXT by PostgREST, so the exact stored decimal
+   * reaches the caller and never passes through a JS float.
+   *
+   * For the admin price comparison and manual entry only (AI model price review
+   * slice 3, SA O-10): class 1 below, behind `requireAdmin`. Not cached. The
+   * billing reader keeps `listActive()`, which this method does not change.
+   */
+  async listActiveExact(): Promise<RepositoryResult<AiModelPricingExactRow[]>> {
+    const methodLogger = this.logger.child({ method: 'listActiveExact' });
+    const startTime = Date.now();
+
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+
+      const { data, error } = await this.supabase
+        .from(TABLE)
+        .select(
+          'id, provider, model_name, input_cost_per_token::text, output_cost_per_token::text, cached_input_cost_per_token::text, effective_date, created_at'
+        )
+        .is('retired_date', null)
+        .lte('effective_date', today)
+        .order('effective_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const duration = Date.now() - startTime;
+      methodLogger.debug({ count: data?.length || 0, duration }, 'Active pricing rows fetched as exact text');
+      return { data: (data as unknown as AiModelPricingExactRow[]) || [], error: null };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      methodLogger.error({ err: error, duration }, 'Failed to fetch active pricing rows as exact text');
       return { data: null, error: error as Error };
     }
   }

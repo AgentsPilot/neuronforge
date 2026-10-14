@@ -71,6 +71,12 @@
 // record and read by no select either. Both are for investigation in the SQL
 // editor, never for a screen.
 //
+// Plan payments P-5b.2 (P5-C10, SA C-7): `findGrantKindsByIdsForAdmin` reads
+// `id, grant_kind` for up to 200 invites at once, for the shadow report and
+// the launch dry run (both behind `requireAdmin`). Its only caller is
+// `lib/business-os/invites/paymentHoldBatch.ts`, and only for the unpaid
+// `admin_invite` lineage rows, whose grant kind decides the hold.
+//
 // Methods never throw: they return `{ data, error }`. A database error is
 // reduced to `{ code, message }` before it is logged or returned (`safeDbError`),
 // because a PostgrestError's `details` can hold the token hash and the email.
@@ -228,9 +234,11 @@ function signupClaimUpdate(
  *
  * `issuer_kind` (Slice 5a, F5a-10, SA R-5) is read only so an account-issued
  * invite never reaches the existing-account check; the view never returns it.
+ * `invite_type` (plan payments P-9.1, SA C-2) is read only so an admin Paid
+ * invite is judged by the signup's own predicate; the view never returns it.
  */
 export const BUSINESS_OS_INVITE_PUBLIC_COLUMNS =
-  'id, issuer_kind, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
+  'id, issuer_kind, invite_type, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
   'personal_note, link_expires_at, first_viewed_at, revoked_at, redeemed_at';
 
 /**
@@ -256,6 +264,9 @@ const FRIEND_INVITE_REFUSALS: ReadonlySet<string> = new Set(['not_eligible', 'al
  * `INVITE_LIST_CEILING` in `adminInviteOps.ts` asks for the same number.
  */
 export const BUSINESS_OS_INVITE_LIST_LIMIT = 500;
+
+/** P-5b.2: the most invite ids one batched grant-kind read accepts (a long `in (...)` is a long URL). */
+export const BUSINESS_OS_GRANT_KIND_LOOKUP_LIMIT = 200;
 
 export class BusinessOsInviteRepository {
   private supabase: SupabaseClient;
@@ -717,6 +728,37 @@ export class BusinessOsInviteRepository {
       return { data: count, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to count the pending invites of a deleted business');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  // ============ Payment hold in batch (P-5b.2, behind requireAdmin) ============
+
+  /**
+   * ADMIN (plan payments P-5b.2, P5-C10): the grant kind of each of these
+   * invites, for the batched hold classification of the shadow report and the
+   * launch dry run. INTENTIONAL SERVICE-ROLE READ across invites (the table has
+   * no `user_id` and no policy); the ids are the `invite_id`s of lineage rows
+   * the walk already read, never a request value. Two columns only: no email,
+   * issuer, note or hash. Invites with no row are absent.
+   *
+   * Only caller: `lib/business-os/invites/paymentHoldBatch.ts`. Refuses more
+   * than `BUSINESS_OS_GRANT_KIND_LOOKUP_LIMIT` ids, and any id that is not a
+   * UUID, before a query.
+   */
+  async findGrantKindsByIdsForAdmin(ids: string[]): Promise<RepositoryResult<Array<Pick<BusinessOsInvite, 'id' | 'grant_kind'>>>> {
+    const methodLogger = this.logger.child({ method: 'findGrantKindsByIdsForAdmin', invites: ids.length });
+    if (ids.length === 0) return { data: [], error: null };
+    if (ids.length > BUSINESS_OS_GRANT_KIND_LOOKUP_LIMIT || !ids.every(isUuid)) {
+      return { data: null, error: new Error(`findGrantKindsByIdsForAdmin accepts at most ${BUSINESS_OS_GRANT_KIND_LOOKUP_LIMIT} UUIDs`) };
+    }
+    try {
+      const { data, error } = await this.supabase.from(INVITES).select('id, grant_kind').in('id', ids);
+
+      if (error) throw error;
+      return { data: (data ?? []) as unknown as Array<Pick<BusinessOsInvite, 'id' | 'grant_kind'>>, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to read invite grant kinds in batch');
       return { data: null, error: toError(error) };
     }
   }

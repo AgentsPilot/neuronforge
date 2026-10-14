@@ -71,11 +71,13 @@ jest.mock('@/lib/repositories/UserPreferencesRepository', () => ({
 jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({ businessOsInviteRepository: {} }));
 const provision = jest.fn(async () => ({ data: 'inv', error: null }));
 const provisionFriend = jest.fn(async () => ({ data: { outcome: 'finalised', inviteId: 'inv', level: 2 }, error: null }));
+const provisionAdminPaid = jest.fn(async () => ({ data: { outcome: 'finalised', inviteId: 'inv' }, error: null }));
 const findEntitlementInputs = jest.fn(async () => ({ data: { plan: null, overrides: [] }, error: null }));
 jest.mock('@/lib/repositories/BusinessOsAccountPlanRepository', () => ({
   businessOsAccountPlanRepository: {
     provisionFromInvite: (...args: unknown[]) => provision(...(args as [])),
     provisionFromFriendInvite: (...args: unknown[]) => provisionFriend(...(args as [])),
+    provisionFromAdminPaidInvite: (...args: unknown[]) => provisionAdminPaid(...(args as [])),
     findEntitlementInputs: (...args: unknown[]) => findEntitlementInputs(...(args as [])),
   },
 }));
@@ -212,6 +214,15 @@ describe('audit and finalise wiring', () => {
     expect(provisionFriend).toHaveBeenCalledWith(input);
     await deps.issuerPlans.findEntitlementInputs('issuer');
     expect(findEntitlementInputs).toHaveBeenCalledWith('issuer');
+  });
+
+  it('P-9.1: finaliseAdminPaid is the plan repository provisionFromAdminPaidInvite, with the input unchanged', async () => {
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    const input = { inviteId: 'inv', accountId: 'acct', email: 'invitee@example.com', tierId: 't' };
+    await expect(deps.finaliseAdminPaid(input)).resolves.toEqual({ data: { outcome: 'finalised', inviteId: 'inv' }, error: null });
+    expect(provisionAdminPaid).toHaveBeenCalledWith(input);
+    expect(provisionFriend).not.toHaveBeenCalled();
+    expect(provision).not.toHaveBeenCalled();
   });
 
   it('writes the invite as the entity, the new account as user and actor, and the correlation id', async () => {

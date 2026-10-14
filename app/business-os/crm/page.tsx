@@ -52,6 +52,14 @@ export default function CRMPage() {
   const [taskListKey, setTaskListKey] = useState(0); // For refreshing task list
   const [contacts, setContacts] = useState<CRMContact[]>([]); // All contacts for pipeline view
   const [pipelineStages, setPipelineStages] = useState<CRMPipelineStage[]>([]);
+  /**
+   * Whether the stage request has FINISHED — success, empty or failed.
+   *
+   * `pipelineStages.length` alone cannot tell "not asked yet" from "the
+   * business has none". The board waited on the length, so an account with no
+   * stages (or a failed stage request) sat behind the spinner forever.
+   */
+  const [stagesLoaded, setStagesLoaded] = useState(false);
   const [enabledCapabilities, setEnabledCapabilities] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   /**
@@ -264,7 +272,13 @@ export default function CRMPage() {
    * ───────────────────────────────────────────────────────────────────────────
    */
   const fetchBoard = async (silent: boolean = false) => {
-    if (!pipelineStages.length) return;
+    // No columns, nothing to ask for. Only reached once the stages have loaded
+    // (the effect below waits for that), so the spinner must come down here or
+    // nothing else will take it down.
+    if (!pipelineStages.length) {
+      if (!silent) setLoading(false);
+      return;
+    }
 
     try {
       if (!silent) setLoading(true);
@@ -331,15 +345,17 @@ export default function CRMPage() {
    */
   useEffect(() => {
     // The board pages per column and ignores `currentPage`; the list pages
-    // globally. `pipelineStages` is a dependency because the board cannot ask
-    // for its columns until it knows what they are.
+    // globally. `pipelineStages` and `stagesLoaded` are dependencies because the
+    // board cannot ask for its columns until it knows what they are — or that
+    // there are none.
     if (viewMode === 'pipeline') {
+      if (!stagesLoaded) return;
       fetchBoard();
     } else {
       fetchContacts();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, currentPage, viewMode, pipelineStages]);
+  }, [searchQuery, currentPage, viewMode, pipelineStages, stagesLoaded]);
 
   const fetchPipelineStages = async () => {
     try {
@@ -350,6 +366,8 @@ export default function CRMPage() {
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch pipeline stages');
+    } finally {
+      setStagesLoaded(true);
     }
   };
 
@@ -678,7 +696,7 @@ export default function CRMPage() {
         </div>
 
         {/* Content */}
-        {loading ? (
+        {loading || (viewMode === 'pipeline' && !stagesLoaded) ? (
           <div className="flex items-center justify-center min-h-[400px]">
             <div className="text-center space-y-4">
               <div className="w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mx-auto" style={{ borderColor: '#8B5CF6', borderTopColor: 'transparent' }}></div>
@@ -687,7 +705,15 @@ export default function CRMPage() {
           </div>
         ) : (
           <>
-            {viewMode === 'pipeline' && (
+            {viewMode === 'pipeline' && !pipelineStages.length && (
+              <div className="flex items-center justify-center min-h-[400px]">
+                <div className="text-center space-y-2 max-w-md">
+                  <p className="text-[var(--v2-text-primary)] font-medium">{t('crm.no_stages_title')}</p>
+                  <p className="text-sm text-[var(--v2-text-secondary)]">{t('crm.no_stages_body')}</p>
+                </div>
+              </div>
+            )}
+            {viewMode === 'pipeline' && pipelineStages.length > 0 && (
               <>
                 <CRMPipelineView
                   contacts={contacts}

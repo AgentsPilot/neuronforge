@@ -172,6 +172,21 @@ describe('a successful generation (AC-6)', () => {
     });
   });
 
+  /*
+   * BR-3 AC-3.5: the picker's waiting screen changed, the request must not.
+   * The style suffix is copied here as a literal on purpose: any change to the
+   * words sent to the provider fails this test and has to be made knowingly.
+   */
+  it('sends the owner prompt plus the fixed style suffix, unchanged (BR-3 AC-3.5)', async () => {
+    await generateImage(OWNER, PROMPT, 'wide', 'hero');
+    expect(mockGenerate).toHaveBeenCalledTimes(1);
+    expect(mockGenerate.mock.calls[0][0].prompt).toBe(
+      `${PROMPT}. ` +
+        'A natural, understated photograph. Real materials and daylight, shallow depth of field, ' +
+        'no text, no logos, no watermarks, no people and no faces. Editorial, not advertising.'
+    );
+  });
+
   it('keeps the prompt out of the ledger row and out of the logs (WC-4)', async () => {
     await generateImage(OWNER, PROMPT, 'wide', 'hero');
     expect(rows()[0].request_payload).toBeUndefined();

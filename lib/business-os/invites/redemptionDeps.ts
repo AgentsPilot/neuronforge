@@ -7,10 +7,11 @@ import 'server-only';
  *
  * Kept out of the routes so both build the SAME dependencies, and so the only
  * application file that names the plan repository is this one (it is listed,
- * with its reason, in the entitlements imports guard: it may call exactly two
- * plan-state writes, `provisionFromInvite` and, from Slice 5b,
- * `provisionFromFriendInvite`; and one read, `findEntitlementInputs`, for the
- * friend issuer's in-force champion re-check).
+ * with its reason, in the entitlements imports guard: it may call exactly three
+ * plan-state writes, `provisionFromInvite`, from Slice 5b
+ * `provisionFromFriendInvite` and, from plan payments P-9.1,
+ * `provisionFromAdminPaidInvite`; and one read, `findEntitlementInputs`, for
+ * the friend issuer's in-force champion re-check).
  *
  * The code email, and from Slice 5b the "you already have an account" notice
  * (F5b-3, SA R-5), are sent from the platform's system sender (no `from`, no
@@ -123,6 +124,8 @@ export function buildRedemptionDeps(context: {
     accounts: authAccountRepository,
     finalise: (input) => businessOsAccountPlanRepository.provisionFromInvite(input),
     finaliseFriend: (input) => businessOsAccountPlanRepository.provisionFromFriendInvite(input),
+    // P-9.1 (SA-P9): the admin Paid finalise, a no-basis plan row and an L1 lineage row.
+    finaliseAdminPaid: (input) => businessOsAccountPlanRepository.provisionFromAdminPaidInvite(input),
     // Read-only: the friend issuer's plan row (the TypeScript in-force re-check,
     // T-19). Only the one read method is handed over (SA N-3).
     issuerPlans: { findEntitlementInputs: (accountId) => businessOsAccountPlanRepository.findEntitlementInputs(accountId) },

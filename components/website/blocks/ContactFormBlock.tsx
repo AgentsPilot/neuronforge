@@ -1,19 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Send, Loader2, CheckCircle, Mail, Phone, MapPin, Clock } from 'lucide-react';
-import PhoneInput from 'react-phone-number-input';
-import { isValidPhoneNumber } from 'react-phone-number-input';
+/*
+ * BR-2: the phone library (about 50 kB gz) is NOT imported here. It arrives
+ * after the page has painted through `usePhoneLib`, and the phone row shows
+ * `PublicPhoneFieldPlaceholder` until then. One static value import of the
+ * library, `phoneField` or `WebsiteCountrySelect` puts it back into every
+ * public site page's first download; `phoneLibLazy.guard.test.ts` fails if one
+ * appears. The stylesheet stays static (no unstyled frame, and CSS is not
+ * First Load JS), and `import type` is erased at build.
+ */
 import 'react-phone-number-input/style.css';
 import type { BlockRendererProps, FormField } from './types';
 import type { Country } from 'react-phone-number-input';
-import {
-  applyCountryToPhone,
-  phoneFieldValue,
-  publicFormCountry,
-} from '@/components/crm/phoneField';
-import { WebsiteCountrySelect } from './WebsiteCountrySelect';
+import { usePhoneLib, loadPhoneLib, type PhoneLib } from '@/components/crm/usePhoneLib';
+import { publicFormCountry } from '@/components/crm/publicFormCountry';
+import { PublicPhoneFieldPlaceholder } from './PublicPhoneFieldPlaceholder';
 import { ConsentCheckbox } from '@/components/public/ConsentCheckbox';
 import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
 
@@ -47,6 +51,7 @@ const LABELS = {
     required: 'This field is required',
     invalidEmail: 'Please enter a valid email address',
     invalidPhone: 'Please enter a valid phone number',
+    phoneUnavailable: 'The phone field could not load. Please try again.',
     getInTouch: 'Get in Touch',
     contactInfo: 'Contact Information',
     sendUsMessage: 'Send us a message',
@@ -66,6 +71,7 @@ const LABELS = {
     required: 'Este campo es obligatorio',
     invalidEmail: 'Por favor, introduce un correo electrónico válido',
     invalidPhone: 'Por favor, introduce un número de teléfono válido',
+    phoneUnavailable: 'No se pudo cargar el campo de teléfono. Por favor, inténtalo de nuevo.',
     getInTouch: 'Contáctanos',
     contactInfo: 'Información de contacto',
     sendUsMessage: 'Envíanos un mensaje',
@@ -85,6 +91,7 @@ const LABELS = {
     required: 'שדה זה הוא חובה',
     invalidEmail: 'אנא הזן כתובת אימייל תקינה',
     invalidPhone: 'אנא הזן מספר טלפון תקין',
+    phoneUnavailable: 'לא ניתן היה לטעון את שדה הטלפון. אנא נסה שוב.',
     getInTouch: 'צור קשר',
     contactInfo: 'פרטי התקשרות',
     sendUsMessage: 'שלח לנו הודעה',
@@ -178,6 +185,31 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
   const [phoneCountry, setPhoneCountry] = useState<Country>(() => publicFormCountry(locale));
 
   /*
+   * BR-2: the phone library, or null until it arrives. Mounting this starts the
+   * download after hydration with no click (FR-2.2), and every re-render while
+   * it is missing (the visitor typing in another field) retries a failed one
+   * (FR-2.6).
+   */
+  const phoneLib = usePhoneLib();
+  /*
+   * The real number box's wrapper. The hand-off focuses the `<input>` inside
+   * it: the library's typings describe its `ref` as a class instance even
+   * though it forwards to the input, so a wrapper query is the typed route.
+   */
+  const phoneBoxRef = useRef<HTMLDivElement>(null);
+  // Focus is on the placeholder and should move into the real box (FR-2.4).
+  const phoneFocusPending = useRef(false);
+  // A submit is waiting for the library; a second press must not wait again.
+  const waitingForPhoneLib = useRef(false);
+  /*
+   * The visitor's CURRENT values. A submit that waits for the library reads
+   * these after the wait, so whatever was typed into the other fields during
+   * it is validated and sent, not the values captured when Send was pressed.
+   */
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
+
+  /*
    * Marketing consent. Unticked, and it stays unticked unless the visitor acts.
    * `null` copy means this business does not collect it, or the lookup failed —
    * either way the checkbox is absent rather than unlabelled.
@@ -188,14 +220,37 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
   const primaryColor = theme?.colors.primary || '#4F6EF7';
   const hasContactInfo = business_email || business_phone || business_address || business_hours;
 
-  const validateField = (field: FormField, value: string): string | null => {
+  /*
+   * The focus hand-off (FR-2.4, RC-3). Only when focus was LOST by the
+   * placeholder's removal: if the visitor has since moved to another field,
+   * that field keeps it.
+   */
+  useEffect(() => {
+    if (!phoneLib || !phoneFocusPending.current) return;
+    phoneFocusPending.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body) {
+      phoneBoxRef.current?.querySelector('input')?.focus();
+    }
+  }, [phoneLib]);
+
+  // A "could not load" message is stale once the field has loaded (RC-1c).
+  const phoneUnavailableMessage = labels.phoneUnavailable;
+  useEffect(() => {
+    if (!phoneLib) return;
+    setErrors(prev =>
+      prev._form === phoneUnavailableMessage ? { ...prev, _form: '' } : prev
+    );
+  }, [phoneLib, phoneUnavailableMessage]);
+
+  const validateField = (lib: PhoneLib, field: FormField, value: string): string | null => {
     if (field.required && !value?.trim()) {
       return labels.required;
     }
     if (field.type === 'email' && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
       return labels.invalidEmail;
     }
-    if (field.type === 'tel' && value && !isValidPhoneNumber(value)) {
+    if (field.type === 'tel' && value && !lib.isValidPhoneNumber(value)) {
       return labels.invalidPhone;
     }
     return null;
@@ -204,15 +259,47 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    /*
+     * BR-2 (FR-2.5, FR-2.6). With the library loaded (the normal case) this is
+     * skipped and the submit below runs exactly as before.
+     *
+     * Pressed before it arrives: the button shows its normal sending state
+     * while the download finishes, then validates as always. The placeholder
+     * is read-only and only `PhoneInput` ever sets `formData.phone`, so in this
+     * path the phone is ALWAYS empty: once the library arrives the outcome is
+     * the usual "required" message on the phone field and nothing is sent. The
+     * wait exists so that a load that FAILS shows "could not load, try again"
+     * rather than a "required" the visitor has no way to satisfy. Nothing is
+     * ever sent without a checked phone (BQ-5).
+     */
+    let lib = phoneLib;
+    if (!lib) {
+      if (waitingForPhoneLib.current) return;
+      waitingForPhoneLib.current = true;
+      setSubmitting(true);
+      lib = await loadPhoneLib();
+      waitingForPhoneLib.current = false;
+      if (!lib) {
+        setErrors({ _form: labels.phoneUnavailable });
+        setSubmitting(false);
+        return;
+      }
+    }
+    const loadedLib: PhoneLib = lib;
+
+    const current = formDataRef.current;
+
     // Validate all fields
     const newErrors: Record<string, string> = {};
     fields.forEach(field => {
-      const error = validateField(field, formData[field.name] || '');
+      const error = validateField(loadedLib, field, current[field.name] || '');
       if (error) newErrors[field.name] = error;
     });
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
+      // Only the waiting path above set it; a no-op otherwise.
+      setSubmitting(false);
       return;
     }
 
@@ -227,11 +314,11 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
         body: JSON.stringify({
           subdomain,
           userCode,
-          name: formData.name,
-          email: formData.email,
-          phone: formData.phone,
-          message: formData.message,
-          service_interest: formData.subject || formData.service,
+          name: current.name,
+          email: current.email,
+          phone: current.phone,
+          message: current.message,
+          service_interest: current.subject || current.service,
           page_url: typeof window !== 'undefined' ? window.location.href : undefined,
           consent: consentPayload(consentCopy, consentGiven)
         })
@@ -399,43 +486,67 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                       />
                     ) : field.type === 'tel' ? (
                       <div dir="ltr" className="flex gap-2">
-                        <WebsiteCountrySelect
-                          value={phoneCountry}
-                          /*
-                            Choosing a country is a statement about the NUMBER.
-                            Wired to the state alone, a visitor who picked their
-                            country saw the dropdown move and their number stay
-                            national — and a national number with a bare `+` in
-                            front of it dials somewhere else entirely.
-                          */
-                          onChange={(country) => {
-                            setPhoneCountry(country);
-                            setFormData({
-                              ...formData,
-                              [field.name]:
-                                applyCountryToPhone(formData[field.name], country) ??
-                                formData[field.name],
-                            });
-                          }}
-                          isRTL={isRTL}
-                          hasError={!!errors[field.name]}
-                        />
-                        <div className={`phone-input-contact flex-1 ${errors[field.name] ? 'has-error' : ''}`}>
-                          <PhoneInput
-                            countryCallingCodeEditable={false}
-                            country={phoneCountry}
-                            /* The page's own language decides, not a fixed US. */
-                            defaultCountry={phoneCountry}
-                            value={phoneFieldValue(formData[field.name], phoneCountry) ?? ''}
-                            onChange={(value) => {
-                              setFormData({ ...formData, [field.name]: value || '' });
-                              if (errors[field.name]) {
-                                setErrors({ ...errors, [field.name]: '' });
-                              }
+                        {phoneLib ? (
+                          <>
+                            <phoneLib.WebsiteCountrySelect
+                              value={phoneCountry}
+                              /*
+                                Choosing a country is a statement about the NUMBER.
+                                Wired to the state alone, a visitor who picked their
+                                country saw the dropdown move and their number stay
+                                national — and a national number with a bare `+` in
+                                front of it dials somewhere else entirely.
+                              */
+                              onChange={(country) => {
+                                setPhoneCountry(country);
+                                setFormData({
+                                  ...formData,
+                                  [field.name]:
+                                    phoneLib.applyCountryToPhone(formData[field.name], country) ??
+                                    formData[field.name],
+                                });
+                              }}
+                              isRTL={isRTL}
+                              hasError={!!errors[field.name]}
+                            />
+                            <div
+                              ref={phoneBoxRef}
+                              className={`phone-input-contact flex-1 ${errors[field.name] ? 'has-error' : ''}`}
+                            >
+                              <phoneLib.PhoneInput
+                                /*
+                                  The label's target, before and after the swap.
+                                  Without it the label pointed at nothing.
+                                */
+                                id={field.name}
+                                countryCallingCodeEditable={false}
+                                country={phoneCountry}
+                                /* The page's own language decides, not a fixed US. */
+                                defaultCountry={phoneCountry}
+                                value={phoneLib.phoneFieldValue(formData[field.name], phoneCountry) ?? ''}
+                                onChange={(value) => {
+                                  setFormData({ ...formData, [field.name]: value || '' });
+                                  if (errors[field.name]) {
+                                    setErrors({ ...errors, [field.name]: '' });
+                                  }
+                                }}
+                                onCountryChange={(country) => country && setPhoneCountry(country)}
+                              />
+                            </div>
+                          </>
+                        ) : (
+                          <PublicPhoneFieldPlaceholder
+                            inputId={field.name}
+                            country={publicFormCountry(locale)}
+                            hasError={!!errors[field.name]}
+                            onFocusWaiting={() => {
+                              phoneFocusPending.current = true;
                             }}
-                            onCountryChange={(country) => country && setPhoneCountry(country)}
+                            onFocusMovedAway={() => {
+                              phoneFocusPending.current = false;
+                            }}
                           />
-                        </div>
+                        )}
                       </div>
                     ) : field.type === 'select' && field.options ? (
                       <select

@@ -481,3 +481,112 @@ describe('revokeFriendInvite (F5a-8, SA Q-2; 409 from Slice 5b)', () => {
     expect(await revokeFriendInvite({ accountId: ACCOUNT, inviteId: INVITE_ID, repository, now: NOW })).toEqual({ ok: false, status: 500 });
   });
 });
+
+// ── Plan payments P-5b.2: "Subscribed" (FR-31, P5-C9, G5-10) ─────────────────
+
+describe('P-5b.2: the champion sees "Subscribed" for a friend who paid, status only', () => {
+  const FRIEND_PAID = '22222222-2222-4222-8222-222222222222';
+  const FRIEND_HELD = '44444444-4444-4444-8444-444444444444';
+  const PENDING = '55555555-5555-4555-8555-555555555555';
+
+  it('friendInviteStatus: subscribed only ever upgrades an ACCEPTED invite', () => {
+    expect(friendInviteStatus(row({ redeemed_at: at(-1) }), NOW, true)).toBe('subscribed');
+    expect(friendInviteStatus(row({ redeemed_at: at(-1) }), NOW, false)).toBe('joined');
+    // A stray "subscribed" bit can never relabel a pending, revoked or expired invite.
+    expect(friendInviteStatus(row(), NOW, true)).toBe('pending');
+    expect(friendInviteStatus(row({ revoked_at: at(-1) }), NOW, true)).toBe('revoked');
+    expect(friendInviteStatus(row({ link_expires_at: at(-1) }), NOW, true)).toBe('expired');
+  });
+
+  it('the view keys are unchanged: no date, amount or account reaches the champion', () => {
+    const view = toFriendInviteView(row({ redeemed_at: at(-1), claimed_account_id: ACCOUNT }), NOW, true);
+    expect(view.status).toBe('subscribed');
+    expect(view.slotReturned).toBe(false);
+    expect(Object.keys(view).sort()).toEqual([...FRIEND_INVITE_VIEW_KEYS].sort());
+  });
+
+  function summaryWith(rows: BusinessOsFriendInviteListRow[], lineage?: { findSubscribedInviteIdsForIssuer: jest.Mock }) {
+    const h = harness();
+    const warnings: Array<Record<string, unknown>> = [];
+    const deps = {
+      accountId: ACCOUNT,
+      plans: h.deps.plans,
+      repository: { listForIssuerAccount: jest.fn(async () => ({ data: rows, error: null })) },
+      lineage,
+      preferences: { findPreferredLanguage: jest.fn(async () => ({ data: 'en' as const, error: null })) },
+      listLimit: 200,
+      now: NOW,
+      logger: { info: () => undefined, warn: (context: Record<string, unknown>) => warnings.push(context) },
+    };
+    return { deps, warnings };
+  }
+
+  const listRows = () => [
+    row({ id: FRIEND_PAID, redeemed_at: at(-2) }),
+    row({ id: FRIEND_HELD, redeemed_at: at(-1) }),
+    row({ id: PENDING }),
+  ];
+
+  it('ONE issuer-scoped read for the accepted rows only; a paid friend reads subscribed, a held one joined', async () => {
+    policy.accountInvitesAvailable = true;
+    const lineage = { findSubscribedInviteIdsForIssuer: jest.fn(async () => ({ data: [FRIEND_PAID], error: null })) };
+    const { deps } = summaryWith(listRows(), lineage);
+    const outcome = await getFriendInviteSummary(deps);
+    if (!outcome.ok || !outcome.summary.eligible) throw new Error('expected an eligible summary');
+    expect(lineage.findSubscribedInviteIdsForIssuer).toHaveBeenCalledTimes(1);
+    // The session's account, never another, and only the accepted invites from the issuer-scoped list.
+    expect(lineage.findSubscribedInviteIdsForIssuer).toHaveBeenCalledWith(ACCOUNT, [FRIEND_PAID, FRIEND_HELD]);
+    expect(outcome.summary.invites.map((invite) => [invite.id, invite.status])).toEqual([
+      [FRIEND_PAID, 'subscribed'],
+      [FRIEND_HELD, 'joined'],
+      [PENDING, 'pending'],
+    ]);
+    // A subscribed friend still counts against the allowance (accepted).
+    expect(outcome.summary.remaining).toBe(FRIEND_INVITE_LIMITS.lifetimeAllowance - 3);
+  });
+
+  it('an id the read returns that is not an accepted row of this list changes nothing', async () => {
+    policy.accountInvitesAvailable = true;
+    const lineage = { findSubscribedInviteIdsForIssuer: jest.fn(async () => ({ data: [PENDING, 'someone-else'], error: null })) };
+    const { deps } = summaryWith(listRows(), lineage);
+    const outcome = await getFriendInviteSummary(deps);
+    if (!outcome.ok || !outcome.summary.eligible) throw new Error('expected an eligible summary');
+    expect(outcome.summary.invites.map((invite) => invite.status)).toEqual(['joined', 'joined', 'pending']);
+  });
+
+  it('no accepted row: no read at all', async () => {
+    policy.accountInvitesAvailable = true;
+    const lineage = { findSubscribedInviteIdsForIssuer: jest.fn() };
+    const { deps } = summaryWith([row({ id: PENDING })], lineage);
+    await getFriendInviteSummary(deps);
+    expect(lineage.findSubscribedInviteIdsForIssuer).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['errors', async () => ({ data: null, error: new Error('timeout') })],
+    ['throws', async () => { throw new Error('network'); }],
+  ])('the read %s: the list still answers, the friends stay "joined" (the less-claiming word), and it is logged', async (_label, read) => {
+    policy.accountInvitesAvailable = true;
+    const lineage = { findSubscribedInviteIdsForIssuer: jest.fn(read) };
+    const { deps, warnings } = summaryWith(listRows(), lineage);
+    const outcome = await getFriendInviteSummary(deps);
+    if (!outcome.ok || !outcome.summary.eligible) throw new Error('expected an eligible summary');
+    expect(outcome.summary.invites.map((invite) => invite.status)).toEqual(['joined', 'joined', 'pending']);
+    expect(warnings).toContainEqual(expect.objectContaining({ event: 'bos_invite_list_subscribed_unread', accountId: ACCOUNT }));
+  });
+
+  it('not wired: every accepted invite is joined, never subscribed', async () => {
+    policy.accountInvitesAvailable = true;
+    const { deps } = summaryWith(listRows());
+    const outcome = await getFriendInviteSummary(deps);
+    if (!outcome.ok || !outcome.summary.eligible) throw new Error('expected an eligible summary');
+    expect(outcome.summary.invites.map((invite) => invite.status)).toEqual(['joined', 'joined', 'pending']);
+  });
+
+  it('the friend-invite wiring hands the route the lineage repository (its one subscribed read)', () => {
+    const source = readFileSync(join(process.cwd(), 'lib', 'business-os', 'invites', 'friendInviteDeps.ts'), 'utf8');
+    expect(source).toMatch(/lineage:\s*businessOsAccountLineageRepository/);
+    const route = readFileSync(join(process.cwd(), 'app', 'api', 'business-os', 'friend-invites', 'route.ts'), 'utf8');
+    expect(route).toMatch(/lineage:\s*friendInviteRepositories\.lineage/);
+  });
+});

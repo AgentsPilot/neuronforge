@@ -36,6 +36,7 @@ import { locales, type Locale } from '@/lib/i18n/config';
 import { FRIEND_INVITE_LIMITS, INVITE_ISSUANCE_POLICY, INVITE_LINK_EXPIRY } from '@/lib/business-os/entitlements/config/invites';
 import { planLabel } from '@/lib/business-os/entitlements/planPresentation';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
+import type { BusinessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import type { UserPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
 import type { UserProfileRepository } from '@/lib/repositories/UserProfileRepository';
@@ -166,9 +167,11 @@ export type FriendInviteStatus = 'pending' | 'expired' | 'revoked' | 'joined' | 
  * The status, from `deriveInviteState` (C-11) and the counted predicate: a
  * claimed-past-expiry invite still holds its slot, so it stays Pending.
  */
-export function friendInviteStatus(row: FriendInviteCountFacts, now: Date): FriendInviteStatus {
+export function friendInviteStatus(row: FriendInviteCountFacts, now: Date, subscribed = false): FriendInviteStatus {
   const state = deriveInviteState(row, now);
-  if (state === 'accepted') return 'joined';
+  // P-5b.2 (FR-31): `subscribed` only ever upgrades an ACCEPTED invite, and
+  // only from the issuer-scoped lineage read (the friend's first payment).
+  if (state === 'accepted') return subscribed ? 'subscribed' : 'joined';
   if (state === 'revoked') return 'revoked';
   return isCountedFriendInvite(row, now) ? 'pending' : 'expired';
 }
@@ -194,9 +197,13 @@ export const FRIEND_INVITE_VIEW_KEYS: ReadonlyArray<keyof FriendInviteView> = [
   'slotReturned',
 ];
 
-/** The one row → view mapper. Built field by field; nothing is spread. */
-export function toFriendInviteView(row: BusinessOsFriendInviteListRow, now: Date): FriendInviteView {
-  const status = friendInviteStatus(row, now);
+/**
+ * The one row → view mapper. Built field by field; nothing is spread.
+ * `subscribed` (P-5b.2) is the status bit only: no date or amount ever reaches
+ * the champion (P5-C9), so the view keys are unchanged.
+ */
+export function toFriendInviteView(row: BusinessOsFriendInviteListRow, now: Date, subscribed = false): FriendInviteView {
+  const status = friendInviteStatus(row, now, subscribed);
   return {
     id: row.id,
     email: row.email,
@@ -228,10 +235,42 @@ export interface FriendInviteSummary {
 
 export type SummaryOutcome = { ok: true; summary: FriendInviteSummary | { eligible: false } } | { ok: false };
 
+/**
+ * P-5b.2 (FR-31, P5-C9): which accepted invites in this list have paid. ONE
+ * issuer-scoped read for the whole list, and only when the list has an
+ * accepted row. A failed read does not fail the list: those rows stay `joined`
+ * (the less-claiming word) and it is logged.
+ */
+async function readSubscribedInviteIds(
+  accountId: string,
+  rows: BusinessOsFriendInviteListRow[],
+  lineage: Pick<BusinessOsAccountLineageRepository, 'findSubscribedInviteIdsForIssuer'> | undefined,
+  logger: FriendInviteLogger
+): Promise<ReadonlySet<string>> {
+  const accepted = rows.filter((row) => row.redeemed_at !== null).map((row) => row.id);
+  if (accepted.length === 0 || !lineage) return new Set<string>();
+  try {
+    const { data, error } = await lineage.findSubscribedInviteIdsForIssuer(accountId, accepted);
+    if (error || !data) {
+      logger.warn({ event: 'bos_invite_list_subscribed_unread', accountId, accepted: accepted.length }, 'Could not read which friends subscribed; they show as joined');
+      return new Set<string>();
+    }
+    return new Set(data);
+  } catch {
+    logger.warn({ event: 'bos_invite_list_subscribed_unread', accountId, accepted: accepted.length }, 'Could not read which friends subscribed; they show as joined');
+    return new Set<string>();
+  }
+}
+
 export async function getFriendInviteSummary(deps: {
   accountId: string;
   plans: IssuerPlanReader;
   repository: Pick<FriendInviteRepository, 'listForIssuerAccount'>;
+  /**
+   * P-5b.2: the issuer-scoped "who paid" read. Optional so a caller that does
+   * not wire it shows `joined` for every accepted invite, never `subscribed`.
+   */
+  lineage?: Pick<BusinessOsAccountLineageRepository, 'findSubscribedInviteIdsForIssuer'>;
   preferences: Pick<UserPreferencesRepository, 'findPreferredLanguage'>;
   listLimit: number;
   now: Date;
@@ -243,6 +282,10 @@ export async function getFriendInviteSummary(deps: {
 
   const { data, error } = await deps.repository.listForIssuerAccount(deps.accountId, { limit: deps.listLimit });
   if (error || !data) return { ok: false };
+
+  // The ids come from the issuer-scoped list above, and the read is itself
+  // filtered by this account as the lineage parent: scoped twice (P5-C9).
+  const subscribed = await readSubscribedInviteIds(deps.accountId, data, deps.lineage, deps.logger);
 
   // C-8: the champion's saved language, or English. Never `LanguageContext`.
   const defaultLanguage = await resolveInviteFormLanguage({
@@ -259,7 +302,7 @@ export async function getFriendInviteSummary(deps: {
       remaining: remainingAllowance(data, deps.now),
       defaultLanguage,
       languages: locales,
-      invites: data.map((row) => toFriendInviteView(row, deps.now)),
+      invites: data.map((row) => toFriendInviteView(row, deps.now, subscribed.has(row.id))),
       truncated: data.length >= deps.listLimit,
     },
   };

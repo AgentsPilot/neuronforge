@@ -134,13 +134,14 @@ describe('column constants', () => {
     expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS).not.toContain('token_hash');
   });
 
-  it('the public columns hold no email, issuer id, reason or redeemer (issuer_kind only, Slice 5a R-5)', () => {
+  it('the public columns hold no email, issuer id, reason or redeemer (issuer_kind only, Slice 5a R-5; invite_type, P-9.1 C-2)', () => {
     for (const column of ['email', 'issuer_admin_id', 'issuer_account_id', 'reason', 'redeemed_account_id', 'revoked_by_admin_id']) {
       expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS).not.toContain(column);
     }
     expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS.split(', ')).toEqual([
       'id',
       'issuer_kind',
+      'invite_type',
       'grant_kind',
       'grant_id',
       'access_open_ended',
@@ -1030,6 +1031,8 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         // Admin delete AD-2a: a deleted business's pending invites, scoped by its issuing account id.
         'revokePendingForIssuerAccountByAdmin',
         'countPendingForIssuerAccountByAdmin',
+        // Plan payments P-5b.2 (P5-C10): grant kinds in batch for the report and dry run, admin only.
+        'findGrantKindsByIdsForAdmin',
       ].sort()
     );
   });

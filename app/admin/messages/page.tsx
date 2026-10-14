@@ -16,12 +16,13 @@
  *
  * Delete and Mark All Read ask first in an admin dialog (LF-3b, OR-3,
  * SA-C11), with the words the native confirm box used; the requests behind
- * them are unchanged.
+ * them are unchanged. Since LF-7 that dialog is the shared `AdminConfirmDialog`.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { clientLogger } from '@/lib/logger/client';
+import { AdminConfirmDialog } from '@/app/admin/components/layout/AdminConfirmDialog';
 import { AdminDrawer } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 import {
@@ -37,7 +38,6 @@ import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 
 import { MessageDetail } from './components/MessageDetail';
-import { MessagesConfirmDialog } from './components/MessagesConfirmDialog';
 import { MessagesTable } from './components/MessagesTable';
 import {
   MARK_ALL_READ_FAILED,
@@ -499,17 +499,17 @@ export default function AdminMessages() {
       </AdminDrawer>
 
       {/* LF-3b: the two confirmations, same words as the native box they replace. */}
-      <MessagesConfirmDialog
+      <AdminConfirmDialog
         open={deleteTarget !== null}
         title="Are you sure you want to delete this message?"
         confirmLabel="Delete"
-        isDanger
+        tone="danger"
         testId="delete-confirm-dialog"
         onConfirm={() => (deleteTarget ? deleteMessage(deleteTarget) : Promise.resolve())}
         onClose={() => setDeleteTarget(null)}
         onReturnFocus={returnConfirmFocus}
       />
-      <MessagesConfirmDialog
+      <AdminConfirmDialog
         open={isMarkAllAsked}
         title="Mark all messages as read?"
         confirmLabel="Mark All Read"

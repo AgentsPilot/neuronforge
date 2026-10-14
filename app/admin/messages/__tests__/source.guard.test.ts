@@ -8,6 +8,13 @@
  * `components/MessagesConfirmDialog.tsx`; G-2 lets exactly
  * `@/components/ui/dialog` into exactly that file (the shared dialog primitive,
  * OR-3) and nothing else; new G-10 pins that no confirm call is left.
+ *
+ * Amended by LF-7 (shared `AdminConfirmDialog`, SA approval of the LF-7
+ * workplan): `MessagesConfirmDialog.tsx` is deleted, so G-1 loses it; the G-2
+ * exception line is removed, so no Messages file may import
+ * `@/components/ui/dialog` (nor name `@/components/ui/` at all); a liveness
+ * check pins that `page.tsx` imports the shared dialog, so the refusal is not
+ * vacuous.
  */
 
 import * as fs from 'fs';
@@ -45,9 +52,9 @@ function codeOf(source: string): string {
 
 const ALLOWED_PACKAGES = ['react', 'lucide-react'];
 
-/** LF-3b: the one file allowed the shared dialog primitive, and the one specifier it may use. */
-const DIALOG_FILE = `${ROOT}/components/MessagesConfirmDialog.tsx`;
+/** LF-7: the dialog primitive no Messages file may import, and the shared dialog the page uses instead. */
 const DIALOG_PRIMITIVE = '@/components/ui/dialog';
+const SHARED_CONFIRM = '@/app/admin/components/layout/AdminConfirmDialog';
 
 /**
  * Does an import from `relative` leave the screen? Allowed: React, lucide, the
@@ -57,7 +64,6 @@ const DIALOG_PRIMITIVE = '@/components/ui/dialog';
 function escapes(relative: string, specifier: string): boolean {
   if (specifier.startsWith('@/app/admin/components/layout/')) return false;
   if (specifier === '@/lib/logger/client') return false;
-  if (relative === DIALOG_FILE && specifier === DIALOG_PRIMITIVE) return false;
   if (specifier.startsWith('@/')) return !specifier.startsWith(`@/${ROOT}/`);
   if (!specifier.startsWith('.')) return !ALLOWED_PACKAGES.includes(specifier);
   const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(relative), specifier));
@@ -67,11 +73,10 @@ function escapes(relative: string, specifier: string): boolean {
 const importsOf = (code: string) => [...code.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
 
 describe('G-1: the exact file list', () => {
-  it('finds the page, its helpers and its three components, so the scan cannot fall behind the code', () => {
+  it('finds the page, its helpers and its two components, so the scan cannot fall behind the code', () => {
     expect(allFiles).toEqual(
       [
         `${ROOT}/components/MessageDetail.tsx`,
-        `${ROOT}/components/MessagesConfirmDialog.tsx`,
         `${ROOT}/components/MessagesTable.tsx`,
         `${ROOT}/messagesFilters.ts`,
         `${ROOT}/messagesFormat.ts`,
@@ -102,17 +107,28 @@ describe('G-2: imports stay inside the screen, the shared layout folder and the 
     expect(escapes(page, 'react')).toBe(false);
   });
 
-  it('LF-3b: the dialog primitive is let into the dialog file only, and only by its exact name', () => {
-    expect(escapes(DIALOG_FILE, DIALOG_PRIMITIVE)).toBe(false);
-    expect(escapes(`${ROOT}/page.tsx`, DIALOG_PRIMITIVE)).toBe(true);
-    expect(escapes(`${ROOT}/components/MessagesTable.tsx`, DIALOG_PRIMITIVE)).toBe(true);
-    expect(escapes(DIALOG_FILE, '@/components/ui/dialogX')).toBe(true);
-    expect(escapes(DIALOG_FILE, '@/components/ui/button')).toBe(true);
-    expect(escapes(DIALOG_FILE, '@/components/ui/sheet')).toBe(true);
+  it('LF-7: every file is refused the dialog primitive and its look-alikes', () => {
+    for (const file of allFiles) {
+      for (const specifier of [
+        DIALOG_PRIMITIVE,
+        '@/components/ui/dialogX',
+        '@/components/ui/dialog/index',
+        '@/components/ui/button',
+        '@/components/ui/sheet',
+      ]) {
+        expect({ file, specifier, escapes: escapes(file, specifier) }).toEqual({ file, specifier, escapes: true });
+      }
+    }
   });
 
-  it('LF-3b: the dialog file really imports the primitive (the exception is not dead)', () => {
-    expect(importsOf(codeOf(read(DIALOG_FILE)))).toContain(DIALOG_PRIMITIVE);
+  it('LF-7: no Messages file names @/components/ui/', () => {
+    for (const relative of allFiles) {
+      expect({ file: relative, ui: codeOf(read(relative)).includes('@/components/ui/') }).toEqual({ file: relative, ui: false });
+    }
+  });
+
+  it('LF-7 liveness: page.tsx imports the shared AdminConfirmDialog (the refusal is not vacuous)', () => {
+    expect(importsOf(codeOf(read(`${ROOT}/page.tsx`)))).toContain(SHARED_CONFIRM);
   });
 });
 
