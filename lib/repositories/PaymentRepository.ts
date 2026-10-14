@@ -157,8 +157,12 @@ export type PaymentRepositoryResult<T> = {
 
 /** `charge.dispute.*`: the payment, its owner and what the dispute alert needs. */
 export const WEBHOOK_TRANSACTION_DISPUTE_COLUMNS = 'id, user_id, status, amount, currency, contact_id, metadata';
-/** `charge.refunded`: what each refund row needs from its payment. */
-export const WEBHOOK_TRANSACTION_REFUND_COLUMNS = 'id, user_id, invoice_id, currency';
+/**
+ * `refund.*` (Connect): what a refund row needs from its payment, plus the
+ * connected account the payment was taken on, which the refund handler compares
+ * with `event.account` (STRIPE_CONNECT_REFUND_WEBHOOK FR 7, A-7).
+ */
+export const WEBHOOK_TRANSACTION_REFUND_COLUMNS = 'id, user_id, invoice_id, currency, stripe_connect_account_id';
 /** `payment_intent.succeeded`: is this intent already recorded? */
 export const WEBHOOK_TRANSACTION_ID_COLUMNS = 'id';
 /** `invoice.paid` (#257): the row recorded under this intent, and whether it has an invoice yet. */
@@ -188,7 +192,10 @@ export interface WebhookTransactionFields {
     contact_id: string | null;
     metadata: Record<string, unknown> | null;
   };
-  [WEBHOOK_TRANSACTION_REFUND_COLUMNS]: Pick<PaymentTransaction, 'id' | 'user_id' | 'invoice_id' | 'currency'>;
+  // `PaymentTransaction` has no `stripe_connect_account_id` field, so it is added here.
+  [WEBHOOK_TRANSACTION_REFUND_COLUMNS]: Pick<PaymentTransaction, 'id' | 'user_id' | 'invoice_id' | 'currency'> & {
+    stripe_connect_account_id: string | null;
+  };
   [WEBHOOK_TRANSACTION_ID_COLUMNS]: Pick<PaymentTransaction, 'id'>;
   [WEBHOOK_TRANSACTION_ATTACH_COLUMNS]: Pick<PaymentTransaction, 'id' | 'invoice_id'>;
 }
@@ -780,10 +787,12 @@ export class PaymentTransactionRepository {
    * (at most one row), as the route always read it. The filter comes after
    * `.limit(1)`, the order the route built it in.
    *
-   * Owner check relied on: none in the route (FU-3). The key is a Stripe id from
-   * a signature-verified `charge.dispute.*` or `charge.refunded` event, which no
-   * business can choose, and the row found carries its own `user_id`, which is
-   * what every later write uses.
+   * Owner check relied on: the key is a Stripe id from a signature-verified
+   * `charge.dispute.*` or `refund.*` event, which no business can choose, and
+   * the row found carries its own `user_id`, which is what every later write
+   * uses. The dispute path has no `accountOwns` (FU-3). The refund path proves
+   * the row's owner with `accountOwns(event.account, row.user_id)`, and compares
+   * the row's `stripe_connect_account_id`, before it reads or writes the ledger.
    */
   async findFirstByStripeReference<C extends WebhookTransactionByReferenceColumns>(
     reference: WebhookStripeReference,
