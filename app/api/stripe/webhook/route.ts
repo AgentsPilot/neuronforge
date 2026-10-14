@@ -14,6 +14,13 @@ import { notifyOwnerOfDispute } from '@/lib/services/DisputeAlertService';
 import { subscriptionIdFromInvoice, subscriptionMetadataFromInvoice } from '@/lib/payments/invoiceSubscription';
 import { bindPlanSubscription } from '@/lib/payments/bindPlanSubscription';
 import { vetLinkId } from '@/lib/payments/ownedLinkId';
+import {
+  REFUND_ROW_ID_METADATA_KEY,
+  mapStripeRefundStatus,
+  nextLedgerRefundStatus,
+  untrustedAppRowCheck,
+  vetLedgerRowIdCandidate,
+} from '@/lib/payments/stripeRefundLedger';
 import { fromMinorUnits } from '@/lib/payments/refundMath';
 import { resolveInvoicePaymentIntent } from '@/lib/payments/invoicePaymentIntent';
 import { syncBookingsForTransactions } from '@/lib/payments/syncBookingPaymentState';
@@ -34,7 +41,7 @@ import {
   WEBHOOK_TRANSACTION_ID_COLUMNS,
   WEBHOOK_TRANSACTION_REFUND_COLUMNS,
 } from '@/lib/repositories/PaymentRepository';
-import { paymentRefundRepository } from '@/lib/repositories/PaymentRefundRepository';
+import { paymentRefundRepository, type StripeRefundStatePatch } from '@/lib/repositories/PaymentRefundRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { userSubscriptionRepository } from '@/lib/repositories/UserSubscriptionRepository';
 import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
@@ -491,90 +498,295 @@ async function handleDispute(
   }
 }
 
-async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: string | null, log: Logger) {
-  log.info({ chargeId: charge.id }, 'Processing charge.refunded');
+/** The three refund events, so `event.data.object` is a `Stripe.Refund` with no cast. */
+type StripeRefundEvent = Stripe.RefundCreatedEvent | Stripe.RefundUpdatedEvent | Stripe.RefundFailedEvent;
 
+/**
+ * A Stripe refund on a connected account, recorded in the refund ledger
+ * (STRIPE_CONNECT_REFUND_WEBHOOK slice 2, FR 1-14).
+ *
+ * Replaces `handleChargeRefunded`, which read `charge.refunds.data`, a list
+ * Stripe stopped sending in 2022, so it never recorded anything. The Refund
+ * object in these events carries everything needed: no Stripe call here.
+ *
+ * Order matters (`tenant-isolation-guard`):
+ *   1. map Stripe's status; a status we do not record is acknowledged, no write;
+ *   2. find the payment by the refund's intent (or its charge);
+ *   3. PROVE the owner: `accountOwns(event.account, payment owner)`, and the
+ *      payment's stored connected account (when set) is `event.account`;
+ *   4. only then read the ledger, inside that payment, and write.
+ *
+ * One row per Stripe refund. Matched (a) by Stripe's refund id, else (b) by the
+ * app's row named in `metadata.refund_row_id` (untrusted, A-1 checks), else
+ * (c) a new `webhook` row. Status moves follow `nextLedgerRefundStatus` and are
+ * applied by compare-and-set, never read-then-write. Every write failure throws
+ * (500, the claim is released, Stripe retries and the retry re-reads), except a
+ * refusal by `refund_guard_before` (P0001), which a retry cannot change: that is
+ * acknowledged with one alert (FR 12, SA C-1).
+ *
+ * Every repository call below has exactly one call site, so the
+ * `routerPlacement` guard's `MONEY_ROW_CALLS` stays exact; the one re-read after
+ * a 23505 is a second pass of the loop, not a second call site.
+ */
+async function handleConnectRefund(event: StripeRefundEvent, connectAccountId: string, log: Logger) {
+  const refund = event.data.object;
+  const chargeId = typeof refund.charge === 'string' ? refund.charge : refund.charge?.id ?? null;
   const paymentIntentId =
-    typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id;
+    typeof refund.payment_intent === 'string' ? refund.payment_intent : refund.payment_intent?.id ?? null;
 
-  // Located by either reference, because which one was recorded depends on the
-  // flow that created the payment.
-  const { data: matches } = await paymentTransactionRepository.findFirstByStripeReference(
-    { paymentIntentId, chargeId: charge.id },
-    WEBHOOK_TRANSACTION_REFUND_COLUMNS
-  );
-  const transaction = matches?.[0];
+  log.info({ stripeRefundId: refund.id, eventType: event.type }, 'Processing Stripe refund');
 
-  if (!transaction) {
-    // Refunded money against a payment this app never recorded. Not droppable —
-    // it means the books are wrong in a way only Stripe can see.
-    log.error({
-      chargeId: charge.id,
-      paymentIntentId
-    }, 'charge.refunded for an unknown payment');
+  // Q-SA-3: no status, or one Stripe has not documented, is not guessed at. A
+  // guessed `pending` row would hold refund budget; a later refund.updated
+  // carries a real status.
+  const incoming = mapStripeRefundStatus(refund.status);
+  if (!incoming) {
+    log.warn({ stripeRefundId: refund.id, stripeStatus: refund.status }, 'Stripe refund status not recorded; nothing written');
     return;
   }
 
-  for (const stripeRefund of charge.refunds?.data ?? []) {
-    const refundCurrency = (stripeRefund.currency || transaction.currency).toUpperCase();
+  if (!paymentIntentId && !chargeId) {
+    log.error({ stripeRefundId: refund.id, chargeId, paymentIntentId }, 'Stripe refund names no charge or payment intent');
+    return;
+  }
+
+  // By the intent when there is one, otherwise the charge (the shared lookup,
+  // SA Q-SA-1). The empty charge id is never read: an intent is set whenever
+  // the charge is missing (both missing returned above).
+  const { data: matches, error: lookupError } = await paymentTransactionRepository.findFirstByStripeReference(
+    { paymentIntentId, chargeId: chargeId ?? '' },
+    WEBHOOK_TRANSACTION_REFUND_COLUMNS
+  );
+  if (lookupError) {
+    // Thrown, not read as "unknown payment": that would acknowledge a real
+    // refund and drop it.
+    log.error({ err: lookupError, stripeRefundId: refund.id }, 'Could not look up the payment behind a Stripe refund');
+    throw new Error(`Payment lookup failed for refund ${refund.id}: ${lookupError.message}`);
+  }
+
+  const transaction = matches?.[0];
+  if (!transaction) {
+    // Refunded money against a payment this app never recorded. Not droppable:
+    // the books are wrong in a way only Stripe can see (FR 11, SA C-9).
+    log.error({ stripeRefundId: refund.id, chargeId, paymentIntentId }, 'Stripe refund for an unknown payment');
+    return;
+  }
+
+  // F3 (A-5): the sending account must own this payment. A read error throws
+  // inside `accountOwns` (500 and a retry), never "not owned".
+  if (!(await accountOwns(connectAccountId, transaction.user_id, log))) {
+    log.error(
+      { stripeRefundId: refund.id, transactionId: transaction.id },
+      'Refused: the sending account does not own the refunded payment; nothing recorded'
+    );
+    return;
+  }
+  if (transaction.stripe_connect_account_id && transaction.stripe_connect_account_id !== connectAccountId) {
+    log.error(
+      { stripeRefundId: refund.id, transactionId: transaction.id, paymentAccountId: transaction.stripe_connect_account_id },
+      'Refused: the payment was taken on a different connected account; nothing recorded'
+    );
+    return;
+  }
+  if (!transaction.stripe_connect_account_id) {
+    // Older payments recorded by other paths do not set it (A-5). The owner
+    // is still proved above.
+    log.warn({ stripeRefundId: refund.id, transactionId: transaction.id }, 'Refunded payment has no recorded connected account');
+  }
+
+  // A-1: the metadata row id is untrusted. Shape-checked here; read only inside
+  // the proven payment, and checked against this refund, below.
+  const candidate = vetLedgerRowIdCandidate(refund.metadata);
+  if (candidate.malformedLength !== undefined) {
+    log.warn(
+      { stripeRefundId: refund.id, key: REFUND_ROW_ID_METADATA_KEY, length: candidate.malformedLength },
+      'Ignored a malformed ledger row id in refund metadata'
+    );
+  }
+
+  const currency = (refund.currency || transaction.currency).toUpperCase();
+  const isoFromStripe = (seconds: number) => new Date(seconds * 1000).toISOString();
+
+  // FR 12: the ledger's own refusal. Deterministic for the same inputs, so a
+  // retry cannot succeed: acknowledged, with one alert. `pgMessage` lets an
+  // operator tell the guard's three causes apart (missing payment, currency
+  // mismatch, over-refund). It is never branched on (SA ruling on U-3).
+  const acknowledgeLedgerRefusal = (pgError: { code?: string; message?: string }) => {
+    log.error(
+      {
+        alert: true,
+        eventId: event.id,
+        stripeRefundId: refund.id,
+        transactionId: transaction.id,
+        pgCode: pgError.code,
+        pgMessage: String(pgError.message ?? '').slice(0, 300),
+      },
+      'Refund ledger refused a Stripe refund (refund_guard_before)'
+    );
+  };
+
+  for (let pass = 1; pass <= 2; pass++) {
+    const { data: match, error: findError } = await paymentRefundRepository.findForStripeRefund(
+      transaction.user_id,
+      transaction.id,
+      { processorRefundId: refund.id, ledgerRowId: candidate.id }
+    );
+    if (findError) {
+      log.error({ err: findError, stripeRefundId: refund.id }, 'Could not read the refund ledger');
+      throw new Error(`Refund ledger read failed for refund ${refund.id}: ${findError.message}`);
+    }
+
+    let row = match?.row ?? null;
+    if (match && match.matchedBy === 'ledger_row_id') {
+      const failedCheck = untrustedAppRowCheck(match.row, refund);
+      if (failedCheck) {
+        // Ids and the check's name only: never a metadata value.
+        log.warn(
+          { check: failedCheck, ledgerRowId: match.row.id, stripeRefundId: refund.id, transactionId: transaction.id },
+          'Ignored refund metadata: the named ledger row is not this refund; recording it as its own row'
+        );
+        row = null;
+      }
+    }
+
+    if (row) {
+      const transition = nextLedgerRefundStatus(row.status, !!row.processor_refund_id, incoming);
+      // Field by field, from a closed type: the app's own columns cannot be
+      // reached (FR 4). `updated_at` in every patch (SA C-7).
+      const patch: StripeRefundStatePatch = { updated_at: new Date().toISOString() };
+      if (transition.kind === 'apply') {
+        patch.status = transition.status;
+        if (transition.warn) {
+          log.warn(
+            { stripeRefundId: refund.id, ledgerRowId: row.id, from: row.status, to: transition.status },
+            'Stripe moved a succeeded refund to canceled'
+          );
+        }
+        // SA-11: the moment of the event that moved it INTO succeeded.
+        if (transition.status === 'succeeded') patch.succeeded_at = isoFromStripe(event.created);
+        if (transition.status === 'failed') {
+          patch.failure_code = refund.failure_reason ?? null;
+          // Stripe's Refund has no failure message field (SDK 19.2.1).
+          patch.failure_message = null;
+        }
+      }
+      if (!row.processor_refund_id) patch.processor_refund_id = refund.id;
+      // Q-SA-4: filled only when empty, never overwritten.
+      if (!row.stripe_connect_account_id) {
+        patch.stripe_connect_account_id = connectAccountId;
+      } else if (row.stripe_connect_account_id !== connectAccountId) {
+        log.warn(
+          { stripeRefundId: refund.id, ledgerRowId: row.id, transactionId: transaction.id },
+          'Ledger row names a different connected account than the event; left as it is'
+        );
+      }
+
+      if (!patch.status && !patch.processor_refund_id && !patch.stripe_connect_account_id) {
+        log.info(
+          { stripeRefundId: refund.id, ledgerRowId: row.id, status: row.status, incoming },
+          'Stripe refund already recorded; nothing to change'
+        );
+        return;
+      }
+
+      const { data: applied, error: applyError } = await paymentRefundRepository.applyStripeRefundState(
+        transaction.user_id,
+        transaction.id,
+        row.id,
+        { status: row.status, processorRefundId: row.processor_refund_id },
+        patch
+      );
+      if (applyError) {
+        // The guard fires on UPDATE OF status too (U-3).
+        if (applyError.code === 'P0001') {
+          acknowledgeLedgerRefusal(applyError);
+          return;
+        }
+        log.error({ err: applyError, stripeRefundId: refund.id, ledgerRowId: row.id }, 'Failed to update the refund ledger');
+        throw new Error(`Failed to update refund ${refund.id}: ${applyError.message}`);
+      }
+      if (!applied?.count) {
+        // Compare-and-set lost: another event (or the app's own write) moved the
+        // row first. The retry re-reads and decides again (FR 11).
+        log.warn({ stripeRefundId: refund.id, ledgerRowId: row.id }, 'Refund ledger row changed underneath; releasing for retry');
+        throw new Error(`Refund ${refund.id}: ledger row ${row.id} changed concurrently`);
+      }
+
+      // A-6: the booking follows an applied STATUS change only; filling an id
+      // changes no money.
+      if (patch.status) await syncBookingsForTransactions([transaction.id], transaction.user_id);
+
+      log.info(
+        {
+          stripeRefundId: refund.id,
+          ledgerRowId: row.id,
+          matchedBy: match?.matchedBy,
+          from: row.status,
+          to: patch.status ?? row.status,
+        },
+        'Stripe refund recorded on an existing ledger row'
+      );
+      return;
+    }
 
     /*
-     * `/ 100` made the ledger disagree with itself.
+     * No row yet: a refund made outside the app (dashboard, Stripe itself, an
+     * agent workflow), or an app refund whose metadata did not check out.
      *
-     * `amount_minor` was recorded correctly straight from Stripe, while `amount`
-     * assumed two decimal places — and `amount` is the column the guard and the
-     * recompute trigger read. For a ¥5,000 refund the ledger said 50.00, so the
-     * transaction read ~1% refunded and the guard would have allowed the
-     * "remaining" 99% to be refunded again.
-     *
-     * `fromMinorUnits` was already imported in this file and used correctly for
-     * plan periods a few hundred lines below.
+     * A refund first seen as `failed` / `canceled` is inserted too (SA Q-SA-9),
+     * on purpose: that row is the TOMBSTONE that turns a late
+     * `refund.created(pending)` into a no-op. Without it, the late event would
+     * insert a `pending` row that holds refund budget for a refund already dead.
+     * Do not "optimise" this insert away.
      */
-    const amountMajor = fromMinorUnits(stripeRefund.amount, refundCurrency);
-
-    // Upserted on `processor_refund_id` (inside the repository).
-    const { error } = await paymentRefundRepository.upsertFromStripe({
+    const { error: insertError } = await paymentRefundRepository.insertFromStripe({
       user_id: transaction.user_id,
       transaction_id: transaction.id,
       invoice_id: transaction.invoice_id,
-      amount: amountMajor,
-      amount_minor: stripeRefund.amount,
-      currency: refundCurrency,
-      // Stripe can report a refund as still pending for some payment methods;
-      // only a succeeded one may count toward the refunded total.
-      status: stripeRefund.status === 'succeeded' ? 'succeeded' : 'pending',
+      // Not `/ 100`: zero-decimal currencies (¥5,000 is 5000 minor units).
+      amount: fromMinorUnits(refund.amount, currency),
+      amount_minor: refund.amount,
+      currency,
+      status: incoming,
       processor_type: 'stripe',
-      processor_refund_id: stripeRefund.id,
+      processor_refund_id: refund.id,
       stripe_connect_account_id: connectAccountId,
-      // Deterministic, so a redelivery of this event cannot open a second row.
-      idempotency_key: `stripe:${stripeRefund.id}`,
+      idempotency_key: `stripe:${refund.id}`,
       source: 'webhook',
-      succeeded_at:
-        stripeRefund.status === 'succeeded'
-          ? new Date(stripeRefund.created * 1000).toISOString()
-          : null,
-      metadata: { origin: 'charge.refunded', charge_id: charge.id }
+      // SA-11: when the refund was issued, not when we heard about it.
+      created_at: isoFromStripe(refund.created),
+      succeeded_at: incoming === 'succeeded' ? isoFromStripe(event.created) : null,
+      failure_code: incoming === 'failed' ? refund.failure_reason ?? null : null,
+      failure_message: null,
+      // Ours, never Stripe's metadata.
+      metadata: { origin: event.type, charge_id: chargeId, payment_intent_id: paymentIntentId },
     });
 
-    if (error) {
-      log.error({ err: error, refundId: stripeRefund.id, chargeId: charge.id }, 'Failed to record refund');
-      throw new Error(`Failed to record refund ${stripeRefund.id}: ${error.message}`);
+    if (!insertError) {
+      await syncBookingsForTransactions([transaction.id], transaction.user_id);
+      log.info({ stripeRefundId: refund.id, transactionId: transaction.id, status: incoming }, 'Stripe refund recorded');
+      return;
     }
+
+    if (insertError.code === '23505' && pass === 1) {
+      // A concurrent delivery (or the app) wrote the row first: read it again
+      // and apply this event to it (F1-g).
+      log.info({ stripeRefundId: refund.id }, 'Refund row appeared concurrently; reading it again');
+      continue;
+    }
+    if (insertError.code === '23505') {
+      // Second pass: the insert collided again and the re-read still found no
+      // row in this payment. Retried by Stripe; the retry reads afresh.
+      log.error({ err: insertError, stripeRefundId: refund.id }, 'Refund row collided twice and cannot be found in this payment');
+      throw new Error(`Refund ${refund.id}: insert collided twice (23505) and no matching ledger row was found`);
+    }
+    if (insertError.code === 'P0001') {
+      acknowledgeLedgerRefusal(insertError);
+      return;
+    }
+    log.error({ err: insertError, stripeRefundId: refund.id }, 'Failed to record refund');
+    throw new Error(`Failed to record refund ${refund.id}: ${insertError.message}`);
   }
-
-  /*
-   * The booking behind the payment, so a refund taken in the Stripe dashboard
-   * reaches it too.
-   *
-   * `propagate_refund_to_booking` does this by trigger and is the authority —
-   * it is the only mechanism that can, since this path has no request behind
-   * it. Called explicitly as well so the behaviour is right before that
-   * migration is applied; it derives the same value from the same rows, so
-   * afterwards it changes nothing.
-   */
-  await syncBookingsForTransactions([transaction.id], transaction.user_id);
-
-  log.info({ refundCount: charge.refunds?.data?.length ?? 0, chargeId: charge.id }, 'Recorded refunds');
 }
 
 /**
@@ -2478,11 +2690,27 @@ export async function POST(request: NextRequest) {
         await handleSubscriptionDeleted(event.data.object as Stripe.Subscription, log);
         break;
 
-      // Refunds issued outside this app — from the Stripe dashboard, or by
-      // Stripe itself. Handled for both platform and connected accounts:
-      // wherever the charge lives, the ledger has to learn about it.
+      // Not recorded from here any more (SA-4). Its handler read
+      // `charge.refunds.data`, a list Stripe stopped sending in 2022, so it never
+      // wrote a refund. Refunds are recorded from `refund.*` below. A platform
+      // boost refund is taken by the billing router before this switch.
       case 'charge.refunded':
-        await handleChargeRefunded(event.data.object as Stripe.Charge, connectAccountId, log);
+        log.info({ chargeId: event.data.object.id }, 'charge.refunded ignored: refunds are recorded from refund.* events');
+        break;
+
+      // Refunds on a connected account, however they were made: in the app, in
+      // the Stripe dashboard, by Stripe itself, or by an agent workflow through
+      // the Stripe plugin. Platform refunds are not client money, so they are not
+      // recorded in the client ledger (FR 8). `charge.refund.updated`, a legacy
+      // duplicate of `refund.updated`, is deliberately not handled.
+      case 'refund.created':
+      case 'refund.updated':
+      case 'refund.failed':
+        if (!isConnectEvent || !connectAccountId) {
+          log.info({ stripeRefundId: event.data.object.id }, 'Platform refund event; not recorded in the client ledger');
+          break;
+        }
+        await handleConnectRefund(event, connectAccountId, log);
         break;
 
       /*
