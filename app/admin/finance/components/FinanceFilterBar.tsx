@@ -4,6 +4,13 @@
  * The one filter bar (L-3, S1-FR-3): Today / 7d / 30d / This month / Custom
  * (UTC dates, applied with Apply so a half-typed date never fires a read) and
  * the business picker. Every control is a native element with a label.
+ *
+ * LF-6 (user request 2026-10-14): the L-4a alignment, applied locally. The row
+ * is top-aligned; every field is a label row then a control, and the controls
+ * with no label of their own (the Window group, Apply) sit under
+ * `AdminFieldSpacer`, so all inputs start on one line. The picker's help line
+ * stays under its input and only grows the picker column downward. Control
+ * heights match the picker input (L-4a SA Q-6).
  */
 
 import { useEffect, useState } from 'react';
@@ -13,6 +20,7 @@ import { X } from 'lucide-react';
 // existing admin businesses endpoint.
 import { BusinessAccountPicker } from '@/app/admin/audit-trail/BusinessAccountPicker';
 import { ADMIN_WINDOW_PRESETS, customRangeProblem } from '@/app/admin/components/adminWindowPresets';
+import { AdminFieldSpacer } from '@/app/admin/components/layout/AdminFilterBar';
 import { cn } from '@/lib/utils';
 import type { FinanceQuery } from '../financeUrl';
 import {
@@ -24,8 +32,10 @@ import {
   SHOW_ALL_BUSINESSES,
 } from '../financeCopy';
 
-const FIELD = 'flex flex-col text-[11px] text-slate-400';
-const INPUT = 'rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400';
+// gap-1: the label row is then exactly `AdminFieldSpacer`'s height (an 11px line plus mb-1).
+const FIELD = 'flex flex-col gap-1 text-[11px] text-slate-400';
+// py-2: as tall as the picker input, so the controls also end on one line.
+const INPUT = 'rounded border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400';
 
 interface Props {
   query: FinanceQuery;
@@ -53,28 +63,31 @@ export function FinanceFilterBar({ query, resolved, onChange }: Props) {
 
   return (
     <div className="space-y-2" data-testid="finance-filters">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-wrap rounded-lg border border-slate-700 p-0.5" role="group" aria-label="Window">
-          {ADMIN_WINDOW_PRESETS.map((p) => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => onChange({ ...query, preset: p, from: null, to: null })}
-              aria-pressed={query.preset === p}
-              className={cn(
-                'rounded-md px-3 py-1 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400',
-                query.preset === p ? 'bg-purple-500/20 text-purple-200' : 'text-slate-300 hover:bg-slate-800'
-              )}
+      <div className="flex flex-wrap items-start gap-3">
+        <div>
+          <AdminFieldSpacer />
+          <div className="flex flex-wrap rounded-lg border border-slate-700 p-0.5" role="group" aria-label="Window">
+            {ADMIN_WINDOW_PRESETS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => onChange({ ...query, preset: p, from: null, to: null })}
+                aria-pressed={query.preset === p}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400',
+                  query.preset === p ? 'bg-purple-500/20 text-purple-200' : 'text-slate-300 hover:bg-slate-800'
+                )}
+              >
+                {PRESET_LABELS[p]}
+              </button>
+            ))}
+            <span
+              className={cn('rounded-md px-3 py-1.5 text-xs', query.preset === 'custom' ? 'bg-purple-500/20 text-purple-200' : 'text-slate-500')}
+              aria-current={query.preset === 'custom' ? 'true' : undefined}
             >
-              {PRESET_LABELS[p]}
-            </button>
-          ))}
-          <span
-            className={cn('rounded-md px-3 py-1 text-xs', query.preset === 'custom' ? 'bg-purple-500/20 text-purple-200' : 'text-slate-500')}
-            aria-current={query.preset === 'custom' ? 'true' : undefined}
-          >
-            {PRESET_LABELS.custom}
-          </span>
+              {PRESET_LABELS.custom}
+            </span>
+          </div>
         </div>
 
         <label className={FIELD}>
@@ -85,14 +98,19 @@ export function FinanceFilterBar({ query, resolved, onChange }: Props) {
           {FILTER_TO}
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={INPUT} />
         </label>
-        <button
-          type="button"
-          onClick={apply}
-          className="rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400"
-        >
-          {FILTER_APPLY}
-        </button>
+        <div>
+          <AdminFieldSpacer />
+          <button
+            type="button"
+            onClick={apply}
+            className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400"
+          >
+            {FILTER_APPLY}
+          </button>
+        </div>
 
+        {/* The picker's help line sits under its input, inside this column:
+            top-aligned, it grows only this column and moves no other control. */}
         <div className="w-64">
           <BusinessAccountPicker
             selectedAccountId={query.accountId ?? ''}
