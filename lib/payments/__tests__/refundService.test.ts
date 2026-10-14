@@ -32,6 +32,10 @@ const dbState: {
   insertedKeys: string[];
   /** The full ledger rows, for assertions about status and processor. */
   insertedRows: Array<Record<string, unknown>>;
+  /** The business's payment account, as the refund path reads it (see below). */
+  connectAccount: { stripe_account_id: string } | null;
+  /** Every table `from()` was called on, in order (slice 3: no CRM activity on IN_FLIGHT). */
+  tablesTouched: string[];
 } = {
   transaction: null,
   insertError: null,
@@ -40,6 +44,7 @@ const dbState: {
   transactionsById: {},
   insertedKeys: [],
   insertedRows: [],
+  tablesTouched: [],
   /*
    * The business's payment account, as the refund path sees it.
    *
@@ -54,6 +59,7 @@ const dbState: {
 jest.mock('@/lib/supabaseServer', () => ({
   supabaseServer: {
     from(table: string) {
+      dbState.tablesTouched.push(table);
       const builder: Record<string, unknown> = {};
       const chain = () => builder;
 
@@ -105,9 +111,24 @@ jest.mock('@/lib/supabaseServer', () => ({
   },
 }));
 
+/**
+ * The ledger's post-reply writes (A-4): compare-and-set through the repository.
+ * Answers `{ count: 1 }` unless a test says otherwise.
+ */
+const applyStripeRefundState = jest.fn();
+
+jest.mock('@/lib/repositories/PaymentRefundRepository', () => ({
+  paymentRefundRepository: {
+    applyStripeRefundState: (...args: unknown[]) => applyStripeRefundState(...args),
+  },
+}));
+
+/** The request logger `refund()` derives with `logger.child`, shared so tests can read it. */
+const childLog = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({
-    child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }),
+    child: () => childLog,
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
@@ -120,6 +141,7 @@ import {
   getRefundability,
   resolveStripeRefundTarget,
 } from '../RefundService';
+import { REFUND_ROW_ID_METADATA_KEY } from '../stripeRefundLedger';
 
 const settledTransaction = (over: Record<string, unknown> = {}) => ({
   id: 'tx-1',
@@ -145,9 +167,15 @@ beforeEach(() => {
   dbState.transactionsById = {};
   dbState.insertedKeys = [];
   dbState.insertedRows = [];
+  dbState.tablesTouched = [];
   // Connected unless a test says otherwise — see `connectAccount`.
   dbState.connectAccount = { stripe_account_id: 'acct_connected' };
   process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+  applyStripeRefundState.mockReset();
+  applyStripeRefundState.mockResolvedValue({ data: { count: 1 }, error: null });
+  childLog.info.mockReset();
+  childLog.warn.mockReset();
+  childLog.error.mockReset();
 });
 
 describe('refund — refusals that must never reach Stripe', () => {
@@ -318,6 +346,53 @@ describe('refund — the Stripe call', () => {
     await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app' });
 
     expect(stripeRefundsCreate.mock.calls[0][0]).toMatchObject({ charge: 'ch_9' });
+  });
+});
+
+/**
+ * Slice 1 (STRIPE_CONNECT_REFUND_WEBHOOK, FR 15): the Stripe refund names our
+ * ledger row, so the webhook can find it before our own write lands (F1).
+ */
+describe('refund — the Stripe refund carries the ledger row id (S1)', () => {
+  it('S1-1: metadata holds the ledger row id under the shared key, and nothing else', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_s1', status: 'succeeded' });
+
+    await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 's1' });
+
+    const [payload] = stripeRefundsCreate.mock.calls[0];
+    expect(REFUND_ROW_ID_METADATA_KEY).toBe('refund_row_id');
+    // The harness's ledger insert answers with id `refund-row-1`.
+    expect(payload.metadata).toEqual({ [REFUND_ROW_ID_METADATA_KEY]: 'refund-row-1' });
+  });
+
+  it('S1-2: nothing else about the call changes (target, amount, reason, key, account)', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_s1', status: 'succeeded' });
+
+    await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 's1' });
+
+    const [payload, options] = stripeRefundsCreate.mock.calls[0];
+    expect(payload).toEqual({
+      payment_intent: 'pi_123',
+      amount: 20000,
+      reason: 'requested_by_customer',
+      metadata: { refund_row_id: 'refund-row-1' },
+    });
+    expect(Object.keys(options).sort()).toEqual(['idempotencyKey', 'stripeAccount']);
+  });
+
+  it('S1-3: a manual refund still makes no Stripe call', async () => {
+    dbState.transaction = settledTransaction({
+      processor_type: 'manual',
+      stripe_payment_intent_id: null,
+      stripe_charge_id: null,
+      stripe_connect_account_id: null,
+      account_resolution: null,
+    });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', manual: true });
+
+    expect(result.ok).toBe(true);
+    expect(stripeRefundsCreate).not.toHaveBeenCalled();
   });
 });
 
@@ -494,9 +569,10 @@ describe('refund — replay and failure', () => {
 
     expect(result).toMatchObject({ ok: false, code: 'BALANCE_INSUFFICIENT' });
     // Marked failed, never succeeded — claiming otherwise would report money as
-    // returned when none moved.
-    expect(dbState.updates.some(u => u.status === 'failed')).toBe(true);
-    expect(dbState.updates.some(u => u.status === 'succeeded')).toBe(false);
+    // returned when none moved. Through the repository since A-4.
+    const patches = applyStripeRefundState.mock.calls.map(call => call[4] as Record<string, unknown>);
+    expect(patches.some(p => p.status === 'failed')).toBe(true);
+    expect(patches.some(p => p.status === 'succeeded')).toBe(false);
   });
 
   it('does not leak Stripe internals outside development', async () => {
@@ -567,6 +643,242 @@ describe('refund — replay and failure', () => {
 
     expect(result).toMatchObject({ ok: false, code: 'IN_FLIGHT' });
     expect(stripeRefundsCreate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A-4 (FR 14): the app's two post-reply writes are compare-and-set through the
+ * repository, so a `refund.*` webhook that recorded Stripe's answer first is
+ * never overwritten. C-2: a failed write is logged, never thrown, and the
+ * answer still follows Stripe's reply.
+ */
+describe('refund — post-reply ledger writes do not overwrite the webhook (A-4)', () => {
+  const OPENED = { status: 'pending', processorRefundId: null };
+  const infoMessages = () => childLog.info.mock.calls.map(call => call[1]);
+  const errorMessages = () => childLog.error.mock.calls.map(call => call[1]);
+
+  it('A4-1: the success write goes through applyStripeRefundState, expecting the row this request opened', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_a4', status: 'succeeded' });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'a4-1' });
+
+    expect(result).toMatchObject({ ok: true, processorRefundId: 're_a4' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    const [userId, transactionId, rowId, expected, patch] = applyStripeRefundState.mock.calls[0];
+    expect([userId, transactionId, rowId, expected]).toEqual(['user-1', 'tx-1', 'refund-row-1', OPENED]);
+    expect(patch).toMatchObject({ status: 'succeeded', processor_refund_id: 're_a4' });
+    // No direct `payment_refunds` update remains on these lines.
+    expect(dbState.updates).toEqual([]);
+  });
+
+  it('A4-1: the catch write goes through applyStripeRefundState too, with the same expectation', async () => {
+    stripeRefundsCreate.mockRejectedValue(Object.assign(new Error('card_declined'), { code: 'card_declined' }));
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'a4-2' });
+
+    expect(result).toMatchObject({ ok: false, code: 'PROCESSOR_ERROR' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    const [, , rowId, expected, patch] = applyStripeRefundState.mock.calls[0];
+    expect([rowId, expected]).toEqual(['refund-row-1', OPENED]);
+    expect(patch).toMatchObject({ status: 'failed', failure_code: 'card_declined' });
+    expect(Object.keys(patch).sort()).toEqual(['failure_code', 'failure_message', 'status', 'updated_at']);
+    expect(dbState.updates).toEqual([]);
+  });
+
+  it("A4-2: a lost reply does not turn the webhook's succeeded into failed (count 0 → info, no further write)", async () => {
+    // Stripe made the refund, the reply was lost, and the webhook recorded it
+    // first: the compare-and-set finds no `pending` row with a null Stripe id.
+    stripeRefundsCreate.mockRejectedValue(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }));
+    applyStripeRefundState.mockResolvedValue({ data: { count: 0 }, error: null });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'a4-3' });
+
+    expect(result.ok).toBe(false);
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    expect(infoMessages()).toContain("Webhook already recorded Stripe's answer; keeping it");
+    expect(dbState.updates).toEqual([]);
+  });
+
+  it('A4-2: on the success path, count 0 keeps the webhook state and still reports the refund', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_a4', status: 'succeeded' });
+    applyStripeRefundState.mockResolvedValue({ data: { count: 0 }, error: null });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'a4-4' });
+
+    expect(result).toMatchObject({ ok: true, processorRefundId: 're_a4' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    expect(infoMessages()).toContain("Webhook already recorded Stripe's answer; keeping it");
+  });
+
+  it('C-2: a failed success-path write is logged, not thrown, and the answer follows Stripe', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_c2', status: 'succeeded' });
+    applyStripeRefundState.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'db down' } });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'c2-1' });
+
+    expect(result).toMatchObject({ ok: true, processorRefundId: 're_c2' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    expect(errorMessages()).toContain("Could not record Stripe's answer on the refund ledger row");
+  });
+
+  it('C-2: a failed catch-path write is logged and the existing error result is returned', async () => {
+    stripeRefundsCreate.mockRejectedValue(Object.assign(new Error('Insufficient funds'), { code: 'balance_insufficient' }));
+    applyStripeRefundState.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'db down' } });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'c2-2' });
+
+    expect(result).toMatchObject({ ok: false, code: 'BALANCE_INSUFFICIENT' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    expect(errorMessages()).toContain('Could not mark the refund ledger row failed');
+  });
+});
+
+/**
+ * Slice 3 (S3-1, S3-2, SA Q-SA-5, C-8): the ledger records what Stripe actually
+ * answered, and the caller is told the truth about it.
+ */
+describe('refund — what Stripe answered is what is recorded (slice 3)', () => {
+  /** The first step of the CRM "refund issued" activity reads the invoice. */
+  const activityRecorded = () => dbState.tablesTouched.includes('payment_invoices');
+  const patchWritten = () => applyStripeRefundState.mock.calls[0][4] as Record<string, unknown>;
+
+  it.each(['pending', 'requires_action'])(
+    'S3-1/S3-2: a %s reply stays pending, IN_FLIGHT with the processing message, no side effects',
+    async (status) => {
+      stripeRefundsCreate.mockResolvedValue({ id: 're_s3', status });
+
+      const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: `s3-${status}` });
+
+      expect(result).toEqual({
+        ok: false,
+        code: 'IN_FLIGHT',
+        message:
+          'Stripe has accepted this refund and is still processing it. It will show as refunded once Stripe confirms. Do not refund it again.',
+      });
+      expect(patchWritten()).toMatchObject({ status: 'pending', processor_refund_id: 're_s3' });
+      // C-8: absent, not null, so a webhook's time is never blanked.
+      expect(patchWritten()).not.toHaveProperty('succeeded_at');
+      expect(activityRecorded()).toBe(false);
+    }
+  );
+
+  it('S3-1: an answer we do not recognise is treated as still in flight, never as success', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_s3', status: null });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 's3-null' });
+
+    expect(result).toMatchObject({ ok: false, code: 'IN_FLIGHT' });
+    expect(patchWritten()).toMatchObject({ status: 'pending' });
+    expect(activityRecorded()).toBe(false);
+  });
+
+  it('S3-1: a succeeded reply records succeeded with succeeded_at, reports success and records the activity', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_s3', status: 'succeeded' });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 's3-ok' });
+
+    expect(result).toMatchObject({ ok: true, processorRefundId: 're_s3', replayed: false });
+    expect(patchWritten()).toMatchObject({ status: 'succeeded', processor_refund_id: 're_s3', succeeded_at: expect.any(String) });
+    expect(activityRecorded()).toBe(true);
+  });
+
+  it('C-8 / Q-SA-5: a failed reply records failed with the Stripe reason and returns PROCESSOR_ERROR, no activity', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_s3', status: 'failed', failure_reason: 'expired_or_canceled_card' });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 's3-failed' });
+
+    expect(result).toEqual({
+      ok: false,
+      code: 'PROCESSOR_ERROR',
+      message: 'The refund could not be completed. Nothing has been charged back.',
+    });
+    expect(patchWritten()).toMatchObject({ status: 'failed', failure_code: 'expired_or_canceled_card' });
+    expect(patchWritten()).not.toHaveProperty('succeeded_at');
+    expect(activityRecorded()).toBe(false);
+  });
+
+  it('C-8 / Q-SA-5: a canceled reply records canceled and returns PROCESSOR_ERROR, no activity', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_s3', status: 'canceled' });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 's3-canceled' });
+
+    expect(result).toMatchObject({ ok: false, code: 'PROCESSOR_ERROR' });
+    expect(patchWritten()).toMatchObject({ status: 'canceled' });
+    expect(patchWritten()).not.toHaveProperty('succeeded_at');
+    expect(activityRecorded()).toBe(false);
+  });
+
+  it('the replay of a still-pending request keeps its own IN_FLIGHT wording', async () => {
+    dbState.insertError = { code: '23505', message: 'duplicate key' };
+    dbState.existingRefund = { id: 'refund-row-1', processor_refund_id: null, amount: 200, currency: 'ILS', status: 'pending' };
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'same-request' });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'IN_FLIGHT',
+      message: 'This refund is still being processed. Check again shortly before retrying.',
+    });
+  });
+
+  it('C-4 / Q-SA-7: under a cap, a leg Stripe is still processing spends its share of the cap', async () => {
+    dbState.transactionsById = {
+      'tx-a': settledTransaction({ id: 'tx-a', amount: 100 }),
+      'tx-b': settledTransaction({ id: 'tx-b', amount: 100 }),
+      'tx-c': settledTransaction({ id: 'tx-c', amount: 100 }),
+    };
+    stripeRefundsCreate
+      .mockResolvedValueOnce({ id: 're_a', status: 'pending' })
+      .mockResolvedValueOnce({ id: 're_b', status: 'succeeded' });
+
+    const result = await refundGroup({
+      userId: 'user-1',
+      transactionIds: ['tx-a', 'tx-b', 'tx-c'],
+      source: 'app',
+      clientRequestId: 'group-cap',
+      maxTotal: 150,
+    });
+
+    // 100 in flight + 50 refunded = the cap. Without the budget step the second
+    // leg would take 100 and the plan would be refunded 200 against a cap of 150.
+    expect(stripeRefundsCreate.mock.calls.map(call => call[0].amount)).toEqual([10000, 5000]);
+    expect(result.legs[0]).toMatchObject({ ok: false, code: 'IN_FLIGHT' });
+    expect(result.refundedTotal).toBe(50);
+  });
+
+  /*
+   * QA source guard for SA C-3 / Q-SA-6. The automation refund block
+   * (`app/api/payments/blocks/execute/route.ts`) has no test file of its own,
+   * and its route pulls in the whole kernel, so this pins the shape instead: on
+   * any `!outcome.ok` the step still throws, and the `refund.failed` payment
+   * event is emitted only when the code is NOT `IN_FLIGHT` (a refund Stripe is
+   * still processing has not failed).
+   */
+  it('C-3 / Q-SA-6 (source guard): the automation refund block emits no refund.failed on IN_FLIGHT and still throws', () => {
+    const { readFileSync } = jest.requireActual<typeof import('fs')>('fs');
+    const { join } = jest.requireActual<typeof import('path')>('path');
+    const source = readFileSync(
+      join(__dirname, '..', '..', '..', 'app', 'api', 'payments', 'blocks', 'execute', 'route.ts'),
+      'utf8'
+    );
+
+    // Exactly one refund.failed emit in the file, so it cannot reappear elsewhere.
+    expect(source.match(/eventType:\s*'refund\.failed'/g)).toHaveLength(1);
+
+    const start = source.indexOf('if (!outcome.ok) {');
+    expect(start).toBeGreaterThan(-1);
+    const end = source.indexOf('throw new Error(outcome.message);', start);
+    expect(end).toBeGreaterThan(start);
+    const failureBranch = source.slice(start, end);
+
+    // The emit sits inside the IN_FLIGHT exclusion…
+    expect(failureBranch).toMatch(
+      /if \(outcome\.code !== 'IN_FLIGHT'\) \{\s*await emitPaymentEvent\(userId, \{\s*eventType: 'refund\.failed'/
+    );
+    // …and the throw is outside it: the guarded block closes before the throw.
+    const guardStart = failureBranch.indexOf("if (outcome.code !== 'IN_FLIGHT') {");
+    const afterGuard = failureBranch.slice(guardStart);
+    expect(afterGuard.match(/\{/g)?.length).toBe(afterGuard.match(/\}/g)?.length);
   });
 });
 

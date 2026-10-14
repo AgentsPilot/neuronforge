@@ -309,6 +309,14 @@ describe('verify-equivalence: the P-5b post-seed gate (T1-13b, RC-W1b)', () => {
     store.set('lead_reply_recommender_model', 'gpt-4o-mini');
     store.set('lead_reply_recommender_enabled', true);
     store.set('image_generation_model', 'gpt-image-1');
+    // The image legacy reader is mocked, so it must return what is stored. It
+    // used to agree by accident: the code default WAS `gpt-image-1` until
+    // 2026-10-14, when the default moved off the retiring model.
+    mockGetImageGenerationConfig.mockResolvedValue({
+      ...IMAGE_GENERATION_CONFIG_DEFAULTS,
+      model: 'gpt-image-1',
+      pricesUsd: {},
+    });
     seedAllAreas();
 
     expect(await runBosLlmSettingsCommand(['verify-equivalence'])).toBe(0);

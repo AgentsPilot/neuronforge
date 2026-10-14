@@ -358,9 +358,15 @@ describe('boost 4b.1 through POST /api/stripe/webhook: refunds and disputes', ()
     data: { object: { id: 'ch_test_1', object: 'charge', payment_intent: INTENT, amount_refunded: 1000, currency: 'usd', refunded: false, ...over } },
     ...eventOver,
   });
-  const legacyRefundRead = () => mockEffects.some((e) => e.type === 'db' && e.table === 'payment_transactions');
+  /*
+   * Did anything read the client payment table? The old `charge.refunded`
+   * handler did, for every refund the billing router passed on. The Stripe
+   * Connect refund fix made `charge.refunded` a pure no-op in the switch
+   * (refunds are recorded from `refund.*`), so nothing reads it now.
+   */
+  const paymentTableRead = () => mockEffects.some((e) => e.type === 'db' && e.table === 'payment_transactions');
 
-  it('a refund on a credited boost → transition with the cumulative amount, REVERSED audit, claim completed, 200; the legacy refund handler never runs', async () => {
+  it('a refund on a credited boost → transition with the cumulative amount, REVERSED audit, claim completed, 200; the client payment table is never read', async () => {
     mockBoost.byIntent = PAID();
     mockBoost.transition = { data: { status: 'transitioned', accountId: ACCOUNT, fromStatus: 'paid' }, error: null };
     const result = await run(refundEvent());
@@ -369,7 +375,7 @@ describe('boost 4b.1 through POST /api/stripe/webhook: refunds and disputes', ()
     expect(mockAudits.map((a) => a.action)).toEqual(['BOS_BOOST_PAYMENT_REVERSED']);
     expect(mockAudits[0].userId).toBe(ACCOUNT);
     expect(claimStatus()).toBe('completed');
-    expect(legacyRefundRead()).toBe(false);
+    expect(paymentTableRead()).toBe(false);
     expect(boostCalls('credit')).toEqual([]);
   });
 
@@ -390,18 +396,20 @@ describe('boost 4b.1 through POST /api/stripe/webhook: refunds and disputes', ()
     expect(claimStatus()).toBe('failed');
   });
 
-  it('a refund whose payment intent is not a boost purchase → the legacy refund handler, exactly as before', async () => {
+  it('a refund whose payment intent is not a boost purchase → passed to the switch, where charge.refunded reads and writes nothing', async () => {
     mockBoost.byIntent = null;
     await run(refundEvent({ payment_intent: 'pi_test_someone_else' }));
     expect(mockBoost.calls).toEqual([['findByPaymentIntentIdForWebhook', 'pi_test_someone_else']]);
     expect(boostCalls('transition')).toEqual([]);
-    expect(legacyRefundRead()).toBe(true);
+    expect(paymentTableRead()).toBe(false);
+    expect(claimStatus()).toBe('completed');
   });
 
-  it('SA Q-2: a refund with no payment intent → the legacy path, with no boost read', async () => {
+  it('SA Q-2: a refund with no payment intent → no boost read, and charge.refunded reads and writes nothing', async () => {
     await run(refundEvent({ payment_intent: null }));
     expect(mockBoost.calls).toEqual([]);
-    expect(legacyRefundRead()).toBe(true);
+    expect(paymentTableRead()).toBe(false);
+    expect(claimStatus()).toBe('completed');
   });
 
   it('HP-4: a Connect refund never reaches the boost resolver', async () => {

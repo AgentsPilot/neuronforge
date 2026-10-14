@@ -264,7 +264,9 @@ describe('PERF-2 + BR-2: the phone library loads on demand', () => {
 
   it('the CRM deep link waits for the library to settle before opening the drawer (AC-2.3)', () => {
     const code = read('app/business-os/crm/page.tsx');
-    expect(code).toContain("if (contactId && contacts.length > 0 && phoneLibSettled)");
-    expect(code).toContain('[searchParams, contacts, phoneLibSettled]');
+    // The list gate is "first load finished" (`!loading`), not "has rows", so a
+    // link on a list that loads empty is still followed (follow-up to #372).
+    expect(code).toContain("if (contactId && !loading && phoneLibSettled)");
+    expect(code).toContain('[searchParams, contacts, loading, phoneLibSettled]');
   });
 });
