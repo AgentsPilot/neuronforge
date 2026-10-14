@@ -1,6 +1,6 @@
 # Business OS credit pricing: the credit value and plan allowances
 
-> **Last Updated**: 2026-10-04
+> **Last Updated**: 2026-10-14
 
 ## Overview
 
@@ -155,9 +155,11 @@ Measured `estimatedCostUsd` from the audit entries; credits at $0.001.
 | Lead reply (`lead_reply_recommendation`) | external | **~$0.00008** | ~0.08 | 1 measured |
 | Onboarding turn (`onboarding_turn`) | owner, setup | **$0.0044** | ~4.4 | 2 measured |
 | Onboarding build (`onboarding_build`) | owner, setup | **$0.0168** | ~17 | 1 measured (website + intake generation) |
-| Image generation (`gpt-image-1`) | owner, setup | **$0.25** | **250** | 1 measured, before audit coverage began (from `token_usage`) |
+| Image generation (`gpt-image-1`, historical) | owner, setup | **$0.25** | **250** | 1 measured, before audit coverage began (from `token_usage`) |
 
 **Images dominate.** One image costs as much as ~125 chat turns or ~1,000 briefings.
+
+> **Model change (2026-10-14).** The measured $0.25 is a `gpt-image-1` image. OpenAI retires `gpt-image-1` on 23 Oct 2026, so the default image model is now `gpt-image-2.5-flare`, with the request quality pinned to `high`. Its estimated price at `high` is **$0.043** (1536x1024 / 1024x1536) to **$0.054** (1024x1024) per image: calculator estimates, not a measurement (the source and rounding rule are in `IMAGE_FALLBACK_PRICING`, `lib/repositories/SystemConfigRepository.ts`). The figures in this section stay as measured until an image on the new model is measured.
 
 ### 4.6 Cost per account and use of the allowance
 
@@ -287,3 +289,4 @@ Use the counting rules in §4.2 for deterministic actions, so figures stay compa
 | 2026-10-03 | Slice 8a: the card shows a percentage | §5 "Fractional credits" row: the card's headline is the percentage left (BD-20 rounding) with colour bands from `creditBands.ts` (BD-19); the admin Businesses list shows the same figure. The credit history's precision is unchanged |
 | 2026-10-04 | Slice 8b: the low-line audit record | §5 "Fractional credits" row: one admin audit entry when a recorded charge takes the shown plan percentage below 10 (BD-22, BD-25), derived once per period; KI-21 to KI-23 |
 | 2026-10-04 | Credits boost slice 1: the markup in code | One paragraph at the end of §6.3: the markup's home `creditRetail.ts` (append-only, version 1 = D1), the computed boost base rate, and the procedure for a markup change (re-version the boost packages). No figure changed |
+| 2026-10-14 | Image model change noted | §4.5: the measured $0.25 image row is labelled historical (`gpt-image-1`), and a note gives the new default `gpt-image-2.5-flare` at quality `high` with its estimated $0.043–$0.054 per image. No measured figure changed |

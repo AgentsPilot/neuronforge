@@ -446,9 +446,17 @@ describe('C: with the seeded rows, the resolver returns the same (FR-16, AC-2)',
     mockGetByKeys.mockResolvedValue(seededRows());
     const resolved = await resolveAll();
     for (const [area, callName] of ALL_CALLS) {
+      // The one intended difference: the seeded `images` row names
+      // `gpt-image-1`, which was the code default when the seed ran. The
+      // default moved to its successor on 2026-10-14 (gpt-image-1 retires
+      // 23 Oct 2026), so the seeded row resolves to the model it names.
+      const params =
+        area === 'images'
+          ? { ...TODAY[area][callName].params, model: SEEDED_ROWS.images.model }
+          : TODAY[area][callName].params;
       expect({ call: `${area}/${callName}`, params: resolved[`${area}/${callName}`] }).toEqual({
         call: `${area}/${callName}`,
-        params: TODAY[area][callName].params,
+        params,
       });
     }
   });
