@@ -9,8 +9,11 @@
  * (ADMIN_BOS_CLEANUP slice 7d, DrainNowDialog.tsx), per cancellable item the
  * "Cancel item" dialog (slice 7b, CancelQueueItemDialog.tsx) and per
  * re-sendable failed item the "Retry item" dialog (slice 7c,
- * RetryQueueItemDialog.tsx), both rendered by the item list. Each dialog owns
- * its one POST; this file makes none. No requeue. No auto-refresh (A-11).
+ * RetryQueueItemDialog.tsx), both rendered by the item list, and, in the
+ * Billing reconcile job's row only, "Reconcile top-ups now (all accounts)"
+ * (Admin Layout follow-ups LF-4c, ReconcileTopUpsDialog.tsx; BD-6, SA-C2).
+ * Each dialog owns its one POST; this file makes none. No requeue. No
+ * auto-refresh (A-11).
  *
  * Slice 7a: each queue card has a "View items" toggle that opens the read-only
  * QueueItemsPanel, which owns the list's only request (a GET). The view bumps
@@ -41,7 +44,9 @@ import { KpiStrip, KpiTile, type KpiTileProps } from '@/app/admin/components/lay
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
 import { DrainNowDialog, isDrainQueueId } from './DrainNowDialog';
 import { QueueItemsPanel } from './QueueItemsPanel';
+import { ReconcileTopUpsDialog } from './ReconcileTopUpsDialog';
 import { ageWords } from './jobsFormat';
+import type { BosCronJobId } from '@/lib/cron/bosCronJobs';
 import type {
   JobStatus,
   JobView,
@@ -62,8 +67,13 @@ const PURPOSE_LEGEND =
   'The Business OS scheduled jobs and the queues they drain. Red needs action, amber needs a look, and the ' +
   'green label Healthy or Clear means checked and clear. Grey means no run recorded yet or could not check.';
 const PURPOSE_ACTIONS =
-  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; everything else here is read-only.";
+  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has a Reconcile top-ups now button; everything else here is read-only.";
 const PURPOSE = `${PURPOSE_LEGEND} ${PURPOSE_ACTIONS}`;
+
+// The one job whose row carries an on-demand action (LF-4c, BD-6, SA-C2). Typed
+// against the registry's id union, so a renamed job id fails the type check.
+// It is not a "Run now" for the job: the press records no run (SA SQ-1).
+const RECONCILE_JOB_ID: BosCronJobId = 'bos-billing-reconcile';
 
 // §5.9 tones: "not measured / could not check" is `unknown` (dashed, with an
 // icon), so no run recorded yet and could not check use it (SA Q-4).
@@ -176,6 +186,11 @@ function JobRow({ job }: { job: JobView }) {
           {job.drainsQueueLabel ? ` · drains ${job.drainsQueueLabel}` : ''}
         </div>
         {job.timeLimitNote && <div className="text-xs text-slate-400">{job.timeLimitNote}</div>}
+        {job.id === RECONCILE_JOB_ID && (
+          <div className="pt-2">
+            <ReconcileTopUpsDialog />
+          </div>
+        )}
       </td>
       <td className="py-2 pr-4">
         <StatusChip tone={JOB_TONE[job.status]} testId="status-badge">

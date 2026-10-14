@@ -303,7 +303,7 @@ describe('T-A: the money actions sit in bars of their own, apart from the figure
     expect(block.querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
   });
 
-  it('T-A2: Set limit and Back to default open the Spending limit part, above its figures; reconcile is unmoved', async () => {
+  it('T-A2: Set limit and Back to default open the Spending limit part, above its figures; no reconcile button, the pointer is last (LF-4c)', async () => {
     boostData = boostView({ cap: { status: 'ok', default: { amountMinor: 15000, currency: 'USD', windowDays: 30 }, active: ACTIVE_CAP, history: [] } });
     const drawer = await openDrawer();
     const cap = within(drawer).getByTestId('boost-cap');
@@ -311,8 +311,12 @@ describe('T-A: the money actions sit in bars of their own, apart from the figure
     expect(bar.className).toBe(MONEY_ACTION_BAR);
     expect(within(bar).getAllByRole('button').map((b) => b.getAttribute('data-testid'))).toEqual(['boost-cap-set', 'boost-cap-end']);
     expectInOrder([bar, within(cap).getByTestId('boost-cap-override'), within(cap).getByTestId('boost-cap-history')]);
-    const blockButtons = within(within(drawer).getByTestId('boost-block')).getAllByRole('button');
-    expect(blockButtons[blockButtons.length - 1].getAttribute('data-testid')).toBe('boost-reconcile');
+    // LF-4c (BD-6): the reconcile moved to Scheduled jobs & queues; the block ends on the pointer line.
+    const block = within(drawer).getByTestId('boost-block');
+    expect(within(block).queryByTestId('boost-reconcile')).toBeNull();
+    const pointer = within(block).getByTestId('boost-reconcile-pointer');
+    const all = Array.from(block.querySelectorAll('*'));
+    expect(all.filter((element) => pointer.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING && !pointer.contains(element))).toEqual([]);
     expect(within(drawer).getByTestId('boost-block').querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
   });
 

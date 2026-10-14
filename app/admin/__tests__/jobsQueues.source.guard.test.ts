@@ -43,6 +43,21 @@
  * the chip's `ok` tone, and the view maps exactly two statuses to `'ok'`
  * (healthy, clear). A new block pins the three dialogs to the shared admin
  * dialog classes (F-88, F-89). Every other rule is unchanged.
+ *
+ * Amended by Admin Layout follow-ups LF-4c (BD-6, SA-C2, SA-C3; workplan
+ * G-1 to G-10, SA-W5 to SA-W8), narrowly: "Reconcile top-ups now (all
+ * accounts)" moved here from the Businesses drawer. `page.tsx` and the panel
+ * keep every rule; the view keeps every rule, its header sentence now also
+ * names the reconcile button (still one "Drain", no capital-word Cancel, Retry
+ * or Requeue, one fetch), and it renders `<ReconcileTopUpsDialog` exactly
+ * once, in the `job.id === RECONCILE_JOB_ID` branch, with the id the literal
+ * 'bos-billing-reconcile' typed through `import type` only. The new
+ * `ReconcileTopUpsDialog.tsx` joins CLIENT_FILES and owns one POST, to the
+ * literal reconcile URL, with the literal body '{}', the JSON header and
+ * `cache: 'no-store'`; it names no account, never says Retry, Requeue, Cancel
+ * or Drain, never renders server text, opens through one `DialogTrigger` and
+ * carries the dialog-class checks it had on Businesses. Its words live in
+ * `reconcileCopy.ts`, which imports nothing and keeps the same word bans.
  */
 
 import * as fs from 'fs';
@@ -55,12 +70,15 @@ const PANEL = 'app/admin/components/jobs/QueueItemsPanel.tsx';
 const CANCEL_DIALOG = 'app/admin/components/jobs/CancelQueueItemDialog.tsx';
 const RETRY_DIALOG = 'app/admin/components/jobs/RetryQueueItemDialog.tsx';
 const FORMAT = 'app/admin/components/jobs/jobsFormat.ts';
+const RECONCILE_DIALOG = 'app/admin/components/jobs/ReconcileTopUpsDialog.tsx';
+const RECONCILE_COPY = 'app/admin/components/jobs/reconcileCopy.ts';
 /** The read-only files: every original rule applies (W7D-2; the panel since slice 7a). */
 const FILES = [PAGE, VIEW, PANEL];
 /** Every client file on the page: client-only, C-21 imports, no console, no "OK". */
-const CLIENT_FILES = [PAGE, VIEW, DIALOG, PANEL, CANCEL_DIALOG, RETRY_DIALOG];
+const CLIENT_FILES = [PAGE, VIEW, DIALOG, PANEL, CANCEL_DIALOG, RETRY_DIALOG, RECONCILE_DIALOG];
+// LF-4c (G-3, deliberate): now also names the reconcile button.
 const VIEW_HEADER_SENTENCE =
-  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; everything else here is read-only.";
+  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has a Reconcile top-ups now button; everything else here is read-only.";
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
 
 function codeOf(source: string): string {
@@ -102,7 +120,7 @@ describe('the jobs & queues client files', () => {
 
   // Rewritten by Admin Layout Standard L-1b (was "green lives in exactly one
   // constant, GREEN_STYLE", SC-7(g)): the green moved to the shared chip.
-  it.each([...CLIENT_FILES, FORMAT])('%s holds no green class (green comes only from the shared StatusChip, C-14 S-7)', (file) => {
+  it.each([...CLIENT_FILES, FORMAT, RECONCILE_COPY])('%s holds no green class (green comes only from the shared StatusChip, C-14 S-7)', (file) => {
     expect(codeOf(read(file))).not.toMatch(GREEN_CLASS);
   });
 
@@ -322,5 +340,116 @@ describe('Admin Layout Standard L-1b: the dialogs use the shared admin dialog cl
     expect(code.match(/<DialogDescription className=\{ADMIN_DIALOG_DESCRIPTION_CLASS\}>/g)).toHaveLength(1);
     expect(code).not.toMatch(/\bDARK_DIALOG\b/);
     expect(code).not.toMatch(/!bg-/);
+  });
+});
+
+describe('Admin Layout follow-ups LF-4c: Reconcile top-ups now, and nothing more (BD-6, SA-C3, SA-W5 to SA-W8)', () => {
+  const RECONCILE_URL_LITERAL = "'/api/admin/business-os/credits/boost/reconcile'";
+  const ACCOUNT_WORDS = /\b(userId|accountId|ownerUserId|user_id)\b/;
+
+  /** Every import specifier, type-only ones included. */
+  function allImports(code: string): string[] {
+    return [...code.matchAll(/import\s+[^'"]*?from\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  }
+
+  it('G-4 (SA-W5): ReconcileTopUpsDialog.tsx makes exactly one POST, with one fetch, to the literal reconcile URL', () => {
+    const code = codeOf(read(RECONCILE_DIALOG));
+    expect(code.match(/method:\s*['"](POST|PUT|PATCH|DELETE|GET)['"]/g)).toEqual(["method: 'POST'"]);
+    const fetches = [...code.matchAll(/fetch\(\s*([^,)]*)/g)].map((m) => m[1].trim());
+    expect(fetches).toEqual([RECONCILE_URL_LITERAL]);
+  });
+
+  it("G-5: the body is the literal '{}', with the JSON header and cache no-store; nothing is built from data", () => {
+    const code = codeOf(read(RECONCILE_DIALOG));
+    expect(code.match(/\bbody\s*:/g)).toHaveLength(1);
+    expect(code).toContain("body: '{}',");
+    expect(code).not.toMatch(/JSON\.stringify\(/);
+    expect(code.match(/\bheaders\s*:/g)).toHaveLength(1);
+    expect(code).toContain("headers: { 'Content-Type': 'application/json' },");
+    expect(code).toContain("cache: 'no-store',");
+  });
+
+  it.each([RECONCILE_DIALOG, RECONCILE_COPY])('G-6 (SA-W6): %s names no account; no Retry, Requeue, Cancel or Drain; never "OK"; no console', (file) => {
+    const code = codeOf(read(file));
+    expect(code).not.toMatch(ACCOUNT_WORDS);
+    expect(code).not.toMatch(/\b(Retry|Requeue|Cancel|Drain)\b/);
+    expect(code).not.toMatch(/\bOK\b/);
+    expect(code).not.toMatch(/console\./);
+  });
+
+  it('G-6: ReconcileTopUpsDialog.tsx never renders server text: no error, details or message field is read from a response', () => {
+    const code = codeOf(read(RECONCILE_DIALOG));
+    expect(code).not.toMatch(/\.(error|details|message)\b(?!\s*\()/);
+    expect(code).not.toMatch(/['"](error|details|message)['"]/);
+  });
+
+  it('G-7 (SA-W7, SA-W8): the dialog imports only its UI parts, the client logger, the shared dialog classes and ./reconcileCopy', () => {
+    const code = codeOf(read(RECONCILE_DIALOG));
+    expect(allImports(code).sort()).toEqual(
+      [
+        '@/app/admin/components/layout/adminDialog',
+        '@/components/ui/button',
+        '@/components/ui/dialog',
+        '@/lib/logger/client',
+        './reconcileCopy',
+        'react',
+      ].sort()
+    );
+  });
+
+  it('G-7 (SA-W7): the dialog-class checks it carried on Businesses, plus one DialogTrigger', () => {
+    const code = codeOf(read(RECONCILE_DIALOG));
+    expect(code).toMatch(/import\s*\{[^}]*\bADMIN_DIALOG_CLASS\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/adminDialog'/);
+    const contents = code.match(/<DialogContent\b[^>]*>/g) ?? [];
+    expect(contents).toHaveLength(1);
+    expect(contents[0]).toMatch(/className=\{ADMIN_DIALOG_CLASS\}/);
+    expect(code.match(/<DialogTitle className=\{ADMIN_DIALOG_TITLE_CLASS\}>/g)).toHaveLength(1);
+    expect(code).not.toMatch(/\bDARK_DIALOG\b/);
+    expect(code).not.toMatch(/!bg-/);
+    expect(code.match(/<DialogTrigger asChild>/g)).toHaveLength(1);
+  });
+
+  it('G-8: reconcileCopy.ts has no imports at all', () => {
+    const code = codeOf(read(RECONCILE_COPY));
+    expect(code).not.toMatch(/\bimport\b/);
+    expect(code).not.toMatch(/\brequire\(/);
+  });
+
+  it('G-9 (SA-W8): the view renders the dialog exactly once, in JobRow, only for the Billing reconcile job', () => {
+    const code = codeOf(read(VIEW));
+    expect(code.match(/<ReconcileTopUpsDialog\b/g)).toHaveLength(1);
+    const jobRow = code.slice(code.indexOf('function JobRow('), code.indexOf('function QueueCard('));
+    expect(jobRow).toMatch(/\{job\.id === RECONCILE_JOB_ID && \(\s*<div[^>]*>\s*<ReconcileTopUpsDialog \/>/);
+    expect(code).toContain("const RECONCILE_JOB_ID: BosCronJobId = 'bos-billing-reconcile';");
+    expect(code).toContain("import type { BosCronJobId } from '@/lib/cron/bosCronJobs';");
+    // The inline form counts as a runtime import for C-21 (SA-W8).
+    expect(code).not.toMatch(/import\s*\{\s*type\b/);
+  });
+
+  // SA F1 (LF-4c code review): the logger never carries the response body, its
+  // error, details or message; only the status, a numeric passesFailed and err.
+  it('G-11 (SA F1): every logger call in the dialog passes one object literal with keys status, passesFailed and/or err only; no body reaches it', () => {
+    const code = codeOf(read(RECONCILE_DIALOG));
+    const calls = [...code.matchAll(/logger\.(\w+)\(([^;]*)\);/g)];
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls).toHaveLength((code.match(/logger\./g) ?? []).length);
+    const ALLOWED = new Set(['status', 'passesFailed', 'err']);
+    for (const [, , args] of calls) {
+      const literal = args.match(/^\s*\{([^{}]*)\}\s*,\s*'[^']*'\s*$/);
+      expect({ args, isObjectLiteralThenMessage: literal !== null }).toEqual({ args, isObjectLiteralThenMessage: true });
+      const keys = literal![1]
+        .split(',')
+        .map((part) => part.split(':')[0].trim())
+        .filter((key) => key.length > 0);
+      expect(keys.length).toBeGreaterThan(0);
+      for (const key of keys) expect({ args, key, allowed: ALLOWED.has(key) }).toEqual({ args, key, allowed: true });
+      expect(args).not.toMatch(/\bbody\b/);
+    }
+  });
+
+  it('G-9: the self-test: the allowance is a decision, not a regex accident', () => {
+    expect('<ReconcileTopUpsDialog />').not.toMatch(/\b(Retry|Requeue|Cancel|Drain)\b/);
+    expect('<ReconcileTopUpsDialog />').not.toMatch(/method:/);
+    expect(VIEW_HEADER_SENTENCE).toContain('the Billing reconcile job has a Reconcile top-ups now button; everything else here is read-only.');
   });
 });
