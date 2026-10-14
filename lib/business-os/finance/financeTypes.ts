@@ -25,6 +25,11 @@
  * carries its money in `money`, never in `value` (SA-W47), and never a sum of
  * two currencies.
  *
+ * Slice 5a (our plan revenue, layer A): plan payments received in the window,
+ * per currency, with the same money rule. `revenue.totals` adds boost net and
+ * plans received WITHIN one currency only (SA-Q40); K-5's `money.net` is that
+ * total. No field is a total across currencies.
+ *
  * @module lib/business-os/finance/financeTypes
  */
 
@@ -223,20 +228,126 @@ export interface FinanceBoostRevenue {
   notes: FinanceBoostNotes | null;
 }
 
-export interface FinanceRevenueSection {
-  /** `unknown` only when the existence check AND the boost read failed; `partial` when one did, or the boosts are partial. */
+// ── Our revenue, plans (slice 5a, §11D.4 M2-FR-1 to M2-FR-11) ───────────────
+// The platform's own paid plan invoices, by `paid_at` in the window. Each money
+// figure is in the currency named beside it, received INCLUDING any tax, before
+// any refund (none is recorded for plans yet) and before Stripe fees.
+
+/** One currency's plan payments (M2-FR-1). `currency` null = "Unknown currency". */
+export interface FinancePlanLine {
+  currency: string | null;
+  /** Readable paid invoices with an amount above 0. */
+  payments: number;
+  /** Σ amounts received (tax included). "At least" when not `exact`. */
+  received: number;
+  /** Of which tax (shown, never deducted). */
+  tax: number;
+  /** Distinct accounts with a payment in this currency (deleted accounts not counted). */
+  businesses: number;
+  /** Readable paid invoices of 0 in this currency: not payments (M2-W-5). */
+  zeroAmountInvoices: number;
+  /** Paid invoices whose money could not be read: excluded, never 0 (SA-W64). */
+  unreadable: number;
+  /** False at the ceiling or with an unreadable row or an overflow on this line: payments, received and tax are "At least". */
+  exact: boolean;
+}
+
+/** One (account, currency) row of the by-business table (M2-FR-2). */
+export interface FinancePlanAccountRow {
+  accountId: string;
+  name: string | null;
+  nameStatus: 'found' | 'missing' | 'unavailable' | 'platform';
+  currency: string | null;
+  payments: number;
+  received: number;
+  exact: boolean;
+}
+
+/** One payment of the picked business (M2-FR-3), newest first. */
+export interface FinancePlanPaymentListRow {
+  /** The billing event row's own id (an internal UUID, never a Stripe id). */
+  id: string;
+  /** ISO timestamptz, shown through `formatUtc`; null only defensively (the read filters on it). */
+  paidAt: string | null;
+  /** The plan's display label, or null ("Unknown plan"). */
+  planLabel: string | null;
+  received: number;
+  tax: number;
+  currency: string | null;
+  /** ISO timestamptz, or null ("Not recorded"). */
+  periodStart: string | null;
+  periodEnd: string | null;
+}
+
+/** One currency's plan payments from deleted accounts (M2-W-8). Never a name. */
+export interface FinancePlanDeletedLine {
+  currency: string | null;
+  payments: number;
+  received: number;
+  exact: boolean;
+}
+
+export interface FinancePlanNotes {
+  /** No payment and no unreadable paid invoice in the window. */
+  empty: boolean;
+  /** False when the read reached its ceiling. */
+  exact: boolean;
+  zeroAmountInvoices: number;
+  unreadable: number;
+  /** Rows of another kind (impossible by the query; left out, counted). */
+  otherKind: number;
+}
+
+export interface FinancePlanRevenue {
   status: FinanceSectionStatus;
-  /** R-d, unchanged: whether any paid plan invoice or paid boost exists, platform-wide. */
-  state: FinanceRevenueState;
-  /** The plans line (S4-FR-4), from R-d's paid plan invoice count only. Platform-wide, even with a business picked. */
-  plans: 'recorded' | 'none' | 'unknown';
-  /** Credit boosts paid in the window (S4-FR-10). */
-  boosts: FinanceBoostRevenue;
+  scope: 'all' | 'one';
+  /** Null only when `status` is `unknown` (the read failed). */
+  lines: FinancePlanLine[] | null;
+  /** All businesses only: at most the display cap. */
+  accounts: FinancePlanAccountRow[] | null;
+  /** Every (account, currency) row before the cap; all businesses only. */
+  accountsTotal: number | null;
+  /** One business only: at most the display cap, newest first. */
+  payments: FinancePlanPaymentListRow[] | null;
+  /** Every payment before the cap; one business only. */
+  paymentsTotal: number | null;
+  /** All businesses only; `[]` when none. */
+  deletedAccounts: FinancePlanDeletedLine[] | null;
+  notes: FinancePlanNotes | null;
 }
 
 /**
- * K-5's money (SA-W47): one currency's net, a count of currencies (never a
- * sum), nothing yet, or unknown. Set on K-5 only.
+ * One currency of "boosts net plus plans received" (SA-Q40, E-34). Every money
+ * key sits beside `currency`; a part or the total is null when it cannot be
+ * exact. Never across currencies.
+ */
+export interface FinanceRevenueTotalLine {
+  currency: string | null;
+  boostsNet: number | null;
+  plansReceived: number | null;
+  total: number | null;
+}
+
+export interface FinanceRevenueSection {
+  /** From the two money parts (SA-W62): `unknown` when boosts AND plans failed; `partial` when one did or either is partial. */
+  status: FinanceSectionStatus;
+  /**
+   * All businesses: R-d, unchanged (any paid plan invoice or paid boost,
+   * platform-wide). One business (E-36): from that business's own reads.
+   */
+  state: FinanceRevenueState;
+  /** Plan payments received in the window (slice 5a, M2-FR-11; replaced R-d's plans line, SA-W61). */
+  plans: FinancePlanRevenue;
+  /** Credit boosts paid in the window (S4-FR-10). */
+  boosts: FinanceBoostRevenue;
+  /** Boost net plus plans received, per currency (SA-Q40); null when either read failed. Never across currencies. */
+  totals: FinanceRevenueTotalLine[] | null;
+}
+
+/**
+ * K-5's money (SA-W47): one currency's figure, a count of currencies (never a
+ * sum), nothing yet, or unknown. Set on K-5 only. Slice 5a (SA-W60): `net` is
+ * boost net plus plans received, in one currency.
  */
 export type FinanceTileMoney =
   | { kind: 'one'; currency: string | null; net: number }
@@ -266,7 +377,7 @@ export interface FinanceTile {
   value: FinanceMeasured | null;
   /** K-1 only: the same elapsed span of last month (USD). Null when not measured. */
   previous: FinanceMeasured | null;
-  /** K-5 only (slice 4a, SA-W47): the boost net for the window, with its currency. Absent on K-1 to K-4. */
+  /** K-5 only (slice 4a, SA-W47; slice 5a): boost net plus plans received for the window, with its currency. Absent on K-1 to K-4. */
   money?: FinanceTileMoney;
 }
 

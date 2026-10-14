@@ -5,10 +5,7 @@
  * 3.07:1 on Health and 4.16:1 on Jobs, below WCAG AA 4.5:1, so it and the
  * darker `text-slate-600` are refused here, under any variant prefix.
  *
- * Folders are WALKED, not listed, so a component added later is covered. One
- * named exclusion: the old `audit-trail/BusinessAccountPicker.tsx`, which the
- * Audit trail page no longer mounts and Finance still imports (F-112); its
- * slate-500 lines belong to the finance adoption slice.
+ * Folders are WALKED, not listed, so a component added later is covered.
  *
  * Borders (`border-slate-600`), underline decoration (`decoration-slate-500`)
  * and placeholders are not text and are not refused. Comments are stripped
@@ -47,8 +44,6 @@ function walk(dir: string): string[] {
 /** A line break, spelled without an escape (no backslash in this file, per the Tailwind-scan note). */
 const NEWLINE = String.fromCharCode(10);
 
-const EXCLUDED = ['app/admin/audit-trail/BusinessAccountPicker.tsx'];
-
 /**
  * Businesses (LF-4b, requirement §4, SA C8): the whole folder is walked. One
  * named exclusion: the AD-1 "Delete…" dialog, whose entry is hidden
@@ -61,7 +56,7 @@ const BUSINESSES_EXCLUDED = ['app/admin/users/components/DeleteBusinessDialog.ts
 const PAGES: Record<string, string[]> = {
   Health: ['app/admin/page.tsx', ...walk('app/admin/components/health')],
   'Scheduled jobs & queues': ['app/admin/jobs-queues/page.tsx', ...walk('app/admin/components/jobs')],
-  'Audit trail': walk('app/admin/audit-trail').filter((relative) => !EXCLUDED.includes(relative)),
+  'Audit trail': walk('app/admin/audit-trail'),
   'Business OS AI Activity': walk('app/admin/business-os-llm/components/activity'),
   Businesses: walk('app/admin/users').filter((relative) => !BUSINESSES_EXCLUDED.includes(relative)),
 };

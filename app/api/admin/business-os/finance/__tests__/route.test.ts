@@ -38,6 +38,15 @@
  * a failed boost read is 200 with K-5 "Unknown" (AC-95), the two boost reads
  * in `allReads()` (AC-99), and the info line's `revenueBoosts` and
  * `counts.boosts` with no amount, currency or package (AC-98).
+ *
+ * Slice 5a (Money M-2): R-m and R-m′ are in `mockDeps.finance`, so
+ * `allReads()` covers them in every 401 / 403 / 400 case (AC-128). With a
+ * business picked, R-m′ gets exactly the id and R-m and R-d have ZERO calls
+ * (AC-123, SA-Q35; the 4a "R-d with no argument" pins are rewritten). The
+ * payload's plans, totals and K-5 money keep every money key beside its
+ * currency, with no Stripe, refusal, plan_written or mode key (AC-127), and the
+ * info line carries `sections.revenuePlans`, `counts.plans` and
+ * `counts.revenueExistence` with no amount, currency or tier.
  */
 
 import * as fs from 'fs';
@@ -104,6 +113,9 @@ const mockDeps = {
     // Slice 4a: R-k and R-k′.
     listBoostPurchasesAllAccountsPaidInRange: jest.fn(),
     listBoostPurchasesForAccountPaidInRange: jest.fn(),
+    // Slice 5a: R-m and R-m′.
+    listPlanPaymentsAllAccountsPaidInRange: jest.fn(),
+    listPlanPaymentsForAccountPaidInRange: jest.fn(),
   },
   credits: {
     getSnapshots: jest.fn(),
@@ -295,6 +307,10 @@ function seed() {
   const boosts = { data: { rows: [boostPurchase(ACCOUNT)], reachedCeiling: false }, error: null };
   mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange.mockResolvedValue(boosts);
   mockDeps.finance.listBoostPurchasesForAccountPaidInRange.mockResolvedValue(boosts);
+  // Slice 5a: no plan payment by default (so the 4a K-5 figures stand); the 5a describe seeds its own.
+  const noPlans = { data: { rows: [], reachedCeiling: false }, error: null };
+  mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange.mockResolvedValue(noPlans);
+  mockDeps.finance.listPlanPaymentsForAccountPaidInRange.mockResolvedValue(noPlans);
 }
 
 const allReads = () => [
@@ -476,7 +492,10 @@ describe('200', () => {
     expect(mockDeps.findPlanForAccount).toHaveBeenCalledWith(ACCOUNT);
     expect(mockDeps.finance.findBillingStatusForAccount).toHaveBeenCalledWith(ACCOUNT);
     for (const [id] of mockDeps.ledger.listRowsForAccountCreatedInRange.mock.calls) expect(id).toBe(ACCOUNT);
-    expect(mockDeps.finance.countRevenueRows).toHaveBeenCalledWith();
+    // SA-Q35 (slice 5a): no platform-wide read with a business picked; R-m′ gets exactly the id.
+    expect(mockDeps.finance.countRevenueRows).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+    for (const [id] of mockDeps.finance.listPlanPaymentsForAccountPaidInRange.mock.calls) expect(id).toBe(ACCOUNT);
     expect(mockFindNames).toHaveBeenCalledWith([ACCOUNT]);
   });
 
@@ -591,8 +610,8 @@ describe('slice 2a: takings through the route', () => {
 
   it('AC-45: the four takings reads are in allReads(), so every 401 / 403 / 400 case proves zero calls on them', () => {
     for (const fn of Object.values(mockDeps.finance)) expect(allReads()).toContain(fn);
-    // Slice 2b: the six overdue and plan reads joined the seven (thirteen); slice 4a: R-k and R-k′ (fifteen).
-    expect(Object.keys(mockDeps.finance)).toHaveLength(15);
+    // Slice 2b: the six overdue and plan reads joined the seven (thirteen); slice 4a: R-k and R-k′ (fifteen); slice 5a: R-m and R-m′ (seventeen).
+    expect(Object.keys(mockDeps.finance)).toHaveLength(17);
   });
 
   it('the payload carries takings; AC-48: every money key sits beside a currency, and no money key is top-level', async () => {
@@ -854,8 +873,8 @@ describe('slice 4a: our revenue through the route', () => {
   it('the payload: revenue with plans and boosts; K-5 money; AC-92: every money key sits beside a currency; AC-98: no Stripe or lot field', async () => {
     const body = await (await call()).json();
     const revenue = body.data.revenue;
-    expect(Object.keys(revenue).sort()).toEqual(['boosts', 'plans', 'state', 'status']);
-    expect(revenue).toMatchObject({ status: 'ok', plans: 'none', boosts: { status: 'ok', scope: 'all', deletedAccounts: [] } });
+    expect(Object.keys(revenue).sort()).toEqual(['boosts', 'plans', 'state', 'status', 'totals']);
+    expect(revenue).toMatchObject({ status: 'ok', plans: { status: 'ok', lines: [] }, boosts: { status: 'ok', scope: 'all', deletedAccounts: [] } });
     expect(revenue.boosts.lines).toEqual([
       { currency: 'USD', purchases: 1, gross: 1234.57, tax: 0, refunded: 0, held: 0, lost: 0, net: 1234.57, creditsSold: 5000, unreadable: 0, unreadableCredits: 0 },
     ]);
@@ -889,7 +908,7 @@ describe('slice 4a: our revenue through the route', () => {
     for (const banned of ['stripe_', 'receipt_url', 'flag_reason', 'lot_id', 'paid_at', 'user_id', ACCOUNT]) expect(text).not.toContain(banned);
   });
 
-  it('AC-96 through the route: R-k′ gets exactly the id and the window; R-k has zero calls; R-d with no argument; no deleted line', async () => {
+  it('AC-96 through the route: R-k′ gets exactly the id and the window; R-k has zero calls; R-d has zero calls (SA-Q35); no deleted line', async () => {
     const res = await call(`?accountId=${ACCOUNT}`);
     expect(res.status).toBe(200);
     expect(mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
@@ -898,7 +917,7 @@ describe('slice 4a: our revenue through the route', () => {
     expect(id).toBe(ACCOUNT);
     const body = await res.json();
     expect(range).toEqual({ from: new Date(body.data.window.start), to: new Date(body.data.window.end) });
-    expect(mockDeps.finance.countRevenueRows.mock.calls).toEqual([[]]);
+    expect(mockDeps.finance.countRevenueRows.mock.calls).toEqual([]);
     expect(body.data.revenue.boosts).toMatchObject({ scope: 'one', deletedAccounts: null });
     expect(body.data.tiles.k5.money).toEqual({ kind: 'one', currency: 'USD', net: 1234.57 });
   });
@@ -926,6 +945,132 @@ describe('slice 4a: our revenue through the route', () => {
     const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
     for (const secret of [String(BOOST_MINOR), '1234.57', BOOST_PACKAGE]) expect(logged).not.toContain(secret);
     expect(logged).not.toMatch(/\bUSD\b/);
+  });
+});
+
+describe('slice 5a: our plan revenue through the route', () => {
+  beforeEach(asAdmin);
+
+  const PLAN_MINOR = 98761;
+  const PLAN_TIER = 'secret-tier-value';
+  const planPayment = (user_id: string | null, extra: Record<string, unknown> = {}) => ({
+    id: 'efefefef-0000-4000-8000-000000000001', user_id, kind: 'invoice_paid', tier: PLAN_TIER,
+    amount_minor: PLAN_MINOR, amount_tax_minor: 0, currency: 'usd',
+    period_start: '2026-10-02T10:00:00+00:00', period_end: '2026-11-02T10:00:00+00:00', paid_at: '2026-10-02T10:00:00+00:00',
+    ...extra,
+  });
+  const seedPlans = (rows: unknown[], reachedCeiling = false) => {
+    const read = { data: { rows, reachedCeiling }, error: null };
+    mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange.mockResolvedValue(read);
+    mockDeps.finance.listPlanPaymentsForAccountPaidInRange.mockResolvedValue(read);
+  };
+
+  it('AC-128: R-m and R-m′ are in allReads(); signed out, a non-admin and an invalid query each make zero plan reads', async () => {
+    expect(allReads()).toContain(mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange);
+    expect(allReads()).toContain(mockDeps.finance.listPlanPaymentsForAccountPaidInRange);
+    mockGetUser.mockResolvedValue(null);
+    expect((await call()).status).toBe(401);
+    mockGetUser.mockResolvedValue(OWNER);
+    mockIsAdmin.mockResolvedValue(false);
+    expect((await call()).status).toBe(403);
+    asAdmin();
+    expect((await call('?preset=this_month&unknownKey=1')).status).toBe(400);
+    expect((await call('?preset=this_month&currency=usd')).status).toBe(400);
+    expect(mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listPlanPaymentsForAccountPaidInRange).not.toHaveBeenCalled();
+  });
+
+  it('AC-122 / AC-127: the payload — plans per currency, totals and K-5 within one currency; every money key beside a currency; no Stripe, refusal, plan_written or mode key', async () => {
+    seedPlans([planPayment(ACCOUNT), planPayment(null, { id: 'efefefef-0000-4000-8000-000000000002', amount_minor: 100 })]);
+    const body = await (await call()).json();
+    const revenue = body.data.revenue;
+    expect(revenue.plans.lines).toEqual([
+      { currency: 'USD', payments: 2, received: 988.61, tax: 0, businesses: 1, zeroAmountInvoices: 0, unreadable: 0, exact: true },
+    ]);
+    expect(revenue.plans.deletedAccounts).toEqual([{ currency: 'USD', payments: 1, received: 1, exact: true }]);
+    expect(revenue.plans.accounts).toEqual([
+      { accountId: ACCOUNT, name: NAME, nameStatus: 'found', currency: 'USD', payments: 1, received: 987.61, exact: true },
+    ]);
+    expect(revenue.totals).toEqual([{ currency: 'USD', boostsNet: 1234.57, plansReceived: 988.61, total: 2223.18 }]);
+    expect(body.data.tiles.k5.money).toEqual({ kind: 'one', currency: 'USD', net: 2223.18 });
+
+    const MONEY = new Set(['received', 'tax', 'boostsNet', 'plansReceived', 'total', 'net']);
+    let moneyKeys = 0;
+    const walk = (node: unknown, depth: number) => {
+      if (Array.isArray(node)) return node.forEach((child) => walk(child, depth + 1));
+      if (node === null || typeof node !== 'object') return;
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (MONEY.has(key)) {
+          moneyKeys += 1;
+          expect({ key, hasCurrency: 'currency' in (node as object) }).toEqual({ key, hasCurrency: true });
+          expect(depth).toBeGreaterThan(0);
+        }
+        walk(value, depth + 1);
+      }
+    };
+    walk(revenue.plans, 0);
+    walk(revenue.totals, 0);
+    walk({ money: body.data.tiles.k5.money }, 0);
+    // plan line (2) + deleted line (1) + by-business row (1) + totals (3) + K-5 (1).
+    expect(moneyKeys).toBe(8);
+
+    const text = JSON.stringify(revenue.plans);
+    for (const banned of ['stripe_', 'refusal_reason', 'plan_written', 'livemode', 'amount_minor', 'paid_at', PLAN_TIER]) {
+      expect(text).not.toContain(banned);
+    }
+  });
+
+  it('AC-123 through the route: with accountId, R-m′ gets exactly the id and the window; R-m and R-d have ZERO calls; the payment list, no table', async () => {
+    seedPlans([planPayment(ACCOUNT)]);
+    const res = await call(`?accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.countRevenueRows).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listPlanPaymentsForAccountPaidInRange).toHaveBeenCalledTimes(1);
+    const [id, range] = mockDeps.finance.listPlanPaymentsForAccountPaidInRange.mock.calls[0];
+    expect(id).toBe(ACCOUNT);
+    expect(range).toEqual({ from: new Date(body.data.window.start), to: new Date(body.data.window.end) });
+    expect(body.data.revenue.plans).toMatchObject({ scope: 'one', accounts: null, deletedAccounts: null, paymentsTotal: 1 });
+    expect(body.data.revenue.plans.payments).toEqual([
+      { id: 'efefefef-0000-4000-8000-000000000001', paidAt: '2026-10-02T10:00:00+00:00', planLabel: null, received: 987.61, tax: 0, currency: 'USD', periodStart: '2026-10-02T10:00:00+00:00', periodEnd: '2026-11-02T10:00:00+00:00' },
+    ]);
+    expect(body.data.revenue.state).toBe('recorded');
+  });
+
+  it('AC-126 through the route: R-m fails → 200, plans unknown, the section partial, K-5 Unknown, every other section renders', async () => {
+    mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange.mockResolvedValue({ data: null, error: new Error('down') });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.revenue).toMatchObject({ status: 'partial', plans: { status: 'unknown', lines: null }, boosts: { status: 'ok' }, totals: null });
+    expect(body.data.tiles.k5).toMatchObject({ status: 'unavailable', money: { kind: 'unknown', reason: 'failed' } });
+    for (const section of ['accounts', 'aiCost', 'credits', 'takings']) expect(body.data[section].status).not.toBe('unknown');
+  });
+
+  it('AC-127: the info line carries sections.revenuePlans, counts.plans and counts.revenueExistence; no plan amount, currency or tier in any log call', async () => {
+    seedPlans([planPayment(ACCOUNT)]);
+    await call();
+    const lines = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(lines).toHaveLength(1);
+    const [ctx] = lines[0];
+    expect(ctx.sections.revenuePlans).toBe('ok');
+    expect(ctx.counts.revenueExistence).toBe('read');
+    expect(ctx.counts.plans).toEqual({
+      rows: 1, ceiling: false, payments: 1, zeroAmount: 0, unreadable: 0, otherKind: 0, currencies: 1,
+      accountsShown: 1, accountsTotal: 1, deletedAccountPayments: 0, paymentsTotal: 0, namesFound: 1,
+    });
+    for (const value of Object.values(ctx.counts.plans)) expect(['number', 'boolean']).toContain(typeof value);
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
+    for (const secret of [String(PLAN_MINOR), '987.61', PLAN_TIER, '2223.18']) expect(logged).not.toContain(secret);
+    expect(logged).not.toMatch(/\bUSD\b|"usd"/);
+
+    jest.clearAllMocks();
+    seed();
+    asAdmin();
+    await call(`?accountId=${ACCOUNT}`);
+    const picked = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(picked[0][0].counts.revenueExistence).toBe('not_called');
   });
 });
 

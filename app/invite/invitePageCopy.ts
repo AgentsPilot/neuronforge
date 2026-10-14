@@ -38,7 +38,10 @@ export interface InvitePageCopy {
   offerHeading: string;
   free: string;
   perMonth: (priceUsd: number) => string;
-  /** Not rendered in 5b (SA CR-1): kept for 5c, when payment at signup is live. */
+  /**
+   * FR-22 (plan payments P-9.2, SA C-6, C-7): under a PAID offer when the
+   * server's `payment` flag says `required`, i.e. the account could pay at once.
+   */
   paymentRequired: string;
   /**
    * Slice 5b (workplan D-11): under a PAID offer's signup form, while payment is

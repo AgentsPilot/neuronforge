@@ -32,8 +32,16 @@
  * `event: 'subscribed'` is the champion's one email when a friend they invited
  * pays their first invoice. Its own subject, heading and lead; the status row
  * reads the list's `subscribed` word (`INVITE_FRIENDS_COPY[l].status.subscribed`),
- * never a second translation; no "held" note. Champions only: the caller
- * (`inviterNotification.ts`) refuses an admin recipient for it at the type level.
+ * never a second translation; no "held" note.
+ *
+ * TO THE ISSUING ADMIN (plan payments P-9.2, T10, BQ-P11)
+ *
+ * The same email goes to the admin who issued an admin Paid invite when that
+ * invitee pays their first invoice. No new words: the admin's heading is the
+ * already-approved N-2 SUBJECT ("Your invitation turned into a
+ * subscription"), because the English heading says "friend"; the lead, the
+ * status row, the subject and the footer are N-2's, the button is N-1's admin
+ * one.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * @module lib/email/templates/invite-accepted
@@ -188,7 +196,10 @@ export function generateInviteAcceptedEmail(data: InviteAcceptedEmailData): {
   const action = data.recipientKind === 'admin' ? t.actionAdmin : t.actionChampion;
   const isHeld = data.status === 'not_subscribed_yet';
   // N-2 has its own subject, heading and lead; everything else is shared.
-  const words = data.event === 'subscribed' ? t.subscribed : { subject: t.subject, heading: t.heading, lead: t.lead };
+  // P-9.2 (T10): an admin is not told about a "friend", so the admin's heading
+  // reuses the N-2 subject, approved in every language (no new copy).
+  const subscribedWords = data.recipientKind === 'admin' ? { ...t.subscribed, heading: t.subscribed.subject } : t.subscribed;
+  const words = data.event === 'subscribed' ? subscribedWords : { subject: t.subject, heading: t.heading, lead: t.lead };
 
   const details = emailDetailsTable(
     [

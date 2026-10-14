@@ -136,6 +136,11 @@ export default function UsersPage() {
   const { filters, setFilters, clear, isDefault, hrefFor } = useAdminFilters(USERS_FILTER_SPEC);
   const filter: StatusFilter = toStatusFilter(filters.status);
   const [searchTerm, setSearchTerm] = useState('');
+  /** SA-Q33: the inbound `account` named a business that is not on screen. Cleared by the next status or search change. */
+  const [deepLinkMissing, setDeepLinkMissing] = useState(false);
+  useEffect(() => {
+    setDeepLinkMissing(false);
+  }, [filter, searchTerm]);
 
   const searchId = useId();
   const statusId = useId();
@@ -375,6 +380,30 @@ export default function UsersPage() {
     void details.loadDetails(user.id);
   };
 
+  // Money M-1 (SA-Q33, E-38, SA-WR-36): consume the inbound `account` key ONCE,
+  // after the first list read that succeeded. A failed read consumes nothing.
+  // The hook's mount write has already removed the key from the address bar;
+  // the value stays in `filters` until this clears it. The row is looked up in
+  // the rows on screen, and the CSS selector is built from that row's id, never
+  // from the URL text. Opening goes through `openRow`, so focus returns to the
+  // row's Open button on close (D-6).
+  const pendingAccount = filters.account;
+  const consumeDeepLink = useRef<() => void>(() => undefined);
+  consumeDeepLink.current = () => {
+    const wanted = pendingAccount.toLowerCase();
+    const row = shownUsers.find((user) => user.id.toLowerCase() === wanted) ?? null;
+    const button = row
+      ? contentRef.current?.querySelector<HTMLButtonElement>(`tr[data-account-id="${row.id}"] [data-testid="row-open"]`) ?? null
+      : null;
+    if (row && button) openRow(row, button);
+    else setDeepLinkMissing(true);
+    setFilters({ account: '' });
+  };
+  useEffect(() => {
+    if (!pendingAccount || loading || !hasLoaded) return;
+    consumeDeepLink.current();
+  }, [pendingAccount, loading, hasLoaded]);
+
   /**
    * D-17 (SA Q-1): a click anywhere on the row opens it, as a mouse extra. Not
    * on a control inside the row (rule 2), not while selecting text in it
@@ -491,6 +520,10 @@ export default function UsersPage() {
               </AdminNotice>
             )}
 
+            {deepLinkMissing && (
+              <AdminNotice testId="users-deeplink-missing">This business is not in the current list</AdminNotice>
+            )}
+
             {/* LF-F2 (SA C5): amber, no live role; only the drawer line announces. */}
             {listStale && (
               <AdminNotice testId="users-list-stale">
@@ -556,6 +589,7 @@ export default function UsersPage() {
                         // ARIA here: the Open button is the keyboard path (SA Q-1).
                         <tr
                           key={user.id}
+                          data-account-id={user.id}
                           className={`hover:bg-slate-700/30 transition-colors cursor-pointer ${
                             isRowOpen ? 'bg-slate-700/20' : ''
                           }`}

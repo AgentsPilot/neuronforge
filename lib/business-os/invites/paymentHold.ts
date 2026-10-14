@@ -21,7 +21,7 @@
  * An unpaid `account_invite` row is held on the lineage read ALONE: the invite
  * is never read, so no error reading it can release a friend. The invite is
  * read only for an unpaid `admin_invite` row (5c's case), where its grant kind
- * decides.
+ * decides, and its `grant_id` names the tier the held account may buy (P-9.2).
  *
  * ── Failing open, and only then (SA Q-2) ────────────────────────────────────
  * `{ ok: false }` is returned only when a read that DECIDES failed: the lineage
@@ -50,10 +50,16 @@ export interface PaymentHoldReaders {
  * `source` on a held result (plan payments P-3a, SA Q-3): which lineage holds
  * the account, so the plan checkout can restrict a friend to the friend tier
  * without copying this predicate. Additive: the gate reads only `held`.
+ *
+ * `grantId` (P-9.2, SA C-5) exists ONLY on the `admin_invite` variant: the
+ * tier the admin chose, read from the invite named by the account's own
+ * lineage row, so the held checkout names it from the server, never from the
+ * client (SA-P9). A friend's variant has none: R-3 never reads its invite.
  */
 export type PaymentHold =
   | { ok: true; held: false }
-  | { ok: true; held: true; inviteId: string | null; source: 'account_invite' | 'admin_invite' }
+  | { ok: true; held: true; inviteId: string | null; source: 'account_invite' }
+  | { ok: true; held: true; inviteId: string; source: 'admin_invite'; grantId: string }
   | { ok: false };
 
 /**
@@ -87,7 +93,12 @@ export async function readPaymentHold(accountId: string, readers: PaymentHoldRea
   // 5c's case: an admin invite holds only when it was a Paid (tier) invite.
   const invite = await readers.invites.findHoldFactsById(facts.invite_id);
   if (invite.error) return { ok: false };
-  return isAwaitingPayment(facts, invite.data?.grant_kind ?? null)
-    ? { ok: true, held: true, inviteId: facts.invite_id, source: 'admin_invite' }
-    : { ok: true, held: false };
+  if (!isAwaitingPayment(facts, invite.data?.grant_kind ?? null)) return { ok: true, held: false };
+
+  // C-5: a held admin invitee always carries the tier the admin chose. An empty
+  // `grant_id` is impossible by schema (NOT NULL), but would be a held result
+  // with nothing to sell: the hold is then unreadable, never "held, no tier".
+  const grantId = invite.data?.grant_id;
+  if (typeof grantId !== 'string' || grantId.length === 0) return { ok: false };
+  return { ok: true, held: true, inviteId: facts.invite_id, source: 'admin_invite', grantId };
 }

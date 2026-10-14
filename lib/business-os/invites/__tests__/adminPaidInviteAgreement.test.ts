@@ -164,6 +164,13 @@ describe.each([false, true])('the Paid switch %s', (switchOn) => {
     const page = await viewState(shape);
     const signup = await signupAnswer(shape);
 
+    // SA O-1 (P-9.2): the EXPECTED state per case, not only agreement, so a
+    // shape both sides wrongly accept (e.g. an unpriced tier) turns this red.
+    const expectedValid = switchOn && shape === SHAPES[0];
+    expect(page).toBe(expectedValid ? 'valid' : 'unavailable');
+    expect(signup.ok).toBe(expectedValid);
+    expect(predicate).toBe(expectedValid ? 'ok' : switchOn ? 'unavailable' : 'switch_off');
+
     expect(page === 'valid').toBe(signup.ok);
     expect(page === 'valid').toBe(predicate === 'ok');
     if (!signup.ok) {

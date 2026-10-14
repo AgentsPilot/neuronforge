@@ -8,6 +8,9 @@ import 'server-only';
  *   coming_soon  today's screen: a held-payment switch is off, or the hold
  *                cannot be paid for yet (D5-3: never offer what the server
  *                refuses). Decided by `heldPaymentOffer`, never re-derived.
+ *                With every switch on but no tier to sell
+ *                (`held_tier_unresolved`), one `alert: true` error per load
+ *                (P-9.2, §3.4).
  *   pay          "Finish your payment", with the plan name and the monthly
  *                price read from `TIER_MATRIX.presentation` (G5-7: no literal).
  *   processing   a payment is under way: the checkout return marker is on the
@@ -120,7 +123,19 @@ export async function readHeldPaymentView(input: HeldPaymentViewInput, deps: Hel
 
   // 1. The one predicate (S5-2). Unavailable → today's screen, whatever else is true.
   const offer = heldPaymentOffer(hold, (deps.switches ?? readHeldPaymentSwitches)());
-  if (offer.kind !== 'pay') return { kind: 'coming_soon' };
+  if (offer.kind !== 'pay') {
+    // P-9.2 (§3.4, SA W-2): `held_tier_unresolved` is answered only with every
+    // switch on, so this account is held with nothing it can buy (its invited
+    // tier lost its Stripe price, R-3). Someone must look; P-13's waiver is the
+    // way out. Ids and the source only; bounded by page loads.
+    if (offer.code === 'held_tier_unresolved') {
+      log.error(
+        { event: 'bos_billing_held_tier_unresolved', alert: true, accountId, source: hold.source },
+        'Held account has no plan it can pay for'
+      );
+    }
+    return { kind: 'coming_soon' };
+  }
 
   const pay: HeldPaymentView = {
     kind: 'pay',
