@@ -157,7 +157,7 @@ describe('PaymentTransactionRepository: Stripe webhook methods (CF-5 PR 3)', () 
 
       expect(calls).toEqual([
         ['from', 'payment_transactions'],
-        ['select', 'id, user_id, invoice_id, currency'],
+        ['select', 'id, user_id, invoice_id, currency, stripe_connect_account_id'],
         ['limit', 1],
         ['eq', 'stripe_charge_id', CHARGE],
         ['await'],
@@ -390,7 +390,9 @@ describe('PaymentTransactionRepository: Stripe webhook methods (CF-5 PR 3)', () 
 
     it('column constants are the exact inline strings', () => {
       expect(WEBHOOK_TRANSACTION_DISPUTE_COLUMNS).toBe('id, user_id, status, amount, currency, contact_id, metadata');
-      expect(WEBHOOK_TRANSACTION_REFUND_COLUMNS).toBe('id, user_id, invoice_id, currency');
+      // Widened by the Stripe Connect refund fix (FR 7, A-7): the refund handler
+      // compares the payment's connected account with `event.account`.
+      expect(WEBHOOK_TRANSACTION_REFUND_COLUMNS).toBe('id, user_id, invoice_id, currency, stripe_connect_account_id');
       expect(WEBHOOK_TRANSACTION_ID_COLUMNS).toBe('id');
       expect(WEBHOOK_TRANSACTION_ATTACH_COLUMNS).toBe('id, invoice_id');
     });

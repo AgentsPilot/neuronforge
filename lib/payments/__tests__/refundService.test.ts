@@ -105,9 +105,24 @@ jest.mock('@/lib/supabaseServer', () => ({
   },
 }));
 
+/**
+ * The ledger's post-reply writes (A-4): compare-and-set through the repository.
+ * Answers `{ count: 1 }` unless a test says otherwise.
+ */
+const applyStripeRefundState = jest.fn();
+
+jest.mock('@/lib/repositories/PaymentRefundRepository', () => ({
+  paymentRefundRepository: {
+    applyStripeRefundState: (...args: unknown[]) => applyStripeRefundState(...args),
+  },
+}));
+
+/** The request logger `refund()` derives with `logger.child`, shared so tests can read it. */
+const childLog = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({
-    child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }),
+    child: () => childLog,
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
@@ -149,6 +164,11 @@ beforeEach(() => {
   // Connected unless a test says otherwise — see `connectAccount`.
   dbState.connectAccount = { stripe_account_id: 'acct_connected' };
   process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+  applyStripeRefundState.mockReset();
+  applyStripeRefundState.mockResolvedValue({ data: { count: 1 }, error: null });
+  childLog.info.mockReset();
+  childLog.warn.mockReset();
+  childLog.error.mockReset();
 });
 
 describe('refund — refusals that must never reach Stripe', () => {
@@ -542,9 +562,10 @@ describe('refund — replay and failure', () => {
 
     expect(result).toMatchObject({ ok: false, code: 'BALANCE_INSUFFICIENT' });
     // Marked failed, never succeeded — claiming otherwise would report money as
-    // returned when none moved.
-    expect(dbState.updates.some(u => u.status === 'failed')).toBe(true);
-    expect(dbState.updates.some(u => u.status === 'succeeded')).toBe(false);
+    // returned when none moved. Through the repository since A-4.
+    const patches = applyStripeRefundState.mock.calls.map(call => call[4] as Record<string, unknown>);
+    expect(patches.some(p => p.status === 'failed')).toBe(true);
+    expect(patches.some(p => p.status === 'succeeded')).toBe(false);
   });
 
   it('does not leak Stripe internals outside development', async () => {
@@ -615,6 +636,93 @@ describe('refund — replay and failure', () => {
 
     expect(result).toMatchObject({ ok: false, code: 'IN_FLIGHT' });
     expect(stripeRefundsCreate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A-4 (FR 14): the app's two post-reply writes are compare-and-set through the
+ * repository, so a `refund.*` webhook that recorded Stripe's answer first is
+ * never overwritten. C-2: a failed write is logged, never thrown, and the
+ * answer still follows Stripe's reply.
+ */
+describe('refund — post-reply ledger writes do not overwrite the webhook (A-4)', () => {
+  const OPENED = { status: 'pending', processorRefundId: null };
+  const infoMessages = () => childLog.info.mock.calls.map(call => call[1]);
+  const errorMessages = () => childLog.error.mock.calls.map(call => call[1]);
+
+  it('A4-1: the success write goes through applyStripeRefundState, expecting the row this request opened', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_a4', status: 'succeeded' });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'a4-1' });
+
+    expect(result).toMatchObject({ ok: true, processorRefundId: 're_a4' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    const [userId, transactionId, rowId, expected, patch] = applyStripeRefundState.mock.calls[0];
+    expect([userId, transactionId, rowId, expected]).toEqual(['user-1', 'tx-1', 'refund-row-1', OPENED]);
+    expect(patch).toMatchObject({ status: 'succeeded', processor_refund_id: 're_a4' });
+    // No direct `payment_refunds` update remains on these lines.
+    expect(dbState.updates).toEqual([]);
+  });
+
+  it('A4-1: the catch write goes through applyStripeRefundState too, with the same expectation', async () => {
+    stripeRefundsCreate.mockRejectedValue(Object.assign(new Error('card_declined'), { code: 'card_declined' }));
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'a4-2' });
+
+    expect(result).toMatchObject({ ok: false, code: 'PROCESSOR_ERROR' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    const [, , rowId, expected, patch] = applyStripeRefundState.mock.calls[0];
+    expect([rowId, expected]).toEqual(['refund-row-1', OPENED]);
+    expect(patch).toMatchObject({ status: 'failed', failure_code: 'card_declined' });
+    expect(Object.keys(patch).sort()).toEqual(['failure_code', 'failure_message', 'status', 'updated_at']);
+    expect(dbState.updates).toEqual([]);
+  });
+
+  it("A4-2: a lost reply does not turn the webhook's succeeded into failed (count 0 → info, no further write)", async () => {
+    // Stripe made the refund, the reply was lost, and the webhook recorded it
+    // first: the compare-and-set finds no `pending` row with a null Stripe id.
+    stripeRefundsCreate.mockRejectedValue(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }));
+    applyStripeRefundState.mockResolvedValue({ data: { count: 0 }, error: null });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'a4-3' });
+
+    expect(result.ok).toBe(false);
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    expect(infoMessages()).toContain("Webhook already recorded Stripe's answer; keeping it");
+    expect(dbState.updates).toEqual([]);
+  });
+
+  it('A4-2: on the success path, count 0 keeps the webhook state and still reports the refund', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_a4', status: 'succeeded' });
+    applyStripeRefundState.mockResolvedValue({ data: { count: 0 }, error: null });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'a4-4' });
+
+    expect(result).toMatchObject({ ok: true, processorRefundId: 're_a4' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    expect(infoMessages()).toContain("Webhook already recorded Stripe's answer; keeping it");
+  });
+
+  it('C-2: a failed success-path write is logged, not thrown, and the answer follows Stripe', async () => {
+    stripeRefundsCreate.mockResolvedValue({ id: 're_c2', status: 'succeeded' });
+    applyStripeRefundState.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'db down' } });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'c2-1' });
+
+    expect(result).toMatchObject({ ok: true, processorRefundId: 're_c2' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    expect(errorMessages()).toContain("Could not record Stripe's answer on the refund ledger row");
+  });
+
+  it('C-2: a failed catch-path write is logged and the existing error result is returned', async () => {
+    stripeRefundsCreate.mockRejectedValue(Object.assign(new Error('Insufficient funds'), { code: 'balance_insufficient' }));
+    applyStripeRefundState.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'db down' } });
+
+    const result = await refund({ userId: 'user-1', transactionId: 'tx-1', source: 'app', clientRequestId: 'c2-2' });
+
+    expect(result).toMatchObject({ ok: false, code: 'BALANCE_INSUFFICIENT' });
+    expect(applyStripeRefundState).toHaveBeenCalledTimes(1);
+    expect(errorMessages()).toContain('Could not mark the refund ledger row failed');
   });
 });
 

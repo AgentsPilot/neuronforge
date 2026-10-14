@@ -38,6 +38,7 @@ import { activitySentence } from '@/lib/business-os/activityText';
 import { createLogger } from '@/lib/logger';
 import { resolveRefundAccount, stripeRequestOptions } from './stripeAccountContext';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
+import { paymentRefundRepository } from '@/lib/repositories/PaymentRefundRepository';
 import { fromMinorUnits, resolveRefundAmount } from './refundMath';
 import { REFUND_ROW_ID_METADATA_KEY } from './stripeRefundLedger';
 
@@ -1064,11 +1065,26 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
     };
   }
 
-  // Now Stripe.
+  /*
+   * The row this request opened, as the app's two post-reply writes expect to
+   * find it: still `pending`, with no Stripe id yet (A-4, FR 14).
+   *
+   * Both writes are compare-and-set through the repository. Since the webhook
+   * records `refund.*` events, it can reach this row first (the event can land
+   * before Stripe's reply does). If it has, the count is 0, and the webhook's
+   * state stands: it is Stripe's own word. In particular, a lost reply must not
+   * write `failed` over a refund the webhook already recorded as `succeeded`.
+   */
+  const OPENED_BY_THIS_REQUEST = { status: 'pending', processorRefundId: null } as const;
+
+  // Now Stripe. Only the call is inside the try: the catch below describes a
+  // failed Stripe call and nothing else, so it can never write `failed` over
+  // money that has moved.
+  let stripeRefund: Stripe.Refund;
   try {
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
-    const stripeRefund = await stripe.refunds.create(
+    stripeRefund = await stripe.refunds.create(
       {
         // Non-null by the guard above: a null target on a non-manual refund
         // returned MISSING_REFERENCE before the ledger row was written.
@@ -1088,45 +1104,29 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
         ...stripeRequestOptions(stripeAccount!),
       }
     );
-
-    await supabaseServer
-      .from('payment_refunds')
-      .update({
-        status: stripeRefund.status === 'failed' ? 'failed' : 'succeeded',
-        processor_refund_id: stripeRefund.id,
-        succeeded_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', ledgerRow.id);
-
-    log.info(
-      { refundId: ledgerRow.id, stripeRefundId: stripeRefund.id, amount: amount.amountMajor },
-      'Refund issued'
-    );
-
-    recordRefundActivity();
-
-    return {
-      ok: true,
-      refundId: ledgerRow.id,
-      processorRefundId: stripeRefund.id,
-      amount: amount.amountMajor,
-      currency: tx.currency,
-      replayed: false,
-    };
   } catch (error) {
     const stripeCode = (error as { code?: string })?.code;
     const message = error instanceof Error ? error.message : String(error);
 
-    await supabaseServer
-      .from('payment_refunds')
-      .update({
+    const { data: failedWrite, error: failedWriteError } = await paymentRefundRepository.applyStripeRefundState(
+      userId,
+      tx.id,
+      ledgerRow.id,
+      OPENED_BY_THIS_REQUEST,
+      {
         status: 'failed',
         failure_code: stripeCode ?? null,
         failure_message: message.slice(0, 500),
         updated_at: new Date().toISOString(),
-      })
-      .eq('id', ledgerRow.id);
+      }
+    );
+    if (failedWriteError) {
+      // Logged, not mapped (SA C-2). The row stays `pending`; a `refund.*`
+      // event, if Stripe did make the refund, still finds it by `refund_row_id`.
+      log.error({ err: failedWriteError, refundId: ledgerRow.id }, 'Could not mark the refund ledger row failed');
+    } else if (failedWrite?.count === 0) {
+      log.info({ refundId: ledgerRow.id }, "Webhook already recorded Stripe's answer; keeping it");
+    }
 
     log.error({ err: error, stripeCode }, 'Stripe refused the refund');
 
@@ -1153,4 +1153,46 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
           : 'The refund could not be completed. Nothing has been charged back.',
     };
   }
+
+  /*
+   * Stripe has answered. The write does not throw (the repository returns its
+   * error) and must not: the money has moved, so the answer below follows
+   * Stripe's reply whatever happens to this write (SA C-2). If it fails, the row
+   * stays `pending` with no Stripe id, and the webhook fills it in through
+   * `refund_row_id`. A P0001 here should be unreachable: a `pending` row already
+   * holds its budget in `refund_guard_before`. It is logged, not mapped.
+   */
+  const { data: written, error: writeError } = await paymentRefundRepository.applyStripeRefundState(
+    userId,
+    tx.id,
+    ledgerRow.id,
+    OPENED_BY_THIS_REQUEST,
+    {
+      status: stripeRefund.status === 'failed' ? 'failed' : 'succeeded',
+      processor_refund_id: stripeRefund.id,
+      succeeded_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+  );
+  if (writeError) {
+    log.error({ err: writeError, refundId: ledgerRow.id }, "Could not record Stripe's answer on the refund ledger row");
+  } else if (written?.count === 0) {
+    log.info({ refundId: ledgerRow.id }, "Webhook already recorded Stripe's answer; keeping it");
+  }
+
+  log.info(
+    { refundId: ledgerRow.id, stripeRefundId: stripeRefund.id, amount: amount.amountMajor },
+    'Refund issued'
+  );
+
+  recordRefundActivity();
+
+  return {
+    ok: true,
+    refundId: ledgerRow.id,
+    processorRefundId: stripeRefund.id,
+    amount: amount.amountMajor,
+    currency: tx.currency,
+    replayed: false,
+  };
 }
