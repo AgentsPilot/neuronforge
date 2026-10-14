@@ -31,6 +31,7 @@ jest.mock('@/lib/logger', () => ({
 
 import UsersPage from '../page';
 import { BusinessOsPanel } from '../components/BusinessOsPanel';
+import { DRAWER_PURPOSE } from '../components/DrawerBox';
 import recordedAccountBody from '@/app/admin/business-os-tiers/__tests__/__fixtures__/recordedAccountBody.json';
 import type { AdminUserRow } from '../types';
 
@@ -473,8 +474,12 @@ describe('the Businesses list', () => {
 
     const plugins = await screen.findByTestId('plugins-card');
     expect(plugins.textContent).toContain('could not be read');
-    expect(plugins.textContent).not.toContain('active');
-    expect(plugins.textContent).not.toContain('No plugins connected');
+    // LF-4d (BD-16, SA C1 wording): the card's purpose line says "active" in
+    // every state; everything else in the card is held to the old rule.
+    const shown = (plugins.textContent ?? '').replace(DRAWER_PURPOSE['account-plugins'], '');
+    expect(plugins.textContent).toContain(DRAWER_PURPOSE['account-plugins']);
+    expect(shown).not.toContain('active');
+    expect(shown).not.toContain('No plugins connected');
     expect(screen.getByTestId('ai-spend-card').textContent).toContain('$0.4321');
   });
 
