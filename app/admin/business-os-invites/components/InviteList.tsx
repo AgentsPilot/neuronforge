@@ -20,11 +20,16 @@
  * "(UTC)" on the date headers, `scope="col"`, a named table. State and email
  * status are `StatusChip`s (tones ruled by SA L-6 Q-3 / Q-4: Revoked is a
  * deliberate admin act, so neutral; "Sent (not tracked)" is not a proven
- * outcome, so info; Unknown keeps its amber prompt to check, so warn). The
- * revoke form stays inline under its row (D-8): no drawer (SA Q-7).
+ * outcome, so info; Unknown keeps its amber prompt to check, so warn).
+ *
+ * ── Admin Layout Follow-ups LF-3a (OR-3, F-110) ─────────────────────────────
+ * The row keeps its Revoke button; the question itself is the page's Revoke
+ * dialog, which outlives the button (the button leaves when the row becomes
+ * Revoked). Each button's accessible name names its invite: the email and the
+ * created time to the second, in UTC (SA C1), because the same email can hold
+ * two revocable invites created the same day. The visible word stays "Revoke",
+ * and the name starts with it (WCAG 2.5.3).
  */
-
-import { useState } from 'react';
 
 import { AdminEmpty } from '@/app/admin/components/layout/AdminStates';
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
@@ -38,11 +43,11 @@ import {
 } from '@/app/admin/components/layout/adminTable';
 
 import type { InviteEmailStatus, InviteRow, InviteState } from '../types';
-import { RevokeDialog } from './RevokeDialog';
 
 interface Props {
   invites: InviteRow[];
-  onRevoked: (invite: InviteRow) => void;
+  /** Opens the page's Revoke dialog for this invite; `button` is where focus goes back. */
+  onRevoke: (invite: InviteRow, button: HTMLButtonElement) => void;
   /** Slice 1c: "no invites yet" and "nothing matches" are different answers. */
   emptyMessage?: string;
   /** Set only while a filter is on: the empty state offers "Clear filters" (§5.10). */
@@ -77,11 +82,17 @@ function day(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '—';
 }
 
+/**
+ * The created time to the second, in UTC, for the Revoke button's name (F-110,
+ * SA C1). The same assumption as `day()`: the server sends UTC ISO strings.
+ */
+function secondUtc(iso: string): string {
+  return `${iso.slice(0, 10)} ${iso.slice(11, 19)} UTC`;
+}
+
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
 
-export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.', onClearFilters }: Props) {
-  const [revoking, setRevoking] = useState<string | null>(null);
-
+export function InviteList({ invites, onRevoke, emptyMessage = 'No invites yet.', onClearFilters }: Props) {
   if (invites.length === 0) {
     return <AdminEmpty testId="invite-list-empty" message={emptyMessage} onClear={onClearFilters} />;
   }
@@ -201,24 +212,15 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
                 </td>
                 <td className={`${ADMIN_TD} whitespace-nowrap text-slate-400`}>{day(invite.firstViewedAt)}</td>
                 <td className={ADMIN_TD}>
-                  {canRevoke && revoking !== invite.id && (
+                  {canRevoke && (
                     <button
                       type="button"
-                      onClick={() => setRevoking(invite.id)}
+                      onClick={(event) => onRevoke(invite, event.currentTarget)}
+                      aria-label={`Revoke invite for ${invite.email} (created ${secondUtc(invite.createdAt)})`}
                       className={`rounded-lg border border-rose-500/50 px-2 py-1 text-xs text-rose-200 hover:bg-rose-500/20 ${FOCUS_RING}`}
                     >
                       Revoke
                     </button>
-                  )}
-                  {revoking === invite.id && (
-                    <RevokeDialog
-                      invite={invite}
-                      onCancel={() => setRevoking(null)}
-                      onRevoked={(updated) => {
-                        setRevoking(null);
-                        onRevoked(updated);
-                      }}
-                    />
                   )}
                 </td>
               </tr>
