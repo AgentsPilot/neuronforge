@@ -575,3 +575,43 @@ describe('no dead Advanced Filters panel (Admin Layout Standard L-4a; D-11 (a), 
     expect(PANEL_WORDS.filter((word) => page.includes(word))).toEqual([]);
   });
 });
+
+describe('the screen logs through the client logger, never the server one (follow-ups LF-F3, SA-F3; F-56)', () => {
+  /** Every non-test source file under the screen, walked, so a new file is covered without a list edit. */
+  function screenSources(dir: string): string[] {
+    return fs.readdirSync(path.join(process.cwd(), dir), { withFileTypes: true }).flatMap((entry) => {
+      const relative = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) return entry.name === '__tests__' ? [] : screenSources(relative);
+      return relative.endsWith('.ts') || relative.endsWith('.tsx') ? [relative] : [];
+    });
+  }
+
+  /** Names the server entry `@/lib/logger` as a module specifier (the client entry `@/lib/logger/client` is fine). */
+  const namesServerLogger = (code: string) => code.includes("'@/lib/logger'") || code.includes('"@/lib/logger"');
+
+  it('the detector sees the server entry in either quote style and passes the client entry (planted samples)', () => {
+    expect(namesServerLogger("import { createLogger } from '@/lib/logger';")).toBe(true);
+    expect(namesServerLogger('import { createLogger } from "@/lib/logger";')).toBe(true);
+    expect(namesServerLogger("const m = await import('@/lib/logger');")).toBe(true);
+    expect(namesServerLogger("import { clientLogger } from '@/lib/logger/client';")).toBe(false);
+  });
+
+  it('the walk finds the page, the detail hook and a component, so it cannot pass on an empty list', () => {
+    const files = screenSources(ROOT);
+    expect(files).toEqual(
+      expect.arrayContaining([`${ROOT}/page.tsx`, `${ROOT}/useBusinessDetails.ts`, `${ROOT}/components/BusinessDetail.tsx`]),
+    );
+    expect(files.some((file) => file.includes('__tests__'))).toBe(false);
+  });
+
+  it('no file of the screen imports the server logger', () => {
+    const offenders = screenSources(ROOT).filter((file) => namesServerLogger(codeOf(read(file))));
+    expect(offenders).toEqual([]);
+  });
+
+  it.each([`${ROOT}/page.tsx`, `${ROOT}/useBusinessDetails.ts`])('%s is a client file that imports clientLogger', (file) => {
+    const source = read(file);
+    expect(source.trimStart().startsWith("'use client'")).toBe(true);
+    expect(source).toContain("import { clientLogger } from '@/lib/logger/client';");
+  });
+});

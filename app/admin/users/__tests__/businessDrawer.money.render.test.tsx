@@ -40,6 +40,8 @@ jest.mock('@/lib/logger', () => ({
     debug: jest.fn(),
     child: jest.fn().mockReturnThis(),
   }),
+  // LF-F3: the page logs through `clientLogger.child`; `@/lib/logger/client` re-exports it from this module.
+  clientLogger: { child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }) },
 }));
 
 jest.mock('next/navigation', () => ({
@@ -184,9 +186,20 @@ let boostGate: Promise<void> | null = null;
  * LF-F2 (T-K): how the next list read fails, then cleared: a 500 from the
  * route, a rejected fetch, or held until the test answers it (T-K8).
  */
-let listFailNext: 'http' | 'network' | 'held' | null = null;
+let listFailNext: 'http' | 'network' | 'held' | 'heldNetwork' | null = null;
 /** The held list read's answer (T-K8). */
 let heldList: { promise: Promise<Reply>; resolve: (reply: Reply) => void } | null = null;
+/** The held list read the test rejects as a network failure (T-K9, T-K10; LF-F3, LF-F2-N1). */
+let heldNetwork: { promise: Promise<Reply>; reject: (reason: unknown) => void } | null = null;
+
+/** As the harness `deferred`, but rejectable: the harness one has no reject, and the harness stays as it is. */
+function rejectableDeferred<T>() {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((_resolve, r) => {
+    reject = r;
+  });
+  return { promise, reject };
+}
 
 function routePost(url: string): Queued {
   if (url === OPS_URL) return fromQueue(opsQueue, url);
@@ -206,6 +219,10 @@ function routeGet(url: string): Queued {
     if (fail === 'held') {
       heldList = deferred<Reply>();
       return heldList.promise;
+    }
+    if (fail === 'heldNetwork') {
+      heldNetwork = rejectableDeferred<Reply>();
+      return heldNetwork.promise;
     }
     return okBody([danaRow(listReadCount)]);
   }
@@ -299,6 +316,7 @@ beforeEach(() => {
   boostGate = null;
   listFailNext = null;
   heldList = null;
+  heldNetwork = null;
   creditsData = creditsPayload([lot(1), PAID_LOT]);
   boostData = boostView();
 });
@@ -703,6 +721,66 @@ describe('T-K: a failed list re-read after a Give or Take back keeps the rows an
     expect(screen.queryByTestId('users-list-stale')).toBeNull();
     expect(screen.queryByTestId('users-error')).toBeNull();
     expect(listUrls()).toHaveLength(3);
+    window.history.replaceState(null, '', '/');
+  });
+
+  // LF-F3 (LF-F2-N1, SA N-1): T-K8 pins the 500 branch only; these two pin the
+  // network branch, where the order check is its own line (`if (isNewest()) fail(...)`).
+  /** Everything the newer read showed is still there, and no failure is shown. */
+  function expectNewerReadStands() {
+    expect(rowCell().textContent).toBe('30%');
+    expect(screen.getAllByTestId('row-business')).toHaveLength(1);
+    expect(screen.queryByTestId('users-error')).toBeNull();
+    expect(screen.queryByTestId('users-list-stale')).toBeNull();
+    expect(screen.queryByTestId('drawer-list-stale')).toBeNull();
+    expect(listUrls()).toHaveLength(3);
+  }
+
+  it('T-K9: keep mode: an older post-Give read rejected (network) after a newer read succeeded changes nothing', async () => {
+    const drawer = await openDrawer();
+    const dialog = await give(drawer);
+    opsQueue.push(granted(100));
+    listFailNext = 'heldNetwork';
+    fireEvent.click(button(dialog, 'credit-form-confirm'));
+    await waitFor(() => expect(dialog.isConnected).toBe(false));
+    await waitFor(() => expect(heldNetwork).not.toBeNull());
+
+    // As T-K8: the newer read an admin can start now is a status change, once the drawer is closed.
+    fireEvent.keyDown(drawer, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'all' } });
+    await waitFor(() => expect(listUrls()).toHaveLength(3));
+    await waitFor(() => expect(rowCell().textContent).toBe('30%'));
+
+    await act(async () => {
+      heldNetwork?.reject(new TypeError('Failed to fetch'));
+    });
+    await quiet();
+
+    expectNewerReadStands();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('T-K10: normal mode: an older Status read rejected (network) after a newer Status read succeeded changes nothing', async () => {
+    installFetch();
+    render(<UsersPage />);
+    await screen.findByRole('button', { name: 'Open details for Dana Cohen' });
+    await quiet();
+    expect(rowCell().textContent).toBe('40%');
+
+    listFailNext = 'heldNetwork';
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'all' } });
+    await waitFor(() => expect(heldNetwork).not.toBeNull());
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'active' } });
+    await waitFor(() => expect(listUrls()).toHaveLength(3));
+    await waitFor(() => expect(rowCell().textContent).toBe('30%'));
+
+    await act(async () => {
+      heldNetwork?.reject(new TypeError('Failed to fetch'));
+    });
+    await quiet();
+
+    expectNewerReadStands();
     window.history.replaceState(null, '', '/');
   });
 });

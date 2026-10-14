@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Phone, Building, XCircle } from 'lucide-react';
-import { createLogger } from '@/lib/logger';
+import { clientLogger } from '@/lib/logger/client';
 import { AdminDrawer } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 import {
@@ -37,7 +37,8 @@ import { ageLine } from './usersFormat';
 import { useBusinessDetails } from './useBusinessDetails';
 import type { AdminUserRow } from './types';
 
-const logger = createLogger({ module: 'AdminUsersPage' });
+// A client file logs through the client logger (Admin Layout Standard F-56; follow-ups LF-F3, SA-F3).
+const logger = clientLogger.child({ module: 'AdminUsersPage' });
 
 /** One row of the list route (the type moved to `types.ts` in L-4b). */
 type User = AdminUserRow;
