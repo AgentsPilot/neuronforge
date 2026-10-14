@@ -1,6 +1,6 @@
 # Requirement: Business OS Finance & Business Health (admin page)
 
-> **Last Updated**: 2026-10-11
+> **Last Updated**: 2026-10-13
 
 **Created by:** BA
 **Date:** 2026-10-09
@@ -32,6 +32,7 @@ This document is the feature's **single source of truth**: every slice decision,
 11. [Slices 1a and 1b: acceptance criteria](#11-slices-1a-and-1b-acceptance-criteria)
     - [11A. Slice 2 (2a and 2b): full specification and acceptance criteria](#11a-slice-2-2a-and-2b-full-specification-and-acceptance-criteria)
     - [11B. Slice 1c (fix): test-mode platform money and paying Founding Partners](#11b-slice-1c-fix-test-mode-platform-money-and-paying-founding-partners)
+    - [11C. Slice 4 (4a and 4b): Boost revenue](#11c-slice-4-4a-and-4b-boost-revenue)
 12. [Testing and CI guards](#12-testing-and-ci-guards)
 13. [Read-only SQL cross-checks for slice 1](#13-read-only-sql-cross-checks-for-slice-1)
 14. [Open questions for SA](#14-open-questions-for-sa)
@@ -52,7 +53,7 @@ This document is the feature's **single source of truth**: every slice decision,
 | 2 | Business takings and client payment problems (layer B); currency-grouping helper (CUR-1, CUR-2, AC-13) | None (real rows today); **no migration**; new reads R-e to R-i (§11A.7) plus the reused reminder read R-j; SA-Q9 resolved by BD-13; split **2a** (takings) and **2b** (client payment problems) | ⬜ **2a implemented (uncommitted); SA code review APPROVED (SA-CR-2a), QA PASS WITH ISSUES (no bugs), fix round 1 applied; user approved diff 2026-10-12; TL retrospective done; committed `502e5d5d` on `feature/bos-finance-health-2`, PR [#312](https://github.com/AgentsPilot/neuronforge/pull/312) opened 2026-10-12, merge pending; user manual QA L-23..L-31 owed. 2a MERGED PR #312 (2026-10-12, merge `045a4d06`). 2b: workplan written 2026-10-12 on branch `feature/bos-finance-health-2b`, 2b implemented (uncommitted); SA code review APPROVED WITH CONDITIONS (SA-CR-2b; condition SA-CR-1 backspace fix done), QA PASS WITH ISSUES (no bugs), fix round 1 applied; user approved diff 2026-10-12; TL retrospective done; committed `b4e0fa2b` on `feature/bos-finance-health-2b` (origin/main merged in `a6caf75e`), PR [#318](https://github.com/AgentsPilot/neuronforge/pull/318) opened 2026-10-12, merge pending; user manual QA L-32..L-41 owed** (§11A; SA rulings SA-Q13 to SA-Q19 and SA-W18 to SA-W27 in §0.3; findings S2-F1 to S2-F9 applied 2026-10-11; workplan-review edits E-8 to E-10 applied 2026-10-11) | 2a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md); 2b: [BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md) | 2a: [#312](https://github.com/AgentsPilot/neuronforge/pull/312); 2b: [#318](https://github.com/AgentsPilot/neuronforge/pull/318) |
 | 1c | Fix slice: test-mode platform money counts (BD-14); a paying Founding Partner is grouped under its paid tier (BD-15); revenue panel copy no longer says the webhook is missing | Slices 1a, 1b; **no migration**; changes R-c, R-c′, R-d (§11B) | ⬜ **1c implemented (uncommitted); SA code review APPROVED WITH CONDITIONS (SA-CR-1c; SA-CR-2 rename and SA-CR-3 test title done), QA PASS WITH ISSUES (no bugs), fix round 1 applied (FP note only while the FP period is current); user approved diff 2026-10-13; TL retrospective done; committed `fa7a4aad` on `feature/bos-finance-health-1c` (origin/main merged in `10e3c5f0`), PR [#335](https://github.com/AgentsPilot/neuronforge/pull/335) opened 2026-10-13, merge pending; user manual QA L-42..L-48 owed** | [BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_WORKPLAN.md) | [#335](https://github.com/AgentsPilot/neuronforge/pull/335) |
 | 3 | Growth funnel (invites) | More invite volume to be meaningful; "paid" stage waits on P-5 | ⬜ Not started | — | — |
-| 4 | Boost revenue (live, with test-mode switch) | Boost checkout open beyond test accounts (boost slice 5b.1 deployed + flag); new admin read on the boost repository | ⬜ Not started | — | — |
+| 4 | Boost revenue: **4a** boost revenue per currency and package, K-5 value; **4b** boost problems, K-5 dispute rule, bought credits in Section 4 (test and live together, BD-14; no switch) | **Met:** boost purchases are recorded (1 paid Starter, test mode, counted under BD-14; §11C.1); **no migration**; new reads R-k, R-k′, R-l, R-l′ in `BusinessOsFinanceReadRepository`, not on the boost repository (§11C.6) | ⬜ **4a implemented (uncommitted); SA code review APPROVED with no conditions (SA-CR-4a), QA PASS WITH ISSUES (no bugs, no fix round); user approved diff 2026-10-14; TL retrospective done; 4a committed `0acb460b`, PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358) open, awaiting user merge; manual QA L-49 to L-58 owed; 4b next; DF-5 refund timing on default (a) pending user** (§11C; SA-Q25 to SA-Q31; about 2.5 + 1.5 days) | 4a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md) | 4a: [#358](https://github.com/AgentsPilot/neuronforge/pull/358) |
 | 5 | Plan revenue, MRR, paying vs comped, trial-to-paid | P-3b.2 (webhook writer), P-8a (MRR definition), P-5 (`first_paid_at` writer) | ⬜ Blocked on dependencies | — | — |
 | 6 | AI margin (overall and per current plan) | Slices 4 and 5 | ⬜ Blocked on slices 4, 5 | — | — |
 | 7 | Platform payment problems and churn | P-6a, P-6b, P-8b | ⬜ Blocked on dependencies | — | — |
@@ -94,6 +95,9 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 - 2026-10-13 — The user's owner-account test (a Starter boost and a Basic subscription, both Stripe test mode, recorded correctly, verified read-only 2026-10-12) showed nothing on the Finance page: the revenue panel and the paying read are live-only (BD-10), and the account stayed in Founding Partner. User decided **BD-14** (test and live platform money together, no switch; supersedes BD-10) and **BD-15** (a paying champion is grouped under its paid tier, with a Founding Partner note). BA specified fix slice **1c** in §11B (about 1 day, no migration; AC-75 to AC-84; SQL checks 1 and 6 updated). Awaiting SA review (SA-Q20 to SA-Q24).
 - 2026-10-13 — BA applied SA 1c review edits E-15..E-19 (SA-RR-1c): §13 check 1 comment keeps the tier caveat (E-15, S1C-F4); AC-78 rewritten for the owner account (tier in force, shown as Comped, not Founding Partner, per S1C-F1) and for a paying champion with no tier in force (E-16); AC-80 adds `tier` is `(none)` (E-17); new AC-85 (two billing rows, page boundary, OR) and AC-86 (paid tier source, SA-Q20) (E-18); §11B.5 guard rows (E-19). §11B SA-Q20 background corrected (the account showed as Comped).
 - 2026-10-13 — BA applied SA 1c workplan-review edits E-20..E-25 (BD-16): S1C-FR-2 rewritten for one billing row per account, where two rows give an error and the 'Tier set' fallback (E-20); AC-82 two-row case now fails to the fallback (E-21); AC-80 "counted once" sentence removed (E-22); AC-85 rewritten (E-23); §11B.6 SA-Q21 marked withdrawn (E-24); §13 check 1 comments (E-25, ASCII, query unchanged).
+- 2026-10-13 — BA specified slice 4 "Boost revenue" in §11C from a read-only live check (§11C.1: 1 boost purchase, paid, test mode, Starter, USD 10.00; integer minor-unit amounts; no refund date and no refund or dispute rows; `user_id` nullable). Split **4a** boost revenue (R-k, R-k′; per currency gross, tax, refunded, held and lost in disputes, net, credits sold; by package; K-5 value; about 2.5 days) and **4b** boost problems, the BD-11 dispute rule on K-5 and bought credits beside gifted credits in Section 4 (R-l, R-l′; about 1.5 days). Purchases dated by `paid_at`; refunds and disputes shown against the purchase month (no date stored). No migration; no business question open. AC-87 to AC-107; §13 checks 14 to 16; SA-Q25 to SA-Q31. Awaiting SA review.
+- 2026-10-13 — BA applied SA slice 4 review edits E-26..E-29 (SA-RR-4): S4-W-4 uses `minorUnitsPerMajor` from `lib/payments/refundMath.ts` as the one source for currency decimals (E-26, S4-F1); AC-88 asserts the half-open bounds on the read's query (E-27, S4-F2); S4-FR-17 red reason names the dispute and narrows to a picked business via R-l′ (E-28, S4-F3); deferral DF-5 refund and dispute dates, default purchase month, pending user question on refund timing (E-29, SA-Q28).
+- 2026-10-13 — BA applied SA 4a workplan-review edits E-30..E-32 (SA-WP-4a): §13 check 14 gains a comment and the `deleted_account_net_minor` column, and AC-97 compares against it (E-30, SA-W51); note after AC-77 that 4a supersedes the 1c K-5 wording only (E-31, SA-W50); S4-FR-4 plans line says it covers all businesses in the picked view (E-32, SA-WR-33).
 
 ### 0.3 SA rulings
 
@@ -150,6 +154,11 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **SA-W41 to SA-W46** | **Slice 1c workplan rulings (with BD-16).**<br>• W41: moot, because one row gives one `bought_tier`; `paidTierOf(planTier, boughtTier, tierOrder)`.<br>• W42: dormant counts the Founding Partner group only, so a Comped dormant champion is not counted either.<br>• W43: keep the SA-WR-17 test and add a picked-view chip test.<br>• W44: the override runs after `groupFor`, only when paying is true.<br>• W45: comment-only edit in `payingSubscriptionStatuses.ts`, never using the word "supabase".<br>• W46: no code change; the check 1 caveat is stated (E-25).<br>`!!cohort` is accepted, since `cohort !== ''` trips the cohort-literal rule. | 2026-10-13 | §11B, AC-80, AC-82, AC-85 |
 | **SA-WP-1c** | **2026-10-13 SA workplan review (slice 1c): APPROVED WITH CONDITIONS.** Under BD-16 the single-row reads are kept; keyset paging on `user_id` was verified correct for one row per account. Two rows give an honest error (SA-WR-27, SA-WR-28). Required changes SA-WR-26 to SA-WR-31; about 1 day. BA applies E-20 to E-25 (exact text in the workplan's SA review). | 2026-10-13 | Slice 1c |
 | **SA-CR-1c** | **2026-10-13 SA code review (slice 1c): APPROVED WITH CONDITIONS, code approved for QA.**<br>• The dual-row redesign is gone, and two rows give an honest error.<br>• The renames leave no old name.<br>• The repository code names no `livemode` (planted control).<br>• The paid tier comes from `tierOrder` only.<br>• The BD-15 override runs after `groupFor`, with the note and the picked-view chip; a non-paying champion stays in Founding Partner.<br>• Dormant counts the Founding Partner group only.<br>• The panel copy has no webhook or mode wording.<br>• Test-mode rows count in R-c, R-c′ and R-d.<br>Conditions (Low): **SA-CR-2** rename R-c′ to `findBillingStatusForAccount`, since under BD-16 it returns one row or null; **SA-CR-3** re-title the "spans pages" duplicate test. The page-boundary residual is accurate. | 2026-10-13 | Slice 1c |
+| **SA-Q25 to SA-Q31** | **Slice 4 rulings.**<br>• Q25: K-5 follows the filter window.<br>• Q26: reuse `minorUnitsPerMajor` (`lib/payments/refundMath.ts`); integer cents are hundredths only when it returns 100, otherwise unreadable; never `toUnits` or `× 100`.<br>• Q27: the layer-B pager (ceiling 5,000, "At least", net Unknown).<br>• Q28: refunds and disputes count in the purchase month, as recorded today; a refund date is deferred (DF-5) and offered to the user as a business choice with that default.<br>• Q29: a dispute rule on K-5 (data, `atLeast 1`), five tiles kept.<br>• Q30: stored package id and version, no entitlements import.<br>• Q31: bought credits in `creditsSection.ts`, a second source filter; G3 is not tripped. | 2026-10-13 | §11C |
+| **SA-RR-4** | **2026-10-13 SA requirement review (slice 4): APPROVED WITH CONDITIONS.** Verified:<br>• the finance table pin does not grow (`business_os_boost_purchases` is already pinned for R-d);<br>• no boost or webhook guard trips;<br>• checks 14 to 16 match the migration columns and the style rules (to be run at QA).<br>Findings S4-F1 to S4-F5. The 4a workplan starts after BA edits E-26 to E-29. | 2026-10-13 | Slice 4 |
+| **SA-W47 to SA-W54** | **Slice 4a workplan rulings, all approved.**<br>• W47: an optional `money` on K-5 only.<br>• W48: unreadable is decided per row; numeric strings in the integer money columns are unreadable.<br>• W49: reuse the `CLIENT_*` limits.<br>• W50: 1c's K-5 and panel wording tests may be rewritten, but R-d's no-mode behaviour stays pinned (SA-WR-32, E-31).<br>• W51: check 14 gains `deleted_account_net_minor` (E-30).<br>• W52: `RevenuePanel.tsx` rewritten in place over `FinanceSection`; the strip gets `windowLabel`.<br>• W53: DF-5 kept in one function and one copy line, pinned.<br>• W54: credits go through `toUnits` once; money never goes through `toUnits`, `toHundredths` or `× 100`. | 2026-10-13 | §11C, check 14, AC-75 to AC-77, AC-97 |
+| **SA-WP-4a** | **2026-10-13 SA workplan review (slice 4a): APPROVED WITH CONDITIONS.** Required changes SA-WR-32 to SA-WR-35, including the plans line marked platform-wide in the picked view (E-32). Verified untouched: the table pin (eight tables), the boost repository identifier pins, the webhook placement guards, purge and entitlements. BA applies E-30 to E-32 (exact text in the workplan's SA review) before V-11 and QA. | 2026-10-13 | Slice 4a |
+| **SA-CR-4a** | **2026-10-14 SA code review (slice 4a): APPROVED, code approved for QA.** SA-WR-32 to SA-WR-35 verified: the R-d repository test is unedited and the test-mode invoice behaviour is pinned; the plans line is platform-wide in the picked view; `money` is on K-5 only and printed via `formatMoney` or copy; the DF-5 function and copy line are pinned. SA-W48: numeric strings are unreadable. SA-W54: one `toUnits` (credits) and no `× 100`. `minorUnitsPerMajor` is the one source of decimals. No cross-currency sum. Account-scoped reads only with a business picked. `requireAdmin` first. Logs carry counts only. Deviations approved. The Jest worker-exit warning predates 4a. | 2026-10-14 | Slice 4a |
 
 ### 0.4 Deferrals and parked items
 
@@ -159,6 +168,7 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | DF-2 | "Businesses without a plan row" is **not** shown in slice 1 | A shadow-report fact (`findTenantsMissingPlanRow`); the page links to Plans & entitlements instead (SA-F7) | 2026-10-09 |
 | DF-3 | **Filter out test businesses or users (future)** | BD-13: test and real client payments are shown together and all layer-B data is treated as real for now; no test-mode label and no livemode migration. A later slice may let the admin exclude chosen test businesses or users from the layer-B figures. Needs its own business decision on how a business or user is marked as test | 2026-10-11 |
 | DF-4 | The finance page **shell** adopts the shared admin layout standard ([ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md)): `AdminPageHeader`, `AdminFilterBar` through `useAdminFilters` (canonical `range` / `account`, with `preset` / `accountId` read as legacy aliases), the shared `KpiStrip` with its cross-page tile mode, and the C-14 registry entry | Not in slice 2: a layout migration is UI-only and must not ride in a data slice (layout standard §3 rules 1, 4 and 5). Slice 2's **new** blocks use the shared components from the start (S2-FR-13). Its own slice, after 2b (SA-Q18) | 2026-10-11 |
+| DF-5 | **Boost refund and dispute dates** | No date is stored for a boost refund or dispute, so slice 4 counts them in the purchase month (S4-W-3). Showing them in the month they happen needs a writer-side change in the boost module (for example a refund event record). User choice pending; default: purchase month. **Pending user question (refund timing).** | 2026-10-13 |
 
 ---
 
@@ -877,6 +887,8 @@ The panel still shows **no amount, no $0 figure and no chart**. Final wording ma
 - [ ] **AC-75** *(1c)* With only a **test-mode** `invoice_paid` billing event (and no other paid row), the panel says "Revenue has been recorded" and K-5 says "Revenue recorded, not yet shown"; the R-d queries name no `livemode` (mocked repository test). Replaces AC-23's "test-mode rows alone do not change it".
 - [ ] **AC-76** *(1c)* With only a **test-mode paid boost** (`paid_at` set), the same as AC-75.
 - [ ] **AC-77** *(1c)* With no paid row in either mode, the panel says "None yet" with the new wording, and shows no amount, no $0 figure and no chart; K-5 is grey (re-run of AC-22).
+
+**Slice 4a note (SA-W50):** AC-75 to AC-77's K-5 headlines and panel sentences are superseded by S4-FR-4 (plans line) and S4-FR-7 (K-5 shows the boost net). Their R-d rule (no mode filter; any paid plan invoice or paid boost counts) stays pinned by the repository test.
 - [ ] **AC-78** *(1c)* (a) A champion-cohort account whose plan row tier is **in force** and that has a paying **test-mode** billing row (`active` or `past_due`, `ended_at` NULL) is counted in that tier's group, not Comped, and the group shows the Founding Partner note; this is the owner test account. (b) A champion account with **no tier in force** and a paying row is counted in its paid tier's group (SA-Q20) with the note, and Founding Partner does not count it. In both, the six groups still sum to Total (unit test on the classifier; render test for the note).
 - [ ] **AC-79** *(1c)* A champion account that is not paying (no billing row; or `canceled`, `incomplete`, `unpaid`; or `active` with `ended_at` set) stays in Founding Partner, with no note.
 - [ ] **AC-80** *(1c)* K-3 counts only open-ended champions that are **not paying**, and matches updated SQL check 1: the sum of `no_cohort_end_date` over the champion rows where `paying` is false and `tier` is `(none)`.
@@ -913,6 +925,166 @@ The repository header comment (`BusinessOsFinanceReadRepository.ts:69`, "filters
 | **SA-Q22** | Rename `listLiveBillingStatusesAllAccounts`, `findLiveBillingStatusForAccount` and `countLiveRevenueRows` (the word "Live" becomes false), and replace the source guard's non-vacuity control? | Rename in 1c (one caller, `financeHealthDeps.ts`); planted negative control |
 | **SA-Q23** | Do "dormant Founding Partners" (`isDormantChampion`, counted by row, not by group) and "ending in 30 days" still count a paying champion? | Dormant: count only accounts in the Founding Partner group, like K-3. Ending in 30 days: unchanged (it is any end date, not a group figure) |
 | **SA-Q24** | Is a group-row note ("including N Founding Partners") plus a badge in the picked-business view acceptable under the layout standard (§4), or should it be a column? | Note on the row plus the badge; no new column |
+
+---
+
+## 11C. Slice 4 (4a and 4b): Boost revenue
+
+Specified 2026-10-13 from a read-only live check (§11C.1), BD-1, BD-9, BD-11, BD-12, BD-14 and BD-16. **No migration, no new SQL function, no new table, no write, no new query parameter.** Where this section and an earlier slice 4 description disagree (§8.2 block A boost text, §8.6 block A boosts, §9 row 4 "live, test switch" and "a new `…ForAdmin` read on `BusinessOsBoostPurchaseRepository`"), **this section governs**: BD-14 removes the switch, and SA-F2 keeps every admin read in `BusinessOsFinanceReadRepository`. Plan revenue, MRR and plan problems stay in slices 5 and 7.
+
+### 11C.1 Live facts (read-only check, 2026-10-13)
+
+Measured on the live database with a SELECT-only script run from the main checkout (no rows written, no DDL); code read at `15300d29` (branch `feature/bos-finance-health-4`). The SQL checks in §13 (14 to 16) were written against these facts but not executed by BA (no SQL connection was available); SA or QA runs them.
+
+| Fact | Live value |
+|---|---|
+| Rows in `business_os_boost_purchases` | **1** |
+| Columns (30, match migration `20261030` exactly) | `id, user_id, livemode, status, package_id, package_version, retail_version, credit_value_version, price_minor, currency, tax_exclusive, credits_base, credits_bonus, credits_total, checkout_expires_at, stripe_checkout_session_id, stripe_payment_intent_id, stripe_charge_id, receipt_url, amount_subtotal_minor, amount_tax_minor, amount_total_minor, amount_refunded_minor, stripe_dispute_id, flag_reason, lot_id, paid_at, status_changed_at, created_at, updated_at` |
+| Statuses | `paid` 1. The CHECK allows `pending, abandoned, awaiting_payment, paid, failed, expired, flagged_mismatch, partially_refunded, refunded, disputed, dispute_lost`. A won dispute is not a status: the transition function moves the row back to `paid`, `partially_refunded` or `refunded` |
+| `livemode` | `false` 1 (the owner test purchase of 2026-10-12; counted as real, BD-14) |
+| Currency | `USD` 1; a CHECK pins `currency = 'USD'` |
+| Package | `starter` version 1 (1 row); price 1000, subtotal 1000, tax 0, total 1000, refunded 0, credits 5,000 |
+| Amount columns | **Integers in minor units** (cents): `price_minor`, `amount_subtotal_minor`, `amount_tax_minor`, `amount_total_minor` (NULL until paid), `amount_refunded_minor` (NOT NULL, default 0, cumulative, CHECK `<= amount_total_minor`). JSON numbers |
+| `paid_at` | Set on 1 row. Written **only** by the credit function, together with status `paid`, the lot, and the three amounts (CHECK `paid_family_complete`: every row in `paid, partially_refunded, refunded, disputed, dispute_lost` has `paid_at`, `lot_id` and all three amounts). Never cleared by a refund or dispute |
+| Refund and dispute records | **None live** (refunded > 0: 0 rows; `stripe_dispute_id` set: 0 rows). There is **no refund table and no refund date** for boosts: a refund only raises `amount_refunded_minor` on the purchase row. `status_changed_at` moves on every transition, so it is not a refund date |
+| `flagged_mismatch` | 0 rows. A flagged purchase has the Stripe amounts but **no `paid_at` and no lot**: Stripe may have taken the money, and no credits were given |
+| `user_id` | Nullable, `ON DELETE SET NULL` (a financial record, minimised on account deletion, NFR-12). 0 NULL today |
+| Credit lots | `admin_grant` 1, `boost_purchase` 1 (5,000 credits, no expiry, created at the purchase `paid_at`); lot draws: 1 `reversal` (on the admin grant) |
+| Billing events | `invoice_paid` 1 and `mismatch_refused` 8 (all test mode): plan rows, not boosts |
+| Indexes | Only `(user_id, livemode, created_at)`; no index on `paid_at` (a sequential read of a 1-row table today) |
+| Who reads the table now | `BusinessOsBoostPurchaseRepository` (the writer, RPC-only writes; scoped reads plus three unscoped `…ForWebhook` finders) and `BusinessOsFinanceReadRepository.countRevenueRows` (R-d: a head count of `paid_at` not null, no amount) |
+
+### 11C.2 Scope and split
+
+About 4 days in total, above the 3-day limit, so it is split. **4b starts after 4a merges.** Each part is demoable alone and gets its own workplan, SA workplan review, SA code review, QA and PR, recorded in §0.1.
+
+| Part | In scope | Not in scope | Estimate |
+|---|---|---|---|
+| **4a: Boost revenue** | Reads R-k, R-k′ (§11C.6); "Our revenue" shows **boost amounts** per currency for the window: purchases, gross charged, of which tax, refunded, held in open disputes, lost in disputes, **net**, credits sold; a by-package table; a deleted-accounts line; **K-5 shows a value** (S4-FR-1 to S4-FR-14) | Plan revenue amounts and MRR (slice 5: the plan line keeps saying amounts come later); boost problems; any tile colour; Section 4 | About 2.5 days |
+| **4b: Boost problems and bought credits** | Reads R-l, R-l′ (§11C.6); boost problems in Section 6 block A (open disputes, purchases flagged as not credited); the BD-11 dispute rule on K-5; **bought credits** beside gifted credits in Section 4 (S4-FR-15 to S4-FR-22) | Stuck checkouts (owned by the boost reconcile pass, FR-43); plan payment problems (slice 7); a sixth tile | About 1.5 days |
+
+### 11C.3 Window, status and money rules
+
+| # | Rule |
+|---|---|
+| S4-W-1 | **A purchase is dated by `paid_at`** (BD-9): it counts when `paid_at` is in the filter window, half-open whole UTC days `[start, end)` with the microsecond rule (TZ-1). `created_at` (when the checkout was reserved) is never used for revenue. Default **This month**. |
+| S4-W-2 | **Counted purchases** are rows whose `paid_at` is in the window and whose status is in the **paid family**: `paid`, `partially_refunded`, `refunded`, `disputed`, `dispute_lost`. Defined once as a literal `as const` in finance code, checked by a test against the migration CHECKs `status_known` and `paid_family_complete` (the SA-W2 precedent: no import from the boost repository). A row read in the window with any other status (impossible today, by CHECK) is left out of every sum and counted ("N purchases with another status not counted"). |
+| S4-W-3 | **Refunds and disputes are shown against the purchase's own month, as recorded now.** No boost refund or dispute date is stored (§11C.1), so a refund made in November on an October purchase lowers October's net when the page is opened after it. A note says: "Refunds and disputes are counted in the month of the purchase, as recorded today, so a past month can still change." |
+| S4-W-4 | **Minor units, exact.** `amount_*_minor` are integers in the currency's smallest unit. For a currency with two decimals (USD, the only one allowed by CHECK), one minor unit **is** one hundredth, so the value is used **as is** as the integer number of hundredths of the CUR-1 helper; it is **never** passed through `toHundredths`, `toUnits` or `× 100` (that would multiply cents by 100). An amount is **unreadable** when it is missing on a counted purchase, not a safe integer, or negative, or when `minorUnitsPerMajor(currency)` (`lib/payments/refundMath.ts`, the one definition) is not 100 for the row's currency (any other currency would need its own scale; none exists, the CHECK pins USD; SA-Q26). Unreadable amounts are excluded from sums and counted, never 0, and make net 'Unknown' on that line and the block `partial` (the S2-CUR-3 rule). |
+| S4-W-5 | **Per currency only** (CUR-1, CUR-2, BD-12). Lines come from `groupByCurrency`, one per normalised code, sorted, "Unknown currency" last. No figure, tile, payload field or exported function adds two currencies. |
+| S4-W-6 | **Figures per currency line**, over counted purchases: **purchases** (count); **gross charged** = sum of `amount_total_minor`; **of which tax** = sum of `amount_tax_minor` (shown, not deducted; 0 on every row today, TX-3); **refunded** = sum of `amount_refunded_minor`; **held in open disputes** = sum of `amount_total_minor - amount_refunded_minor` over `disputed` rows; **lost in disputes** = the same over `dispute_lost` rows; **net** = gross charged - refunded - held in open disputes - lost in disputes; **credits sold** = sum of `credits_total` (6 dp, exact through `toUnits` at the credit scale; credits, not money). Net is labelled "Net of refunds and disputes (Stripe fees not deducted; includes any tax)". A won dispute is already back in its paid status and counts in full. |
+| S4-W-7 | **Deleted accounts.** A purchase whose `user_id` is NULL (account deleted, NFR-12) is still our revenue: it counts in the all-businesses totals and is shown as its own "Deleted accounts" line under the by-package table (purchases and net per currency), never dropped. |
+| S4-W-8 | **Ceiling (AGG-3).** At the read's ceiling, purchases, gross, tax, refunded and credits sold show "At least", **net and the dispute amounts show 'Unknown (a read was cut off)'**, and the block is `partial` with a notice (a lower bound minus a figure is not a bound, S2-FR-8). |
+
+### 11C.4 Section 2 block A: Our revenue, boosts (4a)
+
+| # | Requirement | Part |
+|---|---|---|
+| S4-FR-1 | The "Our revenue" panel becomes a section with its own status (`ok` / `partial` / `unknown`, L-5), titled "Our revenue", with a subtitle naming the window (UTC) and the source ("Credit boosts paid, all businesses" or the picked business). It stays visibly separate from "Takings through the platform" (§6.1). | 4a |
+| S4-FR-2 | **Boosts, per currency** (S4-W-5, S4-W-6): one line per currency with purchases, gross charged, of which tax, refunded, held in open disputes, lost in disputes, net and credits sold. Money through the shared `formatMoney` (currency named in every cell). | 4a |
+| S4-FR-3 | **By package**: one row per currency and package (`package_id` and `package_version` as stored on the purchase, the snapshot of what was sold), with purchases, gross charged, refunded and net; sorted by currency, then package id, then version. No catalogue lookup (SA-Q30). The deleted-accounts line follows (S4-W-7). | 4a |
+| S4-FR-4 | **Plans line:** "Plan payments: amounts are shown in a later update" while R-d reports a paid plan invoice, otherwise "No plan payment recorded". No plan amount is read or shown (slice 5). With a business picked, the line says it covers all businesses ("Plan payments, all businesses: …"), because R-d reads no account (AC-42). | 4a |
+| S4-FR-5 | **Honest indicators.** No counted purchase in the window → "No credit boosts paid in this window" with no currency line and no "0.00" (boost purchases are recorded today, so this is a real empty, §6.6). The read failed → the boost part says "Could not load" and the section is `unknown` when R-d failed too, `partial` otherwise. Unreadable amounts and other-status rows are counted on the page (S4-W-2, S4-W-4). The S4-W-3 note is always shown when any refund or dispute amount is non-zero. | 4a |
+| S4-FR-6 | **BD-14:** test-mode and live-mode purchases count together, with no test-mode label, note or switch, and no read filters on the mode (§6.4, S1C-FR-7). | 4a |
+| S4-FR-7 | **K-5 "Our revenue" shows a value**: the boost **net** for the filter window (SA-Q25), with one currency as "USD 10.00", several as "N currencies, see Our revenue" (never a sum), "At least" never used for net (S4-W-8: Unknown instead). Its caption says "Credit boosts; plans in a later update". It stays **grey (informational)** in 4a with no rule; text state "No data yet" when there is no counted purchase, "Unknown" when the read failed. Not green-eligible. | 4a |
+| S4-FR-8 | **Picked business:** R-k′ receives exactly the picked id (SEC-3); R-k is not called; the deleted-accounts line is not shown; K-5 shows that business's boost net. R-d keeps its platform-wide exception for the plans line (AC-42). | 4a |
+| S4-FR-9 | **No Stripe or customer data.** R-k selects no Stripe id, receipt URL, flag reason or lot id; the payload carries none (S2-FR-26 spirit). | 4a |
+| S4-FR-10 | **Route and payload:** the `revenue` section gains `boosts { status, scope, lines, packages, deletedAccounts, notes }`; figures null only when `unknown`. The route's one `info` line adds the boost read's status and counts only (rows read, ceiling reached, unreadable amounts, other-status rows): never an amount or a name (SEC-8). | 4a |
+| S4-FR-11 | **Where the code lives:** a pure builder under `lib/business-os/finance/` (for example `boostRevenue.ts`), **never under `lib/business-os/billing/`** (that folder is scanned by the webhook `routerPlacement` M-1 guard). It names no repository; the route wiring injects the reads (the `financeHealthDeps.ts` `Pick<…>` precedent). | 4a |
+| S4-FR-12 | **Layout standard:** as S2-FR-13 (shared table constants, `StatusChip`, `AdminNotice`, `AdminEmpty`, `formatCount`, header cells and `aria-label`). The page shell is not migrated (DF-4). All new copy in `financeCopy.ts`; the 1c "Amounts are shown in a later update" sentence is replaced for boosts. | 4a |
+| S4-FR-13 | **Cannot produce, said on the section:** real Stripe fees (none recorded for platform payments, BD-7; the estimate is slice 6); the date of a refund or dispute (S4-W-3); plan revenue (slice 5); one total across currencies (BD-12). | 4a |
+| S4-FR-14 | **Performance:** one more concurrent read, settled on its own (S1-FR-8); route p95 still under 2 s. | 4a |
+
+### 11C.5 Boost problems and bought credits (4b)
+
+| # | Requirement | Part |
+|---|---|---|
+| S4-FR-15 | **Section 6 block A, "Our payment problems (boosts)"**, placed before block B, **as of now** (the window does not apply; the subtitle says "As of now, UTC"). Per currency: **open disputes** (status `disputed`: count and the amount held, S4-W-6) and **purchases not credited** (status `flagged_mismatch`: count and `amount_total_minor` where recorded, labelled "Payment received by Stripe, credits not given; check the purchase"). Each with the oldest `status_changed_at`. Read through R-l / R-l′. | 4b |
+| S4-FR-16 | **Lost disputes** are not repeated here: they are in the revenue figures of their purchase month (S4-W-6). Plan payment problems keep the slice 7 note. Stuck checkouts are not shown (the boost reconcile pass owns them, FR-43); a link "Boost purchases of one business" points to the per-account credit view under `/admin/users` (FR-38) when a business is picked. | 4b |
+| S4-FR-17 | **K-5 dispute rule (BD-11, SA-Q29):** K-5 turns **red** with the reason "N boost payments in dispute" when open disputes >= 1, as **rule data** in `FINANCE_RULES` (`atLeast`, threshold 1, adjustable without code). Otherwise K-5 stays grey with its value (S4-FR-7). The strip keeps five tiles: K-6 is not added. A failed R-l makes K-5's colour grey with "Dispute check failed", its value unchanged. The red reason names the dispute ("N boost payments in dispute"), never the revenue; with a business picked the rule uses R-l′, so it counts that business's disputes only. | 4b |
+| S4-FR-18 | **Bought credits in Section 4.** The lots read R-b / `listLotsWithDraws` already returns every source. Section 4 adds, **beside** the gifted figures and never combined with them: **bought outstanding** = `extraCreditsAt` over unexpired `boost_purchase` lots (the one definition, applied after the caller filters the source, exactly as for `admin_grant`), and **bought in the window** = credits on `boost_purchase` lots created in the window and the number of such lots. Deleted accounts' bought lots are their own figure (the SA-W9 rule). | 4b |
+| S4-FR-19 | **Gifted and K-4 are unchanged:** they still count `admin_grant` lots only (K-4 "Gifted credits outstanding"). Bought credits are paid for, gifts are a cost to us, so the two are never one figure on this page (the owner card's combined "Extra credits", FR-24, is the owner's view and is not changed). | 4b |
+| S4-FR-20 | **Per-account table:** a "Bought outstanding" column beside "Gifted outstanding", 0 when the account has no boost lot, "Unknown" under the same failure rules as gifted (§8.4: the lots read errors at its ceiling, never a partial list). The note "credits are not consumed from lots yet" covers both columns while it remains true (`creditLots.ts:18-20`). | 4b |
+| S4-FR-21 | **Picked business:** R-l′ and `listLotsWithDraws(accountId)` with exactly that id; R-l is not called. | 4b |
+| S4-FR-22 | **Route and payload:** `paymentProblems` gains `boosts { status, figures }`; `credits` gains the bought figures. Logs: statuses and counts only. | 4b |
+
+**Rule proposed for bought credits (S4-FR-18 to S4-FR-20).** This is a display rule, not a business question: the page already separates money we receive from money we give away (BD-1 separates our revenue from takings; K-4 is defined as gifts). Showing bought credits as their own column keeps K-4's meaning and adds the missing half of "extra credits". The user may still ask for one combined column; nothing in the data forces either choice.
+
+### 11C.6 New reads (no migration)
+
+All in **`BusinessOsFinanceReadRepository`**, never in `BusinessOsBoostPurchaseRepository` (the writer; SA-F2). The finance repository keeps its rules: service role documented in its header, explicit exported column lists, **no write method** (no-write pin), one caller (`financeHealthDeps.ts`), methods that never throw, no `livemode` anywhere in its code (BD-14; the 1c source-guard control), and the boost repository named in words only, never by class name.
+
+| # | Method (example name) | Scope | Table and filter | Columns | Part |
+|---|---|---|---|---|---|
+| **R-k** | `listBoostPurchasesAllAccountsPaidInRange(range)` | Named all-accounts | `business_os_boost_purchases`, `paid_at >= start` and `< end` (every status; the caller applies S4-W-2) | `id, user_id, status, package_id, package_version, currency, amount_total_minor, amount_tax_minor, amount_refunded_minor, credits_total, paid_at` | 4a |
+| **R-k′** | `listBoostPurchasesForAccountPaidInRange(accountId, range)` | Account-scoped | Same, plus `.eq('user_id', accountId)`; refuses a malformed UUID before querying | Same | 4a |
+| **R-l** | `listBoostPurchasesNeedingAttentionAllAccounts()` | Named all-accounts | Same table, status `disputed` or `flagged_mismatch` (an `.in()` on literal statuses) | `id, user_id, status, currency, amount_total_minor, amount_refunded_minor, status_changed_at` | 4b |
+| **R-l′** | `listBoostPurchasesNeedingAttentionForAccount(accountId)` | Account-scoped | Same, plus `user_id` | Same | 4b |
+
+**Paging (SA-Q27):** the layer-B pager (`pageClientRows`): keyset on `id`, page 1,000, **ceiling 5,000** (`FINANCE_READ_LIMITS`), returning rows plus `reachedCeiling` ("At least", S4-W-8). All-accounts methods log at `info` with counts and timing only. **R-d is unchanged** and still drives the plans line and the existence check.
+
+**Wiring:** `financeHealthDeps.ts` adds the four methods to its `finance: Pick<BusinessOsFinanceReadRepository, …>`; no new repository is named.
+
+### 11C.7 Guards and tests affected
+
+| Guard or test | Effect | What Dev must do | Part |
+|---|---|---|---|
+| `lib/business-os/finance/__tests__/finance.source.guard.test.ts` table pin (`REPOSITORY_TABLES`, `:271-291`) | **The table set does not grow:** `business_os_boost_purchases` is already one of the eight (R-d). The `.from(` count grows, and `fromCallsOf(code) === tables.length` and `>= 8` still hold if every new `.from` names its table as a literal | Run unchanged; extend the comment above `REPOSITORY_TABLES` to name R-k and R-l. The "no `livemode` in the repository code" control and the `MODE_WORDING` rules must stay green | 4a, 4b |
+| Same guard, payment-table rule (narrowed in 2a) | The new builder must name no `payment_*` table and no boost table | Keep the builder table-free (S4-FR-11) | 4a |
+| `lib/repositories/__tests__/BusinessOsFinanceReadRepository.test.ts` | New methods | One test per method: column list (no Stripe id, receipt URL, flag reason, lot id), `paid_at` range or status filter, `user_id` and malformed-id refusal on the account-scoped ones, keyset paging, ceiling to `reachedCeiling`, never throws, no `livemode`. No-write and one-caller pins unchanged; header method list extended | 4a, 4b |
+| `lib/repositories/__tests__/BusinessOsBoostPurchaseRepository.test.ts` (SA Q-1: only listed files name `findByIdForWebhook`) | **Not tripped:** finance code never names a `…ForWebhook` finder or the boost repository | Run unchanged | 4a |
+| Boost repository caller lists | **None exists** beyond the SA Q-1 identifier pin (searched `lib/`, `app/` and their tests, 2026-10-13); finance never imports the boost repository, its types or `BOOST_PURCHASE_STATUSES` (S4-W-2 keeps its own literal) | Nothing | 4a, 4b |
+| Stripe webhook placement guards (`routerPlacement.guard`, `invoiceIntentsStayUnowned.guard`, `planSurfaces.guard`) | **Not tripped:** `routerPlacement` reads the webhook route and `lib/business-os/billing/*.ts` only, and the boost reads stay out of that folder (S4-FR-11); the other two pin plan and Connect files | Run all three unchanged and paste the result; any trip goes to SA | 4a |
+| G3 in `creditLots.test.ts` (who names `extraCreditsAt`) | Not tripped if bought credits are computed in the existing `creditsSection.ts` (already listed in 1b) | Keep `extraCreditsAt` in that file only; a new file naming it must be added to `ALLOWED_LIST` | 4b |
+| `BusinessOsCreditLotRepository.test.ts`, the lot repository caller list | Not tripped: R-b and `listLotsWithDraws` are reused unchanged | Run unchanged | 4b |
+| `enforcementPoints.test.ts`, `tierLiteral.forbidden`, RC-15, ledger caller list, `businessOwnedTables` and purge descriptors | Not tripped: no entitlements import (package ids as stored, SA-Q30), no new table, no ledger change | Run unchanged | 4a, 4b |
+| Revenue panel and K-5 tests (1c: AC-75 to AC-77, AC-81) in the builder tests and `financePage.render.test.tsx` | The panel now shows amounts; the "Amounts are shown in a later update" copy changes for boosts | Update to AC-87 onward; AC-81 (no webhook, test-account or mode wording) stays green | 4a |
+| Finance rule data tests (`financeRules`) | K-5 gains its first rule in 4b | Add the rule-in-data test (threshold change flips the colour with no code change) | 4b |
+
+### 11C.8 Acceptance criteria
+
+All testable by Jest or by QA's recorded manual check. Figures are compared with the §13 check run at test time, not with today's numbers.
+
+**AC to part mapping:** 4a: AC-87 to AC-101. 4b: AC-102 to AC-107, plus a re-run of AC-98 to AC-100 over the 4b diff.
+
+**Boost revenue (4a)**
+- [ ] **AC-87** *(4a)* For "This month", per currency: purchases, gross charged, of which tax, refunded, held in open disputes, lost in disputes, net and credits sold match check 14 (its `ALL` package row), and each by-package row matches its check 14 row; net equals gross charged minus refunded minus held minus lost.
+- [ ] **AC-88** *(4a)* **Window by `paid_at`:** a purchase reserved on the last day of the previous month and paid on the first day of this month counts this month; with injected purchases at `23:59:59.999999` and `00:00:00.000000` UTC on a month boundary, each falls in exactly one month (half-open, microsecond rule). `created_at` never decides. The half-open bounds are asserted on the read's query (`gte` start, `lt` end, ISO strings), since the database applies them; the builder counts each row it is given once.
+- [ ] **AC-89** *(4a)* **Statuses:** each paid-family status counts; a planted row in the window with another status is left out of every sum and counted on the page; a `flagged_mismatch` row (no `paid_at`) is never in revenue. The paid-family literal matches the migration CHECKs (test).
+- [ ] **AC-90** *(4a)* **Minor units exact:** `amount_total_minor` 1000 shows "USD 10.00"; 1999 shows "USD 19.99"; no boost amount passes through `toHundredths`, `toUnits` or a multiplication by 100 (unit test plus source test). A non-integer, negative or unsafe amount, or a currency with other than two decimals (mocked), is unreadable: counted, excluded, net "Unknown", block `partial`.
+- [ ] **AC-91** *(4a)* **Refunds and disputes:** a partial refund, a full refund, a `disputed` row with an earlier partial refund (held = total minus refunded) and a `dispute_lost` row each give the S4-W-6 figures; the S4-W-3 note shows whenever a refund or dispute amount is non-zero.
+- [ ] **AC-92** *(4a)* **Multi-currency (mocked):** USD and a planted second currency give two lines and two K-5 entries ("2 currencies, see Our revenue"); no element, payload field or exported function holds a total across currencies (render and source test).
+- [ ] **AC-93** *(4a)* **Ceiling** (injected small ceiling): purchases, gross, tax, refunded and credits sold show "At least"; net, held and lost show "Unknown (a read was cut off)"; the section is `partial` with a notice; K-5 shows "Unknown".
+- [ ] **AC-94** *(4a)* **Empty:** with no counted purchase in the window the section says "No credit boosts paid in this window", shows no currency line and no "0.00", and its status is `ok`; K-5 is grey "No data yet".
+- [ ] **AC-95** *(4a)* **K-5 value:** with the owner test purchase in the window, K-5 shows "USD 10.00" with the caption "Credit boosts; plans in a later update", grey, no rule, not green; the R-k read failing makes K-5 "Unknown" and the boost part "Could not load", and every other section still renders.
+- [ ] **AC-96** *(4a)* **Picked business:** with `accountId` set, R-k′ receives exactly that id, R-k has zero calls, the deleted-accounts line is absent, and K-5 shows that business's net; R-d is still called with no account argument (extends AC-42 and AC-65).
+- [ ] **AC-97** *(4a)* **Deleted accounts:** a purchase with `user_id` NULL counts in the all-businesses totals and appears on the "Deleted accounts" line, never dropped and never named. Its net matches check 14's `deleted_account_net_minor`.
+- [ ] **AC-98** *(4a; re-run 4b)* **No Stripe or customer data and logs:** the R-k and R-l column lists hold no Stripe id, receipt URL, flag reason or lot id; the payload carries none; the route's log line carries counts, statuses and timing only (re-run of AC-30).
+- [ ] **AC-99** *(4a; re-run 4b)* **Auth and input:** 401 unauthenticated, 403 non-admin (including a `profiles.role`-only admin), 400 for each AC-4, AC-33 and AC-34 case and for an unknown key, all with **zero** boost reads.
+- [ ] **AC-100** *(4a; re-run 4b)* **Read-only and guards:** the route, builders and finance repository name no insert, update, upsert, delete or writing RPC; no migration or SQL function in the diff; no `livemode` in the repository code; every §11C.7 row passes, including the three webhook placement guards run unchanged; scoped `tsc` with a planted canary (re-runs of AC-28, AC-31, AC-44).
+- [ ] **AC-101** *(4a)* **Manual QA:** admin opens Finance, sees the owner test purchase (Starter, USD 10.00, 5,000 credits sold) under "Our revenue" and on K-5, cross-checks against check 14, switches to 30d and to the owner business and back, and reloads the URL.
+
+**Boost problems and bought credits (4b)**
+- [ ] **AC-102** *(4b)* Open disputes and purchases not credited, per currency, match check 15 and do not change with the window (as of now).
+- [ ] **AC-103** *(4b)* **K-5 dispute rule:** one open dispute (mocked) turns K-5 red with "1 boost payment in dispute" and its value unchanged; changing the threshold in `FINANCE_RULES` changes the colour with no code change; R-l failing makes K-5 grey with "Dispute check failed"; the strip still holds exactly five tiles.
+- [ ] **AC-104** *(4b)* **Bought credits:** bought outstanding and bought in the window match check 16; K-4 and the gifted figures are unchanged from 1b (still `admin_grant` only, check 5); no figure on the page adds bought and gifted credits together.
+- [ ] **AC-105** *(4b)* Deleted accounts' bought lots are their own figure; the per-account "Bought outstanding" column is 0 for an account without a boost lot and "Unknown" under the §8.4 lots failure rules.
+- [ ] **AC-106** *(4b)* **Picked business:** R-l′ and `listLotsWithDraws` receive exactly that id; R-l has zero calls.
+- [ ] **AC-107** *(4b)* **Manual QA:** admin sees no open dispute and no purchase not credited today, the owner account's 5,000 bought credits beside its gifted credits, and cross-checks against checks 15 and 16.
+
+### 11C.9 Open questions for SA (slice 4)
+
+Technical only; none needs the user. Each has a BA suggestion.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q25** | K-5's window: the filter window (one read, the same figure as the panel) or always the current UTC month like K-1 (a second read when the filter differs)? | The filter window, named in the tile caption; the default window is This month (BD-9) |
+| **SA-Q26** | Minor units: a finance-local rule (a two-decimal currency's minor unit is used as hundredths; anything else unreadable), or reuse `minorUnitsPerMajor` from `lib/payments/refundMath.ts`? Does importing `lib/payments/` from finance trip any guard? | Finance-local rule with a test; the CHECK allows USD only, so a general converter has no caller yet |
+| **SA-Q27** | Reuse the layer-B pager for R-k and R-l (rows plus `reachedCeiling`, "At least"), rather than R-c's error at the ceiling? | Reuse; revenue is a sum like takings, so a lower bound with Unknown net is the honest answer |
+| **SA-Q28** | Refunds and disputes against the purchase month (S4-W-3): confirm, given no refund date is stored. Is a refund date worth a later migration (for example a `refunded_at`, or a boost refund events table), and whose slice would own it? | Confirm for slice 4; a refund date is a boost-module change, recorded as a deferral, not built here |
+| **SA-Q29** | BD-11's "any boost dispute = red": a rule on K-5 (the strip is at its five-tile maximum) or a sixth tile K-6 with a tile removed? | A rule on K-5 (S4-FR-17); K-6 stays unbuilt |
+| **SA-Q30** | Package label: the stored `package_id` and `package_version` as is, or the catalogue name (an import from `lib/business-os/entitlements/config/boostPackages.ts`, which needs registration)? | Stored values; no entitlements import |
+| **SA-Q31** | Bought credits: reuse the existing lots read and `creditsSection.ts` with a second source filter, so G3 and the lot caller list are not tripped? | Yes; one file, two filters, two figures |
 
 ---
 
@@ -965,6 +1137,7 @@ This table is SA's guard table from the SA review (SA-F5), replacing the earlier
 | Shared layout folder guard (C-14, `app/admin/components/layout/__tests__/`) | The finance page imports shared exports through the alias; 2b builds `formatUtcDate` in the shared folder | Rules S-1 to S-10 hold for the new export; the migrated-pages registry is **not** changed (the page shell is not migrated, DF-4) | 2a, 2b |
 | New finance source guards (§12.1) | `currencyGroups` and the layer-B builders | No exported cross-currency total; no `exchange_rates`; no `livemode` in layer-B reads; no reminder rule literal | 2a, 2b |
 | Slice 1c rows (BD-14, BD-15) | R-c, R-c′ and R-d drop `livemode`; new paying-champion mapping; new panel copy | See §11B.5: the finance repository test's `livemode = true` pins, the source guard's layer-A non-vacuity control, the S1-FR-26/27 and AC-22/23 panel tests, the classifier tests; `enforcementPoints` only if symbols change | 1c |
+| Slice 4 rows (boost revenue, problems, bought credits) | New reads R-k, R-k′, R-l, R-l′ on a table the repository already reads; panel and K-5 copy change; K-5 gains a rule (4b) | See §11C.7: the finance table pin does **not** grow; the repository test gains one test per method; the 1c panel tests are updated; the boost repository and the three webhook placement guards are not tripped (run unchanged) | 4a, 4b |
 
 **Not tripped:** L8, BD-26 owner-read, `businessOwnedTables` / purge descriptors, `adminReadMethods`, `accountSeam.guard` (if SA-Q7 is followed), billing-account and billing-event caller lists, boost repository pins (SA-F2 keeps the page off them). **No new CI job and no added PR critical-path time:** every new test runs in the existing Jest gate or the existing `test:bos-entitlements` job.
 
@@ -1286,6 +1459,105 @@ select
 from public.payment_reminders r
 group by 1
 order by 1;
+```
+
+### Slice 4 checks (14 to 16)
+
+Check 14 backs slice 4a; checks 15 and 16 back slice 4b (§11C). The same rules hold: read-only, ASCII only, no apostrophes in comments, one final result set each. Test and live mode are counted together (BD-14). Boost amounts are **minor units** (cents for USD): divide by 100 to compare with the page. Written against the live facts of §11C.1; not yet executed by BA.
+
+**File:** `check 14 - credit boosts paid this month` (AC-87, AC-88, AC-95, AC-101)
+
+```sql
+-- Finance page check 14: credit boosts paid this UTC month, per currency and package, read only.
+-- Compare with Our revenue (boosts) and tile K-5.
+-- A purchase counts in the UTC month of paid_at, and only paid family statuses are added up.
+-- Refunds and disputes are the amounts recorded today on purchases paid this month.
+-- held and lost are the unrefunded remainder of disputed and dispute_lost purchases.
+-- The row with package ALL is the currency line; no row adds two currencies.
+-- deleted_account_net_minor is the net of purchases whose account was deleted.
+select
+  upper(btrim(b.currency)) as currency,
+  coalesce(b.package_id || ' v' || b.package_version, 'ALL') as package,
+  count(*) as purchases,
+  count(*) filter (where b.user_id is null) as deleted_account_purchases,
+  coalesce(sum(b.amount_total_minor - b.amount_refunded_minor)
+    filter (where b.user_id is null and b.status in ('paid', 'partially_refunded', 'refunded')), 0) as deleted_account_net_minor,
+  sum(b.amount_total_minor) as gross_minor,
+  sum(b.amount_tax_minor) as tax_minor,
+  sum(b.amount_refunded_minor) as refunded_minor,
+  coalesce(sum(b.amount_total_minor - b.amount_refunded_minor)
+    filter (where b.status = 'disputed'), 0) as held_in_open_disputes_minor,
+  coalesce(sum(b.amount_total_minor - b.amount_refunded_minor)
+    filter (where b.status = 'dispute_lost'), 0) as lost_in_disputes_minor,
+  sum(b.amount_total_minor) - sum(b.amount_refunded_minor)
+    - coalesce(sum(b.amount_total_minor - b.amount_refunded_minor)
+      filter (where b.status in ('disputed', 'dispute_lost')), 0) as net_minor,
+  sum(b.credits_total) as credits_sold
+from public.business_os_boost_purchases b
+where b.paid_at >= date_trunc('month', now(), 'UTC')
+  and b.paid_at < date_trunc('month', now(), 'UTC') + interval '1 month'
+  and b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+group by grouping sets (
+  (upper(btrim(b.currency)), b.package_id, b.package_version),
+  (upper(btrim(b.currency)))
+)
+order by 1, 2;
+```
+
+**File:** `check 15 - boost purchases by status as of now` (AC-102)
+
+```sql
+-- Finance page check 15: boost purchases by status and currency as of now, read only.
+-- Compare with Section 6 block A (boosts) and the K-5 dispute rule.
+-- The page shows the disputed rows (open disputes, with held_minor)
+-- and the flagged_mismatch rows (paid at Stripe, not credited).
+-- Every other status is listed for information only.
+select
+  b.status,
+  upper(btrim(b.currency)) as currency,
+  count(*) as purchases,
+  coalesce(sum(b.amount_total_minor - b.amount_refunded_minor)
+    filter (where b.status = 'disputed'), 0) as held_minor,
+  sum(b.amount_total_minor) as recorded_total_minor,
+  min(b.status_changed_at) as oldest_change
+from public.business_os_boost_purchases b
+group by 1, 2
+order by 1, 2;
+```
+
+**File:** `check 16 - bought credits` (AC-104, AC-105)
+
+```sql
+-- Finance page check 16: credits bought through boosts, read only.
+-- Compare with the bought figures of Section 4. Gifted credits are check 5.
+-- outstanding: lot credits minus taken back, over lots not expired now, accounts that exist.
+-- deleted_accounts_outstanding: the same for lots whose account was deleted.
+-- lots_in_month and credits_in_month: boost lots created this UTC month.
+with boosts as (
+  select l.id, l.user_id, l.credits_granted, l.expires_at, l.created_at
+  from public.business_os_credit_lots l
+  where l.source = 'boost_purchase'
+),
+taken as (
+  select d.lot_id, sum(d.credits) as taken_back
+  from public.business_os_credit_lot_draws d
+  where d.kind = 'reversal'
+  group by d.lot_id
+)
+select
+  count(b.id) as boost_lots,
+  coalesce(sum(greatest(b.credits_granted - coalesce(t.taken_back, 0), 0))
+    filter (where b.user_id is not null
+      and (b.expires_at is null or b.expires_at > now())), 0) as outstanding,
+  coalesce(sum(greatest(b.credits_granted - coalesce(t.taken_back, 0), 0))
+    filter (where b.user_id is null
+      and (b.expires_at is null or b.expires_at > now())), 0) as deleted_accounts_outstanding,
+  count(b.id) filter (where b.created_at >= date_trunc('month', now(), 'UTC')
+    and b.created_at < date_trunc('month', now(), 'UTC') + interval '1 month') as lots_in_month,
+  coalesce(sum(b.credits_granted) filter (where b.created_at >= date_trunc('month', now(), 'UTC')
+    and b.created_at < date_trunc('month', now(), 'UTC') + interval '1 month'), 0) as credits_in_month
+from boosts b
+left join taken t on t.lot_id = b.id;
 ```
 
 ---
@@ -1615,6 +1887,64 @@ SQL checks 1 and 6 are ASCII only, with no "into", no apostrophe in a comment, a
 
 ---
 
+## SA Requirement Review — Slice 4 — 2026-10-13
+
+**Reviewed by SA — 2026-10-13, against `15300d29`**
+**Status:** ✅ **APPROVED WITH CONDITIONS.** The 4a workplan may start once the BA has applied E-26 to E-29. BD-9, BD-12, BD-14, BD-15 and BD-16 are not reopened.
+
+**How it was checked.** I opened the code and the migrations:
+- **`20261030_business_os_boost_purchases.sql`:**
+  - every column R-k and R-l select exists;
+  - `amount_*_minor` are `integer`, `credits_total` is `numeric(18,6)`;
+  - CHECKs `status_known`, `paid_family_complete`, `currency_usd`, `amounts_not_negative` and `refund_within_total`;
+  - `user_id` is `ON DELETE SET NULL`.
+- **`20261031_business_os_boost_crediting.sql`:** a refund on a `disputed`, `dispute_lost` or `flagged_mismatch` row raises only `amount_refunded_minor`; a won dispute returns the row to its paid status. So `held = total - refunded` and `lost = total - refunded` are right.
+- **`lib/payments/refundMath.ts`:** `minorUnitsPerMajor` is pure, has no imports, and is already used by `lib/business-os/currency.ts` and `entitlements/retailRate.ts`.
+- **The guards:**
+  - the finance table pin already lists `business_os_boost_purchases` (R-d), so **the table set does not grow** (verified);
+  - the boost repository's scan guards pin only the identifiers `findBySessionIdForWebhook`, `findByPaymentIntentIdForWebhook`, `findByIdForWebhook` and `listForReconcile`, which finance never names, so they are **not tripped** (verified);
+  - the three webhook placement guards scan the webhook route, `lib/business-os/billing/*.ts` and named files, so they are **not tripped** while the builder stays out of `billing/` (S4-FR-11).
+- **SQL checks 14 to 16** were confirmed against the migration columns rather than run: there are no database credentials in the worktree, so QA runs them at V-11. All three are ASCII only, with no "into", no apostrophe in a comment, and one result set each (check 14 uses `grouping sets`, which is still one result set).
+
+### Findings
+
+1. **S4-F1 (Medium): S4-W-4 needs one source for "two decimals".** A finance-local list of currency decimals would be a second definition. **Ruling SA-Q26:** reuse `minorUnitsPerMajor` from `lib/payments/refundMath.ts`. A line's amounts are used as hundredths only when that returns 100; otherwise they are unreadable. Never `toUnits` or `× 100`. **E-26.**
+2. **S4-F2 (Low): AC-88's microsecond boundary is enforced by the query, not the builder.** The test must assert the query bounds (`gte` start, `lt` end, ISO with microseconds), plus a builder test that a row given to it counts once. **E-27.**
+3. **S4-F3 (Low): K-5 now carries two meanings.** In 4b it holds a revenue value and a dispute colour. The red reason text must name the dispute, and with a business picked the rule reads R-l′, so it is that business's disputes. **E-28.**
+4. **S4-F4 (Low): Q28 is a genuine reporting choice for the user**, worded below with a default. It does not block 4a: no refund or dispute exists today.
+5. **S4-F5 (Low): the estimates.** 4a at 2.5 days and 4b at 1.5 days are realistic; 4b reuses R-b, `creditsSection.ts` and the rules model. Total about 4 days, split as the BA proposes.
+
+### Rulings SA-Q25 to SA-Q31
+
+| # | Ruling |
+|---|---|
+| **SA-Q25** | **K-5 follows the filter window**: one read, the same figure as the panel. The caption names the window ("This month, UTC" by default). |
+| **SA-Q26** | **Reuse `minorUnitsPerMajor`** (S4-F1). Do not pass integer cents through `toUnits` at scale 100: that is 2a's rule for decimal columns and would multiply cents by 100. A source test pins that no boost amount reaches `toHundredths` or `toUnits`. |
+| **SA-Q27** | **Reuse the layer-B pager**: keyset on `id`, ceiling 5,000, rows plus `reachedCeiling` ("At least", with net Unknown). |
+| **SA-Q28** | **Confirmed for slice 4:** refunds and disputes count against the purchase month, as recorded today, with the S4-W-3 note. A refund date would be a boost-module change (a migration on the writer side); record it as a deferral (**E-29**), not built here. |
+| **SA-Q29** | **A rule on K-5**, as data in `FINANCE_RULES` (`atLeast 1`), with a dispute-specific reason. The strip stays at five tiles and K-6 stays unbuilt. |
+| **SA-Q30** | **Stored `package_id` and `package_version`.** No entitlements import, so no registration. |
+| **SA-Q31** | **Approved.** Compute bought credits in the existing `creditsSection.ts` with a second source filter. G3 and the lot caller list are not tripped, and K-4 stays gifts only. |
+
+### For the user (business terms; a default applies if they do not answer)
+
+**Refund timing.** "When a customer gets a refund on a credit boost, which month should show the lower figure?
+- **(a) The month of the original purchase** (default). Last month's revenue can still go down later.
+- **(b) The month the refund happened.** Past months never change, but it needs a small addition to how refunds are recorded, done as separate work.
+
+There are no refunds today."
+
+**Bought vs gifted credits:** this is not a question for the user. Showing them separately keeps the existing meaning of "gifted credits" (K-4).
+
+### Requirement edits (BA applies; recorded in §0.3 as SA-RR-4)
+
+- **E-26 (S4-W-4, S4-F1).** In S4-W-4, replace "or when the row's normalised currency does not have exactly two decimals (any other currency would need its own scale; none exists, SA-Q26)" with "or when `minorUnitsPerMajor(currency)` (`lib/payments/refundMath.ts`, the one definition) is not 100 for the row's currency (any other currency would need its own scale; none exists, the CHECK pins USD; SA-Q26)".
+- **E-27 (AC-88, S4-F2).** Append to AC-88: " The half-open bounds are asserted on the read's query (`gte` start, `lt` end, ISO strings), since the database applies them; the builder counts each row it is given once."
+- **E-28 (S4-FR-17, S4-F3).** Append to S4-FR-17: " The red reason names the dispute (\"N boost payments in dispute\"), never the revenue; with a business picked the rule uses R-l′, so it counts that business's disputes only."
+- **E-29 (§0.4, SA-Q28).** Add a deferral row: "| DF-5 | **Boost refund and dispute dates** | No date is stored for a boost refund or dispute, so slice 4 counts them in the purchase month (S4-W-3). Showing them in the month they happen needs a writer-side change in the boost module (for example a refund event record). User choice pending; default: purchase month | 2026-10-13 |"
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -1665,3 +1995,12 @@ SQL checks 1 and 6 are ASCII only, with no "into", no apostrophe in a comment, a
 | 2026-10-13 | Slice 1c status: awaiting user diff review | SA-CR-1c approved with conditions SA-CR-2 (R-c' renamed findBillingStatusForAccount) and SA-CR-3 (test title), both done; QA PASS WITH ISSUES, no bugs; fix round 1 also limits the Founding Partner note and chip to accounts whose Founding Partner period is current. Note: the paid Basic tier displays as Essentials. User manual QA L-42 to L-48 owed. |
 | 2026-10-13 | Slice 1c approved by user | User read the diff and approved; TL retrospective `docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_RETROSPECTIVE.md`; RM to commit and open the PR. |
 | 2026-10-13 | Slice 1c PR opened (RM) | Committed `fa7a4aad` on `feature/bos-finance-health-1c`; origin/main merged in `10e3c5f0` (clean; finance, billing and Businesses-list suites 3,360 tests, `test:bos-entitlements` 7,231, `test:authz-guard` 203, all green); PR [#335](https://github.com/AgentsPilot/neuronforge/pull/335) opened, merge pending. §0.1 row 1c updated. |
+| 2026-10-13 | BA: slice 4 "Boost revenue" specified | New §11C from a read-only live check (live facts §11C.1, code at `15300d29`): split 4a (boost revenue, about 2.5 days) and 4b (boost problems, K-5 dispute rule, bought credits in Section 4, about 1.5 days); rules S4-W-1 to S4-W-8 (dated by `paid_at`, paid-family statuses, refunds and disputes against the purchase month, minor units used as hundredths with no `× 100`, per currency only, deleted-accounts line, ceiling); S4-FR-1 to S4-FR-22; new reads R-k, R-k′, R-l, R-l′ in `BusinessOsFinanceReadRepository`; guard rows (§11C.7: the finance table pin does not grow; boost repository and webhook placement guards not tripped); AC-87 to AC-107; SA-Q25 to SA-Q31. §13 checks 14 to 16 added (ASCII, no apostrophes in comments, no "into", one result set each; not executed by BA). §12.2 slice 4 row, TOC entry, §0.1 row 4 and §0.2 log line. SA sections and §0.3 unchanged. No code changed. |
+| 2026-10-13 | SA requirement review, slice 4: **APPROVED WITH CONDITIONS** | New section "SA Requirement Review — Slice 4 — 2026-10-13", checked against `15300d29`. §0.3 rows SA-Q25 to SA-Q31 and SA-RR-4 added. Findings S4-F1 to S4-F5. BA edits E-26 (one source for currency decimals, `minorUnitsPerMajor`), E-27 (AC-88 bounds on the query), E-28 (K-5 dispute reason, picked scope), E-29 (DF-5 refund dates). One business question for the user (refund timing, default: purchase month). Checks 14 to 16 confirmed against the migration columns, not run (no credentials). No code changed. |
+| 2026-10-13 | BA applied SA slice 4 review edits E-26..E-29 | E-26: S4-W-4 currency-decimals test via `minorUnitsPerMajor` (`lib/payments/refundMath.ts`). E-27: AC-88 bounds asserted on the query. E-28: S4-FR-17 dispute reason and picked-business scope (R-l′). E-29: §0.4 DF-5 refund and dispute dates (default purchase month; user question pending). §0.1 row 4 status and §0.2 log updated. SA sections and §0.3 unchanged. No code changed. |
+| 2026-10-13 | SA workplan review, slice 4a: **APPROVED WITH CONDITIONS** | §0.3 rows SA-W47 to SA-W54 and SA-WP-4a added. Required changes SA-WR-32 to SA-WR-35 are in the workplan. Requirement edits for BA (exact text in the workplan): E-30 (check 14 `deleted_account_net_minor`, AC-97), E-31 (AC-75 to AC-77 superseded for K-5 wording; R-d behaviour stays pinned), E-32 (S4-FR-4 plans line platform-wide in the picked view). DF-5 on default (a). No code changed. |
+| 2026-10-13 | BA applied SA 4a workplan-review edits E-30..E-32 | E-30: §13 check 14 comment line and `deleted_account_net_minor` column (ASCII, no apostrophes in comments, no "into", one result set); AC-97 compares against it. E-31: Slice 4a note after AC-77 (K-5 wording superseded; R-d rule stays pinned). E-32: S4-FR-4 plans line platform-wide in the picked view. §0.1 row 4 status and §0.2 log updated. SA sections and §0.3 unchanged. No code changed. |
+| 2026-10-14 | SA code review, slice 4a: **APPROVED** | §0.3 row SA-CR-4a added. SA re-ran 21 suites / 1,576 tests (including the boost repository and webhook placement guards), `test:bos-entitlements` (7,365 tests) and `test:authz-guard` (203 tests), all green. Code approved for QA; QA owes V-11 (check 14) and L-49 to L-56. No code changed. |
+| 2026-10-14 | Slice 4a status: awaiting user diff review | SA-CR-4a APPROVED with no conditions; QA PASS WITH ISSUES, no bugs, so no fix round. Jest worker-exit warning shown to pre-date 4a (seen in 1a and 2a reviews; no open handle found). User manual QA L-49 to L-58 owed; DF-5 refund timing still with the user (default a). |
+| 2026-10-14 | Slice 4a approved by user | User read the diff and approved; TL retrospective `docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_RETROSPECTIVE.md`; RM to commit and open the PR. |
+| 2026-10-14 | Slice 4a PR opened | RM committed 4a as `0acb460b`, merged `origin/main` into the branch (clean), and opened PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358). §0.1 slice 4 row updated with the workplan and PR. Merge awaits the user; manual QA L-49 to L-58 owed; 4b next. |

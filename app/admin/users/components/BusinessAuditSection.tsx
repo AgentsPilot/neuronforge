@@ -15,12 +15,12 @@
 
 import { useId, useState } from 'react';
 import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
-import { DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
 import { ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL } from '@/app/admin/components/layout/AdminFilterBar';
 import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
 import type { AuditEventFilter, AuditLogEntry } from '@/app/admin/users/types';
+import { DrawerBox } from './DrawerBox';
 
 /** The list shows the newest entries only, as before L-4b. */
 const AUDIT_LIST_LIMIT = 50;
@@ -82,7 +82,8 @@ export function BusinessAuditSection({ logs, filter, onFilterChange }: BusinessA
 
   return (
     // "Activity": the drawer's section name (Admin Layout follow-ups LF-4a.2, BD-4).
-    <DrawerSection title="Activity" testId="detail-audit">
+    // LF-4d (BD-16): in its box, the purpose line before the toggle (SA SQ-6).
+    <DrawerBox section="activity" title="Activity" testId="detail-audit">
       <button
         type="button"
         data-testid="detail-audit-toggle"
@@ -177,6 +178,6 @@ export function BusinessAuditSection({ logs, filter, onFilterChange }: BusinessA
           </ul>
         )}
       </div>
-    </DrawerSection>
+    </DrawerBox>
   );
 }

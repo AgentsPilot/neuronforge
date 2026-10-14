@@ -36,12 +36,23 @@
  * wording (AC-75 to AC-77, AC-81), the Founding Partner note on a tier group
  * with all businesses (AC-78) and the neutral chip with words only for a
  * picked business (AC-82, SA-Q24, SA-W43; the SA-WR-17 test is unedited).
+ *
+ * Slice 4a: "Our revenue" as a section (S4-FR-1). The 1c panel-sentence and
+ * K-5 headline cases (AC-75 to AC-77) are superseded by S4-FR-4 / S4-FR-7
+ * (SA-W50, E-31) and rewritten; AC-81's wording rule runs unchanged over every
+ * new state. Then the boost lines with a currency in every money cell (AC-90),
+ * the refund-timing note (AC-91), two currencies and never a total (AC-92),
+ * the ceiling (AC-93), the empty window (AC-94), K-5's value and caption
+ * (AC-95, SA-WR-34), the picked business's plans line (SA-WR-33), deleted
+ * accounts (AC-97) and the failed boost read.
  */
 
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import type { FinanceCreditRow, FinancePayload, FinanceTakingsSection } from '@/lib/business-os/finance/financeTypes';
+// Slice 4a: a separate import, so the line above stays unedited.
+import type { FinanceBoostLine, FinanceRevenueSection } from '@/lib/business-os/finance/financeTypes';
 import type { FinancePaymentProblemsSection } from '@/lib/business-os/finance/financeTypes';
 
 const mockReplace = jest.fn();
@@ -65,8 +76,6 @@ import {
   CREDITS_UNKNOWN,
   k2Subtitle,
   NAME_PLATFORM,
-  REVENUE_COULD_NOT_CHECK,
-  REVENUE_NONE_YET,
   SECTION_COULD_NOT_LOAD,
   TAKINGS_CHIP,
   TAKINGS_FEE_NOTE,
@@ -80,9 +89,30 @@ import {
 // Slice 1c: a separate import, so the lists above stay unedited.
 import {
   ACCOUNTS_FOUNDING_CHIP,
-  REVENUE_RECORDED,
-  REVENUE_SUBTITLE,
   accountsFoundingNote,
+} from '../financeCopy';
+// Slice 4a.
+import {
+  k5Caption,
+  k5SeveralCurrencies,
+  REVENUE_BOOSTS_FAILED,
+  REVENUE_CANNOT,
+  REVENUE_CUT_OFF,
+  REVENUE_DELETED_NONE,
+  REVENUE_NET,
+  REVENUE_NO_BOOSTS,
+  REVENUE_NOTICE_CUT,
+  REVENUE_NOTICE_UNREADABLE,
+  REVENUE_OTHER_STATUS,
+  REVENUE_PLANS_ALL_PREFIX,
+  REVENUE_PLANS_ALL_RECORDED,
+  REVENUE_PLANS_NONE,
+  REVENUE_PLANS_RECORDED,
+  REVENUE_PLANS_UNKNOWN,
+  REVENUE_REFUND_TIMING_NOTE,
+  REVENUE_SUBTITLE_ALL,
+  REVENUE_SUBTITLE_ONE,
+  revenueDeletedLine,
 } from '../financeCopy';
 import { formatMoney } from '../financeFormat';
 import {
@@ -274,6 +304,52 @@ function paymentProblemsSection(extra: Partial<FinancePaymentProblemsSection> = 
   };
 }
 
+/** Slice 4a: "Our revenue" with nothing paid in the window (the default). */
+function revenueSection(extra: Partial<FinanceRevenueSection> = {}, boosts: Partial<FinanceRevenueSection['boosts']> = {}): FinanceRevenueSection {
+  return {
+    status: 'ok',
+    state: 'none_yet',
+    plans: 'none',
+    ...extra,
+    boosts: {
+      status: 'ok',
+      scope: 'all',
+      lines: [],
+      packages: [],
+      deletedAccounts: [],
+      notes: { empty: true, exact: true, otherStatusPurchases: 0, unreadablePurchases: 0, refundOrDispute: false },
+      ...boosts,
+    },
+  };
+}
+
+/** One currency line, the owner's test purchase by default (USD 10.00, 5,000 credits). */
+function boostLine(extra: Partial<FinanceBoostLine> = {}): FinanceBoostLine {
+  return {
+    currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, held: 0, lost: 0, net: 10, creditsSold: 5000,
+    unreadable: 0, unreadableCredits: 0, ...extra,
+  };
+}
+
+/** "Our revenue" with the given lines (one package row per line), as the builder would send it. */
+function paidRevenue(lines: FinanceBoostLine[], notes: Partial<NonNullable<FinanceRevenueSection['boosts']['notes']>> = {}, extra: Partial<FinanceRevenueSection> = {}): FinanceRevenueSection {
+  return revenueSection(
+    { state: 'recorded', ...extra },
+    {
+      lines,
+      packages: lines.map((l) => ({
+        currency: l.currency, packageId: 'pkg-small', packageVersion: 1, purchases: l.purchases, gross: l.gross, refunded: l.refunded, net: l.net, unreadable: l.unreadable,
+      })),
+      notes: { empty: false, exact: true, otherStatusPurchases: 0, unreadablePurchases: 0, refundOrDispute: false, ...notes },
+    }
+  );
+}
+
+const k5With = (p: FinancePayload, money: NonNullable<FinancePayload['tiles']['k5']['money']>, headline = 'Net of refunds and disputes') => {
+  p.tiles.k5 = { ...p.tiles.k5, headline, money };
+  return p;
+};
+
 function payload(extra: Partial<FinancePayload> = {}): FinancePayload {
   return {
     generatedAt: '2026-10-09T10:00:00.000Z',
@@ -284,9 +360,9 @@ function payload(extra: Partial<FinancePayload> = {}): FinancePayload {
       k2: { id: 'k2_far_over_allowance', status: 'amber', headline: 'Accounts at or over the far-over-allowance line', value: { value: 1, exact: false }, previous: null },
       k3: { id: 'k3_founding_no_end_date', status: 'amber', headline: 'Founding Partners with no end date', value: { value: 8, exact: true }, previous: null },
       k4: { id: 'k4_gifted_outstanding', status: 'neutral', headline: 'Admin-granted, not taken back, not expired', value: { value: 12.5, exact: true }, previous: null },
-      k5: { id: 'k5_our_revenue', status: 'neutral', headline: 'None yet', value: null, previous: null },
+      k5: { id: 'k5_our_revenue', status: 'neutral', headline: 'No data yet', value: null, previous: null, money: { kind: 'none' } },
     },
-    revenue: { status: 'ok', state: 'none_yet' },
+    revenue: revenueSection(),
     accounts: {
       status: 'ok',
       scope: 'all',
@@ -380,42 +456,18 @@ describe('the finance page', () => {
     expect(within(screen.getByTestId('ai-top')).getByText('Acme Dental')).toBeInTheDocument();
   });
 
-  it('AC-22 / AC-77: the revenue panel says none yet, and shows no $0 anywhere in it or on K-5', async () => {
+  it('AC-22 / AC-94 (4a meaning of AC-77): nothing paid → "No credit boosts paid in this window", no currency line, no 0.00; K-5 "No data yet" with no value', async () => {
     serve({ success: true, data: payload() });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
-    expect(panel).toHaveTextContent(REVENUE_NONE_YET);
+    expect(within(panel).getByTestId('revenue-plans')).toHaveTextContent(REVENUE_PLANS_NONE);
+    expect(within(panel).getByTestId('revenue-no-boosts')).toHaveTextContent(REVENUE_NO_BOOSTS);
+    expect(within(panel).queryByTestId('revenue-lines')).toBeNull();
     expect(panel.textContent).not.toMatch(/\$|USD|0\.00/);
-    expect(screen.getByTestId('tile-k5_our_revenue').textContent).not.toMatch(/\$|USD|0\.00/);
-  });
-
-  it('AC-39: the revenue check failed → "Could not check"', async () => {
-    serve({ success: true, data: payload({ revenue: { status: 'unknown', state: 'unknown' } }) });
-    render(<FinanceView />);
-    expect(await screen.findByTestId('revenue-text')).toHaveTextContent(REVENUE_COULD_NOT_CHECK);
-  });
-
-  it('AC-75 / AC-76: revenue recorded → "Revenue has been recorded", K-5 headline as served, still no amount', async () => {
-    const p = payload({ revenue: { status: 'ok', state: 'recorded' } });
-    p.tiles.k5 = { ...p.tiles.k5, headline: 'Revenue recorded, not yet shown' };
-    serve({ success: true, data: p });
-    render(<FinanceView />);
-    const panel = await screen.findByTestId('section-revenue');
-    expect(within(panel).getByTestId('revenue-text')).toHaveTextContent(REVENUE_RECORDED);
-    expect(panel).toHaveTextContent(REVENUE_SUBTITLE);
-    expect(panel.textContent).not.toMatch(/\$|USD|0\.00/);
-    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('Revenue recorded, not yet shown');
-  });
-
-  it.each([
-    ['none_yet', { status: 'ok', state: 'none_yet' }],
-    ['recorded', { status: 'ok', state: 'recorded' }],
-    ['unknown', { status: 'unknown', state: 'unknown' }],
-  ] as const)('AC-81: in the %s state the panel names no mode and no webhook', async (_name, revenue) => {
-    serve({ success: true, data: payload({ revenue }) });
-    render(<FinanceView />);
-    const panel = await screen.findByTestId('section-revenue');
-    expect(panel.textContent).not.toMatch(/webhook|not in place|test accounts only|live mode|test mode|livemode/i);
+    const k5 = screen.getByTestId('tile-k5_our_revenue');
+    expect(k5.textContent).not.toMatch(/\$|USD|0\.00/);
+    expect(screen.getByTestId('tile-k5_our_revenue-headline')).toHaveTextContent('No data yet');
+    expect(k5.getAttribute('data-status')).toBe('neutral');
   });
 
   it('AC-78: all businesses, a tier group with a paying Founding Partner shows the note as text, no chip in Section 1', async () => {
@@ -1119,6 +1171,179 @@ describe('Section 6 block B, client payment problems (slice 2b)', () => {
     const section = await renderWith(base());
     expect(section.textContent).not.toMatch(/test.?mode|live.?mode|livemode/i);
     expect(section.textContent).not.toMatch(/Deleted business/);
+  });
+});
+
+describe('Our revenue (slice 4a)', () => {
+  const WINDOW_LABEL = 'This month, 2026-10-01 to 2026-10-09 UTC';
+
+  it('S4-FR-1: a section with its status, the window in the subtitle, above takings; the "cannot produce" list', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    expect(panel.getAttribute('data-status')).toBe('ok');
+    expect(panel).toHaveTextContent(REVENUE_SUBTITLE_ALL(WINDOW_LABEL));
+    expect(panel.compareDocumentPosition(screen.getByTestId('section-takings')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const item of REVENUE_CANNOT) expect(within(panel).getByTestId('revenue-cannot')).toHaveTextContent(item);
+  });
+
+  it.each([
+    ['recorded', REVENUE_PLANS_RECORDED],
+    ['none', REVENUE_PLANS_NONE],
+    ['unknown', REVENUE_PLANS_UNKNOWN],
+  ] as const)('S4-FR-4: the plans line when R-d says %s', async (plans, text) => {
+    serve({ success: true, data: payload({ revenue: revenueSection({ plans, status: plans === 'unknown' ? 'partial' : 'ok' }) }) });
+    render(<FinanceView />);
+    expect(await screen.findByTestId('revenue-plans')).toHaveTextContent(text);
+  });
+
+  it('SA-WR-33: with a business picked, the plans line says it covers all businesses; the subtitle says this business; no deleted line', async () => {
+    mockSearch = `accountId=${A}`;
+    const revenue = paidRevenue([boostLine()], {}, { plans: 'recorded' });
+    revenue.boosts = { ...revenue.boosts, scope: 'one', deletedAccounts: null };
+    serve({ success: true, data: payload({ accountId: A, revenue }) });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    expect(within(panel).getByTestId('revenue-plans')).toHaveTextContent(REVENUE_PLANS_ALL_RECORDED);
+    expect(within(panel).getByTestId('revenue-plans').textContent).toContain(REVENUE_PLANS_ALL_PREFIX);
+    expect(panel).toHaveTextContent(REVENUE_SUBTITLE_ONE(WINDOW_LABEL));
+    expect(within(panel).queryByTestId('revenue-deleted')).toBeNull();
+  });
+
+  it('AC-90 / AC-95: the owner purchase → "USD 10.00" in the line and on K-5, with the caption; K-5 grey, never green', async () => {
+    serve({ success: true, data: k5With(payload({ revenue: paidRevenue([boostLine()]) }), { kind: 'one', currency: 'USD', net: 10 }) });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    const line = within(panel).getByTestId('revenue-line-USD');
+    for (const cell of ['gross', 'net']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent('USD 10.00');
+    expect(line.querySelector('[data-money="tax"]')).toHaveTextContent('USD 0.00');
+    expect(line).toHaveTextContent('5,000');
+    expect(within(panel).getByRole('columnheader', { name: REVENUE_NET })).toBeInTheDocument();
+    expect(within(panel).getByTestId('revenue-package-pkg-small v1')).toHaveTextContent('USD 10.00');
+    const k5 = screen.getByTestId('tile-k5_our_revenue');
+    expect(k5).toHaveTextContent('USD 10.00');
+    expect(k5).toHaveTextContent(k5Caption(WINDOW_LABEL));
+    expect(k5Caption(WINDOW_LABEL)).toContain('Credit boosts; plans in a later update');
+    expect(k5.getAttribute('data-status')).toBe('neutral');
+    expect(k5.className).not.toContain(STATUS_STYLES.green.card);
+    // Every money cell names its currency.
+    for (const cell of panel.querySelectorAll('[data-money]')) expect(cell.textContent).toMatch(/USD|Unknown/);
+  });
+
+  it('AC-90: 1999 minor units arrive as 19.99 and print "USD 19.99"', async () => {
+    serve({ success: true, data: payload({ revenue: paidRevenue([boostLine({ gross: 19.99, net: 19.99 })]) }) });
+    render(<FinanceView />);
+    expect(within(await screen.findByTestId('revenue-line-USD')).getAllByText('USD 19.99').length).toBeGreaterThan(0);
+  });
+
+  it('AC-90: an unreadable purchase → "excludes 1 unreadable", gross "At least", net "Unknown", a notice', async () => {
+    const revenue = paidRevenue([boostLine({ purchases: 2, unreadable: 1, held: null, lost: null, net: null })], { unreadablePurchases: 1 }, { status: 'partial' });
+    revenue.boosts.status = 'partial';
+    serve({ success: true, data: k5With(payload({ revenue }), { kind: 'unknown', reason: 'unreadable' }) });
+    render(<FinanceView />);
+    const line = await screen.findByTestId('revenue-line-USD');
+    expect(line).toHaveTextContent('excludes 1 unreadable');
+    expect(line.querySelector('[data-money="gross"]')).toHaveTextContent('At least USD 10.00');
+    expect(line.querySelector('[data-money="net"]')).toHaveTextContent(/^Unknown$/);
+    expect(screen.getByTestId('revenue-notice-unreadable')).toHaveTextContent(REVENUE_NOTICE_UNREADABLE(1));
+    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('Unknown');
+  });
+
+  it('AC-91: the refund-timing note shows when a refund or dispute amount is non-zero, and only then', async () => {
+    serve({ success: true, data: payload({ revenue: paidRevenue([boostLine({ refunded: 3, net: 7 })], { refundOrDispute: true }) }) });
+    const { unmount } = render(<FinanceView />);
+    expect(await screen.findByTestId('revenue-refund-note')).toHaveTextContent(REVENUE_REFUND_TIMING_NOTE);
+    unmount();
+    serve({ success: true, data: payload({ revenue: paidRevenue([boostLine()]) }) });
+    render(<FinanceView />);
+    await screen.findByTestId('revenue-lines');
+    expect(screen.queryByTestId('revenue-refund-note')).toBeNull();
+  });
+
+  it('AC-92: two currencies → two lines; K-5 "2 currencies, see Our revenue"; no total anywhere', async () => {
+    const lines = [boostLine({ currency: 'EUR', gross: 7, net: 7 }), boostLine()];
+    serve({ success: true, data: k5With(payload({ revenue: paidRevenue(lines) }), { kind: 'several', currencies: 2 }) });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    expect(within(panel).getByTestId('revenue-line-EUR')).toHaveTextContent('EUR 7.00');
+    expect(within(panel).getByTestId('revenue-line-USD')).toHaveTextContent('USD 10.00');
+    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent(k5SeveralCurrencies(2));
+    expect(k5SeveralCurrencies(2)).toBe('2 currencies, see Our revenue');
+    // 7 + 10 printed anywhere would be a cross-currency total.
+    expect(document.body.textContent).not.toMatch(/17\.00/);
+  });
+
+  it('AC-93: the ceiling → "At least" on counts and amounts, "Unknown (a read was cut off)" on held, lost and net, the notice; K-5 "Unknown"', async () => {
+    const revenue = paidRevenue([boostLine({ held: null, lost: null, net: null })], { exact: false }, { status: 'partial' });
+    revenue.boosts.status = 'partial';
+    revenue.boosts.packages = revenue.boosts.packages!.map((p) => ({ ...p, net: null }));
+    serve({ success: true, data: k5With(payload({ revenue }), { kind: 'unknown', reason: 'cut_off' }) });
+    render(<FinanceView />);
+    const line = await screen.findByTestId('revenue-line-USD');
+    for (const cell of ['gross', 'tax', 'refunded']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent(/^At least USD/);
+    for (const cell of ['held', 'lost', 'net']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent(REVENUE_CUT_OFF);
+    expect(line).toHaveTextContent('At least 1');
+    expect(line).toHaveTextContent('At least 5,000');
+    expect(screen.getByTestId('revenue-notice-cut')).toHaveTextContent(REVENUE_NOTICE_CUT);
+    expect(screen.getByTestId('section-revenue').getAttribute('data-status')).toBe('partial');
+    const k5 = screen.getByTestId('tile-k5_our_revenue');
+    expect(k5).toHaveTextContent('Unknown');
+    expect(k5.textContent).not.toMatch(/At least/);
+  });
+
+  it('AC-89: other-status purchases are counted in words', async () => {
+    serve({ success: true, data: payload({ revenue: paidRevenue([boostLine()], { otherStatusPurchases: 2 }) }) });
+    render(<FinanceView />);
+    expect(await screen.findByTestId('revenue-other-status')).toHaveTextContent(REVENUE_OTHER_STATUS(2));
+  });
+
+  it('AC-97: the deleted-accounts line in words, never a name; "No purchases from deleted accounts" when none', async () => {
+    const revenue = paidRevenue([boostLine({ purchases: 2, gross: 35, net: 35 })]);
+    revenue.boosts.deletedAccounts = [{ currency: 'USD', purchases: 1, net: 25, unreadable: 0 }];
+    serve({ success: true, data: payload({ revenue }) });
+    const { unmount } = render(<FinanceView />);
+    expect(await screen.findByTestId('revenue-deleted-USD')).toHaveTextContent(revenueDeletedLine(1, 'USD 25.00'));
+    unmount();
+    serve({ success: true, data: payload({ revenue: paidRevenue([boostLine()]) }) });
+    render(<FinanceView />);
+    expect(await screen.findByTestId('revenue-deleted')).toHaveTextContent(REVENUE_DELETED_NONE);
+  });
+
+  it('AC-95: the boost read failed → "Could not load" in the section, the plans line still shown; K-5 unavailable "Unknown"', async () => {
+    const revenue = revenueSection({ status: 'partial', plans: 'recorded' }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null });
+    const p = payload({ revenue });
+    p.tiles.k5 = { ...p.tiles.k5, status: 'unavailable', headline: 'Unknown', money: { kind: 'unknown', reason: 'failed' } };
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    expect(within(panel).getByTestId('revenue-boosts-failed')).toHaveTextContent(REVENUE_BOOSTS_FAILED);
+    expect(within(panel).getByTestId('revenue-plans')).toHaveTextContent(REVENUE_PLANS_RECORDED);
+    expect(screen.getByTestId('tile-k5_our_revenue').getAttribute('data-status')).toBe('unavailable');
+    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('Unknown');
+    expect(screen.getByTestId('section-takings')).toBeInTheDocument();
+  });
+
+  it('both reads failed → the section says it could not load, with Retry', async () => {
+    const revenue = revenueSection({ status: 'unknown', state: 'unknown', plans: 'unknown' }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null });
+    serve({ success: true, data: payload({ revenue }) });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    expect(panel).toHaveTextContent(SECTION_COULD_NOT_LOAD);
+    expect(within(panel).queryByTestId('revenue-plans')).toBeNull();
+  });
+
+  it.each([
+    ['empty', revenueSection()],
+    ['paid with a refund', paidRevenue([boostLine({ refunded: 3, net: 7 })], { refundOrDispute: true })],
+    ['cut off', paidRevenue([boostLine({ net: null, held: null, lost: null })], { exact: false })],
+    ['boosts failed', revenueSection({ status: 'partial', plans: 'unknown' }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
+    ['both failed', revenueSection({ status: 'unknown', state: 'unknown', plans: 'unknown' }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
+  ] as const)('AC-81 (unchanged rule): in the %s state the section and K-5 name no mode and no webhook', async (_name, revenue) => {
+    serve({ success: true, data: payload({ revenue }) });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    const text = `${panel.textContent} ${screen.getByTestId('tile-k5_our_revenue').textContent}`;
+    expect(text).not.toMatch(/webhook|not in place|test accounts only|live mode|test mode|livemode/i);
   });
 });
 

@@ -5,7 +5,8 @@
 /**
  * The "Scheduled jobs & queues" page (admin reorganisation slice 5, part C):
  * renders what the route sends; read-only apart from one Drain now per queue
- * (slice 7d); "Due now" and
+ * (slice 7d) and one Reconcile top-ups now in the Billing reconcile row
+ * (Admin Layout follow-ups LF-4c); "Due now" and
  * "Scheduled for later" are separate; green only on Healthy / Clear, with a
  * text label; the "not installed" sentence; no forbidden field names.
  */
@@ -106,12 +107,22 @@ describe('the Scheduled jobs & queues page', () => {
   // page was "Refresh only"; it is now Refresh plus one Drain now per queue.
   // Amended again by slice 7a (SA OP-11): plus one "View items" per queue
   // (a read-only toggle), with every item list closed, and nothing else.
-  it('the only buttons are Refresh, one Drain now and one View items per queue', async () => {
+  // Amended deliberately by Admin Layout follow-ups LF-4c (BD-6, SA-C3): plus
+  // exactly one "Reconcile top-ups now (all accounts)", in the Billing
+  // reconcile job's row and in no other row.
+  it('the only buttons are Refresh, one Drain now and one View items per queue, and one Reconcile top-ups now in the Billing reconcile row', async () => {
     mockRoute();
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('job-calendar-sync');
     const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(1 + 5 + 5);
+    expect(buttons).toHaveLength(1 + 5 + 5 + 1);
+    const reconciles = buttons.filter((b) => b.textContent === 'Reconcile top-ups now (all accounts)');
+    expect(reconciles).toHaveLength(1);
+    expect(within(screen.getByTestId('job-bos-billing-reconcile')).getAllByRole('button')).toEqual(reconciles);
+    for (const job of BOS_CRON_JOBS) {
+      if (job.id === 'bos-billing-reconcile') continue;
+      expect(within(screen.getByTestId(`job-${job.id}`)).queryAllByRole('button')).toHaveLength(0);
+    }
     expect(buttons.filter((b) => b.textContent?.includes('Refresh'))).toHaveLength(1);
     const drains = buttons.filter((b) => b.textContent === 'Drain now');
     expect(drains).toHaveLength(5);

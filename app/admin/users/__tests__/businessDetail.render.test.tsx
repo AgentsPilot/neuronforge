@@ -17,7 +17,7 @@
  */
 
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 jest.mock('@/lib/logger', () => ({
@@ -37,6 +37,13 @@ jest.mock('next/navigation', () => ({
 
 import UsersPage from '../page';
 import recordedAccountBody from '@/app/admin/business-os-tiers/__tests__/__fixtures__/recordedAccountBody.json';
+
+// As the pin files (SA F2 on LF-4a.2; SA ruling on LF-4c, check 8): the whole
+// page under a parallel Jest run can take more than RTL's 1 s default to
+// settle. Both limits are raised, so the longer wait does not just hit Jest's
+// 5 s test timeout. A longer wait cannot make a wrong result pass; it only stops a slow machine failing a correct one.
+jest.setTimeout(30_000);
+configure({ asyncUtilTimeout: 5000 });
 
 const DANA_ID = '99999999-9999-4999-8999-999999999999';
 const OREN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

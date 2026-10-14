@@ -1,9 +1,10 @@
 /**
- * The admin finance & business health page's builder (slices 1a, 1b, 2a and
- * 2b). Workplans docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md,
+ * The admin finance & business health page's builder (slices 1a, 1b, 2a, 2b
+ * and 4a). Workplans docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md,
  * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1B_WORKPLAN.md,
- * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md and
- * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md.
+ * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md,
+ * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md and
+ * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md.
  *
  * ONE ORCHESTRATOR, SETTLED SECTIONS (SA-Q8). Every independent read starts at
  * once through `settle`, so a read that throws becomes `{ error }` and never
@@ -21,7 +22,8 @@
  *      read, the all-accounts billing read, the all-accounts lot read, since
  *      slice 2a the all-accounts client payment and refund reads, and since
  *      slice 2b the all-accounts overdue and client plan reads and the
- *      platform-wide reminder queue read). The platform-wide revenue head
+ *      platform-wide reminder queue read, and since slice 4a the all-accounts
+ *      boost purchase read). The platform-wide revenue head
  *      count is the one deliberate exception: it reads no account and no
  *      amount.
  * Slice 1c (BD-14, BD-15, BD-16): the billing and revenue reads count test
@@ -47,6 +49,14 @@
  * inside the same `Promise.all`, and only when no business is picked. The
  * pure `paymentProblems.ts` does the counting; this file adds the names of
  * the rows shown. Each part has its own status; the block is never unknown.
+ *
+ * OUR REVENUE (slice 4a). The boost purchases paid in the window run beside
+ * every other read, settled on their own (R-k, or R-k′ with exactly the picked
+ * id). The pure `buildBoostRevenue` does the money maths (integer minor units
+ * per currency, never across currencies) and gives K-5 its money, so the tile
+ * and the section show the same figure from the same read (SA-Q25). R-d still
+ * drives the plans line, platform-wide. The section is unknown only when both
+ * reads failed. No names are looked up: the block shows no business.
  *
  * SECTION 4, CREDITS (slice 1b). The credit-position pass starts as soon as the
  * plan walk has its account list, beside the ledger reads; a failed or capped
@@ -86,6 +96,7 @@ import { missingOriginalIds, sumCostUsd, summariseAiCost } from './aiCost';
 import { readAdminCreditPositions, type AdminCreditPercentDeps, type AdminCreditPositionsPass } from '@/lib/business-os/credits/adminCreditPercent';
 import { buildCreditsSection, type FinanceLot } from './creditsSection';
 import { buildTakings } from './takings';
+import { buildBoostRevenue } from './boostRevenue';
 import {
   buildClientPlans,
   buildOverdue,
@@ -98,7 +109,6 @@ import {
   colourFarOverAllowanceTile,
   colourFinanceTile,
   farOverAllowancePercentOf,
-  FINANCE_COULD_NOT_CHECK_HEADLINE,
   FINANCE_METRIC_PARAMS,
   FINANCE_RULES,
   K4_INFORMATION_HEADLINE,
@@ -148,9 +158,9 @@ export const FINANCE_LIMITS = {
   REMINDER_DEADLINE_MS: 2 * 1000,
 } as const;
 
-/** The revenue panel's "none yet" and "recorded" headlines for K-5 (S1-FR-26). */
-export const K5_NONE_YET = 'None yet';
-export const K5_RECORDED = 'Revenue recorded, not yet shown';
+/** K-5's information lines (slice 4a, S4-FR-7): no counted boost in the window, or the boost net shown. */
+export const K5_NO_DATA_YET = 'No data yet';
+export const K5_NET_HEADLINE = 'Net of refunds and disputes';
 
 export interface FinanceHealthLogger {
   error: (ctx: Record<string, unknown>, msg: string) => void;
@@ -185,6 +195,8 @@ export interface FinanceHealthDeps {
     | 'listOverdueClientInstalmentsForAccount'
     | 'listClientPlansAllAccounts'
     | 'listClientPlansForAccount'
+    | 'listBoostPurchasesAllAccountsPaidInRange'
+    | 'listBoostPurchasesForAccountPaidInRange'
   >;
   /** Business names for display. Injected by the admin route (admin identity reads stay in `app/api/admin/**`). */
   findNames: (accountIds: readonly string[]) => Promise<RepoResult<Array<{ user_id: string; company_name: string | null }>>>;
@@ -282,6 +294,19 @@ export interface FinanceHealthCounts {
     reminderMs: number | null;
     namesFound: number;
   };
+  /** Our revenue, boosts (slice 4a): counts and booleans only, never an amount, a currency, a package or a name. */
+  boosts: {
+    /** Rows read; null when the read failed. */
+    rows: number | null;
+    ceiling: boolean;
+    counted: number;
+    otherStatus: number;
+    unreadable: number;
+    unreadableCredits: number;
+    currencies: number;
+    packages: number;
+    deletedAccountPurchases: number;
+  };
 }
 
 export type FinanceHealthResult =
@@ -370,8 +395,8 @@ export async function buildFinanceHealth(
     }
   });
 
-  // Takings (slice 2a): the selected window, half-open, like every other window read.
-  const takingsRange = { from: window.start, to: window.end };
+  // Takings (slice 2a) and boosts (slice 4a): the selected window, half-open, like every other window read.
+  const windowRange = { from: window.start, to: window.end };
   // Payment problems (slice 2b): as of now, by today's UTC date, computed once.
   const today = todayUtc(now);
   const reminderTimings: ReadTiming[] = [];
@@ -392,6 +417,7 @@ export async function buildFinanceHealth(
     overdueInstalments,
     clientPlans,
     reminderRead,
+    boostPurchases,
   ] = await Promise.all([
     plansPromise,
     accountId !== null
@@ -408,13 +434,13 @@ export async function buildFinanceHealth(
     positionsPromise,
     settle(() =>
       accountId !== null
-        ? deps.finance.listClientPaymentsForAccountPaidInRange(accountId, takingsRange)
-        : deps.finance.listClientPaymentsAllAccountsPaidInRange(takingsRange)
+        ? deps.finance.listClientPaymentsForAccountPaidInRange(accountId, windowRange)
+        : deps.finance.listClientPaymentsAllAccountsPaidInRange(windowRange)
     ),
     settle(() =>
       accountId !== null
-        ? deps.finance.listClientRefundsForAccountCreatedInRange(accountId, takingsRange)
-        : deps.finance.listClientRefundsAllAccountsCreatedInRange(takingsRange)
+        ? deps.finance.listClientRefundsForAccountCreatedInRange(accountId, windowRange)
+        : deps.finance.listClientRefundsAllAccountsCreatedInRange(windowRange)
     ),
     settle(() =>
       accountId !== null
@@ -437,6 +463,12 @@ export async function buildFinanceHealth(
           (signal) => deps.readReminderFigures(now, signal),
           FINANCE_LIMITS.REMINDER_DEADLINE_MS
         ),
+    // R-k / R-k′ (slice 4a): our boost purchases paid in the window; R-k never with a business picked (AC-96).
+    settle(() =>
+      accountId !== null
+        ? deps.finance.listBoostPurchasesForAccountPaidInRange(accountId, windowRange)
+        : deps.finance.listBoostPurchasesAllAccountsPaidInRange(windowRange)
+    ),
   ]);
 
   if (plansResult.error) failed('plans', plansResult.error);
@@ -451,6 +483,7 @@ export async function buildFinanceHealth(
   if (overdueInvoices.error) failed('client_overdue_invoices', overdueInvoices.error);
   if (overdueInstalments.error) failed('client_overdue_instalments', overdueInstalments.error);
   if (clientPlans.error) failed('client_plans', clientPlans.error);
+  if (boostPurchases.error) failed('boost_purchases', boostPurchases.error);
   // Logged as `{ err }`, like every other finance read (CLAUDE.md logging standard). It cannot
   // carry client data: R-j is head counts filtered by fixed statuses and server-computed times,
   // and its repository wraps a PostgREST error to its message and code only; a deadline is the
@@ -527,13 +560,33 @@ export async function buildFinanceHealth(
     };
   }
 
-  // ── 5. Revenue panel (S1-FR-25..27) ──────────────────────────────────────
-  const revenue: FinanceRevenueSection = !revenueResult.data
-    ? { status: 'unknown', state: 'unknown' }
-    : {
-        status: 'ok',
-        state: revenueResult.data.planInvoicesPaid > 0 || revenueResult.data.boostsPaid > 0 ? 'recorded' : 'none_yet',
-      };
+  // ── 5. Our revenue (S1-FR-25..27; slice 4a S4-FR-1 to S4-FR-10) ─────────
+  // R-d keeps its meaning (`state`, test and real rows alike) and drives the
+  // plans line only; the boost figures come from R-k / R-k′.
+  const builtBoosts = buildBoostRevenue({ purchases: boostPurchases.data, scope: accountId !== null ? 'one' : 'all' });
+  const revenueData = revenueResult.data;
+  const revenue: FinanceRevenueSection = {
+    status:
+      !revenueData && builtBoosts.status === 'unknown'
+        ? 'unknown'
+        : !revenueData || builtBoosts.status !== 'ok'
+          ? 'partial'
+          : 'ok',
+    state: !revenueData
+      ? 'unknown'
+      : revenueData.planInvoicesPaid > 0 || revenueData.boostsPaid > 0
+        ? 'recorded'
+        : 'none_yet',
+    plans: !revenueData ? 'unknown' : revenueData.planInvoicesPaid > 0 ? 'recorded' : 'none',
+    boosts: {
+      status: builtBoosts.status,
+      scope: accountId !== null ? 'one' : 'all',
+      lines: builtBoosts.lines,
+      packages: builtBoosts.packages,
+      deletedAccounts: builtBoosts.deletedAccounts,
+      notes: builtBoosts.notes,
+    },
+  };
 
   // ── 6. Section 4, credits (slice 1b) ─────────────────────────────────────
   const metricParams = deps.metricParams ?? FINANCE_METRIC_PARAMS;
@@ -727,11 +780,16 @@ export async function buildFinanceHealth(
     { onRuleError }
   );
 
+  // K-5 (slice 4a, SA-W47): the boost net, information only (no rule in 4a, never green). A failed boost
+  // read is "Unknown"; R-d failing changes the plans line, never K-5.
+  const k5Money = builtBoosts.k5;
   const k5Colour = colourFinanceTile(
     'k5_our_revenue',
     rules.k5_our_revenue,
-    revenue.state === 'unknown' ? null : { metrics: {}, information: revenue.state === 'recorded' ? K5_RECORDED : K5_NONE_YET },
-    { onRuleError, unavailableHeadline: FINANCE_COULD_NOT_CHECK_HEADLINE }
+    k5Money.kind === 'unknown' && k5Money.reason === 'failed'
+      ? null
+      : { metrics: {}, information: k5Money.kind === 'none' ? K5_NO_DATA_YET : K5_NET_HEADLINE },
+    { onRuleError }
   );
 
   // K-2 (SA-WR-8): an account that could not be read makes the count a lower bound.
@@ -778,7 +836,7 @@ export async function buildFinanceHealth(
       k2: tile('k2_far_over_allowance', k2Colour, k2Value),
       k3: tile('k3_founding_no_end_date', k3Colour, k3Value),
       k4: tile('k4_gifted_outstanding', k4Colour, k4Outstanding === null ? null : { value: k4Outstanding, exact: true }),
-      k5: tile('k5_our_revenue', k5Colour, null),
+      k5: { ...tile('k5_our_revenue', k5Colour, null), money: k5Money },
     },
     revenue,
     accounts,
@@ -843,6 +901,17 @@ export async function buildFinanceHealth(
         reminders: reminders.state,
         reminderMs: reminderTimings[0]?.ms ?? null,
         namesFound: dueNamesFound,
+      },
+      boosts: {
+        rows: boostPurchases.data ? boostPurchases.data.rows.length : null,
+        ceiling: boostPurchases.data?.reachedCeiling ?? false,
+        counted: builtBoosts.counts.counted,
+        otherStatus: builtBoosts.notes?.otherStatusPurchases ?? 0,
+        unreadable: builtBoosts.notes?.unreadablePurchases ?? 0,
+        unreadableCredits: builtBoosts.counts.unreadableCredits,
+        currencies: builtBoosts.lines?.length ?? 0,
+        packages: builtBoosts.packages?.length ?? 0,
+        deletedAccountPurchases: builtBoosts.counts.deletedAccountPurchases,
       },
     },
   };
