@@ -352,15 +352,15 @@ export default function V2AgentDetailPage() {
       setAgent(agentResult.data.agent as Agent)
 
       // Process executions
-      console.log('[AgentPage] Executions result:', executionsResult)
+      clientLogger.debug({ executionsResult }, 'Executions result')
       if (executionsResult.success && executionsResult.data) {
         const enrichedExecutions = executionsResult.data as Execution[]
-        console.log('[AgentPage] Setting executions:', enrichedExecutions.length, 'executions')
+        clientLogger.debug({ count: enrichedExecutions.length }, 'Setting executions')
         setAllExecutions(enrichedExecutions)
         setExecutions(enrichedExecutions)
         // Don't set selectedExecution here - let the useEffect handle it based on time filter
       } else {
-        console.log('[AgentPage] No executions found or error:', executionsResult.error)
+        clientLogger.debug({ error: executionsResult.error }, 'No executions found or error')
       }
 
       // Process config
@@ -372,12 +372,12 @@ export default function V2AgentDetailPage() {
       }
 
       // Process insights
-      console.log('[AgentPage] Insights result:', insightsResult)
+      clientLogger.debug({ insightsResult }, 'Insights result')
       if (insightsResult.success && insightsResult.data) {
-        console.log('[AgentPage] Setting insights:', insightsResult.data.length, 'insights')
+        clientLogger.debug({ count: insightsResult.data.length }, 'Setting insights')
         setInsights(insightsResult.data)
       } else {
-        console.log('[AgentPage] No insights found or error:', insightsResult.error)
+        clientLogger.debug({ error: insightsResult.error }, 'No insights found or error')
       }
 
       // Process pre-fetched form metadata and global schema metadata for input config drawer
@@ -388,7 +388,7 @@ export default function V2AgentDetailPage() {
       const globalMetadata = globalSchemaResult.data?.metadata || globalSchemaResult.metadata
       if (globalMetadata) {
         metadataMap = { ...globalMetadata }
-        console.log('[AgentPage] Pre-loaded global schema metadata:', Object.keys(metadataMap).length, 'parameters')
+        clientLogger.debug({ parameterCount: Object.keys(metadataMap).length }, 'Pre-loaded global schema metadata')
       }
 
       // Merge form field metadata (takes precedence)
@@ -405,7 +405,7 @@ export default function V2AgentDetailPage() {
             }]
           }
         }
-        console.log('[AgentPage] Pre-loaded form field metadata:', formMetadataResult.metadata.length, 'fields')
+        clientLogger.debug({ fieldCount: formMetadataResult.metadata.length }, 'Pre-loaded form field metadata')
       }
 
       if (Object.keys(metadataMap).length > 0) {
@@ -544,7 +544,7 @@ export default function V2AgentDetailPage() {
       // Check if returning from calibration on initial mount
       const calibrationFlag = localStorage.getItem(`calibration-completed-${agentId}`)
       if (calibrationFlag === 'true') {
-        console.log('[Agent Page] Detected calibration completion on mount, clearing flag')
+        clientLogger.debug('Detected calibration completion on mount, clearing flag')
         localStorage.removeItem(`calibration-completed-${agentId}`)
       }
 
@@ -592,12 +592,12 @@ export default function V2AgentDetailPage() {
     // Always select the first (most recent) execution from filtered list
     if (filteredExecutions.length > 0 && filteredExecutions[0].id !== selectedExecution?.id) {
       const firstExec = filteredExecutions[0]
-      console.log('[Auto-select] Updating to first filtered execution:', {
+      clientLogger.debug({
         id: firstExec.id,
         started_at: firstExec.started_at,
         status: firstExec.status,
         isPilot: !!firstExec.logs?.pilot
-      })
+      }, 'Auto-selecting first filtered execution')
 
       setSelectedExecution(firstExec)
 
@@ -629,7 +629,7 @@ export default function V2AgentDetailPage() {
         // Check if returning from calibration (always refresh in this case)
         const calibrationFlag = localStorage.getItem(`calibration-completed-${agentId}`)
         if (calibrationFlag === 'true') {
-          console.log('[Agent Page] Detected calibration completion, refreshing data')
+          clientLogger.debug('Detected calibration completion, refreshing data')
           localStorage.removeItem(`calibration-completed-${agentId}`)
           requestDeduplicator.clear(`executions-${agentId}-false-50`)
           fetchAllData()
@@ -656,7 +656,7 @@ export default function V2AgentDetailPage() {
 
       const calibrationFlag = localStorage.getItem(`calibration-completed-${agentId}`)
       if (calibrationFlag === 'true') {
-        console.log('[Agent Page] Detected calibration completion on focus, refreshing data')
+        clientLogger.debug('Detected calibration completion on focus, refreshing data')
         localStorage.removeItem(`calibration-completed-${agentId}`)
         requestDeduplicator.clear(`executions-${agentId}-false-50`)
         fetchAllData()
@@ -690,12 +690,12 @@ export default function V2AgentDetailPage() {
         setTotalExecutionCount(count)
       }
     } catch (error) {
-      console.error('[fetchTotalExecutionCount] Error:', error)
+      clientLogger.error({ err: error }, 'fetchTotalExecutionCount failed')
     }
   }
 
   const fetchExecutionResults = async (executionId: string) => {
-    console.log('[fetchExecutionResults] Fetching results for execution:', executionId)
+    clientLogger.debug({ executionId }, 'Fetching execution results')
 
     try {
       // Fetch execution_results from workflow_executions table
@@ -705,27 +705,27 @@ export default function V2AgentDetailPage() {
         .eq('id', executionId)
         .single()
 
-      console.log('[fetchExecutionResults] Query response:', { data, error })
+      clientLogger.debug({ data, error }, 'Execution results query response')
 
       if (error) {
-        console.error('[fetchExecutionResults] Error fetching execution_results:', error)
+        clientLogger.error({ err: error }, 'Error fetching execution_results')
         setExecutionResults(null)
         return
       }
 
       if (data?.execution_results) {
-        console.log('[fetchExecutionResults] ✅ Found execution_results:', {
+        clientLogger.debug({
           summary: data.execution_results.summary,
           totalItems: data.execution_results.totalItems,
           totalSteps: data.execution_results.totalSteps
-        })
+        }, 'Found execution_results')
         setExecutionResults(data.execution_results)
       } else {
-        console.log('[fetchExecutionResults] ⚠️ No execution_results found for this execution')
+        clientLogger.debug('No execution_results found for this execution')
         setExecutionResults(null)
       }
     } catch (error) {
-      console.error('[fetchExecutionResults] ❌ Exception:', error)
+      clientLogger.error({ err: error }, 'fetchExecutionResults threw')
       setExecutionResults(null)
     }
   }
@@ -740,13 +740,13 @@ export default function V2AgentDetailPage() {
       const data = await response.json()
 
       if (data.success && data.data) {
-        console.log('[fetchExecutionDetails] ✅ Loaded execution details:', {
+        clientLogger.debug({
           hasMetrics: !!data.data.metrics,
           stepMetricsCount: data.data.metrics?.step_metrics?.length || 0,
           insightRunsCount: data.data.insightRuns?.length || 0,
           executionInsightsCount: data.data.executionInsights?.length || 0,
           hasRoi: !!data.data.roi,
-        })
+        }, 'Loaded execution details')
         setExecutionDetails({
           metrics: data.data.metrics,
           insightRuns: data.data.insightRuns || [],
@@ -755,11 +755,11 @@ export default function V2AgentDetailPage() {
           agent: data.data.agent,
         })
       } else {
-        console.log('[fetchExecutionDetails] ⚠️ No execution details found')
+        clientLogger.debug('No execution details found')
         setExecutionDetails(null)
       }
     } catch (error) {
-      console.error('[fetchExecutionDetails] ❌ Exception:', error)
+      clientLogger.error({ err: error }, 'fetchExecutionDetails threw')
       setExecutionDetails(null)
     } finally {
       setLoadingExecutionDetails(false)
@@ -912,7 +912,7 @@ export default function V2AgentDetailPage() {
 
       // If we're enabling insights via the toggle, complete that action
       if (pendingInsightsToggle) {
-        console.log('[saveHourlyRateAndContinue] Completing pending insights toggle')
+        clientLogger.debug('Completing pending insights toggle after saving hourly rate')
         setPendingInsightsToggle(false)
 
         // Enable insights on the agent (hourly_rate_usd already updated above)
@@ -925,19 +925,19 @@ export default function V2AgentDetailPage() {
         if (result.success && result.data) {
           setAgent({ ...result.data as Agent, hourly_rate_usd: rate })
           clientLogger.info('Insights enabled after hourly rate confirmation', { agentId: agent.id })
-          console.log('✅ Insights enabled successfully')
+          clientLogger.debug('Insights enabled successfully')
         } else {
           // Revert on failure
           setAgent({ ...agent, insights_enabled: false })
           clientLogger.error('Failed to enable insights', new Error(result.error || 'Unknown error'))
-          console.error('❌ Failed to enable insights:', result.error)
+          clientLogger.error({ err: result.error }, 'Failed to enable insights')
         }
       } else {
         // Normal flow: open the insights modal
         setShowInsightsModal(true)
       }
     } catch (error) {
-      console.error('Error saving hourly rate:', error)
+      clientLogger.error({ err: error }, 'Error saving hourly rate')
       alert('Failed to save hourly rate. Please try again.')
     } finally {
       setSavingHourlyRate(false)
@@ -958,7 +958,7 @@ export default function V2AgentDetailPage() {
       if (configResponse.ok) {
         const result = await configResponse.json()
         if (result.inputValues && Object.keys(result.inputValues).length > 0) {
-          console.log('[AgentPage] Loaded saved input configuration:', result.inputValues)
+          clientLogger.debug({ inputValues: result.inputValues }, 'Loaded saved input configuration')
           setInputConfigValues(result.inputValues)
           setInputConfigLoading(false)
           return
@@ -975,7 +975,7 @@ export default function V2AgentDetailPage() {
           }
         }
         if (Object.keys(defaultValues).length > 0) {
-          console.log('[AgentPage] Initialized from input_schema defaults:', defaultValues)
+          clientLogger.debug({ defaultValues }, 'Initialized input configuration from input_schema defaults')
           setInputConfigValues(defaultValues)
         }
       }
@@ -1021,7 +1021,7 @@ export default function V2AgentDetailPage() {
       }
 
       setInputConfigDirty(false)
-      console.log('[AgentPage] Input configuration saved successfully')
+      clientLogger.debug('Input configuration saved successfully')
     } catch (error) {
       clientLogger.error('Error saving input configuration', error as Error)
     } finally {
@@ -1038,17 +1038,17 @@ export default function V2AgentDetailPage() {
   // Get dynamic options for dropdown fields (for AgentInputFields component)
   // Uses same matching logic as CalibrationSetup for consistency
   const getInputConfigDynamicOptions = useCallback((fieldName: string): { plugin: string; action: string; parameter: string; depends_on?: string[]; paramToFieldMap?: Record<string, string>; queryComponents?: any } | null => {
-    console.log('[AgentPage] getInputConfigDynamicOptions called for:', fieldName)
-    console.log('[AgentPage] inputConfigMetadata available:', !!inputConfigMetadata, 'keys:', inputConfigMetadata ? Object.keys(inputConfigMetadata) : [])
+    clientLogger.debug({ fieldName }, 'getInputConfigDynamicOptions called')
+    clientLogger.debug({ hasMetadata: !!inputConfigMetadata, keys: inputConfigMetadata ? Object.keys(inputConfigMetadata) : [] }, 'inputConfigMetadata availability')
 
     if (!inputConfigMetadata) {
-      console.log('[AgentPage] No inputConfigMetadata, returning null')
+      clientLogger.debug('No inputConfigMetadata, returning null')
       return null
     }
 
     // Try exact match first
     let matchingParams = inputConfigMetadata[fieldName]
-    console.log('[AgentPage] Exact match for', fieldName, ':', matchingParams, '| All keys:', Object.keys(inputConfigMetadata))
+    clientLogger.debug({ fieldName, matchingParams, allKeys: Object.keys(inputConfigMetadata) }, 'Exact match lookup')
 
     // If no exact match, try stripping common prefixes (including step ID prefixes)
     if (!matchingParams || matchingParams.length === 0) {
@@ -1071,7 +1071,7 @@ export default function V2AgentDetailPage() {
         }
         matchingParams = inputConfigMetadata[baseFieldName]
         if (matchingParams && matchingParams.length > 0) {
-          console.log('[AgentPage] Matched prefixed field:', fieldName, '->', baseFieldName)
+          clientLogger.debug({ fieldName, baseFieldName }, 'Matched prefixed field')
           break
         }
       }
@@ -1105,19 +1105,19 @@ export default function V2AgentDetailPage() {
       }
 
       if (bestMatch && bestMatch.params.length > 0) {
-        console.log('[AgentPage] Fuzzy matched:', fieldName, '->', bestMatch.key, 'score:', bestMatch.score.toFixed(2))
+        clientLogger.debug({ fieldName, matchedKey: bestMatch.key, score: bestMatch.score.toFixed(2) }, 'Fuzzy matched field')
         matchingParams = bestMatch.params
       }
     }
 
     if (!matchingParams || matchingParams.length === 0) {
-      console.log('[AgentPage] No match found for', fieldName)
+      clientLogger.debug({ fieldName }, 'No match found for field')
       return null
     }
 
     const param = matchingParams[0]
     if (!param.plugin || !param.action || !param.parameter) {
-      console.log('[AgentPage] Missing plugin/action/parameter in match:', param)
+      clientLogger.debug({ param }, 'Missing plugin/action/parameter in match')
       return null
     }
 
@@ -1161,7 +1161,7 @@ export default function V2AgentDetailPage() {
 
         if (matchingField) {
           paramToFieldMap[depParam] = matchingField.name || matchingField.key
-          console.log('[AgentPage] Mapped dependency:', depParam, '→', matchingField.name || matchingField.key)
+          clientLogger.debug({ depParam, mappedTo: matchingField.name || matchingField.key }, 'Mapped dependency')
         } else {
           paramToFieldMap[depParam] = depParam
         }
@@ -1176,7 +1176,7 @@ export default function V2AgentDetailPage() {
       paramToFieldMap,
       queryComponents: param.queryComponents
     }
-    console.log('[AgentPage] Returning dynamic options for', fieldName, ':', result)
+    clientLogger.debug({ fieldName, result }, 'Returning dynamic options')
     return result
   }, [inputConfigMetadata, agent?.input_schema])
 
@@ -1276,17 +1276,17 @@ export default function V2AgentDetailPage() {
     const currentValue = agent.insights_enabled ?? false
     const newInsightsEnabled = !currentValue
 
-    console.log('🔄 Toggling insights:', {
+    clientLogger.debug({
       agentId: agent.id,
       currentValue,
       newValue: newInsightsEnabled,
       agentHasField: 'insights_enabled' in agent,
       fullAgent: agent
-    })
+    }, 'Toggling insights')
 
     // If enabling insights, show hourly rate dialog first
     if (newInsightsEnabled) {
-      console.log('[handleToggleInsights] Enabling insights - showing hourly rate dialog')
+      clientLogger.debug('Enabling insights - showing hourly rate dialog')
       // Store the pending toggle so we can complete it after dialog
       setPendingInsightsToggle(true)
 
@@ -1303,7 +1303,7 @@ export default function V2AgentDetailPage() {
             .eq('id', user.id)
             .single()
 
-          console.log('[handleToggleInsights] Profile response:', { data, error })
+          clientLogger.debug({ data, error }, 'Hourly rate profile response')
           rate = data?.hourly_rate_usd ?? 50
         }
 
@@ -1326,7 +1326,7 @@ export default function V2AgentDetailPage() {
         setHourlyRateInput(rate.toString())
         setShowHourlyRateDialog(true)
       } catch (error) {
-        console.error('[handleToggleInsights] Error fetching hourly rate:', error)
+        clientLogger.error({ err: error }, 'Error fetching hourly rate')
         setHourlyRateInput('50')
         setOrgSettingsComplete(false)
         setShowHourlyRateDialog(true)
@@ -1343,30 +1343,30 @@ export default function V2AgentDetailPage() {
         insights_enabled: newInsightsEnabled
       })
 
-      console.log('📥 API Response:', {
+      clientLogger.debug({
         success: result.success,
         hasData: !!result.data,
         returnedValue: result.data?.insights_enabled,
         fullData: result.data,
         error: result.error
-      })
+      }, 'Insights toggle API response')
 
       if (result.success && result.data) {
         // Confirm the update with server response
         setAgent(result.data as Agent)
         clientLogger.info('Insights toggled', { agentId: agent.id, newValue: result.data.insights_enabled })
-        console.log('✅ Toggle successful, final value:', result.data.insights_enabled)
+        clientLogger.debug({ insightsEnabled: result.data.insights_enabled }, 'Insights toggle successful')
       } else {
         // Revert optimistic update on failure
         setAgent({ ...agent, insights_enabled: currentValue })
         clientLogger.error('Failed to toggle insights', new Error(result.error || 'Unknown error'))
-        console.error('❌ Toggle failed, reverting. Error:', result.error)
+        clientLogger.error({ err: result.error }, 'Insights toggle failed, reverting')
       }
     } catch (error) {
       // Revert optimistic update on exception
       setAgent({ ...agent, insights_enabled: currentValue })
       clientLogger.error('Error toggling insights', error as Error)
-      console.error('❌ Exception, reverting:', error)
+      clientLogger.error({ err: error }, 'Insights toggle threw, reverting')
     }
   }
 
@@ -1829,9 +1829,9 @@ export default function V2AgentDetailPage() {
     i.category === 'technical_insight' || i.category === 'data_insight'
   )
 
-  console.log('[AgentPage] Total insights:', insights.length)
-  console.log('[AgentPage] Business insights:', allBusinessInsights.length)
-  console.log('[AgentPage] Technical insights:', allTechnicalInsights.length)
+  clientLogger.debug({ count: insights.length }, 'Total insights')
+  clientLogger.debug({ count: allBusinessInsights.length }, 'Business insights')
+  clientLogger.debug({ count: allTechnicalInsights.length }, 'Technical insights')
 
   // Get health bar color
   const getHealthColor = () => {
@@ -2803,13 +2803,13 @@ export default function V2AgentDetailPage() {
                           .eq('user_id', user.id)
                         setAgent({ ...agent, hourly_rate_usd: rate })
                       } catch (error) {
-                        console.error('[Use Current] Error saving hourly rate:', error)
+                        clientLogger.error({ err: error }, 'Error saving current hourly rate')
                       }
                     }
 
                     // If we're enabling insights via the toggle, complete that action
                     if (pendingInsightsToggle) {
-                      console.log('[Use Current] Completing pending insights toggle')
+                      clientLogger.debug('Completing pending insights toggle with current hourly rate')
                       setPendingInsightsToggle(false)
 
                       // Enable insights on the agent
@@ -2821,10 +2821,10 @@ export default function V2AgentDetailPage() {
 
                       if (result.success && result.data) {
                         setAgent({ ...result.data as Agent, hourly_rate_usd: rate })
-                        console.log('✅ Insights enabled successfully')
+                        clientLogger.debug('Insights enabled successfully')
                       } else {
                         setAgent((prev) => prev ? { ...prev, insights_enabled: false } : prev)
-                        console.error('❌ Failed to enable insights:', result.error)
+                        clientLogger.error({ err: result.error }, 'Failed to enable insights')
                       }
                     } else {
                       // Normal flow: open the insights modal

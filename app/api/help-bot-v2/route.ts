@@ -12,6 +12,9 @@ import { EmbeddingService } from '@/lib/services/EmbeddingService'
 import * as fs from 'fs'
 import * as path from 'path'
 import crypto from 'crypto'
+import { createLogger, type Logger } from '@/lib/logger'
+
+const logger = createLogger({ module: 'HelpBotV2API' })
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -79,7 +82,8 @@ function hashQuestion(question: string): string {
  */
 async function searchAgents(
   query: string,
-  userId: string
+  userId: string,
+  log: Logger
 ): Promise<Array<{ id: string; name: string; status: string }>> {
   try {
     const { data: agents, error } = await supabase
@@ -90,13 +94,13 @@ async function searchAgents(
       .limit(5)
 
     if (error) {
-      console.error('[HelpBot] Agent search error:', error)
+      log.error({ err: error }, 'Agent search error')
       return []
     }
 
     return agents?.map((a) => ({ id: a.id, name: a.agent_name, status: a.status })) || []
   } catch (error) {
-    console.error('[HelpBot] Agent search error:', error)
+    log.error({ err: error }, 'Agent search error')
     return []
   }
 }
@@ -162,7 +166,8 @@ function detectAgentSearchQuery(query: string): string | null {
 
 async function searchFAQ(
   question: string,
-  pageContext: string
+  pageContext: string,
+  log: Logger
 ): Promise<string | null> {
   const normalized = normalizeQuestion(question)
 
@@ -170,10 +175,10 @@ async function searchFAQ(
   // No stop word filtering - let scoring algorithm handle common words naturally
   const keywords = normalized.split(' ').filter(w => w.length > 2)
 
-  console.log(`[FAQ Search] Question: "${question}"`)
-  console.log(`[FAQ Search] Normalized: "${normalized}"`)
-  console.log(`[FAQ Search] Keywords: [${keywords.join(', ')}] (${keywords.length} keywords)`)
-  console.log(`[FAQ Search] Page context: ${pageContext}`)
+  log.debug({ question }, 'FAQ search question')
+  log.debug({ normalized }, 'FAQ search normalized question')
+  log.debug({ keywords, keywordCount: keywords.length }, 'FAQ search keywords')
+  log.debug({ pageContext }, 'FAQ search page context')
 
   try {
     // Search by keywords using array overlap
@@ -185,7 +190,7 @@ async function searchFAQ(
 
     if (error) throw error
 
-    console.log(`[FAQ Search] Found ${data?.length || 0} articles for page context: ${pageContext}`)
+    log.debug({ articleCount: data?.length || 0, pageContext }, 'FAQ search articles found')
 
     // Find best match by keyword overlap with weighted scoring
     let bestMatch: any = null
@@ -240,12 +245,12 @@ async function searchFAQ(
     }
 
     // Log top 3 matches for debugging
-    console.log(`[FAQ Search] Top matches:`)
+    log.debug('FAQ search top matches')
     scoringDetails
       .sort((a, b) => b.score - a.score)
       .slice(0, 3)
       .forEach((detail, idx) => {
-        console.log(`  ${idx + 1}. "${detail.topic}" - score: ${detail.score}`)
+        log.debug({ rank: idx + 1, topic: detail.topic, score: detail.score }, 'FAQ search match')
       })
 
     // Dynamic threshold based on question length
@@ -254,18 +259,18 @@ async function searchFAQ(
     // Long questions (5+ keywords): threshold = 15 (comprehensive match needed)
     const dynamicThreshold = Math.max(8, Math.min(15, keywords.length * 3))
 
-    console.log(`[FAQ Search] Best match: ${bestMatch?.topic || 'none'} with score: ${bestScore}`)
-    console.log(`[FAQ Search] Threshold: ${dynamicThreshold} (based on ${keywords.length} keywords)`)
+    log.debug({ bestMatchTopic: bestMatch?.topic || 'none', bestScore }, 'FAQ search best match')
+    log.debug({ dynamicThreshold, keywordCount: keywords.length }, 'FAQ search threshold')
 
     if (bestScore >= dynamicThreshold) {
-      console.log(`[HelpBot] ✅ FAQ hit: "${bestMatch.topic}" (score: ${bestScore} >= ${dynamicThreshold})`)
+      log.debug({ topic: bestMatch.topic, bestScore, dynamicThreshold }, 'FAQ hit')
       return bestMatch.body
     }
 
-    console.log(`[FAQ Search] ❌ Score too low (${bestScore} < ${dynamicThreshold} threshold), no FAQ match`)
+    log.debug({ bestScore, dynamicThreshold }, 'FAQ score below threshold, no FAQ match')
     return null
   } catch (error) {
-    console.error('[HelpBot] FAQ search error:', error)
+    log.error({ err: error }, 'FAQ search error')
     return null
   }
 }
@@ -277,7 +282,8 @@ async function searchFAQ(
 async function searchCache(
   question: string,
   questionHash: string,
-  pageContext?: string
+  pageContext: string | undefined,
+  log: Logger
 ): Promise<{ answer: string; id: string; matchType: 'exact' | 'semantic' } | null> {
   try {
     // Step 1: Try exact hash match first (fastest, most reliable)
@@ -297,7 +303,7 @@ async function searchCache(
         })
         .eq('id', exactMatch.id)
 
-      console.log(`[HelpBot] Exact cache hit: ${exactMatch.question.substring(0, 50)}... (${exactMatch.hit_count} hits)`)
+      log.debug({ question: exactMatch.question.substring(0, 50), hitCount: exactMatch.hit_count }, 'Exact cache hit')
       return { answer: exactMatch.answer, id: exactMatch.id, matchType: 'exact' }
     }
 
@@ -335,7 +341,7 @@ async function searchCache(
       })
 
     if (semanticError) {
-      console.error('[HelpBot] Semantic search error:', semanticError)
+      log.error({ err: semanticError }, 'Semantic search error')
       return null
     }
 
@@ -351,8 +357,8 @@ async function searchCache(
         })
         .eq('id', match.id)
 
-      console.log(`[HelpBot] Semantic cache hit: ${match.question.substring(0, 50)}... (similarity: ${match.similarity.toFixed(3)}, ${match.hit_count} hits)`)
-      console.log(`[HelpBot] Embedding cost: $${embeddingCost.toFixed(6)}`)
+      log.debug({ question: match.question.substring(0, 50), similarity: match.similarity.toFixed(3), hitCount: match.hit_count }, 'Semantic cache hit')
+      log.debug({ embeddingCostUsd: embeddingCost.toFixed(6) }, 'Embedding cost')
 
       return { answer: match.answer, id: match.id, matchType: 'semantic' }
     }
@@ -360,7 +366,7 @@ async function searchCache(
     // No match found
     return null
   } catch (error) {
-    console.error('[HelpBot] Cache search error:', error)
+    log.error({ err: error }, 'Cache search error')
     return null
   }
 }
@@ -371,17 +377,18 @@ async function searchCache(
 
 async function handleInputHelp(
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-  context: any
+  context: any,
+  log: Logger
 ): Promise<string> {
   const lastMessage = messages[messages.length - 1]
   const userInput = lastMessage.content
 
-  console.log('[InputHelp] Processing input:', {
+  log.debug({
     fieldName: context.fieldName,
     plugin: context.plugin,
     expectedType: context.expectedType,
     userInput: userInput.substring(0, 100),
-  })
+  }, 'Input help processing input')
 
   // Check if user provided a URL
   if (UrlParserService.isValidUrl(userInput)) {
@@ -393,7 +400,7 @@ async function handleInputHelp(
       context.fieldName  // Pass field name for special handling
     )
 
-    console.log('[InputHelp] Extraction result:', extraction)
+    log.debug({ extraction }, 'Input help extraction result')
 
     if (extraction.success && extraction.value) {
       // Return JSON action to fill the field
@@ -406,7 +413,7 @@ async function handleInputHelp(
     } else if (extraction.error === 'NEEDS_AI_GUIDANCE') {
       // Special case: Field needs conversational guidance (e.g., range field)
       // Let AI explain how to find the value
-      return await callGroqForInputHelp(messages, context)
+      return await callGroqForInputHelp(messages, context, log)
     } else {
       // Extraction failed - provide helpful error
       return extraction.error || 'Could not extract the value from this URL. Please check the format.'
@@ -414,12 +421,13 @@ async function handleInputHelp(
   }
 
   // User didn't provide a URL - use AI to guide them
-  return await callGroqForInputHelp(messages, context)
+  return await callGroqForInputHelp(messages, context, log)
 }
 
 async function callGroqForInputHelp(
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-  context: any
+  context: any,
+  log: Logger
 ): Promise<string> {
   // Load input assistant prompt template - try database first, fallback to file
   let systemPrompt = ''
@@ -444,7 +452,7 @@ async function callGroqForInputHelp(
       .replace(/\{\{expectedType\}\}/g, context.expectedType || 'string')
       .replace(/\{\{plugin\}\}/g, context.plugin || 'the service')
   } catch (error) {
-    console.error('[InputHelp] Failed to load prompt template:', error)
+    log.error({ err: error }, 'Input help: failed to load prompt template')
     // Fallback prompt
     systemPrompt = `You are helping a user fill the field "${context.fieldName}" for their automation agent. Ask them to provide the normal URL/link, not technical IDs. When they provide a URL, respond with: {"action": "fill_agent_input", "agentId": "${context.agentId}", "fieldName": "${context.fieldName}", "value": "<extracted_value>"}`
   }
@@ -605,7 +613,8 @@ async function storeInCache(
   questionHash: string,
   answer: string,
   source: string,
-  pageContext: string
+  pageContext: string,
+  log: Logger
 ): Promise<void> {
   try {
     // Generate embedding for the question
@@ -624,9 +633,9 @@ async function storeInCache(
         const result = await embeddingService.generateEmbedding(question)
         embedding = result.embedding
         embeddingCost = result.cost
-        console.log(`[HelpBot] Generated embedding for cache ($${embeddingCost.toFixed(6)})`)
+        log.debug({ embeddingCostUsd: embeddingCost.toFixed(6) }, 'Generated embedding for cache')
       } catch (error) {
-        console.error('[HelpBot] Failed to generate embedding:', error)
+        log.error({ err: error }, 'Failed to generate embedding')
         // Continue without embedding - cache will still work with exact matching
       }
     }
@@ -642,9 +651,9 @@ async function storeInCache(
       embedding: embedding,
     })
 
-    console.log(`[HelpBot] Stored in cache: ${question.substring(0, 50)}...`)
+    log.debug({ question: question.substring(0, 50) }, 'Stored in cache')
   } catch (error) {
-    console.error('[HelpBot] Cache storage error:', error)
+    log.error({ err: error }, 'Cache storage error')
   }
 }
 
@@ -652,7 +661,7 @@ async function storeInCache(
 // Update analytics
 // ============================================================================
 
-async function updateAnalytics(source: string, responseTimeMs: number): Promise<void> {
+async function updateAnalytics(source: string, responseTimeMs: number, log: Logger): Promise<void> {
   try {
     // Estimate cost: Groq is ~$0.0001 per call (very rough estimate)
     const costUsd = source === 'Groq' ? 0.0001 : 0
@@ -663,7 +672,7 @@ async function updateAnalytics(source: string, responseTimeMs: number): Promise<
       p_cost_usd: costUsd,
     })
   } catch (error) {
-    console.error('[HelpBot] Analytics update error:', error)
+    log.error({ err: error }, 'Analytics update error')
   }
 }
 
@@ -673,6 +682,8 @@ async function updateAnalytics(source: string, responseTimeMs: number): Promise<
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID()
+  const requestLogger = logger.child({ correlationId })
 
   try {
     // Authenticate before anything else. This route holds a module-level service-role
@@ -701,9 +712,9 @@ export async function POST(request: NextRequest) {
     // Check if this is INPUT HELP mode (field-specific assistance)
     // ========================================================================
     if (context && context.mode === 'input_help') {
-      console.log('[HelpBot] Input help mode activated for field:', context.fieldName)
-      const response = await handleInputHelp(messages, context)
-      await updateAnalytics('InputHelp', Date.now() - startTime)
+      requestLogger.debug({ fieldName: context.fieldName }, 'Input help mode activated')
+      const response = await handleInputHelp(messages, context, requestLogger)
+      await updateAnalytics('InputHelp', Date.now() - startTime, requestLogger)
       return NextResponse.json({ response, source: 'InputHelp' })
     }
 
@@ -717,7 +728,7 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     const agentSearchQuery = detectAgentSearchQuery(question)
     if (agentSearchQuery) {
-      const foundAgents = await searchAgents(agentSearchQuery, userId)
+      const foundAgents = await searchAgents(agentSearchQuery, userId, requestLogger)
 
       if (foundAgents.length > 0) {
         const response =
@@ -726,7 +737,7 @@ export async function POST(request: NextRequest) {
             : `I found ${foundAgents.length} agents matching "${agentSearchQuery}":\n\n` +
               foundAgents.map((a) => `- [${a.name}](/v2/agents/${a.id}) (${a.status})`).join('\n')
 
-        await updateAnalytics('AgentSearch', Date.now() - startTime)
+        await updateAnalytics('AgentSearch', Date.now() - startTime, requestLogger)
         return NextResponse.json({ response, source: 'AgentSearch' })
       }
     }
@@ -735,25 +746,25 @@ export async function POST(request: NextRequest) {
     // Step 2: Try FAQ lookup (free, instant)
     // ========================================================================
     const normalizedPagePath = normalizePageContext(pagePath)
-    console.log(`[HelpBot] Searching FAQ for question: "${question}" on page: ${pagePath} (normalized: ${normalizedPagePath})`)
-    const faqAnswer = await searchFAQ(question, normalizedPagePath)
+    requestLogger.debug({ question, pagePath, normalizedPagePath }, 'Searching FAQ')
+    const faqAnswer = await searchFAQ(question, normalizedPagePath, requestLogger)
     if (faqAnswer) {
-      console.log(`[HelpBot] ✅ FAQ match found!`)
-      await updateAnalytics('FAQ', Date.now() - startTime)
+      requestLogger.debug('FAQ match found')
+      await updateAnalytics('FAQ', Date.now() - startTime, requestLogger)
       return NextResponse.json({ response: faqAnswer, source: 'FAQ' })
     }
-    console.log(`[HelpBot] ❌ No FAQ match found, trying cache...`)
+    requestLogger.debug('No FAQ match found, trying cache')
 
     // ========================================================================
     // Step 3: Try cache lookup (hybrid: exact hash + semantic search)
     // ========================================================================
-    const cachedResult = await searchCache(question, questionHash, pagePath)
+    const cachedResult = await searchCache(question, questionHash, pagePath, requestLogger)
     if (cachedResult) {
       // Track whether it was exact or semantic match in analytics
       const isSemanticHit = cachedResult.matchType === 'semantic'
       const isExactHit = cachedResult.matchType === 'exact'
 
-      await updateAnalytics('Cache', Date.now() - startTime)
+      await updateAnalytics('Cache', Date.now() - startTime, requestLogger)
       return NextResponse.json({
         response: cachedResult.answer,
         source: 'Cache',
@@ -765,18 +776,18 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     // Step 4: Groq fallback (cheap, but costs money)
     // ========================================================================
-    console.log(`[HelpBot] FAQ and Cache miss. Calling Groq for: "${question.substring(0, 50)}..."`)
+    requestLogger.debug({ question: question.substring(0, 50) }, 'FAQ and cache miss, calling the model')
 
     const groqAnswer = await callGroq(messages, pageContext)
 
     // Store in cache for future reuse
-    await storeInCache(question, questionHash, groqAnswer, 'Groq', pagePath)
+    await storeInCache(question, questionHash, groqAnswer, 'Groq', pagePath, requestLogger)
 
-    await updateAnalytics('Groq', Date.now() - startTime)
+    await updateAnalytics('Groq', Date.now() - startTime, requestLogger)
 
     return NextResponse.json({ response: groqAnswer, source: 'Groq' })
   } catch (error: any) {
-    console.error('[HelpBot] Error:', error)
+    requestLogger.error({ err: error }, 'Help bot request failed')
     return NextResponse.json(
       { error: 'Failed to process your question. Please try again.' },
       { status: 500 }

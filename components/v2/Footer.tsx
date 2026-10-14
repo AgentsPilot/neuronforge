@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { getPricingConfig } from '@/lib/utils/pricingConfig'
+import { createLogger } from '@/lib/logger'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
 // import { PluginRefreshModal } from '@/components/v2/PluginRefreshModal' // TODO: Component missing, using inline refresh instead
 import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
@@ -33,6 +34,8 @@ import {
   SiAmazon
 } from 'react-icons/si'
 import { PluginIcon } from '@/components/PluginIcon'
+
+const logger = createLogger({ module: 'V2Footer' })
 
 interface ConnectedPlugin {
   plugin_key: string
@@ -112,7 +115,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
           setLastRunTime(new Date(stats.last_run_at))
         }
       } catch (error) {
-        console.error('Error fetching last run:', error)
+        logger.error({ err: error }, 'Error fetching last run')
       }
     }
 
@@ -135,13 +138,13 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
           setPilotCredits(credits)
         }
       } catch (error) {
-        console.error('Error fetching account status:', error)
+        logger.error({ err: error }, 'Error fetching account status')
       }
     }
 
     // Transform connected plugins from UserProvider context
     if (connectedPluginsFromContext) {
-      console.log('Footer: connectedPluginsFromContext =', connectedPluginsFromContext)
+      logger.debug({ connectedPluginsFromContext }, 'Connected plugins from context')
       const plugins: ConnectedPlugin[] = Object.values(connectedPluginsFromContext).map((plugin: any) => ({
         plugin_key: plugin.key,
         plugin_name: plugin.name || plugin.displayName,
@@ -153,23 +156,23 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         last_used: plugin.last_used,
         last_refreshed: plugin.last_refreshed
       }))
-      console.log('Footer: transformed plugins =', plugins)
+      logger.debug({ plugins }, 'Transformed plugins')
       setDisplayPlugins(plugins)
     } else {
-      console.log('Footer: connectedPluginsFromContext is null/undefined')
+      logger.debug('connectedPluginsFromContext is null/undefined')
     }
 
     fetchLastRun()
     fetchAccountStatus()
     // fetchAllAvailablePlugins is optional - don't block on it
     fetchAllAvailablePlugins().catch(err => {
-      console.warn('Failed to load available plugins (non-blocking):', err)
+      logger.warn({ err }, 'Failed to load available plugins (non-blocking)')
     })
   }, [user, connectedPluginsFromContext])
 
   // Debug log when displayPlugins changes
   useEffect(() => {
-    console.log('Footer: displayPlugins updated =', displayPlugins)
+    logger.debug({ displayPlugins }, 'displayPlugins updated')
   }, [displayPlugins])
 
   // Fetch all available plugins dynamically from API
@@ -224,7 +227,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
 
       setAvailablePlugins(plugins)
     } catch (error) {
-      console.error('Error fetching available plugins:', error)
+      logger.error({ err: error }, 'Error fetching available plugins')
     }
   }
 
@@ -260,7 +263,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         setDisplayPlugins(plugins)
       }
     } catch (error) {
-      console.error('Error loading plugins:', error)
+      logger.error({ err: error }, 'Error loading plugins')
       // Don't clear existing plugins on error
     }
   }
@@ -305,7 +308,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         }, 3000)
       }
     } catch (error: any) {
-      console.error('Plugin connection error:', error)
+      logger.error({ err: error }, 'Plugin connection error')
       setReconnecting(null)
       setRefreshStatus({
         plugin: pluginKey,
@@ -362,7 +365,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         }, 3000)
       }
     } catch (error: any) {
-      console.error('OAuth reconnection error:', error)
+      logger.error({ err: error }, 'OAuth reconnection error')
       setReconnecting(null)
       setRefreshStatus({
         plugin: plugin.plugin_key,
@@ -433,7 +436,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         }, 3000)
       }
     } catch (error: any) {
-      console.error('Plugin disconnect error:', error)
+      logger.error({ err: error }, 'Plugin disconnect error')
       setDisconnecting(null)
       setRefreshStatus({
         plugin: plugin.plugin_key,
@@ -515,7 +518,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         }
       }
     } catch (error: any) {
-      console.error('Plugin refresh error:', error)
+      logger.error({ err: error }, 'Plugin refresh error')
       // Show reconnect prompt on network/API errors too
       setRefreshingPlugin(null)
       setReconnectPrompt(plugin.plugin_key)
