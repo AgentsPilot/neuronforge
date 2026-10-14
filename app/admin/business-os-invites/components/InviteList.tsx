@@ -29,6 +29,14 @@
  * created time to the second, in UTC (SA C1), because the same email can hold
  * two revocable invites created the same day. The visible word stays "Revoke",
  * and the name starts with it (WCAG 2.5.3).
+ *
+ * ── Plan payments P-5b.2 (FR-25, SA Q-7, Q-8, Q-12) ─────────────────────────
+ * An accepted row shows its payment under the State chip, as decided on the
+ * server: "Paid" with the date (UTC) and the amount paid, tax included, in USD;
+ * "Test payment" beside it for a test-mode payment; "Signed up, not paid" for a
+ * held account; "Paid, record not found" when the money history has no
+ * matching row; "Payment unknown" when a read failed. English, like every
+ * admin page. Nothing is shown when the server sends no payment.
  */
 
 import { AdminEmpty } from '@/app/admin/components/layout/AdminStates';
@@ -42,7 +50,7 @@ import {
   ADMIN_THEAD,
 } from '@/app/admin/components/layout/adminTable';
 
-import type { InviteEmailStatus, InviteRow, InviteState } from '../types';
+import type { InviteEmailStatus, InvitePayment, InviteRow, InviteState } from '../types';
 
 interface Props {
   invites: InviteRow[];
@@ -91,6 +99,58 @@ function secondUtc(iso: string): string {
 }
 
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
+
+/** P-5b.2: minor units of USD as "$79.00 USD". The server only ever sends `usd` (SA-P15). */
+const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+function usd(amountMinor: number): string {
+  return `${USD.format(amountMinor / 100)} USD`;
+}
+
+/** P-5b.2: the payment line under the State chip (L-6 chips; tones as the email-status ones). */
+function PaymentLine({ payment }: { payment: InvitePayment }) {
+  switch (payment.state) {
+    case 'paid_recorded':
+      return (
+        <p data-testid="invite-payment" className="mt-1 flex flex-wrap items-center gap-1 text-xs text-slate-400">
+          <StatusChip tone="ok" testId="invite-payment-state">
+            Paid
+          </StatusChip>
+          <span data-testid="invite-payment-detail">
+            {day(payment.paidAt)} · {usd(payment.amountMinor)}
+          </span>
+          {!payment.livemode && (
+            <StatusChip tone="neutral" testId="invite-payment-test">
+              Test payment
+            </StatusChip>
+          )}
+        </p>
+      );
+    case 'awaiting_payment':
+      return (
+        <p data-testid="invite-payment" className="mt-1">
+          <StatusChip tone="warn" testId="invite-payment-state">
+            Signed up, not paid
+          </StatusChip>
+        </p>
+      );
+    case 'paid_record_missing':
+      return (
+        <p data-testid="invite-payment" className="mt-1">
+          <StatusChip tone="warn" testId="invite-payment-state">
+            Paid, record not found
+          </StatusChip>
+        </p>
+      );
+    case 'unknown':
+      return (
+        <p data-testid="invite-payment" className="mt-1">
+          <StatusChip tone="neutral" testId="invite-payment-state">
+            Payment unknown
+          </StatusChip>
+        </p>
+      );
+  }
+}
 
 export function InviteList({ invites, onRevoke, emptyMessage = 'No invites yet.', onClearFilters }: Props) {
   if (invites.length === 0) {
@@ -167,6 +227,7 @@ export function InviteList({ invites, onRevoke, emptyMessage = 'No invites yet.'
                       )}
                     </p>
                   )}
+                  {invite.state === 'accepted' && invite.payment && <PaymentLine payment={invite.payment} />}
                   {invite.redemptionStoppedHalfway && (
                     <div
                       data-testid="invite-stopped-halfway"

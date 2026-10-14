@@ -35,6 +35,12 @@
  * neither carries the invitee email, the link, the token or the hash. The
  * Reply-To is the admin's own email from the gate, never a body field.
  *
+ * ── The paid line (plan payments P-5b.2, FR-25, S5-8) ───────────────────────
+ * Each accepted row carries `payment`: held ("Signed up, not paid"), paid with
+ * the date and the amount from the money history, a paid account whose money
+ * row is not found, or unknown when a read failed. Logs carry counts and ids
+ * only, never an amount.
+ *
  * ── The language default (Slice 2a, D-8) ────────────────────────────────────
  * GET pre-selects the admin's saved language (`user_preferences`); a failed
  * read is a warning and English.
@@ -58,6 +64,7 @@ import { createInviteSchema } from '@/lib/business-os/invites/inviteSchemas';
 import { createLogger } from '@/lib/logger';
 import { platformSenderAddress, sendEmail } from '@/lib/notifications/emailTransport';
 import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
+import { businessOsBillingEventRepository } from '@/lib/repositories/BusinessOsBillingEventRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import { userPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
 import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
@@ -87,6 +94,11 @@ export async function GET(request: NextRequest) {
     const listed = await listInvitesForAdmin({
       repository: businessOsInviteRepository,
       lineage: businessOsAccountLineageRepository,
+      // Plan payments P-5b.2 (FR-25, S5-8): the paid line. A cross-account
+      // read of the money history on the service role, intentionally, and only
+      // here: behind `requireAdmin` above. The repository keeps a row only for
+      // an exact (account, invoice) pair taken from lineage (SA C-11).
+      billingEvents: businessOsBillingEventRepository,
       config,
       now: new Date(),
       logger: requestLogger,
