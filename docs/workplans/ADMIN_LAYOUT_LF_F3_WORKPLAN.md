@@ -5,8 +5,9 @@
 **Developer:** Dev
 **Requirement:** [ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md) §1 LF-F3 row; §14 SA-F3 and LF-F2-N1
 **Branch:** `fix/admin-layout-lf-f3-client-logger` (cut from `fix/admin-layout-lf4b-f1-double-give`, PR #366 open)
+**PR:** [#367](https://github.com/AgentsPilot/neuronforge/pull/367)
 **Date:** 2026-10-14
-**Status:** Code Complete — built, awaiting SA code review + QA, uncommitted
+**Status:** PR #367 open — fast-track (SA approved, no separate QA); user merges
 
 ## Overview
 
@@ -94,8 +95,16 @@ No separate QA needed: the suites are green, SA-M2 makes both new pins fail, and
 
 ## Commit Info
 
+| Item | Value |
+|---|---|
+| Code commit | `90a4d40f` |
+| Merge of `origin/main` | none needed (already contained) |
+| PR | [#367](https://github.com/AgentsPilot/neuronforge/pull/367), open, contains #366 (LF-F2) |
+| RM tests | targeted jest 50 / 1,536; `test:bos-entitlements` 259 / 7,619; `lint:hooks` clean; `typecheck:bos-llm` passed |
+
 ## Change History
 
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-14 | Created and built (Dev) | Logger conversion, ten mock keys, T-K9 / T-K10, server-logger guard |
+| 2026-10-14 | PR opened (RM) | Code commit `90a4d40f`; PR #367 open, fast-track (SA approved, no separate QA); user merges |
