@@ -22,6 +22,11 @@ jest.mock('@/lib/logger', () => ({
     debug: (...args: unknown[]) => mockDebug(...args),
     child: jest.fn().mockReturnThis(),
   }),
+  // LF-F3: the page logs through `clientLogger.child`; `@/lib/logger/client` re-exports it from this module.
+  // Its debug goes to `mockDebug` too, so the E-3 checks below still read the page's debug lines.
+  clientLogger: {
+    child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: (...args: unknown[]) => mockDebug(...args) }),
+  },
 }));
 
 import UsersPage from '../page';
