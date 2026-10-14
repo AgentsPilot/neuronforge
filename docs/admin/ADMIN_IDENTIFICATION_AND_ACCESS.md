@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-10-13
+> **Last Updated**: 2026-10-14
 
 ## Overview
 
@@ -40,8 +40,8 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-10-09** (credits boost slice 6a, on `90c33582` plus that slice): **100 handlers across 70
-route files = 94 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
+Re-derived **2026-10-14** (AI model price review slice 3, on `799f8018` plus that slice): **104 handlers across 74
+route files = 98 `requireAdmin` + 6 inline + 0 open.** (2026-10-09: 100 across 70. Two handlers landed on main since without a register row, `business-os/finance#GET` and `business-os/test/take-credits#POST`, both `requireAdmin`; slice 3 adds two.) The split is measured, not
 asserted — re-run the census rather than trusting these figures if much time has
 passed.
 
@@ -178,7 +178,7 @@ passed.
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| **Every one of the 100 `/api/admin/*` handlers requires an admin.** 94 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-09** (slices 2 + 3 of the unification; re-counted from disk in credits boost slice 4b.2) |
+| **Every one of the 104 `/api/admin/*` handlers requires an admin.** 98 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-14** (slices 2 + 3 of the unification; re-counted from disk in AI model price review slice 3) |
 | **All 28 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 7 added since inherited it without an edit: `business-os-tiers`, `business-os-llm`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1), `jobs-queues` (admin reorganisation slice 5, a client page), `business-os-invites` (invite-only signup slice 0) and `agentspilot-billing` (ADMIN_BOS_CLEANUP slice 2, a client page). 21 + 7 = 28. Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/`. Re-counted 2026-10-03 from disk: 27 on `5061489b`, 28 after ADMIN_BOS_CLEANUP slice 2 |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
@@ -205,7 +205,7 @@ verbs open in the *same* files, so a file-level table would have been misleading
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**94 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 and rows 99–103 on 2026-10-09; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **103 rows, 100 live**, equal to the measured handler count.)
+**98 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 rows 99–103 on 2026-10-09 and rows 104–107 on 2026-10-14; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **107 rows, 104 live**, equal to the measured handler count.)
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -312,6 +312,10 @@ the right unit for the register.
 | 101 | `test-account-cleanup/delete` | `POST` | ✅ gated | `requireAdmin` first statement (OX-1r): **DESTRUCTIVE once the second secret is set and the function applied**: removes one TEST account completely, login included, through the secret-gated function (guards G-1…G-19 inside it). Strict Zod `{ email, tag, confirmEmail }`; 503 off switch. Success audited inside the function; refusals write `BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED`. Registered 2026-10-09 (doc only) |
 | 102 | `business-os/credits/boost/reconcile` | `POST` | ✅ gated | `requireAdmin` first statement, new in credits boost slice 4b.2 (SA C-5): runs the boost reconcile pass now, the same pass the nightly `bos-billing-reconcile` cron runs (stuck purchases credited, expired or failed from Stripe's own answer; open disputes re-read; missing receipt links filled), awaited, 45 s deadline, `maxDuration = 60`. A deliberate cross-account action by design: every effect runs through the row-locked, idempotent 2b functions on the purchase's own id and account; lots are never touched. The body must be empty or `{}` (strict Zod), so no account, purchase or mode can be sent; 401/403 before 400 with nothing read, run or audited (route test G-1…G-6, `adminGate.writes`). One write-ahead `BOS_BOOST_RECONCILE_TRIGGERED` row per press, flushed before the pass, on a **system** entity (the run id, the admin as user and actor; SA C-7: never a purchase). Never calls the cron URL, reads `CRON_SECRET` or records a cron run. Counts only in the response and the log. The button is slice 6's; since Admin Layout LF-4c it lives on Scheduled jobs & queues ("Reconcile top-ups now (all accounts)", in the Billing reconcile row), not in the Businesses drawer. Route and request unchanged |
 | 103 | `business-os/credits/accounts/[accountId]/boost` | `GET` | ✅ gated | `requireAdmin` first statement, new in credits boost slice 6a (the "Credit top-ups" block of the Businesses panel at `/admin/users`, FR-38, R-12). A deliberate cross-account, **read-only** read of ONE admin-selected account: its boost purchases in both Stripe modes (at most 50 each, ids only for Stripe), its spending limit (the configured default, the active admin override) and the last 20 limit changes. The 11c order: `requireAdmin` (401/403) → Zod uuid (400) → lower-case + `resolveAccountId` → platform account 409 → tenant check (500 / 404) → the reads. The account comes only from the path; no body is read and the query string is ignored. Every read goes through the boost repository scoped `.eq('user_id', accountId)`; no `…ForWebhook` finder (a source guard). Pinned payload keys (no email, secret or receipt link). No write and no audit row (a plain read); one `info` log with ids, statuses and counts. Pinned by its route test |
+| 104 | `business-os/finance` | `GET` | ✅ gated | `requireAdmin` first statement (`finance/route.ts:118`). Gated from birth by the Business OS finance page (slice 4a, `0acb460b`); registered 2026-10-14 (doc only) by the AI model price review slice 3 re-count, so the register matches the measured census |
+| 105 | `business-os/test/take-credits` | `POST` | ✅ gated | `requireAdmin` first statement (`take-credits/route.ts:83`). Gated from birth by the test harness take-credits tool (TC-1, `4bf75291`); registered 2026-10-14 (doc only), idem |
+| 106 | `model-pricing/manual-entries` | `POST` | ✅ gated | `requireAdmin` first statement, new in AI model price review slice 3: an admin records a provider's new model price by hand. Strict Zod (prices as decimal strings, official https source never fetched); stores a **pending** line only through the service-role RPC `ai_price_submit_pending`, which repeats the `admin_users` check; writes no live price and changes no charge. Audited `AI_PRICE_MANUAL_ENTRY` with `logAndFlush`. 401/403 before the body is read, pinned by its route test |
+| 107 | `model-pricing/comparison` | `GET` | ✅ gated | `requireAdmin` first statement, new in AI model price review slice 3: read-only comparison of what we charge today versus the newest pending provider price, with coverage colours and the Business OS areas using each model. Takes no query parameter (400). No audit (a read). 401/403 before any read, pinned by its route test |
 
 ### CI enforcement
 
@@ -710,3 +714,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-09 | Credits boost slice 6a: register row 103, census 100 = 94 + 6 + 0, 70 files | Row **103** `business-os/credits/accounts/[accountId]/boost#GET` (the read-only admin "Credit top-ups" view), gated from birth with `requireAdmin` as its first statement. Census re-measured on `90c33582` plus this slice: **100 / 94 + 6 + 0 open / 70 files** (was 99 / 93 + 6 / 69). `adminGate.writes` unchanged. No cap moved, no exemption |
 | 2026-10-10 | Credits boost slice 6b: row 74 text names the two cap ops | `business-os/entitlements/accounts/[accountId]#POST` gains `set_boost_cap` / `end_boost_cap`. **No handler added by this slice**: `adminGate.writes` unchanged, no cap moved. Census note: a scratch count on `origin/main` `7e5964ec` plus this slice finds **101 handlers / 95 + 6 + 0 open / 71 files**, one more than the 100 registered at 6a; the extra handler landed on `main` from another change and is not registered here (flagged to TL, not this slice's scope) |
 | 2026-10-13 | Admin users page wording (LF-5) | The revoke step quotes the page's new section title "Admins set in the server configuration" (was "Granted by the ADMIN_EMAILS environment setting"). Doc text only |
+| 2026-10-14 | AI model price review slice 3: register rows 104–107, census 104 = 98 + 6 + 0, 74 files | Re-counted from disk (SA C-9): 72 route files and 102 handlers on `799f8018`, two of them never registered (`business-os/finance#GET`, `business-os/test/take-credits#POST`, both `requireAdmin` first, rows 104–105, doc only). Slice 3 adds `model-pricing/manual-entries#POST` and `model-pricing/comparison#GET` (rows 106–107), both `requireAdmin` first statement. No guard cap changes |
