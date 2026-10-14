@@ -48,8 +48,23 @@ export type PendingLineFlag = (typeof PENDING_LINE_FLAGS)[number];
  */
 export const NEW_MODEL_LABEL = 'not used yet';
 
-/** The text shown beside each flag code (only `new_model` has one in slice 3). */
-export const FLAG_LABELS: Partial<Record<PendingLineFlag, string>> = { new_model: NEW_MODEL_LABEL };
+/**
+ * The words shown beside each flag code. A full record (slice 4, SA RC-3), so
+ * `tsc` demands a label for any flag added later. "Needs a reason to apply" is
+ * not part of a label: the page derives it from `BLOCKING_FLAGS`.
+ */
+export const FLAG_LABELS: Record<PendingLineFlag, string> = {
+  new_model: NEW_MODEL_LABEL,
+  large_move: 'price moves more than 50%',
+  above_conservative_rate: 'above the rate we charge for an unknown model',
+  fallback_differs: 'built-in backup price differs; update it by code change',
+  cached_input_listed: 'provider lists a cached-input price',
+  cross_check_differs: 'differs from the second price list by more than 5%',
+  cross_check_unavailable: 'second price list could not be read',
+  cross_check_not_listed: 'not on the second price list',
+  retiring: 'provider is retiring this model',
+  renamed: 'provider renamed this model',
+};
 
 /** The flags that need an override reason at apply (slice 8). */
 export const BLOCKING_FLAGS: readonly PendingLineFlag[] = ['large_move', 'cross_check_differs', 'retiring'];
