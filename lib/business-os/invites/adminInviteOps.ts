@@ -37,7 +37,7 @@ import {
   PAID_INVITE_TYPE,
   type InviteTypeId,
 } from '@/lib/business-os/entitlements/config/invites';
-import { planLabel } from '@/lib/business-os/entitlements/planPresentation';
+import { planLabel, planMonthlyPriceUsd } from '@/lib/business-os/entitlements/planPresentation';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { BusinessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
@@ -67,6 +67,12 @@ import { describeInviteAccess, isInviteGrantAvailable } from './inviteOffer';
 import type { CreateInviteBody, RevokeInviteBody } from './inviteSchemas';
 import { isAwaitingPayment } from './paymentHold';
 import { claimLeaseCutoff, isClaimLive } from './signupCodePolicy';
+// SA C-3 (P-9.2): the one tier rule for an admin Paid invite is "a Stripe
+// price exists" (`sellableTiers`, P-4.1 M-1), at issuance as at redemption and
+// at the held checkout. An invites → billing import: billing imports
+// `invites/paymentHold` as a TYPE only, so there is no runtime cycle. Nothing
+// else from billing is imported here.
+import { sellableTiers } from '@/lib/business-os/billing/planCheckoutEligibility';
 
 /** The name shown when the inviting admin has none on record (BQ-9, C-9). */
 export const INVITER_NAME_FALLBACK = 'AgentPilot';
@@ -288,6 +294,41 @@ export interface InviteTypeOption {
   requiresAccess: boolean;
   /** The plans the admin chooses between. Empty when the grant is fixed by config. */
   grants: Array<{ id: string; label: string; default: boolean }>;
+  /**
+   * P-9.2 (§3.6): one line the form shows under the plan select, or `null`.
+   * English (admin surface). Set for a Paid (tier) type only.
+   */
+  note: string | null;
+}
+
+/** P-9.2 (§3.6): what an admin is told about a Paid invite before issuing it. */
+export const PAID_INVITE_FORM_NOTE = 'The invitee pays this plan at signup and cannot use AgentPilot until they have paid.';
+
+/** P-9.2: shown when no plan has a Stripe price, so nothing could be paid for. */
+export const PAID_INVITE_NO_PRICED_PLAN = 'No plan has a price yet';
+
+/**
+ * P-9.2 (SA C-3, C-4): a Paid grant's label, "<plan> · $<price> a month". The
+ * price comes from `planMonthlyPriceUsd` on the SAME injected config as the
+ * name, never from the tier matrix directly. Display only: Stripe charges
+ * from its own price, checked by the checkout.
+ */
+function paidGrantLabel(config: EntitlementConfig, tier: string): string {
+  return `${planLabel(config, tier)} · $${planMonthlyPriceUsd(config, tier)} a month`;
+}
+
+/**
+ * P-9.2 (SA C-3): may an admin Paid invite sell this tier? The two tier
+ * halves of the redemption's own predicate (`adminPaidInviteRedemption`): the
+ * config still carries it for an invite type, and `sellableTiers()` (a Stripe
+ * price exists). Never `buyableTiers()`: an admin Paid invite is
+ * sales-assisted, not the public shelf (P-4.1 M-1).
+ */
+function isPayablePaidGrant(config: EntitlementConfig, tier: string): boolean {
+  return (
+    isInviteGrantAvailable(config, { grant_kind: 'tier', grant_id: tier }) &&
+    (sellableTiers() as readonly string[]).includes(tier)
+  );
 }
 
 export interface InviteFormOptions {
@@ -326,19 +367,36 @@ export function buildInviteFormOptions(config: EntitlementConfig, defaultLanguag
       const refusal = refusalFor(type);
       const isCohort = definition.grantKind === 'cohort';
 
+      if (isCohort) {
+        return {
+          type,
+          label: `${definition.label} (${planLabel(config, definition.defaultGrantId)})`,
+          available: refusal === null,
+          unavailableReason: refusal === 'paid_invites_not_available' ? INVITE_ISSUANCE_POLICY.paidUnavailableReason : null,
+          requiresAccess: true,
+          grants: [],
+          note: null,
+        };
+      }
+
+      // P-9.2 (SA C-3): a Paid type offers only tiers that can be paid for
+      // (a Stripe price exists) and that the config still carries for it.
+      const payable = sellableTiers().filter((tier) => isPayablePaidGrant(config, tier));
+      const defaultId = (payable as readonly string[]).includes(definition.defaultGrantId) ? definition.defaultGrantId : payable[0];
+      const nothingPayable = refusal === null && payable.length === 0;
       return {
         type,
-        label: isCohort ? `${definition.label} (${planLabel(config, definition.defaultGrantId)})` : definition.label,
-        available: refusal === null,
-        unavailableReason: refusal === 'paid_invites_not_available' ? INVITE_ISSUANCE_POLICY.paidUnavailableReason : null,
-        requiresAccess: isCohort,
-        grants: isCohort
-          ? []
-          : (definition.grantIds as readonly string[]).map((id) => ({
-              id,
-              label: planLabel(config, id),
-              default: id === definition.defaultGrantId,
-            })),
+        label: definition.label,
+        available: refusal === null && !nothingPayable,
+        unavailableReason:
+          refusal === 'paid_invites_not_available'
+            ? INVITE_ISSUANCE_POLICY.paidUnavailableReason
+            : nothingPayable
+              ? PAID_INVITE_NO_PRICED_PLAN
+              : null,
+        requiresAccess: false,
+        grants: payable.map((id) => ({ id, label: paidGrantLabel(config, id), default: id === defaultId })),
+        note: PAID_INVITE_FORM_NOTE,
       };
     }),
   };
@@ -452,6 +510,12 @@ export async function createInviteForAdmin(body: CreateInviteBody, deps: CreateI
   const grantId = body.inviteType === PAID_INVITE_TYPE ? body.grantId : definition.defaultGrantId;
 
   if (!isInviteGrantAvailable(deps.config, { grant_kind: grantKind, grant_id: grantId })) {
+    return { ok: false, status: 409, error: 'grant_not_available' };
+  }
+
+  // P-9.2 (SA C-3, C-4): a Paid grant nobody could pay for is refused before
+  // any read or write, or the invitee would be held on "coming soon" forever.
+  if (grantKind === 'tier' && !isPayablePaidGrant(deps.config, grantId)) {
     return { ok: false, status: 409, error: 'grant_not_available' };
   }
 

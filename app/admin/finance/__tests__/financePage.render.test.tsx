@@ -45,6 +45,16 @@
  * the ceiling (AC-93), the empty window (AC-94), K-5's value and caption
  * (AC-95, SA-WR-34), the picked business's plans line (SA-WR-33), deleted
  * accounts (AC-97) and the failed boost read.
+ *
+ * Money M-1 (slice 5a): the shared picker (mocked by path, the real chip),
+ * the chip name (AC-109), the header and summary only with a business picked
+ * (AC-110, AC-116), and the Section 3 link (AC-113).
+ *
+ * Money M-2 (slice 5a, SA-W61): `revenue.plans` is the plans object. The 4a
+ * plans-line cases (S4-FR-4, SA-WR-33) are rewritten to the M-2 meaning: the
+ * plans part per currency, the by-business table or the one business's list,
+ * the deleted line, empty and failed states, `formatUtc` on every timestamp,
+ * and K-5's "USD 89.00" with its new caption (AC-120 to AC-126, AC-129).
  */
 
 import '@testing-library/jest-dom';
@@ -53,6 +63,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import type { FinanceCreditRow, FinancePayload, FinanceTakingsSection } from '@/lib/business-os/finance/financeTypes';
 // Slice 4a: a separate import, so the line above stays unedited.
 import type { FinanceBoostLine, FinanceRevenueSection } from '@/lib/business-os/finance/financeTypes';
+// Slice 5a: a separate import.
+import type { FinancePlanRevenue } from '@/lib/business-os/finance/financeTypes';
 import type { FinancePaymentProblemsSection } from '@/lib/business-os/finance/financeTypes';
 
 const mockReplace = jest.fn();
@@ -62,8 +74,16 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({ replace: mockReplace, push: jest.fn() }),
   usePathname: () => '/admin/finance',
 }));
-jest.mock('@/app/admin/audit-trail/BusinessAccountPicker', () => ({
-  BusinessAccountPicker: () => null,
+// Money M-1: Finance uses the shared picker. The stand-in offers one pick, and
+// the real `businessFilterChip` is kept, so the chip's wording is the real one.
+const PICKED_NAME = 'Acme Dental (picked)';
+jest.mock('@/app/admin/components/layout/AdminBusinessPicker', () => ({
+  ...jest.requireActual('@/app/admin/components/layout/AdminBusinessPicker'),
+  AdminBusinessPicker: ({ onSelect }: { onSelect: (id: string, name: string | null) => void }) => (
+    <button type="button" data-testid="picker-pick" onClick={() => onSelect('11111111-1111-4111-8111-111111111111', 'Acme Dental (picked)')}>
+      pick
+    </button>
+  ),
 }));
 
 import { FinanceView } from '../components/FinanceView';
@@ -104,17 +124,27 @@ import {
   REVENUE_NOTICE_CUT,
   REVENUE_NOTICE_UNREADABLE,
   REVENUE_OTHER_STATUS,
-  REVENUE_PLANS_ALL_PREFIX,
-  REVENUE_PLANS_ALL_RECORDED,
-  REVENUE_PLANS_NONE,
-  REVENUE_PLANS_RECORDED,
-  REVENUE_PLANS_UNKNOWN,
   REVENUE_REFUND_TIMING_NOTE,
   REVENUE_SUBTITLE_ALL,
   REVENUE_SUBTITLE_ONE,
   revenueDeletedLine,
 } from '../financeCopy';
 import { formatMoney } from '../financeFormat';
+// Slice 5a (Money M-2).
+import {
+  REVENUE_PLANS_DELETED_NONE,
+  REVENUE_PLANS_EMPTY,
+  REVENUE_PLANS_FAILED,
+  REVENUE_PLANS_NOTICE_CUT,
+  REVENUE_PLANS_NOTICE_UNREADABLE,
+  REVENUE_PLANS_PERIOD_NOT_RECORDED,
+  REVENUE_PLANS_RECEIVED,
+  REVENUE_PLANS_REFUNDS_NOTE,
+  REVENUE_PLANS_UNKNOWN_PLAN,
+  REVENUE_PLANS_ZERO_NOTE,
+  revenuePlansDeletedLine,
+} from '../financeCopy';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import {
   PART_COULD_NOT_LOAD,
   PART_OK,
@@ -304,12 +334,42 @@ function paymentProblemsSection(extra: Partial<FinancePaymentProblemsSection> = 
   };
 }
 
+/** Slice 5a: the plans part with nothing received in the window (the default). */
+function plansPart(extra: Partial<FinancePlanRevenue> = {}): FinancePlanRevenue {
+  return {
+    status: 'ok',
+    scope: 'all',
+    lines: [],
+    accounts: [],
+    accountsTotal: 0,
+    payments: null,
+    paymentsTotal: null,
+    deletedAccounts: [],
+    notes: { empty: true, exact: true, zeroAmountInvoices: 0, unreadable: 0, otherKind: 0 },
+    ...extra,
+  };
+}
+
+/** Slice 5a: the owner's October plan payment, all businesses (USD 79.00, one business, by business). */
+function paidPlans(extra: Partial<FinancePlanRevenue> = {}): FinancePlanRevenue {
+  return plansPart({
+    lines: [{ currency: 'USD', payments: 1, received: 79, tax: 0, businesses: 1, zeroAmountInvoices: 0, unreadable: 0, exact: true }],
+    accounts: [{ accountId: A, name: 'Acme Dental', nameStatus: 'found', currency: 'USD', payments: 1, received: 79, exact: true }],
+    accountsTotal: 1,
+    notes: { empty: false, exact: true, zeroAmountInvoices: 0, unreadable: 0, otherKind: 0 },
+    ...extra,
+  });
+}
+
+const PLANS_FAILED: FinancePlanRevenue = plansPart({ status: 'unknown', lines: null, accounts: null, accountsTotal: null, deletedAccounts: null, notes: null });
+
 /** Slice 4a: "Our revenue" with nothing paid in the window (the default). */
 function revenueSection(extra: Partial<FinanceRevenueSection> = {}, boosts: Partial<FinanceRevenueSection['boosts']> = {}): FinanceRevenueSection {
   return {
     status: 'ok',
     state: 'none_yet',
-    plans: 'none',
+    plans: plansPart(),
+    totals: [],
     ...extra,
     boosts: {
       status: 'ok',
@@ -460,7 +520,7 @@ describe('the finance page', () => {
     serve({ success: true, data: payload() });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
-    expect(within(panel).getByTestId('revenue-plans')).toHaveTextContent(REVENUE_PLANS_NONE);
+    expect(within(panel).getByTestId('revenue-plans-empty')).toHaveTextContent(REVENUE_PLANS_EMPTY);
     expect(within(panel).getByTestId('revenue-no-boosts')).toHaveTextContent(REVENUE_NO_BOOSTS);
     expect(within(panel).queryByTestId('revenue-lines')).toBeNull();
     expect(panel.textContent).not.toMatch(/\$|USD|0\.00/);
@@ -1187,27 +1247,116 @@ describe('Our revenue (slice 4a)', () => {
     for (const item of REVENUE_CANNOT) expect(within(panel).getByTestId('revenue-cannot')).toHaveTextContent(item);
   });
 
-  it.each([
-    ['recorded', REVENUE_PLANS_RECORDED],
-    ['none', REVENUE_PLANS_NONE],
-    ['unknown', REVENUE_PLANS_UNKNOWN],
-  ] as const)('S4-FR-4: the plans line when R-d says %s', async (plans, text) => {
-    serve({ success: true, data: payload({ revenue: revenueSection({ plans, status: plans === 'unknown' ? 'partial' : 'ok' }) }) });
-    render(<FinanceView />);
-    expect(await screen.findByTestId('revenue-plans')).toHaveTextContent(text);
-  });
-
-  it('SA-WR-33: with a business picked, the plans line says it covers all businesses; the subtitle says this business; no deleted line', async () => {
-    mockSearch = `accountId=${A}`;
-    const revenue = paidRevenue([boostLine()], {}, { plans: 'recorded' });
-    revenue.boosts = { ...revenue.boosts, scope: 'one', deletedAccounts: null };
-    serve({ success: true, data: payload({ accountId: A, revenue }) });
+  it('SA-W61 (M-2 meaning of S4-FR-4): plans received, then credit boosts, under their own headings; no "later update" wording', async () => {
+    serve({ success: true, data: payload({ revenue: revenueSection({ state: 'recorded', plans: paidPlans() }) }) });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
-    expect(within(panel).getByTestId('revenue-plans')).toHaveTextContent(REVENUE_PLANS_ALL_RECORDED);
-    expect(within(panel).getByTestId('revenue-plans').textContent).toContain(REVENUE_PLANS_ALL_PREFIX);
+    const plans = within(panel).getByTestId('revenue-plans-part');
+    const boosts = within(panel).getByTestId('revenue-boosts-part');
+    expect(within(plans).getByRole('heading', { level: 3 })).toHaveTextContent('Plans');
+    expect(within(boosts).getByRole('heading', { level: 3 })).toHaveTextContent('Credit boosts');
+    expect(plans.compareDocumentPosition(boosts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(plans.textContent).not.toMatch(/later update|all businesses:/);
+  });
+
+  it('AC-126: plans failed → "Could not load" on the plans part only; the boosts and every other section render', async () => {
+    serve({ success: true, data: payload({ revenue: revenueSection({ status: 'partial', plans: PLANS_FAILED }) }) });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    expect(within(panel).getByTestId('revenue-plans-failed')).toHaveTextContent(REVENUE_PLANS_FAILED);
+    expect(within(panel).getByTestId('revenue-no-boosts')).toBeInTheDocument();
+    expect(panel.getAttribute('data-status')).toBe('partial');
+    expect(screen.getByTestId('section-takings')).toBeInTheDocument();
+  });
+
+  it('AC-123 / AC-129: a business picked → its own payment list (formatUtc, the plan label, the period), no "all businesses" wording, no table, no deleted line', async () => {
+    mockSearch = `accountId=${A}`;
+    const plans = paidPlans({
+      scope: 'one',
+      accounts: null,
+      accountsTotal: null,
+      deletedAccounts: null,
+      payments: [
+        { id: 'e1', paidAt: '2026-10-12T18:21:09.000Z', planLabel: 'Essentials-ish', received: 79, tax: 0, currency: 'USD', periodStart: '2026-10-12T18:21:07.000Z', periodEnd: '2026-11-12T18:21:07.000Z' },
+        { id: 'e0', paidAt: '2026-10-02T08:00:00.000Z', planLabel: null, received: 19.99, tax: 1.99, currency: 'USD', periodStart: null, periodEnd: null },
+      ],
+      paymentsTotal: 2,
+    });
+    const revenue = paidRevenue([boostLine()], {}, { plans, totals: [{ currency: 'USD', boostsNet: 10, plansReceived: 79, total: 89 }] });
+    revenue.boosts = { ...revenue.boosts, scope: 'one', deletedAccounts: null };
+    serve({ success: true, data: k5With(payload({ accountId: A, revenue }), { kind: 'one', currency: 'USD', net: 89 }, 'Boosts net of refunds and disputes, plus plans received') });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
     expect(panel).toHaveTextContent(REVENUE_SUBTITLE_ONE(WINDOW_LABEL));
+    expect(panel.textContent).not.toMatch(/all businesses/);
+    expect(within(panel).queryByTestId('revenue-plans-accounts')).toBeNull();
+    expect(within(panel).queryByTestId('revenue-plans-deleted')).toBeNull();
     expect(within(panel).queryByTestId('revenue-deleted')).toBeNull();
+    const first = within(panel).getByTestId('revenue-plans-payment-e1');
+    expect(first).toHaveTextContent(formatUtc('2026-10-12T18:21:09.000Z'));
+    expect(first).toHaveTextContent('2026-10-12 18:21 UTC');
+    expect(first).toHaveTextContent('Essentials-ish');
+    expect(first).toHaveTextContent(`${formatUtc('2026-10-12T18:21:07.000Z')} to ${formatUtc('2026-11-12T18:21:07.000Z')}`);
+    expect(first.querySelector('[data-money="received"]')).toHaveTextContent('USD 79.00');
+    expect(first.querySelector('[data-money="tax"]')).toHaveTextContent('USD 0.00');
+    const second = within(panel).getByTestId('revenue-plans-payment-e0');
+    expect(second).toHaveTextContent(REVENUE_PLANS_UNKNOWN_PLAN);
+    expect(second).toHaveTextContent(`${REVENUE_PLANS_PERIOD_NOT_RECORDED} to ${REVENUE_PLANS_PERIOD_NOT_RECORDED}`);
+    expect(second.textContent).not.toContain('—');
+    // Newest first, as sent.
+    expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // K-5 and the summary read the same total (SA-Q40).
+    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('USD 89.00');
+    expect(screen.getByTestId('account-summary-total-USD')).toHaveTextContent('USD 89.00');
+    expect(screen.getByTestId('account-summary-plan-USD')).toHaveTextContent('USD 79.00');
+  });
+
+  it('AC-120 / AC-124: all businesses → the per-currency line (Received header, "USD 79.00"), the by-business table, the deleted line in words', async () => {
+    const plans = paidPlans({ deletedAccounts: [{ currency: 'USD', payments: 1, received: 49, exact: true }] });
+    serve({ success: true, data: payload({ revenue: revenueSection({ state: 'recorded', plans }) }) });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('section-revenue');
+    const line = within(panel).getByTestId('revenue-plans-line-USD');
+    expect(line.querySelector('[data-money="received"]')).toHaveTextContent('USD 79.00');
+    expect(line.querySelector('[data-money="tax"]')).toHaveTextContent('USD 0.00');
+    expect(within(panel).getByRole('columnheader', { name: REVENUE_PLANS_RECEIVED })).toBeInTheDocument();
+    expect(within(panel).getByTestId(`revenue-plans-account-${A}`)).toHaveTextContent('Acme Dental');
+    expect(within(panel).getByTestId(`revenue-plans-account-${A}`)).toHaveTextContent('USD 79.00');
+    expect(within(panel).getByTestId('revenue-plans-deleted-USD')).toHaveTextContent(revenuePlansDeletedLine(1, 'USD 49.00'));
+    expect(within(panel).getByTestId('revenue-plans-refunds-note')).toHaveTextContent(REVENUE_PLANS_REFUNDS_NOTE);
+    for (const cell of within(panel).getByTestId('revenue-plans').querySelectorAll('[data-money]')) expect(cell.textContent).toMatch(/USD/);
+  });
+
+  it('AC-124: no deleted-account payment → "No plan payments from deleted accounts"', async () => {
+    serve({ success: true, data: payload({ revenue: revenueSection({ state: 'recorded', plans: paidPlans() }) }) });
+    render(<FinanceView />);
+    expect(await screen.findByTestId('revenue-plans-deleted')).toHaveTextContent(REVENUE_PLANS_DELETED_NONE);
+  });
+
+  it('AC-121 / AC-126: zero-amount only → the empty sentence and the note, no "0.00"', async () => {
+    const plans = plansPart({ notes: { empty: true, exact: true, zeroAmountInvoices: 2, unreadable: 0, otherKind: 0 } });
+    serve({ success: true, data: payload({ revenue: revenueSection({ plans }) }) });
+    render(<FinanceView />);
+    const part = await screen.findByTestId('revenue-plans');
+    expect(within(part).getByTestId('revenue-plans-empty')).toHaveTextContent(REVENUE_PLANS_EMPTY);
+    expect(within(part).getByTestId('revenue-plans-zero-note')).toHaveTextContent(REVENUE_PLANS_ZERO_NOTE(2));
+    expect(part.textContent).not.toMatch(/0\.00|USD/);
+  });
+
+  it('AC-125 / AC-120: the ceiling and an unreadable invoice → "At least", the notices, "excludes 1 unreadable"', async () => {
+    const plans = paidPlans({
+      status: 'partial',
+      lines: [{ currency: 'USD', payments: 1, received: 79, tax: 0, businesses: 1, zeroAmountInvoices: 0, unreadable: 1, exact: false }],
+      notes: { empty: false, exact: false, zeroAmountInvoices: 0, unreadable: 1, otherKind: 0 },
+    });
+    serve({ success: true, data: k5With(payload({ revenue: revenueSection({ status: 'partial', plans }) }), { kind: 'unknown', reason: 'cut_off' }) });
+    render(<FinanceView />);
+    const line = await screen.findByTestId('revenue-plans-line-USD');
+    expect(line.querySelector('[data-money="received"]')).toHaveTextContent('At least USD 79.00');
+    expect(line).toHaveTextContent('excludes 1 unreadable');
+    expect(screen.getByTestId('revenue-plans-notice-cut')).toHaveTextContent(REVENUE_PLANS_NOTICE_CUT);
+    expect(screen.getByTestId('revenue-plans-notice-unreadable')).toHaveTextContent(REVENUE_PLANS_NOTICE_UNREADABLE(1));
+    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('Unknown');
   });
 
   it('AC-90 / AC-95: the owner purchase → "USD 10.00" in the line and on K-5, with the caption; K-5 grey, never green', async () => {
@@ -1223,7 +1372,7 @@ describe('Our revenue (slice 4a)', () => {
     const k5 = screen.getByTestId('tile-k5_our_revenue');
     expect(k5).toHaveTextContent('USD 10.00');
     expect(k5).toHaveTextContent(k5Caption(WINDOW_LABEL));
-    expect(k5Caption(WINDOW_LABEL)).toContain('Credit boosts; plans in a later update');
+    expect(k5Caption(WINDOW_LABEL)).toContain('Credit boosts and plans');
     expect(k5.getAttribute('data-status')).toBe('neutral');
     expect(k5.className).not.toContain(STATUS_STYLES.green.card);
     // Every money cell names its currency.
@@ -1309,22 +1458,22 @@ describe('Our revenue (slice 4a)', () => {
     expect(await screen.findByTestId('revenue-deleted')).toHaveTextContent(REVENUE_DELETED_NONE);
   });
 
-  it('AC-95: the boost read failed → "Could not load" in the section, the plans line still shown; K-5 unavailable "Unknown"', async () => {
-    const revenue = revenueSection({ status: 'partial', plans: 'recorded' }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null });
+  it('AC-95: the boost read failed → "Could not load" in the section, the plans part still shown; K-5 unavailable "Unknown"', async () => {
+    const revenue = revenueSection({ status: 'partial', plans: paidPlans(), totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null });
     const p = payload({ revenue });
     p.tiles.k5 = { ...p.tiles.k5, status: 'unavailable', headline: 'Unknown', money: { kind: 'unknown', reason: 'failed' } };
     serve({ success: true, data: p });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
     expect(within(panel).getByTestId('revenue-boosts-failed')).toHaveTextContent(REVENUE_BOOSTS_FAILED);
-    expect(within(panel).getByTestId('revenue-plans')).toHaveTextContent(REVENUE_PLANS_RECORDED);
+    expect(within(panel).getByTestId('revenue-plans-line-USD')).toHaveTextContent('USD 79.00');
     expect(screen.getByTestId('tile-k5_our_revenue').getAttribute('data-status')).toBe('unavailable');
     expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('Unknown');
     expect(screen.getByTestId('section-takings')).toBeInTheDocument();
   });
 
   it('both reads failed → the section says it could not load, with Retry', async () => {
-    const revenue = revenueSection({ status: 'unknown', state: 'unknown', plans: 'unknown' }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null });
+    const revenue = revenueSection({ status: 'unknown', state: 'unknown', plans: PLANS_FAILED, totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null });
     serve({ success: true, data: payload({ revenue }) });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
@@ -1336,8 +1485,9 @@ describe('Our revenue (slice 4a)', () => {
     ['empty', revenueSection()],
     ['paid with a refund', paidRevenue([boostLine({ refunded: 3, net: 7 })], { refundOrDispute: true })],
     ['cut off', paidRevenue([boostLine({ net: null, held: null, lost: null })], { exact: false })],
-    ['boosts failed', revenueSection({ status: 'partial', plans: 'unknown' }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
-    ['both failed', revenueSection({ status: 'unknown', state: 'unknown', plans: 'unknown' }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
+    ['boosts failed', revenueSection({ status: 'partial', plans: paidPlans(), totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
+    ['plans failed', revenueSection({ status: 'partial', plans: PLANS_FAILED, totals: null })],
+    ['both failed', revenueSection({ status: 'unknown', state: 'unknown', plans: PLANS_FAILED, totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
   ] as const)('AC-81 (unchanged rule): in the %s state the section and K-5 name no mode and no webhook', async (_name, revenue) => {
     serve({ success: true, data: payload({ revenue }) });
     render(<FinanceView />);
@@ -1361,5 +1511,115 @@ describe('formatMoney (SA-WR-18): fixed two decimals, the code always shown', ()
     expect(formatMoney(-1234.5, 'ILS')).toBe('ILS -1,234.50');
     expect(formatMoney(200, 'ILS')).toBe('ILS 200.00');
     expect(formatMoney(12, null)).toBe('Unknown currency 12.00');
+  });
+});
+
+// ── Money M-1: one account, one screen (AC-109, AC-113, AC-116) ─────────────
+describe('Money M-1 on the page', () => {
+  it('AC-116: with all businesses there is no account header and no summary; the sections render as before', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    expect(screen.queryByTestId('account-header')).toBeNull();
+    expect(screen.queryByTestId('account-summary')).toBeNull();
+    expect(screen.queryByTestId('business-filter-chip')).toBeNull();
+    for (const id of ['section-revenue', 'section-takings', 'section-accounts', 'section-ai-cost', 'section-credits', 'section-payment-problems']) {
+      expect(screen.getByTestId(id)).toBeInTheDocument();
+    }
+  });
+
+  it('AC-109: after a pick the chip reads "Business: {picked name}", and the name never reaches the URL', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    fireEvent.click(screen.getByTestId('picker-pick'));
+    expect(mockReplace).toHaveBeenCalledWith(`/admin/finance?preset=this_month&accountId=${A}`, { scroll: false });
+    for (const call of mockReplace.mock.calls) expect(String(call[0])).not.toContain('Acme');
+  });
+
+  it('AC-109: the picked name shows in the chip and the header once the URL carries the account', async () => {
+    serve({ success: true, data: payload() });
+    const { rerender } = render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    fireEvent.click(screen.getByTestId('picker-pick'));
+    // The router mock does not change the URL; the next render sees it, as Next would.
+    mockSearch = `preset=this_month&accountId=${A}`;
+    const fetchMock = serve({ success: true, data: payload({ accountId: A }) });
+    rerender(<FinanceView />);
+    expect(await screen.findByTestId('account-header')).toBeInTheDocument();
+    expect(screen.getByTestId('business-filter-chip')).toHaveTextContent(`Business: ${PICKED_NAME}`);
+    expect(screen.getByTestId('account-header-name')).toHaveTextContent(PICKED_NAME);
+    for (const call of fetchMock.mock.calls) expect(String((call as unknown[])[0])).not.toContain('Acme');
+  });
+
+  it('AC-109: on a reload the chip takes the name from the payload (Section 4 row); with no row, the short id', async () => {
+    mockSearch = `preset=this_month&accountId=${A}`;
+    serve({ success: true, data: payload({ accountId: A }) });
+    const first = render(<FinanceView />);
+    await screen.findByTestId('account-header');
+    expect(screen.getByTestId('business-filter-chip')).toHaveTextContent('Business: Acme Dental');
+    first.unmount();
+
+    const unnamed = '55555555-5555-4555-8555-555555555555';
+    mockSearch = `preset=this_month&accountId=${unnamed}`;
+    serve({ success: true, data: payload({ accountId: unnamed }) });
+    render(<FinanceView />);
+    await screen.findByTestId('account-header');
+    expect(screen.getByTestId('business-filter-chip')).toHaveTextContent('Business: 55555555…');
+    expect(screen.getByTestId('account-header-name')).toHaveTextContent('55555555…');
+  });
+
+  it('AC-110: with a business picked, the header and summary show, and each summary figure equals its section on the same render', async () => {
+    const p = payload({ accountId: A, revenue: paidRevenue([boostLine()]) });
+    p.accounts = {
+      ...p.accounts,
+      scope: 'one',
+      figures: {
+        ...p.accounts.figures!,
+        total: 1,
+        groups: p.accounts.figures!.groups.map((g) => (g.key === 'tier:x' ? { ...g, count: 1, foundingPartners: 1 } : { ...g, count: 0 })),
+      },
+    };
+    mockSearch = `preset=this_month&accountId=${A}`;
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    const header = await screen.findByTestId('account-header');
+    const summary = screen.getByTestId('account-summary');
+    // Above the KPI strip.
+    expect(header.compareDocumentPosition(screen.getByTestId('kpi-strip')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(header.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(header).getByTestId('account-header-paying')).toHaveTextContent('Paying');
+    // The same text as the section's own node.
+    expect(within(summary).getByTestId('account-summary-ai-cost-value').textContent).toBe(screen.getByTestId('ai-total').textContent);
+    const netCell = within(screen.getByTestId('revenue-line-USD')).getByText((_, el) => el?.getAttribute('data-money') === 'net');
+    expect(within(summary).getByTestId('account-summary-boost-USD').textContent).toBe(netCell.textContent);
+    const creditsRow = screen.getByTestId(`credits-row-${A}`);
+    expect(creditsRow.textContent).toContain('160.0%');
+    expect(within(summary).getByTestId('account-summary-credits').textContent).toContain('160.0%');
+    expect(within(summary).getByTestId('account-summary-group-value').textContent).toBe(within(header).getByTestId('account-header-group').textContent);
+    expect(within(header).getByTestId('account-header-group')).toHaveTextContent('Essentials-ish');
+  });
+
+  it('the chip X "Remove business" goes back to all businesses', async () => {
+    mockSearch = `preset=this_month&accountId=${A}`;
+    serve({ success: true, data: payload({ accountId: A }) });
+    render(<FinanceView />);
+    await screen.findByTestId('account-header');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove business' }));
+    expect(mockReplace).toHaveBeenLastCalledWith('/admin/finance?preset=this_month', { scroll: false });
+  });
+
+  it('AC-113 (CR G-8): the Section 3 AI cost & usage link carries the window, and the account when picked', async () => {
+    serve({ success: true, data: payload() });
+    const first = render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toBe('/admin/analytics?range=this_month');
+    first.unmount();
+
+    mockSearch = `preset=this_month&accountId=${A}`;
+    serve({ success: true, data: payload({ accountId: A }) });
+    render(<FinanceView />);
+    await screen.findByTestId('account-header');
+    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toBe(`/admin/analytics?range=this_month&account=${A}`);
   });
 });

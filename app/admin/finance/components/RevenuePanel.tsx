@@ -1,10 +1,12 @@
 'use client';
 
 /**
- * "Our revenue" (S1-FR-25 to S1-FR-27; slice 4a, S4-FR-1 to S4-FR-13): a
- * section with its own status (SA-W52). Our own money: the credit boosts paid
- * in the window, per currency, by package, and from deleted accounts; plan
- * revenue amounts come in a later update (the plans line says so).
+ * "Our revenue" (S1-FR-25 to S1-FR-27; slice 4a, S4-FR-1 to S4-FR-13; slice
+ * 5a, M2-FR-1 to M2-FR-13): a section with its own status (SA-W52). Our own
+ * money: the plan payments received in the window (`PlanRevenuePart`, slice
+ * 5a), then the credit boosts paid in the window, per currency, by package, and
+ * from deleted accounts. The two parts are never one figure here (M2-FR-1):
+ * their per-currency total is K-5's and the account summary's.
  *
  * MONEY: every figure arrives per currency, already divided by 100 once from
  * an exact integer sum. This component never adds or subtracts money (SA-WR-18;
@@ -52,13 +54,9 @@ import {
   REVENUE_NOTICE_UNREADABLE_CREDITS,
   REVENUE_OTHER_STATUS,
   REVENUE_PACKAGE,
+  REVENUE_BOOSTS_HEADING,
   REVENUE_PACKAGE_NOT_RECORDED,
-  REVENUE_PLANS_ALL_NONE,
-  REVENUE_PLANS_ALL_RECORDED,
-  REVENUE_PLANS_ALL_UNKNOWN,
-  REVENUE_PLANS_NONE,
-  REVENUE_PLANS_RECORDED,
-  REVENUE_PLANS_UNKNOWN,
+  REVENUE_PLANS_HEADING,
   REVENUE_PURCHASES,
   REVENUE_REFUND_TIMING_NOTE,
   REVENUE_REFUNDED,
@@ -73,15 +71,10 @@ import {
 } from '../financeCopy';
 import { atLeast, formatCredits, formatMoney } from '../financeFormat';
 import { FinanceSection } from './FinanceSection';
+import { PlanRevenuePart } from './PlanRevenuePart';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
 const NOTE = 'text-[11px] text-slate-500';
-
-/** S4-FR-4 and SA-WR-33: R-d reads no account, so with a business picked the line says "all businesses". */
-const PLANS_TEXT: Record<'all' | 'one', Record<FinanceRevenueSection['plans'], string>> = {
-  all: { recorded: REVENUE_PLANS_RECORDED, none: REVENUE_PLANS_NONE, unknown: REVENUE_PLANS_UNKNOWN },
-  one: { recorded: REVENUE_PLANS_ALL_RECORDED, none: REVENUE_PLANS_ALL_NONE, unknown: REVENUE_PLANS_ALL_UNKNOWN },
-};
 
 const currencyLabel = (currency: string | null) => currency ?? TAKINGS_UNKNOWN_CURRENCY;
 
@@ -107,10 +100,14 @@ export function RevenuePanel({
       onRetry={onRetry}
     >
       <div className="space-y-4" data-testid="revenue-body" data-state={revenue.state}>
-        <p className="text-sm text-slate-200" data-testid="revenue-plans">
-          {PLANS_TEXT[scope][revenue.plans]}
-        </p>
-        <BoostsPart boosts={revenue.boosts} />
+        <div className="space-y-2" data-testid="revenue-plans-part">
+          <h3 className={SUBHEAD}>{REVENUE_PLANS_HEADING}</h3>
+          <PlanRevenuePart plans={revenue.plans} />
+        </div>
+        <div className="space-y-2" data-testid="revenue-boosts-part">
+          <h3 className={SUBHEAD}>{REVENUE_BOOSTS_HEADING}</h3>
+          <BoostsPart boosts={revenue.boosts} />
+        </div>
         <div data-testid="revenue-cannot">
           <p className={NOTE}>{REVENUE_CANNOT_TITLE}</p>
           <ul className={`list-disc pl-5 ${NOTE}`}>

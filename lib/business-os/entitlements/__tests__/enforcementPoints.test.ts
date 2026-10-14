@@ -316,9 +316,10 @@ describe('backward: a gate cannot ship unregistered', () => {
         'INVITE_TYPES',
         'PAID_INVITE_TYPE',
         'planLabel',
+        'planMonthlyPriceUsd',
         'InviteTypeId',
       ],
-      why: 'The admin invite operations. They read the invite config (T-14, T-15) and label plans for the admin list with `planLabel`. The Paid refusal here is an issuance rule on WHO MAY INVITE, not a capability gate on what an account may do.',
+      why: 'The admin invite operations. They read the invite config (T-14, T-15) and label plans for the admin list with `planLabel`. The Paid refusal here is an issuance rule on WHO MAY INVITE, not a capability gate on what an account may do. Plan payments P-9.2 (SA C-4) adds `planMonthlyPriceUsd`, display only: the Paid grant label shows the monthly price, read from the same injected config as the plan name.',
     },
     {
       file: 'lib/business-os/invites/inviteOffer.ts',

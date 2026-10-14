@@ -17,8 +17,9 @@
  *     `held_payment_unavailable` (D5-3: never offer what the server refuses);
  *   - held by a friend invite (`account_invite`) → the friend tier only,
  *     `INVITE_ISSUANCE_POLICY.account.grantId`, imported, never written here;
- *   - held by an admin Paid invite (`admin_invite`) → refused until P-9
- *     decides which tier such an invite sells (fail closed);
+ *   - held by an admin Paid invite (`admin_invite`, P-9.2) → the tier the
+ *     admin chose, carried on the hold as `grantId`, if it has a Stripe price
+ *     (`sellableTiers()`, SA C-3); otherwise refused (fail closed);
  * - the hold could not be read → refused (fail CLOSED here, unlike the page
  *   gate: this decides what may be bought).
  *
@@ -160,26 +161,48 @@ export function readHeldPaymentSwitches(): HeldPaymentSwitches {
 }
 
 /**
- * What a HELD account may pay for (S5-2). Pure. The holding screen offers Pay
- * exactly when this says `pay`, and the checkout admits a held account exactly
- * when this says `pay` (P5-C5).
+ * What an invite makes its account pay for, once held: the hold's own shape
+ * without the facts only a hold read knows (P-9.2, SA C-6). A held result is
+ * one (`HeldPaymentHold` is assignable to it), and so is an invite row the
+ * public page has matched, so both ask the same question of the same step.
  */
-export function heldPaymentOffer(hold: HeldPaymentHold, switches: HeldPaymentSwitches): HeldPaymentOffer {
+export type HeldInviteTier = { source: 'account_invite' } | { source: 'admin_invite'; grantId: string };
+
+/**
+ * The pure tier-and-switches step (P-9.2, SA C-6), extracted from
+ * `heldPaymentOffer` so the invite page's "payment is required at signup"
+ * (FR-22) and the holding screen's Pay can never disagree: the page says
+ * `required` exactly when this says `pay`.
+ *
+ * - any of the three switches off → `held_payment_unavailable` (D5-3);
+ * - a friend (`account_invite`) → the friend tier,
+ *   `INVITE_ISSUANCE_POLICY.account.grantId`, if it has a Stripe price;
+ * - an admin Paid invitee (`admin_invite`, P-9.2) → the tier the admin chose
+ *   (`grantId`, read from the invite on the server, SA-P9), if it has a Stripe
+ *   price. `sellableTiers()`, never `buyableTiers()` (SA C-3, P-4.1 M-1): an
+ *   admin Paid invite is sales-assisted, not the public shelf;
+ * - otherwise `held_tier_unresolved` (fail closed: never widen to another tier).
+ */
+export function heldInviteOffer(invite: HeldInviteTier, switches: HeldPaymentSwitches): HeldPaymentOffer {
   // D5-3: all three, or nothing is offered and nothing is sold.
   if (!switches.checkoutEnabled || !switches.pricesEnabled || !switches.paidInvitesAvailable) {
     return { kind: 'unavailable', code: 'held_payment_unavailable' };
   }
 
-  if (hold.source === 'account_invite') {
-    const friendTier = INVITE_ISSUANCE_POLICY.account.grantId;
-    // A friend tier with no Stripe price would leave the friend nothing to buy:
-    // refuse rather than widen to the other tiers.
-    const tier = sellableTiers().find((candidate) => candidate === friendTier);
-    return tier ? { kind: 'pay', tier } : { kind: 'unavailable', code: 'held_tier_unresolved' };
-  }
+  const invitedTier = invite.source === 'account_invite' ? INVITE_ISSUANCE_POLICY.account.grantId : invite.grantId;
+  // An invited tier with no Stripe price would leave the account nothing to
+  // buy: refuse rather than widen to the other tiers.
+  const tier = sellableTiers().find((candidate) => candidate === invitedTier);
+  return tier ? { kind: 'pay', tier } : { kind: 'unavailable', code: 'held_tier_unresolved' };
+}
 
-  // `admin_invite`: P-9 decides the tier an admin Paid invite sells.
-  return { kind: 'unavailable', code: 'held_tier_unresolved' };
+/**
+ * What a HELD account may pay for (S5-2). Pure. The holding screen offers Pay
+ * exactly when this says `pay`, and the checkout admits a held account exactly
+ * when this says `pay` (P5-C5). The decision is `heldInviteOffer`'s (C-6).
+ */
+export function heldPaymentOffer(hold: HeldPaymentHold, switches: HeldPaymentSwitches): HeldPaymentOffer {
+  return heldInviteOffer(hold, switches);
 }
 
 /**
