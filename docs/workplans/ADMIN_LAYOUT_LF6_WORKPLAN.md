@@ -7,7 +7,7 @@
 **Branch:** `fix/admin-layout-lf6-finance-filter-bar` (from `origin/main` 49b66feb)
 **Path:** UI short path (Dev, then SA code review and QA in parallel, then user diff, then RM)
 **Date:** 2026-10-14
-**Status:** Code Complete, uncommitted, awaiting SA + QA
+**Status:** PR #362 open — fast-track (SA passed); the user merges
 
 ## Overview
 
@@ -70,4 +70,14 @@ Not done: adopting `AdminFilterBar` / `AdminBusinessPicker` (the finance adoptio
 
 ## QA Testing Report
 
+No separate QA: class-only UI slice, proportionate-effort rule. SA ran the finance suites green (see SA Code Review item 5).
+
 ## Commit Info
+
+| Item | Value |
+|---|---|
+| Branch | `fix/admin-layout-lf6-finance-filter-bar` |
+| Code commit | `13c03014` |
+| Merge of `origin/main` | `d0f996d0` |
+| PR | [#362](https://github.com/AgentsPilot/neuronforge/pull/362) — open, fast-track; the user merges |
+| RM test run | 27 suites / 814 tests passed (`app/admin/finance`, `app/admin/components`, tailwind-css-escape guard); `lint:hooks` clean |
