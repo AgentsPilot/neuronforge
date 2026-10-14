@@ -9,7 +9,7 @@ import {
   linkedOAuthLabel,
   linkedProviderAccountUrl,
 } from '@/lib/authIdentities'
-import { supabase } from '@/lib/supabaseClient'
+import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport'
 import { DangerZonePanel } from '@/components/business-os/purge/DangerZonePanel'
 import { createLogger } from '@/lib/logger'
 import {
@@ -107,61 +107,14 @@ export default function SecurityTabV2() {
       setSuccessMessage('')
       setErrorMessage('')
 
-      const [profileRes, preferencesRes, notificationsRes, connectionsRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', user.id),
-        supabase.from('user_preferences').select('*').eq('user_id', user.id),
-        supabase.from('notification_settings').select('*').eq('user_id', user.id),
-        supabase.from('plugin_connections').select('*').eq('user_id', user.id)
-      ])
-
-      const userData = {
-        user: {
-          id: user.id,
-          email: user.email,
-          created_at: user.created_at
-        },
-        profile: profileRes.data?.[0] || null,
-        preferences: preferencesRes.data?.[0] || null,
-        notifications: notificationsRes.data?.[0] || null,
-        connections: connectionsRes.data || []
-      }
-
-      const dataStr = JSON.stringify(userData, null, 2)
-      const dataBlob = new Blob([dataStr], { type: 'application/json' })
-      const url = URL.createObjectURL(dataBlob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `user-data-${user.id}-${new Date().toISOString().split('T')[0]}.json`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-
-      // AUDIT TRAIL: Log data export
-      try {
-        await fetch('/api/audit/log', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-user-id': user.id
-          },
-          body: JSON.stringify({
-            action: 'USER_DATA_EXPORTED',
-            entityType: 'user',
-            entityId: user.id,
-            userId: user.id,
-            resourceName: user.email || 'User Account',
-            details: {
-              timestamp: new Date().toISOString(),
-              export_type: 'full_account_data',
-              data_categories: ['profile', 'preferences', 'notifications', 'connections']
-            },
-            severity: 'medium',
-            complianceFlags: ['GDPR', 'CCPA']
-          })
-        })
-      } catch (auditError) {
-        logger.error({ err: auditError }, 'Audit logging failed (non-blocking)')
+      // The server export, not a client read (DE-0a): reading the tables here
+      // with `select('*')` put every plugin's OAuth tokens in the file. The
+      // server also records the export in the audit trail.
+      const result = await downloadUserDataExport()
+      if (!result.success) {
+        logger.error({ code: result.code, status: result.status }, 'User data export failed')
+        setErrorMessage('Failed to export data. Please try again.')
+        return
       }
 
       setSuccessMessage('Data exported successfully! Check your downloads folder.')

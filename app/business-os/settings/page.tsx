@@ -14,6 +14,7 @@ import {
   linkedProviderAccountUrl,
 } from '@/lib/authIdentities';
 import { supabase } from '@/lib/supabaseClient';
+import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport';
 import { signOutUser } from '@/lib/client/auth-actions';
 import { marketingLogoutUrl } from '@/lib/utils/marketingUrl';
 import {
@@ -433,26 +434,14 @@ function BusinessOSSettingsContent() {
     try {
       setExporting(true);
 
-      const [profileRes, prefsRes, connectionsRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', user.id),
-        supabase.from('user_preferences').select('*').eq('user_id', user.id),
-        supabase.from('plugin_connections').select('*').eq('user_id', user.id),
-      ]);
-
-      const userData = {
-        user: { id: user.id, email: user.email },
-        profile: profileRes.data?.[0] || null,
-        preferences: prefsRes.data?.[0] || null,
-        connections: connectionsRes.data || [],
-      };
-
-      const blob = new Blob([JSON.stringify(userData, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `my-data-${new Date().toISOString().split('T')[0]}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
+      // The server export, not a client read (DE-0a): reading the tables here
+      // with `select('*')` put every plugin's OAuth tokens in the file.
+      const result = await downloadUserDataExport();
+      if (!result.success) {
+        logger.error({ code: result.code, status: result.status }, 'Failed to export the account data');
+        setErrorMessage(t('settings.security.export_error'));
+        return;
+      }
 
       setSuccessMessage(t('settings.security.export_success'));
       setTimeout(() => setSuccessMessage(''), 3000);
