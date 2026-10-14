@@ -228,9 +228,11 @@ function signupClaimUpdate(
  *
  * `issuer_kind` (Slice 5a, F5a-10, SA R-5) is read only so an account-issued
  * invite never reaches the existing-account check; the view never returns it.
+ * `invite_type` (plan payments P-9.1, SA C-2) is read only so an admin Paid
+ * invite is judged by the signup's own predicate; the view never returns it.
  */
 export const BUSINESS_OS_INVITE_PUBLIC_COLUMNS =
-  'id, issuer_kind, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
+  'id, issuer_kind, invite_type, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
   'personal_note, link_expires_at, first_viewed_at, revoked_at, redeemed_at';
 
 /**

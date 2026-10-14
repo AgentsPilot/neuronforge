@@ -454,3 +454,51 @@ describe('N-1 (SA C-2): the issuing admin id never reaches a response', () => {
     expect(await (await code({ token: TOKEN })).text()).not.toContain(ADMIN_ID);
   });
 });
+
+describe('P-9.1 (SA C-9): no signup request may name an account, an invite or a tier', () => {
+  const googleBody = { token: TOKEN, idToken: 'eyJhbGciOiJSUzI1NiJ9.eyJlIjoieCJ9.c2ln', nonce: 'N'.repeat(43) };
+  const google = (body: unknown) => post(googleRoute.POST, '/api/public/invites/signup/google', body);
+  const savedSignin = process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+  beforeEach(() => {
+    // Configured, so a 400 below is the schema's and not the 404 for "Google not set up".
+    process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = '1234567890-abc.apps.googleusercontent.com';
+  });
+  afterEach(() => {
+    if (savedSignin === undefined) delete process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+    else process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = savedSignin;
+  });
+
+  const injected: Array<[string, Record<string, unknown>]> = [
+    ['tier', { tier: 'x' }],
+    ['grantId', { grantId: 'x' }],
+    ['accountId', { accountId: 'x' }],
+    ['inviteId', { inviteId: 'x' }],
+    ['inviteType', { inviteType: 'x' }],
+  ];
+
+  it.each(injected)('code: an injected %s is a 400 and reaches nothing', async (_label, extra) => {
+    const response = await code({ token: TOKEN, ...extra });
+    expect(response.status).toBe(400);
+    expect(state.events).toEqual([]);
+  });
+
+  it.each(injected)('complete: an injected %s is a 400 and reaches nothing', async (_label, extra) => {
+    const response = await complete({ ...validBody, ...extra });
+    expect(response.status).toBe(400);
+    expect(state.events).toEqual([]);
+  });
+
+  it.each(injected)('google: an injected %s is a 400 and reaches nothing', async (_label, extra) => {
+    const response = await google({ ...googleBody, ...extra });
+    expect(response.status).toBe(400);
+    expect(state.events).toEqual([]);
+  });
+
+  it('an admin Paid invitee lands on the payment hold from either method (the landing comes from the outcome only)', async () => {
+    state.completeOutcome = { ok: true, email: 'invitee@example.com', accountId: 'acct', inviteId: 'inv', landing: 'awaiting_payment' };
+    expect(await (await complete(validBody)).json()).toEqual({
+      success: true,
+      data: { email: 'invitee@example.com', redirectTo: '/invite/awaiting-payment' },
+    });
+  });
+});

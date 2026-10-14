@@ -850,6 +850,66 @@ describe('provisionFromFriendInvite (invite-only signup Slice 5b; T-19, T-13)', 
   });
 });
 
+describe('provisionFromAdminPaidInvite (plan payments P-9.1; SA-P9, C-1)', () => {
+  const input = {
+    inviteId: '11111111-1111-4111-8111-111111111111',
+    accountId: '33333333-3333-4333-8333-333333333333',
+    email: 'invitee@example.com',
+    tierId: 'tier-x',
+  };
+
+  it('calls the admin Paid finalise with exactly the four server-derived arguments, and writes no table from here', async () => {
+    const { client, calls, builder } = mockSupabase({
+      data: [{ result_outcome: 'finalised', result_invite_id: input.inviteId }],
+      error: null,
+    });
+    const result = await new BusinessOsAccountPlanRepository(client).provisionFromAdminPaidInvite(input);
+    expect(result).toEqual({ data: { outcome: 'finalised', inviteId: input.inviteId }, error: null });
+    expect(calls.rpc).toEqual([
+      'business_os_finalise_admin_paid_invite_redemption',
+      { p_invite_id: input.inviteId, p_account_id: input.accountId, p_email: input.email, p_tier: input.tierId },
+    ]);
+    expect(builder.insert).not.toHaveBeenCalled();
+    expect(builder.update).not.toHaveBeenCalled();
+    expect(builder.delete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ result_outcome: 'already_finalised', result_invite_id: 'inv' }, { outcome: 'already_finalised', inviteId: 'inv' }],
+    [{ result_outcome: 'not_matched', result_invite_id: null }, { outcome: 'not_matched' }],
+  ])('parses %o', async (row, expected) => {
+    const { client } = mockSupabase({ data: [row], error: null });
+    expect(await new BusinessOsAccountPlanRepository(client).provisionFromAdminPaidInvite(input)).toEqual({ data: expected, error: null });
+  });
+
+  it('an unknown or malformed answer is an error, never a success (issuer_not_eligible is not an admin answer)', async () => {
+    for (const data of [
+      [{ result_outcome: 'finalised', result_invite_id: null }],
+      [],
+      null,
+      [{ result_outcome: 'weird' }],
+      [{ result_outcome: 'issuer_not_eligible', result_invite_id: null }],
+    ]) {
+      const { client } = mockSupabase({ data, error: null });
+      const result = await new BusinessOsAccountPlanRepository(client).provisionFromAdminPaidInvite(input);
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it('a database error is scrubbed to { code, message }, and the email is never returned (M-1)', async () => {
+    const { client } = mockSupabase({
+      data: null,
+      error: { code: '23505', message: 'duplicate key value violates unique constraint', details: `Key (user_id)=(x) for ${input.email}`, hint: '' },
+    });
+    const result = await new BusinessOsAccountPlanRepository(client).provisionFromAdminPaidInvite(input);
+    expect(result.data).toBeNull();
+    expect(result.error).not.toHaveProperty('details');
+    expect((result.error as Error & { code?: string }).code).toBe('23505');
+    expect(JSON.stringify(result.error)).not.toContain(input.email);
+  });
+});
+
 describe('provisionFromInvite (invite-only signup Slice 1b; L-5, I-5, F-8)', () => {
   const input = {
     inviteId: '11111111-1111-4111-8111-111111111111',

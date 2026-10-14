@@ -35,7 +35,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import { safeDbError } from './BusinessOsInviteRepository';
-import type { AgentRepositoryResult as RepositoryResult, FriendFinaliseOutcome } from './types';
+import type { AdminPaidFinaliseOutcome, AgentRepositoryResult as RepositoryResult, FriendFinaliseOutcome } from './types';
 
 /** A row of `business_os_account_plans`. */
 export interface BusinessOsAccountPlan {
@@ -943,6 +943,70 @@ export class BusinessOsAccountPlanRepository {
     } catch (error) {
       const safe = safeDbError(error);
       methodLogger.error({ dbError: safe }, 'Failed to finalise a friend invite redemption');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * Finish the redemption of an ADMIN-issued Paid invite (plan payments P-9.1;
+   * SA-P9, F3). The invite's redeemed stamp, the invitee's plan row and the
+   * lineage row, in ONE transaction, through
+   * `business_os_finalise_admin_paid_invite_redemption` (20261029; SECURITY
+   * INVOKER, empty search_path, service_role EXECUTE only).
+   *
+   * A plan-state WRITE, so it lives here and is listed in the entitlements
+   * imports guard's `WRITE_METHODS`, beside the champion and friend finalise.
+   * Reached only by the public signup routes (code and Google), after mailbox
+   * proof, the claim and the account creation.
+   *
+   * ── The documented exception to R2-3 (T-13 layer 1), as for a friend ───────
+   * The plan row is written with NO basis: `cohort` and `tier` NULL,
+   * `origin = 'invite'`. The tier the admin chose is assigned only by the
+   * payment (SA-P9), so the onboarding and profile triggers can never mint a
+   * trial for an invitee who has not paid. The lineage row is L1,
+   * `admin_invite`, rooted at the invitee.
+   *
+   * `tierId` is the invite row's own `grant_id`, already checked by the caller
+   * against the sellable tiers; the SQL compares it with the row (L-5: it holds
+   * no plan name). `accountId` is the server-generated id the invite was claimed
+   * for (I-3); `email` is the row's own email. Outcomes: `finalised` /
+   * `already_finalised` (re-run safe) with the invite id; `not_matched`. An
+   * unknown answer or a database error is an error, scrubbed to
+   * `{ code, message }` (M-1); nothing here logs the email.
+   */
+  async provisionFromAdminPaidInvite(input: {
+    inviteId: string;
+    accountId: string;
+    email: string;
+    tierId: string;
+  }): Promise<RepositoryResult<AdminPaidFinaliseOutcome>> {
+    const methodLogger = this.logger.child({ method: 'provisionFromAdminPaidInvite', inviteId: input.inviteId, accountId: input.accountId });
+    try {
+      const { data, error } = await this.supabase.rpc('business_os_finalise_admin_paid_invite_redemption', {
+        p_invite_id: input.inviteId,
+        p_account_id: input.accountId,
+        p_email: input.email,
+        p_tier: input.tierId,
+      });
+
+      if (error) throw error;
+      const row = (Array.isArray(data) ? data[0] : data) as { result_outcome?: unknown; result_invite_id?: unknown } | null | undefined;
+      const outcome = row?.result_outcome;
+      if ((outcome === 'finalised' || outcome === 'already_finalised') && typeof row?.result_invite_id === 'string') {
+        methodLogger.info({ outcome }, 'Admin Paid invite redemption finalised (plan row and lineage written)');
+        return { data: { outcome, inviteId: row.result_invite_id }, error: null };
+      }
+      if (outcome === 'not_matched') {
+        methodLogger.warn({ outcome }, 'Admin Paid invite redemption not finalised');
+        return { data: { outcome }, error: null };
+      }
+      methodLogger.error({ outcome: typeof outcome === 'string' ? outcome : null }, 'Admin Paid finalise returned an unknown answer');
+      return { data: null, error: new Error('admin paid finalise returned an unknown answer') };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to finalise an admin Paid invite redemption');
       const out = new Error(safe.message) as Error & { code?: string };
       if (safe.code) out.code = safe.code;
       return { data: null, error: out };
