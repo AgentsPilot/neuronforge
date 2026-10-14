@@ -1008,9 +1008,15 @@ export interface BusinessOsPaidInvoiceFacts {
   livemode: boolean;
 }
 
-/** Slice 5b: the two invite facts the payment hold and its screen need. */
+/**
+ * Slice 5b: the invite facts the payment hold and its screen need. `grant_id`
+ * (P-9.2, SA C-5) is the tier an admin Paid invite sells; NOT NULL in the
+ * schema, and an empty one makes the hold unreadable, never a held result
+ * with no tier.
+ */
 export interface BusinessOsInviteHoldFacts {
   grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
   language: string;
 }
 
@@ -1018,10 +1024,15 @@ export interface BusinessOsInviteHoldFacts {
  * Plan payments P-5b.1 (N-2, SA S5-5 c): what the "your friend subscribed"
  * email needs about ONE invite: who issued it, the address they typed, and who
  * redeemed it (the cross-check against the paying account). Nothing else.
+ * P-9.2 (T10, SA Q-10): also the issuing admin and the grant kind, so an
+ * admin PAID invitee's first payment tells the admin who issued it (a
+ * champion's cohort invite owes nobody that email).
  */
 export interface BusinessOsInviteNotificationFacts {
   issuer_kind: 'admin' | 'account';
   issuer_account_id: string | null;
+  issuer_admin_id: string | null;
+  grant_kind: BusinessOsInviteGrantKind;
   email: string;
   redeemed_account_id: string | null;
 }

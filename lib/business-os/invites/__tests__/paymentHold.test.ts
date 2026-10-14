@@ -140,9 +140,10 @@ describe('readPaymentHold (D-7, SA R-3, Q-2)', () => {
 
   it('5c case: an unpaid admin Paid invite is held; an admin champion is not', async () => {
     store.lineage = friendLineage({ source: 'admin_invite' });
-    store.invite = { grant_kind: 'tier', language: 'en' };
-    expect(await readPaymentHold(ACCOUNT, readers())).toEqual({ ok: true, held: true, inviteId: INVITE, source: 'admin_invite' });
-    store.invite = { grant_kind: 'cohort', language: 'en' };
+    // P-9.2 (SA C-5): the held admin variant carries the invite's `grant_id`.
+    store.invite = { grant_kind: 'tier', grant_id: 'invited_plan', language: 'en' };
+    expect(await readPaymentHold(ACCOUNT, readers())).toEqual({ ok: true, held: true, inviteId: INVITE, source: 'admin_invite', grantId: 'invited_plan' });
+    store.invite = { grant_kind: 'cohort', grant_id: 'invited_cohort', language: 'en' };
     expect(await readPaymentHold(ACCOUNT, readers())).toEqual({ ok: true, held: false });
   });
 
@@ -217,7 +218,7 @@ describe('readHoldForSession (the holding screen, SA R-4)', () => {
   it('held: in the invite language', async () => {
     session.user = { id: ACCOUNT };
     store.lineage = friendLineage();
-    store.invite = { grant_kind: 'tier', language: 'he' };
+    store.invite = { grant_kind: 'tier', grant_id: 'invited_plan', language: 'he' }; // P-9.2: the read carries grant_id
     // P-5a.2 (workplan A-1): `held` also carries the hold and the SESSION's ids.
     expect(await readHoldForSession()).toEqual({
       state: 'held',
@@ -234,7 +235,7 @@ describe('readHoldForSession (the holding screen, SA R-4)', () => {
     store.lineage = friendLineage();
     store.invite = 'error';
     expect(await readHoldForSession()).toMatchObject({ state: 'held', language: 'en' });
-    store.invite = { grant_kind: 'tier', language: 'fr' };
+    store.invite = { grant_kind: 'tier', grant_id: 'invited_plan', language: 'fr' }; // P-9.2: the read carries grant_id
     expect(await readHoldForSession()).toMatchObject({ state: 'held', language: 'en' });
   });
 
