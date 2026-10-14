@@ -27,10 +27,13 @@
  *
  * The transport logs subjects, so the subject names the event only.
  *
- * BUILT FOR N-2
+ * N-2: "YOUR FRIEND SUBSCRIBED" (plan payments P-5b.1, FR-43, SA P5-C8, C-1)
  *
- * `event` is a one-member union today. N-2 ("your friend subscribed", with
- * payments P-5) adds its member and its copy here.
+ * `event: 'subscribed'` is the champion's one email when a friend they invited
+ * pays their first invoice. Its own subject, heading and lead; the status row
+ * reads the list's `subscribed` word (`INVITE_FRIENDS_COPY[l].status.subscribed`),
+ * never a second translation; no "held" note. Champions only: the caller
+ * (`inviterNotification.ts`) refuses an admin recipient for it at the type level.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * @module lib/email/templates/invite-accepted
@@ -48,14 +51,15 @@ import {
   wrapInBrandedTemplate,
 } from './base-template';
 
-/** What happened. N-2 adds `'subscribed'`. */
-export type InviterNotificationEvent = 'accepted';
+/** What happened: the invite was accepted (N-1), or the friend paid (N-2). */
+export type InviterNotificationEvent = 'accepted' | 'subscribed';
 
 /**
  * `joined`: the account is created and usable. `not_subscribed_yet`: a held
  * friend (the account waits for payment), worded with the FR-31 list label.
+ * `subscribed` (N-2): the friend paid, worded with the list's `subscribed` label.
  */
-export type InviteAcceptedStatus = 'joined' | 'not_subscribed_yet';
+export type InviteAcceptedStatus = 'joined' | 'not_subscribed_yet' | 'subscribed';
 
 /** Who is being told: the champion (a friend invite) or the issuing admin. */
 export type InviterRecipientKind = 'champion' | 'admin';
@@ -83,6 +87,12 @@ interface Copy {
   actionChampion: string;
   actionAdmin: string;
   footer: string;
+  /** N-2 (`event: 'subscribed'`): its own subject, heading and lead. Button and footer are shared. */
+  subscribed: {
+    subject: string;
+    heading: string;
+    lead: (email: string) => string;
+  };
 }
 
 /*
@@ -102,6 +112,12 @@ const COPY: Record<Locale, Copy> = {
     actionChampion: 'See your invitations',
     actionAdmin: 'Open invites',
     footer: "You're getting this because you sent this invitation.",
+    // FR-43's wording.
+    subscribed: {
+      subject: 'Your invitation turned into a subscription',
+      heading: 'Your friend subscribed',
+      lead: (email) => `${email} has subscribed.`,
+    },
   },
   he: {
     subject: 'ההזמנה שלך התקבלה',
@@ -114,6 +130,12 @@ const COPY: Record<Locale, Copy> = {
     actionChampion: 'להזמנות שלך',
     actionAdmin: 'לרשימת ההזמנות',
     footer: 'קיבלת את ההודעה הזו כי שלחת את ההזמנה הזו.',
+    // Approved by the user 2026-10-14 (P-5b G-3). No verb agrees with the friend's gender.
+    subscribed: {
+      subject: 'ההזמנה שלך הפכה למנוי',
+      heading: 'יש מנוי חדש מההזמנה שלך',
+      lead: (email) => `התשלום עבור ${email} הושלם והמנוי פעיל.`,
+    },
   },
   es: {
     subject: 'Tu invitación fue aceptada',
@@ -126,14 +148,23 @@ const COPY: Record<Locale, Copy> = {
     actionChampion: 'Ver tus invitaciones',
     actionAdmin: 'Abrir invitaciones',
     footer: 'Recibes este correo porque enviaste esta invitación.',
+    // Approved by the user 2026-10-14 (P-5b G-3).
+    subscribed: {
+      subject: 'Tu invitación se convirtió en una suscripción',
+      heading: 'Nueva suscripción desde tu invitación',
+      lead: (email) => `${email} se suscribió.`,
+    },
   },
 };
 
-/** The status words: the FR-31 list label for a held friend (SA Q-5), never re-translated. */
+/**
+ * The status words: the FR-31 list labels for a held friend (SA Q-5) and for
+ * a friend who paid (N-2, SA C-1), never re-translated.
+ */
 function statusWords(t: Copy, status: InviteAcceptedStatus, locale: Locale): string {
   if (status === 'joined') return t.joined;
   const listLocale = locale === 'he' || locale === 'es' ? locale : 'en';
-  return INVITE_FRIENDS_COPY[listLocale].status.joined;
+  return status === 'subscribed' ? INVITE_FRIENDS_COPY[listLocale].status.subscribed : INVITE_FRIENDS_COPY[listLocale].status.joined;
 }
 
 export function generateInviteAcceptedEmail(data: InviteAcceptedEmailData): {
@@ -156,6 +187,8 @@ export function generateInviteAcceptedEmail(data: InviteAcceptedEmailData): {
   const status = statusWords(t, data.status, locale);
   const action = data.recipientKind === 'admin' ? t.actionAdmin : t.actionChampion;
   const isHeld = data.status === 'not_subscribed_yet';
+  // N-2 has its own subject, heading and lead; everything else is shared.
+  const words = data.event === 'subscribed' ? t.subscribed : { subject: t.subject, heading: t.heading, lead: t.lead };
 
   const details = emailDetailsTable(
     [
@@ -167,8 +200,8 @@ export function generateInviteAcceptedEmail(data: InviteAcceptedEmailData): {
 
   const content = `
     <div dir="${dir}" style="text-align: ${align};">
-      <h1 style="margin: 0 0 16px; font-size: 24px; line-height: 1.3; font-weight: 700; color: ${palette.ink};">${escapeHtml(t.heading)}</h1>
-      <p style="margin: 0 0 8px; font-size: 15px; line-height: 1.6; color: ${palette.inkMuted};">${t.lead(emailHtml)}</p>
+      <h1 style="margin: 0 0 16px; font-size: 24px; line-height: 1.3; font-weight: 700; color: ${palette.ink};">${escapeHtml(words.heading)}</h1>
+      <p style="margin: 0 0 8px; font-size: 15px; line-height: 1.6; color: ${palette.inkMuted};">${words.lead(emailHtml)}</p>
       ${details}
       ${isHeld ? `<p style="margin: 0 0 8px; font-size: 14px; line-height: 1.6; color: ${palette.inkMuted};">${escapeHtml(t.heldNote)}</p>` : ''}
       ${emailButton(escapeHtml(action), data.actionUrl, { branding })}
@@ -177,9 +210,9 @@ export function generateInviteAcceptedEmail(data: InviteAcceptedEmailData): {
   `;
 
   const text = [
-    t.heading,
+    words.heading,
     '',
-    t.lead(email),
+    words.lead(email),
     '',
     `${t.invitedLabel}: ${email}`,
     `${t.statusLabel}: ${status}`,
@@ -191,7 +224,7 @@ export function generateInviteAcceptedEmail(data: InviteAcceptedEmailData): {
   ].join('\n');
 
   return {
-    subject: t.subject,
+    subject: words.subject,
     html: wrapInBrandedTemplate(content, branding),
     text,
   };

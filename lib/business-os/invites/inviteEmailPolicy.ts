@@ -81,5 +81,12 @@ export const INVITER_NOT_NOTIFIED_REASONS = {
   transportFailed: 'transport_failed',
   /** The whole notification did not finish within `deadlineMs`; a send may still land. */
   deadlineExceeded: 'deadline_exceeded',
+  /**
+   * N-2 (plan payments P-5b.1, SA Q-5): the invite named by the paying
+   * account's lineage is not a friend invite, names no issuing account, or was
+   * not redeemed by that account. The lineage and the invite disagree, so
+   * nobody is emailed; alerted, ids only.
+   */
+  inviteMismatch: 'invite_mismatch',
 } as const;
 export type InviterNotNotifiedReason = (typeof INVITER_NOT_NOTIFIED_REASONS)[keyof typeof INVITER_NOT_NOTIFIED_REASONS];

@@ -28,6 +28,11 @@
  * All Business OS billing logic lives in `lib/business-os/billing/`; the route
  * holds the one registration line (SA standards, rule 1; CF-5 coordination).
  *
+ * P-5b.1 (N-2): the production ports include `firstPaymentNotifier`, the
+ * champion's "your friend subscribed" email (`lib/business-os/invites/
+ * championSubscribedNotification.ts`). This is the only place it is built
+ * (SA C-5); boost never reaches it.
+ *
  * @module lib/business-os/billing/planBillingHandler
  */
 
@@ -38,6 +43,9 @@ import { getStripeService } from '@/lib/stripe/StripeService';
 import { businessOsBillingAccountRepository } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import { businessOsBillingEventRepository } from '@/lib/repositories/BusinessOsBillingEventRepository';
 import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
+import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
+import { createFirstPaymentNotifier, writeChampionNotificationAudit } from '@/lib/business-os/invites/championSubscribedNotification';
+import { buildInviterNotificationDeps } from '@/lib/business-os/invites/inviterNotificationDeps';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { recordPlanChange } from '@/lib/business-os/entitlements/recordPlanChange';
 import { planPriceCatalog } from '@/lib/business-os/billing/planPriceCatalog';
@@ -109,6 +117,13 @@ export const handlePlanBillingEvent: BusinessOsFlowHandler = createPlanBillingHa
   recordPlanChange,
   // P-5a.1: one read of the lineage source, only after a first payment stamp (SA Q-2).
   lineage: businessOsAccountLineageRepository,
+  // P-5b.1 (N-2, SA C-5): the champion's "your friend subscribed" email. Built
+  // here and nowhere else. Only the one invite read is handed over (SA N-3).
+  firstPaymentNotifier: createFirstPaymentNotifier({
+    invites: { findInviterNotificationFactsById: (id) => businessOsInviteRepository.findInviterNotificationFactsById(id) },
+    inviterDeps: buildInviterNotificationDeps,
+    writeAudit: writeChampionNotificationAudit,
+  }),
   stripeMode: currentStripeMode,
   now: () => new Date(),
 });

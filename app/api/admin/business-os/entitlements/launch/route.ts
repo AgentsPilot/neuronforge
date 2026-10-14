@@ -20,6 +20,16 @@
  * The dry run is the useful half now — it answers "how many accounts would this
  * touch, and which?" from real data, before anyone commits to the switch-on.
  *
+ * ── Held accounts are listed apart (plan payments P-5b.2; SA-P18, T-9, Q-10) ──
+ * A friend held on the payment screen has no tier and no cohort, so the launch
+ * as written would make them a free champion. Per page, the would-become ids
+ * are classified with the payment gate's own predicate, in batches (P5-C10):
+ * held ones are counted in `awaitingPayment` (sample: `awaitingPaymentSample`)
+ * and NOT in `wouldBecomeChampion`. When that read fails, the page's accounts
+ * stay in `wouldBecomeChampion` (an upper bound, never an understatement) and
+ * `holdScanFailed` is true. The real run's automatic exclusion belongs to the
+ * Slice 2 execution, which is not built.
+ *
  * @module app/api/admin/business-os/entitlements/launch
  */
 
@@ -30,7 +40,10 @@ import { createLogger } from '@/lib/logger';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
+import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
+import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
+import { readAwaitingPaymentAccounts } from '@/lib/business-os/invites/paymentHoldBatch';
 
 const logger = createLogger({ module: 'AdminBosEntitlementsLaunchAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -101,6 +114,13 @@ export async function POST(request: NextRequest) {
     let truncated = false;
     let after: string | null = null;
     const sample: string[] = [];
+    // P-5b.2: held friends, apart from the would-be champions.
+    let awaitingPayment = 0;
+    let holdScanFailed = false;
+    const awaitingPaymentSample: string[] = [];
+    // Batched cross-account hold reads on the service role, intentionally,
+    // behind `requireAdmin` above (P5-C9, P5-C10).
+    const holdReaders = { lineage: businessOsAccountLineageRepository, invites: businessOsInviteRepository };
 
     for (;;) {
       const page = await businessOsAccountPlanRepository.pagePlans({ afterUserId: after, limit: PAGE_SIZE });
@@ -113,6 +133,7 @@ export async function POST(request: NextRequest) {
 
       if (page.data.length === 0) break;
 
+      const candidates: string[] = [];
       for (const row of page.data) {
         scanned += 1;
 
@@ -128,8 +149,27 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
+        candidates.push(row.user_id);
+      }
+
+      // P-5b.2 (Q-10): one batched classification per page; a failure keeps
+      // every candidate counted as a would-be champion.
+      const classified = candidates.length > 0 ? await readAwaitingPaymentAccounts(candidates, holdReaders) : null;
+      if (classified && !classified.ok) {
+        holdScanFailed = true;
+        requestLogger.error(
+          { event: 'bos_entitlements_launch_hold_scan_failed', candidates: candidates.length },
+          'Launch dry run: the payment-hold read failed; these accounts stay counted as would-be champions'
+        );
+      }
+      for (const accountId of candidates) {
+        if (classified?.ok && classified.held.has(accountId)) {
+          awaitingPayment += 1;
+          if (awaitingPaymentSample.length < 20) awaitingPaymentSample.push(accountId);
+          continue;
+        }
         wouldBecomeChampion += 1;
-        if (sample.length < 20) sample.push(row.user_id);
+        if (sample.length < 20) sample.push(accountId);
       }
 
       after = page.data[page.data.length - 1].user_id;
@@ -140,7 +180,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    requestLogger.info({ scanned, wouldBecomeChampion, alreadyChampion, hasTierInForce }, 'Launch dry run');
+    requestLogger.info(
+      { scanned, wouldBecomeChampion, alreadyChampion, hasTierInForce, awaitingPayment, holdScanFailed },
+      'Launch dry run'
+    );
 
     // A dry run writes nothing to the entitlement tables — but it IS an admin
     // asking what a one-way change would do, and that is worth a record.
@@ -157,6 +200,9 @@ export async function POST(request: NextRequest) {
           wouldBecomeChampion,
           alreadyChampion,
           hasTierInForce,
+          // P-5b.2: counts only (the sample is in the response, not the audit).
+          awaitingPayment,
+          holdScanFailed,
         },
         severity: 'info',
         request,
@@ -175,6 +221,12 @@ export async function POST(request: NextRequest) {
         alreadyChampion,
         hasTierInForce,
         sample,
+        // P-5b.2 (SA-P18, T-9): held friends, not counted above. Read
+        // `holdScanFailed` first: when true, some held accounts may still be
+        // inside `wouldBecomeChampion` (an upper bound).
+        awaitingPayment,
+        awaitingPaymentSample,
+        holdScanFailed,
         truncated,
         tiersConfigured: config.tierOrder,
         note:

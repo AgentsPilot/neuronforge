@@ -1368,3 +1368,86 @@ describe('credits boost slice 6b — the spending limit through the accounts rou
     expect(mockBoostCap.writes).toEqual([]);
   });
 });
+
+// ── Plan payments P-5b.2 (SA-P18, T-9, Q-10): held accounts in the dry run and the report ──
+
+describe('P-5b.2: held friends are listed apart, never as would-be champions or anomalies', () => {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const plans = require('@/lib/repositories/BusinessOsAccountPlanRepository').businessOsAccountPlanRepository as Record<string, unknown>;
+  const lineageRepo = require('@/lib/repositories/BusinessOsAccountLineageRepository').businessOsAccountLineageRepository as Record<string, unknown>;
+  const inviteRepo = require('@/lib/repositories/BusinessOsInviteRepository').businessOsInviteRepository as Record<string, unknown>;
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const originalPagePlans = plans.pagePlans;
+
+  const HELD = '33333333-3333-4333-8333-333333333333';
+  const NEW_CHAMPION = '44444444-4444-4444-8444-444444444444';
+  const basisLess = (userId: string) => ({ ...CHAMPION_PLAN, user_id: userId, cohort: null, origin: 'backfill', updated_by_admin_id: null, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' });
+  const lineageCalls: string[][] = [];
+
+  beforeEach(() => {
+    lineageCalls.length = 0;
+    plans.pagePlans = async (options: { afterUserId?: string | null } = {}) =>
+      options.afterUserId ? { data: [], error: null } : { data: [basisLess(HELD), basisLess(NEW_CHAMPION)], error: null };
+    lineageRepo.findHoldFactsForAccountsForAdmin = async (ids: string[]) => {
+      lineageCalls.push(ids);
+      return { data: [{ account_id: HELD, invite_id: null, source: 'account_invite', first_paid_at: null }], error: null };
+    };
+    inviteRepo.findGrantKindsByIdsForAdmin = async () => ({ data: [], error: null });
+  });
+
+  afterEach(() => {
+    plans.pagePlans = originalPagePlans;
+    delete lineageRepo.findHoldFactsForAccountsForAdmin;
+    delete inviteRepo.findGrantKindsByIdsForAdmin;
+  });
+
+  const dryRun = () =>
+    launchRoute.POST(post('/api/admin/business-os/entitlements/launch', { confirm: 'launch_champion_existing', reason: 'planning' }));
+
+  it('launch dry run: the held friend is counted and sampled apart, NOT in wouldBecomeChampion; one batched read per page', async () => {
+    const response = await dryRun();
+    const body = await response.json();
+    expect(body.data).toMatchObject({
+      scanned: 2,
+      wouldBecomeChampion: 1,
+      sample: [NEW_CHAMPION],
+      awaitingPayment: 1,
+      awaitingPaymentSample: [HELD],
+      holdScanFailed: false,
+    });
+    expect(lineageCalls).toEqual([[HELD, NEW_CHAMPION]]);
+    // The audit carries the counts (never the sample) and is flushed before the response.
+    expect(state.audit[0].details).toMatchObject({ wouldBecomeChampion: 1, awaitingPayment: 1, holdScanFailed: false });
+    expect(JSON.stringify(state.audit[0].details)).not.toContain(HELD);
+    expect(state.events).toEqual(['log', 'flush']);
+  });
+
+  it('Q-10: a failed hold read keeps every account in wouldBecomeChampion (an upper bound) and says holdScanFailed', async () => {
+    lineageRepo.findHoldFactsForAccountsForAdmin = async () => ({ data: null, error: new Error('timeout') });
+    const body = await (await dryRun()).json();
+    expect(body.data).toMatchObject({ wouldBecomeChampion: 2, awaitingPayment: 0, awaitingPaymentSample: [], holdScanFailed: true });
+    expect(state.audit[0].details).toMatchObject({ holdScanFailed: true });
+  });
+
+  it('shadow report: the held friend is under static.awaitingPayment, not in anomalies', async () => {
+    const response = await reportRoute.GET(get('/api/admin/business-os/entitlements/shadow-report'));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.data.static.awaitingPayment).toEqual({ scanFailed: false, count: 1, accountIds: [HELD], truncated: false });
+    expect(body.data.static.anomalies.map((entry: { accountId: string }) => entry.accountId)).toEqual([NEW_CHAMPION]);
+  });
+
+  it('shadow report: a failed hold read leaves the anomalies in place and says scanFailed', async () => {
+    lineageRepo.findHoldFactsForAccountsForAdmin = async () => ({ data: null, error: new Error('timeout') });
+    const body = await (await reportRoute.GET(get('/api/admin/business-os/entitlements/shadow-report'))).json();
+    expect(body.data.static.awaitingPayment).toMatchObject({ scanFailed: true, count: null });
+    expect(body.data.static.anomalies.map((entry: { accountId: string }) => entry.accountId)).toEqual([HELD, NEW_CHAMPION]);
+  });
+
+  it('a non-admin never reaches the hold read', async () => {
+    state.isAdmin = false;
+    expect((await dryRun()).status).toBe(403);
+    expect((await reportRoute.GET(get('/api/admin/business-os/entitlements/shadow-report'))).status).toBe(403);
+    expect(lineageCalls).toEqual([]);
+  });
+});

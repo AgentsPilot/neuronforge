@@ -294,3 +294,59 @@ describe('POST', () => {
     expect(state.emails).toEqual([]);
   });
 });
+
+describe('GET, plan payments P-5b.2 (FR-31): "subscribed" for a friend who paid, scoped to the session', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const wiring = require('@/lib/business-os/invites/friendInviteDeps').friendInviteRepositories as Record<string, Record<string, unknown> | undefined>;
+  const repository = wiring.repository as Record<string, unknown>;
+  const originalList = repository.listForIssuerAccount;
+  const PAID = '22222222-2222-4222-8222-222222222222';
+  const HELD = '33333333-3333-4333-8333-333333333333';
+  const subscribedReads: Array<[string, string[]]> = [];
+
+  beforeEach(() => {
+    subscribedReads.length = 0;
+    repository.listForIssuerAccount = async () => ({
+      data: [PAID, HELD].map((id) => ({
+        id,
+        email: `${id.slice(0, 4)}@example.com`,
+        created_at: '2026-10-01T00:00:00.000Z',
+        link_expires_at: '2099-10-31T00:00:00.000Z',
+        revoked_at: null,
+        redeemed_at: '2026-10-02T00:00:00.000Z',
+        claimed_account_id: null,
+      })),
+      error: null,
+    });
+    wiring.lineage = {
+      findSubscribedInviteIdsForIssuer: async (accountId: string, ids: string[]) => {
+        subscribedReads.push([accountId, ids]);
+        return { data: [PAID], error: null };
+      },
+    };
+  });
+
+  afterEach(() => {
+    repository.listForIssuerAccount = originalList;
+    delete wiring.lineage;
+  });
+
+  it('the paid friend reads subscribed, the held one joined; the read is for the SESSION account and its own accepted invites', async () => {
+    const response = await GET(new NextRequest('https://example.test/api/business-os/friend-invites'));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.invites.map((invite: { id: string; status: string }) => [invite.id, invite.status])).toEqual([
+      [PAID, 'subscribed'],
+      [HELD, 'joined'],
+    ]);
+    expect(subscribedReads).toEqual([[CHAMPION, [PAID, HELD]]]);
+    // Status only: no payment date, amount or the friend's account in the payload (P5-C9).
+    expect(JSON.stringify(body)).not.toMatch(/first_paid|amount|USD/i);
+  });
+
+  it('401 without a session: no subscribed read', async () => {
+    state.user = null;
+    expect((await GET(new NextRequest('https://example.test/api/business-os/friend-invites'))).status).toBe(401);
+    expect(subscribedReads).toEqual([]);
+  });
+});

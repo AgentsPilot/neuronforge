@@ -869,6 +869,15 @@ export interface BusinessOsAccountLineageLevel {
   level: number;
   /** NULL for an L1 champion (`admin_invite`); the inviting account for L2+ (FR-36). */
   parent_account_id: string | null;
+  /**
+   * Plan payments P-5b.2 (FR-25, S5-8): what the admin paid line needs. The
+   * hold predicate reads `source` and `first_paid_at`; `first_payment_ref` is
+   * the invoice id the money history is matched on, together with the account.
+   * Never a date or an amount shown from here (AC-F2.2).
+   */
+  source: 'admin_invite' | 'account_invite' | 'organic';
+  first_paid_at: string | null;
+  first_payment_ref: string | null;
 }
 
 /**
@@ -881,10 +890,57 @@ export interface BusinessOsAccountHoldFacts {
   first_paid_at: string | null;
 }
 
+/**
+ * Plan payments P-5b.2 (P5-C10): the same hold facts for MANY accounts at once,
+ * keyed by the account, for the shadow report and the launch dry run (admin
+ * only). Read in batches, never one `readPaymentHold` per account.
+ */
+export interface BusinessOsAccountHoldFactsRow extends BusinessOsAccountHoldFacts {
+  account_id: string;
+}
+
+/**
+ * Plan payments P-5b.2 (S5-8, SA C-11): one (account, invoice) pair the admin
+ * paid line asks the money history about. Both come from the SAME lineage row
+ * (`account_id`, `first_payment_ref`), and a money row is kept only when it
+ * matches both.
+ */
+export interface BusinessOsPaidInvoicePair {
+  accountId: string;
+  invoiceId: string;
+}
+
+/**
+ * Plan payments P-5b.2 (FR-25): one paid plan invoice from
+ * `business_os_billing_events`, as the admin paid line shows it. The amount is
+ * what was paid, tax included (Stripe `amount_paid`), in minor units of USD.
+ */
+export interface BusinessOsPaidInvoiceFacts {
+  accountId: string;
+  invoiceId: string;
+  amountMinor: number;
+  amountTaxMinor: number | null;
+  currency: 'usd';
+  paidAt: string;
+  livemode: boolean;
+}
+
 /** Slice 5b: the two invite facts the payment hold and its screen need. */
 export interface BusinessOsInviteHoldFacts {
   grant_kind: BusinessOsInviteGrantKind;
   language: string;
+}
+
+/**
+ * Plan payments P-5b.1 (N-2, SA S5-5 c): what the "your friend subscribed"
+ * email needs about ONE invite: who issued it, the address they typed, and who
+ * redeemed it (the cross-check against the paying account). Nothing else.
+ */
+export interface BusinessOsInviteNotificationFacts {
+  issuer_kind: 'admin' | 'account';
+  issuer_account_id: string | null;
+  email: string;
+  redeemed_account_id: string | null;
 }
 
 /**

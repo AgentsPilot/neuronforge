@@ -115,6 +115,18 @@ jest.mock('@/lib/repositories/BusinessOsAccountLineageRepository', () => ({
   },
 }));
 
+// Plan payments P-5b.2: the paid line's money-history read. A fake, so the
+// route never reaches the service-role client; tests below set its answer.
+const paidInvoiceCalls: unknown[] = [];
+jest.mock('@/lib/repositories/BusinessOsBillingEventRepository', () => ({
+  businessOsBillingEventRepository: {
+    findPaidInvoicesForAccounts: async (pairs: unknown[]) => {
+      paidInvoiceCalls.push(pairs);
+      return { data: [], error: null };
+    },
+  },
+}));
+
 jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
   businessOsInviteRepository: {
     listRecentForAdmin: async () => {
@@ -681,5 +693,67 @@ describe('Slice 2a: GET pre-selects the admin language (D-8)', () => {
     const body = await (await GET(new NextRequest(URL_BASE))).json();
     expect(body.data.invites[0]).toMatchObject({ emailStatus: 'sent', emailStatusAt: '2026-10-01T12:00:02.000Z' });
     expect(JSON.stringify(body)).not.toContain('msg_hidden');
+  });
+});
+
+describe('P-5b.2: the paid line through the route (FR-25, S5-8)', () => {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const lineageRepo = require('@/lib/repositories/BusinessOsAccountLineageRepository').businessOsAccountLineageRepository as Record<string, unknown>;
+  const moneyRepo = require('@/lib/repositories/BusinessOsBillingEventRepository').businessOsBillingEventRepository as Record<string, unknown>;
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const originalLineage = lineageRepo.findByInviteIdsForAdmin;
+  const originalMoney = moneyRepo.findPaidInvoicesForAccounts;
+  const FRIEND = '66666666-6666-4666-8666-666666666666';
+  const PAID_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const HELD_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const INVOICE = 'in_1ROUTEROUTEROUTEROUTE';
+
+  beforeEach(() => {
+    paidInvoiceCalls.length = 0;
+    state.rows = [
+      storedRow({ id: PAID_ID, grant_kind: 'tier', redeemed_at: '2026-10-02T00:00:00.000Z', redeemed_account_id: FRIEND, claimed_at: '2026-10-02T00:00:00.000Z', claimed_account_id: FRIEND }),
+      storedRow({ id: HELD_ID, grant_kind: 'tier', redeemed_at: '2026-10-03T00:00:00.000Z', redeemed_account_id: 'held-1', claimed_at: '2026-10-03T00:00:00.000Z', claimed_account_id: 'held-1' }),
+    ];
+    lineageRepo.findByInviteIdsForAdmin = async () => ({
+      data: [
+        { account_id: FRIEND, invite_id: PAID_ID, level: 2, parent_account_id: ADMIN, source: 'account_invite', first_paid_at: '2026-10-04T00:00:00.000Z', first_payment_ref: INVOICE },
+        { account_id: 'held-1', invite_id: HELD_ID, level: 2, parent_account_id: ADMIN, source: 'account_invite', first_paid_at: null, first_payment_ref: null },
+      ],
+      error: null,
+    });
+    moneyRepo.findPaidInvoicesForAccounts = async (pairs: unknown[]) => {
+      paidInvoiceCalls.push(pairs);
+      return {
+        data: [{ accountId: FRIEND, invoiceId: INVOICE, amountMinor: 7900, amountTaxMinor: 0, currency: 'usd', paidAt: '2026-10-04T00:00:01.000Z', livemode: false }],
+        error: null,
+      };
+    };
+  });
+
+  afterEach(() => {
+    lineageRepo.findByInviteIdsForAdmin = originalLineage;
+    moneyRepo.findPaidInvoicesForAccounts = originalMoney;
+  });
+
+  it('a paid row carries the money-history date and amount; a held row reads awaiting payment; one money read for the lineage pair', async () => {
+    const body = await (await GET(new NextRequest(URL_BASE))).json();
+    const [paid, held] = body.data.invites;
+    expect(paid.payment).toEqual({ state: 'paid_recorded', paidAt: '2026-10-04T00:00:01.000Z', amountMinor: 7900, currency: 'usd', livemode: false });
+    expect(held.payment).toEqual({ state: 'awaiting_payment' });
+    expect(paidInvoiceCalls).toEqual([[{ accountId: FRIEND, invoiceId: INVOICE }]]);
+  });
+
+  it('a non-admin never reaches the money history', async () => {
+    state.isAdmin = false;
+    expect((await GET(new NextRequest(URL_BASE))).status).toBe(403);
+    expect(paidInvoiceCalls).toEqual([]);
+  });
+
+  it('a failed money read still answers the list, with unknown on the paid row only', async () => {
+    moneyRepo.findPaidInvoicesForAccounts = async () => ({ data: null, error: new Error('timeout') });
+    const response = await GET(new NextRequest(URL_BASE));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.invites.map((invite: { payment: unknown }) => invite.payment)).toEqual([{ state: 'unknown' }, { state: 'awaiting_payment' }]);
   });
 });

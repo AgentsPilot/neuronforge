@@ -16,6 +16,7 @@ import 'server-only';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { platformSenderAddress, sendEmail } from '@/lib/notifications/emailTransport';
+import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import {
   BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT,
@@ -29,6 +30,10 @@ import type { InvitationEmailDeps } from './inviteEmail';
 export const friendInviteRepositories = {
   plans: businessOsAccountPlanRepository,
   repository: businessOsInviteRepository,
+  // Plan payments P-5b.2 (FR-31): the champion's "Subscribed". Only
+  // `findSubscribedInviteIdsForIssuer` is reached, scoped by the session's
+  // account as the lineage parent AND by the issuer-scoped invite ids.
+  lineage: businessOsAccountLineageRepository,
   preferences: userPreferencesRepository,
   profileRepository: userProfileRepository,
   listLimit: BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT,

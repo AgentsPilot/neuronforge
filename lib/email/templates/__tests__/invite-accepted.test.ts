@@ -99,3 +99,69 @@ describe('the invite-accepted email', () => {
     expect(generateInviteAcceptedEmail(data()).html).toContain('AgentPilot');
   });
 });
+
+/*
+ * N-2 (plan payments P-5b.1, FR-43, SA P5-C8, C-1): "{email} has subscribed",
+ * to the champion only. Its own subject, heading and lead; the status row is
+ * the champion list's `subscribed` word, never a second translation.
+ */
+describe('the "your friend subscribed" email (N-2)', () => {
+  const subscribed = (overrides: Partial<InviteAcceptedEmailData> = {}) =>
+    generateInviteAcceptedEmail(data({ event: 'subscribed', status: 'subscribed', ...overrides }));
+
+  it.each(['en', 'he', 'es'] as const)('%s: the address in html and text, never in the subject', (locale) => {
+    const email = subscribed({ locale });
+    expect(email.html).toContain(INVITEE);
+    expect(email.text).toContain(INVITEE);
+    expect(email.subject).not.toContain('@');
+    expect(email.subject).not.toBe(generateInviteAcceptedEmail(data({ locale })).subject);
+  });
+
+  it('English copy: FR-43 wording, the list word, the champion button, no held note', () => {
+    const email = subscribed();
+    expect(email.subject).toBe('Your invitation turned into a subscription');
+    expect(email.text).toContain('Your friend subscribed');
+    expect(email.text).toContain(`${INVITEE} has subscribed.`);
+    expect(email.text).toContain('Status: Subscribed');
+    expect(email.text).toContain(`See your invitations: ${CHAMPION_URL}`);
+    expect(email.text).not.toContain('They can start once they finish their payment.');
+    expect(email.text).not.toContain('accepted your invitation');
+  });
+
+  it.each(['en', 'he', 'es'] as const)('%s: the status row is the list word, exactly (SA C-1)', (locale) => {
+    const email = subscribed({ locale });
+    const label = INVITE_FRIENDS_COPY[locale].status.subscribed;
+    expect(email.text).toContain(label);
+    expect(email.html).toContain(label);
+    // Never the held word.
+    expect(email.text).not.toContain(INVITE_FRIENDS_COPY[locale].status.joined);
+  });
+
+  it('Hebrew is right to left, with the address kept left to right', () => {
+    const email = subscribed({ locale: 'he' });
+    expect(email.subject).toBe('ההזמנה שלך הפכה למנוי');
+    expect(email.html).toContain('dir="rtl"');
+    expect(email.html).toContain(`<span dir="ltr"><strong>${INVITEE}</strong></span>`);
+    expect(email.text).toContain('נרשם למנוי');
+  });
+
+  it('Spanish copy', () => {
+    const email = subscribed({ locale: 'es' });
+    expect(email.subject).toBe('Tu invitación se convirtió en una suscripción');
+    expect(email.text).toContain(`${INVITEE} se suscribió.`);
+    expect(email.text).toContain('Estado: Suscrito');
+  });
+
+  it('escapes an address carrying markup in the HTML', () => {
+    const hostile = '"><script>alert(1)</script>@x.test';
+    const email = subscribed({ inviteeEmail: hostile });
+    expect(email.html).not.toContain('<script>');
+    expect(email.html).toContain('&lt;script&gt;');
+  });
+
+  it('every locale has a subscribed list word (C-1: the shared type carries it in en/he/es)', () => {
+    for (const locale of ['en', 'he', 'es'] as const) {
+      expect(INVITE_FRIENDS_COPY[locale].status.subscribed.trim().length).toBeGreaterThan(0);
+    }
+  });
+});
