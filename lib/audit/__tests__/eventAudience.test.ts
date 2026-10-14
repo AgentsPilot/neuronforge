@@ -70,10 +70,11 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +1 Business OS (BOS_BILLING_FIRST_PAYMENT_STAMPED): plan payments P-5a.1, the first payment stamp (2026-10-11).
   // +1 Business OS (BOS_TEST_CREDITS_TAKEN): test harness take credits, slice TC-1 (2026-10-11).
   // +1 Business OS (BOS_BILLING_UPGRADE_REQUESTED): plan payments P-7b.1a, an owner confirmed an upgrade (2026-10-13).
-  it('pins the split: 54 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(199);
+  // +1 shared (AI_PRICE_MANUAL_ENTRY): AI model price review slice 3, a pending price entered by hand (2026-10-14).
+  it('pins the split: 54 Business OS, 62 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(200);
     expect(eventsTagged('bos')).toHaveLength(54);
-    expect(eventsTagged('shared')).toHaveLength(61);
+    expect(eventsTagged('shared')).toHaveLength(62);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });
 });
