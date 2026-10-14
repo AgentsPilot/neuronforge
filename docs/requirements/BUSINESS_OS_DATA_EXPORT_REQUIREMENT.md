@@ -49,6 +49,131 @@ Evidence tags: ✅ read in code or docs, or measured live, on 2026-10-05 · 🧠
 | **DE-0 — security (token exposure)** | **Separate from the feature.** The finding (§1.2) is independent of export: the browser can read and write the owner's own OAuth tokens, whether or not anyone presses Export. **User decision pending:** does DE-0 jump the queue? BA recommends yes (DX-11) |
 | **Consequence of the order** | Admin delete AD-2…AD-4 will ship **before** the business data can be exported. Until DE-3/DE-4 ship, a deleted owner can take away only today's agent-platform export. See DX-12 |
 
+### 0.1 SA ruling — DE-0 re-baseline and implementation conditions (2026-10-13)
+
+**Reviewed by SA — 2026-10-13, against origin/main `9de8c60b`.** Status: ✅ **Approved for Dev with the conditions below** (no Dev workplan round needed for DE-0a; DE-0b needs the user's pre-check output first, condition B-1). Answers SQ-E2 and SQ-E3. Supersedes the DE-0a / DE-0b rows of §5 and AC-E1…AC-E6 where they differ.
+
+#### 0.1.1 Re-baseline of §1.1 (server export) — what is true on origin/main
+
+| §1.1 said | origin/main | Tier |
+|---|---|---|
+| plugin read = "5 explicit columns" | **13** explicit columns (`USER_DATA_EXPORT_COLUMNS`, `PluginConnectionRepository.ts` L21): `user_id, plugin_key, plugin_name, username, email, scope, status, connected_at, created_at, updated_at, last_used, disconnected_at, profile_data`. Never `access_token`, `refresh_token`, `expires_at`, `last_refreshed_at`, `settings`, `credentials`, `id`. `profile_data` is read but only allow-listed string fields reach the body (`accountProfile`, route.ts L73) | ✅ |
+| seven reads `select('*')` (FU-P1) | **Fixed.** All eight reads use named column constants in their repositories | ✅ |
+| 500 body leaks `error.message` (FU-P2) | **Fixed.** `details` is `NODE_ENV === 'development'` only (L283) | ✅ |
+| `exportData: any` | Still there (L127). Rule-6 debt, **not** DE-0 scope | ✅ |
+| Repository refactor "❓ merged" | Merged | ✅ |
+
+**So the server export is token-free and is the right target for the three buttons.**
+
+#### 0.1.2 Inventory — every `plugin_connections` access that is NOT the service role
+
+Grep of `from('plugin_connections')` / `from("plugin_connections")` across `app/`, `components/`, `hooks/`, `lib/` on origin/main (52 hits). Service-role paths (`supabaseServer`, `createServerSupabaseClient`, repositories, `cron/process-queue`) are unaffected and omitted. `access_token` hits that are Supabase **session** tokens are not in scope. **Two server paths run as `authenticated`** (cookie-auth `createServerClient` with the anon key) and count as "browser role" for the privilege change.
+
+| # | File (origin/main) | Runs as | Access | Columns touched | Live? | DE-0 action |
+|---|---|---|---|---|---|---|
+| C1 | `app/business-os/settings/page.tsx` L439 | browser | SELECT | `*` (tokens) | live | **0a**: remove (server export) |
+| C2 | `components/settings/SecurityTab.tsx` L221 | browser | SELECT | `*` (tokens) | live (`/settings`) | **0a**: remove |
+| C3 | `components/v2/settings/SecurityTabV2.tsx` L114 | browser | SELECT | `*` (tokens) | live (`/v2/settings`) | **0a**: remove, **and** delete the client `fetch('/api/audit/log', { 'x-user-id' })` audit call that follows — the server route already writes `DATA_EXPORTED` |
+| C4 | `app/v2/settings/page.tsx` L82 | browser | SELECT | `*` | live, but the result is **never read** (`const [, setConnections]`) | **0b-prep**: delete the read and the dead state |
+| C5 | `app/(protected)/settings/page.tsx` L100 | browser | SELECT | `*` → feeds `PluginsTab` | live (`/settings`) | **0b-prep**: narrow to `id, plugin_key, plugin_name, username, email, status, connected_at, last_used` (the fields `PluginsTab` uses) |
+| C6 | `components/settings/PluginsTab.tsx` L196 | browser | **UPDATE** | `status, disconnected_at` (`.eq('id')`) | live | keep; covered by the column grant (B-3) |
+| C7 | `components/dashboard/AgentSandBox/useAgentSandbox.ts` L311 | browser (no `'use client'` banner, imports `supabaseClient`) | SELECT | `plugin_key` | live (agents/[id]) | keep; covered |
+| C8 | `components/onboarding/PluginsStep.tsx` L30 | browser | SELECT | `plugin_key` | dead (only `Onboarding_old.tsx`, imported nowhere) | none |
+| C9 | `components/wizard/hooks/useWorkflowData.ts` L142 | browser | SELECT | `*` | dead (`AgentWizard` imported only by a `.tsxold`) | none — fails closed (42501) after 0b |
+| C10 | `components/orchestration-NOT-USED/.../PluginConnectionManager.tsx` L58 | browser | SELECT | `*` | dead | none — fails closed |
+| C11 | `lib/plugins/v2/core/UniversalOAuthHandler.ts` L94 | browser client (`supabaseClient`) | **UPSERT** | tokens | dead (`UniversalPlugin` ← `plugins/v2/registry` imported nowhere) | none — fails closed |
+| S1 | `lib/intelligence/execution/PluginCoordinator.ts` L113, L331, L453 | **`authenticated`** via `runAgentWithContext` from `/api/agent-stream`, `/api/agent-chains/run`, `/api/run-agent` (legacy AgentKit branch) | SELECT `*` + **UPDATE `access_token, expires_at`** (token refresh) | tokens | live (legacy) | **0b-prep**: move all three calls to `pluginConnectionRepository` (service role, `.eq('user_id')`); add one repository method for the refresh write (`new-repository` skill, unit test). 15 `console.*` in this file — flag + convert (CLAUDE.md § Logging) |
+| S2 | `app/api/generate-agent*/route.ts` (×4 + `route copy.ts`) | `authenticated` | SELECT | `plugin_key` | live | keep; covered |
+| S3 | `app/api/plugin-connections/disconnect/route.ts` L53 (V1, deprecated) | `authenticated` | UPDATE | `disconnected_at` | no UI caller | keep; covered |
+| S4 | `app/oauth/[plugin]/start` → V1 `chatgptResearchStrategy.connect` | `authenticated` | UPSERT | tokens (`'platform-key'`) | no UI caller; V1 deprecated | none — fails closed; QA notes it |
+
+**Writers of real tokens are server-side with the service role:** V2 OAuth callback `app/oauth/callback/[plugin]` → `UserPluginConnections` → `PluginConnectionRepository.upsert`; `app/oauth/token` → repository; `app/api/plugin-connections` POST/DELETE/GET → `createServerSupabaseClient` (service role). No browser INSERT or DELETE exists. No Realtime subscription on the table. The only view over it (`active_plugin_connections`) was already locked by 20261054 (PR #306).
+
+#### 0.1.3 DE-0a — conditions (code only, PR 1)
+
+- **A-1** One shared client helper, `lib/client/downloadUserDataExport.ts` (the `lib/client/` folder already holds browser fetch helpers). It does `fetch('/api/user/data-export', { cache: 'no-store', credentials: 'same-origin' })`; throws on `!res.ok` (401/500 JSON); takes the filename from `Content-Disposition` (fallback `my-data-<YYYY-MM-DD>.json`); downloads via Blob + object URL and revokes it. No DB access, no user id parameter. **SQ-E2 answered: fetch + blob**, so the toasts keep their meaning.
+- **A-2** C1, C2 and C3 call the helper. Each keeps its own UX: C1 keeps `exporting` + `Loader2` + `export_success` / `export_error`; C2 and C3 keep their `setSuccessMessage` / `setErrorMessage`. The client data builders, the four `select('*')` reads (`profiles`, `user_preferences`, `notification_settings`, `plugin_connections`) and C3's client audit call are deleted. Remove imports that become unused (`supabase` only if no other use remains in the file).
+- **A-3** **File content for now = the server export as it is** (§0.1.1). The old client file's `preferences` and `notifications` sections are dropped; accepted, DE-1 onwards adds Business OS content. No token or `credentials` key may appear.
+- **A-4** The three files have 0 `console.*` (checked). No logging conversion owed in 0a.
+- **A-5 Jest source guard** (`lib/plugins/__tests__/pluginConnectionsBrowserAccess.guard.test.ts`, runs in the existing Jest job, a file scan, no added CI time). A "browser file" = starts with `'use client'` **or** imports `@/lib/supabaseClient` (otherwise C7 and C11 escape). It fails if any browser file under `app/`, `components/`, `hooks/`, `lib/` calls `.from('plugin_connections')` / `.from("plugin_connections")` unless the file is in a **frozen allowlist** with a one-line reason; the allowlist after 0a is exactly C4–C11 (after 0b-prep: C5–C11). It also fails if an allowlisted file **no longer** has the call (the list can only shrink), and if C1/C2/C3 reference `plugin_connections` at all. Negative control: the detector flags a synthetic `'use client'` source with `.from('plugin_connections').select('*')` and one that only imports `supabaseClient`.
+- **A-6** QA: on each of the three screens, export with a connected plugin; file has no `access_token` / `refresh_token` / `credentials`; signed-out → error message, not a blank file; DevTools Network shows only `/api/user/data-export`.
+
+#### 0.1.4 DE-0b — conditions (PR 2: code prep + migration; user applies to PROD by hand)
+
+- **B-1 Pre-check first (user runs, read-only — paste the output to SA/Dev).** The table was created in the dashboard, so no migration names its full column list. Dev writes `scripts/precheck-plugin-connections-token-privileges.sql` containing the three queries in B-8 "pre". The migration's grant list and the rollback are written **from that output**, not guessed.
+- **B-2 Code prep lands in the same PR, before the migration file is applied:** C4 deleted, C5 narrowed, S1 moved to the repository. Without S1 the legacy run paths break (`select('*')` needs every column) and token refresh writes fail.
+- **B-3 Migration `supabase/migrations/20261059_plugin_connections_token_column_lockdown.sql`** (next free number on origin/main and on every remote branch today; re-check at PR time). One transaction:
+  1. `REVOKE ALL ON public.plugin_connections FROM PUBLIC, anon, authenticated;` — table-level grants must go, because a table-level SELECT covers every column and a column REVOKE alone would change nothing (SQ-E3). `anon` gets **nothing back**: RLS already gives it zero rows, and nothing anonymous reads the table.
+  2. `GRANT SELECT (id, user_id, plugin_key, plugin_name, username, email, scope, status, connected_at, created_at, updated_at, last_used, disconnected_at) ON public.plugin_connections TO authenticated;` — minus any column the pre-check shows does not exist. **Never granted:** `access_token, refresh_token, expires_at, last_refreshed_at, credentials, settings, profile_data` (`profile_data` may hold provider tokens) and any column the pre-check lists that is not in the allow list (default deny, record it in a comment).
+  3. `GRANT UPDATE (status, disconnected_at) ON public.plugin_connections TO authenticated;` (C6, S3). No INSERT, DELETE, REFERENCES, TRIGGER or TRUNCATE for `authenticated`.
+  4. Do not touch `service_role`, `postgres`, RLS or policies.
+  5. A `DO` post-condition block (as in 20261054) that raises if `has_column_privilege` is true for `anon`/`authenticated` on any never-granted column for SELECT/INSERT/UPDATE/REFERENCES, or if `has_table_privilege('anon', …, 'SELECT')` is true.
+- **B-4 Rollback** `scripts/rollback-plugin-connections-token-column-lockdown.sql`: revoke the column grants of B-3.2/B-3.3, then re-grant exactly the table-level privileges the B-1 pre-check recorded, per role. Not a blanket `GRANT ALL`.
+- **B-5 Checker** `scripts/check-plugin-connections-token-column-lockdown.sql`: the B-8 "post" queries, printing PASS/FAIL per row and a VERDICT; it must report both states (before = FAIL, after = PASS), as AC-E6 requires. Avoid the word "into" in any string literal (Supabase SQL editor bug).
+- **B-6 Migration test** `supabase/migrations/__tests__/plugin-connections-token-column-lockdown.migration.test.ts` (text assertions as for the 20261054 test): table-level revoke present, token columns absent from every GRANT, no grant to `anon`.
+- **B-7 Token rotation (SQ-E3):** **no forced rotation** of the 27 refresh tokens. Exposure was to each owner's own browser session under RLS, with no evidence of misuse. Revisit only if an XSS is found.
+- **B-8 SQL for the user (read-only):**
+
+**File:** `scripts/precheck-plugin-connections-token-privileges.sql` (pre) and `scripts/check-plugin-connections-token-column-lockdown.sql` (post)
+
+```sql
+-- pre 1: every column
+SELECT column_name, data_type FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'plugin_connections' ORDER BY ordinal_position;
+-- pre 2: table-level grants (feeds the rollback)
+SELECT grantee, privilege_type FROM information_schema.role_table_grants
+WHERE table_schema = 'public' AND table_name = 'plugin_connections' ORDER BY grantee, privilege_type;
+-- pre 3: any existing column-level grants
+SELECT grantee, column_name, privilege_type FROM information_schema.column_privileges
+WHERE table_schema = 'public' AND table_name = 'plugin_connections'
+  AND grantee IN ('anon', 'authenticated', 'PUBLIC') ORDER BY grantee, column_name, privilege_type;
+
+-- post: every row must be false
+SELECT r.role, c.col, p.priv,
+       has_column_privilege(r.role, 'public.plugin_connections', c.col, p.priv) AS granted
+FROM (VALUES ('anon'), ('authenticated')) r(role),
+     (VALUES ('access_token'), ('refresh_token'), ('credentials'), ('profile_data'),
+             ('settings'), ('expires_at'), ('last_refreshed_at')) c(col),
+     (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('REFERENCES')) p(priv)
+ORDER BY 1, 2, 3;
+-- post: authenticated keeps what the app needs (expect true, true, false)
+SELECT has_column_privilege('authenticated', 'public.plugin_connections', 'plugin_key', 'SELECT'),
+       has_column_privilege('authenticated', 'public.plugin_connections', 'status', 'UPDATE'),
+       has_table_privilege('anon', 'public.plugin_connections', 'SELECT');
+-- post: negative probe (expect ERROR 42501), rolled back
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT access_token FROM public.plugin_connections LIMIT 1;
+ROLLBACK;
+```
+
+- **B-9 QA (AC-E5), named flows:** connect a V2 OAuth plugin (callback writes via service role); run an agent through `/api/agent-stream` with an expired token (S1 refresh now via repository); `/settings` → Plugins tab lists and disconnects (C5, C6); agent page sandbox plugin check (C7); generate-agent (S2); the three exports (0a). Then run the checker on PROD (VERDICT PASS) and the negative probe.
+
+#### 0.1.5 Split and order
+
+**Two PRs.** PR 1 = DE-0a (code only, no DB, ~0.5 d). PR 2 = DE-0b (code prep B-2 + migration + scripts + test, ~1 d), branched from main **after** PR 1 merges (no stacking). The user runs the B-1 pre-check before Dev writes the migration grant list, and applies 20261059 to PROD by hand **only after PR 2's code is deployed**. Overlap check: the DB-exposure lockdown stream (SECDEF slices, views 1a/20261054, RLS 2a/2b/20261056–57) does not touch `plugin_connections` table privileges. Its open slices 1b / 2c / 3 must not claim 20261059 or this table — TL to tell that stream.
+
+**SA code review DE-0a — 2026-10-13 (uncommitted, branch `fix/data-export-de0a-buttons-server`): ✅ Code Approved for QA.** A-1…A-5 met: the three handlers call `downloadUserDataExport()` only (no DB read, no client audit, no `x-user-id`); the server export names 13 columns, never reads a credential, and passes `profile_data` only through the `accountProfile` allow-list; the helper logs nothing and returns a typed verdict, and each screen keeps its own loading state and messages; the server route already writes `DATA_EXPORTED` (`auditLog`), so dropping C3's client audit loses nothing, and C1/C2 gain a server audit they never had; the guard's allowlist is exactly C4–C11, it can only shrink, the negative control passes, it is a file scan in the existing Jest job (no added CI time); 0 `console.*` in the touched files; 20/20 new tests pass. Non-blocking notes: (1) the guard matches a literal table name only, so `.from(SOME_CONST)` or a browser client built with `createBrowserClient` outside `supabaseClient` would escape it — accepted for a source guard, DE-0b's column revoke is the real control; (2) the server route awaits `auditLog`, which only queues, with no WC-7 flush — this was already true before DE-0a, so it goes to DE-1, not here.
+
+**QA — DE-0a — 2026-10-14 (uncommitted, same branch): ✅ Pass. Ready for the user's diff review once the manual checks below are done.** Mode: full, Jest + source reading (A/B); no browser or live calls, because these need a signed-in session.
+
+| Check | Result |
+|---|---|
+| Helper `downloadUserDataExport.test.ts` (200 / 401 / 500 / network, filename fallback, path-traversal filename) | ✅ 7/7 |
+| Guard `pluginConnectionsBrowserAccess.guard.test.ts` | ✅ 13/13 |
+| Route `route.test.ts` + `route.characterization.test.ts`, `userDataExportReads.test.ts`, `ownerAuditReads.guard.test.ts` | ✅ all pass (118 tests across the 10 targeted suites) |
+| Tokens absent from the route body. I wrote a temporary QA test: a fake `plugin_connections` row carrying `access_token`, `refresh_token`, `credentials`, `settings`, `expires_at`, and a `profile_data` holding `access_token` / `refresh_token` / `id_token`. It asserted that none of those keys or values appear in the 200 JSON and that `account_profile` = `{name}` | ✅ pass. Removed afterwards so `git status` is unchanged. The existing tests already cover this in part (`profile_data` allow-list in route.test.ts; `access_token` seeded in the characterization test; the repository column list). **Suggest that Dev adopts the test** (optional) |
+| Planted regressions. (1) `supabase.from('plugin_connections').select('*')` in SecurityTab's handler made the guard go red, 3 failing tests. (2) `supabase.from('profiles').select('*')` in the BOS settings handler made it go red, 1 failing test. Both files were restored and `cmp` showed them byte-identical | ✅ |
+| No client export handler still reads `profiles` / `user_preferences` / `notification_settings` / `plugin_connections` (read the source of all three handlers; the guard enforces it) | ✅ |
+| Messages: C1 shows `export_error` (en/es/he keys present) on any `!success`, and `export_success` + the `exporting` spinner on 200. C2/C3 clear both messages first, then show "Failed to export data…" on 401/500/network and "Data exported successfully!…" on 200. A thrown error is caught on all three screens | ✅ (from reading the source; there are no component tests) |
+| eslint on the 6 changed files | ✅ 0 errors. Warnings are the same count as HEAD (3 / 11 / 1), none new |
+| `tsc --noEmit` | ✅ 0 errors in the changed files (the repo has 1916 errors elsewhere, all pre-existing) |
+| Full `npm test` | 15 suites fail. 11 are quarantined. The other 4 (`bookingsSearchAndPaging.guard`, `supabaseFetch`, `publicEndpointsAreThrottled.guard`, `oneAddressPolicy.guard`; 6 tests) fail the same way on the main checkout, because of Windows path separators and the dev env. None come from DE-0a |
+
+**Edge cases (non-blocking):** (E1) The BOS settings handler does not clear an earlier `errorMessage` before it exports. After a failure and then a success, both banners can show. This was already true before DE-0a. (E2) A 401 shows the generic "try again" message, not "sign in again". A-6 only asks for "error, not a blank file", which is met. (E3) A-1 says the helper "throws on !res.ok", but it returns a typed verdict. SA has already accepted this. (E4) `DangerZonePanel`'s plain `<a href="/api/user/data-export">` is a fourth way into the export. The file it gives is token-free, but a signed-out person still saves the error JSON as their "data". This is the SQ-E2 concern; it is out of DE-0a scope and is noted for DE-1.
+
+**Manual checks owed (A-6, signed in, on `/business-os/settings`, `/settings` → Security and `/v2/settings` → Security):** (1) with a plugin connected, export. The file has no `access_token` / `refresh_token` / `credentials` / `profile_data`, and the success message shows. (2) DevTools Network shows only `GET /api/user/data-export`: no `/rest/v1/plugin_connections`, `profiles`, `user_preferences` or `notification_settings`, and no `/api/audit/log`. (3) Signed out (or with the session cookie removed), click Export. The error message shows and nothing downloads. (4) An offline network shows the error message. (5) `audit_trail` gets one `DATA_EXPORTED` row per export.
+
 ---
 
 ## 1. Discovery: what exists today
@@ -382,3 +507,4 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-05 | Live token finding + sequencing (coordinator input) | User's live check recorded ✅: `anon` and `authenticated` hold SELECT/INSERT/UPDATE/REFERENCES on `plugin_connections.access_token` / `refresh_token`; RLS on (owner-only); 27 refresh tokens. DE-0 split into 0a (buttons through the server) and 0b (revoke browser privileges, SA to rule), and marked independent of the feature. User decision: the export feature runs **last, after admin delete AD-2…AD-4**. DE-0 queue position pending (DX-11). Added DX-12 (admin delete before export) |
 | 2026-10-05 | DX-11 decided; parked; SQ-E10 answered | User: DE-0 does **not** jump the queue — the whole scope incl. the token fix runs last, after AD-2…AD-4 (risk accepted). SQ-E10: the repository refactor and AD-1a are on main; PR #218 (FU-1, FU-P1, FU-P2) also merged today, so the as-built discovery must be re-baselined before DE-1 |
 | 2026-10-06 | `business_addresses` added to A1 | New business-owned table from PR #229 (the address book behind `business_profiles.address_parts` / `invoice_address`). Registered alongside its purge descriptor |
+| 2026-10-13 | SA ruling on DE-0 (§0.1) | Re-baselined §1.1 against origin/main `9de8c60b`: FU-P1/FU-P2 fixed, plugin read is 13 explicit columns, no tokens. Inventory of every non-service-role `plugin_connections` access (11 browser files, 4 `authenticated` server paths; `PluginCoordinator` reads and refreshes tokens as `authenticated`). SQ-E2 answered (shared fetch + blob helper). SQ-E3 answered (table-level revoke + column re-grant, no `anon` grant, no forced rotation). Migration 20261059, pre-check / checker / rollback scripts, Jest guard. Two PRs, 0a first |
