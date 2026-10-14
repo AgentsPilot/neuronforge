@@ -699,10 +699,13 @@ export interface BusinessOsInvite {
  * `id` is read so `markFirstViewed` can target the row; it is never returned.
  * `issuer_kind` (Slice 5a, F5a-10) is read only to branch an account-issued
  * invite away from the existing-account check; it is never returned either.
+ * `invite_type` (plan payments P-9.1, SA C-2) is read only so an admin Paid
+ * invite is judged by the same predicate as the signup; never returned.
  */
 export interface BusinessOsInvitePublicView {
   id: string;
   issuer_kind: 'admin' | 'account';
+  invite_type: string;
   grant_kind: BusinessOsInviteGrantKind;
   grant_id: string;
   access_open_ended: boolean | null;
@@ -1031,3 +1034,13 @@ export interface BusinessOsInviteNotificationFacts {
 export type FriendFinaliseOutcome =
   | { outcome: 'finalised' | 'already_finalised'; inviteId: string; level: number }
   | { outcome: 'issuer_not_eligible' | 'not_matched' };
+
+/**
+ * Plan payments P-9.1 (SA-P9): what `business_os_finalise_admin_paid_invite_redemption`
+ * answered. The friend's outcome without `level` (always 1 for an admin
+ * invite) and without `issuer_not_eligible` (an admin issuer is not re-checked
+ * in SQL; redemption re-checks the switch and the shape first).
+ */
+export type AdminPaidFinaliseOutcome =
+  | { outcome: 'finalised' | 'already_finalised'; inviteId: string }
+  | { outcome: 'not_matched' };

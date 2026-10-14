@@ -46,6 +46,15 @@ import 'server-only';
  * `signup_opens_soon` is gone (SA Q-8): the switch now means friends may be
  * invited AND may sign up.
  *
+ * ── An ADMIN Paid invite (plan payments P-9.1, SA C-2, A-2) ────────────────
+ * An admin-issued tier invite is `unavailable` in exactly the cases the signup
+ * refuses it (the Paid switch off, a type admins may not issue, a grant the
+ * config no longer carries, a tier with no price), through the signup's own
+ * predicate `adminPaidInviteRedemption`, so a visitor is never shown a form
+ * the server would then refuse. Otherwise it is treated as a champion's: the
+ * existing-account check, then the form. While the switch is off in
+ * production, every admin Paid link reads "no longer available".
+ *
  * ── Nothing sensitive is logged ─────────────────────────────────────────────
  * This module logs nothing itself except a failed first-view stamp, keyed by the
  * invite id. The route logs the outcome. Neither ever sees the token again after
@@ -60,7 +69,7 @@ import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsIn
 
 import { deriveInviteState } from './inviteState';
 import { hashInviteToken, isWellFormedInviteToken } from './inviteToken';
-import { describeInviteOffer, isInviteGrantAvailable, type InviteOffer } from './inviteOffer';
+import { adminPaidInviteRedemption, describeInviteOffer, isInviteGrantAvailable, type InviteOffer } from './inviteOffer';
 import { maskEmail } from './signupCode';
 
 /** The states the page can show. `unavailable` is derived, never stored (D-8). */
@@ -196,6 +205,11 @@ export async function viewInviteByToken(
       },
     };
   }
+
+  // Plan payments P-9.1 (SA C-2, A-2): an ADMIN Paid invite is offered only
+  // when the signup would accept it, decided by the signup's own predicate.
+  // `switch_off` and `unavailable` both read "no longer available" here.
+  if (row.grant_kind === 'tier' && adminPaidInviteRedemption(row, deps.config) !== 'ok') return narrow('unavailable');
 
   // FR-8a / L-3: does the invited email already have an account? Asked only
   // here, only about THIS row's email (D-12, R-4). Either read failing is "try

@@ -134,13 +134,14 @@ describe('column constants', () => {
     expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS).not.toContain('token_hash');
   });
 
-  it('the public columns hold no email, issuer id, reason or redeemer (issuer_kind only, Slice 5a R-5)', () => {
+  it('the public columns hold no email, issuer id, reason or redeemer (issuer_kind only, Slice 5a R-5; invite_type, P-9.1 C-2)', () => {
     for (const column of ['email', 'issuer_admin_id', 'issuer_account_id', 'reason', 'redeemed_account_id', 'revoked_by_admin_id']) {
       expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS).not.toContain(column);
     }
     expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS.split(', ')).toEqual([
       'id',
       'issuer_kind',
+      'invite_type',
       'grant_kind',
       'grant_id',
       'access_open_ended',

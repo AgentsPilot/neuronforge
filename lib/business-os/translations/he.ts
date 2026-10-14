@@ -164,6 +164,8 @@ export const he = {
     'crm.subscribers.origin': 'נרשם לדיוור מאז {date}',
     'crm.tab_activity': 'פעילות',
     'crm.loading': 'טוען אנשי קשר...',
+    'crm.no_stages_title': 'אין עדיין שלבים בצנרת שלך',
+    'crm.no_stages_body': 'הלוח צריך שלבים כדי להציג עמודות. אנשי הקשר שלך עדיין זמינים בלשונית אנשי קשר.',
 
     // Pipeline stages - generic
     'crm.stage.lead': 'ליד',

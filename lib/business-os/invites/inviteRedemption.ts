@@ -47,7 +47,7 @@ import 'server-only';
  * ── A champion's FRIEND (Slice 5b; T-19, F5b-2, F5b-3, T-13) ───────────────
  * An account-issued invite takes its own, explicit branch in
  * `loadRedeemableInvite` (keyed on `issuer_kind = 'account'`, before the
- * generic tier refusal, which stays for admin Paid invites until 5c). It is
+ * admin Paid branch, P-9.1). It is
  * redeemable only while friend invites are switched on, only in the exact
  * shape the send writes (Paid, the config tier), and only while the issuer is
  * still an in-force champion (the TypeScript check; the SQL re-check decides).
@@ -63,6 +63,23 @@ import 'server-only';
  *   - the landing is the payment hold, never onboarding (FR-35).
  * Both signup methods reach the friend path through the shared
  * `createAndFinish`, so I-1 to I-6 and FR-12a hold for friends by construction.
+ *
+ * ── An ADMIN Paid invite (plan payments P-9.1; SA-P9, C-2, C-8) ────────────
+ * An admin-issued TIER invite takes its own branch, `loadAdminPaidInvite`,
+ * reached only after the state and live-claim checks (SA C-8). Whether it is
+ * redeemable is decided by ONE predicate, `adminPaidInviteRedemption`
+ * (`inviteOffer.ts`), shared with the public invite page so the two never
+ * disagree: the Paid switch first (`switch_off` → 409
+ * `paid_invites_not_available`, the answer production gives while it is off),
+ * then the shape and a sellable tier (`unavailable`). Then the champion's
+ * existing-account check, before any code: the ADMIN holds the address, so
+ * there is no oracle to protect (unlike F5b-3). `finish` calls the admin Paid
+ * finalise (20261029) with the row's own tier: a plan row with NO basis and the
+ * lineage at L1 / `admin_invite`. The tier is assigned only by the payment
+ * (SA-P9), so the landing is the payment hold, and the issuing admin's N-1
+ * reads "signed up, not subscribed yet". A cohort row never reaches this
+ * branch and a tier row never reaches the champion finalise (R-7, pinned by
+ * test). Both signup methods reach it through `createAndFinish`.
  *
  * ── Telling the inviter (N-1) ───────────────────────────────────────────────
  * After a successful finalise (champion or friend, code or Google), the
@@ -89,6 +106,7 @@ import type {
 } from '@/lib/repositories/AuthAccountRepository';
 import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import type {
+  AdminPaidFinaliseOutcome,
   AgentRepositoryResult as RepositoryResult,
   BusinessOsInviteRedemptionView,
   FriendFinaliseOutcome,
@@ -98,7 +116,7 @@ import type {
 // through `RedemptionDeps`, never loaded by this module (SA Q-2).
 import type { GoogleIdTokenVerification, VerifyGoogleIdToken } from './googleIdToken';
 import { isInForceChampion, type IssuerPlanReader } from './friendInviteOps';
-import { isInviteGrantAvailable } from './inviteOffer';
+import { adminPaidInviteRedemption, isInviteGrantAvailable } from './inviteOffer';
 import { INVITER_NOTIFICATION_POLICY } from './inviteEmailPolicy';
 import type { NotifyInviterInput } from './inviterNotification';
 import { deriveInviteState } from './inviteState';
@@ -149,6 +167,18 @@ export type FinaliseFriendRedemption = (input: {
   issuerCohort: string;
 }) => Promise<RepositoryResult<FriendFinaliseOutcome>>;
 
+/**
+ * The admin Paid finalise (the plan repository's `provisionFromAdminPaidInvite`,
+ * bound by the route). Plan payments P-9.1. `tierId` is the matched row's own
+ * `grant_id`, already checked against the sellable tiers.
+ */
+export type FinaliseAdminPaidRedemption = (input: {
+  inviteId: string;
+  accountId: string;
+  email: string;
+  tierId: string;
+}) => Promise<RepositoryResult<AdminPaidFinaliseOutcome>>;
+
 /** One audit entry the route writes (non-blocking) and flushes before it answers. */
 export interface RedemptionAuditEntry {
   action:
@@ -182,6 +212,8 @@ export interface RedemptionDeps {
   finalise: FinaliseRedemption;
   /** Slice 5b: the friend finalise (T-19). */
   finaliseFriend: FinaliseFriendRedemption;
+  /** Plan payments P-9.1: the admin Paid finalise (SA-P9). */
+  finaliseAdminPaid: FinaliseAdminPaidRedemption;
   /** Slice 5b: the issuer's plan row, for the in-force champion re-check (T-19; the SQL re-check decides). */
   issuerPlans: IssuerPlanReader;
   /**
@@ -256,7 +288,8 @@ export type RequestCodeOutcome =
 
 /**
  * Where a new account goes next (FR-13, FR-35). A champion goes to onboarding;
- * a friend, who has not paid, to the payment hold (Slice 5b).
+ * a friend (Slice 5b) or an admin Paid invitee (P-9.1), who has not paid, to
+ * the payment hold.
  */
 export type RedemptionLanding = 'onboarding' | 'awaiting_payment';
 
@@ -287,8 +320,11 @@ const TRY_AGAIN_LATER: Refusal = { ok: false, kind: 'unavailable_try_again' };
 
 // ── The shared checks ───────────────────────────────────────────────────────
 
-/** Which finalise, and which landing: a champion (admin-issued) or a friend (account-issued, Slice 5b). */
-export type RedemptionKind = 'champion' | 'friend';
+/**
+ * Which finalise, and which landing: a champion (admin-issued cohort), a friend
+ * (account-issued, Slice 5b) or an admin Paid invitee (admin-issued tier, P-9.1).
+ */
+export type RedemptionKind = 'champion' | 'friend' | 'admin_paid';
 
 type Loaded = { ok: true; row: BusinessOsInviteRedemptionView; kind: RedemptionKind } | Refusal;
 
@@ -325,9 +361,11 @@ async function loadRedeemableInvite(
   // mailbox proof, in each entry point.
   if (row.issuer_kind === 'account') return loadFriendInvite(row, deps, now);
 
+  // P-9.1 (SA C-8): an admin Paid invite takes its own branch, only after the
+  // state and live-claim checks above. Friend invites never get here.
+  if (row.grant_kind === 'tier') return loadAdminPaidInvite(row, deps, now, options);
+
   // GR-1, GR-3, T-15, R-5: re-checked at redemption, from the row and config only.
-  // Admin Paid invites stay refused until 5c (C-6); friend invites never get here.
-  if (row.grant_kind === 'tier') return refuse(409, 'paid_invites_not_available');
   const allowedTypes: readonly InviteTypeId[] = row.issuer_kind === 'admin' ? INVITE_ISSUANCE_POLICY.admin : [];
   if (
     row.invite_type !== CHAMPION_INVITE_TYPE ||
@@ -412,6 +450,31 @@ async function loadFriendInvite(row: BusinessOsInviteRedemptionView, deps: Redem
   if (!isInForceChampion(issuer.data.plan, now)) return refuse(409, 'unavailable');
 
   return { ok: true, row, kind: 'friend' };
+}
+
+/**
+ * Plan payments P-9.1 (SA C-2, C-8): an admin-issued Paid invite. The shared
+ * predicate decides, the Paid switch first, so while it is off the answer is
+ * the same 409 `paid_invites_not_available` as before P-9. Then the
+ * champion's existing-account check, before any code (the admin holds the
+ * address; I-6's stale-claim exception kept).
+ */
+async function loadAdminPaidInvite(
+  row: BusinessOsInviteRedemptionView,
+  deps: RedemptionDeps,
+  now: Date,
+  options: { allowStaleClaimWithAccount: boolean }
+): Promise<Loaded> {
+  const redeemable = adminPaidInviteRedemption(row, deps.config);
+  if (redeemable === 'switch_off') return refuse(409, 'paid_invites_not_available');
+  if (redeemable !== 'ok') return refuse(409, 'unavailable');
+
+  if (!(options.allowStaleClaimWithAccount && hasStaleClaimOn(row))) {
+    const refused = await refuseIfEmailHasAccount(row, deps, now);
+    if (refused) return refused;
+  }
+
+  return { ok: true, row, kind: 'admin_paid' };
 }
 
 // ── Request a code ──────────────────────────────────────────────────────────
@@ -771,6 +834,7 @@ async function finish(
   now: Date
 ): Promise<CompleteSignupOutcome> {
   if (kind === 'friend') return finishFriend(row, accountId, method, deps, now);
+  if (kind === 'admin_paid') return finishAdminPaid(row, accountId, method, deps, now);
 
   const call = () => deps.finalise({ inviteId: row.id, accountId, email: row.email, cohort: row.grant_id });
 
@@ -881,6 +945,66 @@ async function finishFriend(
     },
   });
   deps.logger.info({ inviteId: row.id, accountId, level: done.level }, 'Friend invite redeemed; account held until payment');
+  const outcome: CompleteSignupOutcome = { ok: true, email: row.email, accountId, inviteId: row.id, landing: 'awaiting_payment' };
+  await notifyInviterSafely(row, outcome.landing, deps);
+  return outcome;
+}
+
+/**
+ * Plan payments P-9.1 (SA-P9): the admin Paid finalise, retried once (I-5).
+ * The tier passed is the matched row's own `grant_id` (checked sellable in
+ * `loadAdminPaidInvite`); the SQL compares it with the row. `not_matched` or
+ * an error twice keeps the claim and records why (FR-12a). On success the
+ * account has a plan row with no basis and an L1 `admin_invite` lineage row,
+ * so it is held until it pays; the issuing admin gets N-1 with that landing.
+ */
+async function finishAdminPaid(
+  row: BusinessOsInviteRedemptionView,
+  accountId: string,
+  method: RedemptionMethod,
+  deps: RedemptionDeps,
+  now: Date
+): Promise<CompleteSignupOutcome> {
+  const call = () => deps.finaliseAdminPaid({ inviteId: row.id, accountId, email: row.email, tierId: row.grant_id });
+
+  type Answer = Awaited<ReturnType<typeof call>>;
+  const isDone = (answer: Answer) =>
+    !answer.error && (answer.data?.outcome === 'finalised' || answer.data?.outcome === 'already_finalised');
+
+  let result = await call();
+  if (!isDone(result)) result = await call();
+
+  if (!isDone(result)) {
+    const code = (result.error as (Error & { code?: string }) | null)?.code ?? null;
+    await stopWithClaimKept(row, accountId, deps, now, {
+      step: 'finalise',
+      errorCode: code,
+      errorMessage: result.error ? result.error.message : 'admin paid finalise matched no invite row',
+      failedAccountId: accountId,
+    });
+    return TRY_AGAIN_LATER;
+  }
+
+  await deps.audit({
+    action: 'BOS_INVITE_REDEEMED',
+    inviteId: row.id,
+    accountId,
+    details: { inviteType: row.invite_type, level: 1, source: 'admin_invite', method },
+  });
+  await deps.audit({
+    action: 'BOS_INVITE_PLAN_PROVISIONED',
+    inviteId: row.id,
+    accountId,
+    details: {
+      grantKind: row.grant_kind,
+      grantId: row.grant_id,
+      // T-13 layer 1, SA-P9: no cohort, no tier. The tier is assigned only by the payment.
+      basis: 'none',
+      awaitingPayment: true,
+      origin: 'invite',
+    },
+  });
+  deps.logger.info({ inviteId: row.id, accountId }, 'Admin Paid invite redeemed; account held until payment');
   const outcome: CompleteSignupOutcome = { ok: true, email: row.email, accountId, inviteId: row.id, landing: 'awaiting_payment' };
   await notifyInviterSafely(row, outcome.landing, deps);
   return outcome;
