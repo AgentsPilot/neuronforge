@@ -36,6 +36,17 @@
  *        `components/ui/dialog.tsx`, so the walk is proven to reach both and the
  *        per-file URL and storage ban runs over them.
  * The exact file list is unchanged: no file was added or removed.
+ *
+ * Amended by Admin Layout Follow-ups LF-7 (shared `AdminConfirmDialog`, SA
+ * approval of the LF-7 workplan):
+ *   G-8  the exception line is removed from `escapes()`: `RevokeDialog.tsx` now
+ *        renders the shared dialog, so every file, that one included, is refused
+ *        `@/components/ui/dialog` and its look-alikes, and no file names
+ *        `@/components/ui/`. Liveness: `RevokeDialog.tsx` imports the shared
+ *        dialog, so the refusal is not vacuous;
+ *   G-7  the positive control gains `AdminConfirmDialog.tsx`; the primitive is
+ *        still reached, now through it.
+ * The exact file list is unchanged.
  */
 
 import * as fs from 'fs';
@@ -71,9 +82,10 @@ function codeOf(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
-/** LF-3a G-8: the one file allowed the dialog primitive, and the one primitive. */
+/** LF-7 G-8: the screen's dialog file, the primitive no file may import, and the shared dialog it uses instead. */
 const DIALOG_FILE = `${ROOT}/components/RevokeDialog.tsx`;
 const DIALOG_PRIMITIVE = '@/components/ui/dialog';
+const SHARED_CONFIRM = '@/app/admin/components/layout/AdminConfirmDialog';
 
 /** Packages this screen may use. Anything else outside the folder is refused. */
 const ALLOWED_PACKAGES = ['react', 'lucide-react'];
@@ -90,8 +102,6 @@ const ALLOWED_PACKAGES = ['react', 'lucide-react'];
  * so `next/link`, `next/navigation` and `@/lib/...` stay refused.
  */
 function escapes(relative: string, specifier: string): boolean {
-  // LF-3a G-8 (SA-C10): exact file, exact specifier, nothing wider.
-  if (relative === DIALOG_FILE && specifier === DIALOG_PRIMITIVE) return false;
   if (specifier.startsWith('@/app/admin/components/layout/')) return false;
   if (specifier.startsWith('@/')) return !specifier.startsWith(`@/${ROOT}`);
   if (!specifier.startsWith('.')) return !ALLOWED_PACKAGES.includes(specifier);
@@ -138,28 +148,26 @@ describe('the screen holds no server module and no rule of its own', () => {
     expect(escapes(page, 'react')).toBe(false);
   });
 
-  it('G-8: exactly @/components/ui/dialog, in exactly RevokeDialog.tsx', () => {
-    expect(escapes(DIALOG_FILE, DIALOG_PRIMITIVE)).toBe(false);
-    // Any other file of the screen is still refused the primitive.
-    for (const file of [`${ROOT}/page.tsx`, `${ROOT}/components/CreateInviteForm.tsx`, `${ROOT}/components/InviteList.tsx`]) {
-      expect(escapes(file, DIALOG_PRIMITIVE)).toBe(true);
-    }
-    // The dialog file gets nothing else from outside the screen.
-    for (const specifier of [
-      '@/components/ui/dialogX',
-      '@/components/ui/dialog/index',
-      '@/components/ui/button',
-      '@/components/ui/sheet',
-      '../../../../components/ui/dialog',
-    ]) {
-      expect(escapes(DIALOG_FILE, specifier)).toBe(true);
+  it('G-8 (LF-7): every file, RevokeDialog.tsx included, is refused the dialog primitive and its look-alikes', () => {
+    expect(allFiles).toContain(DIALOG_FILE);
+    for (const file of allFiles) {
+      for (const specifier of [
+        DIALOG_PRIMITIVE,
+        '@/components/ui/dialogX',
+        '@/components/ui/dialog/index',
+        '@/components/ui/button',
+        '@/components/ui/sheet',
+        '../../../../components/ui/dialog',
+      ]) {
+        expect({ file, specifier, escapes: escapes(file, specifier) }).toEqual({ file, specifier, escapes: true });
+      }
     }
   });
 
-  it('G-8 liveness: RevokeDialog.tsx really imports the primitive, and no other file names @/components/ui/', () => {
+  it('G-8 liveness (LF-7): RevokeDialog.tsx imports the shared dialog, and no file names @/components/ui/', () => {
     // The G-7 extractor, defined below (it runs after the module has loaded).
-    expect(valueSpecifiersOf(codeOf(read(DIALOG_FILE)))).toContain(DIALOG_PRIMITIVE);
-    for (const relative of allFiles.filter((file) => file !== DIALOG_FILE)) {
+    expect(valueSpecifiersOf(codeOf(read(DIALOG_FILE)))).toContain(SHARED_CONFIRM);
+    for (const relative of allFiles) {
       expect({ file: relative, ui: codeOf(read(relative)).includes('@/components/ui/') }).toEqual({ file: relative, ui: false });
     }
   });
@@ -362,6 +370,8 @@ describe('L-6 G-7: nothing an Invites file pulls in, at any depth, writes the UR
       // LF-3a (SA-C10): the drawer's sheet and the Revoke dialog's primitive.
       'components/ui/sheet.tsx',
       'components/ui/dialog.tsx',
+      // LF-7: the shared dialog Revoke renders, through which the primitive is reached.
+      'app/admin/components/layout/AdminConfirmDialog.tsx',
     ]) {
       expect(reached.has(file)).toBe(true);
     }

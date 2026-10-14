@@ -69,6 +69,12 @@
  *
  * Amended by L-12: Admin users joins the registry; no rule change and no
  * shared source change.
+ *
+ * Amended by LF-7 (Admin Layout Follow-ups): `AdminConfirmDialog.tsx`, the
+ * shared confirmation dialog, joins the expected files. No rule change: its
+ * imports (`react`, `lucide-react`, `@/components/ui/dialog` and siblings
+ * through `./`) were already on the S-3 allow-list, and it never fetches. The
+ * Messages registry entry drops `MessagesConfirmDialog.tsx`, deleted by LF-7.
  */
 
 import * as fs from 'fs';
@@ -103,6 +109,7 @@ const TSX_SOURCES = SOURCE_FILES.filter((f) => f.endsWith('.tsx'));
 
 const EXPECTED_SOURCES = [
   'AdminBusinessPicker.tsx',
+  'AdminConfirmDialog.tsx',
   'AdminDrawer.tsx',
   'AdminFilterBar.tsx',
   'AdminPageHeader.tsx',
@@ -624,8 +631,6 @@ const MIGRATED_PAGES = [
       'app/admin/messages/messagesFormat.ts',
       'app/admin/messages/components/MessagesTable.tsx',
       'app/admin/messages/components/MessageDetail.tsx',
-      // LF-3b: the Delete and Mark All Read admin dialogs (OR-3).
-      'app/admin/messages/components/MessagesConfirmDialog.tsx',
     ],
   },
   {
