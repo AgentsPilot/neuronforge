@@ -1,10 +1,16 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { clientLogger } from '@/lib/logger/client';
 import { CREDIT_EXPLANATION } from '@/lib/i18n/creditExplanation';
+import {
+  INITIAL_LANGUAGE_DEFAULT,
+  isOwnerLanguage,
+  type InitialLanguage,
+  type OwnerLanguage,
+} from '@/lib/business-os/ownerLanguage';
 
 /*
  * The dictionaries, one module each.
@@ -24,7 +30,9 @@ import { he } from './translations/he';
 
 const logger = clientLogger.child({ module: 'LanguageContext' });
 
-type Language = 'en' | 'es' | 'he';
+// One list for the server helper, the pre-paint script and this provider, so the
+// three cannot drift (BR-1a, SA RC-4).
+type Language = OwnerLanguage;
 export type CurrencyCode = 'USD' | 'EUR' | 'ILS' | 'GBP';
 
 interface CurrencyConfig {
@@ -177,8 +185,30 @@ async function savePreference(
   }
 }
 
-export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [language, setLanguageState] = useState<Language>('en');
+export function LanguageProvider({
+  children,
+  initial = INITIAL_LANGUAGE_DEFAULT,
+}: {
+  children: React.ReactNode;
+  /**
+   * The language to draw the FIRST frame in, read on the server by
+   * `readInitialLanguage` in the layout (performance business round BR-1a).
+   *
+   * Used once, at mount. A later value (a layout re-render, `router.refresh()`)
+   * is ignored on purpose: after mount the language is this provider's state,
+   * changed only by `setLanguage` or the preferences GET, and a stale server
+   * value must never undo a switch the owner just made.
+   *
+   * Absent means today's behaviour: English, then this browser's last pick.
+   */
+  initial?: InitialLanguage;
+}) {
+  const [language, setLanguageState] = useState<Language>(() =>
+    isOwnerLanguage(initial.language) ? initial.language : 'en'
+  );
+  // Read once for the mount effect below, so it is visibly a mount-time fact
+  // and not a dependency (SA RC-5).
+  const initialSource = useRef(initial.source).current;
   const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('USD');
 
   /**
@@ -206,7 +236,19 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     const loadPreferences = async () => {
       // First load from localStorage for immediate UI
       const savedLang = localStorage.getItem('business-os-language');
-      if (savedLang && (savedLang === 'en' || savedLang === 'es' || savedLang === 'he')) {
+      /*
+       * BR-1a: when the server already drew the owner's SAVED language, this
+       * browser's last pick must not override it, or the page would flash the
+       * old language until the GET below put the saved one back (AC-1.3).
+       *
+       * `savedLang` is still READ either way: the display-currency default just
+       * below is derived from it, never from the server language (SA-6). That
+       * is also why localStorage is not rewritten here at mount: under
+       * StrictMode the effect runs twice, and the second run would read the
+       * server language back out and derive the wrong currency. The write stays
+       * where it was, once the GET confirms the saved value.
+       */
+      if (initialSource !== 'saved' && savedLang && (savedLang === 'en' || savedLang === 'es' || savedLang === 'he')) {
         setLanguageState(savedLang);
       }
 
@@ -288,7 +330,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     };
 
     loadPreferences();
-  }, []);
+  }, [initialSource]);
 
   // Apply RTL to HTML element when language changes
   useEffect(() => {
@@ -484,7 +526,21 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       timezone,
       timeZoneOptions
     }}>
-      {children}
+      {/*
+        The language and direction on the first CONTENT frame (BR-1a, FR-1.2).
+
+        From state, not from the server prop, so it follows every switch; a
+        wrapper fixed to the server value would pin the old direction over the
+        whole page after a switch. Not in the server HTML: every layout mounts
+        this provider inside `V2ThemeProvider`, which renders nothing until it
+        mounts. `<html>` is set before paint by `OwnerDirScript` instead.
+
+        `display: contents` generates no box, so sizing and layout are as
+        before; `dir` and `lang` still inherit through it.
+      */}
+      <div data-owner-locale="" dir={isRTL ? 'rtl' : 'ltr'} lang={language} style={{ display: 'contents' }}>
+        {children}
+      </div>
     </LanguageContext.Provider>
   );
 }
