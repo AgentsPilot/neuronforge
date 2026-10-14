@@ -66,3 +66,30 @@ export const ATTACHABLE_DOCUMENT_TYPES = [
  * file.
  */
 export const ATTACHABLE_ACCEPT = ATTACHABLE_DOCUMENT_TYPES.join(',');
+
+/**
+ * The largest file the bucket will take, in bytes.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * HERE, BESIDE THE TYPES, FOR THE SAME REASON THEY ARE HERE.
+ *
+ * The picker has to know it. `ContactDocumentService` cannot tell it — that
+ * module imports `supabaseServer`, so a `'use client'` component reading the
+ * limit from there would pull the service-role client into the browser bundle.
+ * This is the leaf both sides can read.
+ *
+ * It was ALSO not the real limit for a long time. Uploads were base64-encoded
+ * into a JSON body and posted to a serverless function, where the platform caps
+ * a request body at 4.5MB — and base64 adds a third, so anything over about
+ * 3.3MB failed. The UI promised 50MB, a 4.47MB PDF was refused at the edge
+ * before the route ran, and the browser got a non-JSON error that surfaced as
+ * "the document could not be uploaded" with no reason in it.
+ *
+ * The file now goes straight from the browser to Storage on a signed URL, so
+ * the platform is no longer in its path and this number is true again.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
+
+/** The same limit in whole megabytes, for a message that has to say it. */
+export const MAX_DOCUMENT_MB = Math.floor(MAX_DOCUMENT_BYTES / (1024 * 1024));

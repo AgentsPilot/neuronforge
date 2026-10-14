@@ -2126,6 +2126,7 @@ export const es = {
     'crm.drawer.uploading': 'Subiendo...',
     'crm.drawer.upload_success': 'Documento subido exitosamente',
     'crm.drawer.upload_error': 'Error al subir el documento',
+    'crm.drawer.upload_too_large': 'Ese archivo es demasiado grande. El límite es {max}MB.',
     'crm.drawer.delete_document': 'Eliminar Documento',
     'crm.drawer.delete_document_confirm': '¿Estás seguro de que deseas eliminar este documento?',
     'crm.drawer.document_deleted': 'Documento eliminado',
