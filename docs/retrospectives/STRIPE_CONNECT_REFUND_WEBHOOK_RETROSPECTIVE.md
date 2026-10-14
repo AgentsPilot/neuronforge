@@ -73,10 +73,11 @@ There is no migration.
 
 ---
 
-## Status: APPROVED BY USER 2026-10-14 — PENDING COMMIT — `fix/stripe-connect-refund-webhook` — commit hash and PR to be recorded by RM
+## Status: APPROVED BY USER 2026-10-14 — COMMITTED, PR OPEN — `fix/stripe-connect-refund-webhook` — commits `59361635` (slice 1), `f38ee6c4` (slice 2), `dfc35d31` (slice 3) — [PR #379](https://github.com/AgentsPilot/neuronforge/pull/379) (not merged)
 
 ## Change History
 
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-14 | Created | TL retrospective after user approval of the diff, before the RM commit |
+| 2026-10-14 | Commit + PR recorded | RM: three slice commits `59361635` (slice 1), `f38ee6c4` (slice 2), `dfc35d31` (slice 3); PR #379 opened against `main` (not merged, no auto-merge) |
