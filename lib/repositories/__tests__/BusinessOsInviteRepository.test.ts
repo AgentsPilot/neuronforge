@@ -451,6 +451,41 @@ describe('findHoldFactsById (Slice 5b, the payment hold)', () => {
   });
 });
 
+describe('findInviterNotificationFactsById (plan payments P-5b.1, N-2)', () => {
+  const FACTS = { issuer_kind: 'account', issuer_account_id: ACCOUNT, email: 'dana@example.com', redeemed_account_id: ADMIN };
+
+  it('reads exactly the four N-2 columns of the one row, by id: no hash, reply-to or note', async () => {
+    const { client, calls } = recordingClient({ data: FACTS, error: null });
+    const result = await new BusinessOsInviteRepository(client).findInviterNotificationFactsById(ID);
+    expect(result).toEqual({ data: FACTS, error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_invites'] },
+      { method: 'select', args: ['issuer_kind, issuer_account_id, email, redeemed_account_id'] },
+      { method: 'eq', args: ['id', ID] },
+      { method: 'maybeSingle', args: [] },
+    ]);
+    // The address is returned to the caller, never logged.
+    expect(JSON.stringify(logged)).not.toContain('dana@example.com');
+  });
+
+  it('no row is null data; an error is returned, never a default', async () => {
+    const none = recordingClient({ data: null, error: null });
+    expect(await new BusinessOsInviteRepository(none.client).findInviterNotificationFactsById(ID)).toEqual({ data: null, error: null });
+    const failing = recordingClient({ data: null, error: { message: 'timeout' } });
+    const result = await new BusinessOsInviteRepository(failing.client).findInviterNotificationFactsById(ID);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('timeout');
+  });
+
+  it('the method documents its service-role use and its one caller (C-7)', () => {
+    const text = readFileSync(join(process.cwd(), 'lib', 'repositories', 'BusinessOsInviteRepository.ts'), 'utf8');
+    const at = text.indexOf('async findInviterNotificationFactsById(');
+    const doc = text.slice(text.lastIndexOf('/**', at), at);
+    expect(doc).toContain('INTENTIONAL SERVICE-ROLE');
+    expect(doc).toContain('championSubscribedNotification.ts');
+  });
+});
+
 describe('markOpenedByExistingAccount (Slice 1a, FR-8a, D-13)', () => {
   it('stamps only while the stamp is empty, sets updated_at, and reports true when this call set it', async () => {
     const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
@@ -990,6 +1025,8 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         'findRedeemedForIssuerAccount',
         // Slice 5b: the payment hold's two facts of the signed-in account's own invite.
         'findHoldFactsById',
+        // Plan payments P-5b.1 (N-2): the four facts of the paying account's own invite.
+        'findInviterNotificationFactsById',
         // Admin delete AD-2a: a deleted business's pending invites, scoped by its issuing account id.
         'revokePendingForIssuerAccountByAdmin',
         'countPendingForIssuerAccountByAdmin',
@@ -1063,6 +1100,8 @@ describe('M-1 (C-3): a database error never carries row values into a log or a r
     ['markOpenedByExistingAccount', (repo) => repo.markOpenedByExistingAccount(ID, NOW)],
     // Slice 5b: the payment hold's read.
     ['findHoldFactsById', (repo) => repo.findHoldFactsById(ID)],
+    // P-5b.1 (N-2): the first payment's read; its email column must not leak either.
+    ['findInviterNotificationFactsById', (repo) => repo.findInviterNotificationFactsById(ID)],
     [
       'recordInviteEmailOutcome',
       (repo) => repo.recordInviteEmailOutcome({ id: ID, tokenHash: HASH, now: NOW, outcome: { kind: 'sent', providerMessageId: 'msg_1' } }),

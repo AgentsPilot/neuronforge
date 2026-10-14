@@ -888,6 +888,18 @@ export interface BusinessOsInviteHoldFacts {
 }
 
 /**
+ * Plan payments P-5b.1 (N-2, SA S5-5 c): what the "your friend subscribed"
+ * email needs about ONE invite: who issued it, the address they typed, and who
+ * redeemed it (the cross-check against the paying account). Nothing else.
+ */
+export interface BusinessOsInviteNotificationFacts {
+  issuer_kind: 'admin' | 'account';
+  issuer_account_id: string | null;
+  email: string;
+  redeemed_account_id: string | null;
+}
+
+/**
  * Slice 5b (T-19): what `business_os_finalise_friend_invite_redemption`
  * answered. `finalised` and `already_finalised` carry the invite id and the
  * level written; the refusals carry neither.

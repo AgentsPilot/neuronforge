@@ -155,8 +155,12 @@ export function isCountedFriendInvite(row: FriendInviteCountFacts, now: Date): b
  * What a champion's list says about one invite (FR-31). `joined` is derived
  * from `redeemed_at` only (F5b-7): the section words it "Signed up — not
  * subscribed yet", because a friend is held until payment (Slice 5c).
+ *
+ * `subscribed` (plan payments P-5b, FR-31, SA C-1): the friend paid. The type
+ * and its words land with P-5b.1 (the N-2 email reads the same word); this
+ * derivation starts returning it with P-5b.2, from an issuer-scoped lineage read.
  */
-export type FriendInviteStatus = 'pending' | 'expired' | 'revoked' | 'joined';
+export type FriendInviteStatus = 'pending' | 'expired' | 'revoked' | 'joined' | 'subscribed';
 
 /**
  * The status, from `deriveInviteState` (C-11) and the counted predicate: a
