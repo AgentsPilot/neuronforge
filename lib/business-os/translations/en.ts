@@ -1786,6 +1786,9 @@ export const en = {
     'crm.loading': 'Loading contacts...',
     'crm.no_stages_title': 'Your pipeline has no stages yet',
     'crm.no_stages_body': 'The board needs stages to show its columns. Your contacts are still on the Contacts tab.',
+    'crm.stages_failed_title': 'Your pipeline could not be loaded',
+    'crm.stages_failed_body': 'Something went wrong on our side. Your contacts are safe and still on the Contacts tab.',
+    'crm.stages_failed_retry': 'Try again',
 
     // Pipeline stages - generic
     'crm.stage.lead': 'Lead',
