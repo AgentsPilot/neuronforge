@@ -328,12 +328,17 @@ async function executeRefundBlock(
   });
 
   if (!outcome.ok) {
-    await emitPaymentEvent(userId, {
-      eventType: 'refund.failed',
-      entityType: 'transaction',
-      entityId: transaction_id as string,
-      metadata: { error: outcome.message, code: outcome.code }
-    });
+    // `IN_FLIGHT`: Stripe accepted the refund and is still processing it, so
+    // the money may yet move. Emitting `refund.failed` would be a false business
+    // event (SA Q-SA-6). The step still throws, so it reports "not done".
+    if (outcome.code !== 'IN_FLIGHT') {
+      await emitPaymentEvent(userId, {
+        eventType: 'refund.failed',
+        entityType: 'transaction',
+        entityId: transaction_id as string,
+        metadata: { error: outcome.message, code: outcome.code }
+      });
+    }
     throw new Error(outcome.message);
   }
 
