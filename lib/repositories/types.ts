@@ -388,6 +388,86 @@ export interface AiModelPricingSyncResult {
 }
 
 /**
+ * An active `ai_model_pricing` row read with its prices as exact decimal TEXT
+ * (`::text` casts), for the admin price comparison only (AI model price review
+ * slice 3). Never a JS float.
+ */
+export interface AiModelPricingExactRow {
+  id: string;
+  provider: string;
+  model_name: string;
+  input_cost_per_token: string;
+  output_cost_per_token: string;
+  cached_input_cost_per_token: string | null;
+  effective_date: string;
+  created_at: string;
+}
+
+/**
+ * A pending provider price line, as handed to `ai_price_submit_pending`
+ * (AI model price review slice 3). Every price is a decimal STRING: per 1M
+ * tokens or per image for the proposed price, per token or per image for the
+ * current snapshot. The database converts them; no float is ever sent.
+ */
+export interface AiPriceSubmitLine {
+  kind: 'token' | 'image';
+  provider: string;
+  model_name: string;
+  image_size?: string;
+  image_quality?: string;
+  input_per_1m?: string;
+  output_per_1m?: string;
+  cached_input_per_1m?: string;
+  price_per_image?: string;
+  current_basis: 'table' | 'in_code_fallback' | 'image_setting' | 'unpriced';
+  current_row_id?: string;
+  current_input_cost_per_token?: string;
+  current_output_cost_per_token?: string;
+  current_cached_input_cost_per_token?: string;
+  current_cost_per_image?: string;
+  source_url: string;
+  checked_on: string;
+  flags: string[];
+}
+
+export interface AiPriceSubmitInput {
+  adminUserId: string;
+  sourceKind: 'manual' | 'fetch';
+  providerOutcomes: Record<string, unknown> | null;
+  lines: AiPriceSubmitLine[];
+}
+
+/** One row of the submit RPC's result: one per submitted line. */
+export interface AiPriceSubmitResultLine {
+  proposalId: string;
+  lineId: string;
+  /** 1-based position of the line in the submitted list. */
+  lineIndex: number;
+  supersededLineId: string | null;
+}
+
+/** A pending line as the comparison read needs it (prices as submitted, per 1M or per image). */
+export interface AiPricePendingLine {
+  id: string;
+  proposal_id: string;
+  kind: 'token' | 'image';
+  provider: string;
+  model_name: string;
+  image_size: string | null;
+  image_quality: string | null;
+  input_per_1m: string | null;
+  output_per_1m: string | null;
+  cached_input_per_1m: string | null;
+  price_per_image: string | null;
+  source_url: string;
+  checked_on: string;
+  flags: string[];
+  cross_check_verdict: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+/**
  * A row of `boost_packs` — the agent-platform Pilot-Credit boost catalog, a
  * platform-wide table with no `user_id`. See the header of `BoostPackRepository`
  * for why the mandatory user scoping does not apply. PostgREST returns the
@@ -619,10 +699,13 @@ export interface BusinessOsInvite {
  * `id` is read so `markFirstViewed` can target the row; it is never returned.
  * `issuer_kind` (Slice 5a, F5a-10) is read only to branch an account-issued
  * invite away from the existing-account check; it is never returned either.
+ * `invite_type` (plan payments P-9.1, SA C-2) is read only so an admin Paid
+ * invite is judged by the same predicate as the signup; never returned.
  */
 export interface BusinessOsInvitePublicView {
   id: string;
   issuer_kind: 'admin' | 'account';
+  invite_type: string;
   grant_kind: BusinessOsInviteGrantKind;
   grant_id: string;
   access_open_ended: boolean | null;
@@ -951,3 +1034,13 @@ export interface BusinessOsInviteNotificationFacts {
 export type FriendFinaliseOutcome =
   | { outcome: 'finalised' | 'already_finalised'; inviteId: string; level: number }
   | { outcome: 'issuer_not_eligible' | 'not_matched' };
+
+/**
+ * Plan payments P-9.1 (SA-P9): what `business_os_finalise_admin_paid_invite_redemption`
+ * answered. The friend's outcome without `level` (always 1 for an admin
+ * invite) and without `issuer_not_eligible` (an admin issuer is not re-checked
+ * in SQL; redemption re-checks the switch and the shape first).
+ */
+export type AdminPaidFinaliseOutcome =
+  | { outcome: 'finalised' | 'already_finalised'; inviteId: string }
+  | { outcome: 'not_matched' };

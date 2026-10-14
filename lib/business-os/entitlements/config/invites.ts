@@ -14,8 +14,9 @@
  *   the create route accepts. The chosen day count is stamped on each invite at
  *   creation, so a change affects NEW invites only (T-14, AC-3).
  * - `INVITE_ISSUANCE_POLICY.paidInvitesAvailable`: the server-side switch for
- *   Paid invites (C-6). It stays `false` until Slice 5c, when the Business OS
- *   checkout (reuse-plan S-4a) exists. Flipping it is a config edit, not code.
+ *   Paid invites (C-6). It stays `false` until plan payments P-9 has fully
+ *   merged (P-9.1 AND P-9.2; requirement §9.5 row 17). Flipping it is a config
+ *   edit, not code.
  * - `INVITE_ISSUANCE_POLICY.accountInvitesAvailable` (Slice 5a, T-18): the
  *   switch for champion-issued friend invites. `true` since 2026-10-01, when the
  *   user chose to switch it on (BQ-13). Rollback: the same one-line flip back
@@ -100,11 +101,15 @@ export const INVITE_TYPE_IDS = Object.keys(INVITE_TYPES) as InviteTypeId[];
  *   Paid invites (F5c-3), AND, from plan payments P-5a.2, a held friend's Pay:
  *   while it is off the holding screen says "payment coming soon" and the plan
  *   checkout refuses a held account (`held_payment_unavailable`; requirement
- *   §9.1.1 D5-3, SA S5-1, S5-7). It is ONE switch on purpose (S5-7): admin
- *   tier invites are still refused at redemption whatever it says until P-9.
- *   Turn it on only after P-9 has merged (requirement §9.5 row 17), in a
- *   reviewed one-line PR. Local demos flip it in the working tree and never
- *   commit the flip.
+ *   §9.1.1 D5-3, SA S5-1, S5-7). It is ONE switch on purpose (S5-7). From
+ *   plan payments P-9.1 it ALSO opens the signup of an admin Paid invite
+ *   (`adminPaidInviteRedemption` in `invites/inviteOffer.ts`, shared with the
+ *   public invite page): the unconditional refusal is gone, so with it on an
+ *   admin invitee signs up and is held until they pay. P-9.1 alone gives that
+ *   invitee nothing to pay ("payment coming soon"); P-9.2 adds the Pay. So
+ *   turn it on only after **P-9.2** has merged (requirement §9.5 row 17, SA
+ *   C-11), in a reviewed one-line PR. Local demos flip it in the working tree
+ *   and never commit the flip.
  * - `accountInvitesAvailable` means "champions may send friend invites". Code
  *   config, not an environment variable: turning it on or off is a one-line
  *   change released through the normal review. It was switched on 2026-10-01,
@@ -121,9 +126,11 @@ export const INVITE_ISSUANCE_POLICY = {
     grantId: TIER_ORDER[0] as string,
   },
   /**
-   * The C-6 switch. `false` until Slice 5c: the server refuses every Paid invite
-   * at redemption. Also gates a held friend's Pay (P-5a.2, S5-7; see above).
-   * On only after P-9 has merged; never commit a local demo flip.
+   * The C-6 switch. While `false` the server refuses every admin Paid invite at
+   * redemption (409 `paid_invites_not_available`) and the invite page reads
+   * "no longer available". Also gates a held friend's Pay (P-5a.2, S5-7; see
+   * above). On only after P-9.2 has merged (SA C-11); never commit a local
+   * demo flip.
    */
   paidInvitesAvailable: false as boolean,
   /** The T-18 switch: friend invites from champion accounts. On since 2026-10-01, by the user's choice (BQ-13). */

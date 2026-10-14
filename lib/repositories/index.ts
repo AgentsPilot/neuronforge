@@ -3,14 +3,17 @@
 
 // Repositories
 export { AgentRepository, agentRepository } from './AgentRepository';
-export { ExecutionRepository, executionRepository } from './ExecutionRepository';
-export { SharedAgentRepository, sharedAgentRepository } from './SharedAgentRepository';
+// No singleton (RLS slice 2c-1, SA R-8): its old default was the browser
+// client, which on the server talks to the database as `anon`. Construct it
+// with the caller's client.
+export { ExecutionRepository } from './ExecutionRepository';
 export { AgentMetricsRepository, agentMetricsRepository } from './AgentMetricsRepository';
 export { ConfigRepository, configRepository } from './ConfigRepository';
 export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
 export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
+export { AiPriceProposalRepository, aiPriceProposalRepository } from './AiPriceProposalRepository';
 export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
@@ -264,9 +267,17 @@ export type {
   WebhookClaimResult,
   WebhookClaimStatus,
 } from './ProcessedWebhookEventRepository';
-// CF-5 PR 3: the refund ledger's Stripe webhook write (payment_refunds).
-export { PaymentRefundRepository, paymentRefundRepository } from './PaymentRefundRepository';
-export type { NewStripeRefundRow, PaymentRefundResult } from './PaymentRefundRepository';
+// The refund ledger (payment_refunds): the Stripe refund webhook's reads and
+// writes, and RefundService's post-reply compare-and-set writes.
+export { PaymentRefundRepository, paymentRefundRepository, STRIPE_REFUND_MATCH_COLUMNS } from './PaymentRefundRepository';
+export type {
+  ExpectedRefundState,
+  NewWebhookRefundRow,
+  PaymentRefundResult,
+  StripeRefundLedgerRow,
+  StripeRefundMatch,
+  StripeRefundStatePatch,
+} from './PaymentRefundRepository';
 // CF-5 PR 5: the Stripe webhook's agent-platform legacy writes (billing_events,
 // boost_pack_purchases) and the types of the legacy sections it added to
 // UserSubscriptionRepository and SystemConfigRepository.
@@ -362,6 +373,11 @@ export type {
   CreateAiModelPricingInput,
   AiModelPricingSyncEntry,
   AiModelPricingSyncResult,
+  AiModelPricingExactRow,
+  AiPriceSubmitLine,
+  AiPriceSubmitInput,
+  AiPriceSubmitResultLine,
+  AiPricePendingLine,
   // Boost pack (agent-platform catalog) types
   BoostPack,
   BoostPackWriteInput,

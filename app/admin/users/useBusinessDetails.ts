@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import { createLogger } from '@/lib/logger';
+import { clientLogger } from '@/lib/logger/client';
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import type {
   AuditEventFilter,
@@ -27,7 +27,8 @@ import type {
 } from '@/app/admin/users/types';
 
 // The page's module name, so log queries written for the page still match.
-const logger = createLogger({ module: 'AdminUsersPage' });
+// A client file logs through the client logger (F-56; follow-ups LF-F3, SA-F3).
+const logger = clientLogger.child({ module: 'AdminUsersPage' });
 
 /** Stored when the stats request itself failed, so both cards say so (SA-5a-2). */
 const UNREADABLE_STATS: UserDetailedStats = { tokens: null, plugins: null };

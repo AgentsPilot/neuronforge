@@ -226,12 +226,11 @@ describe('QA — the service-role swaps keep user scoping (tenant-isolation-guar
 });
 
 describe('QA — the UI cannot announce credits it did not grant (RC9-7)', () => {
-  it('v2: the credits banner is only reachable from the success branch', () => {
+  // RLS slice 2c-1 (user decisions BQ-2/BQ-3, 2026-10-14): sharing is switched
+  // off on v2, so the banner and the reward call are gone rather than guarded.
+  it('v2: the share flow, its credits banner and the reward call are gone', () => {
     const src = read('app/v2/agents/[id]/page.tsx');
-    expect(src.match(/setShareCreditsAwarded\(/g)).toHaveLength(1);
-    expect(src.match(/setShowShareSuccess\(true\)/g)).toHaveLength(1);
-    const failure = src.slice(src.indexOf('P0-FT-RLS (SA RC9-7)'));
-    expect(failure.slice(0, 900)).not.toMatch(/setShowShareSuccess\(true\)|setShareCreditsAwarded\(/);
+    expect(src).not.toMatch(/setShareCreditsAwarded\(|setShowShareSuccess\(|awardAgentSharingReward/);
   });
 
   it('(protected): the success notification is not fired on a failed reward', () => {

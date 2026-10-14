@@ -58,6 +58,11 @@ export interface BusinessDetailProps {
   isLoading: boolean;
   /** The page's list read (`fetchUsers`), after a deletion or a hard delete. */
   refreshList: () => Promise<void>;
+  /**
+   * BD-14 after a successful Give or Take back: the page's list read that keeps
+   * the rows, and so this drawer, when it fails (LF-F2, LF4B-F1).
+   */
+  refreshListAfterCredits: () => Promise<void>;
 }
 
 /** A UTC time with its age as a second line (§5.11; the L-4a list rule). */
@@ -86,6 +91,7 @@ export function BusinessDetail({
   onAuditFilterChange,
   isLoading,
   refreshList,
+  refreshListAfterCredits,
 }: BusinessDetailProps) {
   /** The read-only deletion preview (admin delete AD-1c); local now that the body is one account. */
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
@@ -101,8 +107,9 @@ export function BusinessDetail({
         allProducts={detailedStats ? <AllProductsUsage stats={detailedStats} /> : null}
         onCreditsChanged={() => {
           // BD-14 (LF-4b, SA-C7): once after a successful Give or Take back, so
-          // the strip, the list row and the Credits block agree.
-          void refreshList();
+          // the strip, the list row and the Credits block agree. LF-F2: a failed
+          // read keeps the rows, so this drawer and its notice stay open.
+          void refreshListAfterCredits();
         }}
       />
 

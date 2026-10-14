@@ -324,8 +324,8 @@ describe('backward: a gate cannot ship unregistered', () => {
       file: 'lib/business-os/invites/inviteOffer.ts',
       // No resolver (SA M-3): the resolution lives in `planOfferView.ts`, inside
       // the module, and this file gets only its read-only result.
-      symbols: ['EntitlementConfig', 'INVITE_TYPES', 'INVITE_TYPE_IDS', 'describePlanOffer', 'PlanOfferCategory'],
-      why: 'Describes the plan an invite OFFERS through `describePlanOffer`, a read-only view inside the entitlements module that previews a plan the way `adminPlansView` and `customerPlanView` do. It imports no resolver and no decision function, so it cannot refuse a capability.',
+      symbols: ['EntitlementConfig', 'INVITE_ISSUANCE_POLICY', 'INVITE_TYPES', 'INVITE_TYPE_IDS', 'describePlanOffer', 'PlanOfferCategory'],
+      why: 'Describes the plan an invite OFFERS through `describePlanOffer`, a read-only view inside the entitlements module that previews a plan the way `adminPlansView` and `customerPlanView` do. It imports no resolver and no decision function, so it cannot refuse a capability. Plan payments P-9.1 (SA C-2) adds `INVITE_ISSUANCE_POLICY` for `adminPaidInviteRedemption`, the one predicate deciding whether an admin Paid INVITE may be redeemed (the Paid switch and who may issue which type): an issuance rule on an invite, not a capability gate on what an account may do.',
     },
     {
       file: 'lib/business-os/invites/inviteSchemas.ts',

@@ -451,6 +451,9 @@ export const AUDIT_EVENTS = {
   AI_PRICING_DELETED: 'AI_PRICING_DELETED',
   AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Synced from external source
   AI_PRICING_ZERO_SET: 'AI_PRICING_ZERO_SET', // A price was saved as $0 — usage of that model is billed at nothing
+  // AI model price review slice 3: an admin recorded a provider's new price by hand. It is
+  // PENDING only (ai_price_proposal_lines) and changes no charge until someone applies it.
+  AI_PRICE_MANUAL_ENTRY: 'AI_PRICE_MANUAL_ENTRY',
 
   // ==========================================
   // MEMORY SYSTEM EVENTS
@@ -1327,6 +1330,14 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['SOC2'],
     description: 'AI model price set to zero (usage billed at $0)',
+  },
+  // Info: nothing is charged differently. Written with logAndFlush by
+  // POST /api/admin/model-pricing/manual-entries; entity 'ai_pricing', entity id
+  // the proposal id, with entity_kind 'price_proposal' in details (SA O-14).
+  [AUDIT_EVENTS.AI_PRICE_MANUAL_ENTRY]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Pending AI model price entered by hand (not applied)',
   },
 
   // Workflow Pilot events
