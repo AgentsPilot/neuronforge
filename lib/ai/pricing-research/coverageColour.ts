@@ -66,6 +66,20 @@ function gapText(sign: -1 | 1, basisPoints: number): string {
   return formatGapPercent(basisPoints);
 }
 
+/**
+ * The gap of one unit as short text for a table cell (slice 4, SA N-2). The
+ * sign comes from the exact `status`, never from the rounded basis points, so
+ * a red unit under 1 bp reads "less than -0.01%", never "0.00%". A unit with
+ * no gap (not compared, not priced, provider price 0) returns its `label`.
+ */
+export function unitGapText(unit: Pick<UnitComparison, 'status' | 'gapBasisPoints' | 'label'>): string {
+  if (unit.status === 'no_change') return formatGapPercent(0);
+  if (unit.gapBasisPoints === null) return unit.label;
+  if (unit.status === 'undercharging') return gapText(-1, unit.gapBasisPoints);
+  if (unit.status === 'covered') return gapText(1, unit.gapBasisPoints);
+  return unit.label;
+}
+
 function unitLabel(unit: string): string {
   return unit.replace('_', ' ');
 }

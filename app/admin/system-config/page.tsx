@@ -9,13 +9,22 @@
  * used to share this page (grace period, boost packs, the Pilot Credit
  * calculator, the read-only dump) moved to `app/admin/agentspilot-billing/page.tsx`.
  *
- * The only reads are `GET /api/admin/system-config/pricing`. A failed read
+ * The page reads `GET /api/admin/system-config/pricing` and, since slice 4,
+ * the price comparison (below). A failed read
  * clears the table and says so (C2-4): the table shows only what the last
  * read returned, never an empty or stale list posing as current.
  *
  * Sync is parked (UC-5) and its handler and button are frozen byte for byte
  * (C2-1). AI_MODEL_PRICE_REVIEW slice 1 (SA 2026-10-08 R-5) rewrote the false
  * info-box and helper text around it; slice 8 retires Sync.
+ *
+ * AI_MODEL_PRICE_REVIEW slice 4 (user decision UF-5): this table IS the price
+ * comparison. Every displayed price, gap, status, area and flag comes from
+ * `GET /api/admin/model-pricing/comparison` (read in `priceComparisonRead.ts`),
+ * printed from the server's decimal strings. The pricing list read here only
+ * supplies the row id behind Edit, the dates and the retired rows (SA N-1,
+ * NR-1). Either read failing fails the table (SA N-4, C2-4). There is no Apply,
+ * no provider check and no history yet (slices 5, 8, 9).
  */
 
 import { useEffect, useState } from 'react';
@@ -34,6 +43,39 @@ import {
 } from 'lucide-react';
 
 import { clientLogger } from '@/lib/logger/client';
+import type { ComparisonModel } from '@/lib/ai/pricing-research/comparisonModel';
+import { AdminNotice } from '@/app/admin/components/layout/AdminStates';
+import { formatUtcDate } from '@/app/admin/components/layout/adminFormat';
+import {
+  ADMIN_BUTTON,
+  ADMIN_TABLE,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TH,
+  ADMIN_TH_NUM,
+  ADMIN_THEAD,
+} from '@/app/admin/components/layout/adminTable';
+import { ManualPriceEntryForm, type ManualEntryPrefill } from '@/app/admin/system-config/components/ManualPriceEntryForm';
+import {
+  EmptyPriceCells,
+  PriceCells,
+  SourceCell,
+  StatusCell,
+  UsedByCell,
+} from '@/app/admin/system-config/components/PriceRowCells';
+import { readPriceComparison } from '@/app/admin/system-config/priceComparisonRead';
+import {
+  EDIT_UNIT_WORDS,
+  ENTER_PROVIDER_PRICE,
+  IN_EFFECT_SINCE,
+  NO_MODELS_LINE,
+  NO_PENDING_NOTICE,
+  PRICE_REVIEW_NOTE,
+  SORT_LABEL,
+  SORT_OPTIONS,
+  type PriceSortMode,
+} from '@/app/admin/system-config/priceReviewCopy';
+import { buildPriceTableRows, sortPriceTableRows } from '@/app/admin/system-config/priceTableRows';
 
 const logger = clientLogger.child({ module: 'AdminModelPricingPage' });
 
@@ -44,7 +86,12 @@ interface ModelPricing {
   input_cost_per_token: number;
   output_cost_per_token: number;
   effective_date: string;
+  /** Set on a retired row (slice 4 labels it, SA RC-4). */
+  retired_date?: string | null;
 }
+
+/** The two sub-header rows of the unit groups (slice 4, SA NR-5). */
+const UNIT_SUB_HEADERS = ['ours', 'provider', 'gap'] as const;
 
 export default function ModelPricingPage() {
   const [loading, setLoading] = useState(true);
@@ -65,6 +112,15 @@ export default function ModelPricingPage() {
   // an extra click and would hide the C2-4 failure line.
   const [pricingExpanded, setPricingExpanded] = useState(true);
 
+  // Slice 4: the comparison behind every displayed price, the sort, the
+  // manual-entry form, and the busy flag of a silent re-read (SA NR-2).
+  const [comparison, setComparison] = useState<ComparisonModel | null>(null);
+  const [sortMode, setSortMode] = useState<PriceSortMode>('recommended');
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [entryPrefill, setEntryPrefill] = useState<ManualEntryPrefill | null>(null);
+  const [entryKey, setEntryKey] = useState(0);
+  const [rereading, setRereading] = useState(false);
+
   useEffect(() => {
     fetchData();
     // Mount-only load, as on the page before the split; refreshes are explicit.
@@ -76,6 +132,7 @@ export default function ModelPricingPage() {
   const markPricingReadFailed = () => {
     setPricingReadFailed(true);
     setPricingModels([]);
+    setComparison(null);
     setEditingPricing(null);
     setError('Could not load model prices.');
   };
@@ -84,13 +141,20 @@ export default function ModelPricingPage() {
     try {
       if (!silent) {
         setLoading(true);
+      } else {
+        setRereading(true);
       }
       setError(null);
 
-      const response = await fetch('/api/admin/system-config/pricing', {
-        method: 'GET',
-        cache: 'no-store'
-      });
+      // Both lists in one go (SA N-4). The comparison read never throws, so a
+      // throw here is the pricing read, as before.
+      const [response, comparisonRead] = await Promise.all([
+        fetch('/api/admin/system-config/pricing', {
+          method: 'GET',
+          cache: 'no-store'
+        }),
+        readPriceComparison(),
+      ]);
 
       if (!response.ok) {
         logger.error({ status: response.status }, 'Model prices read failed');
@@ -106,17 +170,47 @@ export default function ModelPricingPage() {
         return;
       }
 
+      if (!comparisonRead.ok) {
+        logger.error({ status: comparisonRead.status, read: 'comparison' }, 'Price comparison read failed');
+        markPricingReadFailed();
+        return;
+      }
+
       setPricingModels(result.data);
+      setComparison(comparisonRead.data);
       setPricingReadFailed(false);
-      logger.debug({ count: result.data.length }, 'Model prices loaded');
+      logger.debug({ count: result.data.length, compared: comparisonRead.data.rows.length }, 'Model prices loaded');
     } catch (err) {
       logger.error({ err }, 'Model prices read threw');
       markPricingReadFailed();
     } finally {
       if (!silent) {
         setLoading(false);
+      } else {
+        setRereading(false);
       }
     }
+  };
+
+  // After a saved edit "ours" must show the stored price exactly, so the
+  // comparison is read once more (SA N-5). If that read fails, the save still
+  // succeeded: its message stays and the table is cleared (SA NR-2, C2-4).
+  const rereadComparison = async () => {
+    setRereading(true);
+    const comparisonRead = await readPriceComparison();
+    setRereading(false);
+    if (comparisonRead.ok) {
+      setComparison(comparisonRead.data);
+      return;
+    }
+    logger.error({ status: comparisonRead.status, read: 'comparison' }, 'Price comparison re-read after save failed');
+    markPricingReadFailed();
+  };
+
+  const openEntry = (prefill: ManualEntryPrefill | null) => {
+    setEntryPrefill(prefill);
+    setEntryKey((key) => key + 1);
+    setEntryOpen(true);
   };
 
   const handleEditPricing = (model: ModelPricing) => {
@@ -175,6 +269,10 @@ export default function ModelPricingPage() {
 
       setTimeout(() => setSuccess(null), 3000);
 
+      if (saved?.id) {
+        await rereadComparison();
+      }
+
     } catch (error) {
       logger.error({ err: error, pricingId: modelId }, 'Model price save failed');
       setError(error instanceof Error ? error.message : 'Unknown error occurred');
@@ -218,29 +316,9 @@ export default function ModelPricingPage() {
     }
   };
 
-  // Per token, exact. The 8-digit minimum keeps today's renderings unchanged
-  // ($0.00000015); the maximum used to be 8 too, which showed $0.075 per 1M as
-  // $0.08 per 1M. 15 = 6 + the 9 decimals per 1M the price review accepts, and
-  // stays clear of float noise (around the 17th significant digit).
-  const formatCost = (cost: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 8,
-      maximumFractionDigits: 15
-    }).format(cost);
-  };
-
-  // The same price per 1M tokens, the figure providers publish. Display only:
-  // the stored value and the editor stay per token.
-  const formatCostPerMillion = (cost: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 9
-    }).format(cost * 1_000_000);
-  };
+  // Slice 4: the rows of the one table, sorted as the admin chose. Every
+  // displayed price comes from the comparison (SA N-1); none is formatted here.
+  const tableRows = comparison ? sortPriceTableRows(buildPriceTableRows(pricingModels, comparison), sortMode) : [];
 
   if (loading) {
     return (
@@ -338,6 +416,9 @@ export default function ModelPricingPage() {
               <button
                 data-testid="pricing-toggle"
                 onClick={() => setPricingExpanded(!pricingExpanded)}
+                aria-expanded={pricingExpanded}
+                aria-controls="model-pricing-body"
+                aria-label={pricingExpanded ? 'Collapse model prices' : 'Expand model prices'}
                 className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
               >
                 {pricingExpanded ? (
@@ -351,7 +432,7 @@ export default function ModelPricingPage() {
         </div>
 
         {pricingExpanded && (
-          <div className="p-6 space-y-4">
+          <div id="model-pricing-body" className="p-6 space-y-4">
             {/* Info Box */}
             <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
               <div className="flex items-start gap-3">
@@ -363,10 +444,10 @@ export default function ModelPricingPage() {
                   </p>
                   <div className="space-y-2 text-xs leading-relaxed">
                     <p className="text-slate-300">
-                      <strong className="text-green-300">Input Cost:</strong> Price per single input token (prompts, context, memory), in USD. This is the unit stored and the unit the editor takes; the smaller figure under each price is the same price per 1M tokens. Example: $0.00000015 per token = $0.15 per 1M tokens.
+                      <strong className="text-green-300">Input /1M:</strong> Price per 1M input tokens (prompts, context, memory), in USD, the figure providers publish. The table stores the price per token, and the Edit field still takes the per-token value. Example: $0.15 per 1M tokens = $0.00000015 per token.
                     </p>
                     <p className="text-slate-300">
-                      <strong className="text-green-300">Output Cost:</strong> Price per single output token (AI responses, generated content), in USD. Usually higher than input. Example: $0.00000060 per token = $0.60 per 1M tokens.
+                      <strong className="text-green-300">Output /1M:</strong> Price per 1M output tokens (AI responses, generated content), in USD. Usually higher than input. Example: $0.60 per 1M tokens = $0.0000006 per token.
                     </p>
                     <p className="text-slate-300">
                       <strong className="text-green-300">Sync Latest Pricing:</strong> Copies a built-in price list, kept in the code, into this table: it overwrites the price of every model on that list, including manual edits, and adds any listed model that is missing. It does not contact OpenAI, Anthropic or any other provider.
@@ -379,54 +460,114 @@ export default function ModelPricingPage() {
               </div>
             </div>
 
+          {/* Slice 4: the bar, note, notice and form sit above the table, so a failed read never hides them. */}
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <button type="button" onClick={() => openEntry(null)} className={ADMIN_BUTTON}>
+              {ENTER_PROVIDER_PRICE}
+            </button>
+            <div className="flex items-center gap-2">
+              <label htmlFor="price-sort" className="text-xs text-slate-300">
+                {SORT_LABEL}
+              </label>
+              <select
+                id="price-sort"
+                value={sortMode}
+                onChange={(event) => setSortMode(event.target.value as PriceSortMode)}
+                className="rounded-lg border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+              >
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <p data-testid="price-review-note" className="text-xs text-slate-400">
+            {PRICE_REVIEW_NOTE}
+          </p>
+          {comparison && comparison.rows.length > 0 && comparison.rows.every((row) => row.pending.length === 0) && (
+            <AdminNotice testId="no-pending-notice">{NO_PENDING_NOTICE}</AdminNotice>
+          )}
+          {entryOpen && (
+            <ManualPriceEntryForm
+              key={entryKey}
+              prefill={entryPrefill}
+              onSaved={() => {
+                void fetchData(true);
+              }}
+              onClose={() => setEntryOpen(false)}
+            />
+          )}
+
           {/* C2-4: a failed read is said, never drawn as an empty table. */}
           {pricingReadFailed ? (
             <p data-testid="pricing-read-failed" className="text-sm text-red-400">
               Model prices could not be read. Use the refresh button to try again.
             </p>
           ) : (
-          <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-700/30">
+          <div className="overflow-x-auto rounded-xl border border-slate-700" aria-busy={rereading || undefined} data-testid="pricing-table-wrap">
+          <table className={ADMIN_TABLE}>
+            <caption className="sr-only">Model prices: what we charge today next to the provider&apos;s new price, per 1M tokens or per image</caption>
+            <thead className={ADMIN_THEAD}>
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  Provider
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  Model
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  Input Cost/Token
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  Output Cost/Token
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  Effective Date
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
-                  Actions
-                </th>
+                <th scope="col" rowSpan={2} className={ADMIN_TH}>Model</th>
+                <th scope="col" rowSpan={2} className={ADMIN_TH}>Used by</th>
+                <th scope="colgroup" colSpan={3} className={`${ADMIN_TH} text-center`}>Input /1M</th>
+                <th scope="colgroup" colSpan={3} className={`${ADMIN_TH} text-center`}>Output /1M</th>
+                <th scope="col" rowSpan={2} className={ADMIN_TH}>Status</th>
+                <th scope="col" rowSpan={2} className={ADMIN_TH}>Source</th>
+                <th scope="col" rowSpan={2} className={ADMIN_TH_NUM}>Actions</th>
+              </tr>
+              <tr>
+                {[...UNIT_SUB_HEADERS, ...UNIT_SUB_HEADERS].map((label, index) => (
+                  <th key={`${label}-${index}`} scope="col" className={ADMIN_TH_NUM}>
+                    {label}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
-              {pricingModels.map((model) => {
-                const isEditing = editingPricing === model.id;
+            <tbody className={ADMIN_TBODY}>
+              {tableRows.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className={ADMIN_TD}>
+                    {NO_MODELS_LINE}
+                  </td>
+                </tr>
+              ) : tableRows.map((row) => {
+                const comparisonRow = row.kind === 'compared' ? row.comparison : null;
+                // Edit only on a stored row that is, or will be, charged
+                // (SA RC-4, NR-1): not on retired or superseded rows, and not
+                // on a model with no stored row.
+                const model = row.kind === 'compared' || row.kind === 'starts_later' ? row.stored : null;
+                const isEditing = model !== null && editingPricing === model.id;
+                const provider = comparisonRow ? comparisonRow.provider : row.stored?.provider ?? null;
+                const modelName = comparisonRow ? comparisonRow.modelName : row.stored?.model_name ?? '';
 
                 return (
-                  <tr key={model.id} className="hover:bg-slate-700/20 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full capitalize">
-                        {model.provider}
+                  <tr key={row.key} className="hover:bg-slate-700/20 transition-colors">
+                    <td className={ADMIN_TD}>
+                      <span className="font-mono text-white">{modelName}</span>
+                      <span className="block text-[11px] text-slate-400">
+                        {comparisonRow?.kind === 'image' ? `${provider ?? '—'} · images` : provider ?? '—'}
                       </span>
+                      {/* SA F-1: when the charged stored price took effect (text only, no Date). */}
+                      {row.kind === 'compared' && row.stored && (
+                        <span className="block text-[11px] text-slate-400">
+                          {`${IN_EFFECT_SINCE} ${formatUtcDate(row.stored.effective_date.slice(0, 10))}`}
+                        </span>
+                      )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-mono">
-                      {model.model_name}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300 text-right">
-                      {isEditing ? (
+                    <UsedByCell row={comparisonRow} />
+                    {isEditing && model ? (
+                      <td className={ADMIN_TD} colSpan={6}>
+                        <div className="flex flex-wrap items-center gap-4">
                         <div className="flex items-center justify-end gap-1">
+                          <label htmlFor={`edit-input-${model.id}`} className="text-xs text-slate-300">
+                            Input, {EDIT_UNIT_WORDS}
+                          </label>
                           <input
+                            id={`edit-input-${model.id}`}
                             type="text"
                             value={editedInputCost.toFixed(10)}
                             onChange={(e) => {
@@ -453,19 +594,12 @@ export default function ModelPricingPage() {
                             </button>
                           </div>
                         </div>
-                      ) : (
-                        <>
-                          <span className="font-mono">{formatCost(model.input_cost_per_token)}</span>
-                          <span className="block text-xs text-slate-500 font-mono">
-                            {formatCostPerMillion(model.input_cost_per_token)} per 1M
-                          </span>
-                        </>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300 text-right">
-                      {isEditing ? (
                         <div className="flex items-center justify-end gap-1">
+                          <label htmlFor={`edit-output-${model.id}`} className="text-xs text-slate-300">
+                            Output, {EDIT_UNIT_WORDS}
+                          </label>
                           <input
+                            id={`edit-output-${model.id}`}
                             type="text"
                             value={editedOutputCost.toFixed(10)}
                             onChange={(e) => {
@@ -492,20 +626,17 @@ export default function ModelPricingPage() {
                             </button>
                           </div>
                         </div>
-                      ) : (
-                        <>
-                          <span className="font-mono">{formatCost(model.output_cost_per_token)}</span>
-                          <span className="block text-xs text-slate-500 font-mono">
-                            {formatCostPerMillion(model.output_cost_per_token)} per 1M
-                          </span>
-                        </>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-400 text-right">
-                      {new Date(model.effective_date).toLocaleDateString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right">
-                      {isEditing ? (
+                        </div>
+                      </td>
+                    ) : comparisonRow ? (
+                      <PriceCells row={comparisonRow} />
+                    ) : (
+                      <EmptyPriceCells />
+                    )}
+                    <StatusCell row={row} />
+                    <SourceCell row={comparisonRow} />
+                    <td className={`${ADMIN_TD} whitespace-nowrap text-right`}>
+                      {isEditing && model ? (
                         <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={() => handleSavePricing(model.id)}
@@ -525,13 +656,30 @@ export default function ModelPricingPage() {
                           </button>
                         </div>
                       ) : (
-                        <button
-                          onClick={() => handleEditPricing(model)}
-                          className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-                          title="Edit pricing"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          {comparisonRow && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openEntry({ kind: comparisonRow.kind, provider: comparisonRow.provider, modelName: comparisonRow.modelName })
+                              }
+                              aria-label={`${ENTER_PROVIDER_PRICE} for ${comparisonRow.modelName}`}
+                              className={ADMIN_BUTTON}
+                            >
+                              {ENTER_PROVIDER_PRICE}
+                            </button>
+                          )}
+                          {model && (
+                            <button
+                              onClick={() => handleEditPricing(model)}
+                              className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+                              title="Edit pricing"
+                              aria-label={`Edit the stored price of ${modelName}`}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>
