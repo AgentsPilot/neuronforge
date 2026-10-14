@@ -1,0 +1,45 @@
+{
+  "id": "evt_connect_refund_updated_app",
+  "object": "event",
+  "account": "acct_owner_a",
+  "api_version": "2025-10-29.clover",
+  "created": 1790000860,
+  "data": {
+    "object": {
+      "id": "re_connect_1",
+      "object": "refund",
+      "amount": 2500,
+      "balance_transaction": "txn_connect_1",
+      "charge": "ch_connect_1",
+      "created": 1790000790,
+      "currency": "usd",
+      "destination_details": {
+        "card": {
+          "reference_status": "available",
+          "reference_type": "acquirer_reference_number",
+          "type": "refund"
+        },
+        "type": "card"
+      },
+      "metadata": {
+        "refund_row_id": "a1a1a1a1-0001-4000-8000-00000000a101"
+      },
+      "payment_intent": "pi_website_1",
+      "reason": "requested_by_customer",
+      "receipt_number": null,
+      "source_transfer_reversal": null,
+      "status": "succeeded",
+      "transfer_reversal": null
+    },
+    "previous_attributes": {
+      "status": "pending"
+    }
+  },
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": {
+    "id": null,
+    "idempotency_key": null
+  },
+  "type": "refund.updated"
+}
