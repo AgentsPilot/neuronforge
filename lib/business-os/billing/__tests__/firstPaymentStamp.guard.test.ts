@@ -64,8 +64,13 @@ describe('P5-C4: no TypeScript writer of the first payment stamp', () => {
 
   it('first_paid_at / first_payment_ref are named only by the known readers', () => {
     expect(naming(/first_paid_at|first_payment_ref|firstPaidAt|firstPaymentRef/)).toEqual([
+      // Plan payments P-5b.2 (FR-25, S5-8): the admin paid line reads both
+      // columns from the lineage rows it was given, to pair the money history.
+      'lib/business-os/invites/adminInviteOps.ts',
       // The hold predicate: reads first_paid_at.
       'lib/business-os/invites/paymentHold.ts',
+      // Plan payments P-5b.2 (P5-C10): the batched hold classification reads first_paid_at.
+      'lib/business-os/invites/paymentHoldBatch.ts',
       // The one account-scoped read (select only) and its header.
       'lib/repositories/BusinessOsAccountLineageRepository.ts',
       // The row type of that read.
@@ -74,7 +79,13 @@ describe('P5-C4: no TypeScript writer of the first payment stamp', () => {
   });
 
   it('those readers and the lineage repository make no write call and no RPC', () => {
-    for (const file of ['lib/business-os/invites/paymentHold.ts', 'lib/repositories/BusinessOsAccountLineageRepository.ts']) {
+    for (const file of [
+      'lib/business-os/invites/paymentHold.ts',
+      'lib/repositories/BusinessOsAccountLineageRepository.ts',
+      // P-5b.2: the two new readers of the stamp.
+      'lib/business-os/invites/adminInviteOps.ts',
+      'lib/business-os/invites/paymentHoldBatch.ts',
+    ]) {
       const text = SOURCES.find((source) => source.file === file)?.text ?? '';
       expect({ file, write: WRITE_CALL.test(text), rpc: /\.rpc\s*\(/.test(text) }).toEqual({ file, write: false, rpc: false });
     }
