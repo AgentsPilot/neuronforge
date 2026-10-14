@@ -353,3 +353,39 @@ describe('GET /api/user/data-export', () => {
     expect(mockCalls.agent_executions).toBeDefined();
   });
 });
+
+describe('DE-0a: plugin_connections tokens never reach the export body (QA)', () => {
+  it('a connection row carrying access_token / refresh_token / credentials / token-bearing profile_data exports none of them', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    mockSeeds.plugin_connections = [
+      {
+        user_id: OWNER.id,
+        plugin_key: 'google-mail',
+        plugin_name: 'Gmail',
+        username: 'Ada',
+        email: 'a@example.com',
+        status: 'active',
+        created_at: '2026-02-01T00:00:00Z',
+        updated_at: '2026-03-01T00:00:00Z',
+        access_token: 'QA-ACCESS-TOKEN-SECRET',
+        refresh_token: 'QA-REFRESH-TOKEN-SECRET',
+        credentials: { api_key: 'QA-CREDENTIALS-SECRET' },
+        expires_at: '2099-01-01',
+        settings: { webhook_secret: 'QA-SETTINGS-SECRET' },
+        profile_data: { name: 'Ada', access_token: 'QA-PROFILE-ACCESS', refresh_token: 'QA-PROFILE-REFRESH', id_token: 'QA-PROFILE-ID' },
+      },
+    ];
+    const res = await GET(request());
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const body = JSON.parse(text);
+    expect(body.plugin_connections).toHaveLength(1);
+    expect(body.plugin_connections[0].account_profile).toEqual({ name: 'Ada' });
+    for (const key of ['access_token', 'refresh_token', 'credentials', 'profile_data', 'id_token', 'expires_at', 'settings']) {
+      expect(text).not.toContain(`"${key}"`);
+    }
+    for (const secret of ['QA-ACCESS-TOKEN-SECRET', 'QA-REFRESH-TOKEN-SECRET', 'QA-CREDENTIALS-SECRET', 'QA-SETTINGS-SECRET', 'QA-PROFILE-ACCESS', 'QA-PROFILE-REFRESH', 'QA-PROFILE-ID']) {
+      expect(text).not.toContain(secret);
+    }
+  });
+});
