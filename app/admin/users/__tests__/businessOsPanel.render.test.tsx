@@ -175,6 +175,33 @@ describe('BusinessOsPanel', () => {
     expect(screen.queryByTestId('bos-panel-spend')).toBeNull();
   });
 
+  it('AC-114 (Money M-1): "Open money view" opens Finance on this account, This month; the id only, never a name or an email', async () => {
+    mockFetch({
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+    });
+    render(panel(ACCOUNT, 'Dana Cohen'));
+    // Not while the reads are in flight (SA-W71).
+    expect(screen.queryByTestId('bos-panel-money-view')).toBeNull();
+    const link = await screen.findByTestId('bos-panel-money-view');
+    expect(link.textContent).toBe('Open money view');
+    const href = link.getAttribute('href') ?? '';
+    expect(href).toBe(`/admin/finance?accountId=${ACCOUNT}&preset=this_month`);
+    expect(href).not.toMatch(/Dana|Acme|someone|example|@/);
+    // In the header block, outside the summary strip.
+    expect(link.closest('[data-testid="bos-panel-header"]')).not.toBeNull();
+  });
+
+  it('AC-114: no "Open money view" for a login with no Business OS account', async () => {
+    mockFetch({
+      [`/entitlements/accounts/${NO_BUSINESS}`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
+      [`/accounts/${NO_BUSINESS}/summary`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
+    });
+    render(panel(NO_BUSINESS, 'Agent Only'));
+    await screen.findByTestId('bos-panel-not-bos');
+    expect(screen.queryByTestId('bos-panel-money-view')).toBeNull();
+  });
+
   it('still shows the plan when the summary fails, under a neutral header (N-4)', async () => {
     mockFetch({
       [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },

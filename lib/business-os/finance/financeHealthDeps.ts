@@ -14,7 +14,8 @@
  *   - the finance read repository: billing status and revenue head counts,
  *     the client payments and refunds (layer B, slice 2a), and the overdue
  *     invoices and instalments, and client plans (layer B, slice 2b), and the
- *     boost purchases paid in the window (layer A, slice 4a): the
+ *     boost purchases paid in the window (layer A, slice 4a), and the paid
+ *     plan invoices in the window (layer A, slice 5a): the
  *     named all-accounts reads only when no business is picked, the
  *     account-scoped ones with exactly the picked id (the builder chooses);
  *   - slice 1b, the credit-position pass: `adminCreditPercentDeps()`, the
@@ -136,6 +137,10 @@ export function financeHealthDeps(): Omit<FinanceHealthDeps, 'findNames' | 'read
         businessOsFinanceReadRepository.listBoostPurchasesAllAccountsPaidInRange(range, opts),
       listBoostPurchasesForAccountPaidInRange: (accountId, range, opts) =>
         businessOsFinanceReadRepository.listBoostPurchasesForAccountPaidInRange(accountId, range, opts),
+      listPlanPaymentsAllAccountsPaidInRange: (range, opts) =>
+        businessOsFinanceReadRepository.listPlanPaymentsAllAccountsPaidInRange(range, opts),
+      listPlanPaymentsForAccountPaidInRange: (accountId, range, opts) =>
+        businessOsFinanceReadRepository.listPlanPaymentsForAccountPaidInRange(accountId, range, opts),
     },
     // SA-WR-4: the classifier takes the config as a parameter; this is where it is read.
     config: getEntitlementConfig(),

@@ -52,7 +52,6 @@ import type {
   FinanceBoostNotes,
   FinanceBoostPackageRow,
   FinanceSectionStatus,
-  FinanceTileMoney,
 } from './financeTypes';
 
 /** One boost purchase, structurally (SA-W22): the read's row fits it. */
@@ -93,8 +92,13 @@ export interface BoostRevenueResult {
   /** Null with a business picked (S4-FR-8) or when the read failed. */
   deletedAccounts: FinanceBoostDeletedLine[] | null;
   notes: FinanceBoostNotes | null;
-  /** K-5's money (SA-W47), from the same lines the section shows (SA-Q25). */
-  k5: FinanceTileMoney;
+  /**
+   * NON-WIRE input for the per-currency combiner (slice 5a, SA-W59): one entry
+   * per line, the net in integer minor units, null exactly when the line's
+   * wire `net` is null. K-5 is combined in `ourRevenue.ts` from this and the
+   * plans received, never by scaling a wire number back up.
+   */
+  netMinorByCurrency: Array<{ currency: string | null; netMinor: number | null }>;
   /** For the route's info line: counts only. */
   counts: { counted: number; unreadableCredits: number; deletedAccountPurchases: number };
 }
@@ -245,7 +249,7 @@ export function buildBoostRevenue(input: {
       packages: null,
       deletedAccounts: null,
       notes: null,
-      k5: { kind: 'unknown', reason: 'failed' },
+      netMinorByCurrency: [],
       counts: { counted: 0, unreadableCredits: 0, deletedAccountPurchases: 0 },
     };
   }
@@ -259,6 +263,7 @@ export function buildBoostRevenue(input: {
 
   // ── Per currency (S4-W-5, S4-W-6) ────────────────────────────────────────
   const summaries = summarise(counted);
+  const netMinorByCurrency = summaries.map((s) => ({ currency: s.currency, netMinor: netOf(s, exact) }));
   const lines: FinanceBoostLine[] = summaries.map((s) => {
     const net = netOf(s, exact);
     return {
@@ -320,7 +325,7 @@ export function buildBoostRevenue(input: {
           return { currency: s.currency, purchases: s.purchases, net: net === null ? null : toMoney(net), unreadable: s.unreadable };
         });
 
-  // ── Notes, status, K-5 ───────────────────────────────────────────────────
+  // ── Notes, status ────────────────────────────────────────────────────────
   const unreadableCredits = summaries.reduce((n, s) => n + s.unreadableCredits, 0);
   const overflow = summaries.some((s) => s.overflow);
   // The S4-W-3 note: a refund or dispute amount above 0, or one that is unknown on a refund or dispute row.
@@ -336,24 +341,13 @@ export function buildBoostRevenue(input: {
   };
   const partial = !exact || unreadablePurchases > 0 || unreadableCredits > 0 || otherStatusPurchases > 0 || overflow;
 
-  let k5: FinanceTileMoney;
-  if (lines.length === 0) k5 = { kind: 'none' };
-  else if (lines.length > 1) k5 = { kind: 'several', currencies: lines.length };
-  else {
-    const only = lines[0];
-    k5 =
-      only.net !== null
-        ? { kind: 'one', currency: only.currency, net: only.net }
-        : { kind: 'unknown', reason: exact ? 'unreadable' : 'cut_off' };
-  }
-
   return {
     status: partial ? 'partial' : 'ok',
     lines,
     packages,
     deletedAccounts,
     notes,
-    k5,
+    netMinorByCurrency,
     counts: { counted: counted.length, unreadableCredits, deletedAccountPurchases: deleted.length },
   };
 }

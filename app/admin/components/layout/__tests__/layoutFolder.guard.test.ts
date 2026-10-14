@@ -515,11 +515,9 @@ const MIGRATED_PAGES = [
     ],
   },
   {
-    // G-6. The original `BusinessAccountPicker.tsx` is deliberately not listed:
-    // it is unmigrated (it still calls `.json(`), and since L-1e it is no longer
-    // on this page (the shared `AdminBusinessPicker` replaced it). It stays in
-    // the folder for Finance only (Activity left it in L-8a); the finance
-    // adoption slice deletes it (SA M-2 on L-8).
+    // G-6. The original `BusinessAccountPicker.tsx` was deleted in Money M-1
+    // (finance health §11D, M1-FR-2): Finance moved to the shared
+    // `AdminBusinessPicker`, as Audit trail (L-1e) and Activity (L-8a) had.
     page: '/admin/audit-trail (Audit trail)',
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },
