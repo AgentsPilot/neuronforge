@@ -87,12 +87,12 @@ This is the retrospective for slice 5a of the read-only admin page `/admin/finan
 | FU-5a-3 | Load-sensitive render suites outside this diff: `app/admin/__tests__/activityLayout.render` and `jobsQueues.items.render` time out under parallel load and pass alone. Watch on CI shards | SA / Dev | ⬜ Recorded |
 | FU-4a-3 | Jest "A worker process has failed to exit gracefully": pre-existing, printed on every 5a run with all suites passing | SA / Dev | ⬜ Carried |
 | FU-5a-4 | Manual QA **L-59 to L-74** (QA report): the chip and header name, "Essentials" with the Founding Partner chip, "Paying", the summary (USD 79.00 plan, USD 10.00 boost, **USD 89.00** total), the links and the deep link, K-5 "USD 89.00", the payment list with `formatUtc` timestamps, **checks 17 and 18** with the October literal, 401 / 403, the log line and `durationMs`. Plus the owed **L-1 to L-58** from 1a, 1b, 2a, 2b, 1c and 4a | User | ⬜ Owed |
-| FU-5a-5 | RM: commit, push and open **one** PR for `feature/bos-money-m1-m2`, as the user pre-authorised; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ⬜ Pending |
+| FU-5a-5 | RM: commit, push and open **one** PR for `feature/bos-money-m1-m2`, as the user pre-authorised; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ✅ Done: commit `e8ffc5da`, PR [#383](https://github.com/AgentsPilot/neuronforge/pull/383) |
 | FU-5a-6 | **STOP for a user sync**, as the user asked. Then: the remaining Money steps **M-3 to M-8**, and the consolidation review's **10 business questions** | User → BA → SA | ⬜ Next |
 | FU-4a-2 | DF-5 decision (refund drop in the purchase month or the refund month) | User | ⬜ Open |
 | FU-4a-4, FU-1c-5, FU-2b-5 to FU-2b-10, FU-2a-5 to FU-2a-8, FU-1b-3, FU-1b-4, FU-4 | Carried from earlier slices (currency decimals lists, two-row residual, flaky wall-clock test, `schema:check` from a credentialed checkout, slices 3 and 6 to 8, DF-3, DF-4, layer-B items, earlier typing notes) | As before | ⬜ Unchanged |
 
-### Status: PRE-AUTHORISED BY USER (no diff review) — commit and PR pending (RM) — `feature/bos-money-m1-m2`
+### Status: PRE-AUTHORISED BY USER (no diff review) — committed `e8ffc5da`, PR [#383](https://github.com/AgentsPilot/neuronforge/pull/383) open, not merged — `feature/bos-money-m1-m2`
 
 ---
 
@@ -101,3 +101,4 @@ This is the retrospective for slice 5a of the read-only admin page `/admin/finan
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-14 | Created (TL) | Slice 5a (Money M-1 and M-2) retrospective, written before commit under the user's pre-authorisation (no diff review). Records the consolidation context (docs PR #375), the user's missing USD 79.00 plan now shown as USD 89.00 with the boost, the full cycle despite the "all UI" expectation, the hard M-1 checkpoint gate (green), SA's pre-code corrections (S5-F1 `formatUtc`, K-5 exact-only), D-1 to D-6, cycle counts (0 rejections, 0 bug cycles), a comparison with 4a's lessons, and follow-ups FU-5a-1 to FU-5a-6. Next: stop for a user sync. |
+| 2026-10-14 | Commit and PR (RM) | Slice 5a committed as `e8ffc5da`; origin/main merged cleanly and suites re-run green; PR [#383](https://github.com/AgentsPilot/neuronforge/pull/383) opened, not merged. FU-5a-5 done. |
