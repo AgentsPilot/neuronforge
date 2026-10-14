@@ -22,6 +22,13 @@ import NotificationsTab from '@/components/settings/NotificationsTab'
 import SecurityTab from '@/components/settings/SecurityTab'
 import BillingSettings from '@/components/settings/BillingSettings'
 import { UserProfile, NotificationSettings, PluginConnection } from '@/types/settings'
+import { createLogger } from '@/lib/logger'
+
+const logger = createLogger({ module: 'SettingsPage' })
+
+// Only what PluginsTab reads. `authenticated` holds no token column after
+// DE-0b (BUSINESS_OS_DATA_EXPORT_REQUIREMENT.md §0.1.4), so `*` would fail.
+const PLUGINS_TAB_COLUMNS = 'id, plugin_key, plugin_name, username, email, status, connected_at, last_used'
 
 export default function SettingsPage() {
   const { user } = useAuth()
@@ -97,7 +104,7 @@ export default function SettingsPage() {
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('user_preferences').select('*').eq('user_id', user.id).single(),
         supabase.from('notification_settings').select('*').eq('user_id', user.id).single(),
-        supabase.from('plugin_connections').select('*').eq('user_id', user.id).neq('status', 'disconnected').order('connected_at', { ascending: false })
+        supabase.from('plugin_connections').select(PLUGINS_TAB_COLUMNS).eq('user_id', user.id).neq('status', 'disconnected').order('connected_at', { ascending: false })
       ])
 
       // Set profile data - merge profile and preferences
@@ -132,7 +139,7 @@ export default function SettingsPage() {
       }
 
     } catch (error) {
-      console.error('Error loading user data:', error)
+      logger.error({ err: error }, 'Error loading user data')
     } finally {
       setLoading(false)
     }
@@ -157,7 +164,7 @@ export default function SettingsPage() {
         })
 
       if (profileError) {
-        console.error('Error saving profile:', profileError)
+        logger.error({ err: profileError }, 'Error saving profile')
         throw profileError
       }
 
@@ -177,7 +184,7 @@ export default function SettingsPage() {
           })
 
         if (prefsError) {
-          console.error('Error saving preferences:', prefsError)
+          logger.error({ err: prefsError }, 'Error saving preferences')
           throw prefsError
         }
       }
@@ -185,9 +192,9 @@ export default function SettingsPage() {
       // Reload data to confirm changes
       await loadUserData()
 
-      console.log('✅ Profile saved successfully')
+      logger.info('Profile saved')
     } catch (error) {
-      console.error('Error saving profile:', error)
+      logger.error({ err: error }, 'Error saving profile')
       throw error
     }
   }
@@ -207,14 +214,14 @@ export default function SettingsPage() {
         })
 
       if (error) {
-        console.error('Error saving notifications:', error)
+        logger.error({ err: error }, 'Error saving notifications')
         throw error
       }
 
       await loadUserData()
-      console.log('✅ Notifications saved successfully')
+      logger.info('Notifications saved')
     } catch (error) {
-      console.error('Error saving notifications:', error)
+      logger.error({ err: error }, 'Error saving notifications')
       throw error
     }
   }
