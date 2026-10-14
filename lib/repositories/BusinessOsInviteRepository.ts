@@ -50,6 +50,15 @@
 //      equality-scoped to that account's `issuer_account_id`, UUID-checked,
 //      live claims skipped) and `countPendingForIssuerAccountByAdmin` (what was
 //      skipped). The account id is the deleted target's, from the route path.
+//   7. THE FIRST PAYMENT (plan payments P-5b.1, N-2, SA S5-5 c, C-7), from
+//      the Stripe webhook, which holds no session.
+//      `findInviterNotificationFactsById` reads four columns (`issuer_kind`,
+//      `issuer_account_id`, `email`, `redeemed_account_id`) of the ONE invite
+//      named by the paying account's own lineage row, where the account was
+//      resolved from OUR billing record (SR-8), never from Stripe metadata. Its
+//      only caller is `lib/business-os/invites/championSubscribedNotification.ts`
+//      (wired in `planBillingHandler.ts`), which refuses to email anyone unless
+//      `redeemed_account_id` equals that paying account.
 //
 // `token_hash` is written once per invite, by `createForAdmin` or (Slice 5a)
 // by the SQL send function behind `createForIssuerAccount`, and never selected
@@ -80,6 +89,7 @@ import type {
   BusinessOsFriendInviteListRow,
   BusinessOsInvite,
   BusinessOsInviteHoldFacts,
+  BusinessOsInviteNotificationFacts,
   BusinessOsInvitePublicView,
   BusinessOsInviteRedemptionView,
   ClaimInviteForGoogleSignupInput,
@@ -845,6 +855,35 @@ export class BusinessOsInviteRepository {
       return { data: (data ?? null) as unknown as BusinessOsInviteHoldFacts | null, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to read the invite hold facts');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  // ============ First payment (P-5b.1, N-2; the paying account's own invite) ============
+
+  /**
+   * N-2: who to tell that a friend paid, or `null`. INTENTIONAL SERVICE-ROLE
+   * READ (RLS bypass; the table has no `user_id` and no policy): the Stripe
+   * webhook has no session. `id` is the `invite_id` of the lineage row of the
+   * account resolved from OUR billing record (SR-8), never a value from Stripe
+   * or a request; the caller (`championSubscribedNotification.ts`, its only
+   * one, C-7) cross-checks `redeemed_account_id` against that account before
+   * anything is sent. Four columns: no hash, no reply-to, no note. Never logs
+   * the email.
+   */
+  async findInviterNotificationFactsById(id: string): Promise<RepositoryResult<BusinessOsInviteNotificationFacts>> {
+    const methodLogger = this.logger.child({ method: 'findInviterNotificationFactsById', inviteId: id });
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .select('issuer_kind, issuer_account_id, email, redeemed_account_id')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data ?? null) as unknown as BusinessOsInviteNotificationFacts | null, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to read the invite notification facts');
       return { data: null, error: toError(error) };
     }
   }

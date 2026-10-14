@@ -39,7 +39,11 @@ import type { AdminListData } from '@/lib/admin/adminList-types';
 
 const OVERLAP_MARKER = 'Also in the environment setting: removing the row alone does not revoke access';
 const TABLE_HEADING = 'From the admin_users table';
-const ENV_HEADING = 'Granted by the ADMIN_EMAILS environment setting';
+// LF-5 (user-approved copy, 2026-10-13): the section title, its note and its empty sentence.
+const ENV_HEADING = 'Admins set in the server configuration';
+const ENV_NOTE = 'Added through the ADMIN_EMAILS setting, not through the list above. Changing it needs a redeploy.';
+const ENV_EMPTY_TEXT =
+  'No extra admins come from the server configuration. Everyone with access is in the list above.';
 const REFRESH = 'Refresh the admin list';
 const ROUTE_ERROR = 'Failed to load admin list';
 const UNUSABLE = 'Could not read the admin list. Try again in a moment.';
@@ -121,6 +125,11 @@ describe('what the page shows', () => {
   it('P-3: the environment section heading and its address', async () => {
     await renderLoaded();
     expect(screen.getByText(ENV_HEADING)).toBeInTheDocument();
+    // LF-5: the note sits in the same section as the title, directly after it.
+    const note = screen.getByText(ENV_NOTE);
+    expect(note.closest('section')).toBe(screen.getByText(ENV_HEADING).closest('section'));
+    expect(note.previousElementSibling).toBe(screen.getByText(ENV_HEADING).closest('h2'));
+    expect(note).toHaveClass('text-slate-400');
     const envRows = screen.getAllByTestId('env-admin');
     expect(envRows).toHaveLength(1);
     expect(envRows[0]).toHaveTextContent('extra@x.io');
@@ -128,7 +137,10 @@ describe('what the page shows', () => {
 
   it('P-3b: no env-only addresses says so', async () => {
     await renderLoaded({ ...LIST, envOnlyAdmins: [] });
-    expect(screen.getByText('No addresses beyond the table.')).toBeInTheDocument();
+    expect(screen.getByText(ENV_EMPTY_TEXT)).toBeInTheDocument();
+    // LF-5: the note stays when the list is empty; the old sentence is gone.
+    expect(screen.getByText(ENV_NOTE)).toBeInTheDocument();
+    expect(screen.queryByText('No addresses beyond the table.')).not.toBeInTheDocument();
   });
 
   it('P-8: an empty table, with no error, says so truthfully', async () => {

@@ -29,6 +29,14 @@
  * AC-66 each read failing alone, AC-67 the reminder deadline with fake
  * timers, SA-WR-23), one names call over both tables (SA-W38), and counts
  * with no amount, currency, date or name.
+ *
+ * Slice 4a: "Our revenue" through the builder. The 1c K-5 headline and panel
+ * sentence assertions (AC-75 to AC-77) are superseded by S4-FR-4 / S4-FR-7
+ * (SA-W50, E-31) and rewritten; 1c's R-d BEHAVIOUR stays pinned (SA-WR-32):
+ * a test-mode plan invoice alone still marks plans recorded. Then the boost
+ * block (AC-93, AC-95), K-5's money (SA-W47, SA-WR-34: on K-5 only), the
+ * picked business (AC-96: R-k′ gets exactly the id, R-k zero calls, R-d with
+ * no argument) and the counts (no amount, currency or package).
  */
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
@@ -71,6 +79,8 @@ import type {
 } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 // Slice 1c: a separate import, so the list above stays unedited.
 import type { FinanceBillingStatusRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
+// Slice 4a: a separate import too.
+import type { FinanceBoostPurchaseRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 import type { FinanceReminderFiguresInput } from '../paymentProblems';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { stateForCohort } from '@/lib/business-os/entitlements/lifecycle';
@@ -268,6 +278,13 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       listClientPlansForAccount: jest.fn<Result<ClientRead<FinanceClientPlanRow>>, unknown[]>(() =>
         ok({ rows: [], reachedCeiling: false })
       ),
+      // Slice 4a: empty by default; the boost describes seed their own rows.
+      listBoostPurchasesAllAccountsPaidInRange: jest.fn<Result<ClientRead<FinanceBoostPurchaseRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listBoostPurchasesForAccountPaidInRange: jest.fn<Result<ClientRead<FinanceBoostPurchaseRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
     },
     readReminderFigures: jest.fn<Result<FinanceReminderFiguresInput>, [Date, AbortSignal]>(() => ok(REMINDERS)),
     findNames: jest.fn((ids: readonly string[]) =>
@@ -313,8 +330,8 @@ describe('all businesses', () => {
     ]);
     // Names are asked only for the non-platform ids read from the ledger.
     expect(deps.findNames).toHaveBeenCalledWith([A, B]);
-    expect(p.revenue).toEqual({ status: 'ok', state: 'none_yet' });
-    expect(p.tiles.k5).toMatchObject({ status: 'neutral', headline: 'None yet' });
+    expect(p.revenue).toMatchObject({ status: 'ok', state: 'none_yet', plans: 'none', boosts: { status: 'ok', scope: 'all' } });
+    expect(p.tiles.k5).toMatchObject({ status: 'neutral', headline: 'No data yet', money: { kind: 'none' } });
     expect(p.tiles.k3).toMatchObject({ status: 'amber', value: { value: 1, exact: true } });
     expect(result.counts).toMatchObject({ accounts: 2, ledgerRows: 4, deletedRows: 1, topAccounts: 3, namesFound: 1 });
   });
@@ -421,41 +438,222 @@ describe('all businesses', () => {
   });
 });
 
-describe('the revenue panel (S1-FR-25..27; slice 1c S1C-FR-1)', () => {
+// ── Our revenue (slice 4a; the 1c revenue panel's wording superseded, SA-W50 / E-31) ──
+
+let boostSeq = 0;
+function boostRow(user_id: string | null, extra: Partial<FinanceBoostPurchaseRow> = {}): FinanceBoostPurchaseRow {
+  boostSeq += 1;
+  return {
+    id: `cccccccc-0000-4000-8000-${String(boostSeq).padStart(12, '0')}`,
+    user_id,
+    status: 'paid',
+    package_id: 'pkg-small',
+    package_version: 1,
+    currency: 'USD',
+    amount_total_minor: 1000,
+    amount_tax_minor: 0,
+    amount_refunded_minor: 0,
+    credits_total: '5000.000000',
+    paid_at: '2026-11-05T10:00:00.000Z',
+    ...extra,
+  };
+}
+
+/** The owner's own test purchase (AC-95): one boost, USD 10.00, 5,000 credits. */
+function boostDeps(rows: FinanceBoostPurchaseRow[] = [boostRow(A)], reachedCeiling = false) {
+  const deps = makeDeps();
+  deps.finance.listBoostPurchasesAllAccountsPaidInRange.mockImplementation(() => ok({ rows, reachedCeiling }));
+  deps.finance.listBoostPurchasesForAccountPaidInRange.mockImplementation(() =>
+    ok({ rows: rows.filter((r) => r.user_id === A), reachedCeiling })
+  );
+  return deps;
+}
+
+describe('the plans line from R-d (S4-FR-4; 1c behaviour kept, SA-WR-32)', () => {
   // The builder receives counts only; that test-mode rows are counted at all is
-  // pinned in the repository test (no mode filter on either head count).
-  it('AC-75: a paid plan invoice (test or real) → recorded, K-5 "Revenue recorded, not yet shown"', async () => {
+  // pinned, UNEDITED, in the repository test (no mode filter on either head count).
+  it('SA-WR-32: a test-mode plan invoice alone (R-d counts it) → plans recorded and state recorded', async () => {
     const deps = makeDeps();
     deps.finance.countRevenueRows.mockImplementation(() => ok({ planInvoicesPaid: 1, boostsPaid: 0 }));
     const { result } = await run(deps);
     if (result.kind !== 'ok') throw new Error('expected ok');
-    expect(result.payload.revenue.state).toBe('recorded');
-    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'Revenue recorded, not yet shown' });
+    expect(result.payload.revenue).toMatchObject({ status: 'ok', state: 'recorded', plans: 'recorded' });
   });
 
-  it('AC-76: a paid boost alone → recorded', async () => {
-    const deps = makeDeps();
+  it('AC-76 (4a meaning): a paid boost alone → plans none, state recorded, the boost line shown', async () => {
+    const deps = boostDeps();
     deps.finance.countRevenueRows.mockImplementation(() => ok({ planInvoicesPaid: 0, boostsPaid: 1 }));
     const { result } = await run(deps);
     if (result.kind !== 'ok') throw new Error('expected ok');
-    expect(result.payload.revenue).toEqual({ status: 'ok', state: 'recorded' });
-    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'Revenue recorded, not yet shown' });
+    expect(result.payload.revenue).toMatchObject({ status: 'ok', state: 'recorded', plans: 'none' });
+    expect(result.payload.revenue.boosts.lines).toEqual([expect.objectContaining({ currency: 'USD', purchases: 1, net: 10 })]);
   });
 
-  it('AC-77: no paid invoice and no paid boost → none_yet, K-5 "None yet"', async () => {
+  it('AC-77 (4a meaning): nothing paid → plans none, state none_yet, K-5 "No data yet"', async () => {
     const { result } = await run(makeDeps());
     if (result.kind !== 'ok') throw new Error('expected ok');
-    expect(result.payload.revenue).toEqual({ status: 'ok', state: 'none_yet' });
-    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'None yet' });
+    expect(result.payload.revenue).toMatchObject({ status: 'ok', state: 'none_yet', plans: 'none' });
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'No data yet', money: { kind: 'none' } });
   });
 
-  it('AC-39: the check fails → panel unknown, K-5 unavailable "Could not check"', async () => {
+  it('AC-39 (4a meaning): R-d fails → plans unknown, section partial, K-5 unchanged (it rests on the boost read)', async () => {
+    const deps = boostDeps();
+    deps.finance.countRevenueRows.mockImplementation(fail);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue).toMatchObject({ status: 'partial', state: 'unknown', plans: 'unknown', boosts: { status: 'ok' } });
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', money: { kind: 'one', currency: 'USD', net: 10 } });
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'revenue_existence' }), 'Finance read failed');
+  });
+
+  it('both R-d and R-k fail → the section is unknown; every other section still renders', async () => {
     const deps = makeDeps();
     deps.finance.countRevenueRows.mockImplementation(fail);
+    deps.finance.listBoostPurchasesAllAccountsPaidInRange.mockImplementation(fail as never);
     const { result } = await run(deps);
     if (result.kind !== 'ok') throw new Error('expected ok');
-    expect(result.payload.revenue).toEqual({ status: 'unknown', state: 'unknown' });
-    expect(result.payload.tiles.k5).toMatchObject({ status: 'unavailable', headline: 'Could not check' });
+    expect(result.payload.revenue.status).toBe('unknown');
+    expect(result.payload.revenue.boosts).toEqual({ status: 'unknown', scope: 'all', lines: null, packages: null, deletedAccounts: null, notes: null });
+    expect(result.payload.accounts.status).toBe('ok');
+    expect(result.payload.takings.status).toBe('ok');
+  });
+});
+
+describe('our boost revenue, all businesses (slice 4a)', () => {
+  it('AC-95: the owner purchase → USD 10.00 line, starter-like package row, K-5 grey with USD 10 and the net headline; R-k gets the window', async () => {
+    const deps = boostDeps();
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const boosts = result.payload.revenue.boosts;
+    expect(boosts).toMatchObject({ status: 'ok', scope: 'all', deletedAccounts: [] });
+    expect(boosts.lines).toEqual([
+      { currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, held: 0, lost: 0, net: 10, creditsSold: 5000, unreadable: 0, unreadableCredits: 0 },
+    ]);
+    expect(boosts.packages).toEqual([
+      { currency: 'USD', packageId: 'pkg-small', packageVersion: 1, purchases: 1, gross: 10, refunded: 0, net: 10, unreadable: 0 },
+    ]);
+    expect(result.payload.tiles.k5).toEqual({
+      id: 'k5_our_revenue',
+      status: 'neutral',
+      headline: 'Net of refunds and disputes',
+      value: null,
+      previous: null,
+      money: { kind: 'one', currency: 'USD', net: 10 },
+    });
+    expect(deps.finance.listBoostPurchasesAllAccountsPaidInRange.mock.calls).toEqual([[{ from: WINDOW.start, to: WINDOW.end }]]);
+    expect(deps.finance.listBoostPurchasesForAccountPaidInRange).not.toHaveBeenCalled();
+  });
+
+  it('SA-WR-34: K-1 to K-4 never carry money; K-5 always does', async () => {
+    for (const deps of [makeDeps(), boostDeps()]) {
+      const { result } = await run(deps);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      const { k1, k2, k3, k4, k5 } = result.payload.tiles;
+      for (const tile of [k1, k2, k3, k4]) expect(tile).not.toHaveProperty('money');
+      expect(k5).toHaveProperty('money');
+      expect(k5.value).toBeNull();
+    }
+  });
+
+  it('AC-97: a deleted-account purchase counts in the totals and on the deleted line', async () => {
+    const { result } = await run(boostDeps([boostRow(A), boostRow(null, { amount_total_minor: 2500 })]));
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ purchases: 2, net: 35 });
+    expect(result.payload.revenue.boosts.deletedAccounts).toEqual([{ currency: 'USD', purchases: 1, net: 25, unreadable: 0 }]);
+    expect(result.counts.boosts.deletedAccountPurchases).toBe(1);
+  });
+
+  it('AC-92: two currencies → K-5 several, never a sum', async () => {
+    const { result } = await run(boostDeps([boostRow(A), boostRow(B, { currency: 'EUR', amount_total_minor: 700 })]));
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'Net of refunds and disputes', money: { kind: 'several', currencies: 2 } });
+    expect(result.payload.revenue.boosts.lines!.map((l) => l.currency)).toEqual(['EUR', 'USD']);
+  });
+
+  it('AC-93: R-k at its ceiling → boosts partial, section partial, K-5 unknown cut_off (still grey, never "at least")', async () => {
+    const { result } = await run(boostDeps([boostRow(A)], true));
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue).toMatchObject({ status: 'partial', boosts: { status: 'partial', notes: { exact: false } } });
+    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ net: null, held: null, lost: null });
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', money: { kind: 'unknown', reason: 'cut_off' } });
+    expect(result.counts.boosts).toMatchObject({ rows: 1, ceiling: true });
+  });
+
+  it('AC-95: R-k fails → K-5 unavailable "Unknown", boosts unknown, section partial, every other section present', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostPurchasesAllAccountsPaidInRange.mockImplementation(fail as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'unavailable', headline: 'Unknown', money: { kind: 'unknown', reason: 'failed' } });
+    expect(result.payload.revenue).toMatchObject({ status: 'partial', plans: 'none', boosts: { status: 'unknown', lines: null } });
+    expect(result.payload.accounts.status).toBe('ok');
+    expect(result.payload.aiCost.status).toBe('ok');
+    expect(result.payload.credits.status).toBe('ok');
+    expect(result.payload.takings.status).toBe('ok');
+    expect(result.counts.boosts).toMatchObject({ rows: null, counted: 0 });
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'boost_purchases' }), 'Finance read failed');
+  });
+
+  it('R-k THROWS → the same unknown block, never a throw out of the builder', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostPurchasesAllAccountsPaidInRange.mockImplementation(() => {
+      throw new Error('exploded');
+    });
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue.boosts.status).toBe('unknown');
+  });
+
+  it('the counts carry no amount, currency or package', async () => {
+    const { result } = await run(boostDeps([boostRow(A, { amount_total_minor: 987654 }), boostRow(A, { status: 'expired' })]));
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.counts.boosts).toEqual({
+      rows: 2,
+      ceiling: false,
+      counted: 1,
+      otherStatus: 1,
+      unreadable: 0,
+      unreadableCredits: 0,
+      currencies: 1,
+      packages: 1,
+      deletedAccountPurchases: 0,
+    });
+    const text = JSON.stringify(result.counts);
+    for (const secret of ['9876', 'USD', 'pkg-small']) expect(text).not.toContain(secret);
+  });
+
+  it('the boost block looks up no name: an id read only from a boost row never reaches the names read', async () => {
+    const ONLY_IN_BOOSTS = '66666666-6666-4666-8666-666666666666';
+    const deps = boostDeps([boostRow(ONLY_IN_BOOSTS)]);
+    await run(deps);
+    for (const [ids] of deps.findNames.mock.calls) expect(ids).not.toContain(ONLY_IN_BOOSTS);
+  });
+});
+
+describe('AC-96: with a business picked, R-k′ gets exactly the id; R-k zero calls; R-d with no argument', () => {
+  it('exactly the id and the window range; deletedAccounts null; K-5 is that business’s net; plans stay platform-wide', async () => {
+    const deps = boostDeps([boostRow(A), boostRow(null, { amount_total_minor: 2500 })]);
+    deps.finance.countRevenueRows.mockImplementation(() => ok({ planInvoicesPaid: 3, boostsPaid: 2 }));
+    const { result } = await run(deps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(deps.finance.listBoostPurchasesForAccountPaidInRange.mock.calls).toEqual([[A, { from: WINDOW.start, to: WINDOW.end }]]);
+    expect(deps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(deps.finance.countRevenueRows.mock.calls).toEqual([[]]);
+    const boosts = result.payload.revenue.boosts;
+    expect(boosts.scope).toBe('one');
+    expect(boosts.deletedAccounts).toBeNull();
+    expect(boosts.lines).toEqual([expect.objectContaining({ purchases: 1, net: 10 })]);
+    expect(result.payload.revenue.plans).toBe('recorded');
+    expect(result.payload.tiles.k5).toMatchObject({ money: { kind: 'one', currency: 'USD', net: 10 } });
+  });
+
+  it('a picked business with no boost → K-5 "No data yet", empty', async () => {
+    const deps = boostDeps([boostRow(B)]);
+    const { result } = await run(deps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue.boosts.notes).toMatchObject({ empty: true });
+    expect(result.payload.tiles.k5).toMatchObject({ headline: 'No data yet', money: { kind: 'none' } });
+    expect(deps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
   });
 });
 
@@ -1172,11 +1370,13 @@ describe('AC-65 (2a): with a business picked, R-e′ and R-f′ get exactly the 
 });
 
 describe('the wiring (slices 2a and 2b)', () => {
-  it('exposes exactly the thirteen finance reads: the four of 2a and the six of 2b included', () => {
+  it('exposes exactly the fifteen finance reads: the four of 2a, the six of 2b and the two of 4a included', () => {
     expect(Object.keys(financeHealthDeps().finance).sort()).toEqual([
       'countRevenueRows',
       'findBillingStatusForAccount',
       'listBillingStatusesAllAccounts',
+      'listBoostPurchasesAllAccountsPaidInRange',
+      'listBoostPurchasesForAccountPaidInRange',
       'listClientPaymentsAllAccountsPaidInRange',
       'listClientPaymentsForAccountPaidInRange',
       'listClientPlansAllAccounts',

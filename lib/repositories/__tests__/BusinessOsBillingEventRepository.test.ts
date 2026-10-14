@@ -475,6 +475,8 @@ describe('source rules', () => {
       'lib/business-os/billing/__tests__/firstPaymentStamp.guard.test.ts',
       // P-5a.1: the first payment stamp test imports the same TYPES for its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
+      // P-5b.1: the N-2 apply test imports the same TYPES for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
       // P-3b.2: the apply use case's test imports the input and result TYPES to build its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       // P-7b.1b (U-7): the captured-payload test imports the apply input and event TYPES for its fake.

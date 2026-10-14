@@ -311,6 +311,9 @@ export const AUDIT_EVENTS = {
   // actorId null, SA Q-4), so it appears in neither person's own audit view;
   // the recipient's account id, the status, the language and the reason class
   // are in the details. Never an email address of anyone.
+  // Plan payments P-5b.1 (N-2, SA S5-4, Q-1): the same two events, with
+  // `details.event = 'subscribed'`, when a friend pays their first invoice; the
+  // same no-owner shape, never on the lineage entity (N-6).
   BOS_INVITE_INVITER_NOTIFIED: 'BOS_INVITE_INVITER_NOTIFIED',
   BOS_INVITE_INVITER_NOT_NOTIFIED: 'BOS_INVITE_INVITER_NOT_NOTIFIED',
   // Slice 5a (F5a-13): a champion's friend invites. Actor = the champion
@@ -912,12 +915,12 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_INVITE_INVITER_NOTIFIED]: {
     severity: 'info',
     complianceFlags: ['SOC2'],
-    description: 'The issuer of an accepted Business OS invite was emailed (recipient kind, account id, status and language recorded)',
+    description: 'The issuer of a Business OS invite was emailed that it was accepted, or (N-2) that the friend subscribed (event, recipient kind, account id, status and language recorded)',
   },
   [AUDIT_EVENTS.BOS_INVITE_INVITER_NOT_NOTIFIED]: {
     severity: 'info',
     complianceFlags: ['SOC2'],
-    description: 'The issuer of an accepted Business OS invite was not emailed, or the send was not confirmed in time (reason class only)',
+    description: 'The issuer of a Business OS invite was not emailed that it was accepted or (N-2) that the friend subscribed, or the send was not confirmed in time (reason class only)',
   },
   // Credit deduction slice 11b. 'warning': an admin changed what an account can
   // spend. SOC2 and not FINANCIAL: FINANCIAL is reserved for AgentsPilot's own
