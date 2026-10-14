@@ -1002,7 +1002,13 @@ Run `npm run dev` from `neuronforge-finance-health` and sign in as a platform ad
 
 ## Commit Info
 
-_RM populates this section._
+| Item | Value |
+|---|---|
+| Branch | `feature/bos-finance-health-4` |
+| Commit | `0acb460b` feat(admin): Business OS finance page slice 4a (boost revenue) |
+| Merge of `origin/main` | `4df4f7c5` (clean) |
+| PR | [#358](https://github.com/AgentsPilot/neuronforge/pull/358) |
+| Files | 20 (16 modified, 4 new) |
 
 ---
 

@@ -84,12 +84,12 @@ The cycle ran in this order:
 | FU-4a-2 | **DF-5 decision:** when a boost is refunded, does the drop show in the **purchase month** (a, the default, as built) or in the **refund month** (b, which needs a refund date to be recorded by the boost module)? Choosing (b) changes only `refundsAndDisputesOf`'s input and one sentence, plus a writer-side change | User | ⬜ Open |
 | FU-4a-3 | Jest "A worker process has failed to exit gracefully": pre-existing (seen in the 1a and 2a reviews; reproduced on suite sets with no 4a file), intermittent, exit 0; `--detectOpenHandles` found no open handle. Look at it separately if it starts to fail CI | SA / Dev | ⬜ Recorded |
 | FU-4a-4 | QA Low note 2: any three-letter code not on `refundMath`'s zero- or three-decimal lists is treated as two-decimal. Boosts are USD only today; a new currency with other decimals must be added to those lists | SA | ⬜ Recorded |
-| FU-4a-5 | RM: commit, push and open the PR for `feature/bos-finance-health-4`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ⬜ Pending (user approved 2026-10-14) |
+| FU-4a-5 | RM: commit, push and open the PR for `feature/bos-finance-health-4`; record the commit in the workplan's Commit Info and in requirement §0.1 | RM / TL | ✅ Done: commit `0acb460b`, PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358) |
 | FU-4a-6 | **Slice 4b** (boost problems, Section 6 block A, K-5's dispute rule, bought credits in Section 4), then **slice 5** (plan revenue) | BA → SA → Dev | ⬜ Next |
 | FU-1c-4 | AI-cost overlap questions BQ-1 to BQ-5; **urgent** OV-2 (move Finance to the shared picker before layout step L-8) | User → BA → SA | ⬜ Open, time-sensitive |
 | FU-1c-5, FU-2b-5 to FU-2b-10, FU-2a-5 to FU-2a-8, FU-1b-3, FU-1b-4, FU-4 | Carried from earlier slices (two-row residual, flaky wall-clock test, `schema:check` from a credentialed checkout, slices 3 and 6 to 8, DF-3, DF-4, layer-B items, earlier typing notes) | As before | ⬜ Unchanged |
 
-### Status: APPROVED BY USER — commit pending (RM) — `feature/bos-finance-health-4`
+### Status: APPROVED BY USER — committed `0acb460b`, PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358) open — `feature/bos-finance-health-4`
 
 ---
 
@@ -98,3 +98,4 @@ The cycle ran in this order:
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-14 | Created (TL) | Slice 4a retrospective after the user approved the diff. Records the 4a / 4b split, the scope (R-k / R-k′, `boostRevenue.ts`, the revenue section, K-5 with its currency), the integer-cents rules, the cycle counts (0 rejections, 0 bug cycles, the first slice of the feature with no fix round), the canary catching two real type errors, a comparison with 1c's lessons, and follow-ups: manual QA L-1 to L-58, the open DF-5 decision, the pre-existing Jest worker-exit warning, and slice 4b next. Commit pending (RM). |
+| 2026-10-14 | Commit recorded (RM) | Slice 4a committed as `0acb460b` on `feature/bos-finance-health-4`; `origin/main` merged in cleanly (`4df4f7c5`); PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358) opened. |
