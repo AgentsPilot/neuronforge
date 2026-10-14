@@ -1031,6 +1031,8 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         // Admin delete AD-2a: a deleted business's pending invites, scoped by its issuing account id.
         'revokePendingForIssuerAccountByAdmin',
         'countPendingForIssuerAccountByAdmin',
+        // Plan payments P-5b.2 (P5-C10): grant kinds in batch for the report and dry run, admin only.
+        'findGrantKindsByIdsForAdmin',
       ].sort()
     );
   });

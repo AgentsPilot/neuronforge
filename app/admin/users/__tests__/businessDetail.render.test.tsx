@@ -28,6 +28,8 @@ jest.mock('@/lib/logger', () => ({
     debug: jest.fn(),
     child: jest.fn().mockReturnThis(),
   }),
+  // LF-F3: the page logs through `clientLogger.child`; `@/lib/logger/client` re-exports it from this module.
+  clientLogger: { child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }) },
 }));
 
 let mockSearch = '';

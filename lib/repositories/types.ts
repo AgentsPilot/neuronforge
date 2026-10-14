@@ -388,6 +388,86 @@ export interface AiModelPricingSyncResult {
 }
 
 /**
+ * An active `ai_model_pricing` row read with its prices as exact decimal TEXT
+ * (`::text` casts), for the admin price comparison only (AI model price review
+ * slice 3). Never a JS float.
+ */
+export interface AiModelPricingExactRow {
+  id: string;
+  provider: string;
+  model_name: string;
+  input_cost_per_token: string;
+  output_cost_per_token: string;
+  cached_input_cost_per_token: string | null;
+  effective_date: string;
+  created_at: string;
+}
+
+/**
+ * A pending provider price line, as handed to `ai_price_submit_pending`
+ * (AI model price review slice 3). Every price is a decimal STRING: per 1M
+ * tokens or per image for the proposed price, per token or per image for the
+ * current snapshot. The database converts them; no float is ever sent.
+ */
+export interface AiPriceSubmitLine {
+  kind: 'token' | 'image';
+  provider: string;
+  model_name: string;
+  image_size?: string;
+  image_quality?: string;
+  input_per_1m?: string;
+  output_per_1m?: string;
+  cached_input_per_1m?: string;
+  price_per_image?: string;
+  current_basis: 'table' | 'in_code_fallback' | 'image_setting' | 'unpriced';
+  current_row_id?: string;
+  current_input_cost_per_token?: string;
+  current_output_cost_per_token?: string;
+  current_cached_input_cost_per_token?: string;
+  current_cost_per_image?: string;
+  source_url: string;
+  checked_on: string;
+  flags: string[];
+}
+
+export interface AiPriceSubmitInput {
+  adminUserId: string;
+  sourceKind: 'manual' | 'fetch';
+  providerOutcomes: Record<string, unknown> | null;
+  lines: AiPriceSubmitLine[];
+}
+
+/** One row of the submit RPC's result: one per submitted line. */
+export interface AiPriceSubmitResultLine {
+  proposalId: string;
+  lineId: string;
+  /** 1-based position of the line in the submitted list. */
+  lineIndex: number;
+  supersededLineId: string | null;
+}
+
+/** A pending line as the comparison read needs it (prices as submitted, per 1M or per image). */
+export interface AiPricePendingLine {
+  id: string;
+  proposal_id: string;
+  kind: 'token' | 'image';
+  provider: string;
+  model_name: string;
+  image_size: string | null;
+  image_quality: string | null;
+  input_per_1m: string | null;
+  output_per_1m: string | null;
+  cached_input_per_1m: string | null;
+  price_per_image: string | null;
+  source_url: string;
+  checked_on: string;
+  flags: string[];
+  cross_check_verdict: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+/**
  * A row of `boost_packs` — the agent-platform Pilot-Credit boost catalog, a
  * platform-wide table with no `user_id`. See the header of `BoostPackRepository`
  * for why the mandatory user scoping does not apply. PostgREST returns the
@@ -872,6 +952,15 @@ export interface BusinessOsAccountLineageLevel {
   level: number;
   /** NULL for an L1 champion (`admin_invite`); the inviting account for L2+ (FR-36). */
   parent_account_id: string | null;
+  /**
+   * Plan payments P-5b.2 (FR-25, S5-8): what the admin paid line needs. The
+   * hold predicate reads `source` and `first_paid_at`; `first_payment_ref` is
+   * the invoice id the money history is matched on, together with the account.
+   * Never a date or an amount shown from here (AC-F2.2).
+   */
+  source: 'admin_invite' | 'account_invite' | 'organic';
+  first_paid_at: string | null;
+  first_payment_ref: string | null;
 }
 
 /**
@@ -882,6 +971,41 @@ export interface BusinessOsAccountHoldFacts {
   invite_id: string | null;
   source: 'admin_invite' | 'account_invite' | 'organic';
   first_paid_at: string | null;
+}
+
+/**
+ * Plan payments P-5b.2 (P5-C10): the same hold facts for MANY accounts at once,
+ * keyed by the account, for the shadow report and the launch dry run (admin
+ * only). Read in batches, never one `readPaymentHold` per account.
+ */
+export interface BusinessOsAccountHoldFactsRow extends BusinessOsAccountHoldFacts {
+  account_id: string;
+}
+
+/**
+ * Plan payments P-5b.2 (S5-8, SA C-11): one (account, invoice) pair the admin
+ * paid line asks the money history about. Both come from the SAME lineage row
+ * (`account_id`, `first_payment_ref`), and a money row is kept only when it
+ * matches both.
+ */
+export interface BusinessOsPaidInvoicePair {
+  accountId: string;
+  invoiceId: string;
+}
+
+/**
+ * Plan payments P-5b.2 (FR-25): one paid plan invoice from
+ * `business_os_billing_events`, as the admin paid line shows it. The amount is
+ * what was paid, tax included (Stripe `amount_paid`), in minor units of USD.
+ */
+export interface BusinessOsPaidInvoiceFacts {
+  accountId: string;
+  invoiceId: string;
+  amountMinor: number;
+  amountTaxMinor: number | null;
+  currency: 'usd';
+  paidAt: string;
+  livemode: boolean;
 }
 
 /** Slice 5b: the two invite facts the payment hold and its screen need. */

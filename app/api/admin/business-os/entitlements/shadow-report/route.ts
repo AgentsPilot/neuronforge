@@ -19,6 +19,9 @@
  * business names, no emails, no override reason text. That is a property of the
  * builder, asserted by its own tests — the route adds no fields of its own.
  *
+ * Plan payments P-5b.2: the route wires the batched payment-hold readers, so
+ * held accounts show under `static.awaitingPayment` instead of as anomalies.
+ *
  * @module app/api/admin/business-os/entitlements/shadow-report
  */
 
@@ -28,6 +31,8 @@ import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { buildShadowReport } from '@/lib/business-os/entitlements/report';
 import { getEntitlementMode } from '@/lib/business-os/entitlements/mode';
+import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
+import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 
 const logger = createLogger({ module: 'AdminBosEntitlementsReportAPI' });
 
@@ -84,12 +89,18 @@ export async function GET(request: NextRequest) {
       asTier: parsed.data.asTier,
       asTierReadRule: parsed.data.asTierReadRule,
       includeSetupAi: parsed.data.includeSetupAi === 'true',
+      // Plan payments P-5b.2 (SA-P18): held accounts leave `anomalies` for
+      // `awaitingPayment`. Batched cross-account reads on the service role,
+      // intentionally, behind `requireAdmin` above (P5-C9, P5-C10).
+      holdReaders: { lineage: businessOsAccountLineageRepository, invites: businessOsInviteRepository },
     });
 
     requestLogger.info(
       {
         mode: getEntitlementMode(),
         accountsScanned: report.static.accountsScanned,
+        awaitingPayment: report.static.awaitingPayment.count,
+        holdScanFailed: report.static.awaitingPayment.scanFailed,
         asTier: parsed.data.asTier ?? null,
         window: parsed.data.from ? `${parsed.data.from}..${parsed.data.to}` : null,
       },

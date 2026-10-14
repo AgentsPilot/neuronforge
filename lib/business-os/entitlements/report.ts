@@ -40,6 +40,9 @@ import {
   type BusinessOsShadowEvent,
 } from '@/lib/repositories/BusinessOsEntitlementShadowRepository';
 import { tokenUsageRepository, type TokenUsageRepository } from '@/lib/repositories/TokenUsageRepository';
+// Plan payments P-5b.2 (SA-P18, P5-C10): an import OUT of the module. The batch
+// helper imports nothing from the entitlements module (SA C-8), so no cycle.
+import { readAwaitingPaymentAccounts, type AwaitingPaymentReaders } from '@/lib/business-os/invites/paymentHoldBatch';
 import { fromPlanRow } from './account';
 import { deriveLifecycle } from './lifecycle';
 import { resolveEntitlements, satisfies } from './resolver';
@@ -136,6 +139,21 @@ export interface StaticSection {
   noEndDateAccountsWithoutProfile: number;
   anomalies: Array<{ accountId: string; anomaly: string }>;
   /**
+   * Accounts held on the payment screen (plan payments P-5b.2, SA-P18, AC-F2.10).
+   *
+   * A held friend's plan row has no basis by design (T-13 layer 1), so the
+   * lifecycle reads it as a `no_assignment` anomaly. Those accounts are
+   * classified once, after the walk, with the payment gate's own predicate
+   * (`isAwaitingPayment`, in batches), and a held one is listed HERE INSTEAD of
+   * in `anomalies` (SA Q-9). `byState` and `accountsScanned` are not changed by
+   * the move, so the totals reconcile as before (SA C-9).
+   *
+   * Read `scanFailed` first, like `tenantsWithoutPlanRow`: when the hold read
+   * failed (or no reader was given) `count` is `null` and every anomaly stays
+   * where it was — a failed read never hides an anomaly. Ids only (RC-16).
+   */
+  awaitingPayment: AwaitingPaymentSection;
+  /**
    * Tenants with no plan record — **exhaustive since S-0**.
    *
    * `onboardingOnly` is the set the previous scan could not see at all, and
@@ -182,6 +200,21 @@ export interface StaticSection {
    */
   dormantChampions: DormantChampionSection;
 }
+
+/** P-5b.2: held accounts, moved out of `anomalies` (see `StaticSection.awaitingPayment`). */
+export interface AwaitingPaymentSection {
+  /** `true` when the hold read failed or was not wired. **Read this before `count`.** */
+  scanFailed: boolean;
+  /** Distinct held accounts; `null` while `scanFailed` is `true`. */
+  count: number | null;
+  /** Their account ids, at most `AWAITING_PAYMENT_LIST_CAP`. Ids only (RC-16). */
+  accountIds: string[];
+  /** More held accounts exist than `accountIds` lists. */
+  truncated: boolean;
+}
+
+/** P-5b.2: how many held account ids the section lists (the count is exact). */
+export const AWAITING_PAYMENT_LIST_CAP = 200;
 
 /** One dormant champion, and what ending their free access would take. */
 export interface DormantChampionRow {
@@ -393,6 +426,14 @@ export interface ShadowReportOptions {
   planRepository?: Pick<BusinessOsAccountPlanRepository, 'pagePlans' | 'findTenantsMissingPlanRow' | 'findRecentOnboardedPlans'>;
   shadowRepository?: Pick<BusinessOsEntitlementShadowRepository, 'findWindow'>;
   usageRepository?: Pick<TokenUsageRepository, 'listCallsInWindow'>;
+  /**
+   * Plan payments P-5b.2: the batched hold reads (lineage + invite grant
+   * kinds), injected by the shadow-report route. Deliberately NO default: a
+   * caller that does not pass them (every older report suite, SA C-9) can
+   * never reach a real repository, and its held anomalies stay in place with
+   * `awaitingPayment.scanFailed: true`.
+   */
+  holdReaders?: AwaitingPaymentReaders;
   now?: () => Date;
 }
 
@@ -413,7 +454,7 @@ export async function buildShadowReport(options: ShadowReportOptions = {}): Prom
     generatedAt: now().toISOString(),
     tiersConfigured: config.tierOrder,
     limitations: LIMITATIONS,
-    static: await buildStatic(config, planRepository, now()),
+    static: await buildStatic(config, planRepository, now(), options.holdReaders),
   };
 
   if (options.from && options.to) {
@@ -449,7 +490,8 @@ export async function buildShadowReport(options: ShadowReportOptions = {}): Prom
 async function buildStatic(
   config: EntitlementConfig,
   repository: Pick<BusinessOsAccountPlanRepository, 'pagePlans' | 'findTenantsMissingPlanRow'>,
-  now: Date
+  now: Date,
+  holdReaders?: AwaitingPaymentReaders
 ): Promise<StaticSection> {
   const byState: Record<string, number> = {};
   const byCohort: Record<string, number> = {};
@@ -519,6 +561,7 @@ async function buildStatic(
   }
 
   const missing = await repository.findTenantsMissingPlanRow({ maxAccounts: 2000 });
+  const held = await separateAwaitingPayment(anomalies, holdReaders);
 
   return {
     accountsScanned: scanned,
@@ -531,7 +574,8 @@ async function buildStatic(
     noEndDateAccountsWithoutProfile: new Set(
       noEndDate.filter((row) => !row.hasBusinessProfile).map((row) => row.accountId)
     ).size,
-    anomalies,
+    anomalies: held.anomalies,
+    awaitingPayment: held.section,
     tenantsWithoutPlanRow: missing.data
       ? {
           scanFailed: false,
@@ -562,6 +606,49 @@ async function buildStatic(
           scope: 'unavailable — the read failed',
         },
     dormantChampions: dormantChampionSection(dormant, truncated, walkFailed, now),
+  };
+}
+
+/**
+ * Plan payments P-5b.2 (SA-P18, Q-9, C-9): move held accounts out of
+ * `anomalies` into their own section.
+ *
+ * Only `no_assignment` anomalies are candidates: that is exactly what a held
+ * friend's basis-less plan row reads as (T-13 layer 1). Any other anomaly on a
+ * held account is a real one and stays. Classified ONCE, in batches, with the
+ * gate's own predicate (`readAwaitingPaymentAccounts`, P5-C10).
+ *
+ * No candidate: no read at all, and the section is a clean zero. A failed (or
+ * unwired) read: every anomaly stays where it was and `scanFailed` says so,
+ * because a failed read must never hide an anomaly.
+ */
+async function separateAwaitingPayment(
+  anomalies: Array<{ accountId: string; anomaly: string }>,
+  holdReaders: AwaitingPaymentReaders | undefined
+): Promise<{ anomalies: Array<{ accountId: string; anomaly: string }>; section: AwaitingPaymentSection }> {
+  const candidates = [...new Set(anomalies.filter((entry) => entry.anomaly === 'no_assignment').map((entry) => entry.accountId))];
+  if (candidates.length === 0) {
+    return { anomalies, section: { scanFailed: false, count: 0, accountIds: [], truncated: false } };
+  }
+
+  const classified = holdReaders ? await readAwaitingPaymentAccounts(candidates, holdReaders) : ({ ok: false } as const);
+  if (!classified.ok) {
+    logger.error(
+      { event: 'bos_entitlements_report_hold_scan_failed', candidates: candidates.length, wired: Boolean(holdReaders) },
+      'Report: the payment-hold read failed; held accounts stay listed as anomalies'
+    );
+    return { anomalies, section: { scanFailed: true, count: null, accountIds: [], truncated: false } };
+  }
+
+  const heldIds = candidates.filter((accountId) => classified.held.has(accountId));
+  return {
+    anomalies: anomalies.filter((entry) => !(entry.anomaly === 'no_assignment' && classified.held.has(entry.accountId))),
+    section: {
+      scanFailed: false,
+      count: heldIds.length,
+      accountIds: heldIds.slice(0, AWAITING_PAYMENT_LIST_CAP),
+      truncated: heldIds.length > AWAITING_PAYMENT_LIST_CAP,
+    },
   };
 }
 
