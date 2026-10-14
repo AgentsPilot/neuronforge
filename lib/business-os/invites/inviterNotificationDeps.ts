@@ -42,6 +42,9 @@ export function buildInviterNotificationDeps(context: {
    * lineage row, the account resolved from OUR billing record (SR-8), and the
    * invite must have been redeemed by that same account
    * (`championSubscribedNotification.ts`). Never a value from Stripe metadata.
+   * Plan payments P-9.2 (T10): for an admin Paid invitee the id is that same
+   * invite's `issuer_admin_id` instead (the invite must be admin-issued and
+   * redeemed by the payer), and `isActiveAdmin` is checked before any send.
    */
   return {
     findUserIdentity: (id) => authAccountRepository.findUserIdentity(id),

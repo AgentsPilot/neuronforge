@@ -409,3 +409,45 @@ describe('P-5a.2 source guards', () => {
     expect(text).not.toMatch(/Essentials|Autopilot/);
   });
 });
+
+// ── Plan payments P-9.2: an ADMIN Paid invitee on the holding screen ──────────
+// The screen is invite-neutral: the plan and price arrive as data from the
+// model, which got the admin hold (with its `grantId`) from the session.
+
+describe('P-9.2 held: an admin Paid invitee pays for the plan the admin chose', () => {
+  const ADMIN_HOLD = { ok: true, held: true, inviteId: INVITE, source: 'admin_invite', grantId: 'top_tier_from_the_invite' };
+  const ADMIN_PAY_VIEW = { kind: 'pay', tier: 'top_tier_from_the_invite', planName: 'Autopilot', monthlyPriceUsd: 129 };
+  const heldAdmin = (language: string) => ({ state: 'held', language, hold: ADMIN_HOLD, userId: USER, accountId: USER });
+
+  it('the screen model is asked with the admin hold, grantId included, never a client value', async () => {
+    hold.value = heldAdmin('he');
+    await renderPage();
+    expect(view.inputs).toEqual([{ userId: USER, accountId: USER, hold: ADMIN_HOLD, language: 'he', checkoutReturned: false }]);
+  });
+
+  it.each(['en', 'he', 'es'] as const)('%s: "Finish your payment", the invited plan, its price (LTR inside RTL), and Pay for that tier', async (locale) => {
+    hold.value = heldAdmin(locale);
+    view.value = ADMIN_PAY_VIEW;
+    fetchReply = { status: 200, body: { success: true, data: { clientSecret: 'cs_test_secret_a', sessionId: 'cs_test_admin1', expiresAt: '2026-10-14T10:31:00.000Z', tier: ADMIN_PAY_VIEW.tier } } };
+    await renderPage();
+    const copy = AWAITING_PAYMENT_COPY[locale];
+    expect(screen.getByTestId('awaiting-payment-pay')).toHaveTextContent(copy.payTitle);
+    expect(screen.getByTestId('awaiting-payment-plan')).toHaveTextContent('Autopilot');
+    const price = screen.getByTestId('awaiting-payment-price');
+    expect(price).toHaveTextContent(copy.payPrice.replace('{price}', '$129'));
+    if (locale === 'he') {
+      expect(screen.getByRole('main')).toHaveAttribute('dir', 'rtl');
+      expect(price.querySelector('bdi[dir="ltr"]')?.textContent).toContain('$129');
+    }
+    await userEvent.setup().click(screen.getByTestId('awaiting-payment-checkout-start'));
+    expect(fetchCalls).toEqual([{ url: '/api/business-os/billing/plan/checkout', body: { tier: ADMIN_PAY_VIEW.tier, returnTo: 'awaiting_payment' } }]);
+  });
+
+  it('coming soon when the model says so (a switch off, or the invited tier has no price)', async () => {
+    hold.value = heldAdmin('en');
+    view.value = { kind: 'coming_soon' };
+    await renderPage();
+    expect(screen.getByText(AWAITING_PAYMENT_COPY.en.title)).toBeInTheDocument();
+    expect(screen.queryByTestId('awaiting-payment-checkout-start')).not.toBeInTheDocument();
+  });
+});

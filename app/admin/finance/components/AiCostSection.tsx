@@ -6,10 +6,13 @@
  * a window that starts before charging went live shows the cut-over notice,
  * and one entirely before it shows the notice INSTEAD of figures, never a $0
  * (AC-40). The provider-side token measure is a link, not a read (SA-Q4).
+ *
+ * Money M-1 (CR G-8, SA-W56): that link carries the window, and the business
+ * when one is picked (`section3AnalyticsHref`).
  */
 
 import { CutoverNotice } from '@/app/admin/business-os-llm/components/activity/CutoverNotice';
-import type { FinanceAiCostSection, FinanceTopAccount } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceAiCostSection, FinanceTopAccount, FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
 import {
   AI_ACTIONS,
   AI_BUSINESS,
@@ -22,7 +25,6 @@ import {
   AI_CREDITS,
   AI_DELETED,
   AI_LINK,
-  AI_LINK_HREF,
   AI_LINK_NOTE,
   AI_NO_ROWS,
   AI_SOURCE,
@@ -37,6 +39,7 @@ import {
   TRIGGER_LABELS,
 } from '../financeCopy';
 import { atLeast, formatCount, formatCredits, formatUsd } from '../financeFormat';
+import { section3AnalyticsHref } from '../financeLinks';
 import { groupLabel } from './AccountsByPlanSection';
 import { FinanceSection } from './FinanceSection';
 
@@ -59,11 +62,14 @@ function nameOf(account: FinanceTopAccount): string {
 export function AiCostSection({
   aiCost,
   accountId,
+  window,
   windowLabel,
   onRetry,
 }: {
   aiCost: FinanceAiCostSection;
   accountId: string | null;
+  /** The payload's window, carried by the AI cost & usage link (SA-W56). */
+  window: FinanceWindowInfo;
   windowLabel: string;
   onRetry: () => void;
 }) {
@@ -151,7 +157,7 @@ export function AiCostSection({
         )}
         <p className="text-xs text-slate-400">
           {AI_LINK_NOTE}{' '}
-          <a href={AI_LINK_HREF} className="text-purple-300 underline hover:text-purple-200">
+          <a href={section3AnalyticsHref(accountId, window)} data-testid="ai-analytics-link" className="text-purple-300 underline hover:text-purple-200">
             {AI_LINK}
           </a>
         </p>

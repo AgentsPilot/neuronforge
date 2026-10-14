@@ -10,7 +10,10 @@
 // invoices and instalments, and their client plans, layer B too; slice 4a,
 // workplan docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md,
 // reads R-k and R-k′: the platform's own credit boost purchases paid in the
-// window, layer A).
+// window, layer A; slice 5a, workplan
+// docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_5A_MONEY_M1_M2_WORKPLAN.md,
+// reads R-m and R-m′: the platform's own paid plan invoices in the window,
+// layer A).
 //
 // ── WHY A SEPARATE REPOSITORY (SA-F2) ────────────────────────────────────────
 // The money tables read here each have a writer repository whose callers are
@@ -57,22 +60,24 @@
 //     `listClientRefundsAllAccountsCreatedInRange` (R-f),
 //     `listOverdueClientInvoicesAllAccounts` (R-g),
 //     `listOverdueClientInstalmentsAllAccounts` (R-h),
-//     `listClientPlansAllAccounts` (R-i) and
-//     `listBoostPurchasesAllAccountsPaidInRange` (R-k). Logged at info.
+//     `listClientPlansAllAccounts` (R-i),
+//     `listBoostPurchasesAllAccountsPaidInRange` (R-k) and
+//     `listPlanPaymentsAllAccountsPaidInRange` (R-m). Logged at info.
 //   - ONE ACCOUNT: `findBillingStatusForAccount` (R-c′),
 //     `listClientPaymentsForAccountPaidInRange` (R-e′),
 //     `listClientRefundsForAccountCreatedInRange` (R-f′),
 //     `listOverdueClientInvoicesForAccount` (R-g′),
 //     `listOverdueClientInstalmentsForAccount` (R-h′),
-//     `listClientPlansForAccount` (R-i′) and
-//     `listBoostPurchasesForAccountPaidInRange` (R-k′), with `.eq('user_id')`
+//     `listClientPlansForAccount` (R-i′),
+//     `listBoostPurchasesForAccountPaidInRange` (R-k′) and
+//     `listPlanPaymentsForAccountPaidInRange` (R-m′), with `.eq('user_id')`
 //     on every page.
 //   - PLATFORM-WIDE EXISTENCE: `countRevenueRows` (R-d), two head counts
 //     that read no account and no amount.
 //
 // ── TEST AND LIVE MODE (BD-13, BD-14, BD-16) ─────────────────────────────────
-// No read in this file filters by mode. Layer A (R-c, R-c′, R-d, R-k, R-k′)
-// counts test and real Stripe rows together and treats them as real (BD-14, slice 1c);
+// No read in this file filters by mode. Layer A (R-c, R-c′, R-d, R-k, R-k′,
+// R-m, R-m′) counts test and real Stripe rows together and treats them as real (BD-14, slice 1c);
 // layer B (R-e to R-i′) has no mode at all (BD-13). One billing record per
 // account is assumed (BD-16): if an account ever has two, R-c and R-c′ return
 // an ERROR, never a figure. This file's code never names the mode column
@@ -83,10 +88,11 @@
 // and reaching its ceiling, or reading one `user_id` twice, is an ERROR. The
 // layer-B reads page by keyset on `id`, and at their ceiling (the `>=` rule)
 // return the rows read with `reachedCeiling: true`, so the page says "At
-// least". R-e to R-k′ use one pager, with the same CLIENT_* page size and
-// ceiling (SA-W49): R-e / R-f / R-k filter a range and read every status (the
+// least". R-e to R-m′ use one pager, with the same CLIENT_* page size and
+// ceiling (SA-W49, SA-Q36): R-e / R-f / R-k filter a range and read every status (the
 // caller counts the others); R-g / R-h filter by the stored status and a
-// validated UTC date; R-i reads every row.
+// validated UTC date; R-i reads every row; R-m / R-m′ filter the paid plan
+// invoice kind and a `paid_at` range on every page (slice 5a).
 //
 // Methods never throw: they return `{ data, error }`.
 
@@ -184,6 +190,35 @@ export interface FinanceBoostPurchaseRow {
   amount_tax_minor: number | null;
   amount_refunded_minor: number | null;
   credits_total: number | string | null;
+  paid_at: string | null;
+}
+
+/**
+ * The plan payment columns R-m / R-m′ select (slice 5a, §11D.6). No Stripe id,
+ * no refusal reason, no plan_written, no mode column (BD-14, M2-FR-10) and no
+ * created_at (never a revenue date, M2-W-1).
+ */
+export const FINANCE_PLAN_PAYMENT_COLUMNS =
+  'id, user_id, kind, tier, amount_minor, amount_tax_minor, currency, period_start, period_end, paid_at';
+
+/**
+ * One paid plan invoice, as "Our revenue" reads it (slice 5a). The amounts are
+ * INTEGER minor units, sent as JSON numbers; the caller still checks each one.
+ */
+export interface FinancePlanPaymentRow {
+  id: string;
+  /** NULL: a payment of a deleted account (ON DELETE SET NULL). */
+  user_id: string | null;
+  kind: string | null;
+  /** The stored tier id, or NULL ("Unknown plan" on the page). */
+  tier: string | null;
+  /** Stripe's amount paid: tax INCLUDED. */
+  amount_minor: number | null;
+  amount_tax_minor: number | null;
+  currency: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  /** Decides the window, in the query only. */
   paid_at: string | null;
 }
 
@@ -661,7 +696,54 @@ export class BusinessOsFinanceReadRepository {
     );
   }
 
-  /** R-e to R-f′, R-k and R-k′: a valid half-open range on the read's own column, as ISO strings. Checked inside the pager. */
+  /**
+   * R-m. Every account's PAID plan invoices in the range (slice 5a, §11D.6),
+   * test or real mode (BD-14), keyset on `id`: `kind = invoice_paid` and
+   * `from <= paid_at < to` on every page (M2-W-1, M2-W-2), so a refused or any
+   * other kind is never read (DF-7). Rows of deleted accounts (`user_id` NULL)
+   * are included. Logged at info.
+   */
+  async listPlanPaymentsAllAccountsPaidInRange(
+    range: FinanceClientRange,
+    opts?: FinanceClientReadOptions
+  ): Promise<RepositoryResult<FinanceClientReadResult<FinancePlanPaymentRow>>> {
+    return this.pageClientRows<FinancePlanPaymentRow>(
+      'listPlanPaymentsAllAccountsPaidInRange',
+      () => this.supabase.from('business_os_billing_events').select(FINANCE_PLAN_PAYMENT_COLUMNS),
+      this.paidInvoiceFilter(range),
+      'Plan payment rows',
+      null,
+      opts
+    );
+  }
+
+  /** R-m′. ONE account's paid plan invoices in the range; the id is checked before any query. */
+  async listPlanPaymentsForAccountPaidInRange(
+    accountId: string,
+    range: FinanceClientRange,
+    opts?: FinanceClientReadOptions
+  ): Promise<RepositoryResult<FinanceClientReadResult<FinancePlanPaymentRow>>> {
+    return this.pageClientRows<FinancePlanPaymentRow>(
+      'listPlanPaymentsForAccountPaidInRange',
+      () => this.supabase.from('business_os_billing_events').select(FINANCE_PLAN_PAYMENT_COLUMNS),
+      this.paidInvoiceFilter(range),
+      'Plan payment rows',
+      { accountId },
+      opts
+    );
+  }
+
+  /** R-m / R-m′: kind invoice_paid AND paid_at in the half-open range, on every page. */
+  private paidInvoiceFilter(range: FinanceClientRange): ClientFilter {
+    const inRange = this.rangeFilter('paid_at', range);
+    return () => {
+      // Refuses a bad range before any query (inside the pager's try).
+      const applyRange = inRange();
+      return (query) => applyRange(query.eq('kind', 'invoice_paid'));
+    };
+  }
+
+  /** R-e to R-f′, R-k to R-m′: a valid half-open range on the read's own column, as ISO strings. Checked inside the pager. */
   private rangeFilter(dateColumn: 'paid_at' | 'created_at', range: FinanceClientRange): ClientFilter {
     return () => {
       const isValidDate = (d: unknown): d is Date => d instanceof Date && !Number.isNaN(d.getTime());

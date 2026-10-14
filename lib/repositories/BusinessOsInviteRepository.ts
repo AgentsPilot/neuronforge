@@ -42,7 +42,8 @@
 //      a read with the same two issuer filters, so a revoke of an accepted
 //      invite can answer "already used" (409) without widening the 404.
 //   5. The PAYMENT HOLD (Slice 5b, T-13 layer 2), for the signed-in account
-//      itself. `findHoldFactsById` reads two facts (`grant_kind`, `language`)
+//      itself. `findHoldFactsById` reads three facts (`grant_kind`, `grant_id`,
+//      `language`; `grant_id` since P-9.2, the tier an admin Paid invite sells)
 //      of the ONE invite named by that account's own lineage row, which the
 //      caller read with the session's account id. Never a caller-supplied id.
 //   6. ADMIN DELETE (AD-2a, behind `requireAdmin`), after an admin deleted one
@@ -52,8 +53,9 @@
 //      skipped). The account id is the deleted target's, from the route path.
 //   7. THE FIRST PAYMENT (plan payments P-5b.1, N-2, SA S5-5 c, C-7), from
 //      the Stripe webhook, which holds no session.
-//      `findInviterNotificationFactsById` reads four columns (`issuer_kind`,
-//      `issuer_account_id`, `email`, `redeemed_account_id`) of the ONE invite
+//      `findInviterNotificationFactsById` reads six columns (`issuer_kind`,
+//      `issuer_account_id`, `issuer_admin_id`, `grant_kind`, `email`,
+//      `redeemed_account_id`; the admin two since P-9.2, T10) of the ONE invite
 //      named by the paying account's own lineage row, where the account was
 //      resolved from OUR billing record (SR-8), never from Stripe metadata. Its
 //      only caller is `lib/business-os/invites/championSubscribedNotification.ts`
@@ -843,15 +845,17 @@ export class BusinessOsInviteRepository {
   // ============ Payment hold (Slice 5b; the signed-in account's own invite) ============
 
   /**
-   * HOLD: the grant kind and language of the invite that created the signed-in
-   * account, or `null`. `id` is the `invite_id` of THAT account's own lineage
-   * row (read by the caller with the session's account id), never a value from
-   * a request. Two columns only: no email, no issuer, no hash.
+   * HOLD: the grant kind, grant id and language of the invite that created the
+   * signed-in account, or `null`. `id` is the `invite_id` of THAT account's own
+   * lineage row (read by the caller with the session's account id), never a
+   * value from a request. Three columns only: no email, no issuer, no hash.
+   * `grant_id` (P-9.2, SA C-5) is the tier an admin Paid invite sells, so the
+   * held checkout names it from the server, never from the client (SA-P9).
    */
   async findHoldFactsById(id: string): Promise<RepositoryResult<BusinessOsInviteHoldFacts>> {
     const methodLogger = this.logger.child({ method: 'findHoldFactsById', inviteId: id });
     try {
-      const { data, error } = await this.supabase.from(INVITES).select('grant_kind, language').eq('id', id).maybeSingle();
+      const { data, error } = await this.supabase.from(INVITES).select('grant_kind, grant_id, language').eq('id', id).maybeSingle();
 
       if (error) throw error;
       return { data: (data ?? null) as unknown as BusinessOsInviteHoldFacts | null, error: null };
@@ -870,15 +874,17 @@ export class BusinessOsInviteRepository {
    * account resolved from OUR billing record (SR-8), never a value from Stripe
    * or a request; the caller (`championSubscribedNotification.ts`, its only
    * one, C-7) cross-checks `redeemed_account_id` against that account before
-   * anything is sent. Four columns: no hash, no reply-to, no note. Never logs
-   * the email.
+   * anything is sent. Six columns: no hash, no reply-to, no note. Never logs
+   * the email. P-9.2 (T10, SA Q-10) adds `issuer_admin_id` and `grant_kind`,
+   * so an ADMIN Paid invitee's first payment can tell the ONE admin who
+   * issued it, found from this row, never from webhook metadata.
    */
   async findInviterNotificationFactsById(id: string): Promise<RepositoryResult<BusinessOsInviteNotificationFacts>> {
     const methodLogger = this.logger.child({ method: 'findInviterNotificationFactsById', inviteId: id });
     try {
       const { data, error } = await this.supabase
         .from(INVITES)
-        .select('issuer_kind, issuer_account_id, email, redeemed_account_id')
+        .select('issuer_kind, issuer_account_id, issuer_admin_id, grant_kind, email, redeemed_account_id')
         .eq('id', id)
         .maybeSingle();
 

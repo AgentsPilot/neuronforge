@@ -13,15 +13,24 @@
  * platform (Section 2 block B, slice 2a, directly under our revenue),
  * Section 1, Section 3, Section 4 (credits, slice 1b), then Section 6 block
  * B, client payment problems (slice 2b), last.
+ *
+ * Money M-1 (finance health §11D.3): with a business picked, the account
+ * header and the account summary sit above the KPI strip (never with all
+ * businesses, M1-FR-10). The picked NAME is held here, in state, and never in
+ * the URL, a request or a log (SA-Q32, AC-109): the URL is written only from
+ * the query, whose type has no name field.
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { RefreshCw } from 'lucide-react';
 
 import { parseFinanceUrl, serialiseFinanceUrl, type FinanceQuery } from '../financeUrl';
 import { useFinanceData } from '../useFinanceData';
-import { LOADING, NOTICE_LABEL, PAGE_LOAD_FAILED, PAGE_PURPOSE, PAGE_TITLE, PRESET_LABELS, REFRESH, RETRY } from '../financeCopy';
+import { LOADING, NOTICE_LABEL, NAME_PLATFORM, PAGE_LOAD_FAILED, PAGE_PURPOSE, PAGE_TITLE, PRESET_LABELS, REFRESH, RETRY } from '../financeCopy';
+import { accountNameFor, type PickedName } from '../financeAccount';
+import { AccountHeader } from './AccountHeader';
+import { AccountSummary } from './AccountSummary';
 import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
 import { CreditsSection } from './CreditsSection';
@@ -48,6 +57,18 @@ export function FinanceView() {
     [router, pathname]
   );
 
+  // SA-Q32: the name the admin picked, for the chip, the header and the summary only.
+  const [pickedName, setPickedName] = useState<PickedName | null>(null);
+  const onPick = useCallback(
+    (accountId: string, name: string | null) => {
+      setPickedName({ accountId, name });
+      setQuery({ ...query, accountId: accountId || null });
+    },
+    [query, setQuery]
+  );
+  const accountName = query.accountId !== null ? accountNameFor(query.accountId, pickedName, data) : null;
+  const chipName = accountName === null ? null : accountName.platform ? NAME_PLATFORM : accountName.name;
+
   const windowLabel = data
     ? `${PRESET_LABELS[data.window.preset]}, ${data.window.from} to ${data.window.to} UTC`
     : PRESET_LABELS[query.preset];
@@ -72,7 +93,13 @@ export function FinanceView() {
         </button>
       </header>
 
-      <FinanceFilterBar query={query} resolved={data ? { from: data.window.from, to: data.window.to } : null} onChange={setQuery} />
+      <FinanceFilterBar
+        query={query}
+        resolved={data ? { from: data.window.from, to: data.window.to } : null}
+        onChange={setQuery}
+        onPick={onPick}
+        chipName={chipName}
+      />
 
       {notice && (
         <p className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200" role="status" data-testid="finance-url-notice">
@@ -93,11 +120,28 @@ export function FinanceView() {
 
       {data && !error && (
         <div className="space-y-4">
+          {data.accountId !== null && (
+            <>
+              <AccountHeader
+                accountId={data.accountId}
+                name={accountNameFor(data.accountId, pickedName, data)}
+                accounts={data.accounts}
+              />
+              <AccountSummary
+                accountId={data.accountId}
+                window={data.window}
+                aiCost={data.aiCost}
+                revenue={data.revenue}
+                credits={data.credits}
+                accounts={data.accounts}
+              />
+            </>
+          )}
           <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} windowLabel={windowLabel} />
           <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
           <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
           <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
-          <AiCostSection aiCost={data.aiCost} accountId={data.accountId} windowLabel={windowLabel} onRetry={reload} />
+          <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
           <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
           <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
         </div>

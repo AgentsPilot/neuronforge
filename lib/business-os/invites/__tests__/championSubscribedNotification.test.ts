@@ -41,6 +41,9 @@ const CHAMPION_EMAIL = 'champion@example.org';
 const friendInvite = (overrides: Partial<BusinessOsInviteNotificationFacts> = {}): BusinessOsInviteNotificationFacts => ({
   issuer_kind: 'account',
   issuer_account_id: CHAMPION_ID,
+  // P-9.2 (T10): the read also carries these two; a friend invite has no admin.
+  issuer_admin_id: null,
+  grant_kind: 'tier',
   email: INVITEE,
   redeemed_account_id: FRIEND_ID,
   ...overrides,

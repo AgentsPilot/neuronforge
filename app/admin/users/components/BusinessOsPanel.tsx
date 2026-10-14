@@ -246,6 +246,21 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
         {!notBos && summary.state === 'ok' && summary.data.business.status === 'none' && (
           <p className="text-sm text-slate-400">Business profile not created yet (setup in progress).</p>
         )}
+        {/* Money M-1 (M1-FR-8, AC-114, SA-W71): Finance with this business
+            picked, This month. Only once the reads say it is a Business OS
+            account (Finance would 404 otherwise). The id only, never a name
+            or an email; outside the summary strip and the section boxes. */}
+        {!loading && !notBos && (
+          <p>
+            <Link
+              data-testid="bos-panel-money-view"
+              href={`/admin/finance?accountId=${encodeURIComponent(accountId)}&preset=this_month`}
+              className={LINK_CLASS}
+            >
+              Open money view
+            </Link>
+          </p>
+        )}
       </div>
 
       <BusinessSummaryStrip

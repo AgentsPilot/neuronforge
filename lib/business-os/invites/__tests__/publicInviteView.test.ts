@@ -139,7 +139,8 @@ describe('the valid state', () => {
     if (!outcome.ok) return;
     const response = outcome.response as Record<string, unknown>;
     expect(Object.keys(response).sort()).toEqual(
-      ['inviterDisplayName', 'language', 'linkExpiresAt', 'maskedEmail', 'offer', 'personalNote', 'state'].sort()
+      // P-9.2 (FR-22, SA C-6): `payment`, the page's one payment line.
+      ['inviterDisplayName', 'language', 'linkExpiresAt', 'maskedEmail', 'offer', 'payment', 'personalNote', 'state'].sort()
     );
     // Slice 1b (R-6): the first character of the local part, and the domain. Never the full email.
     expect(response.maskedEmail).toBe('i•••@example.com');
@@ -329,6 +330,7 @@ describe('Slices 5a/5b (F5a-10, F5b-3, SA R-5, Q-8): a champion friend invite', 
       'linkExpiresAt',
       'maskedEmail',
       'offer',
+      'payment',
       'personalNote',
       'state',
     ]);
@@ -460,6 +462,7 @@ describe('P-9.1 (SA C-2, A-2): an ADMIN Paid invite reads "unavailable" exactly 
       'linkExpiresAt',
       'maskedEmail',
       'offer',
+      'payment',
       'personalNote',
       'state',
     ]);
