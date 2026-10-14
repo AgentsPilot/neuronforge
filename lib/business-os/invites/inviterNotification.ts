@@ -10,8 +10,10 @@ import 'server-only';
  *
  * N-2 (plan payments P-5b.1, FR-43, SA S5-4, P5-C8): also called with
  * `event: 'subscribed'` by `championSubscribedNotification.ts` when a friend
- * pays their first invoice. Champion only (the input type refuses an admin);
- * everything below applies unchanged, and the audit uses the same two events.
+ * pays their first invoice. Plan payments P-9.2 (T10, BQ-P11, SA Q-10): also
+ * to the ONE admin who issued an admin PAID invite, when that invitee pays
+ * their first invoice, with N-1's active-admin check unchanged. Everything
+ * below applies unchanged, and the audit uses the same two events.
  *
  * ── Never throws, never fails the signup (SA Q-1, C-1) ──────────────────────
  * Every dependency call is guarded, and the whole notification (lookups,
@@ -81,12 +83,13 @@ interface NotifyInviterCommon {
 
 /**
  * N-1 (`accepted`): either issuer kind; the status follows the landing.
- * N-2 (`subscribed`, plan payments P-5b.1, FR-43): the CHAMPION only, so an
- * admin issuer does not type-check; the status is `subscribed`.
+ * N-2 (`subscribed`, plan payments P-5b.1, FR-43): the champion; and since
+ * P-9.2 (T10, BQ-P11) the issuing admin of an admin Paid invite. The status
+ * is `subscribed`.
  */
 export type NotifyInviterInput =
   | (NotifyInviterCommon & { event: Extract<InviterNotificationEvent, 'accepted'>; issuerKind: 'admin' | 'account'; landing: InviterNotificationLanding })
-  | (NotifyInviterCommon & { event: Extract<InviterNotificationEvent, 'subscribed'>; issuerKind: 'account' });
+  | (NotifyInviterCommon & { event: Extract<InviterNotificationEvent, 'subscribed'>; issuerKind: 'admin' | 'account' });
 
 /** One audit entry. The caller writes it with no owner (`userId`/`actorId` null, SA Q-4). */
 export interface InviterNotificationAuditEntry {

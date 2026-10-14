@@ -26,10 +26,12 @@ const ROOT = process.cwd();
 const SCAN_DIRS = ['app', 'components', 'hooks', 'lib'];
 const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 
-/** The remaining browser sites after DE-0a (§0.1.2 C4–C11), with why. */
+/**
+ * The remaining browser sites after DE-0b-prep (§0.1.2 C5–C11), with why. C4
+ * (`app/v2/settings/page.tsx`) was deleted in DE-0b.
+ */
 const ALLOWED_FILES: Record<string, string> = {
-  'app/v2/settings/page.tsx': 'C4: result never read; DE-0b-prep deletes it',
-  'app/(protected)/settings/page.tsx': 'C5: feeds PluginsTab; DE-0b-prep narrows it to non-token columns',
+  'app/(protected)/settings/page.tsx': 'C5: feeds PluginsTab; narrowed in DE-0b to granted non-token columns',
   'components/settings/PluginsTab.tsx': 'C6: UPDATE status/disconnected_at only; covered by the DE-0b column grant',
   'components/dashboard/AgentSandBox/useAgentSandbox.ts': 'C7: reads plugin_key only; covered by the DE-0b column grant',
   'components/onboarding/PluginsStep.tsx': 'C8: reads plugin_key only; dead code (Onboarding_old.tsx only)',
@@ -141,7 +143,22 @@ describe('plugin_connections browser access guard (DE-0a A-5)', () => {
     });
     // Remove a stale entry from ALLOWED_FILES in the PR that removed the call.
     expect(stale).toEqual([]);
-    expect(Object.keys(ALLOWED_FILES).length).toBeLessThanOrEqual(8);
+    expect(Object.keys(ALLOWED_FILES).length).toBeLessThanOrEqual(7);
+  });
+
+  it('C5 reads only the PluginsTab columns, never * or a token column (DE-0b)', () => {
+    const code = withoutComments(read('app/(protected)/settings/page.tsx'));
+    const columns = code.match(/const PLUGINS_TAB_COLUMNS\s*=\s*'([^']*)'/);
+    expect(columns).not.toBeNull();
+    expect(columns![1].split(',').map((c) => c.trim())).toEqual([
+      'id', 'plugin_key', 'plugin_name', 'username', 'email', 'status', 'connected_at', 'last_used',
+    ]);
+    expect(code).toMatch(/\.from\('plugin_connections'\)\.select\(PLUGINS_TAB_COLUMNS\)/);
+    expect(code).not.toMatch(/access_token|refresh_token|profile_data/);
+  });
+
+  it('C4 is gone: the v2 settings page no longer names plugin_connections (DE-0b)', () => {
+    expect(withoutComments(read('app/v2/settings/page.tsx'))).not.toMatch(/plugin_connections/);
   });
 
   describe.each(EXPORT_SCREENS)('%s', (file) => {

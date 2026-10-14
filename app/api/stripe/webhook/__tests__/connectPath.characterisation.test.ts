@@ -49,6 +49,11 @@
  * against it as it stands. One exception: CF-5 PR 3 added its own `describe`
  * (X56 to X58) for #257's attach arms, which landed after PR 0, written against
  * the untouched route before PR 3 moved them.
+ *
+ * STRIPE_CONNECT_REFUND_WEBHOOK (slice 2) rewrote the four `charge.refunded`
+ * entries (7a, X4, X25, X26): the fixture carried a `refunds.data` list Stripe
+ * has not sent since 2022, and refunds are now recorded from `refund.*`. It
+ * added its own `describe` at the end. Every other entry is byte-identical.
  */
 
 import fs from 'fs';
@@ -598,18 +603,24 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
     ).toMatchSnapshot();
   });
 
-  it('7a. charge.refunded on a Connect charge records each refund', async () => {
-    expect(
-      await run({
-        fixture: 'charge-refunded.json',
-        owners: OWNER_A,
-        db: {
-          'payment_transactions:select': ok([
-            { id: 'tx-1', user_id: 'owner-a', invoice_id: 'pinv-0001', currency: 'usd' },
-          ]),
-        },
-      })
-    ).toMatchSnapshot();
+  /*
+   * Rewritten (STRIPE_CONNECT_REFUND_WEBHOOK F5-a, SA-4). The old fixture carried
+   * a `refunds.data` list that Stripe has not sent since 2022-11-15, so this case
+   * characterised a payload that cannot happen. With the real shape,
+   * `charge.refunded` is a pure no-op: refunds are recorded from `refund.*`.
+   */
+  it('7a. charge.refunded on a Connect charge is acknowledged and writes nothing (refunds come from refund.*)', async () => {
+    const result = await run({
+      fixture: 'charge-refunded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': ok([
+          { id: 'tx-1', user_id: 'owner-a', invoice_id: 'pinv-0001', currency: 'usd', stripe_connect_account_id: 'acct_owner_a' },
+        ]),
+      },
+    });
+    expect(result).toMatchSnapshot();
+    expect(mockLogLines.filter((l) => l.msg === 'charge.refunded ignored: refunds are recorded from refund.* events')).toHaveLength(1);
   });
 
   it('7b. charge.dispute.created marks the payment disputed and alerts the owner', async () => {
@@ -1266,7 +1277,9 @@ const CHECKOUT_INVOICE = {
 const FAILED_INVOICE = { id: 'pinv-0003', invoice_number: 'INV-003', user_id: 'owner-a' };
 const ENDING_PLAN = { id: 'plan-1', user_id: 'owner-a', status: 'active', installment_count: 3, periods_paid: 1 };
 
-const REFUND_TX = ok([{ id: 'tx-1', user_id: 'owner-a', invoice_id: 'pinv-0001', currency: 'usd' }]);
+const REFUND_TX = ok([
+  { id: 'tx-1', user_id: 'owner-a', invoice_id: 'pinv-0001', currency: 'usd', stripe_connect_account_id: 'acct_owner_a' },
+]);
 const DISPUTE_TX = ok([
   {
     id: 'tx-1',
@@ -1476,7 +1489,9 @@ describe('Stripe webhook, CF-5 PR 0: arms the repository moves will touch', () =
 
   // ── PR 3: money rows ───────────────────────────────────────────────────────
 
-  it('X4. platform charge.refunded with no payment intent: found by charge id, refund on no connected account', async () => {
+  // Rewritten (F5-a, SA-4): the platform `charge.refunded` that is not a boost
+  // refund reaches the switch, which no longer reads or writes anything.
+  it('X4. platform charge.refunded that is not a boost refund: acknowledged, nothing read or written', async () => {
     expect(
       await run({
         fixture: 'charge-refunded.json',
@@ -1509,16 +1524,18 @@ describe('Stripe webhook, CF-5 PR 0: arms the repository moves will touch', () =
     ).toMatchSnapshot();
   });
 
-  it('X25. charge.refunded for a payment never recorded: logged, nothing written', async () => {
-    expect(await run({ fixture: 'charge-refunded.json', owners: OWNER_A })).toMatchSnapshot();
+  // Rewritten onto `refund.*` (STRIPE_CONNECT_REFUND_WEBHOOK slice 2): the
+  // `charge.refunded` arms these characterised are gone (SA-4).
+  it('X25. refund.updated for a payment never recorded: logged, nothing written', async () => {
+    expect(await run({ fixture: 'refund-updated-succeeded.json', owners: OWNER_A })).toMatchSnapshot();
   });
 
-  it('X26. charge.refunded: the refund upsert fails, 500', async () => {
+  it('X26. refund.updated: the ledger insert fails, 500', async () => {
     expect(
       await run({
-        fixture: 'charge-refunded.json',
+        fixture: 'refund-updated-succeeded.json',
         owners: OWNER_A,
-        db: { 'payment_transactions:select': REFUND_TX, 'payment_refunds:upsert': DB_DOWN },
+        db: { 'payment_transactions:select': REFUND_TX, 'payment_refunds:insert': DB_DOWN },
       })
     ).toMatchSnapshot();
   });
@@ -1900,5 +1917,590 @@ describe('Stripe webhook, CF-5 PR 3: the #257 attach arms', () => {
         invoicePaymentIntent: 'pi_invoice_1',
       })
     ).toMatchSnapshot();
+  });
+});
+
+// ─── STRIPE_CONNECT_REFUND_WEBHOOK slice 2: refund.* ─────────────────────────
+
+/**
+ * Refunds recorded from `refund.created` / `refund.updated` / `refund.failed`
+ * (requirement docs/requirements/STRIPE_CONNECT_REFUND_WEBHOOK_REQUIREMENT.md,
+ * workplan §3.2 and §8).
+ *
+ * R1–R4 are snapshots, one per new fixture (F5-b). The rest assert the specific
+ * rule they exist for, so a later change shows up as a named failure, not as a
+ * moved snapshot.
+ *
+ * `payment_refunds:select` answers are consumed in order: (a) by Stripe refund
+ * id, then (b) by the metadata row id; after a 23505 the loop reads (a)/(b)
+ * again.
+ */
+describe('Stripe webhook, refund.* on a Connect account (STRIPE_CONNECT_REFUND_WEBHOOK)', () => {
+  const APP_ROW_ID = 'a1a1a1a1-0001-4000-8000-00000000a101';
+  const PAYMENT = { id: 'tx-1', user_id: 'owner-a', invoice_id: 'pinv-0001', currency: 'usd', stripe_connect_account_id: 'acct_owner_a' };
+  const paymentFound = (over: Record<string, unknown> = {}): Answer => ok([{ ...PAYMENT, ...over }]);
+  const appRow = (over: Record<string, unknown> = {}) => ({
+    id: APP_ROW_ID,
+    status: 'pending',
+    processor_refund_id: null,
+    source: 'app',
+    processor_type: 'stripe',
+    amount_minor: 2500,
+    currency: 'USD',
+    stripe_connect_account_id: 'acct_owner_a',
+    ...over,
+  });
+  const counted = (count: number): Answer => ({ data: null, error: null, count });
+
+  type DbEffect = { type: 'db'; table: string; operation: string; chain: unknown[][] };
+  const refundOps = (result: unknown) =>
+    effectsOf(result).filter((e) => e.type === 'db' && e.table === 'payment_refunds') as unknown as DbEffect[];
+  const refundWrites = (result: unknown) => refundOps(result).filter((e) => e.operation !== 'select');
+  const syncs = (result: unknown) => effectsOf(result).filter((e) => e.type === 'syncBookingsForTransactions');
+  const firstArg = (e: DbEffect) => e.chain[0][1] as Record<string, unknown>;
+  const linesAt = (level: string) => mockLogLines.filter((l) => l.level === level);
+  const messagesAt = (level: string) => linesAt(level).map((l) => l.msg);
+
+  /** The columns the app wrote that an update must never touch (FR 4, F1-c, T-2). */
+  const APP_COLUMNS = ['source', 'idempotency_key', 'reason', 'reason_note', 'initiated_by', 'metadata', 'amount', 'amount_minor', 'user_id', 'created_at'];
+
+  // ── F5-b: one snapshot per fixture ─────────────────────────────────────────
+
+  it('R1. refund.created (pending) before the app wrote the Stripe id: the app row is found by refund_row_id and gets the id, no second row (F1-a)', async () => {
+    const result = await run({
+      fixture: 'refund-created.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': [ok(null), ok(appRow())],
+        'payment_refunds:update': counted(1),
+      },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(refundWrites(result).map((e) => e.operation)).toEqual(['update']);
+    const patch = firstArg(refundWrites(result)[0]);
+    expect(Object.keys(patch).sort()).toEqual(['processor_refund_id', 'updated_at']);
+    expect(patch.processor_refund_id).toBe('re_connect_1');
+    // Only the id was filled: no status moved, so no booking sync (A-6).
+    expect(syncs(result)).toEqual([]);
+  });
+
+  it('R2. refund.updated (succeeded) for a dashboard refund: one webhook row, the owner and links from the payment (F1-d, T-1, F3-e)', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      db: { 'payment_transactions:select': paymentFound() },
+    });
+    expect(result).toMatchSnapshot();
+    const writes = refundWrites(result);
+    expect(writes.map((e) => e.operation)).toEqual(['insert']);
+    expect(firstArg(writes[0])).toEqual({
+      user_id: 'owner-a',
+      transaction_id: 'tx-1',
+      invoice_id: 'pinv-0001',
+      amount: 10,
+      amount_minor: 1000,
+      currency: 'USD',
+      status: 'succeeded',
+      processor_type: 'stripe',
+      processor_refund_id: 're_dashboard_1',
+      stripe_connect_account_id: 'acct_owner_a',
+      idempotency_key: 'stripe:re_dashboard_1',
+      source: 'webhook',
+      created_at: new Date(1790000900 * 1000).toISOString(),
+      succeeded_at: new Date(1790000905 * 1000).toISOString(),
+      failure_code: null,
+      failure_message: null,
+      metadata: { origin: 'refund.updated', charge_id: 'ch_connect_1', payment_intent_id: 'pi_website_1' },
+    });
+    // No metadata row id → no (b) read.
+    expect(refundOps(result).filter((e) => e.operation === 'select')).toHaveLength(1);
+    expect(syncs(result)).toEqual([{ type: 'syncBookingsForTransactions', args: [['tx-1'], 'owner-a'] }]);
+    expect(claimStatus(result)).toBe('completed');
+  });
+
+  it('R3. refund.updated pending → succeeded on the app row matched by Stripe id: status and succeeded_at from this event (F1-b, T-3)', async () => {
+    const result = await run({
+      fixture: 'refund-updated-pending-to-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': ok(appRow({ processor_refund_id: 're_connect_1' })),
+        'payment_refunds:update': counted(1),
+      },
+    });
+    expect(result).toMatchSnapshot();
+    const [update] = refundWrites(result);
+    expect(refundWrites(result)).toHaveLength(1);
+    expect(firstArg(update)).toEqual({
+      updated_at: '<NOW>',
+      status: 'succeeded',
+      succeeded_at: new Date(1790000860 * 1000).toISOString(),
+    });
+    // Compare-and-set on the state read (F2-e).
+    expect(update.chain.slice(1)).toEqual([
+      ['eq', 'id', APP_ROW_ID],
+      ['eq', 'transaction_id', 'tx-1'],
+      ['eq', 'user_id', 'owner-a'],
+      ['eq', 'status', 'pending'],
+      ['eq', 'processor_refund_id', 're_connect_1'],
+    ]);
+    expect(update.chain[0][2]).toEqual({ count: 'exact' });
+    expect(syncs(result)).toHaveLength(1);
+  });
+
+  it('R4. refund.failed on a succeeded row: failed with Stripe’s failure_reason, the booking follows (F2-b, G-1)', async () => {
+    const result = await run({
+      fixture: 'refund-failed.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': ok(appRow({ status: 'succeeded', processor_refund_id: 're_connect_1' })),
+        'payment_refunds:update': counted(1),
+      },
+    });
+    expect(result).toMatchSnapshot();
+    expect(firstArg(refundWrites(result)[0])).toEqual({
+      updated_at: '<NOW>',
+      status: 'failed',
+      failure_code: 'expired_or_canceled_card',
+      failure_message: null,
+    });
+    expect(syncs(result)).toEqual([{ type: 'syncBookingsForTransactions', args: [['tx-1'], 'owner-a'] }]);
+  });
+
+  // ── F1: one row per refund ─────────────────────────────────────────────────
+
+  it('F1-c. an app row that is matched keeps every column the app wrote', async () => {
+    for (const [fixture, row] of [
+      ['refund-created.json', appRow()],
+      ['refund-updated-pending-to-succeeded.json', appRow()],
+      ['refund-failed.json', appRow({ status: 'succeeded', processor_refund_id: 're_connect_1' })],
+    ] as const) {
+      const result = await run({
+        fixture,
+        owners: OWNER_A,
+        db: { 'payment_transactions:select': paymentFound(), 'payment_refunds:select': [ok(null), ok(row)], 'payment_refunds:update': counted(1) },
+      });
+      const writes = refundWrites(result);
+      expect({ fixture, ops: writes.map((e) => e.operation) }).toEqual({ fixture, ops: ['update'] });
+      expect(Object.keys(firstArg(writes[0])).filter((k) => APP_COLUMNS.includes(k))).toEqual([]);
+    }
+  });
+
+  it('F1-d. redelivering a recorded dashboard refund writes nothing and syncs nothing', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': ok(
+          appRow({ id: 'rf-webhook-1', source: 'webhook', status: 'succeeded', processor_refund_id: 're_dashboard_1', amount_minor: 1000 })
+        ),
+      },
+    });
+    expect(refundWrites(result)).toEqual([]);
+    expect(syncs(result)).toEqual([]);
+    expect(claimStatus(result)).toBe('completed');
+  });
+
+  describe('F1-e. untrusted metadata is ignored and the refund is recorded as its own webhook row', () => {
+    const FORGED = 'b2b2b2b2-0002-4000-8000-00000000b202';
+    const cases: Array<[string, Record<string, unknown> | null, string | null]> = [
+      ['the named row is in another payment or another user (the scoped read finds nothing)', null, null],
+      ['source is manual', appRow({ id: FORGED, source: 'manual' }), 'source'],
+      ['processor_type is manual', appRow({ id: FORGED, processor_type: 'manual' }), 'processor_type'],
+      ['amount differs', appRow({ id: FORGED, amount_minor: 2400 }), 'amount_minor'],
+      ['currency differs', appRow({ id: FORGED, currency: 'EUR' }), 'currency'],
+      ['it already has a different Stripe id', appRow({ id: FORGED, processor_refund_id: 're_other' }), 'processor_refund_id'],
+    ];
+
+    it.each(cases)('%s', async (_name, namedRow, check) => {
+      const result = await run({
+        fixture: 'refund-created.json',
+        owners: OWNER_A,
+        eventPatch: { data: { object: { metadata: { refund_row_id: FORGED } } } },
+        db: { 'payment_transactions:select': paymentFound(), 'payment_refunds:select': [ok(null), ok(namedRow)] },
+      });
+      const reads = refundOps(result).filter((e) => e.operation === 'select');
+      // (b) is read only inside the proven payment.
+      expect(reads[1].chain.slice(1, 4)).toEqual([
+        ['eq', 'id', FORGED],
+        ['eq', 'transaction_id', 'tx-1'],
+        ['eq', 'user_id', 'owner-a'],
+      ]);
+      const writes = refundWrites(result);
+      expect(writes.map((e) => e.operation)).toEqual(['insert']);
+      expect(firstArg(writes[0])).toMatchObject({ source: 'webhook', processor_refund_id: 're_connect_1', idempotency_key: 'stripe:re_connect_1' });
+      if (check) {
+        const warned = linesAt('warn').filter((l) => (l.ctx as { check?: string }).check === check);
+        expect(warned).toHaveLength(1);
+        expect(warned[0].ctx).toEqual({ check, ledgerRowId: FORGED, stripeRefundId: 're_connect_1', transactionId: 'tx-1' });
+      }
+    });
+
+    it('a value that is not UUID-shaped is never read, and only its length is logged', async () => {
+      const VALUE = 'drop table payment_refunds';
+      const result = await run({
+        fixture: 'refund-created.json',
+        owners: OWNER_A,
+        eventPatch: { data: { object: { metadata: { refund_row_id: VALUE } } } },
+        db: { 'payment_transactions:select': paymentFound() },
+      });
+      expect(refundOps(result).map((e) => e.operation)).toEqual(['select', 'insert']);
+      const warned = linesAt('warn').find((l) => l.msg === 'Ignored a malformed ledger row id in refund metadata');
+      expect(warned?.ctx).toEqual({ stripeRefundId: 're_connect_1', key: 'refund_row_id', length: VALUE.length });
+      expect(JSON.stringify(mockLogLines)).not.toContain(VALUE);
+    });
+
+    it('no log line carries a metadata value', async () => {
+      await run({
+        fixture: 'refund-created.json',
+        owners: OWNER_A,
+        eventPatch: { data: { object: { metadata: { refund_row_id: FORGED, note: 'client secret note' } } } },
+        db: { 'payment_transactions:select': paymentFound(), 'payment_refunds:select': [ok(null), ok(appRow({ id: FORGED, source: 'manual' }))] },
+      });
+      expect(JSON.stringify(mockLogLines)).not.toContain('client secret note');
+    });
+  });
+
+  it('F1-g. the insert hits 23505: the row is read again and the event applied to it', async () => {
+    const result = await run({
+      fixture: 'refund-updated-pending-to-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': [ok(null), ok(null), ok(appRow({ processor_refund_id: 're_connect_1' }))],
+        'payment_refunds:insert': fail('23505', 'duplicate key value violates unique constraint'),
+        'payment_refunds:update': counted(1),
+      },
+    });
+    expect(statusOf(result)).toBe(200);
+    expect(refundOps(result).map((e) => e.operation)).toEqual(['select', 'select', 'insert', 'select', 'update']);
+    expect(firstArg(refundWrites(result)[1])).toMatchObject({ status: 'succeeded' });
+    expect(claimStatus(result)).toBe('completed');
+  });
+
+  it('F1-g. the insert hits 23505 and the re-read still finds nothing: 500, claim released, its own message', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:insert': [fail('23505', 'duplicate key'), fail('23505', 'duplicate key')],
+      },
+    });
+    expect(statusOf(result)).toBe(500);
+    expect(refundOps(result).map((e) => e.operation)).toEqual(['select', 'insert', 'select', 'insert']);
+    expect(claimStatus(result)).toBe('failed');
+    expect(syncs(result)).toEqual([]);
+    expect(messagesAt('error')).toContain('Refund row collided twice and cannot be found in this payment');
+  });
+
+  // ── F2 / T: statuses and timing ────────────────────────────────────────────
+
+  it('F2-c / T-3. a late refund.created (pending) after succeeded is a no-op: nothing written, no sync', async () => {
+    const result = await run({
+      fixture: 'refund-created.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': ok(appRow({ status: 'succeeded', processor_refund_id: 're_connect_1' })),
+      },
+    });
+    expect(refundWrites(result)).toEqual([]);
+    expect(syncs(result)).toEqual([]);
+    expect(messagesAt('info')).toContain('Stripe refund already recorded; nothing to change');
+  });
+
+  it('T-3. a redelivered succeeded event leaves succeeded_at as it is', async () => {
+    const result = await run({
+      fixture: 'refund-updated-pending-to-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': ok(appRow({ status: 'succeeded', processor_refund_id: 're_connect_1' })),
+      },
+    });
+    expect(refundWrites(result)).toEqual([]);
+  });
+
+  it('SA-5. a failed row with no Stripe id (lost reply) moves to succeeded, and the id is filled', async () => {
+    const result = await run({
+      fixture: 'refund-updated-pending-to-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': [ok(null), ok(appRow({ status: 'failed' }))],
+        'payment_refunds:update': counted(1),
+      },
+    });
+    const [update] = refundWrites(result);
+    expect(firstArg(update)).toMatchObject({ status: 'succeeded', processor_refund_id: 're_connect_1' });
+    expect(update.chain.slice(4)).toEqual([['eq', 'status', 'failed'], ['is', 'processor_refund_id', null]]);
+    expect(syncs(result)).toHaveLength(1);
+  });
+
+  it('CR-1. a lost-reply failed row (no Stripe id): pending moves it to pending with the id and one sync; then succeeded moves it to succeeded', async () => {
+    // The app's catch path wrote `failed` after a lost reply; Stripe did make the refund.
+    const pendingStep = await run({
+      fixture: 'refund-created.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': [ok(null), ok(appRow({ status: 'failed' }))],
+        'payment_refunds:update': counted(1),
+      },
+    });
+    const [toPending] = refundWrites(pendingStep);
+    expect(refundWrites(pendingStep)).toHaveLength(1);
+    expect(firstArg(toPending)).toEqual({ updated_at: '<NOW>', status: 'pending', processor_refund_id: 're_connect_1' });
+    expect(toPending.chain.slice(4)).toEqual([['eq', 'status', 'failed'], ['is', 'processor_refund_id', null]]);
+    expect(syncs(pendingStep)).toEqual([{ type: 'syncBookingsForTransactions', args: [['tx-1'], 'owner-a'] }]);
+
+    // The row as the first event left it: pending, with the Stripe id.
+    const succeededStep = await run({
+      fixture: 'refund-updated-pending-to-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': ok(appRow({ status: 'pending', processor_refund_id: 're_connect_1' })),
+        'payment_refunds:update': counted(1),
+      },
+    });
+    const [toSucceeded] = refundWrites(succeededStep);
+    expect(firstArg(toSucceeded)).toEqual({
+      updated_at: '<NOW>',
+      status: 'succeeded',
+      succeeded_at: new Date(1790000860 * 1000).toISOString(),
+    });
+    expect(toSucceeded.chain.slice(4)).toEqual([['eq', 'status', 'pending'], ['eq', 'processor_refund_id', 're_connect_1']]);
+    expect(syncs(succeededStep)).toHaveLength(1);
+  });
+
+  it('A-3. succeeded → canceled is applied and warned', async () => {
+    const result = await run({
+      fixture: 'refund-failed.json',
+      owners: OWNER_A,
+      eventPatch: { type: 'refund.updated', data: { object: { status: 'canceled' } } },
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': ok(appRow({ status: 'succeeded', processor_refund_id: 're_connect_1' })),
+        'payment_refunds:update': counted(1),
+      },
+    });
+    expect(firstArg(refundWrites(result)[0])).toMatchObject({ status: 'canceled' });
+    expect(messagesAt('warn')).toContain('Stripe moved a succeeded refund to canceled');
+  });
+
+  it('Q-SA-3. a refund with no status is acknowledged, nothing read or written', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      eventPatch: { data: { object: { status: null } } },
+      db: { 'payment_transactions:select': paymentFound() },
+    });
+    expect(statusOf(result)).toBe(200);
+    expect(effectsOf(result).filter((e) => e.type === 'db' && ['payment_transactions', 'payment_refunds'].includes(String(e.table)))).toEqual([]);
+    expect(messagesAt('warn')).toContain('Stripe refund status not recorded; nothing written');
+  });
+
+  it('Q-SA-4. a matched row with no connected account gets event.account; one with an account is never overwritten', async () => {
+    const empty = await run({
+      fixture: 'refund-created.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': [ok(null), ok(appRow({ stripe_connect_account_id: null }))],
+        'payment_refunds:update': counted(1),
+      },
+    });
+    expect(firstArg(refundWrites(empty)[0])).toMatchObject({ stripe_connect_account_id: 'acct_owner_a' });
+
+    const other = await run({
+      fixture: 'refund-created.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': [ok(null), ok(appRow({ stripe_connect_account_id: 'acct_somewhere_else' }))],
+        'payment_refunds:update': counted(1),
+      },
+    });
+    expect(firstArg(refundWrites(other)[0])).not.toHaveProperty('stripe_connect_account_id');
+    expect(messagesAt('warn')).toContain('Ledger row names a different connected account than the event; left as it is');
+  });
+
+  it('F2-e. the compare-and-set matches 0 rows (race lost): 500, claim released, no sync', async () => {
+    const result = await run({
+      fixture: 'refund-updated-pending-to-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': ok(appRow({ processor_refund_id: 're_connect_1' })),
+        'payment_refunds:update': counted(0),
+      },
+    });
+    expect(statusOf(result)).toBe(500);
+    expect(claimStatus(result)).toBe('failed');
+    expect(syncs(result)).toEqual([]);
+  });
+
+  // ── R: the ledger's own refusal (SA-7, C-1) ────────────────────────────────
+
+  const ALERT = 'Refund ledger refused a Stripe refund (refund_guard_before)';
+  const GUARD_MESSAGE = 'Refund of 10.00 would exceed transaction tx-1 amount 150.00';
+
+  it('R-1. P0001 on the insert: acknowledged (200, completed) with exactly one alert carrying six fields', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      db: { 'payment_transactions:select': paymentFound(), 'payment_refunds:insert': fail('P0001', GUARD_MESSAGE) },
+    });
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    const alerts = linesAt('error').filter((l) => l.msg === ALERT);
+    expect(alerts.map((l) => l.ctx)).toEqual([
+      { alert: true, eventId: 'evt_connect_refund_updated_dashboard', stripeRefundId: 're_dashboard_1', transactionId: 'tx-1', pgCode: 'P0001', pgMessage: GUARD_MESSAGE },
+    ]);
+    expect(syncs(result)).toEqual([]);
+  });
+
+  it('R-1. P0001 on the compare-and-set update: acknowledged the same way', async () => {
+    const result = await run({
+      fixture: 'refund-updated-pending-to-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': [ok(null), ok(appRow({ status: 'failed' }))],
+        'payment_refunds:update': fail('P0001', 'x'.repeat(400)),
+      },
+    });
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    const alerts = linesAt('error').filter((l) => l.msg === ALERT);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].ctx).toMatchObject({ alert: true, eventId: 'evt_connect_refund_updated_app', pgCode: 'P0001', pgMessage: 'x'.repeat(300) });
+    expect(syncs(result)).toEqual([]);
+  });
+
+  it('R-2. any other error on the update throws: 500, claim released', async () => {
+    const result = await run({
+      fixture: 'refund-updated-pending-to-succeeded.json',
+      owners: OWNER_A,
+      db: {
+        'payment_transactions:select': paymentFound(),
+        'payment_refunds:select': ok(appRow({ processor_refund_id: 're_connect_1' })),
+        'payment_refunds:update': DB_DOWN,
+      },
+    });
+    expect(statusOf(result)).toBe(500);
+    expect(claimStatus(result)).toBe('failed');
+    expect(linesAt('error').filter((l) => l.msg === ALERT)).toEqual([]);
+  });
+
+  it('G-2. a ledger read error throws: 500, claim released, nothing written', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      db: { 'payment_transactions:select': paymentFound(), 'payment_refunds:select': fail('XX000', 'read failed') },
+    });
+    expect(statusOf(result)).toBe(500);
+    expect(refundWrites(result)).toEqual([]);
+  });
+
+  it('a payment lookup error throws (500) instead of reading as an unknown payment', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      db: { 'payment_transactions:select': fail('XX000', 'read failed') },
+    });
+    expect(statusOf(result)).toBe(500);
+    expect(claimStatus(result)).toBe('failed');
+    expect(refundOps(result)).toEqual([]);
+  });
+
+  it('C-9. a refund for a payment never recorded logs both the charge and the intent', async () => {
+    await run({ fixture: 'refund-updated-succeeded.json', owners: OWNER_A });
+    const line = linesAt('error').find((l) => l.msg === 'Stripe refund for an unknown payment');
+    expect(line?.ctx).toEqual({ stripeRefundId: 're_dashboard_1', chargeId: 'ch_connect_1', paymentIntentId: 'pi_website_1' });
+  });
+
+  // ── F3: the tenant check ───────────────────────────────────────────────────
+
+  it('F3-a. the sending account does not own the payment: nothing read from or written to the ledger, no sync, 200', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNED_BY_OTHER,
+      db: { 'payment_transactions:select': paymentFound() },
+    });
+    expect(statusOf(result)).toBe(200);
+    expect(refundOps(result)).toEqual([]);
+    expect(syncs(result)).toEqual([]);
+    expect(messagesAt('error')).toContain('Refused: the sending account does not own the refunded payment; nothing recorded');
+    expect(claimStatus(result)).toBe('completed');
+  });
+
+  it('F3-c. the payment was taken on a different connected account: the same refusal', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      db: { 'payment_transactions:select': paymentFound({ stripe_connect_account_id: 'acct_other' }) },
+    });
+    expect(statusOf(result)).toBe(200);
+    expect(refundOps(result)).toEqual([]);
+    expect(syncs(result)).toEqual([]);
+    expect(messagesAt('error')).toContain('Refused: the payment was taken on a different connected account; nothing recorded');
+  });
+
+  it('F3-c. no connected account recorded on the payment: recorded, with a warning', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      db: { 'payment_transactions:select': paymentFound({ stripe_connect_account_id: null }) },
+    });
+    expect(refundWrites(result).map((e) => e.operation)).toEqual(['insert']);
+    expect(messagesAt('warn')).toContain('Refunded payment has no recorded connected account');
+  });
+
+  it('F3-d. the owner lookup fails: 500, claim released, no ledger operation', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      ownerLookupFails: ['acct_owner_a'],
+      db: { 'payment_transactions:select': paymentFound() },
+    });
+    expect(statusOf(result)).toBe(500);
+    expect(claimStatus(result)).toBe('failed');
+    expect(refundOps(result)).toEqual([]);
+  });
+
+  // ── F4: routing ────────────────────────────────────────────────────────────
+
+  it.each(['refund.created', 'refund.updated', 'refund.failed'])(
+    'F4-a. platform %s: no money-row operation, logged, completed',
+    async (type) => {
+      const result = await run({
+        fixture: 'refund-updated-succeeded.json',
+        eventPatch: { type, account: null },
+        db: { 'payment_transactions:select': paymentFound() },
+      });
+      expect(statusOf(result)).toBe(200);
+      expect(effectsOf(result).filter((e) => e.type === 'db' && ['payment_transactions', 'payment_refunds'].includes(String(e.table)))).toEqual([]);
+      expect(messagesAt('info')).toContain('Platform refund event; not recorded in the client ledger');
+      expect(claimStatus(result)).toBe('completed');
+    }
+  );
+
+  it('F4-c. charge.refund.updated is not handled', async () => {
+    const result = await run({
+      fixture: 'refund-updated-succeeded.json',
+      owners: OWNER_A,
+      eventPatch: { type: 'charge.refund.updated' },
+      db: { 'payment_transactions:select': paymentFound() },
+    });
+    expect(refundOps(result)).toEqual([]);
+    // `log.info('Unhandled event type')` passes the message as the only argument.
+    expect(linesAt('info').map((l) => l.msg ?? l.ctx)).toContain('Unhandled event type');
   });
 });

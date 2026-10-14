@@ -8,7 +8,7 @@
 **Depends on:** P-5a merged (P-5a.1 #314 with 20261028 applied to production; P-5a.2 #327). P-5b is not needed, but P-5b.2 (#363) is now on `main` and gives the admin list its "Signed up, not paid" and paid line for free (§1.3).
 **Date:** 2026-10-14
 **Branch:** `feature/bos-plan-payments-p9`, worktree `neuronforge-invite-s1`, cut from `origin/main` `396cafa6` (#362). Confirmed with `git branch --show-current` on 2026-10-14. `origin/main` has since moved to `096f86e0` (#363, P-5b.2, 5 commits); it is merged in at T0 (RM's call, never a rebase or a stash).
-**Status:** SA APPROVED WITH CONDITIONS C-1 to C-12 (2026-10-14). Two PRs, P-9.1 first. **P-9.1 Code Complete (2026-10-14), uncommitted, awaiting SA code review.** G-6 answered YES (2026-10-14): T10 is in P-9.2.
+**Status:** SA APPROVED WITH CONDITIONS C-1 to C-12 (2026-10-14). Two PRs, P-9.1 first. **P-9.1 MERGED (#373, 2026-10-14); 20261029 APPLIED to production 2026-10-14** (G-2: pre-check PASS 7/0, checker PASS 7/0 with C3 `576c2e80149a372d7cc1dce490e0de4f`, PROBE PASS F01 to F10 and F12, F11 PASS). G-6 answered YES (2026-10-14): T10 is in P-9.2. **P-9.2 Code Complete (2026-10-14)** on `feature/bos-plan-payments-p9-2` (worktree `neuronforge-invite-s1`, fresh from `origin/main` `392a9b53`; confirmed with `git branch --show-current`), uncommitted, awaiting SA code review.
 
 ## Overview
 
@@ -47,8 +47,9 @@ Today an admin can choose "Paid" with Essentials or Autopilot on the invite form
 15. [SA Review Notes](#sa-review-notes)
 16. [Implementation Notes (P-9.1)](#implementation-notes-p-91)
 17. [QA Testing Report](#qa-testing-report)
-18. [Commit Info](#commit-info)
-19. [Change History](#change-history)
+18. [Implementation Notes (P-9.2)](#implementation-notes-p-92)
+19. [Commit Info](#commit-info)
+20. [Change History](#change-history)
 
 ---
 
@@ -253,12 +254,12 @@ Pino via `createLogger`, context first; ids only, never an email, token or code.
 | ✅ T2 | `provisionFromAdminPaidInvite` + types + guard lists + repository tests (finalised, already_finalised, not_matched, unknown answer, DB error scrubbed) | 0.25d | .1 |
 | ✅ T3 | Redemption `admin_paid` branch, `finishAdminPaid`, deps wiring, shared `adminPaidInviteRedeemable`, public view `unavailable` (A-2); tests (§7) | 0.5d | .1 |
 | ✅ T4 | Comments in `config/invites.ts`; registry update (§3.7); P-9.1 docs; full suites, typecheck, lint | 0.1d | .1 |
-| ⬜ T5 | Hold `grantId` (repository select, type, `readPaymentHold`), `heldPaymentOffer` admin branch, held-view alert; switch-matrix parity test extended to admin invitees; checkout tests | 0.4d | .2 |
-| ⬜ T6 | FR-22: `payment` flag in the view, page rendering, new copy key en/he/es (drafts), render tests (en, he RTL, es) for admin Paid and friend | 0.35d | .2 |
-| ⬜ T7 | Admin form: sellable grants with price, `note`, create refusal; ops + render tests | 0.25d | .2 |
-| ⬜ T8 | Registry update, P-9.2 docs (both requirements), full suites, `test:bos-entitlements`, typecheck, lint | 0.15d | .2 |
-| ⬜ T9 | Demo (§8) (P-9.1 share: checklist written in Implementation Notes; the run is TL/user's) on the standard sandbox, cleanup the same day | 0.3d | .1 0.1d / .2 0.2d |
-| ⬜ T10 | *(§14 BQ answered **yes** 2026-10-14: in scope for P-9.2)* N-2 to the issuing admin: allow `'subscribed'` for `issuerKind: 'admin'` with N-1's active-admin check; `planPaymentApply.ts` hands `admin_invite` first payments to the notifier; the notifier's issuer cross-check accepts an admin invite whose `redeemed_account_id` is the payer; audit shape as N-2 (`business_os_invite`, `userId: null`); en/he/es wording reused ("Subscribed"); tests | 0.6d | .2 |
+| ✅ T5 | Hold `grantId` (repository select, type, `readPaymentHold`), `heldPaymentOffer` admin branch, held-view alert; switch-matrix parity test extended to admin invitees; checkout tests | 0.4d | .2 |
+| ✅ T6 | FR-22: `payment` flag in the view, page rendering, new copy key en/he/es (drafts), render tests (en, he RTL, es) for admin Paid and friend | 0.35d | .2 |
+| ✅ T7 | Admin form: sellable grants with price, `note`, create refusal; ops + render tests | 0.25d | .2 |
+| ✅ T8 | Registry update, P-9.2 docs (both requirements), full suites, `test:bos-entitlements`, typecheck, lint | 0.15d | .2 |
+| ⬜ T9 | Demo (§8) (P-9.1 and P-9.2 shares: checklists written in Implementation Notes (P-9.1) and (P-9.2); the run is TL/user's) on the standard sandbox, cleanup the same day | 0.3d | .1 0.1d / .2 0.2d |
+| ✅ T10 | *(§14 BQ answered **yes** 2026-10-14: in scope for P-9.2)* N-2 to the issuing admin: allow `'subscribed'` for `issuerKind: 'admin'` with N-1's active-admin check; `planPaymentApply.ts` hands `admin_invite` first payments to the notifier; the notifier's issuer cross-check accepts an admin invite whose `redeemed_account_id` is the payer; audit shape as N-2 (`business_os_invite`, `userId: null`); en/he/es wording reused ("Subscribed"); tests | 0.6d | .2 |
 
 **Total ≈ 3.2d** (P-9.1 ≈ 1.75d: T0 to T4 + 0.1d of T9; P-9.2 ≈ 1.45d: T5 to T8 + 0.2d of T9). **With T10 ≈ 3.8d** (P-9.2 ≈ 2.05d).
 
@@ -807,6 +808,352 @@ Q3 also lists the N-1 "notified" row and the code-sent rows for the same invite;
 
 ---
 
+## Implementation Notes (P-9.2)
+
+**Dev, 2026-10-14.** Branch `feature/bos-plan-payments-p9-2` (worktree `neuronforge-invite-s1`, fresh from `origin/main` `392a9b53`, which carries P-9.1 #373 and P-5b.2 #363; confirmed with `git branch --show-current`). Uncommitted. **No migration.** Skills applied: `business-os-entitlements`, `tenant-isolation-guard`, `new-api-route` (no new route), `business-os-schema-check` (`grant_id`, `issuer_admin_id`, `grant_kind` verified on `business_os_invites` in 20261012: NOT NULL `grant_id`, `one_issuer` CHECK).
+
+### G-2 recorded (P-9.1 gate, production, 2026-10-14)
+
+| Step | Result |
+|---|---|
+| Pre-check | VERDICT PASS 7/0 |
+| Migration 20261029 | applied |
+| Checker | VERDICT PASS 7/0, C3 body md5 `576c2e80149a372d7cc1dce490e0de4f` (equal to the PGlite run) |
+| Probe | PROBE PASS F01 to F10 and F12 |
+| F11 | PASS (nothing left behind) |
+
+Recorded in requirement §9.3 (20261029 row). P-9.1 merged as #373.
+
+### What was built
+
+| Task | Area | Files |
+|---|---|---|
+| T5 | Hold carries the invited tier (C-5): `findHoldFactsById` selects `grant_kind, grant_id, language`; `BusinessOsInviteHoldFacts.grant_id`; `PaymentHold`'s held variant is a union, `grantId: string` only on `admin_invite`; an empty / missing `grant_id` → `{ ok: false }` | `lib/repositories/BusinessOsInviteRepository.ts`, `lib/repositories/types.ts`, `lib/business-os/invites/paymentHold.ts` |
+| T5 | `heldInviteOffer(invite, switches)` extracted (C-6): switches first (D5-3), then the invited tier (friend: `INVITE_ISSUANCE_POLICY.account.grantId`; admin: `grantId`) if it is in `sellableTiers()` (C-3), else `held_tier_unresolved`. `heldPaymentOffer` now delegates to it. No registry change (same symbols) | `lib/business-os/billing/planCheckoutEligibility.ts` |
+| T5 | Holding screen: `held_tier_unresolved` (only reachable with every switch on) logs `error`, `alert: true`, `bos_billing_held_tier_unresolved`, account id and source only (W-2) | `lib/business-os/billing/heldPaymentView.ts` |
+| T6 | FR-22: the `valid` response gains `payment: 'none' \| 'required' \| 'opens_later'`, decided by `heldInviteOffer` with injectable switches (`paymentSwitches`); `none` for a non-tier grant | `lib/business-os/invites/publicInviteView.ts` |
+| T6 | Invite page renders the existing `copy.paymentRequired` for `required` (`data-testid="invite-payment-required"`), `paymentOpensLater` for `opens_later`, nothing for a free offer; the SA CR-1 comment now points at C-6/C-7. No new copy key (C-7) | `app/invite/page.tsx`, `app/invite/invitePageCopy.ts` (comment only) |
+| T7 | Admin form: the Paid type's grants are `sellableTiers()` that the config still carries for an invite type, labelled `"<plan> · $<price> a month"` via `planLabel` + `planMonthlyPriceUsd(config, tier)` (C-4); default = the type's default when payable, else the first; `note` = the pays-at-signup line; with no payable tier the type is unavailable ("No plan has a price yet"). Create refuses an unpayable Paid grant with 409 `grant_not_available` before any read or write | `lib/business-os/invites/adminInviteOps.ts`, `app/admin/business-os-invites/components/CreateInviteForm.tsx` (renders `note`), `app/admin/business-os-invites/types.ts` |
+| T8 | Registry: `adminInviteOps.ts` gains exactly `planMonthlyPriceUsd` | `lib/business-os/entitlements/__tests__/enforcementPoints.test.ts` |
+| T10 | N-2 to the issuing admin (BQ-P11, Q-10): `planPaymentApply.ts` hands a stamped `admin_invite` first payment to the existing notifier port (organic still `not_applicable`) with the lineage `source` (`lineageSource`); the notifier looks for the recipient that lineage names: for `admin_invite` the invite must be admin-issued, name an `issuer_admin_id` and be redeemed by the payer (else `invite_mismatch`, alerted); a champion's own (cohort) payment owes nobody (info line, no audit); then `notifyInviter` with `issuerKind: 'admin'` (N-1's `isActiveAdmin` and the admin's live auth email via `findUserIdentity`, N-1's admin button, the same 4 s clock, N-2's audit shape with `recipientKind: 'admin'`). `NotifyInviterInput` allows `'subscribed'` for an admin. The N-2 invite read gains `issuer_admin_id, grant_kind` | `lib/business-os/billing/planPaymentApply.ts`, `lib/business-os/invites/championSubscribedNotification.ts`, `lib/business-os/invites/inviterNotification.ts`, `lib/repositories/BusinessOsInviteRepository.ts`, `lib/repositories/types.ts`, `lib/email/templates/invite-accepted.ts` |
+
+**Exactly once (T10).** Only `result.firstPaymentStamped === true` (the apply function's own "newly stamped" answer) on `applied`/`recorded` reaches the notifier, unchanged from P-5b.1; a replay is `already_applied` and never gets there, including a replay arriving while the first email is still sending (pinned).
+
+### Copy (G-3)
+
+**No new he/es strings.** The invite page reuses `copy.paymentRequired` (C-7). The admin's "subscribed" email reuses N-2's approved strings: its heading is N-2's **subject** in each language (the English N-2 heading says "Your friend subscribed", which is wrong for an admin), its lead, status word and footer are N-2's, its button is N-1's admin one. G-3 has nothing to approve.
+
+New **English-only admin** strings (admin surface, P-5b SA Q-7 precedent): the form note "The invitee pays this plan at signup and cannot use AgentPilot until they have paid."; the grant label shape "<plan> · $<price> a month"; the unavailable reason "No plan has a price yet".
+
+### Deviations and points for SA
+
+| # | What | Why |
+|---|---|---|
+| D2-1 | T10 needed two more columns on the N-2 invite read: `findInviterNotificationFactsById` now selects `issuer_kind, issuer_account_id, issuer_admin_id, grant_kind, email, redeemed_account_id` (was four); `BusinessOsInviteNotificationFacts` gains both. Same one-row PK read, same single caller (C-7 guard unchanged) | Q-10: the admin is found from the payer's own lineage invite (`issuer_admin_id`), and only an admin **Paid** (tier) invite owes the email, so the grant kind is needed. Not listed in §4 |
+| D2-2 | `FirstPaymentNotifyInput` gains optional `lineageSource`; absent is read as a friend (P-5b.1's only case) | The notifier keeps P-5b.1's cross-check "the invite is of the kind the lineage says"; a friend lineage pointing at an admin invite is still `not_a_friend_invite` |
+| D2-3 | An `admin_invite` first payment now always reaches the notifier, so a **champion's own** first payment costs one bounded invite read before the notifier says `not_applicable` (info, no audit). The unwired-notifier alert now also covers `admin_invite`; its message was reworded ("may be owed an N-2 email") | Only the invite row tells a champion (cohort) from an admin Paid invitee (tier); `planPaymentApply.ts` imports nothing from invites (C-8) |
+| D2-4 | Admin email heading = the N-2 subject (no new string) | See Copy |
+| D2-5 | The admin form's payable-tier predicate is `isInviteGrantAvailable(config, tier) && sellableTiers().includes(tier)`, the two tier halves of the redemption predicate; the LIST comes from `sellableTiers()`. `isInviteGrantAvailable` (pre-existing GR-1 check, already applied at create) consults the invite types' grant lists | Read C-3 as "the tier list and the price rule come from `sellableTiers()`, never `buyableTiers()` or `INVITE_TYPES.paid.grantIds` as the list"; form, create and redemption cannot disagree. SA to confirm |
+| D2-6 | Paid type shown unavailable when no tier is payable ("No plan has a price yet") | Otherwise the form would offer a type whose create always answers 409 |
+| D2-7 | The client type keeps `payment` optional; a paid offer with no flag reads "Payment opens soon" | A deploy in flight (old server, new page) must never show "required" |
+| D2-8 | The `held_tier_unresolved` alert also fires for a FRIEND whose friend tier lost its price | Same condition (every switch on, nothing to buy); W-2 shape |
+| D2-9 | `{ ok: false }` for an empty `grant_id` means the page GATE treats the account as not held (it fails open on `{ ok: false }` with an error log, SA Q-2), while the checkout and the holding screen fail closed | As C-5 rules; the case is impossible by schema (NOT NULL). Flagged so SA sees the gate's half |
+| D2-10 | Existing tests edited where the behaviour changed on purpose (listed below), never to weaken an assertion | Fixtures gain `grant_id` / the two N-2 columns / the `payment` key; three "until P-9" cases now use an unpriced admin tier and keep their fail-closed assertion; the P-5b.1 "admin_invite sends nothing" case is narrowed to organic, its admin half replaced by the T10 block |
+
+Existing tests edited: `paymentHold.test.ts` (fixtures + `grantId`), `paymentHoldBatch.test.ts` (fixture), `planCheckout.test.ts` and `planCheckout.qa.test.ts` and `planCheckoutEligibility.test.ts` and `heldPaymentView.test.ts` and `app/api/business-os/billing/plan/checkout/__tests__/route.test.ts` ("until P-9" cases → unpriced admin tier, same refusal), `heldPaymentOffer.matrix.test.ts` (shapes, see §tests), `publicInviteView.test.ts` and `app/api/public/invites/validate/__tests__/route.test.ts` (allow-list gains `payment`), `BusinessOsInviteRepository.test.ts` (two column lists), `championSubscribedNotification.test.ts` and `planPaymentApply.n2.test.ts` (fixtures; organic-only case; T10 block appended), `adminPaidInviteAgreement.test.ts` (O-1), `inviteRedemption.test.ts` and `awaitingPayment.render.test.tsx` (blocks appended).
+
+### Tests
+
+| Area | Where | What |
+|---|---|---|
+| Hold (C-5) | `paymentHold.adminGrant.test.ts` (new) | admin + tier → `grantId`; friend → no `grantId`, invite never read (R-3); empty / null / undefined `grant_id` → `{ ok: false }`; cohort not held; `paymentHold.ts` imports nothing from billing or entitlements |
+| `heldPaymentOffer` / `heldInviteOffer` | `heldPaymentOffer.admin.test.ts` (new) | each sellable tier → pay that tier; unknown / empty / `constructor` → unresolved; every partial switch combination → unavailable; `heldInviteOffer` ≡ `heldPaymentOffer` for 8 × 4 holds; source pin (sellableTiers only, no buyableTiers, no INVITE_TYPES, no tier literal); holding screen en/he/es Pay with the config's label and price; the W-2 alert (exact context) only with every switch on |
+| P5-C5 parity (C-5) | `heldPaymentOffer.matrix.test.ts` | {friend, admin per tier (basic, pro), admin unknown, friend unpriced} × 8 switch combinations through the REAL route: the checkout admits exactly `[view.tier]` when Pay is shown and refuses every other tier (all of them otherwise); expected tier asserted per cell |
+| Checkout | `planCheckout.test.ts` (block appended) | invited to each tier: admitted for it, `held_tier_not_allowed` for every other tier with no session; empty `grant_id` → `hold_unreadable` |
+| FR-22 (C-6) | `invitePaymentStatement.agreement.test.ts` (new) | {admin per tier, admin tier lost its price, friend, friend tier lost its price} × 8: the page's `payment` = the expected value (O-1 style) AND `required` ⇔ `heldPaymentOffer` pay ⇔ `readHeldPaymentView` pay; champion → `none` |
+| Page (C-7) | `page.payment.render.test.tsx` (new) | en/he (RTL)/es: `required` → one "Payment is required at signup." line, no "opens soon"; `opens_later` → one "opens soon" line; no flag → the safe line; free → none; no new key; page keys on the flag only |
+| Holding screen | `awaitingPayment.render.test.tsx` (block appended) | admin hold (with `grantId`) reaches the model; en/he/es "Finish your payment", Autopilot, $129 (LTR `bdi` inside RTL), Pay POSTs the model's tier; coming soon otherwise |
+| Admin ops (C-3, C-4) | `adminInviteOps.paid.test.ts` (new) | grants = sellable tiers with `planLabel · $planMonthlyPriceUsd a month`; note on Paid only; unpriced tier dropped and default moves; none payable → unavailable with reason; switch off unchanged; create refuses an unpriced tier with no read or write and lets every payable tier reach the write; source pin |
+| Admin form | `createInviteForm.paidNote.render.test.tsx` (new) | renders the server grants and note; none for a champion; writes no note text or price of its own |
+| Admin list (SA D-1, REQUIRED) | `invites.adminPaidInvitee.render.test.tsx` (new) | the REAL `listInvitesForAdmin` into the REAL `InviteList`: an admin Paid invitee reads "Signed up, not paid" (L1); after the stamp, "Paid · 2026-10-14 · $129.00 USD" + "Test payment"; an admin champion has no payment line |
+| Redemption pins (QA P-9.1 note 1) | `inviteRedemption.test.ts` (block appended) | switch ON, admin Paid: revoked → 409 `revoked`, expired → 409 `expired`, used → 409 `used` on code, complete and Google, only the token lookup, no finalise, audit, N-1 or code; success then resubmit → one finalise, one audit pair, one N-1 in total |
+| O-1 | `adminPaidInviteAgreement.test.ts` | each shape × switch asserts the expected page state, signup answer and predicate reason, not only agreement |
+| T10 notifier | `championSubscribedNotification.admin.test.ts` (new) | one email to the admin's live auth email, active-admin checked, ids from `issuer_admin_id` only; exact NOTIFIED entry (N-2 shape, `recipientKind: 'admin'`); he/es approved subject and list word, RTL; former admin → `recipient_not_admin`; champion cohort → no email, no audit; four mismatches alerted; admin lineage without invite id; no clock left; friend path unchanged; no `@` in logs or audits |
+| T10 apply | `planPaymentApply.n2.test.ts` (block appended) | stamped `admin_invite` → notifier with `lineageSource`; flag false / `already_applied` → never; real notifier → one admin email, audit order (stamp flush, then the N-2 entry); champion cohort → nothing; the same invoice twice through the real handler → one email; **replay mid-send** → `already_applied`, one email; one 4 s clock (1.5 s read leaves 2.5 s) |
+| Template | `invite-accepted.adminSubscribed.test.ts` (new) | admin heading = approved subject in en/he/es; champion and N-1 unchanged |
+
+### Gates (final diff)
+
+| Command | Result |
+|---|---|
+| `npx jest lib/business-os/invites lib/business-os/billing app/api/public/invites app/invite app/api/admin/business-os/invites app/admin/business-os-invites app/api/business-os/billing app/api/stripe lib/repositories/__tests__ lib/email lib/business-os/entitlements supabase/migrations/__tests__` | **301 suites, 11451 tests, 0 failed** |
+| `npm run test:bos-entitlements` (G-4) | **264 suites, 7869 tests, 0 failed** |
+| `npm run typecheck:bos-llm` | **passed**, 530 files in scope, 28 errors, **0 new** (the one baseline entry it reports as fixed, `app/api/onboarding/build/route.ts` TS18047, is not P-9.2's). A first run caught one new error, an `admin_invite` hold fixture without `grantId` in `heldPaymentView.test.ts`, fixed before this run |
+| `tsc` over the 41 touched code files plus every file importing the changed modules (scratch tsconfig, 150 files) | 0 errors in any touched file or in any error mentioning the changed types; the only error in a touched file is the pre-existing TS1501 at `awaitingPayment.render.test.tsx:398` (present on `origin/main`) |
+| `eslint` on the 41 touched code files | 0 errors; 1 pre-existing `no-explicit-any` warning (`lib/repositories/types.ts:516`, not a changed line) |
+| `npm run lint:hooks` | clean, exit 0 |
+| `console.*` or a tier literal in added lines | none |
+
+### T9 (P-9.2 share): demo checklist for TL / the user
+
+Prerequisites (§8): the standard sandbox `acct_1UPKR4C7KDUGYIcA` with `stripe listen` forwarding; locally only, never committed: `BUSINESS_OS_PLAN_CHECKOUT_ENABLED=true`, `BUSINESS_OS_PLAN_PRICES_ENABLED=true`, `paidInvitesAvailable: true`; an admin mailbox the user reads; a fresh invitee address.
+
+| Step | Do | Expect |
+|---|---|---|
+| D1 | `/admin/business-os-invites` → New invite → Paid | Plans "Essentials · $79 a month", "Autopilot · $129 a month"; the note "The invitee pays this plan at signup and cannot use AgentPilot until they have paid." |
+| D2 | Issue an Autopilot Paid invite, Hebrew | Link created; invitation says payment required |
+| D3 | Open the link signed out | Autopilot, $129 a month, what it includes, and **"נדרש תשלום בעת ההרשמה."** (RTL); with either env switch off it reads "payment opens soon" instead |
+| D4 | Sign up with the code | Holding screen: "Finish your payment", Autopilot, "$129 a month, excluding tax", Pay |
+| D5 | Admin inbox | One N-1 "Signed up — not subscribed yet" |
+| D6 | Admin list | Accepted, L1, **"Signed up, not paid"** |
+| D8 | Pay with `4242 4242 4242 4242` | Processing, then onboarding |
+| D9 | Read-only SQL; Tiers page | Plan row `tier = 'pro'`; lineage `first_paid_at` and `first_payment_ref` set once; one `BOS_BILLING_FIRST_PAYMENT_STAMPED`, one `BOS_BILLING_INVOICE_PAID` (AC-F3.1) |
+| D10 | Admin list | Paid · date · $129.00 USD · Test payment |
+| **D10a (T10)** | Admin inbox | **Exactly one** "Your invitation turned into a subscription" email (heading the same), "{invitee} has subscribed.", status "Subscribed", button "Open invites"; one `BOS_INVITE_INVITER_NOTIFIED` on the invite with `event: subscribed`, `recipientKind: admin` |
+| D11 | Resend `invoice.paid` from the sandbox | `already_applied`; nothing changes, **no second admin email** |
+| D11a | (optional) Before paying, try the checkout for Essentials from the browser console | 409 `held_tier_not_allowed` |
+| D13 | Same day | Cancel the sandbox subscription; revoke unused demo invites; revert the local flips (`git diff lib/business-os/entitlements/config/invites.ts` empty); Danger Zone cleanup of the test account |
+
+---
+
+## SA Code Review — P-9.2 (2026-10-14)
+
+**Code Review by SA — 2026-10-14**
+**Status:** ✅ Code Approved (APPROVED WITH FIXES: one comment-only fix applied by SA, listed below; nothing for Dev to redo)
+
+Reviewed in the worktree `neuronforge-invite-s1`, branch `feature/bos-plan-payments-p9-2` on `origin/main` `392a9b53`, uncommitted: 35 modified files (+894/−149) and 9 new test files. Read in full: the diffs of `paymentHold.ts`, `planCheckoutEligibility.ts`, `heldPaymentView.ts`, `publicInviteView.ts`, `app/invite/page.tsx`, `invitePageCopy.ts`, `adminInviteOps.ts`, `CreateInviteForm.tsx`, the admin `types.ts`, `planPaymentApply.ts`, `championSubscribedNotification.ts`, `inviterNotification.ts`, `invite-accepted.ts`, the invite repository, `lib/repositories/types.ts` and the registry; every removed line in the 17 edited test files; the new parity matrix, the T10 notifier tests and the replay-mid-send case. Also read, unchanged: `planBillingHandler.ts` wiring, `inviterNotificationDeps.ts`, `paymentHoldGate.ts`, and the two other hold readers (`boostCheckout.ts`, `creditAdminOps.ts`). Skills applied: `tenant-isolation-guard`, `business-os-entitlements` (review checklist), `business-os-schema-check` (`grant_id` NOT NULL, `issuer_admin_id`, `grant_kind` on `business_os_invites`, 20261012).
+
+### Gates SA ran on the final diff
+
+| Command | Result |
+|---|---|
+| `npx jest` over invites, billing, public invite routes, `app/invite`, admin invite route and page, billing routes, Stripe, repositories, email, entitlements, migration guards | **301 suites, 11451 tests, 0 failed** |
+| `npm run test:bos-entitlements` (G-4) | **264 suites, 7869 tests, 0 failed** |
+| `console.*` in any touched non-test file (whole file, not only added lines) | none |
+| Tier literal (`'basic'`, `'pro'`, plan names) in added non-test lines | none |
+
+`typecheck:bos-llm` and eslint were not re-run by SA; Dev's recorded runs (0 new errors, 0 lint errors) are relied on. The union change to `PaymentHold` is the one type risk, and every consumer (`planCheckout`, `boostCheckout`, `creditAdminOps`, the gate, the holding screen) reads only `ok` / `held` / `source`, so the narrowing cannot break them.
+
+### Mutation checks (one at a time; each restored by re-editing and md5-verified)
+
+| # | Mutation | Caught by |
+|---|---|---|
+| SM-1 | `adminMismatchOf`: drop "redeemed by this account" | `championSubscribedNotification.admin.test.ts` (1 red) |
+| SM-2 | Notifier: a champion's own (cohort) first payment no longer stops before the send | admin notifier test and `planPaymentApply.n2.test.ts` (2 red) |
+| SM-3 | `heldInviteOffer`: an admin invitee pays its `grantId` without the `sellableTiers()` check | 7 billing suites incl. the P5-C5 matrix through the real route, `heldPaymentOffer.admin`, checkout, eligibility, holding screen |
+| SM-4 | Public view: an admin tier invite says `required` without asking `heldInviteOffer` (ignores the switches) | `invitePaymentStatement.agreement.test.ts` (6 red) |
+| SM-5 | Create: the unpayable-Paid-grant refusal is skipped | `adminInviteOps.paid.test.ts` (1 red) |
+| SM-6 | Hold: an empty `grant_id` becomes a held result instead of `{ ok: false }` | `paymentHold.adminGrant.test.ts` and `planCheckout.test.ts` (2 red) |
+
+md5 after restore, equal to the value before the first mutation: `paymentHold.ts` `5bc1ba75155181742ddab7790cde299f`, `championSubscribedNotification.ts` `beea76523ba3f5eafe1ebd40398c967d`, `planCheckoutEligibility.ts` `151702573b052ac86d55c49aa35345fa`, `publicInviteView.ts` `6373c5d7f34fc4eb851d39f53fafdfb1`, `adminInviteOps.ts` `308aa147219814491ecadb62d2aa88d4`; `planPaymentApply.ts` `dcc6b920b7242cdac681deeafd87237e` (not mutated).
+
+### Conditions
+
+| # | Verdict | Evidence |
+|---|---|---|
+| C-3 | ✅ | `sellableTiers()` is the only price rule at the form, create, redemption (P-9.1), the public view and `heldInviteOffer`. No `buyableTiers()` and no `INVITE_TYPES.paid.grantIds` as a list in any admin Paid decision (source pins in `heldPaymentOffer.admin.test.ts` and `adminInviteOps.paid.test.ts`). `paymentHold.ts` gains no import (its pin stays green). Import graph: `planCheckoutEligibility.ts` imports config, two flag readers and `import type { PaymentHold }` only; no billing module imports `adminInviteOps`, `publicInviteView` or `inviteOffer`. No runtime cycle; both new invites → billing imports carry the C-3 comment |
+| C-4 | ✅ | `planMonthlyPriceUsd` is the only new entitlements symbol, on the existing `adminInviteOps.ts` entry with a matching `why`. No admin route changed, so `requireAdmin` stays the first statement (CI guard). The new 409 `grant_not_available` sits after the pre-existing pure checks and before any repository call (SM-5). The admin page is unchanged apart from `CreateInviteForm.tsx` rendering the server's `note`; it stays inside the shared admin layout |
+| C-5 | ✅ | `PaymentHold` held variant is the union, `grantId: string` only on `admin_invite`; the friend's invite is still never read (R-3, pinned). Empty / null / undefined `grant_id` → `{ ok: false }` (SM-6). The matrix runs {friend, admin basic, admin pro, admin unknown, friend unpriced} × 8 switches through the REAL checkout route, trying every tier per cell, and asserts the expected tier per cell, not only agreement |
+| C-6 | ✅ | `heldInviteOffer` is the one step; `heldPaymentOffer` delegates to it; the public view calls it for friend (`account_invite`) and admin tier (`row.grant_id`) with injectable switches; `invitePaymentStatement.agreement.test.ts` pins page `required` ⇔ `heldPaymentOffer` pay ⇔ `readHeldPaymentView` pay (SM-4). The client reads `required` only when the server sent it; anything else on a paid offer reads "opens soon" (D2-7) |
+| C-7 | ✅ | `copy.paymentRequired` rendered; no new copy key (pinned in the page render test); CR-1 comment updated |
+
+### T10 (G-6 = yes)
+
+| Check | Verdict |
+|---|---|
+| Exactly once | ✅ Only `firstPaymentStamped === true` on `applied`/`recorded` reaches `notifyFirstPayment` (unchanged); a replay is `already_applied`; the replay-mid-send case runs through the real handler and sends one email |
+| Admin found only from the payer's own lineage invite | ✅ `inviteId` from the paying account's lineage row; `issuer_admin_id` from that invite's row; nothing from Stripe metadata |
+| Invite must be admin-issued and redeemed by the payer | ✅ `adminMismatchOf` → `invite_mismatch`, `alert: true`, NOT_NOTIFIED audit (SM-1) |
+| Active admin, live auth email | ✅ `notifyInviter` with `issuerKind: 'admin'` runs N-1's `isActiveAdmin` (`AdminAccessService.isAdminById`, `admin_users`) and `findUserIdentity`; production wiring in `planBillingHandler.ts` provides both through `buildInviterNotificationDeps` |
+| Same 4 s clock | ✅ One `deadlineMs`; the 1.5 s-read case leaves 2.5 s |
+| Audit | ✅ entity `business_os_invite`, `userId`/`actorId` null, `recipientKind: 'admin'`; no address in logs or audits (pinned) |
+| Champion cohort first payment | ✅ info line, no audit, no email, no admin lookup (SM-2) |
+| Friend path | ✅ unchanged; a friend lineage pointing at an admin invite is still `not_a_friend_invite` |
+
+### Tenant isolation (`tenant-isolation-guard`)
+
+✅ No new request field anywhere. The held tier is read on the server from the invite named by the session account's own lineage row (`findHoldFactsById`, one extra column on the same PK read); the checkout admits only the tier `heldInviteOffer` answers, and the client's named tier is checked against it. The webhook path is service-role with no session: the account comes from OUR billing record (SR-8), the invite from that account's lineage, the admin from that invite, and the invite must be redeemed by the payer before anyone is emailed. The repository's two widened selects stay one-row PK reads with no hash, no reply-to, no note.
+
+### Entitlements (`business-os-entitlements` review checklist)
+
+✅ Only `adminInviteOps.ts` gains a symbol (`planMonthlyPriceUsd`, display only, from the injected config); its non-gate classification is correct (issuance rule on who may invite, not a capability). `publicInviteView.ts` and `planCheckoutEligibility.ts` import nothing new from the module (`heldInviteOffer` reuses the symbols already registered for `planCheckoutEligibility.ts`). No tier literal in code. `npm run test:bos-entitlements` green.
+
+### Rulings on D2-1 to D2-10
+
+| # | Ruling |
+|---|---|
+| D2-1 | **Accepted.** Q-10 needs `issuer_admin_id` and `grant_kind`; same one-row PK read, same single caller (C-7 guard). Column-list test updated on purpose |
+| D2-2 | **Accepted.** Optional `lineageSource`, absent = friend, keeps P-5b.1's callers and the "the lineage decides whom to look for" cross-check |
+| D2-3 | **Accepted.** One bounded invite read on a champion's own first payment is the price of not importing invites into billing (C-8); it happens once per account lifetime. The reworded unwired alert is correct |
+| D2-4 | **Accepted.** The approved N-2 subject is a correct admin heading in all three languages; no G-3 approval owed |
+| D2-5 | **Accepted: consistent with C-3.** C-3 forbids `buyableTiers()` and `INVITE_TYPES.paid.grantIds` as the *source of the tier list or the price rule*. The list here comes from `sellableTiers()`; `isInviteGrantAvailable` is the pre-existing GR-1 "the config still carries this grant for an invite type" check that create already ran and that `adminPaidInviteRedemption` runs, so the form and create apply exactly the two tier halves of the redemption predicate and issuance ⊆ redeemable. `heldInviteOffer` deliberately checks `sellableTiers()` alone: once an invitee is held, the only question is whether their tier can be bought |
+| D2-6 | **Accepted.** Offering a type whose create always answers 409 would be worse |
+| D2-7 | **Accepted.** The safe default is the line that never promises a payment |
+| D2-8 | **Accepted.** Same condition, W-2 shape (account id and source only) |
+| D2-9 | **Accepted.** This is exactly C-5's ruling: an empty `grant_id` is impossible by schema (NOT NULL, and every writer copies a payable tier), so it is a read anomaly, and Q-2 treats every unreadable hold the same way: the page gate fails open with an error log, while every path that SELLS or GIVES (plan checkout, holding screen, boost checkout, admin credit grant) fails closed. Making this one case fail closed at the gate would need a third hold outcome for a state the schema rules out. SM-6 pins it |
+| D2-10 | **Accepted, verified line by line.** Every removed test line was read. The "until P-9" admin cases in `planCheckout.test.ts`, `planCheckout.qa.test.ts`, `planCheckoutEligibility.test.ts`, `heldPaymentView.test.ts` and the checkout route test now use an unpriced admin tier and keep their fail-closed assertion; the rest are fixture widenings (`grant_id`, the two N-2 columns, the `payment` key, the allow-list) and the narrowed P-5b.1 "admin_invite sends nothing" case (organic only, its admin half moved to the T10 block). No money assertion was weakened; no Stripe webhook or credit suite was edited |
+
+### Fixes applied by SA
+
+1. `lib/business-os/invites/inviterNotificationDeps.ts`: the service-role justification comment described N-2's recipient as `issuer_account_id` only. It now also names the T10 case (`issuer_admin_id` of the same invite, admin-issued and redeemed by the payer, `isActiveAdmin` before any send). Comment only.
+
+### Code Review Comments
+
+None blocking.
+
+### Optimisation Suggestions
+
+- **O-2** (Low) The gate's "Payment hold unreadable; failing open" line in `paymentHoldGate.ts` carries no `alert: true`. A persistent unreadable hold (D2-9, or a lineage read failing) is an account getting in unpaid; an alert flag would surface it. Pre-existing and outside this diff; consider it when the gate is next touched.
+
+### QA focus
+
+1. **Inert in the shipped state** (`paidInvitesAvailable: false`, env switches off): admin Paid links still `unavailable`; the admin form shows the Paid type unavailable with the existing reason; a friend invite page shows "payment opens soon", not "required".
+2. **Parity, switches flipped locally only:** an admin Autopilot invitee sees "Payment is required at signup" on the link, Pay for Autopilot on the holding screen, and a 409 `held_tier_not_allowed` for Essentials; with any one switch off, the link says "opens soon" and the screen "coming soon".
+3. **Admin form:** grants read "<plan> · $<price> a month" with the note; with no priced tier the Paid type is unavailable ("No plan has a price yet"); a direct POST of an unpriced tier returns 409 `grant_not_available` with no row written.
+4. **T10:** after the first `invoice.paid`, exactly one admin email (approved N-2 subject as heading, "{invitee} has subscribed.", button "Open invites") and one `BOS_INVITE_INVITER_NOTIFIED` with `recipientKind: admin`; resending the event sends nothing. A champion (cohort) invitee's own first payment sends nothing and audits nothing.
+5. **Friend regression (P-5b.1):** a friend's first payment still emails the champion once; the friend checkout still refuses the higher tier.
+6. **Run-sheet T9 D1 to D13**, same-day cleanup and revert of the local flips.
+
+### Code Approved for QA: **Yes**
+
+---
+
+## QA Testing Report (P-9.2)
+
+### QA — P-9.2 "Admin invitee pays and gets in" (2026-10-14)
+
+**Test mode:** full (SA QA focus 1 to 5; focus 6 is the user's session, covered by the tightened run-sheet below)
+**Strategy used:** A (Jest over the real modules with injected deps and switches) + B-lite (route-level Jest with mocked repositories, incl. the REAL checkout route in the P5-C5 matrix and the REAL admin invites route in QA's temporary cases) + code reading of every non-test diff. No browser, no database, no Stripe, no real email in this session.
+**Focus:** api, ui (render tests), security, schema
+**Skipped:** D (browser) and live Stripe / SQL / inbox: not available here; all in the run-sheet.
+**Input source:** prompt keywords (TL trigger) + SA "QA focus"
+**Worktree:** `neuronforge-invite-s1`, `feature/bos-plan-payments-p9-2` on `392a9b53`, uncommitted (36 modified, 9 new test files). Before QA started, md5 of `paymentHold.ts`, `championSubscribedNotification.ts`, `planCheckoutEligibility.ts`, `publicInviteView.ts`, `adminInviteOps.ts` and `planPaymentApply.ts` equalled SA's recorded values.
+
+#### Test Coverage
+
+| Acceptance criterion (SA QA focus) | Tested? | Result | Evidence |
+|---|---|---|---|
+| 1a. Shipped: admin Paid link `unavailable` | ✅ | Pass | `paidInvitesAvailable: false as boolean` in `config/invites.ts` (unchanged); `publicInviteView.test.ts` / `adminPaidInviteAgreement.test.ts` switch-off cells (page `unavailable`, signup 409) |
+| 1b. Shipped: admin form Paid type unavailable with the EXISTING reason | ✅ | Pass | `adminInviteOps.paid.test.ts` "while the Paid switch is off"; **QA extra** through the real GET route: the payload carries `paidUnavailableReason` and never "No plan has a price yet" (the switch refusal wins over the priced check, by reading: `refusal === 'paid_invites_not_available'` is tested first) |
+| 1c. Shipped: friend invite page "opens soon", not "required" | ✅ | Pass | `invitePaymentStatement.agreement.test.ts` friend × 8 switches (only all-on is `required`); production default switches = env flags off → `opens_later`; `page.payment.render.test.tsx` en/he/es |
+| 2a. Switches on: admin Autopilot link "Payment is required at signup" | ✅ | Pass | agreement test (admin per tier, all on → `required`); page render test (`invite-payment-required`, one line, no "opens soon"); copy is the existing `copy.paymentRequired` (C-7, no new key) |
+| 2b. Holding screen offers Pay for Autopilot | ✅ | Pass | `awaitingPayment.render.test.tsx` appended block (en/he/es, $129 in LTR `bdi`, Pay posts the model's tier); `heldPaymentOffer.admin.test.ts` |
+| 2c. Essentials checkout → 409 `held_tier_not_allowed` | ✅ | Pass | `heldPaymentOffer.matrix.test.ts` through the REAL route, every other tier per cell; `planCheckout.test.ts` "invited to each tier" block (no Stripe session) |
+| 2d. Any one switch off → link "opens soon", screen "coming soon" | ✅ | Pass | agreement test and matrix cover all 8 combinations; `heldInviteOffer` checks the three switches before the tier (read) |
+| 3a. Form grants "<plan> · $<price> a month" + note | ✅ | Pass | `adminInviteOps.paid.test.ts`, `createInviteForm.paidNote.render.test.tsx`; **QA extra** through the real GET route |
+| 3b. No priced tier → Paid type unavailable, "No plan has a price yet" | ✅ | Pass | unit test; **QA extra** through the real GET route (`sellableTiers` spied to `[]`) |
+| 3c. Direct POST of an unpriced tier → 409 `grant_not_available`, no row | ✅ | Pass | unit test (before the inviter read and any write, SM-5); **QA extra** through the real POST route, every tier in `TIER_ORDER` with nothing priced: each 409 `grant_not_available`, `inserted`, `audit`, `sent` all empty. Counter-check: a priced tier → 201 with one insert `{ grant_kind: 'tier', grant_id }`. Extra `accountId` field → 400 (strict schema) |
+| 4a. T10: exactly one admin email + one `BOS_INVITE_INVITER_NOTIFIED`, `recipientKind: 'admin'` | ✅ | Pass | `championSubscribedNotification.admin.test.ts` happy path (exact NOTIFIED entry, `userId`/`actorId` null, entity `business_os_invite`); `planPaymentApply.n2.test.ts` "with the real notifier: ONE email to the admin" (audit after the stamp flush) |
+| 4b. `invoice.paid` resend sends nothing | ✅ | Pass | n2 "the same invoice twice through the real handler: one admin email" and "a replay arriving WHILE the admin email is still sending" (`already_applied`, one email total) |
+| 4c. Champion (cohort) own first payment sends and audits nothing | ✅ | Pass | notifier "a champion paying for themself" (info line, no audit) + n2 "champion's own first payment"; SM-2 |
+| 4d. Invite not redeemed by the payer → `invite_mismatch`, alerted, no email | ✅ | Pass | notifier `it.each` (four mismatches incl. `redeemed_by_another_account`, NOT_NOTIFIED with `reason: invite_mismatch`); SM-1 |
+| 4e. Inactive admin → no email | ✅ | Pass | "a former admin": NOT_NOTIFIED `recipient_not_admin`, no send; production wiring uses `AdminAccessService.isAdminById` (`admin_users`, never `profiles.role`) |
+| 5a. Friend regression: champion still gets exactly one email | ✅ | Pass | P-5b.1 friend cases in `planPaymentApply.n2.test.ts` and `championSubscribedNotification.test.ts` green, untouched in substance (D2-10 verified by SA line by line); notifier "the friend path is unchanged" (friend lineage + admin row → `not_a_friend_invite`) |
+| 5b. Friend can't buy the higher tier | ✅ | Pass | matrix friend rows: checkout admits exactly the friend tier, refuses the rest |
+| Admin email never in logs / audit | ✅ | Pass | notifier test asserts no `@` anywhere in `logs` and `audits`; read: the admin branch logs ids, `grantKind` and `source` only; mismatch audits carry `issuer_admin_id` (an id), never an address |
+| Audit `userId` / `actorId` null | ✅ | Pass | exact `toMatchObject` in the notifier tests (NOTIFIED and NOT_NOTIFIED) |
+| `requireAdmin` first | ✅ | Pass | `app/api/admin/business-os/invites/route.ts` GET and POST and `[inviteId]/revoke` POST: `requireAdmin` is the first statement; no admin route changed in this diff |
+| No tier literals | ✅ | Pass | `git diff` added non-test lines: 0 matches for `'basic'`, `'pro'`, "Essentials", "Autopilot", `console.` ; source pins in `heldPaymentOffer.admin.test.ts` and `adminInviteOps.paid.test.ts` |
+
+#### Mutation check (QA, one at a time, restored by re-editing, md5-verified)
+
+| # | Mutation | Caught by | Restore |
+|---|---|---|---|
+| QM-1 | `app/invite/page.tsx` `paymentStatementOf`: the missing-flag fallback flipped (`data.payment === 'opens_later' ? 'opens_later' : 'required'`), so an old-server response or any unexpected value would promise "Payment is required at signup" (the D2-7 safety) | `page.payment.render.test.tsx` + `page.render.test.tsx`, **7 red** | Re-edited with the Edit tool; md5 back to `280d056d98cf0c4f338d650db4425a61`; `app/invite` 215/215 green |
+
+The QA extra cases (4: shipped GET, unpriced GET + POST of every tier, priced GET + POST, extra-field 400) ran from a temporary copy of the admin invites route test (`zzqa.p92.tmp.test.ts`), all green, and the file was **deleted**. While it existed it made one repo-wide source guard red (`BusinessOsBillingEventRepository.test.ts` "only the listed files name the repository", because the copy inherits the repository mock): that is QA's artefact, not a P-9.2 defect; after deletion the suite was 67/67 and the full gate was re-run (below). Nothing QA wrote remains in the tree.
+
+#### Issues Found
+
+**Bugs (must fix before commit):** none.
+
+**Performance issues:** none. (D2-3's one bounded invite read on a champion's own first payment is once per account lifetime, accepted by SA.)
+
+**Edge cases / notes (none blocking):**
+1. **Route-level pin for 3c missing** (Low). The unpriced-tier 409 is pinned in `adminInviteOps.paid.test.ts` against the ops function; no case goes through the POST route. QA's temporary route case proved it; adding one to `route.test.ts` would make a future handler change that bypasses `createInviteForAdmin` visible.
+2. **SA O-2 stands** (Low): the gate's "hold unreadable; failing open" line has no `alert: true` (pre-existing, D2-9).
+3. **Admin email language** is the ADMIN's own language (N7, recipient's preference), not the invite's. A Hebrew invite still emails an English-preferring admin in English. Correct by design; noted in the run-sheet so the user is not surprised.
+
+#### Test Outputs
+
+| Command | Result |
+|---|---|
+| `npx jest lib/business-os/invites lib/business-os/billing app/api/public/invites app/invite app/api/admin/business-os/invites app/admin/business-os-invites app/api/business-os/billing app/api/stripe lib/repositories/__tests__ lib/email lib/business-os/entitlements supabase/migrations/__tests__` | **301 suites, 11451 tests, 0 failed** (147 s; one "worker failed to exit gracefully" warning, no failure). Run before any QA file existed |
+| QA extra (temporary, deleted) | 4 passed |
+| QM-1 | 7 red while mutated; 215/215 after restore |
+| `npm run test:bos-entitlements` | First run 263/264 suites, 7868/7869: the one red was the source guard above, caused by QA's temporary file. **Re-run after deleting it: 264 suites, 7869 tests, 0 failed.** No load timeouts |
+| `npm run typecheck:bos-llm` | **passed**, exit 0: 530 files in scope, 28 errors, 0 new; one baseline entry fixed (`app/api/onboarding/build/route.ts` TS18047), not P-9.2's |
+| `npm run lint:hooks` | **clean**, exit 0 |
+
+#### T9 run-sheet for the user's session (P-9.2 share, tightened by QA)
+
+**Before you start (localhost only, never committed).**
+- Stripe: the standard sandbox `acct_1UPKR4C7KDUGYIcA`, with `stripe listen --forward-to localhost:3000/api/stripe/webhook` running and its `whsec_` secret in `.env.local`.
+- `.env.local`: `BUSINESS_OS_PLAN_CHECKOUT_ENABLED=true`, `BUSINESS_OS_PLAN_PRICES_ENABLED=true`.
+- `lib/business-os/entitlements/config/invites.ts`: `paidInvitesAvailable: true`.
+- **Restart `npm run dev`** after the flips (the env flags are read by the server at start).
+- An admin account whose inbox you read (the admin emails arrive in that admin's own language preference), and a fresh invitee address that has never signed up.
+
+| Step | Do | Expect |
+|---|---|---|
+| D1 | `/admin/business-os-invites` → New invite → Paid | Plans "Essentials · $79 a month" and "Autopilot · $129 a month"; under them "The invitee pays this plan at signup and cannot use AgentPilot until they have paid." |
+| D2 | Issue an **Autopilot** Paid invite, language Hebrew, to the fresh address | Link created; the invitation says payment is required |
+| D3 | Open the link signed out (private window) | Autopilot, $129 a month, what it includes, and **"נדרש תשלום בעת ההרשמה."** (RTL). Nothing says "payment opens soon" |
+| D3b | (optional, before D4) Set `BUSINESS_OS_PLAN_CHECKOUT_ENABLED=false`, restart, reload the link; then set it back to `true` and restart | With the switch off: "payment opens soon" and no "required" line. Back on: "required" again |
+| D4 | Sign up with the emailed code | Holding screen: "Finish your payment", Autopilot, "$129 a month, excluding tax", a Pay button. No way into the app |
+| D5 | Admin inbox | **One** N-1: "Signed up — not subscribed yet" |
+| D6 | Admin list | Accepted, L1, **"Signed up, not paid"** |
+| D11a | (optional, before paying) On the holding screen, browser console: `fetch('/api/business-os/billing/plan/checkout',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tier:'basic',returnTo:'awaiting_payment'})}).then(r=>r.json()).then(console.log)` | `success: false`, error `held_tier_not_allowed` (status 409). No Stripe session opens |
+| D8 | Click Pay; card `4242 4242 4242 4242`, any future date, any CVC | Processing, then onboarding; `stripe listen` shows `invoice.paid` → 200 |
+| D9 | Read-only SQL below (one query per tab); Tiers page | Q1: `tier` = `pro`, `cohort` empty. Q2: `admin_invite`, level 1, `first_paid_at` and `first_payment_ref` both set. Q3: one `BOS_BILLING_FIRST_PAYMENT_STAMPED`, one `BOS_BILLING_INVOICE_PAID`, one `BOS_INVITE_INVITER_NOTIFIED` (details `event` subscribed, `recipientKind` admin, `user_id` and `actor_id` empty), **no** `BOS_INVITE_INVITER_NOT_NOTIFIED` |
+| D10 | Admin list | "Paid · <today> · $129.00 USD" and "Test payment" |
+| **D10a (T10)** | Admin inbox | **Exactly one** "Your invitation turned into a subscription" email (heading the same as the subject), "<invitee> has subscribed.", status "Subscribed", button "Open invites" |
+| D11 | `stripe events resend <evt_id of that invoice.paid>` | Webhook 200, outcome `already_applied`; re-run Q3: still one of each row; **no second admin email** |
+| D13 | **Same day** | Cancel the sandbox subscription in the Stripe dashboard; revoke every unused demo invite from the admin list; set `paidInvitesAvailable` back to `false` and remove the two env lines; confirm `git diff lib/business-os/entitlements/config/invites.ts` is empty; restart dev; the test account may then go through the Danger Zone cleanup |
+
+Read-only SQL for D9 and D11 (no comments, no punctuation inside strings, the forbidden word never appears). Each picks the newest redeemed admin Paid invite, so run them right after D8:
+
+```sql
+SELECT plan_row.user_id, plan_row.tier, plan_row.cohort, plan_row.origin, plan_row.updated_at
+FROM public.business_os_account_plans AS plan_row
+JOIN public.business_os_invites AS invite_row ON invite_row.redeemed_account_id = plan_row.user_id
+WHERE invite_row.issuer_kind = 'admin' AND invite_row.grant_kind = 'tier' AND invite_row.redeemed_at IS NOT NULL
+ORDER BY invite_row.redeemed_at DESC
+LIMIT 1;
+```
+
+```sql
+SELECT lineage_row.source, lineage_row.level, lineage_row.parent_account_id, lineage_row.first_paid_at, lineage_row.first_payment_ref
+FROM public.business_os_account_lineage AS lineage_row
+JOIN public.business_os_invites AS invite_row ON invite_row.id = lineage_row.invite_id
+WHERE invite_row.issuer_kind = 'admin' AND invite_row.grant_kind = 'tier' AND invite_row.redeemed_at IS NOT NULL
+ORDER BY invite_row.redeemed_at DESC
+LIMIT 1;
+```
+
+```sql
+SELECT audit_row.action, audit_row.entity_type, audit_row.user_id, audit_row.actor_id, audit_row.details, audit_row.created_at
+FROM public.audit_trail AS audit_row
+JOIN (
+  SELECT invite_row.id::text AS invite_key, invite_row.redeemed_account_id::text AS account_key
+  FROM public.business_os_invites AS invite_row
+  WHERE invite_row.issuer_kind = 'admin' AND invite_row.grant_kind = 'tier' AND invite_row.redeemed_at IS NOT NULL
+  ORDER BY invite_row.redeemed_at DESC
+  LIMIT 1
+) AS newest ON audit_row.entity_id::text IN (newest.invite_key, newest.account_key)
+WHERE audit_row.action IN ('BOS_BILLING_FIRST_PAYMENT_STAMPED', 'BOS_BILLING_INVOICE_PAID', 'BOS_INVITE_INVITER_NOTIFIED', 'BOS_INVITE_INVITER_NOT_NOTIFIED')
+ORDER BY audit_row.created_at;
+```
+
+Q3 lists the D5 N-1 entry too (`event` accepted); count only the `subscribed` one for D10a.
+
+#### Final Status
+
+- [x] All P-9.2 acceptance criteria in scope for QA pass — **PASS WITH NOTES** (notes: a route-level pin suggestion for the 409, SA O-2, and the admin-email language reminder; no bug)
+- Still owed before merge, by the user: the run-sheet above (G-5) or a waiver, and seeing the diff (standing preference)
+
+---
+
 ## Commit Info
 
 *(RM populates this section.)*
@@ -823,3 +1170,6 @@ Q3 also lists the N-1 "notified" row and the code-sent rows for the same invite;
 | 2026-10-14 | P-9.1 implemented (Dev) | T1 to T4 and the P-9.1 share of T9 (checklist); C-1, C-2, C-8, C-9, C-10, C-11, C-12 (and C-3 for redemption and the view). 20261029 + pre-check, checker, probe, F11 count, rollback, run on PGlite (pre-check PASS 7/0, checker PASS 7/0, PROBE PASS with and without existing plan and lineage rows, F11 PASS, rollback and re-apply clean, M1 to M9 caught). T0 merge refused by git over the uncommitted requirement (not stashed): left to RM. Deviations D-1 to D-11 for SA in Implementation Notes (P-9.1). Uncommitted |
 | 2026-10-14 | SA code review of P-9.1 (SA) | **Code approved for QA** (approved with one SA doc fix: the requirement's P-9 row no longer claims the T0 merge happened). C-1, C-2, C-8 to C-11 verified, C-12 deferred to RM (D-1). D-1 to D-11 accepted; D-8 recorded as follow-up F-1; the D-1 admin-list pin moves to P-9.2. SA re-ran the suites (62 suites, 4623 tests), `test:bos-entitlements` (258 suites, 7623 tests) and `typecheck:bos-llm`, all green. Five mutations, each caught and restored by md5. QA focus listed in "SA Code Review — P-9.1" |
 | 2026-10-14 | QA of P-9.1 (QA) | **PASS WITH NOTES**. 229 suites / 9704 tests green over the requested scope; 5 temporary extra cases (revoked, expired, resubmit after success, `already_finalised` sends one N-1, Google existing account) green and deleted; `test:bos-entitlements` 7622/7623 with one load-sensitive timeout in an untouched admin-credits render test that passed 69/69 on its own; `typecheck:bos-llm` passed, `lint:hooks` clean. Independent paste-rule scan of all six SQL files clean. Mutation QM-1 (lineage parent) caught, restored, md5-verified. No bugs; demo run-sheet with read-only SQL added to the QA section |
+| 2026-10-14 | P-9.1 merged; G-2 recorded; P-9.2 implemented (Dev) | P-9.1 merged as #373; 20261029 applied to production (pre-check PASS 7/0, checker PASS 7/0 with C3 `576c2e80149a372d7cc1dce490e0de4f`, PROBE PASS F01 to F10 and F12, F11 PASS), recorded here and in requirement §9.3. P-9.2 on `feature/bos-plan-payments-p9-2` (from `origin/main` `392a9b53`): T5 to T8 and T10 under C-3 to C-7 and Q-10, plus the required pins (SA D-1 admin list "Signed up, not paid", QA revoked / expired / resubmit, SA O-1). No migration, no new he/es strings. Deviations D2-1 to D2-10 for SA. Suites 301 / 11451, `test:bos-entitlements` 264 / 7869, `typecheck:bos-llm` 0 new, `lint:hooks` clean. Uncommitted, awaiting SA code review. Details in Implementation Notes (P-9.2) |
+| 2026-10-14 | SA code review of P-9.2 (SA) | **Code approved for QA** (approved with one SA comment-only fix in `inviterNotificationDeps.ts`). C-3 to C-7 and T10 (Q-10) verified; D2-1 to D2-10 accepted (D2-5 consistent with C-3; D2-9 is C-5's ruling, gate fail-open per Q-2, every selling path fails closed). SA re-ran the suites (301 / 11451) and `test:bos-entitlements` (264 / 7869), all green. Six mutations (SM-1 to SM-6), each caught and restored by md5. O-2 (gate alert flag) suggested, not blocking. QA focus in "SA Code Review — P-9.2" |
+| 2026-10-14 | QA of P-9.2 (QA) | **PASS WITH NOTES**. 301 suites / 11451 tests green over the requested scope; 4 temporary route-level extras (shipped form, unpriced GET + POST of every tier → 409 `grant_not_available` with nothing written, priced POST → 201, extra field → 400) green and deleted; `test:bos-entitlements` 264 / 7869 green (a first run's single red was QA's own temporary file tripping a source guard, cleared by deleting it); `typecheck:bos-llm` 0 new; `lint:hooks` clean. Mutation QM-1 (page's missing-flag fallback) caught 7 red, restored, md5-verified. No bugs; T9 run-sheet tightened (restart after flips, D3b switch-off check, D11a console snippet, read-only SQL Q1 to Q3, `stripe events resend`) in "QA Testing Report (P-9.2)" |

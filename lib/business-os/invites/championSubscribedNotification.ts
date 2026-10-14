@@ -43,6 +43,21 @@ import 'server-only';
  * A webhook has no later flush, so each entry goes out through `logAndFlush`
  * (2 s) after the deadline race, as N-1's audit runs after its race.
  *
+ * ── To the issuing ADMIN (plan payments P-9.2, T10, BQ-P11, SA Q-10) ──────
+ * When the payer's lineage `source` is `admin_invite`, the same chain finds
+ * the admin instead:
+ *   the paying account → its lineage row `invite_id` → that invite's
+ *   `issuer_admin_id`,
+ * and the invite must be ADMIN-issued (`issuer_kind = 'admin'`) and redeemed
+ * by THIS account, or nobody is emailed and it is alerted as `invite_mismatch`
+ * (as for a friend). A champion's own first payment (an admin COHORT invite)
+ * owes nobody this email: an info line, no audit. Then `notifyInviter` with
+ * `issuerKind: 'admin'`: N-1's active-admin check (`admin_users`, never
+ * `profiles.role`) and the admin's LIVE auth email, N-1's admin button, the
+ * same clock, the same audit shape (`recipientKind: 'admin'`). Exactly once
+ * for the same reason as a friend's: only a newly stamped first payment gets
+ * here, and a replay is `already_applied`.
+ *
  * Imports nothing from `lib/business-os/entitlements/**` and must not (C-8).
  * No address of anyone in a log line or an audit entry.
  */
@@ -110,6 +125,14 @@ function mismatchOf(facts: BusinessOsInviteNotificationFacts, accountId: string)
   return null;
 }
 
+/** P-9.2 (T10): why the invite does not lead to an admin this account may notify, or null. */
+function adminMismatchOf(facts: BusinessOsInviteNotificationFacts, accountId: string): string | null {
+  if (facts.issuer_kind !== 'admin') return 'not_an_admin_invite';
+  if (!facts.issuer_admin_id) return 'no_issuing_admin';
+  if (facts.redeemed_account_id !== accountId) return 'redeemed_by_another_account';
+  return null;
+}
+
 export function createFirstPaymentNotifier(deps: ChampionSubscribedNotifierDeps): FirstPaymentNotifier {
   const deadlineMs = deps.deadlineMs ?? INVITER_NOTIFICATION_POLICY.deadlineMs;
 
@@ -117,6 +140,8 @@ export function createFirstPaymentNotifier(deps: ChampionSubscribedNotifierDeps)
     const startedAt = Date.now();
     const log: ChampionNotifierLogger = input.log;
     const ids = { accountId: input.accountId, stripeEventId: input.stripeEventId, livemode: input.livemode };
+    // P-9.2 (T10): whom the lineage says to look for. Absent → a friend (P-5b.1).
+    const recipientKind: 'champion' | 'admin' = input.lineageSource === 'admin_invite' ? 'admin' : 'champion';
     let audited = false;
 
     /** C-2: the only shape an N-2 entry is ever written in. */
@@ -143,7 +168,7 @@ export function createFirstPaymentNotifier(deps: ChampionSubscribedNotifierDeps)
       write(
         toAuditInput('BOS_INVITE_INVITER_NOT_NOTIFIED', inviteId, {
           event: 'subscribed',
-          recipientKind: 'champion',
+          recipientKind,
           recipientAccountId: extra.recipientAccountId ?? null,
           status: 'subscribed',
           outcome: 'not_sent',
@@ -168,7 +193,7 @@ export function createFirstPaymentNotifier(deps: ChampionSubscribedNotifierDeps)
       const inviteId = input.inviteId;
       if (!inviteId) {
         if (input.lineageRead === 'ok') {
-          await mismatch(null, 'friend_lineage_without_invite', null);
+          await mismatch(null, recipientKind === 'admin' ? 'admin_lineage_without_invite' : 'friend_lineage_without_invite', null);
           return;
         }
         log.warn(
@@ -193,22 +218,46 @@ export function createFirstPaymentNotifier(deps: ChampionSubscribedNotifierDeps)
         return;
       }
 
-      // 3. Cross-checks (tenant-isolation-guard step 2, Q-5).
-      const mismatchKind = mismatchOf(facts, input.accountId);
-      if (mismatchKind !== null || !facts.issuer_account_id) {
-        await mismatch(inviteId, mismatchKind ?? 'no_issuing_account', facts.issuer_account_id ?? null);
-        return;
+      // 3. Cross-checks (tenant-isolation-guard step 2, Q-5): the invite must be
+      // of the kind the payer's own lineage names, and redeemed by the payer.
+      let issuer:
+        | { issuerKind: 'account'; issuerAccountId: string; issuerAdminId: null }
+        | { issuerKind: 'admin'; issuerAccountId: null; issuerAdminId: string };
+      if (recipientKind === 'admin') {
+        const adminMismatch = adminMismatchOf(facts, input.accountId);
+        if (adminMismatch !== null || !facts.issuer_admin_id) {
+          await mismatch(inviteId, adminMismatch ?? 'no_issuing_admin', facts.issuer_admin_id ?? null);
+          return;
+        }
+        // A champion paying for themself (an admin COHORT invite): no admin sold
+        // this plan, so nothing was owed and nothing is audited (as P-5b.1).
+        if (facts.grant_kind !== 'tier') {
+          log.info(
+            { event: 'bos_invite_subscribed_not_applicable', source: 'admin_invite', grantKind: facts.grant_kind, inviteId, ...ids },
+            'First payment is from a champion invite, not an admin Paid invite; no N-2 email'
+          );
+          return;
+        }
+        issuer = { issuerKind: 'admin', issuerAccountId: null, issuerAdminId: facts.issuer_admin_id };
+      } else {
+        const mismatchKind = mismatchOf(facts, input.accountId);
+        if (mismatchKind !== null || !facts.issuer_account_id) {
+          await mismatch(inviteId, mismatchKind ?? 'no_issuing_account', facts.issuer_account_id ?? null);
+          return;
+        }
+        issuer = { issuerKind: 'account', issuerAccountId: facts.issuer_account_id, issuerAdminId: null };
       }
-      const championId = facts.issuer_account_id;
+      const recipientId = issuer.issuerKind === 'admin' ? issuer.issuerAdminId : issuer.issuerAccountId;
 
       // 4. Nothing is started that cannot finish inside the clock.
       const left = remaining();
       if (left <= 0) {
-        await notNotified(inviteId, INVITER_NOT_NOTIFIED_REASONS.deadlineExceeded, { recipientAccountId: championId });
+        await notNotified(inviteId, INVITER_NOT_NOTIFIED_REASONS.deadlineExceeded, { recipientAccountId: recipientId });
         return;
       }
 
-      // 5. From here everything is N-1's, with N-2's audit shape (C-2).
+      // 5. From here everything is N-1's, with N-2's audit shape (C-2). For an
+      // admin, N-1's active-admin check and live auth email (T10, SA Q-10).
       const inviterDeps = deps.inviterDeps({
         logger: log,
         audit: async (entry) => write(toAuditInput(entry.action, entry.inviteId, entry.details)),
@@ -217,9 +266,7 @@ export function createFirstPaymentNotifier(deps: ChampionSubscribedNotifierDeps)
         {
           event: 'subscribed',
           inviteId,
-          issuerKind: 'account',
-          issuerAccountId: championId,
-          issuerAdminId: null,
+          ...issuer,
           inviteeEmail: facts.email,
         },
         { ...inviterDeps, deadlineMs: left }

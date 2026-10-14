@@ -3,9 +3,10 @@
  * S5-2, P5-C5, W-8).
  *
  * For every combination of the three held-payment switches (2³) and every
- * held shape (a friend, an admin invitee, a friend whose tier has no Stripe
- * price), the holding screen offers Pay EXACTLY when the checkout admits the
- * account.
+ * held shape (a friend, an admin Paid invitee for each tier, an admin invitee
+ * whose tier has no Stripe price, a friend whose tier has none), the holding
+ * screen offers Pay EXACTLY when the checkout admits the account for that
+ * tier, and the checkout refuses EVERY other tier (P-9.2, SA C-5).
  *
  * Both sides run through the REAL code, reading the REAL switches:
  *   - the screen: `readHeldPaymentView` with its default switch reader;
@@ -146,26 +147,38 @@ afterEach(() => {
   policy.account.grantId = saved.grantId;
 });
 
-type Shape = 'friend' | 'admin invitee' | 'friend, tier unpriced';
+// P-9.2 (SA C-5): an admin Paid invitee for EACH tier there is, and one whose
+// tier has no Stripe price ("admin unknown"), beside the two friend shapes.
+const ADMIN_UNKNOWN_TIER = 'tier_without_a_price';
+type Shape = 'friend' | 'friend, tier unpriced' | `admin ${string}`;
+const ADMIN_SHAPES: Shape[] = [...TIER_ORDER.map((tier): Shape => `admin ${tier}`), 'admin unknown'];
+
+/** The tier an admin shape's invite names (`grant_id`), or null for a friend. */
+function adminGrantOf(shape: Shape): string | null {
+  if (!shape.startsWith('admin ')) return null;
+  return shape === 'admin unknown' ? ADMIN_UNKNOWN_TIER : shape.slice('admin '.length);
+}
 
 function arrange(shape: Shape) {
   state.sessionsCreated = 0;
-  if (shape === 'admin invitee') {
+  const grantId = adminGrantOf(shape);
+  if (grantId !== null) {
     state.lineage = { invite_id: INVITE, source: 'admin_invite', first_paid_at: null };
-    state.invite = { grant_kind: 'tier', language: 'en' };
+    state.invite = { grant_kind: 'tier', grant_id: grantId, language: 'en' };
   } else {
     state.lineage = { invite_id: INVITE, source: 'account_invite', first_paid_at: null };
-    state.invite = { grant_kind: 'tier', language: 'en' };
+    state.invite = { grant_kind: 'tier', grant_id: policy.account.grantId, language: 'en' };
   }
   // A friend tier with no Stripe price: the invite policy names a tier nobody sells.
   if (shape === 'friend, tier unpriced') policy.account.grantId = 'tier_without_a_price';
 }
 
-const HOLDS = {
-  friend: { ok: true, held: true, inviteId: INVITE, source: 'account_invite' },
-  'admin invitee': { ok: true, held: true, inviteId: INVITE, source: 'admin_invite' },
-  'friend, tier unpriced': { ok: true, held: true, inviteId: INVITE, source: 'account_invite' },
-} as const;
+function holdOf(shape: Shape) {
+  const grantId = adminGrantOf(shape);
+  return grantId !== null
+    ? ({ ok: true, held: true, inviteId: INVITE, source: 'admin_invite', grantId } as const)
+    : ({ ok: true, held: true, inviteId: INVITE, source: 'account_invite' } as const);
+}
 
 async function checkoutAdmits(tier: string): Promise<boolean> {
   const before = state.sessionsCreated;
@@ -186,13 +199,14 @@ const BOOLS = [false, true] as const;
 const COMBINATIONS = BOOLS.flatMap((checkoutEnabled) =>
   BOOLS.flatMap((pricesEnabled) => BOOLS.map((paidInvitesAvailable) => ({ checkoutEnabled, pricesEnabled, paidInvitesAvailable })))
 );
-const SHAPES: Shape[] = ['friend', 'admin invitee', 'friend, tier unpriced'];
+const SHAPES: Shape[] = ['friend', ...ADMIN_SHAPES, 'friend, tier unpriced'];
 const CASES = COMBINATIONS.flatMap((switches) => SHAPES.map((shape) => [shape, switches] as const));
 
 describe('the screen offers Pay ⇔ the real checkout admits the account (P5-C5, W-8)', () => {
-  it('covers 8 switch combinations × 3 held shapes', () => {
+  it('covers 8 switch combinations × every held shape (friend, admin per tier, admin unknown, friend unpriced)', () => {
     expect(COMBINATIONS).toHaveLength(8);
-    expect(CASES).toHaveLength(24);
+    expect(SHAPES).toHaveLength(TIER_ORDER.length + 3);
+    expect(CASES).toHaveLength(8 * SHAPES.length);
   });
 
   it.each(CASES)('%s, switches %j', async (shape, switches) => {
@@ -204,27 +218,32 @@ describe('the screen offers Pay ⇔ the real checkout admits the account (P5-C5,
     const view = await readHeldPaymentView({
       userId: USER,
       accountId: USER,
-      hold: HOLDS[shape],
+      hold: holdOf(shape),
       language: 'en',
       checkoutReturned: false,
     });
     const offersPay = view.kind === 'pay';
 
-    // The tier the screen would buy, or (when it offers none) every tier there is.
-    const tiers = view.kind === 'pay' ? [view.tier] : [...TIER_ORDER];
-    const admitted: boolean[] = [];
-    for (const tier of tiers) admitted.push(await checkoutAdmits(tier));
+    // P-9.2 (SA C-5): EVERY tier is tried. The checkout admits exactly the tier
+    // the screen offers, and refuses every other one (all of them when the
+    // screen offers none).
+    const admitted: string[] = [];
+    for (const tier of TIER_ORDER) if (await checkoutAdmits(tier)) admitted.push(tier);
 
-    if (offersPay) {
-      expect(admitted).toEqual([true]);
+    if (view.kind === 'pay') {
+      expect(admitted).toEqual([view.tier]);
     } else {
-      expect(admitted.every((value) => !value)).toBe(true);
+      expect(admitted).toEqual([]);
       expect(view.kind).toBe('coming_soon');
     }
 
-    // Non-vacuity: Pay is offered in exactly one cell per shape row, the friend with all three on.
+    // Non-vacuity: with all three on, a friend pays the friend tier and an admin
+    // invitee pays exactly the tier the admin chose; nothing else ever pays.
     const allOn = switches.checkoutEnabled && switches.pricesEnabled && switches.paidInvitesAvailable;
-    expect(offersPay).toBe(allOn && shape === 'friend');
+    const adminGrant = adminGrantOf(shape);
+    const expectedTier = !allOn ? null : shape === 'friend' ? FRIEND_TIER : adminGrant !== null && adminGrant !== ADMIN_UNKNOWN_TIER ? adminGrant : null;
+    expect(offersPay).toBe(expectedTier !== null);
+    if (expectedTier !== null) expect(view).toMatchObject({ kind: 'pay', tier: expectedTier });
   });
 
   it('when Pay is offered, the higher tier is still refused to the held friend', async () => {

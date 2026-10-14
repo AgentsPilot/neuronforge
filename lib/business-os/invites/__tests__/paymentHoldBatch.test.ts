@@ -64,7 +64,8 @@ describe('parity with readPaymentHold (P5-C10: the gate and the views can never 
     const single = await readPaymentHold(accountId, {
       lineage: { findHoldFactsForAccount: async () => ({ data: facts, error: null }) },
       invites: {
-        findHoldFactsById: async (id: string) => ({ data: grants[id] ? { grant_kind: grants[id], language: 'en' } : null, error: null }),
+        // P-9.2: the read also carries `grant_id` (SA C-5).
+        findHoldFactsById: async (id: string) => ({ data: grants[id] ? { grant_kind: grants[id], grant_id: 'invited_plan', language: 'en' } : null, error: null }),
       },
     });
     const batch = await readAwaitingPaymentAccounts([accountId], readers);

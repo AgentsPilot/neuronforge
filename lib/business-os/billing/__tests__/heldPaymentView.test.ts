@@ -94,7 +94,8 @@ function harness(options: {
 }
 
 const friendHold = { ok: true, held: true, inviteId: INVITE, source: 'account_invite' } as const;
-const adminHold = { ok: true, held: true, inviteId: INVITE, source: 'admin_invite' } as const;
+// P-9.2 (SA C-5): the admin variant carries its invited tier; this one has no price.
+const adminHold = { ok: true, held: true, inviteId: INVITE, source: 'admin_invite', grantId: 'tier_without_a_price' } as const;
 
 function input(overrides: Partial<HeldPaymentViewInput> = {}): HeldPaymentViewInput {
   return { userId: USER, accountId: USER, hold: friendHold, language: 'en', checkoutReturned: false, ...overrides };
@@ -117,7 +118,7 @@ describe('readHeldPaymentView — the offer comes first (S5-2, D5-3)', () => {
     }
   );
 
-  it('a held admin invitee → coming_soon (held_tier_unresolved until P-9)', async () => {
+  it('a held admin invitee whose tier has no price → coming_soon (held_tier_unresolved, P-9.2)', async () => {
     const { deps } = harness();
     expect(await readHeldPaymentView(input({ hold: adminHold }), deps)).toEqual({ kind: 'coming_soon' });
   });

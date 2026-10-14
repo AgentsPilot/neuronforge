@@ -454,7 +454,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X3. leg
 }
 `;
 
-exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X4. platform charge.refunded with no payment intent: found by charge id, refund on no connected account 1`] = `
+exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X4. platform charge.refunded that is not a boost refund: acknowledged, nothing read or written 1`] = `
 {
   "body": {
     "received": true,
@@ -501,102 +501,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X4. pla
       "table": "processed_webhook_events",
       "terminal": "await",
       "type": "db",
-    },
-    {
-      "chain": [
-        [
-          "select",
-          "id, user_id, invoice_id, currency",
-        ],
-        [
-          "limit",
-          1,
-        ],
-        [
-          "eq",
-          "stripe_charge_id",
-          "ch_connect_1",
-        ],
-      ],
-      "operation": "select",
-      "table": "payment_transactions",
-      "terminal": "await",
-      "type": "db",
-    },
-    {
-      "chain": [
-        [
-          "upsert",
-          {
-            "amount": 25,
-            "amount_minor": 2500,
-            "currency": "USD",
-            "idempotency_key": "stripe:re_1",
-            "invoice_id": "pinv-0001",
-            "metadata": {
-              "charge_id": "ch_connect_1",
-              "origin": "charge.refunded",
-            },
-            "processor_refund_id": "re_1",
-            "processor_type": "stripe",
-            "source": "webhook",
-            "status": "succeeded",
-            "stripe_connect_account_id": null,
-            "succeeded_at": "2026-09-21T14:26:30.000Z",
-            "transaction_id": "tx-1",
-            "user_id": "owner-a",
-          },
-          {
-            "onConflict": "processor_refund_id",
-          },
-        ],
-      ],
-      "operation": "upsert",
-      "table": "payment_refunds",
-      "terminal": "await",
-      "type": "db",
-    },
-    {
-      "chain": [
-        [
-          "upsert",
-          {
-            "amount": 10,
-            "amount_minor": 1000,
-            "currency": "USD",
-            "idempotency_key": "stripe:re_2",
-            "invoice_id": "pinv-0001",
-            "metadata": {
-              "charge_id": "ch_connect_1",
-              "origin": "charge.refunded",
-            },
-            "processor_refund_id": "re_2",
-            "processor_type": "stripe",
-            "source": "webhook",
-            "status": "pending",
-            "stripe_connect_account_id": null,
-            "succeeded_at": null,
-            "transaction_id": "tx-1",
-            "user_id": "owner-a",
-          },
-          {
-            "onConflict": "processor_refund_id",
-          },
-        ],
-      ],
-      "operation": "upsert",
-      "table": "payment_refunds",
-      "terminal": "await",
-      "type": "db",
-    },
-    {
-      "args": [
-        [
-          "tx-1",
-        ],
-        "owner-a",
-      ],
-      "type": "syncBookingsForTransactions",
     },
     {
       "chain": [
@@ -3107,7 +3011,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X24. in
 }
 `;
 
-exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X25. charge.refunded for a payment never recorded: logged, nothing written 1`] = `
+exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X25. refund.updated for a payment never recorded: logged, nothing written 1`] = `
 {
   "body": {
     "received": true,
@@ -3126,7 +3030,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X25. ch
         [
           "eq",
           "event_id",
-          "evt_connect_charge_refunded",
+          "evt_connect_refund_updated_dashboard",
         ],
       ],
       "operation": "select",
@@ -3139,10 +3043,10 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X25. ch
         [
           "insert",
           {
-            "event_id": "evt_connect_charge_refunded",
-            "event_type": "charge.refunded",
+            "event_id": "evt_connect_refund_updated_dashboard",
+            "event_type": "refund.updated",
             "metadata": {
-              "created": 1790000800,
+              "created": 1790000905,
               "livemode": false,
             },
             "processed_at": "<NOW>",
@@ -3159,7 +3063,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X25. ch
       "chain": [
         [
           "select",
-          "id, user_id, invoice_id, currency",
+          "id, user_id, invoice_id, currency, stripe_connect_account_id",
         ],
         [
           "limit",
@@ -3188,7 +3092,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X25. ch
         [
           "eq",
           "event_id",
-          "evt_connect_charge_refunded",
+          "evt_connect_refund_updated_dashboard",
         ],
       ],
       "operation": "update",
@@ -3201,7 +3105,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X25. ch
 }
 `;
 
-exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X26. charge.refunded: the refund upsert fails, 500 1`] = `
+exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X26. refund.updated: the ledger insert fails, 500 1`] = `
 {
   "body": {
     "error": "Webhook processing failed",
@@ -3221,7 +3125,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X26. ch
         [
           "eq",
           "event_id",
-          "evt_connect_charge_refunded",
+          "evt_connect_refund_updated_dashboard",
         ],
       ],
       "operation": "select",
@@ -3234,10 +3138,10 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X26. ch
         [
           "insert",
           {
-            "event_id": "evt_connect_charge_refunded",
-            "event_type": "charge.refunded",
+            "event_id": "evt_connect_refund_updated_dashboard",
+            "event_type": "refund.updated",
             "metadata": {
-              "created": 1790000800,
+              "created": 1790000905,
               "livemode": false,
             },
             "processed_at": "<NOW>",
@@ -3254,7 +3158,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X26. ch
       "chain": [
         [
           "select",
-          "id, user_id, invoice_id, currency",
+          "id, user_id, invoice_id, currency, stripe_connect_account_id",
         ],
         [
           "limit",
@@ -3272,34 +3176,69 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X26. ch
       "type": "db",
     },
     {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
       "chain": [
         [
-          "upsert",
+          "select",
+          "id, status, processor_refund_id, source, processor_type, amount_minor, currency, stripe_connect_account_id",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+        [
+          "eq",
+          "transaction_id",
+          "tx-1",
+        ],
+        [
+          "eq",
+          "processor_refund_id",
+          "re_dashboard_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_refunds",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
           {
-            "amount": 25,
-            "amount_minor": 2500,
+            "amount": 10,
+            "amount_minor": 1000,
+            "created_at": "2026-09-21T14:28:20.000Z",
             "currency": "USD",
-            "idempotency_key": "stripe:re_1",
+            "failure_code": null,
+            "failure_message": null,
+            "idempotency_key": "stripe:re_dashboard_1",
             "invoice_id": "pinv-0001",
             "metadata": {
               "charge_id": "ch_connect_1",
-              "origin": "charge.refunded",
+              "origin": "refund.updated",
+              "payment_intent_id": "pi_website_1",
             },
-            "processor_refund_id": "re_1",
+            "processor_refund_id": "re_dashboard_1",
             "processor_type": "stripe",
             "source": "webhook",
             "status": "succeeded",
             "stripe_connect_account_id": "acct_owner_a",
-            "succeeded_at": "2026-09-21T14:26:30.000Z",
+            "succeeded_at": "2026-09-21T14:28:25.000Z",
             "transaction_id": "tx-1",
             "user_id": "owner-a",
           },
-          {
-            "onConflict": "processor_refund_id",
-          },
         ],
       ],
-      "operation": "upsert",
+      "operation": "insert",
       "table": "payment_refunds",
       "terminal": "await",
       "type": "db",
@@ -3309,14 +3248,14 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X26. ch
         [
           "update",
           {
-            "failure_message": "Failed to record refund re_1: write rejected",
+            "failure_message": "Failed to record refund re_dashboard_1: write rejected",
             "status": "failed",
           },
         ],
         [
           "eq",
           "event_id",
-          "evt_connect_charge_refunded",
+          "evt_connect_refund_updated_dashboard",
         ],
       ],
       "operation": "update",
@@ -10363,7 +10302,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 6c. invoic
 }
 `;
 
-exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 7a. charge.refunded on a Connect charge records each refund 1`] = `
+exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 7a. charge.refunded on a Connect charge is acknowledged and writes nothing (refunds come from refund.*) 1`] = `
 {
   "body": {
     "received": true,
@@ -10410,102 +10349,6 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 7a. charge
       "table": "processed_webhook_events",
       "terminal": "await",
       "type": "db",
-    },
-    {
-      "chain": [
-        [
-          "select",
-          "id, user_id, invoice_id, currency",
-        ],
-        [
-          "limit",
-          1,
-        ],
-        [
-          "eq",
-          "stripe_payment_intent_id",
-          "pi_website_1",
-        ],
-      ],
-      "operation": "select",
-      "table": "payment_transactions",
-      "terminal": "await",
-      "type": "db",
-    },
-    {
-      "chain": [
-        [
-          "upsert",
-          {
-            "amount": 25,
-            "amount_minor": 2500,
-            "currency": "USD",
-            "idempotency_key": "stripe:re_1",
-            "invoice_id": "pinv-0001",
-            "metadata": {
-              "charge_id": "ch_connect_1",
-              "origin": "charge.refunded",
-            },
-            "processor_refund_id": "re_1",
-            "processor_type": "stripe",
-            "source": "webhook",
-            "status": "succeeded",
-            "stripe_connect_account_id": "acct_owner_a",
-            "succeeded_at": "2026-09-21T14:26:30.000Z",
-            "transaction_id": "tx-1",
-            "user_id": "owner-a",
-          },
-          {
-            "onConflict": "processor_refund_id",
-          },
-        ],
-      ],
-      "operation": "upsert",
-      "table": "payment_refunds",
-      "terminal": "await",
-      "type": "db",
-    },
-    {
-      "chain": [
-        [
-          "upsert",
-          {
-            "amount": 10,
-            "amount_minor": 1000,
-            "currency": "USD",
-            "idempotency_key": "stripe:re_2",
-            "invoice_id": "pinv-0001",
-            "metadata": {
-              "charge_id": "ch_connect_1",
-              "origin": "charge.refunded",
-            },
-            "processor_refund_id": "re_2",
-            "processor_type": "stripe",
-            "source": "webhook",
-            "status": "pending",
-            "stripe_connect_account_id": "acct_owner_a",
-            "succeeded_at": null,
-            "transaction_id": "tx-1",
-            "user_id": "owner-a",
-          },
-          {
-            "onConflict": "processor_refund_id",
-          },
-        ],
-      ],
-      "operation": "upsert",
-      "table": "payment_refunds",
-      "terminal": "await",
-      "type": "db",
-    },
-    {
-      "args": [
-        [
-          "tx-1",
-        ],
-        "owner-a",
-      ],
-      "type": "syncBookingsForTransactions",
     },
     {
       "chain": [
@@ -14404,6 +14247,738 @@ exports[`Stripe webhook, platform path through the Business OS router (P-1) P7. 
           "eq",
           "event_id",
           "evt_platform_failed",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, refund.* on a Connect account (STRIPE_CONNECT_REFUND_WEBHOOK) R1. refund.created (pending) before the app wrote the Stripe id: the app row is found by refund_row_id and gets the id, no second row (F1-a) 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_refund_created",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_refund_created",
+            "event_type": "refund.created",
+            "metadata": {
+              "created": 1790000791,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, invoice_id, currency, stripe_connect_account_id",
+        ],
+        [
+          "limit",
+          1,
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, status, processor_refund_id, source, processor_type, amount_minor, currency, stripe_connect_account_id",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+        [
+          "eq",
+          "transaction_id",
+          "tx-1",
+        ],
+        [
+          "eq",
+          "processor_refund_id",
+          "re_connect_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_refunds",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, status, processor_refund_id, source, processor_type, amount_minor, currency, stripe_connect_account_id",
+        ],
+        [
+          "eq",
+          "id",
+          "a1a1a1a1-0001-4000-8000-00000000a101",
+        ],
+        [
+          "eq",
+          "transaction_id",
+          "tx-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_refunds",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "processor_refund_id": "re_connect_1",
+            "updated_at": "<NOW>",
+          },
+          {
+            "count": "exact",
+          },
+        ],
+        [
+          "eq",
+          "id",
+          "a1a1a1a1-0001-4000-8000-00000000a101",
+        ],
+        [
+          "eq",
+          "transaction_id",
+          "tx-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+        [
+          "eq",
+          "status",
+          "pending",
+        ],
+        [
+          "is",
+          "processor_refund_id",
+          null,
+        ],
+      ],
+      "operation": "update",
+      "table": "payment_refunds",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_refund_created",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, refund.* on a Connect account (STRIPE_CONNECT_REFUND_WEBHOOK) R2. refund.updated (succeeded) for a dashboard refund: one webhook row, the owner and links from the payment (F1-d, T-1, F3-e) 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_refund_updated_dashboard",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_refund_updated_dashboard",
+            "event_type": "refund.updated",
+            "metadata": {
+              "created": 1790000905,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, invoice_id, currency, stripe_connect_account_id",
+        ],
+        [
+          "limit",
+          1,
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, status, processor_refund_id, source, processor_type, amount_minor, currency, stripe_connect_account_id",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+        [
+          "eq",
+          "transaction_id",
+          "tx-1",
+        ],
+        [
+          "eq",
+          "processor_refund_id",
+          "re_dashboard_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_refunds",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "amount": 10,
+            "amount_minor": 1000,
+            "created_at": "2026-09-21T14:28:20.000Z",
+            "currency": "USD",
+            "failure_code": null,
+            "failure_message": null,
+            "idempotency_key": "stripe:re_dashboard_1",
+            "invoice_id": "pinv-0001",
+            "metadata": {
+              "charge_id": "ch_connect_1",
+              "origin": "refund.updated",
+              "payment_intent_id": "pi_website_1",
+            },
+            "processor_refund_id": "re_dashboard_1",
+            "processor_type": "stripe",
+            "source": "webhook",
+            "status": "succeeded",
+            "stripe_connect_account_id": "acct_owner_a",
+            "succeeded_at": "2026-09-21T14:28:25.000Z",
+            "transaction_id": "tx-1",
+            "user_id": "owner-a",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "payment_refunds",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        [
+          "tx-1",
+        ],
+        "owner-a",
+      ],
+      "type": "syncBookingsForTransactions",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_refund_updated_dashboard",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, refund.* on a Connect account (STRIPE_CONNECT_REFUND_WEBHOOK) R3. refund.updated pending → succeeded on the app row matched by Stripe id: status and succeeded_at from this event (F1-b, T-3) 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_refund_updated_app",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_refund_updated_app",
+            "event_type": "refund.updated",
+            "metadata": {
+              "created": 1790000860,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, invoice_id, currency, stripe_connect_account_id",
+        ],
+        [
+          "limit",
+          1,
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, status, processor_refund_id, source, processor_type, amount_minor, currency, stripe_connect_account_id",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+        [
+          "eq",
+          "transaction_id",
+          "tx-1",
+        ],
+        [
+          "eq",
+          "processor_refund_id",
+          "re_connect_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_refunds",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "status": "succeeded",
+            "succeeded_at": "2026-09-21T14:27:40.000Z",
+            "updated_at": "<NOW>",
+          },
+          {
+            "count": "exact",
+          },
+        ],
+        [
+          "eq",
+          "id",
+          "a1a1a1a1-0001-4000-8000-00000000a101",
+        ],
+        [
+          "eq",
+          "transaction_id",
+          "tx-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+        [
+          "eq",
+          "status",
+          "pending",
+        ],
+        [
+          "eq",
+          "processor_refund_id",
+          "re_connect_1",
+        ],
+      ],
+      "operation": "update",
+      "table": "payment_refunds",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        [
+          "tx-1",
+        ],
+        "owner-a",
+      ],
+      "type": "syncBookingsForTransactions",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_refund_updated_app",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, refund.* on a Connect account (STRIPE_CONNECT_REFUND_WEBHOOK) R4. refund.failed on a succeeded row: failed with Stripe’s failure_reason, the booking follows (F2-b, G-1) 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_refund_failed",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "insert",
+          {
+            "event_id": "evt_connect_refund_failed",
+            "event_type": "refund.failed",
+            "metadata": {
+              "created": 1790001500,
+              "livemode": false,
+            },
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+        ],
+      ],
+      "operation": "insert",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, invoice_id, currency, stripe_connect_account_id",
+        ],
+        [
+          "limit",
+          1,
+        ],
+        [
+          "eq",
+          "stripe_payment_intent_id",
+          "pi_website_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_transactions",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, status, processor_refund_id, source, processor_type, amount_minor, currency, stripe_connect_account_id",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+        [
+          "eq",
+          "transaction_id",
+          "tx-1",
+        ],
+        [
+          "eq",
+          "processor_refund_id",
+          "re_connect_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_refunds",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "failure_code": "expired_or_canceled_card",
+            "failure_message": null,
+            "status": "failed",
+            "updated_at": "<NOW>",
+          },
+          {
+            "count": "exact",
+          },
+        ],
+        [
+          "eq",
+          "id",
+          "a1a1a1a1-0001-4000-8000-00000000a101",
+        ],
+        [
+          "eq",
+          "transaction_id",
+          "tx-1",
+        ],
+        [
+          "eq",
+          "user_id",
+          "owner-a",
+        ],
+        [
+          "eq",
+          "status",
+          "succeeded",
+        ],
+        [
+          "eq",
+          "processor_refund_id",
+          "re_connect_1",
+        ],
+      ],
+      "operation": "update",
+      "table": "payment_refunds",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "args": [
+        [
+          "tx-1",
+        ],
+        "owner-a",
+      ],
+      "type": "syncBookingsForTransactions",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_refund_failed",
         ],
       ],
       "operation": "update",

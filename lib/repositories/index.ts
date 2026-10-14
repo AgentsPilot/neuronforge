@@ -270,9 +270,17 @@ export type {
   WebhookClaimResult,
   WebhookClaimStatus,
 } from './ProcessedWebhookEventRepository';
-// CF-5 PR 3: the refund ledger's Stripe webhook write (payment_refunds).
-export { PaymentRefundRepository, paymentRefundRepository } from './PaymentRefundRepository';
-export type { NewStripeRefundRow, PaymentRefundResult } from './PaymentRefundRepository';
+// The refund ledger (payment_refunds): the Stripe refund webhook's reads and
+// writes, and RefundService's post-reply compare-and-set writes.
+export { PaymentRefundRepository, paymentRefundRepository, STRIPE_REFUND_MATCH_COLUMNS } from './PaymentRefundRepository';
+export type {
+  ExpectedRefundState,
+  NewWebhookRefundRow,
+  PaymentRefundResult,
+  StripeRefundLedgerRow,
+  StripeRefundMatch,
+  StripeRefundStatePatch,
+} from './PaymentRefundRepository';
 // CF-5 PR 5: the Stripe webhook's agent-platform legacy writes (billing_events,
 // boost_pack_purchases) and the types of the legacy sections it added to
 // UserSubscriptionRepository and SystemConfigRepository.
