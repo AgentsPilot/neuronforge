@@ -5,6 +5,7 @@
 **Created by:** BA
 **Date:** 2026-10-05
 **Status:** Draft, **PARKED until the admin delete (AD-2, AD-3, AD-4) is finished** — the whole export scope, **including DE-0 (token exposure)**, runs LAST (user decisions 2026-10-05, DX-11 = no). Open business questions DX-1 to DX-10 and DX-12 are asked when the work resumes, then SA review (§9.2). **Re-baseline §1 against main first** (PR #218 merged 2026-10-05; see SQ-E10).
+**Status update (2026-10-14):** the user decided DX-1 to DX-9 (see [§0.2](#02-user-decisions-2026-10-14)). Where §0.2 differs from the BA recommendations in §9.1 or from §3 / §5 / §6 / §8, **§0.2 wins**. DX-10 and DX-12 stay open.
 
 ## Overview
 
@@ -254,7 +255,289 @@ No `.update(...).select()` exists on an `authenticated` path; that form would ne
 - (N1) Before applying the rollback, check that the pasted pre-check showed all 7 privileges for `service_role` as well. The rollback asserts that `service_role` holds TRUNCATE and TRIGGER too. If prod lacks them, the rollback aborts safely but cannot be applied as written.
 - (N2) Tables created in the dashboard can carry functions that no migration shows. Before the apply, the user runs one read-only query: `SELECT p.proname, p.prosecdef FROM pg_proc p WHERE p.prosrc ILIKE '%plugin_connections%';`. Any row with `prosecdef = false` that `authenticated` calls and that reads a token column would get 42501. Send such a row to SA.
 - (N3) Already true before DE-0b, not a regression: `/api/agent-chains/run` calls `runAgentWithContext` with `user_id` / `agent_id`, not `userId` / `agent`. It throws before it reaches the coordinator.
+**DE-0b shipped — 2026-10-14.** PR #381 merged (`02b57468`) and deployed to Production. Pre-check matched the rollback (anon + authenticated held all 7 privileges; no PUBLIC grant; service_role full). Migration `20261068` applied to PROD 2026-10-14; post-condition passed; checker **VERDICT PASS 46/0**; probe as `authenticated`: safe columns read, `access_token` refused **42501**. Owed: B-9 manual click-through by the user.
+
 - (N4) QA E1 is accepted: also setting `updated_at` on the refresh is correct housekeeping.
+### 0.2 User decisions 2026-10-14
+
+**Decided by the user on 2026-10-14.** These answer the business questions in §9.1. Where they differ from the BA recommendation there, or from §3 (scope), §5 (slices), §6 (FRs) or §8 (ACs), **this section wins**; those sections are not rewritten. The delivery design behind DX-4 and DE-8 is evaluated in [BUSINESS_OS_DATA_EXPORT_ASYNC_EVALUATION.md](/docs/requirements/BUSINESS_OS_DATA_EXPORT_ASYNC_EVALUATION.md).
+
+| DX | Decision | Differs from BA recommendation? |
+|---|---|---|
+| **DX-1** — what goes in | **In:** (a) **profile details only** — **no** credits, and **no** billing, plan or payment-to-us data; (b) **client records** — contacts, notes, bookings, services, payments, invoices, ledger, intake; (c) **content, including the actual files** — website, images, documents. **Out:** (d) **activity** — assistant chats, briefings, insights, emails sent. **Open note (non-blocking; owner to check with the lawyer):** a formal GDPR access or erasure request may still require the excluded personal data (the owner's own billing, chats). | **Yes** — BA recommended all four groups, incl. plan, billing, credits and activity. Group A2 and the activity group in §3.1 are therefore out of the export |
+| **DX-2** — one download or sections | **One download of everything.** | No |
+| **DX-3** — format | **A zip:** one CSV per section, plus `data.json`, a plain-language README, and the files. | No |
+| **DX-4** — large accounts / delivery | **One background export engine** for every export. **Quick exports:** a Download button appears on screen. **Big or slow exports:** the owner clicks Export and the screen says it will arrive by email. The email is **one email with one link** to the **in-app export page** (sign-in required); that page lists **all parts**, each with a **short-lived signed download link**. Ready exports are **kept 3 days**, then deleted; "prepare again" is one click. **Limit: 1 at a time, 3 per day** per account — exports started by an admin count too. **Split when large:** "Your records" + "Your files" (files in parts). Design: [async evaluation](/docs/requirements/BUSINESS_OS_DATA_EXPORT_ASYNC_EVALUATION.md); applies to DE-8. | **Yes** — BA had a 24-hour link sent by email; the user chose an in-app page behind sign-in, 3-day retention, rate limits and a split |
+| **DX-5** — one button | **One "Download my data" button**, in Business OS Settings and the Danger zone. The old settings pages point to it. | No |
+| **DX-6** — export before delete | **Customer self-delete:** the export is **offered** (a link), **not required**. To delete, the customer **types an acknowledgement** that they have exported their data (or chosen not to) and understand the account will be erased with no recovery. **Admin delete:** the admin can **send** the export to the owner's email; **not blocking**. | **Yes** (customer side) — BA had the export as a required step 1 with an "I don't want a copy" tick; the user chose an offered link plus a typed acknowledgement |
+| **DX-7** — who may download | **The owner AND admins** may download an account's export. **Every admin download is audited with the admin's identity.** | **Yes** — BA recommended owner only |
+| **DX-8** — history depth | **Everything we hold.** No 90-day or 12-month windows. | No |
+| **DX-9** — admin's reason on extra credits | **Moot** — credits are excluded from the export (DX-1). | n/a |
+
+DX-10 (name in the file) and DX-12 (admin delete before export) are **not** decided by this round.
+
+### 0.3 SA ruling — delivery design, classification and slice plan (2026-10-14)
+
+**Reviewed by SA — 2026-10-14, against origin/main `392a9b53`.** Status: ✅ **Requirement approved for slicing, with the rulings below.** Inputs: §0.2 (binding, not reopened) and the [async evaluation](/docs/requirements/BUSINESS_OS_DATA_EXPORT_ASYNC_EVALUATION.md) (BA). This section answers SQ-A1…SQ-A6 and SQ-E1, SQ-E4…SQ-E9. Where it differs from §3, §5, §6, §8 or the evaluation, **this section wins** (§0.2 still wins over this section). Each slice still gets a Dev workplan and an SA workplan review. These rulings are the conditions for those workplans.
+
+#### 0.3.1 What §0.2 means for scope (the rulings Dev builds to)
+
+| Item | Ruling |
+|---|---|
+| **In: profile details** (DX-1a) | `profiles` (explicit columns), `user_preferences`, `notification_settings`, `business_profiles`, `business_addresses`, `plugin_connections` (the 13 metadata columns of §0.1.1, never a token). **Out:** `business_os_account_plans`, `business_os_billing_accounts`, every `business_os_credit_*` table, `business_os_invites`, `user_subscriptions`, `credit_transactions`. The whole of group A2 in §3.1 is `exclude`, reason "DX-1: billing and credits are not exported" |
+| **In: client records** (DX-1b) | Groups B1, B2, B3 and B4 of §3.1, **except** `email_sends` (an email sent = activity, DX-1d). `email_campaigns`, `email_sequences`, `email_sequence_steps` (what the owner wrote) and `email_sequence_enrollments` (which client is in which sequence) stay **in**. The consent tables stay **in**: they are the owner's legal record of a client's consent |
+| **In: content + files** (DX-1c) | `website_pages`, `website_content`, `smart_links`, `user_media`, `contact_documents` (metadata in records, the file in "Your files"). Note: `websites` and `insight_outcomes` do **not** exist live (`businessOwnedTables.test.ts` §8.9 exceptions); nothing to export |
+| **Out: activity** (DX-1d) | Group D of §3.1 in full, plus `onboarding_conversations` (assistant chat), `email_sends`, `website_page_views` and `smart_link_clicks` (visitor tracking; also closes SQ-E7 for them), and `audit_trail` (the owner's activity history). Today's file carries `audit_logs` and `agent_executions`: both leave in DE-1 |
+| **Agent-platform section** | Today's file carries agents and runs. Under DX-1, runs are activity (out), Pilot-Credit tables are billing (out). `agents` + `agent_configurations` are the owner's own content: **SA default = keep them** (no regression for agent-platform users). **Business question BQ-SA-1** (§0.3.8) confirms |
+| **SQ-E5 soft-deleted rows** | Excluded everywhere, stated in the README. Exception: none. (The 2025 "agents incl. deleted" precedent is dropped: a deleted agent is not "data we hold" from the owner's view, and the purge does not keep them either) |
+| **SQ-E6 ledger** | Follow `ledgerService` **conventions only** (refunds as their own dated negative rows, currency on every amount, per-currency totals). Do **not** add the accountant workbook as a second file: two money views of the same rows can disagree, and the owner already has the ledger export |
+| **SQ-E7 borderline** | `website_page_views` out (above). `derived_metrics`, `daily_briefing_sends`, `business_events` out (derived / activity). `external_calendar_events` **in** (the owner's own calendar as we hold it, scheduling group). `email_sends` bodies: out with the table |
+| **FR-E12 failed section** | Kept: a section that fails is written to the README and `data.json` as `failed`, never silently empty. The job still finishes, and the page shows "complete with N sections missing" |
+
+#### 0.3.2 Delivery engine — SQ-A1 … SQ-A5 (and SQ-E4, SQ-E8)
+
+| # | Ruling | Why |
+|---|---|---|
+| **SQ-A1 Plan / limits / streaming** | We are on **Vercel Pro**: `vercel.json` runs 3 crons every 5 minutes, which Hobby refuses. **No zip is ever streamed out of a function.** Every download, quick or big, is a Supabase Storage **signed URL** minted by an authenticated route. The 4.5 MB response limit and the "streaming under Fluid" question therefore do not apply, and no `maxDuration` above **300** is used. The repo's ceiling today is 300; 800 is not needed and is not relied on | One delivery path. A 300 s ceiling plus resumable parts is enough, and leaves room if the plan changes |
+| **SQ-A2 Starting at once** | **No QStash.** It is a dependency only for the legacy agent queue (`lib/queues/qstashQueue.ts`, `/api/cron/process-queue`). Bringing it into Business OS adds a public signed worker endpoint and two secrets to a third path; that is a new pattern for no gain. Instead: **(1)** the start route enqueues, then runs the drain **in-process for this job only**, with a **25 s budget** (route `maxDuration = 60`). This is the same shape as the admin "Drain now" route (`runQueueDrain`, awaited). **(2)** A dedicated cron `/api/cron/data-export-drain` runs **every minute**, as the backstop and for big exports (`maxDuration = 300`, work budget 240 s). The fail-closed `CRON_SECRET` auth follows `durable-queue-drain` Step 8. An empty queue costs one claim RPC a minute | Reuses the §8.1 claim pattern, crons and the in-process drain shape. No size guess: **"quick" = finished inside the start request** |
+| **SQ-A3 Resumable parts** | Table `business_os_data_exports` (one row per job) + `business_os_data_export_parts` (one row per part). **The part is the unit of claim, lease and retry.** Planning (first claim) writes a **frozen manifest**: one `records` part, then `files` parts. Each file part is a list of storage paths bounded at **≤ 200 MB of input and ≤ 500 objects**. Every part is its **own zip object**, so there is **no assemble step**. This is exactly the §0.2 split: "Your records" + "Your files (part 1 of N)". Lease **360 s** (> the 300 s `maxDuration`, per the skill). Up to **5 attempts with backoff**, then `failed`. A job is `ready` when every part is `done`, and `failed` when any part dead-letters. "Prepare again" makes a new job | A killed run loses one part at most. A finished part is never redone (terminal status on the part row = idempotency) |
+| **SQ-A4 Zip library** | **`fflate`** as a new **direct** dependency, pinned to the version already in the tree (**0.8.x**: it is already installed as a transitive dependency of `xlsx`, `jspdf` and `pdfkit`). MIT, zero dependencies, TypeScript types included. **Store** (no compression) for files, which are mostly already compressed; deflate for CSV/JSON. Rejected: `archiver` (pulls in a dependency tree, stream API aimed at fs); `jszip` (in-memory only, slower; also only transitive). **Build each part in memory** (≤ 200 MB of input, against about 2 GB of function memory) and upload it with the normal Storage upload. No streaming upload and no TUS client (which would be another new dependency). The part cap is what bounds memory, not streaming. This is a rule-7 approval for `fflate` only | The smallest change: no new code enters the install, and memory is bounded by design |
+| **SQ-A4 Bucket** | A new **private** bucket `business-data-exports`, created in the DE-8a migration (`public = false`, `file_size_limit` 250 MB, mime `application/zip`). **No storage policy for `anon` or `authenticated` on any verb**, the same control and the same `pg_policies` assertion as `business-purge-snapshots` (20260916a). Path `{user_id}/{job_id}/{part_no}.zip`. **Owed check (user, read-only, before DE-8a):** the project's global upload limit must be ≥ 250 MB (Dashboard → Storage → Settings). The snapshot bucket's 500 MB suggests it is raised, but this is not verified | Files leave only through a signed URL that a route mints |
+| **SQ-A5 Consistency** | **"As of the start time, best effort"** is accepted and stated in the README. Each section is read once, ordered by primary key and paged. Rows that change while the job runs may or may not appear. The **file manifest is frozen at planning**: a file deleted before its part runs is listed in the README as "removed before export", not an error | Snapshot isolation across HTTP reads is not available, and building it would be out of proportion |
+| **SQ-E8 Rate limit** | **One in progress:** a partial unique index on `(user_id) WHERE status IN ('queued','running')`. **3 per day:** counted from job rows created in the last rolling 24 h, checked **inside the enqueue RPC** (`SECURITY DEFINER`, REVOKEd from `anon`/`authenticated`, granted to `service_role`), so two clicks cannot both pass. Admin-started jobs count (§0.2). A refusal returns 409 with the time the next export is allowed. An admin refused by the limit can still download an existing ready export (§0.3.4) | Enforced in the database, at the choke point (skill Step 6) |
+| **Retention** | `expires_at = ready_at + 3 days`. The same cron's sweep step deletes expired objects and marks the job `expired`. **It also lists the bucket and removes any object older than 3 days that has no live job row.** This covers a hard-deleted auth user, whose job rows cascade away. So no export file can outlive 3 days by any path | One enforcer, shipped with the bucket (the SA-4 lesson from the snapshot bucket) |
+| **Email** | **One** transactional email per job (`emailTransport`, `kind: 'transactional'`, `dedupe_key = data-export:{job_id}`), sent when a job becomes `ready` **after** its start request returned, and always for admin-started jobs. It goes to the **target account's own auth email**, never to an admin. The body has **one link to the in-app page** (`/business-os/settings/data-export`), no data, no signed URL. A job that **fails** after the start request returned also gets one email ("could not prepare, try again") | §0.2 DX-4. A forwarded email is useless without the owner's sign-in |
+| **Downloads** | `GET /api/business-os/data-exports/[jobId]/parts/[partNo]/download`: signed-in owner, Zod on the path, the job is read **with `.eq('user_id', user.id)`** (a job id is not a capability), then a **signed URL with a 120 s TTL** is returned as JSON and the client navigates to it. A non-blocking `DATA_EXPORT_DOWNLOADED` row per download. `Cache-Control: no-store` | Signed URLs are only ever minted for an authenticated caller, one part at a time |
+| **Audit** | New events next to `DATA_EXPORTED`: `DATA_EXPORT_REQUESTED` (actor: owner or admin), `DATA_EXPORT_READY` (section counts and bytes, never content), `DATA_EXPORT_FAILED`, `DATA_EXPORT_DOWNLOADED`, `DATA_EXPORT_EXPIRED`. "Last exported" (DE-9) reads the latest `READY` | FR-E15 |
+| **Logs** | Ids, counts, bytes and durations only. No file names (they can be client names), no emails | §7 |
+| **Admin queue page** | The new queue is registered on the existing Scheduled jobs & queues page (`DRAIN_QUEUE_IDS`, "Drain now") | Reuse |
+
+#### 0.3.3 SQ-A6 — registration (lands in DE-8a, same PR as the tables)
+
+| Registry | Entry |
+|---|---|
+| `USER_OWNED_TABLES` | both tables, reason: "an export request belongs to the person; it survives a Reset (an owner may export, then start over); Purge and account deletion remove it". Not business-owned: an agent-platform user with no `business_profiles` row can export too |
+| Purge `descriptors.ts` | both tables, `level: 'purge'`, scope `user_id`, `snapshot: 'ids'` (the snapshot must not copy another copy of the business). Parts sit in the blocking/cascade band as the invariant test dictates. **New closed `PurgeArea` `'data_exports'`** (D-5 union) |
+| `STORAGE_DESCRIPTORS` | `{ bucket: 'business-data-exports', level: 'purge', pathPrefix: '{user_id}/' }`. The admin delete commit already deletes every `reset`/`purge` bucket prefix, so **an admin delete removes the account's exports immediately** |
+| Export classification (DE-2) | both tables and the bucket: `exclude`, reason "the export itself" |
+| `accountDeletionPolicy.ts` | `delete` (only if purge slice 3 has not retired the file by then) |
+
+#### 0.3.4 Admin path — SQ-E9, DX-7
+
+- **Routes** (under the `/api/admin/users/[id]/…` family, which is already SA-3's admin-target exception; `tenant-isolation-guard`: the target comes **only** from the path):
+  - `GET  /api/admin/users/[id]/data-exports`: status list (state, parts, sizes, dates, who started it, downloaded yes/no). No URLs.
+  - `POST /api/admin/users/[id]/data-exports`: "send export to owner". Strict Zod body `{ reason }` (5–500 chars). Starts the **same** job with `requested_by = admin`. The target's limits apply. Delivery is the owner's email only (§0.3.2).
+  - `POST /api/admin/users/[id]/data-exports/[jobId]/parts/[partNo]/download`: **POST, not GET**, so a link cannot trigger it and a prefetcher cannot either. Strict Zod body `{ reason }`.
+- **Every admin route:** `requireAdmin` is the **first statement**. The path UUIDs go through Zod. The job is read with `.eq('user_id', <path id>)`, and a job of another account is a 404.
+- **Admin download order (write-ahead):** `requireAdmin` → Zod → job/part belongs to the path id and is `done`, not expired → **a confirmed admin-owned row via `AuditTrailService.writeNow`** (`{ written }`, as AD-2a writes `BUSINESS_DELETION_STARTED`) `DATA_EXPORT_DOWNLOADED_BY_ADMIN` (`user_id = actor_id = admin`, `entity_type 'user'`, `entity_id = target`, details: job, part, reason; the AD-2a audit placement). If `written` is false, **refuse (503)**. A bulk-PII download without a record is not allowed, so this is the one place an audit failure blocks. Then mint a **60 s** signed URL and return it as JSON. Never by email, never a link that skips the admin's sign-in.
+- **UI:** `/admin/users` drawer → a "Data export" card, and the delete preview (below). The Download button is behind a confirm dialog that takes the reason.
+
+#### 0.3.5 Export before delete — the live admin delete and the customer delete
+
+- **Admin delete (AD-2 preview / commit and the `/admin/users` hard delete):** the preview gains a **"Data export"** line: never / in progress / ready on <date> (downloaded by the owner: yes/no) / expired. It also offers "Send export to owner" and "Download (audited)". **Not blocking** (§0.2 DX-6). If an export exists that the owner has **not** downloaded, the preview shows: *"The owner has not downloaded the export sent on <date>. Deleting now deletes it, and the owner will not be able to sign in to fetch it. Download it now if you need to hand it over."* The commit then removes the bucket prefix through `STORAGE_DESCRIPTORS` (§0.3.3). For the hard delete of an auth user, the cascade removes the rows and the sweep removes the objects within 3 days (§0.3.2). DE-10a also makes the hard delete remove the prefix explicitly, through the same descriptor, if that path does not already run the purge engine's storage step (Dev verifies in the workplan). **So "send export" during a delete is useful only if the owner downloads before the admin commits. Otherwise the admin downloads it (audited) and hands it over.** This is how §0.2's "non-blocking" and "the owner signs in" both hold.
+- **Customer self-delete:** purge slice 5 (the customer delete) is not built. The Danger zone's erasure path today is a mailto. **DE-10b rides with purge slice 5:** its first step shows the "Download my data" link (offered, not required). Its confirmation is the **typed acknowledgement** (§0.2 DX-6), which reuses the comparison rule of `confirmation.ts` (server-side phrase, fails closed); the phrase text is UI copy for purge slice 5. Until then, DE-9 puts the one button into the Danger zone.
+
+#### 0.3.6 DE-2 classification — SQ-E1 answered: an `export` field on the purge descriptors
+
+- **Where:** `PurgeDescriptor` and `StorageDescriptor` gain a **required** `export` field:
+  `{ kind: 'include'; section: ExportSectionId; columns: readonly string[]; excludedColumns?: Readonly<Record<string, string>> }` | `{ kind: 'exclude'; reason: string }` | `{ kind: 'planned'; slice: 'DE-3' | … | 'DE-7' }`.
+  A required field means a new descriptor without one **fails `tsc`**. That is the existing type-check job, so there is no added CI time. `accountDeletionPolicy.ts` is not touched (purge slice 3 owns its retirement). **No fourth list.**
+- **Why descriptors and not `businessOwnedTables.ts`:** the descriptors are the only registry that covers **every** live tenant table, including `never` and `global` platform tables, and buckets. The `SchemaReconciler` already compares them with live columns, so FR-E19 comes almost free. Coverage measured today: all 61 business-owned tables have a descriptor (`websites` and `insight_outcomes` are not live; a reasoned exception already exists), and 45 of 46 user-owned tables do. **The one gap is `intent_examples`**: DE-2 adds a `level: 'never'` descriptor for it. That does not change what any delete removes; the invariant suite confirms it.
+- **CI chain (all Jest/tsc in existing jobs, no added time):** the existing migration-reading test (`CREATE TABLE … user_id` → must be in one ownership list) → the existing list↔descriptor test → **new** `exportClassification.test.ts`: every descriptor has `export`; `exclude` has a non-empty reason; `include.columns` is non-empty, has no `*`, and is disjoint from a **global secret-column deny list** (`access_token`, `refresh_token`, `credentials`, `secret`, `api_key`, `*_key`, `cost_usd`-style provider cost, …); every `include` section id has a reader in the export section registry and vice versa; `planned` is allowed only until the DE-7 PR (the test carries a `PLANNED_ALLOWED = true` constant that DE-7 flips to `false`). Negative controls for each rule.
+- **Purge stays blind to it:** a guard asserts that no file under `lib/business-os/purge/` other than `descriptors.ts` / `types.ts` reads `.export`. The executor must never branch on export.
+- **Column drift (FR-E19), with no DB in CI:** `SchemaReconciler` gains a **report-only** `exportColumnDrift` list: a live column on an `include` table that is in neither `columns` nor `excludedColumns`. It is surfaced by `npm run schema:check` (and the admin reconciler output). It **never** blocks a delete and never fails an export. Dev and SA run it before each DE-3…DE-7 merge and record it in the workplan.
+- **Readers:** the export section readers take their column lists **from the descriptor** (one source). A reader that selects a column not in `columns` fails a unit test.
+- **Skill rule:** Appendix A goes into `new-repository`, `new-api-route` and `new-plugin`. Add one line to `durable-queue-drain`: "a new queue table is a tenant table: descriptor + export `exclude`". **Point at `descriptors.ts` as the place**, not at this requirement's §6.4.
+
+#### 0.3.7 Numbered slice plan
+
+Every slice is its own PR from main (no stacking). Nothing is committed before the user sees the diff. All new checks are Jest/tsc in existing jobs (no added CI time). Owner-facing switch-over happens in DE-9, behind the flag `isBusinessOsDataExportEnabled` (env, default off) until then. The old JSON route keeps working until DE-9.
+
+| Slice | Delivers | Depends on | Size |
+|---|---|---|---|
+| **DE-0a** | Per §0.1 (built, QA ✅, awaiting the user's diff review) | — | 🟢 done |
+| **DE-0b** | Per §0.1 (token column lockdown, migration 20261059) | DE-0a merged | 🟡 ~1 d |
+| **DE-1 — Honest current export + section model** | Apply DX-1 to today's JSON: drop `subscriptions`, `transactions`, `agent_executions`, `audit_logs`. Typed payload (rule 6, no `any`). Section model `{ id, group, gdprRole, reader }` with the FR-E12 `failed` marker. `DATA_EXPORTED` via `logAndFlush` (the WC-7 note from §0.1). DX-10 filename/controller if decided, else unchanged. The Danger zone's plain `<a>` goes through the shared helper (QA E4). Characterization pin updated deliberately | DE-0a | 🟢 ~1 d |
+| **DE-2 — Classification + CI + skill rule** | §0.3.6 in full. Every descriptor classified: today's sections `include`, §0.3.1 exclusions `exclude`, the rest `planned` with a slice id | DE-1 | 🟡 ~1.5 d |
+| **DE-3 — Profile details** | The §0.3.1 DX-1a set (+ agents/configurations per BQ-SA-1) | DE-2 | 🟢 ~1 d |
+| **DE-4 — Clients & scheduling** | B1 + B2 records (file **metadata** for `contact_documents`) | DE-2 | 🟡 ~1.5 d |
+| **DE-5 — Money** | B3 with ledger conventions (SQ-E6); processors, methods and Connect: names / last 4 / ids / status only | DE-2 | 🟡 ~1.5 d |
+| **DE-6 — Intake, leads & consent** | B4 minus `email_sends` | DE-2 | 🟢 ~1 d |
+| **DE-7 — Content records** | Group C records + `user_media` metadata. Flips `PLANNED_ALLOWED` to false | DE-3…DE-6 | 🟢 ~1 d |
+| **M-1 — Measurement (user, read-only, ~15 min)** | Largest account: rows per included table, and file count and bytes per bucket and owner (SQL below). Plus the global upload-limit check (§0.3.2). **Gates DE-8a's sizing and DE-8c's part cap** | — | user |
+| **DE-8a — Engine foundation** | Migration: both tables, partial unique index, claim / reap / enqueue RPCs (`SECURITY DEFINER`, REVOKEd), private bucket + `pg_policies` assertion. Repository (`new-repository`), §0.3.3 registrations, audit event names, `fflate` dependency. Test: the claim prevents double-processing; the limit RPC refuses the 2nd concurrent job and the 4th in 24 h. User applies the migration by hand | DE-7, M-1 | 🟡 ~1.5 d |
+| **DE-8b — Records zip end to end** | Planner + `records` part (CSV per section with CSV-injection neutralising, `data.json`, README in en/he); start route (inline 25 s), status route, owner download route; `data-export-drain` cron (1 min, sweep + reaper); jobs-queues page entry. Behind the flag | DE-8a | 🔴 ~2.5 d |
+| **DE-9 — One button + export page** | `/business-os/settings/data-export` page (status, parts, Download, "prepare again", "last exported"); one "Download my data" control in Settings and the Danger zone; `SecurityTab` / `SecurityTabV2` / BOS settings point to it; the old GET route retired. Flag on after QA | DE-8b | 🟡 ~1.5 d |
+| **DE-8c — Files + split** | File manifest from `STORAGE_DESCRIPTORS` `include` buckets under `{user_id}/`, `files` parts (≤ 200 MB / ≤ 500 objects, store mode), "removed before export" list, page shows "Your records" + "Your files (n of N)". AC-E21 count/bytes match | DE-9 | 🟡 ~2 d |
+| **DE-8d — Email + failure notice** | §0.3.2 email (en/he, dedupe), sent only when not finished inline or admin-started; failed-job email | DE-8c | 🟢 ~1 d |
+| **DE-10a — Admin: status, send, audited download** | §0.3.4 routes + drawer card + delete-preview line and warning (§0.3.5); the hard delete removes the prefix explicitly if needed. `requireAdmin` CI guard green | DE-8d | 🟡 ~1.5 d |
+| **DE-10b — Customer delete: offered export + typed acknowledgement** | Inside purge slice 5, not before | purge slice 5 | 🟢 ~0.5 d (inside slice 5) |
+
+**Order:** DE-0b → DE-1 → DE-2 → DE-3…DE-6 (any order, DE-4 first is most valuable) → DE-7 → M-1 (can run any time earlier) → DE-8a → DE-8b → DE-9 → DE-8c → DE-8d → DE-10a. About 19 working days in total, excluding DE-0 and DE-10b.
+
+**M-1 SQL (user runs on PROD, read-only; it avoids the editor's "into" bug):**
+
+**File:** `scripts/measure-data-export-size.sql` (Dev writes it in DE-8a's workplan from this text)
+
+```sql
+-- files per owner (top 10 by bytes)
+SELECT bucket_id, (storage.foldername(name))[1] AS owner_id,
+       count(*) AS files, pg_size_pretty(sum((metadata->>'size')::bigint)) AS bytes
+FROM storage.objects
+WHERE bucket_id IN ('contact-documents', 'website-images')
+GROUP BY 1, 2 ORDER BY sum((metadata->>'size')::bigint) DESC NULLS LAST LIMIT 10;
+-- largest owners by client-record volume
+SELECT user_id, count(*) AS contacts FROM public.crm_contacts GROUP BY 1 ORDER BY 2 DESC LIMIT 5;
+SELECT user_id, count(*) AS activities FROM public.crm_activities GROUP BY 1 ORDER BY 2 DESC LIMIT 5;
+SELECT user_id, count(*) AS bookings FROM public.scheduling_bookings GROUP BY 1 ORDER BY 2 DESC LIMIT 5;
+SELECT user_id, count(*) AS payments FROM public.payment_transactions GROUP BY 1 ORDER BY 2 DESC LIMIT 5;
+-- whole-table sizes (upper bound for any one account)
+SELECT relname, n_live_tup, pg_size_pretty(pg_total_relation_size(relid))
+FROM pg_stat_user_tables WHERE schemaname = 'public' ORDER BY pg_total_relation_size(relid) DESC LIMIT 25;
+```
+
+Not measured by SA in this review: the read-only DB tool was not available in the SA session. Slice sizes above assume the BA estimate (§1 of the evaluation). **If M-1 shows the largest account's records above ~100 MB of CSV, or one records pass above ~120 s**, DE-8b splits `records` into one part per section group (the same mechanism, ~+0.5 d).
+
+#### 0.3.8 Open questions left
+
+| # | Question | Kind | SA default if unanswered |
+|---|---|---|---|
+| **BQ-SA-1** | Today's file gives agent-platform users their **agents and agent settings**. §0.2 lists profile, client records and content, but does not mention agents. Keep agents + their settings in the file (runs, Pilot-Credit history and audit history leave per DX-1)? | Business | Keep them |
+| **BQ-SA-2** | When an **admin** downloads an owner's export, should the **owner** be able to see that it happened (a line on their export page)? It is audited for us either way (DX-7) | Business | No (internal, as BD-26) |
+| **DX-10** | Name in the file and in the controller field (still open) | Business | Unchanged until decided; DE-1 / DE-8b pick it up |
+| **DX-12** | Superseded in practice: DE-10a gives the admin the export at delete time. TL may close it | — | — |
+| SQ-E1, E4…E9, SQ-A1…A6 | Answered above | — | — |
+
+### 0.4 User decisions 2026-10-14 (round 2)
+
+**Decided by the user on 2026-10-14, after M-1.** These answer the §0.3.8 questions and change the delivery order. **Where they differ from §0.3, this section wins** (§0.2 still stands).
+
+**M-1 result (prod, read-only, 2026-10-14):** 80 stored files across all accounts, ~28 MB in total; the largest account holds 27 files, ~14 MB; the largest single file is 4.7 MB. The busiest account has ~748 CRM activities, 77 bookings, 57 payments. Every export today is far below the §0.3 part cap (200 MB / 500 objects).
+
+| # | Decision | Effect on §0.3 |
+|---|---|---|
+| **Delivery order** | **Incremental.** Phase 1 serves **small accounts**: one zip holding records **and** files, downloaded on screen. **Once Phase 1 is done, the user decides** the next steps for large accounts | SA re-cuts the §0.3 slice plan into Phase 1 (small) and Phase 2 (large, **not scheduled** until the user decides). Split delivery, the "ready" email and anything that exists only for big or slow exports move to Phase 2. Phase 1 must still fail safely (clear message, no partial file) on an account above its size limit |
+| **BQ-SA-1** — agents | **Remove** agents and agent settings. **Business OS data only** | Overrides the SA default (keep). `agents` and `agent_configurations` are out with the rest of the agent-platform section; recorded reason "not Business OS data (user 2026-10-14)" in the classification |
+| **BQ-SA-2** — owner sees admin download | **No.** Internal audit only | SA default confirmed |
+| **DX-10** — name in the file | **The business's own name** in the file name (e.g. `<business>-data-export-<date>.zip`); the README names **AgentPilot** as the provider | SA rules the file-name rules (Hebrew and other non-Latin names, empty name, unsafe characters, fallback) and the controller wording per group |
+
+DX-12 stays as in §0.3.8.
+
+#### 0.4.1 SA ruling — Phase 1 re-cut (2026-10-14)
+
+**Reviewed by SA — 2026-10-14.** Status: ✅ **Phase 1 approved for workplans, with the rulings below.** Inputs: §0.2 and §0.4 (binding, not reopened), §0.3 (SA's own earlier ruling) and the M-1 result. **Where this section differs from §0.3, this section wins for Phase 1.** Everything in §0.3 that is not named here as changed or moved still applies (classification, token safety, explicit columns, scope rulings §0.3.1, registrations §0.3.3, admin route rules §0.3.4). Each slice still gets a Dev workplan and an SA workplan review.
+
+##### A. Does Phase 1 need the background engine? No. Does it need the bucket? Yes.
+
+| Piece from §0.3.2 | Phase 1 ruling | Why |
+|---|---|---|
+| Background queue (parts table, claim / reap RPCs, leases, retries) | **Not built in Phase 1.** Moves to Phase 2 | M-1: the largest account is ~14 MB / 27 files, ~1,000 rows. One request builds that in seconds. A queue would exist only for accounts we do not have yet |
+| Every-minute drain cron + in-process 25 s drain | **Not built.** Moves to Phase 2 | Nothing is queued in Phase 1, so there is nothing to drain |
+| Streaming the zip out of the function | **Still forbidden** (SQ-A1 stands) | The response cap is 4.5 MB and the largest account is ~14 MB already. Every download is a signed URL |
+| Private bucket `business-data-exports` | **Built in Phase 1**, exactly as §0.3.2 (private, no `anon` / `authenticated` policy on any verb, the `pg_policies` assertion, path `{user_id}/{job_id}/{part_no}.zip`). `file_size_limit` **50 MB** in Phase 1 (Phase 2 raises it) | It is the only way to hand a file over 4.5 MB to the browser without streaming. **Rejected:** reusing `business-purge-snapshots` (different purpose and retention; mixing them blurs both sweeps and registrations); zipping in the browser from per-file signed URLs (a second code path, `fflate` in the client bundle, and the admin path would need its own). 50 MB matches the Supabase default global upload limit, so **the §0.3.2 "owed check" on the global limit is not needed for Phase 1** (it moves to Phase 2) |
+| Jobs table `business_os_data_exports` | **Built in Phase 1**, one row per export. Statuses `queued`, `running`, `ready`, `failed`, `expired` (Phase 1 never writes `queued`; it is in the check constraint now so Phase 2 does not have to alter it). Adds `failure_reason` (`over_ceiling` / `timeout` / `error`), `requested_by` (owner or admin id), `bytes`, `file_count`, `row_count`, `ready_at`, `expires_at`. Each export writes **one part, `part_no = 1`**, so the path and the download route already have the Phase 2 shape | The row is what the rate limit, the 3-day retention, "download again", the admin status line and "last exported" read. It is also the row Phase 2's parts table hangs off, so Phase 2 adds and does not rework |
+| Parts table `business_os_data_export_parts` | **Phase 2** | One part per export in Phase 1 needs no row of its own |
+| Zip library | **`fflate` approved as in §0.3.2** (rule 7, direct dependency, pinned 0.8.x). Build in memory; store for files, deflate for CSV / JSON | The Phase 1 ceiling (§C) bounds memory to well under 200 MB |
+| Email | **Phase 2** (§0.4: the "ready" email moves) | In Phase 1 the owner is on the screen when the file is ready |
+
+**How an export runs in Phase 1 (one request).** `POST /api/business-os/data-exports` (owner, `new-api-route`, `maxDuration = 60`): auth → Zod (empty strict body) → **start RPC** (rate limit, below) creates the job as `running` → **pre-flight ceiling check** (§C) → read the sections (column lists from the descriptors, §0.3.6) → read the files from the `include` buckets → build the zip → **check the finished size** → upload → mark `ready` → return `{ jobId, downloadUrl (signed, 120 s), expiresAt }` with `Cache-Control: no-store`. The client sends the browser to the URL. **Nothing is uploaded until the zip is complete, and no URL is minted until the upload succeeded**, so there is never a partial file. On any failure the job becomes `failed` with its reason, nothing is left in the bucket, the owner sees a clear message, and the log carries ids and counts only. "Download again" within 3 days: `GET /api/business-os/data-exports/[jobId]/parts/[partNo]/download` exactly as §0.3.2 (`.eq('user_id', user.id)`, 120 s URL, non-blocking `DATA_EXPORT_DOWNLOADED`). FR-E12 stays: a section that fails is marked `failed` in the README and `data.json`, never silently empty.
+
+**Rate limit (1 at a time, 3 per day) lives in the start RPC**, in the DE-8a migration: `SECURITY DEFINER`, REVOKEd from `anon` / `authenticated`, granted to `service_role`. One at a time = the partial unique index on `(user_id) WHERE status IN ('queued','running')`. 3 per day = job rows created in the last rolling 24 h with status `running`, `ready` or `expired` (**a `failed` job does not count**: a failure is ours, not the owner's). Admin-prepared exports count against the target account (§0.2). **Stale run:** a function killed at 60 s leaves a `running` row; the RPC first marks any `running` row older than **90 s** as `failed` / `timeout`, so the owner is never locked out and no reaper cron is needed. A refusal returns 409 with the time the next export is allowed. `lib/security/rateLimit.ts` is a request throttle, not a durable daily quota, so it is not the place.
+
+**Retention (3 days).** One **daily** cron, `/api/cron/data-export` (fail-closed `CRON_SECRET`, `durable-queue-drain` Step 8). Step 1, the sweep: delete objects of jobs past `expires_at` and mark them `expired`; list the bucket and delete any object older than 3 days without a live job row (a hard-deleted auth user). Step 2, the size watch (§C). Phase 2 adds its drain as a further step and moves the schedule to every minute: same route, no rework. A new export by the same owner also deletes that owner's earlier ready objects (a newer export replaces the old one).
+
+##### B. Phase 1 slice table
+
+Every slice is its own PR from main (no stacking). Nothing is committed before the user sees the diff. All new checks are Jest / tsc in existing jobs (no added CI time). The owner-facing switch stays behind `isBusinessOsDataExportEnabled` (env, default off) until DE-9.
+
+| Slice | What | Depends on | Effort |
+|---|---|---|---|
+| **DE-0b** (prerequisite, unchanged) | Token column lockdown, §0.1 | DE-0a merged | 🟡 ~1 d |
+| **DE-1 — Honest current export + section model** | As §0.3.7, **plus BQ-SA-1: `agents` and `agent_configurations` leave today's file** with the rest of the agent-platform section | DE-0a | 🟢 ~1 d |
+| **DE-2 — Classification + CI + skill rule** | As §0.3.6. **`agents` and `agent_configurations` are classified `exclude`, reason "not Business OS data (user 2026-10-14)"**, not `planned` | DE-1 | 🟡 ~1.5 d |
+| **DE-3 — Profile details** | The §0.3.1 DX-1a set **only** (agents removed from this slice) | DE-2 | 🟢 ~1 d |
+| **DE-4 — Clients & scheduling** | As §0.3.7 | DE-2 | 🟡 ~1.5 d |
+| **DE-5 — Money** | As §0.3.7 | DE-2 | 🟡 ~1.5 d |
+| **DE-6 — Intake, leads & consent** | As §0.3.7 | DE-2 | 🟢 ~1 d |
+| **DE-7 — Content records** | As §0.3.7; flips `PLANNED_ALLOWED` to false | DE-3…DE-6 | 🟢 ~1 d |
+| **DE-8a — Export foundation (Phase 1 cut)** | Migration: jobs table only, partial unique index, start RPC (limit + stale-run rule), private bucket (50 MB) + `pg_policies` assertion. Repository (`new-repository`), §0.3.3 registrations for the jobs table and the bucket, audit event names, `fflate` dependency. Tests: the 2nd concurrent start and the 4th in 24 h are refused; a 91 s old `running` row does not block. User applies the migration by hand | DE-7 | 🟢 ~1 d |
+| **DE-8b — One zip end to end (Phase 1 cut)** | The single request of §A: records (CSV per section with CSV-injection neutralising, `data.json`, README en/he) **and files** in one zip; pre-flight and finished-size ceiling (§C); DX-10 naming and controller wording (§E); start route and download-again route; the daily `/api/cron/data-export` (sweep + size watch). Tests: over-ceiling refusal leaves no object and no URL; a file entry name with `../` cannot escape the zip root; a Hebrew name gives the §E file name. Behind the flag | DE-8a | 🔴 ~2.5 d |
+| **DE-9 — One button** | One shared "Download my data" control in Business OS Settings and the Danger zone (DX-5): Preparing (up to a minute) → Download, plus "Last export <date> — download again until <date>". `SecurityTab` / `SecurityTabV2` / BOS settings point to it; the old GET route is retired. Flag on after QA. The separate export **page** waits for Phase 2 (its only extra job is to be the email's target) | DE-8b | 🟡 ~1 d |
+| **DE-10a — Admin: status + audited download (Phase 1 cut)** | §0.3.4 routes **without "send export to owner"**: `GET` status; `POST /api/admin/users/[id]/data-exports` with `{ reason }` **prepares** an export for the admin (same builder, counts against the target's limit, non-blocking `DATA_EXPORT_REQUESTED` with the admin as actor); `POST …/parts/[partNo]/download` with `{ reason }`, write-ahead `writeNow`, refuse 503 if not written, 60 s URL (DX-7). **No notice to the owner** (BQ-SA-2). Drawer card and the delete-preview line (§0.3.5) without the "send" button; the warning reads: *"The owner has not downloaded an export. Deleting now deletes any export. Download it now if you need to hand it over."* The hard delete removes the prefix explicitly if needed. `requireAdmin` CI guard green | DE-8b | 🟡 ~1.5 d |
+| **DE-10b — Customer delete: offered export + typed acknowledgement** | Unchanged (§0.3.5, DX-6), inside purge slice 5, not before | purge slice 5 | 🟢 ~0.5 d (inside slice 5) |
+
+**Admin "send export to owner" (DX-6) moves to Phase 2.** It only has meaning with an email: an admin cannot hand the owner a link the owner will see without one. **Business consequence, plainly:** in Phase 1, when we delete an account, we cannot send the owner their copy automatically. Before deleting, the admin either asks the owner to click "Download my data" themselves, or downloads it (recorded with the admin's name and reason) and hands it over by hand. The delete is not blocked either way (DX-6). Adding a minimal email to Phase 1 instead costs about **+1 day** (see business question below).
+
+##### C. Phase 1 size ceiling and safe failure
+
+| Measure | Ceiling | Today's largest (M-1) |
+|---|---|---|
+| Stored files, total input bytes | **40 MB** | ~14 MB (35%) |
+| Stored files, count | **150 files** | 27 (18%) |
+| Records, total rows across included sections | **100,000 rows** | ~1,000 (1%) |
+| Finished zip | **45 MB** (under the 50 MB bucket limit) | — |
+| Build time | **40 s** of the 60 s route limit | seconds |
+
+- **Pre-flight** (before reading any file): file bytes and count from `storage.objects` metadata for the `include` buckets under `{user_id}/`, rows from `count` head queries. Over any ceiling → the job ends `failed` / `over_ceiling` **before any heavy work**. The finished-size and build-time checks are the backstop: over either → abort **before upload**.
+- **What the owner sees:** *"Your account holds more than the on-screen download can package (over 40 MB of files or 150 files). Nothing was downloaded. Please contact support and we will prepare your export."* (en/he; UI copy final in DE-9.) Nothing is kept, nothing is half-written.
+- **What we record:** `DATA_EXPORT_FAILED` with reason `over_ceiling` and the measured sizes (never contents); a `warn` log `data_export_over_ceiling` with user id, bytes, files, rows.
+- **How we notice an account approaching it:** every `DATA_EXPORT_READY` audit row and success log carry `ceilingUsePct` (the highest of the five ratios), and at **≥ 60%** the log is a `warn` `data_export_near_ceiling`. Because an owner may never export, the daily cron's **size watch** step also runs one aggregate over `storage.objects` (the `include` buckets, grouped by owner) and logs `data_export_accounts_near_ceiling` with the **count** of accounts at ≥ 60% of the file-bytes or file-count ceiling (ids only, at `warn`). Records are not watched daily: at ~1% they are not the risk. **When that count is above zero, it is time for the user to decide Phase 2.**
+- **What happens to an account above the ceiling in Phase 1:** neither the owner nor an admin can export it (the admin path uses the same builder and the same ceiling). Today no account is near it.
+
+##### D. BQ-SA-1 applied
+
+`agents` and `agent_configurations` leave the file in **DE-1** (today's JSON loses them along with runs, subscriptions, transactions and audit logs). **DE-2** classifies both `exclude` with the reason "not Business OS data (user 2026-10-14)". **DE-3** no longer carries them. An agent-platform user with no business still gets their profile details (DE-3). The README states that agents are not part of this export.
+
+##### E. DX-10 — file name and controller wording
+
+**File name:** `<business-slug>-data-export-<YYYY-MM-DD>.zip`.
+
+| Rule | Ruling |
+|---|---|
+| Source | The business name on `business_profiles` (Dev confirms the column with `business-os-schema-check` in the DE-8b workplan) |
+| Slug | Unicode NFC. **Keep letters and digits of any script** (`\p{L}`, `\p{N}`, plus combining marks `\p{M}` so Hebrew niqqud and accented letters survive). Every other run of characters (spaces, punctuation, `/ \ : * ? " < > |`, control and bidi-control characters) becomes one `-`. Trim `-` and `.` at both ends. Lowercase (it affects Latin only). At most **60 characters**, cut on a character boundary, never inside a surrogate pair |
+| Empty or unsafe | If the slug is empty, or is a Windows reserved name (`con`, `prn`, `aux`, `nul`, `com1`–`com9`, `lpt1`–`lpt9`), the fallback applies. An agent-platform user with no business also gets the fallback |
+| Fallback | `agentpilot-data-export-<YYYY-MM-DD>.zip` |
+| Date | The day the export **started**, `YYYY-MM-DD`, in the owner's timezone (`user_preferences.timezone`, the authority; NULL → UTC, and the README then says "UTC"). The README also gives the exact start time in ISO 8601 with its offset |
+| Hebrew and other non-Latin names | The name travels as the signed URL's `download` option, which makes Storage send `Content-Disposition`. The header must be `attachment; filename="<ASCII fallback>"; filename*=UTF-8''<percent-encoded name>` (RFC 6266 / RFC 5987). **ASCII fallback** = the slug with non-ASCII letters removed and re-trimmed; if nothing is left, `data-export-<date>.zip`. **Dev verifies on Preview in DE-8b** what Storage actually sends for a Hebrew name. If it does not send a correct `filename*`, the client saves the signed URL through the shared fetch-and-blob helper from DE-0a (SQ-E2) with the Unicode name (the Phase 1 ceiling keeps that blob under 45 MB) |
+| Never | The business name is **never** in the storage object path, a log line or an audit detail (it can identify a person). The object path stays `{user_id}/{job_id}/1.zip` |
+| Names inside the zip | UTF-8 entry names with the language-encoding flag set. Each stored file's name is cleaned the same way, keeps its extension, and can never contain `..`, a leading `/`, or a drive letter (no zip-slip). Duplicate names get ` (2)`, ` (3)`. Dev checks a Hebrew file name opens correctly in Windows Explorer and macOS Archive Utility |
+
+**Controller wording** (README en/he, and `data.json` `meta.controller` per group; this replaces the stale `data_controller: 'NeuronForge'`):
+
+| Group | README wording (en; he to match) |
+|---|---|
+| **Your account** (profile details, DX-1a) | "AgentPilot is the controller of this data about you. For questions about it, contact AgentPilot support." |
+| **Your client records** and **Your content** (DX-1b, DX-1c) | "<Business name> is the controller of these records. AgentPilot keeps them on <Business name>'s behalf, as its processor, and returns them to you here. If one of your clients asks for their data, the request is for <Business name> to answer." With no business name: "the account holder" instead |
+
+The legal-entity line behind "AgentPilot" is README copy; it follows the open lawyer note in §0.2 DX-1 and does not block DE-8b.
+
+##### F. Phase 2 (not scheduled; the user decides after Phase 1)
+
+| From §0.3 | What moves |
+|---|---|
+| DE-8a (rest) | Parts table `business_os_data_export_parts`, claim / reap RPCs, leases, 5 attempts with backoff; the global upload-limit check; bucket limit raised to 250 MB |
+| DE-8b (rest) | Background start (in-process 25 s drain) and the every-minute drain step in `/api/cron/data-export`; records split per section group if needed; jobs-queues page entry |
+| DE-8c | Split delivery: "Your records" + "Your files (n of N)", ≤ 200 MB / ≤ 500 objects per part, "removed before export" list |
+| DE-8d | The "ready" and "could not prepare" emails |
+| DE-9 (rest) | The in-app export page `/business-os/settings/data-export` as the email's target, listing all parts |
+| DE-10a (rest) | Admin "send export to owner" and its delete-preview button and warning |
+| Phase 1 ceiling | Lifted for accounts that go through the engine |
+
+##### G. Phase 1 total and order
+
+**Order:** DE-0b → DE-1 → DE-2 → DE-3…DE-6 (any order; DE-4 first is the most valuable) → DE-7 → DE-8a → DE-8b → DE-9 → DE-10a. DE-10b rides with purge slice 5.
+
+**Total:** about **14.5 working days** (DE-1 to DE-10a), excluding DE-0b (~1 d) and DE-10b (inside purge slice 5). §0.3's plan was about 19 days; the difference is the engine, the split and the email.
+
+##### H. User decisions on the Phase 1 trade-offs (2026-10-14)
+
+| Trade-off | Decision |
+|---|---|
+| Admin "send export to owner" needs email | **Defer to Phase 2.** In Phase 1 the admin asks the owner to download first, or downloads it (audited, with a reason) and hands it over. The delete is never blocked |
+| An account above the Phase 1 ceiling cannot export ("contact support") | **Accepted until Phase 2.** The daily 60% watch gives early warning |
+
+Phase 1 plan is **approved by the user for building.** Each slice still gets a Dev workplan and an SA workplan review.
 
 ---
 
@@ -527,6 +810,8 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 | **DX-11** | **Does the security fix (DE-0) jump the queue?** Today any signed-in browser can read and write its own Google/plugin tokens, and three Export buttons write them into a downloaded file | **Yes, now.** DE-0a is about half a day and closes the file leak. DE-0b (revoke browser access to the token columns) follows once SA confirms nothing in the browser needs it. Neither depends on the export feature **➜ Decided by user 2026-10-05: NO — DE-0 runs LAST together with the export, after the admin delete. Tokens stay browser-readable until then (risk accepted by the user).** |
 | **DX-12** | **Admin delete ships before the export (your order).** Until DE-3/DE-4, a deleted owner can take away only the old agent-platform file, not their clients, bookings or invoices. Accept? | **Accept the order, with one guard:** do not use admin delete on a **real** customer with business data until at least DE-3 + DE-4 have shipped, or until the admin has sent the customer the relevant per-screen exports (ledger, contacts) by hand. Test accounts are unaffected (admin delete already recommends test accounts only until AD-3) |
 
+> **User decisions 2026-10-14 for DX-1 to DX-9 are in [§0.2](#02-user-decisions-2026-10-14)** and override the recommendations above where they differ.
+
 ### 9.2 Technical questions for SA
 
 - [ ] **SQ-E1** Where does export classification live: (i) an export map in `businessOwnedTables.ts` keyed by both lists (like `accountDeletionPolicy`), or (ii) an `export` field on the purge `descriptors.ts`, which the `SchemaReconciler` already checks against live columns (making FR-E19 almost free)? BA leans to (ii), or (i) **derived** from one source, given SA-1's "two registries" finding. How is column drift checked with no DB in CI? (raised by: BA | status: open)
@@ -590,3 +875,9 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-05 | DX-11 decided; parked; SQ-E10 answered | User: DE-0 does **not** jump the queue — the whole scope incl. the token fix runs last, after AD-2…AD-4 (risk accepted). SQ-E10: the repository refactor and AD-1a are on main; PR #218 (FU-1, FU-P1, FU-P2) also merged today, so the as-built discovery must be re-baselined before DE-1 |
 | 2026-10-06 | `business_addresses` added to A1 | New business-owned table from PR #229 (the address book behind `business_profiles.address_parts` / `invoice_address`). Registered alongside its purge descriptor |
 | 2026-10-13 | SA ruling on DE-0 (§0.1) | Re-baselined §1.1 against origin/main `9de8c60b`: FU-P1/FU-P2 fixed, plugin read is 13 explicit columns, no tokens. Inventory of every non-service-role `plugin_connections` access (11 browser files, 4 `authenticated` server paths; `PluginCoordinator` reads and refreshes tokens as `authenticated`). SQ-E2 answered (shared fetch + blob helper). SQ-E3 answered (table-level revoke + column re-grant, no `anon` grant, no forced rotation). Migration 20261059, pre-check / checker / rollback scripts, Jest guard. Two PRs, 0a first |
+| 2026-10-14 | User decisions DX-1…DX-9 (§0.2) | New §0.2 records the decisions as a table keyed by DX id, plus a pointer under the §9.1 table and a status-update line. Changes from BA: DX-1 profile details only (no credits/billing/plan), activity out, open GDPR note for the lawyer; DX-4 one background engine, in-app export page behind sign-in reached from one email link, 3-day retention, 1 at a time / 3 per day, split into records + files; DX-6 customer export offered not required, typed acknowledgement to delete; DX-7 owner and admins, admin downloads audited. DX-9 moot. Linked the new [async evaluation](/docs/requirements/BUSINESS_OS_DATA_EXPORT_ASYNC_EVALUATION.md) |
+| 2026-10-14 | SA ruling: delivery design, classification, slice plan (§0.3) | Scope rulings under DX-1 (billing/credits/activity out, `email_sends`/page views/audit out, agents kept pending BQ-SA-1, soft-deleted out, ledger conventions only). SQ-A1…A6: Pro plan, no zip streamed from a function (signed URLs only), no QStash (in-process 25 s start + 1-minute drain cron on the §8.1 pattern), part-per-zip resumable design with no assemble step, `fflate` approved (rule 7), private `business-data-exports` bucket, best-effort consistency, rate limit in the enqueue RPC, 3-day sweep incl. orphans. SQ-A6 registrations. SQ-E1: a required `export` field on purge descriptors (tsc + Jest, no added CI time), report-only column drift in `SchemaReconciler`. Admin routes (POST download, confirmed audit, 60 s URL), export-before-delete wiring. Slice plan DE-0b…DE-10b + M-1 measurement. BQ-SA-1, BQ-SA-2 raised |
+| 2026-10-14 | User decisions round 2 (§0.4) | M-1 result recorded (~28 MB / 80 files in total, largest account ~14 MB). Delivery made incremental: Phase 1 = small accounts, one zip on screen; large-account parts wait for the user's decision after Phase 1. BQ-SA-1: agents and agent settings removed (Business OS only). BQ-SA-2: no owner notice. DX-10: business name in the file name, AgentPilot in the README. SA to re-cut the slice plan |
+| 2026-10-14 | SA ruling: Phase 1 re-cut (§0.4.1) | Phase 1 = one request builds one zip (records + files), uploads to the private `business-data-exports` bucket (50 MB) and returns a 120 s signed URL; no queue, parts table, drain or email. Jobs table kept (rate limit in the start RPC, stale-run rule at 90 s, failed jobs not counted); one daily `/api/cron/data-export` for the 3-day sweep and a size watch. Ceiling 40 MB / 150 files / 100,000 rows / 45 MB zip / 40 s, refused before upload with a clear message and an `over_ceiling` audit; warn at 60%. BQ-SA-1 applied in DE-1/DE-2/DE-3. DX-10 file-name and controller rules. Admin "send export to owner" moved to Phase 2. Phase 1 ~14.5 d; Phase 2 list recorded, not scheduled |
+| 2026-10-14 | User decisions on Phase 1 trade-offs (§0.4.1 H) | Admin "send export to owner" deferred to Phase 2; "contact support" above the Phase 1 ceiling accepted. Phase 1 plan approved for building |
+| 2026-10-14 | DE-0b shipped | PR #381 merged + deployed; 20261068 applied to PROD; checker PASS 46/0; probe 42501. B-9 click-through owed |
