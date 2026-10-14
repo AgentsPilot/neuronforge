@@ -5,6 +5,11 @@
  * AC-90 (minor units exact; every SA-W48 unreadable case), AC-91 (refunds and
  * disputes, DF-5), AC-92 (per currency only), AC-93 (the ceiling), AC-94
  * (empty), AC-97 (deleted accounts) and the K-5 summary (SA-W47).
+ *
+ * Slice 5a (SA-W59): K-5 moved to `ourRevenue.ts` (its five kinds are tested in
+ * ourRevenue.test.ts). This builder now gives the combiner `netMinorByCurrency`:
+ * integer minor units per line, null exactly when the wire net is null. The
+ * former `.k5` assertions here assert that input instead.
  */
 
 jest.mock('@/lib/payments/refundMath', () => {
@@ -214,7 +219,7 @@ describe('AC-89: statuses', () => {
     expect(result.lines).toEqual([]);
     expect(result.notes).toMatchObject({ empty: true, otherStatusPurchases: 1 });
     expect(result.status).toBe('partial');
-    expect(result.k5).toEqual({ kind: 'none' });
+    expect(result.netMinorByCurrency).toEqual([]);
   });
 });
 
@@ -278,7 +283,7 @@ describe('AC-90: minor units, exact', () => {
     expect(result.notes!.unreadablePurchases).toBe(1);
     expect(result.status).toBe('partial');
     expect(result.packages![0]).toMatchObject({ purchases: 2, net: null, unreadable: 1 });
-    expect(result.k5).toEqual({ kind: 'unknown', reason: 'unreadable' });
+    expect(result.netMinorByCurrency).toEqual([{ currency: 'USD', netMinor: null }]);
     // Credits are not money: the unreadable purchase's credits still count.
     expect(line.creditsSold).toBe(10000);
   });
@@ -358,8 +363,8 @@ describe('AC-92: per currency only', () => {
       ['EUR', 7],
       ['USD', 10],
     ]);
-    expect(result.k5).toEqual({ kind: 'several', currencies: 2 });
-    expect(Object.keys(result).sort()).toEqual(['counts', 'deletedAccounts', 'k5', 'lines', 'notes', 'packages', 'status']);
+    expect(result.netMinorByCurrency).toEqual([{ currency: 'EUR', netMinor: 700 }, { currency: 'USD', netMinor: 1000 }]);
+    expect(Object.keys(result).sort()).toEqual(['counts', 'deletedAccounts', 'lines', 'netMinorByCurrency', 'notes', 'packages', 'status']);
     expect(Object.keys(result.notes!).sort()).toEqual(['empty', 'exact', 'otherStatusPurchases', 'refundOrDispute', 'unreadablePurchases']);
   });
 
@@ -385,7 +390,7 @@ describe('AC-93: the ceiling', () => {
     expect(result.lines![0].gross).toBeGreaterThan(0);
     expect(result.packages!.every((p) => p.net === null)).toBe(true);
     expect(result.deletedAccounts!.every((d) => d.net === null)).toBe(true);
-    expect(result.k5).toEqual({ kind: 'unknown', reason: 'cut_off' });
+    expect(result.netMinorByCurrency.every((n) => n.netMinor === null)).toBe(true);
   });
 });
 
@@ -398,7 +403,7 @@ describe('AC-94: empty', () => {
       packages: [],
       deletedAccounts: [],
       notes: { empty: true, exact: true, otherStatusPurchases: 0, unreadablePurchases: 0, refundOrDispute: false },
-      k5: { kind: 'none' },
+      netMinorByCurrency: [],
     });
   });
 
@@ -417,18 +422,26 @@ describe('the read failed', () => {
       packages: null,
       deletedAccounts: null,
       notes: null,
-      k5: { kind: 'unknown', reason: 'failed' },
+      netMinorByCurrency: [],
       counts: { counted: 0, unreadableCredits: 0, deletedAccountPurchases: 0 },
     });
   });
 });
 
-describe('K-5 summary (SA-W47)', () => {
-  it('one currency, exact → { one, USD, net }', () => {
-    expect(all([boost()]).k5).toEqual({ kind: 'one', currency: 'USD', net: 10 });
+describe('netMinorByCurrency (slice 5a, SA-W59): the combiner input, integer minor units, never a scaled wire number', () => {
+  it('one currency, exact → the net in minor units, equal to the wire net times nothing (1000 ↔ 10)', () => {
+    const result = all([boost()]);
+    expect(result.netMinorByCurrency).toEqual([{ currency: 'USD', netMinor: 1000 }]);
+    expect(result.lines![0].net).toBe(10);
   });
 
-  it('a full refund nets to 0: one, USD, 0 (a real 0, not "no data")', () => {
-    expect(all([boost({ status: 'refunded', amount_refunded_minor: 1000 })]).k5).toEqual({ kind: 'one', currency: 'USD', net: 0 });
+  it('a full refund nets to 0: a real 0, not null', () => {
+    expect(all([boost({ status: 'refunded', amount_refunded_minor: 1000 })]).netMinorByCurrency).toEqual([{ currency: 'USD', netMinor: 0 }]);
+  });
+
+  it('null exactly where the wire net is null, one entry per line, in line order', () => {
+    const result = all([boost({ currency: 'EUR', amount_total_minor: 'x' as unknown as number }), boost()]);
+    expect(result.netMinorByCurrency.map((n) => n.currency)).toEqual(result.lines!.map((l) => l.currency));
+    result.lines!.forEach((line, i) => expect(result.netMinorByCurrency[i].netMinor === null).toBe(line.net === null));
   });
 });

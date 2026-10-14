@@ -53,6 +53,17 @@
  * page adds no two 4a money fields; K-5's money is printed only through
  * formatMoney or a copy string. No existing rule is edited. Each new rule has
  * a planted negative control.
+ *
+ * Slice 5a (Money M-1 and M-2, §11D.7): one existing rule is WIDENED, by SA
+ * ruling SA-W58 (a) / SA-WR-38: the refund-timing sentence now has exactly two
+ * users, the revenue panel and the account summary, with a planted third user
+ * as the control. The table pin is unchanged (R-m / R-m′ read the billing
+ * events, already pinned for R-d). A new describe pins the plan revenue
+ * builder and the combiner (scale, purity, exports, the kind literal), the
+ * R-m / R-m′ bodies, the page's money arithmetic over the 5a fields, `formatUtc`
+ * on the plans part and no dim text in the new page file. Every new rule has a
+ * planted negative control. The M-1 page rules (the local chip, the picked name,
+ * the links file) live in the page's own guard, app/admin/finance/__tests__/source.guard.test.ts.
  */
 
 import * as fs from 'fs';
@@ -276,7 +287,7 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
     expect(fromCallsOf(planted)).not.toBe(tablesOf(planted).length);
   });
 
-  /** Slice 2b (S2-F1): the five of 1a / 2a plus the client invoices, plan instalments and client plans. Slice 4a: R-k and R-k′ read the boost table too (already here for R-d). */
+  /** Slice 2b (S2-F1): the five of 1a / 2a plus the client invoices, plan instalments and client plans. Slice 4a: R-k and R-k′ read the boost table too (already here for R-d). Slice 5a: R-m and R-m′ read the billing events too (already here for R-d). */
   const REPOSITORY_TABLES = [
     'business_os_billing_accounts',
     'business_os_billing_events',
@@ -703,10 +714,14 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
     expect(outsideDf5(plantedStatus)).toMatch(DF5_TOKENS);
   });
 
-  // SA-WR-35: the one DF-5 copy line is used only by the revenue panel.
-  it('SA-WR-35: REVENUE_REFUND_TIMING_NOTE is defined in the copy and used only by RevenuePanel.tsx', () => {
-    const users = FILES.filter((file) => file !== COPY && /\bREVENUE_REFUND_TIMING_NOTE\b/.test(codeOf(file)));
-    expect(users).toEqual([PANEL]);
+  // SA-WR-35: the one DF-5 copy line. Slice 5a, SA-W58 (a) / SA-WR-38: exactly two users, the revenue
+  // panel and the account summary (S5-F7); still one constant and one sentence.
+  const SUMMARY = 'app/admin/finance/components/AccountSummary.tsx';
+  const refundNoteUsers = (files: readonly string[], code: (file: string) => string) =>
+    files.filter((file) => file !== COPY && /\bREVENUE_REFUND_TIMING_NOTE\b/.test(code(file)));
+  it('SA-WR-35 / SA-WR-38: REVENUE_REFUND_TIMING_NOTE is defined in the copy and used by exactly RevenuePanel.tsx and AccountSummary.tsx', () => {
+    const users = refundNoteUsers(FILES, codeOf);
+    expect([...users].sort()).toEqual([SUMMARY, PANEL].sort());
     expect(codeOf(COPY)).toMatch(/export const REVENUE_REFUND_TIMING_NOTE =/);
     expect(read(COPY)).toContain('Refunds and disputes are counted in the month of the purchase, as recorded today, so a past month can still change.');
   });
@@ -715,6 +730,15 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
     const planted = "import { REVENUE_REFUND_TIMING_NOTE } from '../financeCopy';";
     expect(/\bREVENUE_REFUND_TIMING_NOTE\b/.test(planted)).toBe(true);
     expect(/\bREVENUE_REFUND_TIMING_NOTE\b/.test('REVENUE_REFUND_TIMING_NOTES')).toBe(false);
+  });
+
+  it('SA-WR-38 (planted control): a THIRD user of the sentence breaks the exact two-file list', () => {
+    const THIRD = 'app/admin/finance/components/TakingsSection.tsx';
+    const planted = (file: string) =>
+      file === THIRD ? `${codeOf(file)}\nconst leak = REVENUE_REFUND_TIMING_NOTE;\n` : codeOf(file);
+    const users = refundNoteUsers(FILES, planted);
+    expect(users).toContain(THIRD);
+    expect([...users].sort()).not.toEqual([SUMMARY, PANEL].sort());
   });
 
   // (e) SA-W22: pure and structural.
@@ -785,5 +809,179 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
     expect(strayMoney('return String(money.net);')).toEqual(['money.net']);
     expect(strayMoney('return formatMoney(money.net, money.currency);')).toEqual([]);
     expect(/\bk[1-4]\.money\b/.test('k1.money')).toBe(true);
+  });
+});
+
+// ── Slice 5a: our plan revenue (§11D.7, SA-W59, SA-W64, SA-W65, SA-Q40) ─────
+describe('finance slice 5a source guards (plans received, the per-currency combiner)', () => {
+  const PLANS = 'lib/business-os/finance/planRevenue.ts';
+  const OURS = 'lib/business-os/finance/ourRevenue.ts';
+  const PART = 'app/admin/finance/components/PlanRevenuePart.tsx';
+  const COPY = 'app/admin/finance/financeCopy.ts';
+  const NEW_PRODUCT_FILES = [
+    PLANS,
+    OURS,
+    PART,
+    'app/admin/finance/components/AccountHeader.tsx',
+    'app/admin/finance/components/AccountSummary.tsx',
+    'app/admin/finance/financeAccount.ts',
+    'app/admin/finance/financeLinks.ts',
+  ];
+  const PLAN_METHODS = ['listPlanPaymentsAllAccountsPaidInRange', 'listPlanPaymentsForAccountPaidInRange'];
+  /** From `async <name>(` to the next `async ` (the 4a slicer, repeated here). */
+  const bodyOf = (code: string, name: string) => {
+    const start = code.search(new RegExp(`async\\s+${name}\\s*[<(]`));
+    if (start < 0) return '';
+    const next = code.indexOf('async ', start + 6);
+    return code.slice(start, next < 0 ? undefined : next);
+  };
+
+  // (a) Non-vacuity, and the two read bodies.
+  it('scans the slice 5a files; finds the R-m / R-m′ bodies; the filter holds the paid invoice kind', () => {
+    expect(FILES).toEqual(expect.arrayContaining(NEW_PRODUCT_FILES));
+    expect(LAYER_B_FREE).toEqual(expect.arrayContaining([PLANS, OURS, PART]));
+    const code = codeOf(REPOSITORY);
+    for (const name of PLAN_METHODS) {
+      const body = bodyOf(code, name);
+      expect({ name, found: body.length > 100 }).toEqual({ name, found: true });
+      expect(body).toMatch(/from\('business_os_billing_events'\)/);
+      expect(body).toMatch(/paidInvoiceFilter\(range\)/);
+      expect(body).not.toMatch(/livemode/);
+    }
+    const filter = code.slice(code.indexOf('private paidInvoiceFilter('), code.indexOf('private rangeFilter('));
+    expect(filter.length).toBeGreaterThan(50);
+    expect(filter).toMatch(/\.eq\('kind', 'invoice_paid'\)/);
+    expect(filter).toMatch(/this\.rangeFilter\('paid_at', range\)/);
+  });
+
+  // (b) Scale: integer cents only, one division to the wire, behind the two-decimals gate.
+  const TIMES_100 = /\*\s*100\b|CURRENCY_SCALE\s*\*/;
+  it('the 5a scale rules bite (planted)', () => {
+    expect(TIMES_100.test('const cents = row.amount_minor * 100;')).toBe(true);
+    expect(/\btoUnits\(/.test('toUnits(row.amount_minor, 100)')).toBe(true);
+    expect(/\btoHundredths\b/.test('toHundredths(row.amount_minor)')).toBe(true);
+    expect('a / CURRENCY_SCALE; b / CURRENCY_SCALE'.match(/\/ CURRENCY_SCALE/g)).toHaveLength(2);
+  });
+
+  it.each([PLANS, OURS])('%s: no toHundredths, no toUnits, no × 100; exactly one / CURRENCY_SCALE', (file) => {
+    const code = codeOf(file);
+    expect(code.length).toBeGreaterThan(1000);
+    expect(code).not.toMatch(/\btoHundredths\b/);
+    expect(code).not.toMatch(/\btoUnits\(/);
+    expect(code).not.toMatch(TIMES_100);
+    expect(code.match(/\/ CURRENCY_SCALE/g)).toHaveLength(1);
+  });
+
+  it('planRevenue.ts reads a row only behind the two-decimals gate (SA-W64)', () => {
+    expect(codeOf(PLANS)).toMatch(/minorUnitsPerMajor\(code\) !== 100/);
+  });
+
+  // (c) Pure and structural (SA-WR-4, SA-W22, SA-W65).
+  const IMPURE = /@\/lib\/repositories|supabase|business-os\/entitlements\/|['"]server-only['"]/i;
+  it('the purity rule bites (planted)', () => {
+    expect(IMPURE.test("import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';")).toBe(true);
+    expect(IMPURE.test("import type { X } from '@/lib/repositories/BusinessOsFinanceReadRepository';")).toBe(true);
+    expect(/new Date\(|Date\.now\(/.test('const t = Date.now();')).toBe(true);
+  });
+
+  it.each([PLANS, OURS])('%s: imports no repository, Supabase, entitlements path or server-only; names no table; reads no clock', (file) => {
+    expect(read(file)).not.toMatch(IMPURE);
+    expect(read(file)).not.toMatch(/BusinessOsFinanceReadRepository|BusinessOsBillingEvent/);
+    expect(codeOf(file)).not.toMatch(/business_os_|payment_/);
+    expect(codeOf(file)).not.toMatch(/new Date\(|Date\.now\(/);
+  });
+
+  // (d) No Stripe id, refusal reason, plan_written or mode.
+  const PLAN_SECRET = /stripe_|refusal_reason|plan_written|livemode/;
+  it('the plan-secret rule bites (planted)', () => {
+    expect(PLAN_SECRET.test("'id, stripe_invoice_id, amount_minor'")).toBe(true);
+    expect(PLAN_SECRET.test('row.refusal_reason')).toBe(true);
+    expect(PLAN_SECRET.test("'Real Stripe fees'")).toBe(false);
+  });
+
+  it('no Stripe id, refusal reason, plan_written or mode in the plan columns, the builders, the plans part or the copy', () => {
+    const columns = codeOf(REPOSITORY).match(/export const FINANCE_PLAN_PAYMENT_COLUMNS =\s*'([^']*)'/);
+    expect(columns).not.toBeNull();
+    expect((columns as RegExpMatchArray)[1]).not.toMatch(PLAN_SECRET);
+    expect((columns as RegExpMatchArray)[1]).not.toMatch(/created_at/);
+    for (const file of [PLANS, OURS, PART, COPY]) expect({ file, hit: PLAN_SECRET.test(codeOf(file)) }).toEqual({ file, hit: false });
+  });
+
+  // (e) Exports pinned exactly; none is a cross-currency total, no exchange rate.
+  const exportsOf = (code: string) =>
+    [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
+  it('the export pin bites (planted): an extra export would join the list', () => {
+    expect(exportsOf('export function sumAcrossCurrencies() {}\nexport const A = 1;')).toEqual(['A', 'sumAcrossCurrencies']);
+  });
+
+  it('planRevenue.ts exports exactly PLAN_PAYMENT_KIND, PlanPaymentInput, PlanRevenueResult and buildPlanRevenue', () => {
+    const code = codeOf(PLANS);
+    expect(exportsOf(code)).toEqual(['PLAN_PAYMENT_KIND', 'PlanPaymentInput', 'PlanRevenueResult', 'buildPlanRevenue']);
+    expect(code).not.toMatch(/export\s*\{|export\s+default/);
+    expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
+  });
+
+  it('ourRevenue.ts exports exactly PartByCurrency and combineOurRevenue', () => {
+    const code = codeOf(OURS);
+    expect(exportsOf(code)).toEqual(['PartByCurrency', 'combineOurRevenue']);
+    expect(code).not.toMatch(/export\s*\{|export\s+default/);
+    expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
+  });
+
+  // (f) The paid invoice kind is written in exactly two places (a positive pin).
+  const KIND_LITERAL = /['"`]invoice_paid['"`]/;
+  it('the kind-literal pin bites (planted), and prose is not a literal', () => {
+    expect(KIND_LITERAL.test("row.kind === 'invoice_paid'")).toBe(true);
+    expect(KIND_LITERAL.test('// kind = invoice_paid')).toBe(false);
+  });
+
+  it("'invoice_paid' appears only in the repository and planRevenue.ts", () => {
+    const holders = FILES.filter((file) => KIND_LITERAL.test(codeOf(file)));
+    expect(holders.sort()).toEqual([REPOSITORY, PLANS].sort());
+  });
+
+  // (g) SA-WR-18 extended: no page file adds or subtracts any 5a money field.
+  const MONEY_5A = '(?:gross|refunded|net|fees|amount|held|lost|tax|creditsSold|received|total|boostsNet|plansReceived|payments)';
+  const MONEY_5A_ARITHMETIC = new RegExp(`\\b${MONEY_5A}\\b\\s*(?:[-+]=|[-+]\\s*[\\w.?!()]*\\b${MONEY_5A}\\b)`);
+  it('the 5a money-arithmetic rule bites (planted)', () => {
+    expect(MONEY_5A_ARITHMETIC.test('const t = line.boostsNet + line.plansReceived;')).toBe(true);
+    expect(MONEY_5A_ARITHMETIC.test('line.received - line.tax')).toBe(true);
+    expect(MONEY_5A_ARITHMETIC.test('a.payments + b.payments')).toBe(true);
+    expect(MONEY_5A_ARITHMETIC.test('total - rows.length')).toBe(false);
+    expect(MONEY_5A_ARITHMETIC.test('formatMoney(line.received, line.currency)')).toBe(false);
+  });
+
+  it.each(FILES.filter((file) => file.startsWith('app/admin/finance/')))('%s: adds or subtracts no two 5a money fields', (file) => {
+    expect(codeOf(file)).not.toMatch(MONEY_5A_ARITHMETIC);
+  });
+
+  it('the account summary and header hold no .reduce( (AC-112)', () => {
+    for (const file of ['app/admin/finance/components/AccountSummary.tsx', 'app/admin/finance/components/AccountHeader.tsx']) {
+      expect({ file, reduce: /\.reduce\(/.test(codeOf(file)) }).toEqual({ file, reduce: false });
+    }
+  });
+
+  // (h) S5-F1 / E-33: every list timestamp through formatUtc.
+  it('the plans part imports formatUtc and never names formatUtcDate (planted control)', () => {
+    const code = codeOf(PART);
+    expect(code).toMatch(/import \{[^}]*\bformatUtc\b[^}]*\} from '@\/app\/admin\/components\/layout\/adminFormat'/);
+    expect(code).not.toMatch(/\bformatUtcDate\b/);
+    expect(/\bformatUtcDate\b/.test('formatUtcDate(row.paidAt)')).toBe(true);
+    expect(/\bformatUtcDate\b/.test('formatUtc(row.paidAt)')).toBe(false);
+  });
+
+  // (i) SA-W69: the new page file is held to text-slate-400.
+  const DIM_TEXT = /(^|[^a-zA-Z0-9-])text-slate-[56]00([^0-9]|$)/;
+  it('the dim-text rule bites (planted), and the plans part has none', () => {
+    expect(DIM_TEXT.test("const NOTE = 'text-[11px] text-slate-500';")).toBe(true);
+    expect(DIM_TEXT.test("const NOTE = 'text-[11px] text-slate-400';")).toBe(false);
+    expect(DIM_TEXT.test(codeOf(PART))).toBe(false);
+  });
+
+  // The 4a plans line is gone (SA-W61): its constants are deleted everywhere.
+  it('the 4a plans-line constants and PLANS_TEXT are gone from every scanned file', () => {
+    for (const file of FILES) {
+      expect({ file, hit: /REVENUE_PLANS_(ALL_PREFIX|ALL_RECORDED|ALL_NONE|ALL_UNKNOWN|RECORDED|NONE|UNKNOWN)\b|K5_NET_HEADLINE|\bPLANS_TEXT\b/.test(read(file)) }).toEqual({ file, hit: false });
+    }
   });
 });
