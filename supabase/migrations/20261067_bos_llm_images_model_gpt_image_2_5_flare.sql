@@ -1,4 +1,4 @@
--- 20261061_bos_llm_images_model_gpt_image_2_5_flare.sql
+-- 20261067_bos_llm_images_model_gpt_image_2_5_flare.sql
 --
 -- Moves the Business OS images area row (system_settings_config key
 -- bos_llm_area_images) from gpt-image-1 to gpt-image-2.5-flare.

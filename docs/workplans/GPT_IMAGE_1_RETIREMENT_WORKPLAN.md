@@ -13,7 +13,7 @@ OpenAI shuts `gpt-image-1` down on **23 Oct 2026**. Business OS image generation
 
 The model in prod comes from the `bos_llm_area_images` row (`{model: gpt-image-1, enabled: true, provider: openai}`), not from the code default. The code default matters as the `withModelFallback` retry target and as the model the guardrail skips. So this PR ships the default and the prices; the prod row is moved afterwards in one UPDATE.
 
-The image guardrail (`checkImageModel`) refuses any model whose configured sizes are not all priced at low, medium and high. Prod has no `image_generation_prices_usd`, so the prices go in the in-code `IMAGE_FALLBACK_PRICING`: an out-of-band addition, since the price review flow (slice 3) is on hold and cannot carry it before the shutdown.
+The image guardrail (`checkImageModel`) refuses any model whose configured sizes are not all priced at low, medium and high. Prod has no `image_generation_prices_usd`, so the prices go in the in-code `IMAGE_FALLBACK_PRICING`: an out-of-band addition. The price review flow's slice 3 (PR #368, migration `20261066`) has since merged, but it only records and compares pending prices: `ai_model_image_pricing` has no reader until slice 7, so the in-code map is still what charges an image, and the only way to price the model before the shutdown.
 
 ## Prices
 
@@ -35,17 +35,18 @@ The `gpt-image-1` entries stay until the shutdown has passed: the prod row names
 | 3 | New tests: default model covered at low/medium/high and xhigh/max from the fallback alone (`priceCoverage.test.ts`); a row naming gpt-image-1 is still accepted (`modelSettings.test.ts`); gpt-image-1 prices kept (repository image test) | ✅ |
 | 4 | Comments in `GeneratedImageService.ts` that called `auto` the default | ✅ |
 | 5 | Docs: price review requirement Change History; credit pricing §4.5 note | ✅ |
-| 6 | Migration `20261061_bos_llm_images_model_gpt_image_2_5_flare.sql`: guarded one-row move of `bos_llm_area_images` to flare, applied by hand after deploy (SA F1) | ✅ |
+| 6 | Migration `20261067_bos_llm_images_model_gpt_image_2_5_flare.sql`: guarded one-row move of `bos_llm_area_images` to flare, applied by hand after deploy (SA F1) | ✅ |
 | 7 | Attribution test: requested `high`, reported `xhigh` → priced at the flare `1536x1024:xhigh` entry with the different-quality warning (SA F2) | ✅ |
 | 8 | Open item Q10 in the price review requirement: removing the gpt-image-1 entries after 23 Oct lowers the conservative image rate $0.25 → $0.212 (SA F3) | ✅ |
+| 9 | Merge origin/main (slice 3 of the price review, among others); migration renumbered `20261061` → `20261067`, above main's `20261062` and `20261066`; slice 3 interaction checked (see Change History 2026-10-14 "merged origin/main") | ✅ |
 
-`lib/business-os/llm/__fixtures__/seededRows.ts` is unchanged on purpose: it mirrors what migration `20261003_seed_bos_llm_area_settings.sql` writes (T1-9 reads only that file), and an applied migration is not edited. `20261061` is a later change to the row, not part of the seed.
+`lib/business-os/llm/__fixtures__/seededRows.ts` is unchanged on purpose: it mirrors what migration `20261003_seed_bos_llm_area_settings.sql` writes (T1-9 reads only that file), and an applied migration is not edited. `20261067` is a later change to the row, not part of the seed.
 
 Removing the `gpt-image-1` fallback entries after 23 Oct is open question Q10 in [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md) §8.
 
 ## Post-deploy steps
 
-1. **Only with the user's OK**, apply migration `20261061_bos_llm_images_model_gpt_image_2_5_flare.sql` by hand (it sets `model` of `bos_llm_area_images` to `gpt-image-2.5-flare`, nothing else), then run the read-back query in its header. Never before the deploy. Until then prod generates with `gpt-image-1` at quality `high` ($0.167–$0.25 per image), so do it soon after the deploy and before 23 Oct 2026.
+1. **Only with the user's OK**, apply migration `20261067_bos_llm_images_model_gpt_image_2_5_flare.sql` by hand (it sets `model` of `bos_llm_area_images` to `gpt-image-2.5-flare`, nothing else), then run the read-back query in its header. Never before the deploy. Until then prod generates with `gpt-image-1` at quality `high` ($0.167–$0.25 per image), so do it soon after the deploy and before 23 Oct 2026.
 2. Live test: generate one image on a test business. Check the `token_usage` row: `model_name = gpt-image-2.5-flare`, `cost_usd` matches the table above for the reported quality, and no "No price" or "different quality than requested" log.
 
 ## SA Review Notes
@@ -146,3 +147,5 @@ check-bos-llm-literals: passed   (exit 0)
 | 2026-10-14 | QA report | QA PASS: 50 suites / 1666 tests green, literal guard clean, one live flare call $0.041425 vs price 0.043 |
 | 2026-10-14 | SA code review | Approved with nits; finding 1 (record the prod row move as a guarded migration, or at least its exact SQL) to settle before post-deploy step 1 |
 | 2026-10-14 | SA nits F1–F3 applied | Migration 20261061 (number checked free on all branches), xhigh attribution test, Q10 open item; uncommitted pending Offir's approval |
+| 2026-10-14 | Offir approved; RM local commit | 67b8ba1 on `fix/gpt-image-1-retirement`, not pushed |
+| 2026-10-14 | Merged origin/main; migration renumbered | Merge commit `ebd155ea` (no rebase), renumber in the fix commit after it. One conflict, the price review requirement's Change History: main's slice 3 rows kept, our row after them and reworded (slice 3 is merged, not on hold); Q10 kept in §8. Migration renamed `20261067_bos_llm_images_model_gpt_image_2_5_flare.sql` (main holds `20261062` and `20261066`; `20261061` is left unused). Slice 3 check: the comparison reads `IMAGE_FALLBACK_PRICING` read-only as the "current" image price; the 15 flare keys show as in-code-fallback rows, both area models (row `gpt-image-1`, default flare) are covered, `xhigh`/`max` pass its quality pattern, and no test pins the key set or count. Slice 3 has no apply path for image prices (no reader of `ai_model_image_pricing` until slice 7), so the in-code addition stays correct. Not pushed |
