@@ -41,6 +41,17 @@ jest.mock('@/hooks/useConsentCopy', () => ({
   consentPayload: () => undefined,
 }));
 
+/*
+ * BR-2: the phone library now arrives after mount. These tests are about which
+ * fields the form asks for, not about that download, so it is held off: the
+ * phone row stays the placeholder (still an `input[type="tel"]`), and no load
+ * resolves after a test has finished.
+ */
+jest.mock('@/components/crm/usePhoneLib', () => ({
+  usePhoneLib: () => null,
+  loadPhoneLib: () => new Promise(() => undefined),
+}));
+
 import { ContactFormBlock } from '../ContactFormBlock';
 
 /** What the route cannot do without. */
