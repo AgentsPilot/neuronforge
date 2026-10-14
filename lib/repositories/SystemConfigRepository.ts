@@ -22,8 +22,9 @@ export interface ImageGenerationConfig {
   /** Aspect → the size string the provider is asked for. */
   sizes: Record<ImageGenerationAspect, string>;
   /**
-   * Sent on every request. `auto` (the default) lets the provider choose; the
-   * price is then keyed on the quality the provider REPORTS it used.
+   * Sent on every request. The default is `high`; `auto` would let the
+   * provider choose. The price is keyed on the quality the provider REPORTS
+   * it used.
    */
   quality: string;
   /** `"<model>:<size>:<reported quality>"` → USD per image. Empty when nothing is configured. */
@@ -33,20 +34,23 @@ export interface ImageGenerationConfig {
 /**
  * Documented in-code defaults, overridden by configuration (Layer 1.5 FR-10).
  *
- * - model: the literal GeneratedImageService used before this was configurable.
+ * - model: 'gpt-image-2.5-flare'. OpenAI retires `gpt-image-1` on 23 Oct 2026,
+ *   so the default moved off it (user decision, 2026-10-14). The prod
+ *   `images` area row names the model explicitly and must be updated
+ *   separately; this default is what `withModelFallback` retries on.
  * - sizes: the aspect → size map it used, unchanged.
- * - quality: 'auto' — what the provider applied before Layer 1.5, when the call
- *   sent no quality at all. Kept by user decision (CR-1, option C, 2026-09-18),
- *   so images look and cost exactly as they did. `auto` is priced AFTER the
- *   call, by the quality the provider reports it used; configure
- *   `image_generation_quality` to pin `low`, `medium` or `high` instead.
+ * - quality: 'high', pinned. The 2.5 models add `xhigh` and `max` levels, so
+ *   `auto` could let the provider pick a level several times the cost of
+ *   `high`. This supersedes CR-1 option C (2026-09-18, which kept `auto`) by
+ *   user decision on 2026-10-14. Images are still priced AFTER the call, by
+ *   the quality the provider reports it used.
  * - pricesUsd: empty. The documented per-image fallback prices are
  *   IMAGE_FALLBACK_PRICING below, applied only when configuration has no entry.
  */
 export const IMAGE_GENERATION_CONFIG_DEFAULTS: Readonly<ImageGenerationConfig> = Object.freeze({
-  model: 'gpt-image-1',
+  model: 'gpt-image-2.5-flare',
   sizes: Object.freeze({ wide: '1536x1024', portrait: '1024x1536', square: '1024x1024' }),
-  quality: 'auto',
+  quality: 'high',
   pricesUsd: Object.freeze({}),
 });
 
@@ -54,11 +58,24 @@ export const IMAGE_GENERATION_CONFIG_DEFAULTS: Readonly<ImageGenerationConfig> =
  * Documented fallback per-image prices in USD, keyed `model:size:quality`,
  * where quality is the one the provider reports it used (never `auto`).
  *
- * Provenance: gpt-image-1's per-image price table (low / medium / high at
+ * Provenance, gpt-image-2.5-flare (the default model): calculator ESTIMATES,
+ * because OpenAI publishes no per-image price table for the 2.5 models. Source:
+ * the image-output token calculator in
+ * developers.openai.com/api/docs/guides/image-generation ("GPT Image 2.5 and
+ * GPT Image 2 output tokens", row "GPT Image 2.5 (Sunburst and Flare)"),
+ * checked 2026-10-14. Rule: output tokens × $30/M, plus a $0.001 allowance for
+ * the prompt's text tokens at $5/M, rounded UP to the nearest $0.001.
+ * 1536x1024 and 1024x1536 share one row. `xhigh` and `max` are priced too,
+ * so an image the provider reports at those levels is never recorded at $0.
+ *
+ * Provenance, gpt-image-1: its per-image price table (low / medium / high at
  * 1024x1024 and at 1024x1536 / 1536x1024). On 2026-09-18 all nine values were
  * confirmed against OpenAI's own model page
  * (developers.openai.com/api/docs/models/gpt-image-1, "Image generation — Per
- * image"). Re-check that page when prices change. These are the
+ * image"). OpenAI shuts gpt-image-1 down on 23 Oct 2026. Keep these entries
+ * until that date has passed: the prod `images` row still names it until its
+ * one-row update, and `chargePricing` takes the conservative image rate as the
+ * maximum of this map, so removing them would change that rate. These are the
  * DEFAULT, not the rule: `image_generation_prices_usd` in configuration
  * overrides any entry, and is where a price change belongs. This mirrors
  * `FALLBACK_PRICING` in lib/ai/pricing.ts for token models. Resolved by
@@ -75,6 +92,21 @@ export const IMAGE_FALLBACK_PRICING: Readonly<Record<string, number>> = Object.f
   'gpt-image-1:1024x1024:high': 0.167,
   'gpt-image-1:1024x1536:high': 0.25,
   'gpt-image-1:1536x1024:high': 0.25,
+  'gpt-image-2.5-flare:1024x1024:low': 0.007,
+  'gpt-image-2.5-flare:1024x1536:low': 0.006,
+  'gpt-image-2.5-flare:1536x1024:low': 0.006,
+  'gpt-image-2.5-flare:1024x1024:medium': 0.015,
+  'gpt-image-2.5-flare:1024x1536:medium': 0.012,
+  'gpt-image-2.5-flare:1536x1024:medium': 0.012,
+  'gpt-image-2.5-flare:1024x1024:high': 0.054,
+  'gpt-image-2.5-flare:1024x1536:high': 0.043,
+  'gpt-image-2.5-flare:1536x1024:high': 0.043,
+  'gpt-image-2.5-flare:1024x1024:xhigh': 0.095,
+  'gpt-image-2.5-flare:1024x1536:xhigh': 0.075,
+  'gpt-image-2.5-flare:1536x1024:xhigh': 0.075,
+  'gpt-image-2.5-flare:1024x1024:max': 0.212,
+  'gpt-image-2.5-flare:1024x1536:max': 0.166,
+  'gpt-image-2.5-flare:1536x1024:max': 0.166,
 });
 
 /** A JSONB value may arrive as the object itself or as a JSON string. */

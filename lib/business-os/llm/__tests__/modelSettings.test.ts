@@ -290,6 +290,15 @@ describe('guardrails: one bad field, one fallback, one error log (T1-6, AC-5, DE
     expect((await resolveBosLlmSettings('images', 'image_generation')).model).toBe('gpt-image-2');
   });
 
+  it('still accepts a row naming gpt-image-1 until the prod row is moved (its fallback prices are kept)', async () => {
+    // The prod `images` row names gpt-image-1 until its one-row update. It is
+    // no longer the code default, so it is price-checked now, and must pass.
+    mockGetByKeys.mockResolvedValue(rows({ images: { model: 'gpt-image-1' } }));
+
+    expect((await resolveBosLlmSettings('images', 'image_generation')).model).toBe('gpt-image-1');
+    expect(issuesLogged('error')).toEqual([]);
+  });
+
   it('refuses a provider that is not on the call list (DEC-4)', async () => {
     mockGetByKeys.mockResolvedValue(rows({ leads: { provider: 'anthropic' } }));
     expect((await resolveBosLlmSettings('leads', 'reply_recommendation')).provider).toBe('openai');

@@ -364,7 +364,7 @@ describe('the shared per-request context', () => {
 
   it('reads the image configuration once across areas, not once per area', async () => {
     // A NON-default image model: `checkModel` returns early for a value equal
-    // to the code default, so `gpt-image-1` would never reach the image check
+    // to the code default, so the default image model would never reach the image check
     // at all and this test would prove nothing.
     mockListPricedModels.mockResolvedValue({
       models: [priced('openai', 'dall-e-3')],

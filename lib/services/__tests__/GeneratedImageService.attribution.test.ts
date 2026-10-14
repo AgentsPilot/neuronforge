@@ -161,13 +161,13 @@ describe('a successful generation (AC-6)', () => {
     });
   });
 
-  it('asks for one image at the configured size, sending quality auto by default (AC-8, AC-9, CR-1 C)', async () => {
+  it('asks for one image at the configured size, sending quality high by default (AC-8, AC-9; pinned 2026-10-14)', async () => {
     await generateImage(OWNER, PROMPT, 'portrait', 'about');
     expect(mockGenerate).toHaveBeenCalledTimes(1);
     expect(mockGenerate.mock.calls[0][0]).toMatchObject({
       model: IMAGE_GENERATION_CONFIG_DEFAULTS.model,
       size: '1024x1536',
-      quality: 'auto',
+      quality: 'high',
       n: 1,
     });
   });
@@ -328,14 +328,17 @@ describe('price resolution (AC-8, FR-13)', () => {
     config.quality = 'ultra';
     mockGetImageConfig.mockResolvedValue(config);
     await generateImage(OWNER, PROMPT, 'wide', 'hero');
-    expect(mockGenerate.mock.calls[0][0]).toMatchObject({ size: '1536x1024', quality: 'auto' });
+    expect(mockGenerate.mock.calls[0][0]).toMatchObject({ size: '1536x1024', quality: 'high' });
   });
 });
 
 /*
- * CR-1 option C (user decision 2026-09-18) and CR-5: the request keeps `auto`,
- * and each image is priced by the quality the provider REPORTS it used, keyed
- * on model + size + reported quality. This is the pricing path, not a warning.
+ * CR-5: each image is priced by the quality the provider REPORTS it used, keyed
+ * on model + size + reported quality. CR-1 option C (2026-09-18) kept the
+ * request at `auto`; since 2026-10-14 the default request is pinned to `high`
+ * (the 2.5 models add costlier xhigh/max levels). `auto` is still a valid
+ * configured quality, so the reported-quality cases below configure it
+ * explicitly: that is the path where a report is expected, not a warning.
  */
 describe('pricing by the reported quality (CR-1 option C, CR-5)', () => {
   const MODEL = IMAGE_GENERATION_CONFIG_DEFAULTS.model;
@@ -348,6 +351,13 @@ describe('pricing by the reported quality (CR-1 option C, CR-5)', () => {
     });
   }
 
+  /** The defaults with the request quality configured to `auto`. */
+  function autoConfig(): ImageGenerationConfig {
+    const config = defaults();
+    config.quality = 'auto';
+    return config;
+  }
+
   function warnings(): Array<{ fields: Record<string, unknown>; msg: string }> {
     return logged
       .filter((l) => l.level === 'warn')
@@ -358,7 +368,8 @@ describe('pricing by the reported quality (CR-1 option C, CR-5)', () => {
     ['medium', '1536x1024'],
     ['high', '1536x1024'],
     ['low', '1536x1024'],
-  ])('reported %s → the row carries the %s price at that size, with no warning', async (reported, size) => {
+  ])('reported %s → the row carries the %s price at that size, with no warning (quality configured auto)', async (reported, size) => {
+    mockGetImageConfig.mockResolvedValue(autoConfig());
     respondWith(reported);
     await expect(generateImage(OWNER, PROMPT, 'wide', 'hero')).resolves.toMatchObject({ ok: true });
 
@@ -378,7 +389,32 @@ describe('pricing by the reported quality (CR-1 option C, CR-5)', () => {
     expect(rows()[0].cost_usd).toBe(0.05);
   });
 
+  it('under the default (high), a report of high is priced at high with no warning', async () => {
+    respondWith('high');
+    await expect(generateImage(OWNER, PROMPT, 'wide', 'hero')).resolves.toMatchObject({ ok: true });
+
+    expect(mockGenerate.mock.calls[0][0]).toMatchObject({ quality: 'high' });
+    expect(rows()[0].cost_usd).toBe(IMAGE_FALLBACK_PRICING[`${MODEL}:1536x1024:high`]);
+    expect(warnings()).toEqual([]);
+  });
+
+  it('requested high but reported xhigh → priced at the xhigh entry, with the different-quality warning', async () => {
+    // The 2.5 models add xhigh and max. If the provider ever goes above the
+    // pinned `high`, the image is priced at what it reports, never at $0.
+    respondWith('xhigh');
+    await expect(generateImage(OWNER, PROMPT, 'wide', 'hero')).resolves.toMatchObject({ ok: true });
+
+    expect(mockGenerate.mock.calls[0][0]).toMatchObject({ quality: 'high' });
+    const xhighPrice = IMAGE_FALLBACK_PRICING[`${MODEL}:1536x1024:xhigh`];
+    expect(xhighPrice).toBeGreaterThan(0);
+    expect(rows()[0].cost_usd).toBe(xhighPrice);
+    const warning = warnings().find((w) => w.msg.includes('different quality than requested'));
+    expect(warning?.fields).toEqual({ model: MODEL, size: '1536x1024', requestedQuality: 'high', reportedQuality: 'xhigh' });
+    expect(JSON.stringify(logged)).not.toContain(PROMPT);
+  });
+
   it('no reported quality → priced at high, with a warning that names no prompt', async () => {
+    mockGetImageConfig.mockResolvedValue(autoConfig());
     respondWith(undefined);
     await expect(generateImage(OWNER, PROMPT, 'wide', 'hero')).resolves.toMatchObject({ ok: true });
 

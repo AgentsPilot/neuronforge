@@ -1,6 +1,6 @@
 # Requirement: AI Model Price Review (proposal, approve, apply)
 
-> **Last Updated**: 2026-10-12
+> **Last Updated**: 2026-10-14
 
 **Created by:** BA
 **Date:** 2026-10-08
@@ -188,6 +188,12 @@ All **DECIDED** by the user on 2026-10-08. The original options and BA recommend
 | **Q7** | **A price change never changes packages, allowances or credits.** It must prompt the admin to go and validate package margins and credits. A more advanced workflow is future work |
 | **Q8** | **Fix precision going forward only.** No measurement of past charges, no credit-backs. (Which flags block apply: BA suggestion "unpriced in use" and "precision loss" stands for SA to confirm) |
 | **Q9** | **Remove the direct single-row edit / delete.** Every change goes through a proposal |
+
+**Open (raised 2026-10-14, not yet decided):**
+
+| # | Question |
+|---|---|
+| **Q10** | **Removing the `gpt-image-1` image prices after its shutdown (23 Oct 2026) is a charging change.** `chargePricing` takes its conservative image rate as the maximum of `IMAGE_FALLBACK_PRICING`. Today that is $0.25 (`gpt-image-1` at high, 1536x1024 / 1024x1536). Once the `gpt-image-1` entries are removed, the maximum becomes $0.212 (`gpt-image-2.5-flare` at max, 1024x1024), so the rate drops from $0.25 to $0.212. Decide here whether and when to remove them, and treat it like any price change (Q7: prompt the admin to re-check package margins and credits). Until decided, the entries stay. Source: `fix/gpt-image-1-retirement` (Change History 2026-10-14) |
 
 **Original questions and BA recommendations (for the record):**
 
@@ -412,3 +418,4 @@ All **DECIDED** by the user on 2026-10-08. The original options and BA recommend
 | 2026-10-11 | Slice 2 view hardened | User decision: the dependent view `pilot_cost_savings_summary` is recreated with `security_invoker = true`, anon loses all access, SELECT only for authenticated and service_role, owner postgres, no comment; the rollback keeps the hardening. Slice 2 code complete, awaiting SA code review |
 | 2026-10-11 | Slice 2 SA code review and QA fixes | SA CR-1 to CR-3 applied (view guard refuses triggers, extra rewrite rules and comments; Infinity excluded in the two new CHECKs; apply-order expectations). QA follow-up recorded under slice 4: the admin pricing list shows retired rows unlabelled |
 | 2026-10-12 | Slice 2 merged and applied; slice 3 on hold | PR #304 merged (856455c4 / 7cf7974a). Production apply 2026-10-11 by TL via the Supabase connector with the user's go-ahead: baseline `20261052` (no-op), retire (12 rows, fingerprint `76c7cfe8e89e2464f9fa866668682426` unchanged, 42 active / 12 retired), schema `20261053`, checker VERDICT PASS 83/0; anon refused on `pilot_cost_savings_summary` (401). Open: user smoke check after deploy; admin list still shows retired rows (review UI slice); separate task on anon read of `pilot_step_routing_history`. User put slice 3 on hold pending feedback |
+| 2026-10-14 | Out-of-band image price addition (gpt-image-1 retirement) | Outside the proposal/approve/apply flow, by user decision: OpenAI shuts `gpt-image-1` down on 23 Oct 2026, before slice 3 (on hold) or any review UI could carry a new image model, and the image guardrail refuses a model whose sizes are not priced at low/medium/high. Fix branch `fix/gpt-image-1-retirement` adds 15 `gpt-image-2.5-flare:<size>:<quality>` entries (low, medium, high, xhigh, max) to the in-code `IMAGE_FALLBACK_PRICING`, moves the image default to that model with quality pinned `high`, and keeps the `gpt-image-1` entries until the shutdown has passed (the conservative charge rate is unchanged). Values are calculator ESTIMATES (OpenAI image-generation guide, 'GPT Image 2.5 (Sunburst and Flare)' row, checked 2026-10-14): output cost + $0.001 prompt allowance, rounded up to $0.001. When the DB-authoritative image table (`ai_model_image_pricing`, R-1) goes live, these prices move there through the normal flow. Offir emailed for approval. Workplan: `docs/workplans/GPT_IMAGE_1_RETIREMENT_WORKPLAN.md` |
