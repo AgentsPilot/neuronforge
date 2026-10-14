@@ -44,6 +44,15 @@
  * "not in place" or "test accounts only", and no scanned file's code names a
  * mode. Each has a planted control, including the known false-positive shape
  * of an identifier such as latestMode (SA-WR-30).
+ *
+ * Slice 4a (SA-Q26, SA-W22, SA-W53, SA-W54, SA-WR-34, SA-WR-35): the boost
+ * revenue builder never scales money (no decimal helper, no × 100; credits go
+ * through toUnits once), reads no date, keeps the DF-5 rule in one function
+ * and its sentence in one copy line used by the panel only, imports no data
+ * layer, exports exactly four names, and names no Stripe or lot field; the
+ * page adds no two 4a money fields; K-5's money is printed only through
+ * formatMoney or a copy string. No existing rule is edited. Each new rule has
+ * a planted negative control.
  */
 
 import * as fs from 'fs';
@@ -267,7 +276,7 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
     expect(fromCallsOf(planted)).not.toBe(tablesOf(planted).length);
   });
 
-  /** Slice 2b (S2-F1): the five of 1a / 2a plus the client invoices, plan instalments and client plans. */
+  /** Slice 2b (S2-F1): the five of 1a / 2a plus the client invoices, plan instalments and client plans. Slice 4a: R-k and R-k′ read the boost table too (already here for R-d). */
   const REPOSITORY_TABLES = [
     'business_os_billing_accounts',
     'business_os_billing_events',
@@ -600,5 +609,181 @@ describe('finance slice 1c wording guards', () => {
 
   it.each(FILES)('%s: names no mode in code (no livemode, test mode or live mode)', (file) => {
     expect(codeOf(file)).not.toMatch(MODE_WORDING);
+  });
+});
+
+// ── Slice 4a: our boost revenue (SA-Q26, SA-W22, SA-W53, SA-W54, SA-WR-34, SA-WR-35) ──
+describe('finance slice 4a source guards (our boost revenue)', () => {
+  const BUILDER = 'lib/business-os/finance/boostRevenue.ts';
+  const PANEL = 'app/admin/finance/components/RevenuePanel.tsx';
+  const STRIP = 'app/admin/finance/components/FinanceKpiStrip.tsx';
+  const COPY = 'app/admin/finance/financeCopy.ts';
+  const BOOST_METHODS = ['listBoostPurchasesAllAccountsPaidInRange', 'listBoostPurchasesForAccountPaidInRange'];
+  /** From `async <name>(` to the next `async ` or the end of the class (the 2a slicer, repeated here). */
+  const bodyOf = (code: string, name: string) => {
+    const start = code.search(new RegExp(`async\\s+${name}\\s*[<(]`));
+    if (start < 0) return '';
+    const next = code.indexOf('async ', start + 6);
+    return code.slice(start, next < 0 ? undefined : next);
+  };
+
+  // (a) Non-vacuity.
+  it('scans the slice 4a files, and finds the two boost read bodies in the repository', () => {
+    expect(FILES).toEqual(expect.arrayContaining([BUILDER, PANEL, STRIP, COPY]));
+    expect(LAYER_B_FREE).toEqual(expect.arrayContaining([BUILDER, PANEL]));
+    for (const name of BOOST_METHODS) {
+      const body = bodyOf(codeOf(REPOSITORY), name);
+      expect({ name, found: body.length > 100 }).toEqual({ name, found: true });
+      expect(body).toMatch(/from\('business_os_boost_purchases'\)/);
+      expect(body).toMatch(/rangeFilter\('paid_at', range\)/);
+      expect(body).not.toMatch(/livemode/);
+    }
+  });
+
+  // (b) SA-Q26 / SA-W54: money never through the decimal helpers or × 100; credits through toUnits once.
+  const TIMES_100 = /\*\s*100\b|CURRENCY_SCALE\s*\*/;
+  it('the scale rules bite (planted)', () => {
+    expect(TIMES_100.test('const cents = row.amount_total_minor * 100;')).toBe(true);
+    expect(TIMES_100.test('const cents = row.amount_total_minor*100;')).toBe(true);
+    expect(TIMES_100.test('CURRENCY_SCALE * total')).toBe(true);
+    expect(TIMES_100.test('hundredths / CURRENCY_SCALE')).toBe(false);
+    expect(/\btoHundredths\b/.test('toHundredths(row.amount_total_minor)')).toBe(true);
+    expect('toUnits(row.amount_total_minor, 100); toUnits(row.credits_total, CREDIT_SCALE)'.match(/\btoUnits\(/g)).toHaveLength(2);
+  });
+
+  it('boostRevenue.ts never names toHundredths, has no × 100, and calls toUnits exactly once: credits_total at CREDIT_SCALE', () => {
+    const code = codeOf(BUILDER);
+    expect(code.length).toBeGreaterThan(2000);
+    expect(code).not.toMatch(/\btoHundredths\b/);
+    expect(code).not.toMatch(TIMES_100);
+    const calls = code.match(/\btoUnits\([^)]*\)/g) ?? [];
+    expect(calls).toEqual(['toUnits(row.credits_total, CREDIT_SCALE)']);
+    // The one division to the wire, valid only behind the minorUnitsPerMajor === 100 gate.
+    expect(code).toMatch(/minorUnitsPerMajor\(code\) !== 100/);
+    expect(code.match(/\/ CURRENCY_SCALE/g)).toHaveLength(1);
+  });
+
+  // (c) AC-88: the read decides the window; the builder reads no date.
+  it('boostRevenue.ts reads neither paid_at nor created_at (planted control)', () => {
+    expect(codeOf(BUILDER)).not.toMatch(/\bpaid_at\b|\bcreated_at\b/);
+    expect(/\bpaid_at\b/.test(stripComments('const d = row.paid_at;'))).toBe(true);
+  });
+
+  // (d) SA-W53: the DF-5 rule lives in refundsAndDisputesOf only.
+  const DF5_TOKENS = /amount_refunded_minor|'disputed'|'dispute_lost'/;
+  /** The builder's code with the three places allowed to name the tokens cut out. */
+  const outsideDf5 = (code: string) => {
+    const fnStart = code.indexOf('function refundsAndDisputesOf(');
+    const fnEnd = code.indexOf('\n}\n', fnStart);
+    const ifaceStart = code.indexOf('export interface BoostPurchaseInput');
+    const ifaceEnd = code.indexOf('\n}\n', ifaceStart);
+    if (fnStart < 0 || fnEnd < 0 || ifaceStart < 0 || ifaceEnd < 0) return null;
+    return code
+      .slice(0, Math.min(fnStart, ifaceStart))
+      .concat(code.slice(Math.min(fnEnd, ifaceEnd), Math.max(fnStart, ifaceStart)))
+      .concat(code.slice(Math.max(fnEnd, ifaceEnd)))
+      .replace(/export const BOOST_PAID_FAMILY = \[[^\]]*\] as const;/, '');
+  };
+
+  it('DF-5: the refunded amount and the dispute statuses appear only in refundsAndDisputesOf, the paid-family literal and the input type', () => {
+    const code = codeOf(BUILDER);
+    const rest = outsideDf5(code);
+    expect(rest).not.toBeNull();
+    expect((rest as string).length).toBeGreaterThan(1000);
+    expect(rest).not.toMatch(DF5_TOKENS);
+    // The function itself holds all three.
+    const fn = code.slice(code.indexOf('function refundsAndDisputesOf('), code.indexOf('function readMoney('));
+    for (const token of ['amount_refunded_minor', "'disputed'", "'dispute_lost'"]) expect(fn).toContain(token);
+  });
+
+  it('the DF-5 pin bites (planted): a refund read outside the function is caught', () => {
+    const planted = `${codeOf(BUILDER)}\nconst leak = (r: BoostPurchaseInput) => r.amount_refunded_minor;\n`;
+    expect(outsideDf5(planted)).toMatch(DF5_TOKENS);
+    const plantedStatus = codeOf(BUILDER).replace('function readMoney(', "const x = (s: string) => s === 'disputed';\nfunction readMoney(");
+    expect(outsideDf5(plantedStatus)).toMatch(DF5_TOKENS);
+  });
+
+  // SA-WR-35: the one DF-5 copy line is used only by the revenue panel.
+  it('SA-WR-35: REVENUE_REFUND_TIMING_NOTE is defined in the copy and used only by RevenuePanel.tsx', () => {
+    const users = FILES.filter((file) => file !== COPY && /\bREVENUE_REFUND_TIMING_NOTE\b/.test(codeOf(file)));
+    expect(users).toEqual([PANEL]);
+    expect(codeOf(COPY)).toMatch(/export const REVENUE_REFUND_TIMING_NOTE =/);
+    expect(read(COPY)).toContain('Refunds and disputes are counted in the month of the purchase, as recorded today, so a past month can still change.');
+  });
+
+  it('the SA-WR-35 pin bites (planted): a second user would join the list', () => {
+    const planted = "import { REVENUE_REFUND_TIMING_NOTE } from '../financeCopy';";
+    expect(/\bREVENUE_REFUND_TIMING_NOTE\b/.test(planted)).toBe(true);
+    expect(/\bREVENUE_REFUND_TIMING_NOTE\b/.test('REVENUE_REFUND_TIMING_NOTES')).toBe(false);
+  });
+
+  // (e) SA-W22: pure and structural.
+  it('boostRevenue.ts imports no repository and no Supabase client, names no table and reads no clock', () => {
+    const raw = read(BUILDER);
+    expect(raw).not.toMatch(/@\/lib\/repositories|supabase/i);
+    expect(raw).not.toMatch(/BusinessOsFinanceReadRepository/);
+    expect(codeOf(BUILDER)).not.toMatch(/business_os_boost_purchases|payment_/);
+    expect(codeOf(BUILDER)).not.toMatch(/new Date\(|Date\.now\(/);
+  });
+
+  // (f) SA-WR-18 extended: no page file adds or subtracts any 4a money field.
+  const MONEY_4A = '(?:gross|refunded|net|fees|amount|held|lost|tax|creditsSold)';
+  const MONEY_4A_ARITHMETIC = new RegExp(`\\b${MONEY_4A}\\b\\s*(?:[-+]=|[-+]\\s*[\\w.?!()]*\\b${MONEY_4A}\\b)`);
+  it('the 4a money-arithmetic rule bites (planted)', () => {
+    expect(MONEY_4A_ARITHMETIC.test('const n = line.held + line.lost;')).toBe(true);
+    expect(MONEY_4A_ARITHMETIC.test('line.gross - line.tax')).toBe(true);
+    expect(MONEY_4A_ARITHMETIC.test('a.creditsSold + b.creditsSold')).toBe(true);
+    expect(MONEY_4A_ARITHMETIC.test('count + line.unreadableCredits')).toBe(false);
+    expect(MONEY_4A_ARITHMETIC.test('formatMoney(line.held, line.currency)')).toBe(false);
+  });
+
+  it.each(FILES.filter((file) => file.startsWith('app/admin/finance/')))('%s: adds or subtracts no two 4a money fields', (file) => {
+    expect(codeOf(file)).not.toMatch(MONEY_4A_ARITHMETIC);
+  });
+
+  // (g) BD-12: boostRevenue.ts's exports are pinned exactly; none is a cross-currency total.
+  it('boostRevenue.ts exports exactly BOOST_PAID_FAMILY, BoostPurchaseInput, BoostRevenueResult and buildBoostRevenue', () => {
+    const code = codeOf(BUILDER);
+    const exported = [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
+    expect(exported).toEqual(['BOOST_PAID_FAMILY', 'BoostPurchaseInput', 'BoostRevenueResult', 'buildBoostRevenue']);
+    expect(code).not.toMatch(/export\s*\{|export\s+default/);
+    expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
+  });
+
+  // (h) S4-FR-9 / AC-98: no Stripe id, receipt, flag reason or lot id.
+  const STRIPE_OR_LOT = /stripe_|receipt_url|flag_reason|lot_id/;
+  it('the Stripe-or-lot rule bites (planted)', () => {
+    expect(STRIPE_OR_LOT.test("'id, stripe_charge_id, amount'")).toBe(true);
+    expect(STRIPE_OR_LOT.test('row.lot_id')).toBe(true);
+    expect(STRIPE_OR_LOT.test("'Real Stripe fees'")).toBe(false);
+  });
+
+  it('no Stripe id, receipt URL, flag reason or lot id in the boost columns, the builder, the panel, the strip or the copy', () => {
+    const columns = codeOf(REPOSITORY).match(/export const FINANCE_BOOST_PURCHASE_COLUMNS =\s*'([^']*)'/);
+    expect(columns).not.toBeNull();
+    expect((columns as RegExpMatchArray)[1]).not.toMatch(STRIPE_OR_LOT);
+    for (const file of [BUILDER, PANEL, STRIP, COPY]) expect({ file, hit: STRIPE_OR_LOT.test(codeOf(file)) }).toEqual({ file, hit: false });
+  });
+
+  // SA-WR-34: K-5's money is printed only through formatMoney or a copy string, and only K-5 has it.
+  const strayMoney = (code: string) =>
+    code
+      .replace(/formatMoney\(money\.net, money\.currency\)/g, '')
+      .replace(/k5SeveralCurrencies\(money\.currencies\)/g, '')
+      .match(/\bmoney\.(?:net|currencies|currency)\b/g) ?? [];
+
+  it('SA-WR-34: the strip prints money.net only through formatMoney, the count only through the copy, and reads money from K-5 only', () => {
+    const code = codeOf(STRIP);
+    expect(code).toMatch(/formatMoney\(money\.net, money\.currency\)/);
+    expect(strayMoney(code)).toEqual([]);
+    expect(code).not.toMatch(/\bk[1-4]\.money\b/);
+    expect(code.match(/\.money\b/g)).toEqual(['.money']);
+    expect(code).toMatch(/k5Value\(k5\.money\)/);
+  });
+
+  it('the SA-WR-34 rules bite (planted): a bare net or a K-1 money read is caught', () => {
+    expect(strayMoney('return String(money.net);')).toEqual(['money.net']);
+    expect(strayMoney('return formatMoney(money.net, money.currency);')).toEqual([]);
+    expect(/\bk[1-4]\.money\b/.test('k1.money')).toBe(true);
   });
 });

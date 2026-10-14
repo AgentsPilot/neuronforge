@@ -31,6 +31,13 @@
  * with no amount, currency, due date or name (AC-69); and the six new reads
  * plus the reminder read in `allReads()`, so every 401 / 403 / 400 case proves
  * zero calls on them (AC-45, AC-46).
+ *
+ * Slice 4a: "Our revenue" with its boosts in the payload (every money key
+ * beside its currency, `tiles.k5.money` included, AC-92 / SA-WR-34), no
+ * Stripe or lot field (AC-98), the picked business through the route (AC-96),
+ * a failed boost read is 200 with K-5 "Unknown" (AC-95), the two boost reads
+ * in `allReads()` (AC-99), and the info line's `revenueBoosts` and
+ * `counts.boosts` with no amount, currency or package (AC-98).
  */
 
 import * as fs from 'fs';
@@ -94,6 +101,9 @@ const mockDeps = {
     listOverdueClientInstalmentsForAccount: jest.fn(),
     listClientPlansAllAccounts: jest.fn(),
     listClientPlansForAccount: jest.fn(),
+    // Slice 4a: R-k and R-k′.
+    listBoostPurchasesAllAccountsPaidInRange: jest.fn(),
+    listBoostPurchasesForAccountPaidInRange: jest.fn(),
   },
   credits: {
     getSnapshots: jest.fn(),
@@ -225,6 +235,17 @@ const REMINDER_FIGURES = {
   deadLettered7d: 1, skipped7d: 0, guardrailSkips7d: null, unrecognisedStatus: 0, oldestDueAt: '2026-10-01T09:00:00.000Z',
 };
 
+/** Slice 4a: a boost amount (minor units) and a package id that must never reach a log line (AC-98). */
+const BOOST_MINOR = 123457;
+const BOOST_PACKAGE = 'pkg-secret-name';
+function boostPurchase(user_id: string | null) {
+  return {
+    id: 'abababab-0000-4000-8000-000000000001', user_id, status: 'paid', package_id: BOOST_PACKAGE, package_version: 3,
+    currency: 'USD', amount_total_minor: BOOST_MINOR, amount_tax_minor: 0, amount_refunded_minor: 0,
+    credits_total: '5000.000000', paid_at: '2026-10-02T10:00:00+00:00',
+  };
+}
+
 /** Credit figures that must never reach a log line (AC-30). */
 const USED_FIGURE = '7.123456';
 const GIFTED_FIGURE = 13.5;
@@ -271,6 +292,9 @@ function seed() {
   mockDeps.finance.listClientPlansAllAccounts.mockResolvedValue(plans);
   mockDeps.finance.listClientPlansForAccount.mockResolvedValue(plans);
   mockReadQueueFigures.mockResolvedValue({ data: REMINDER_FIGURES, error: null });
+  const boosts = { data: { rows: [boostPurchase(ACCOUNT)], reachedCeiling: false }, error: null };
+  mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange.mockResolvedValue(boosts);
+  mockDeps.finance.listBoostPurchasesForAccountPaidInRange.mockResolvedValue(boosts);
 }
 
 const allReads = () => [
@@ -567,8 +591,8 @@ describe('slice 2a: takings through the route', () => {
 
   it('AC-45: the four takings reads are in allReads(), so every 401 / 403 / 400 case proves zero calls on them', () => {
     for (const fn of Object.values(mockDeps.finance)) expect(allReads()).toContain(fn);
-    // Slice 2b: the six overdue and plan reads joined the seven (thirteen).
-    expect(Object.keys(mockDeps.finance)).toHaveLength(13);
+    // Slice 2b: the six overdue and plan reads joined the seven (thirteen); slice 4a: R-k and R-k′ (fifteen).
+    expect(Object.keys(mockDeps.finance)).toHaveLength(15);
   });
 
   it('the payload carries takings; AC-48: every money key sits beside a currency, and no money key is top-level', async () => {
@@ -807,6 +831,101 @@ describe('slice 2b: client payment problems through the route', () => {
     expect(logged).not.toContain(DUE_DATE);
     expect(logged).not.toMatch(/\bEUR\b|\beur\b/);
     expect(logged).not.toContain(NAME);
+  });
+});
+
+describe('slice 4a: our revenue through the route', () => {
+  beforeEach(asAdmin);
+
+  it('AC-99: R-k and R-k′ are in allReads(); signed out, a non-admin and an invalid query each make zero boost reads', async () => {
+    expect(allReads()).toContain(mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange);
+    expect(allReads()).toContain(mockDeps.finance.listBoostPurchasesForAccountPaidInRange);
+    mockGetUser.mockResolvedValue(null);
+    expect((await call()).status).toBe(401);
+    mockGetUser.mockResolvedValue(OWNER);
+    mockIsAdmin.mockResolvedValue(false);
+    expect((await call()).status).toBe(403);
+    asAdmin();
+    expect((await call('?preset=this_month&unknownKey=1')).status).toBe(400);
+    expect(mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listBoostPurchasesForAccountPaidInRange).not.toHaveBeenCalled();
+  });
+
+  it('the payload: revenue with plans and boosts; K-5 money; AC-92: every money key sits beside a currency; AC-98: no Stripe or lot field', async () => {
+    const body = await (await call()).json();
+    const revenue = body.data.revenue;
+    expect(Object.keys(revenue).sort()).toEqual(['boosts', 'plans', 'state', 'status']);
+    expect(revenue).toMatchObject({ status: 'ok', plans: 'none', boosts: { status: 'ok', scope: 'all', deletedAccounts: [] } });
+    expect(revenue.boosts.lines).toEqual([
+      { currency: 'USD', purchases: 1, gross: 1234.57, tax: 0, refunded: 0, held: 0, lost: 0, net: 1234.57, creditsSold: 5000, unreadable: 0, unreadableCredits: 0 },
+    ]);
+    expect(revenue.boosts.packages).toEqual([
+      { currency: 'USD', packageId: BOOST_PACKAGE, packageVersion: 3, purchases: 1, gross: 1234.57, refunded: 0, net: 1234.57, unreadable: 0 },
+    ]);
+    expect(body.data.tiles.k5).toMatchObject({ status: 'neutral', value: null, money: { kind: 'one', currency: 'USD', net: 1234.57 } });
+    for (const id of ['k1', 'k2', 'k3', 'k4']) expect(body.data.tiles[id]).not.toHaveProperty('money');
+
+    const MONEY = new Set(['gross', 'tax', 'refunded', 'held', 'lost', 'net']);
+    let moneyKeys = 0;
+    const walk = (node: unknown, depth: number) => {
+      if (Array.isArray(node)) return node.forEach((child) => walk(child, depth + 1));
+      if (node === null || typeof node !== 'object') return;
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (MONEY.has(key)) {
+          moneyKeys += 1;
+          expect({ key, hasCurrency: 'currency' in (node as object) }).toEqual({ key, hasCurrency: true });
+          expect(depth).toBeGreaterThan(0);
+        }
+        walk(value, depth + 1);
+      }
+    };
+    walk(revenue.boosts, 0);
+    walk({ money: body.data.tiles.k5.money }, 0);
+    // line (6) + package row (3) + K-5 money (1).
+    expect(moneyKeys).toBe(10);
+    expect(Object.keys(revenue.boosts).sort()).toEqual(['deletedAccounts', 'lines', 'notes', 'packages', 'scope', 'status']);
+
+    const text = JSON.stringify(revenue);
+    for (const banned of ['stripe_', 'receipt_url', 'flag_reason', 'lot_id', 'paid_at', 'user_id', ACCOUNT]) expect(text).not.toContain(banned);
+  });
+
+  it('AC-96 through the route: R-k′ gets exactly the id and the window; R-k has zero calls; R-d with no argument; no deleted line', async () => {
+    const res = await call(`?accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    expect(mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listBoostPurchasesForAccountPaidInRange).toHaveBeenCalledTimes(1);
+    const [id, range] = mockDeps.finance.listBoostPurchasesForAccountPaidInRange.mock.calls[0];
+    expect(id).toBe(ACCOUNT);
+    const body = await res.json();
+    expect(range).toEqual({ from: new Date(body.data.window.start), to: new Date(body.data.window.end) });
+    expect(mockDeps.finance.countRevenueRows.mock.calls).toEqual([[]]);
+    expect(body.data.revenue.boosts).toMatchObject({ scope: 'one', deletedAccounts: null });
+    expect(body.data.tiles.k5.money).toEqual({ kind: 'one', currency: 'USD', net: 1234.57 });
+  });
+
+  it('AC-95 through the route: R-k fails → 200, K-5 unavailable "Unknown", the boost part unknown, every other section renders', async () => {
+    mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange.mockResolvedValue({ data: null, error: new Error('down') });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.tiles.k5).toMatchObject({ status: 'unavailable', headline: 'Unknown', money: { kind: 'unknown', reason: 'failed' } });
+    expect(body.data.revenue).toMatchObject({ status: 'partial', boosts: { status: 'unknown', lines: null } });
+    for (const section of ['accounts', 'aiCost', 'credits', 'takings']) expect(body.data[section].status).not.toBe('unknown');
+  });
+
+  it('AC-98: the info line carries sections.revenueBoosts and counts.boosts (counts and booleans only); no boost amount, package or currency in any log call', async () => {
+    await call();
+    const lines = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(lines).toHaveLength(1);
+    const [ctx] = lines[0];
+    expect(ctx.sections.revenueBoosts).toBe('ok');
+    expect(ctx.counts.boosts).toEqual({
+      rows: 1, ceiling: false, counted: 1, otherStatus: 0, unreadable: 0, unreadableCredits: 0, currencies: 1, packages: 1, deletedAccountPurchases: 0,
+    });
+    for (const value of Object.values(ctx.counts.boosts)) expect(['number', 'boolean']).toContain(typeof value);
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
+    for (const secret of [String(BOOST_MINOR), '1234.57', BOOST_PACKAGE]) expect(logged).not.toContain(secret);
+    expect(logged).not.toMatch(/\bUSD\b/);
   });
 });
 

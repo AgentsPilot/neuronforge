@@ -42,7 +42,13 @@ import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { BusinessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import type { UserProfileRepository } from '@/lib/repositories/UserProfileRepository';
-import type { BusinessOsInvite } from '@/lib/repositories/types';
+import type {
+  AgentRepositoryResult,
+  BusinessOsAccountLineageLevel,
+  BusinessOsInvite,
+  BusinessOsPaidInvoiceFacts,
+  BusinessOsPaidInvoicePair,
+} from '@/lib/repositories/types';
 
 import type { UserPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
 
@@ -59,6 +65,7 @@ import { deriveInviteState, type InviteState } from './inviteState';
 import { buildInviteLink, generateInviteToken, hashInviteToken } from './inviteToken';
 import { describeInviteAccess, isInviteGrantAvailable } from './inviteOffer';
 import type { CreateInviteBody, RevokeInviteBody } from './inviteSchemas';
+import { isAwaitingPayment } from './paymentHold';
 import { claimLeaseCutoff, isClaimLive } from './signupCodePolicy';
 
 /** The name shown when the inviting admin has none on record (BQ-9, C-9). */
@@ -132,6 +139,45 @@ export interface InviteListView {
    * revoke always stamps the admin's id.
    */
   revokedByInviter: boolean;
+  /**
+   * Plan payments P-5b.2 (FR-25, S5-8): the payment of the account created
+   * from this invite, or `null` when there is nothing to show (not accepted,
+   * no lineage row, or an account that neither paid nor is held).
+   */
+  payment: InvitePaymentView | null;
+}
+
+/**
+ * Plan payments P-5b.2 (FR-25, S5-8, SA Q-8, Q-12). One accepted invite's
+ * payment, as the admin row shows it:
+ *
+ *   - `awaiting_payment`: held on the payment screen, by the gate's own
+ *     predicate (`isAwaitingPayment`), with the invite's grant kind ("Signed
+ *     up, not paid").
+ *   - `paid_recorded`: the first payment, with the date and the amount paid (tax
+ *     included) from the money history `business_os_billing_events`, matched
+ *     on the account AND the invoice together. Never copied from lineage
+ *     (AC-F2.2). `livemode: false` is a test payment (P5-N1).
+ *   - `paid_record_missing`: lineage says paid but no money row matches the
+ *     pair (a deleted account detached its rows, or the ref is wrong). No date
+ *     or amount is guessed (Q-8).
+ *   - `unknown`: a read this answer depends on failed. Never "not paid".
+ *
+ * A union, so P-13 can add `{ state: 'waived' }` without reshaping it (S5-9).
+ */
+export type InvitePaymentView =
+  | { state: 'awaiting_payment' }
+  | { state: 'paid_recorded'; paidAt: string; amountMinor: number; currency: 'usd'; livemode: boolean }
+  | { state: 'paid_record_missing' }
+  | { state: 'unknown' };
+
+/**
+ * The one money-history read the paid line needs, described structurally so
+ * this module never names the money-history repository (its caller guard keeps
+ * that to the route that wires it, SA C-7).
+ */
+export interface PaidInvoiceReader {
+  findPaidInvoicesForAccounts(pairs: BusinessOsPaidInvoicePair[]): Promise<AgentRepositoryResult<BusinessOsPaidInvoiceFacts[]>>;
 }
 
 /** The FR-12a record as the admin row shows it (SA D-2, T-16). */
@@ -171,6 +217,7 @@ export const INVITE_LIST_VIEW_KEYS: ReadonlyArray<keyof InviteListView> = [
   'issuerKind',
   'issuerAccountId',
   'revokedByInviter',
+  'payment',
 ];
 
 /** The D-3 derivation, in one place (the C-11 one-derivation rule). */
@@ -186,7 +233,8 @@ export function toInviteListView(
   config: EntitlementConfig,
   now: Date,
   level: number | null = null,
-  parentAccountId: string | null = null
+  parentAccountId: string | null = null,
+  payment: InvitePaymentView | null = null
 ): InviteListView {
   const email = deriveInviteEmailStatus(row);
   return {
@@ -224,6 +272,7 @@ export function toInviteListView(
     issuerKind: row.issuer_kind,
     issuerAccountId: row.issuer_kind === 'account' ? row.issuer_account_id : null,
     revokedByInviter: row.issuer_kind === 'account' && row.revoked_at !== null && row.revoked_by_admin_id === null,
+    payment,
   };
 }
 
@@ -502,6 +551,96 @@ export const INVITE_LIST_CEILING = 500;
  */
 export const INVITE_LINEAGE_BATCH = 200;
 
+/**
+ * P-5b.2: the money-history read takes at most 200 pairs at once (the
+ * repository refuses more); the ops test pins the batching.
+ */
+export const INVITE_PAID_INVOICE_BATCH = 200;
+
+const pairKey = (accountId: string, invoiceId: string) => `${accountId}|${invoiceId}`;
+
+/** What the money history answered for the stamped lineage rows of one page. */
+interface PaidInvoiceLookup {
+  byPair: Map<string, BusinessOsPaidInvoiceFacts>;
+  /** Pairs whose batch failed (or no reader was wired): their payment is `unknown`. */
+  unread: Set<string>;
+}
+
+/**
+ * P-5b.2 (S5-8, SA C-11): the paid invoices of the stamped lineage rows. Pairs
+ * are built ONLY from lineage (`account_id`, `first_payment_ref`); the
+ * repository keeps a money row only for an exact pair.
+ */
+async function readPaidInvoices(
+  lineageRows: BusinessOsAccountLineageLevel[],
+  reader: PaidInvoiceReader | undefined,
+  logger: InviteOpsLogger | undefined
+): Promise<PaidInvoiceLookup> {
+  const lookup: PaidInvoiceLookup = { byPair: new Map(), unread: new Set() };
+  const pairs: BusinessOsPaidInvoicePair[] = [];
+  const seen = new Set<string>();
+  for (const row of lineageRows) {
+    if (typeof row.first_paid_at !== 'string' || typeof row.first_payment_ref !== 'string') continue;
+    const key = pairKey(row.account_id, row.first_payment_ref);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ accountId: row.account_id, invoiceId: row.first_payment_ref });
+  }
+  if (pairs.length === 0) return lookup;
+
+  for (let start = 0; start < pairs.length; start += INVITE_PAID_INVOICE_BATCH) {
+    const batch = pairs.slice(start, start + INVITE_PAID_INVOICE_BATCH);
+    let facts: BusinessOsPaidInvoiceFacts[] | null = null;
+    if (reader) {
+      try {
+        const read = await reader.findPaidInvoicesForAccounts(batch);
+        facts = read.error ? null : read.data;
+      } catch {
+        facts = null;
+      }
+    }
+    if (!facts) {
+      // Ids and counts only (C-3): never an amount, a date or an address.
+      logger?.warn({ event: 'bos_invite_admin_payment_unread', pairs: batch.length, wired: Boolean(reader) }, 'Could not read the money history for the invite list; payments show as unknown');
+      for (const pair of batch) lookup.unread.add(pairKey(pair.accountId, pair.invoiceId));
+      continue;
+    }
+    for (const fact of facts) lookup.byPair.set(pairKey(fact.accountId, fact.invoiceId), fact);
+  }
+  return lookup;
+}
+
+/** P-5b.2 (FR-25): one accepted row's payment, or `null` when there is nothing to show. */
+function paymentViewFor(
+  row: BusinessOsInvite,
+  lineage: BusinessOsAccountLineageLevel | undefined,
+  lineageUnread: boolean,
+  paid: PaidInvoiceLookup,
+  logger: InviteOpsLogger | undefined
+): InvitePaymentView | null {
+  if (lineageUnread) return { state: 'unknown' };
+  if (!lineage) return null;
+
+  if (typeof lineage.first_paid_at === 'string') {
+    if (typeof lineage.first_payment_ref !== 'string') return { state: 'paid_record_missing' };
+    const key = pairKey(lineage.account_id, lineage.first_payment_ref);
+    if (paid.unread.has(key)) return { state: 'unknown' };
+    const fact = paid.byPair.get(key);
+    if (!fact) {
+      // SA Q-8: said, never guessed from the lineage date (AC-F2.2). Ids only.
+      logger?.warn(
+        { event: 'bos_invite_admin_payment_record_missing', inviteId: row.id, accountId: lineage.account_id },
+        'A stamped first payment has no matching money-history row'
+      );
+      return { state: 'paid_record_missing' };
+    }
+    return { state: 'paid_recorded', paidAt: fact.paidAt, amountMinor: fact.amountMinor, currency: fact.currency, livemode: fact.livemode };
+  }
+
+  // The gate's own predicate, with the grant kind already on the invite row: no extra read (P5-C10).
+  return isAwaitingPayment(lineage, row.grant_kind) ? { state: 'awaiting_payment' } : null;
+}
+
 export type ListInvitesOutcome =
   | { ok: true; invites: InviteListView[]; stoppedHalfway: StoppedHalfwaySummary; truncated: boolean }
   | { ok: false };
@@ -518,10 +657,18 @@ export type ListInvitesOutcome =
  * `redemptionStoppedHalfway` (C-11: one derivation of state, here).
  *
  * A failed lineage read does not fail the list: levels show as unknown.
+ *
+ * Plan payments P-5b.2 (FR-25, S5-8, SA C-11): each accepted row also gets its
+ * `payment`. The (account, invoice) pairs come ONLY from the lineage rows read
+ * here (`account_id`, `first_payment_ref` of a stamped row), are read in
+ * batches through `billingEvents`, and the money history answers only for an
+ * exact pair. A failed read shows `unknown`, never "not paid".
  */
 export async function listInvitesForAdmin(deps: {
   repository: Pick<AdminInviteRepository, 'listRecentForAdmin'>;
   lineage?: Pick<BusinessOsAccountLineageRepository, 'findByInviteIdsForAdmin'>;
+  /** P-5b.2: the money history, for the paid line. Missing: a paid row reads `unknown`. */
+  billingEvents?: PaidInvoiceReader;
   config: EntitlementConfig;
   now: Date;
   logger?: InviteOpsLogger;
@@ -529,7 +676,9 @@ export async function listInvitesForAdmin(deps: {
   const { data, error } = await deps.repository.listRecentForAdmin({ limit: INVITE_LIST_CEILING });
   if (error || !data) return { ok: false };
 
-  const lineageByInvite = new Map<string, { level: number; parentAccountId: string | null }>();
+  const lineageByInvite = new Map<string, BusinessOsAccountLineageLevel>();
+  // P-5b.2: accepted invites whose lineage batch failed, so their payment is `unknown`.
+  const lineageUnread = new Set<string>();
   const redeemedIds = data.filter((row) => row.redeemed_at).map((row) => row.id);
   if (deps.lineage) {
     for (let start = 0; start < redeemedIds.length; start += INVITE_LINEAGE_BATCH) {
@@ -538,18 +687,20 @@ export async function listInvitesForAdmin(deps: {
       if (lineage.error) {
         // SA N-3: the list still answers (levels show as unknown), but it is said.
         deps.logger?.warn({ err: lineage.error, invites: batch.length }, 'Could not read lineage levels for the invite list');
+        for (const id of batch) lineageUnread.add(id);
       }
       for (const entry of lineage.data ?? []) {
-        if (entry.invite_id) {
-          lineageByInvite.set(entry.invite_id, { level: entry.level, parentAccountId: entry.parent_account_id ?? null });
-        }
+        if (entry.invite_id) lineageByInvite.set(entry.invite_id, entry);
       }
     }
   }
 
+  const paid = await readPaidInvoices([...lineageByInvite.values()], deps.billingEvents, deps.logger);
+
   const invites = data.map((row) => {
     const lineage = lineageByInvite.get(row.id);
-    return toInviteListView(row, deps.config, deps.now, lineage?.level ?? null, lineage?.parentAccountId ?? null);
+    const payment = row.redeemed_at ? paymentViewFor(row, lineage, lineageUnread.has(row.id), paid, deps.logger) : null;
+    return toInviteListView(row, deps.config, deps.now, lineage?.level ?? null, lineage?.parent_account_id ?? null, payment);
   });
   const stopped = invites.filter((invite) => invite.redemptionStoppedHalfway).map((invite) => invite.id);
   return {

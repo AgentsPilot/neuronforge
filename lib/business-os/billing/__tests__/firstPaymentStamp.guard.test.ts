@@ -64,8 +64,13 @@ describe('P5-C4: no TypeScript writer of the first payment stamp', () => {
 
   it('first_paid_at / first_payment_ref are named only by the known readers', () => {
     expect(naming(/first_paid_at|first_payment_ref|firstPaidAt|firstPaymentRef/)).toEqual([
+      // Plan payments P-5b.2 (FR-25, S5-8): the admin paid line reads both
+      // columns from the lineage rows it was given, to pair the money history.
+      'lib/business-os/invites/adminInviteOps.ts',
       // The hold predicate: reads first_paid_at.
       'lib/business-os/invites/paymentHold.ts',
+      // Plan payments P-5b.2 (P5-C10): the batched hold classification reads first_paid_at.
+      'lib/business-os/invites/paymentHoldBatch.ts',
       // The one account-scoped read (select only) and its header.
       'lib/repositories/BusinessOsAccountLineageRepository.ts',
       // The row type of that read.
@@ -74,7 +79,13 @@ describe('P5-C4: no TypeScript writer of the first payment stamp', () => {
   });
 
   it('those readers and the lineage repository make no write call and no RPC', () => {
-    for (const file of ['lib/business-os/invites/paymentHold.ts', 'lib/repositories/BusinessOsAccountLineageRepository.ts']) {
+    for (const file of [
+      'lib/business-os/invites/paymentHold.ts',
+      'lib/repositories/BusinessOsAccountLineageRepository.ts',
+      // P-5b.2: the two new readers of the stamp.
+      'lib/business-os/invites/adminInviteOps.ts',
+      'lib/business-os/invites/paymentHoldBatch.ts',
+    ]) {
       const text = SOURCES.find((source) => source.file === file)?.text ?? '';
       expect({ file, write: WRITE_CALL.test(text), rpc: /\.rpc\s*\(/.test(text) }).toEqual({ file, write: false, rpc: false });
     }
@@ -125,6 +136,68 @@ describe('P5-C4: no TypeScript writer of the first payment stamp', () => {
     expect(rpcHolders).toEqual(['lib/repositories/BusinessOsBillingEventRepository.ts']);
     const callers = SOURCES.filter((source) => /\.applyPlanPayment\s*\(/.test(source.text)).map((source) => source.file);
     expect(callers).toEqual(['lib/business-os/billing/planPaymentApply.ts']);
+  });
+});
+
+/**
+ * Plan payments P-5b.1 (N-2; workplan BUSINESS_OS_PLAN_PAYMENTS_P5B_WORKPLAN.md
+ * §7 "Guards"; SA Q-4, C-5, C-7). The champion notifier is optional on the
+ * apply's deps, so these guards close the gap that leaves: every caller of the
+ * apply names it, it is built in one place, and boost never reaches it.
+ */
+describe('P-5b.1 (C-5, C-7): the N-2 notifier has one builder, every apply caller wires it, boost never names it', () => {
+  const callers = (pattern: RegExp, except: string[] = []) =>
+    SOURCES.filter((source) => pattern.test(source.text) && !except.includes(source.file))
+      .map((source) => source.file)
+      .sort();
+
+  it('every non-test caller of applyPaidPlanInvoice( names firstPaymentNotifier (and the handler is found)', () => {
+    const applyCallers = callers(/\bapplyPaidPlanInvoice\s*\(/, ['lib/business-os/billing/planPaymentApply.ts']);
+    // Non-vacuity: the webhook's plan handler is the one known caller today.
+    expect(applyCallers).toContain('lib/business-os/billing/planBillingHandler.ts');
+    for (const file of applyCallers) {
+      const text = SOURCES.find((source) => source.file === file)?.text ?? '';
+      expect({ file, namesNotifier: /\bfirstPaymentNotifier\b/.test(text) }).toEqual({ file, namesNotifier: true });
+    }
+  });
+
+  it('the notifier is constructed only in planBillingHandler.ts', () => {
+    expect(callers(/\bcreateFirstPaymentNotifier\s*\(/, ['lib/business-os/invites/championSubscribedNotification.ts'])).toEqual([
+      'lib/business-os/billing/planBillingHandler.ts',
+    ]);
+    // Imported (statically or dynamically) only by the wiring; other files name it in comments only.
+    expect(callers(/(from\s+|import\s*\(\s*|require\s*\(\s*)['"][^'"]*championSubscribedNotification['"]/)).toEqual([
+      'lib/business-os/billing/planBillingHandler.ts',
+    ]);
+  });
+
+  it('findInviterNotificationFactsById is named only by the repository, the notifier and the handler wiring (C-7)', () => {
+    expect(callers(/findInviterNotificationFactsById/)).toEqual([
+      'lib/business-os/billing/planBillingHandler.ts',
+      'lib/business-os/invites/championSubscribedNotification.ts',
+      'lib/repositories/BusinessOsInviteRepository.ts',
+    ]);
+    // Called (not just named) only by the notifier and the handler's one-method hand-over.
+    expect(callers(/\.findInviterNotificationFactsById\s*\(/)).toEqual([
+      'lib/business-os/billing/planBillingHandler.ts',
+      'lib/business-os/invites/championSubscribedNotification.ts',
+    ]);
+  });
+
+  it.each([
+    ['the notifier module', /championSubscribedNotification/],
+    ['the port', /firstPaymentNotifier|FirstPaymentNotifier/],
+    ['the notifier builder', /createFirstPaymentNotifier/],
+    ['the notify call', /notifyChampion/],
+    ['the N-2 invite read', /findInviterNotificationFactsById/],
+  ])('no boost file names %s', (_what, pattern) => {
+    const boost = SOURCES.filter(
+      (source) =>
+        source.file.startsWith('lib/business-os/boost/') ||
+        (source.file.startsWith('app/') && /(^|\/)boost[^/]*(\/|\.tsx?$)|boost-packs\//.test(source.file))
+    );
+    expect(boost.length).toBeGreaterThan(10);
+    expect(boost.filter((source) => pattern.test(source.text)).map((source) => source.file)).toEqual([]);
   });
 });
 

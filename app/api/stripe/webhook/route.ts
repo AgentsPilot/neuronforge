@@ -56,6 +56,11 @@ import Stripe from 'stripe';
 // Disable body parsing for webhook signature verification
 export const runtime = 'nodejs';
 
+// Plan payments P-5b.1 (SA Q-2, C-3): pin the function limit, so a paid plan
+// invoice's post-commit chain (stamp audit, N-2 email, its audit; at most
+// 8.5 s, every leg bounded) can never be cut between the commit and the flush.
+export const maxDuration = 60;
+
 // Module logger. POST derives a per-request child carrying the correlation id
 // and the Stripe event id, and passes it to every handler as `log`, so each
 // line a delivery writes can be found from the event id alone.

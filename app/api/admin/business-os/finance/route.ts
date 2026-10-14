@@ -35,6 +35,11 @@
  * its counts join the same line: never an amount, a currency, a due date or
  * a name. Still no new query parameter.
  *
+ * Slice 4a turns "Our revenue" into a section with the platform's boost
+ * revenue; its boost status and counts join the same line (`revenueBoosts`,
+ * `counts.boosts`): never an amount, a currency, a package or a name
+ * (S4-FR-10, SEC-8). Still no new query parameter.
+ *
  * Every response, success or error, is `Cache-Control: no-store` (SEC-9).
  *
  * @module app/api/admin/business-os/finance
@@ -169,13 +174,14 @@ export async function GET(request: NextRequest) {
     // `counts.creditsPass` make the credit pass's scale trigger visible from
     // this route too (SA-WR-13). `counts.takings` (slice 2a) and
     // `counts.paymentProblems` (slice 2b) are counts, booleans and state
-    // words only (S2-FR-12).
+    // words only (S2-FR-12); so is `counts.boosts` (slice 4a, S4-FR-10).
     requestLogger.info(
       {
         window: { preset: window.preset, from: window.from, to: window.to },
         accountId,
         sections: {
           revenue: payload.revenue.status,
+          revenueBoosts: payload.revenue.boosts.status,
           accounts: payload.accounts.status,
           aiCost: payload.aiCost.status,
           credits: payload.credits.status,

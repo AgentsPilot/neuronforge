@@ -268,3 +268,34 @@ describe('the copy and the source', () => {
     }
   });
 });
+
+describe('plan payments P-5b.2 (FR-31): a friend who paid reads "Subscribed", in every language', () => {
+  const subscribed = {
+    id: 's1',
+    email: 'paid@example.com',
+    createdAt: '2026-09-25T00:00:00.000Z',
+    linkExpiresAt: '2026-10-25T00:00:00.000Z',
+    status: 'subscribed',
+    slotReturned: false,
+  };
+
+  it.each([
+    ['en', false, 'Subscribed'],
+    ['he', true, 'נרשם למנוי'],
+    ['es', false, 'Suscrito'],
+  ] as const)('%s: the status word is the copy table word, with no Revoke and no slot returned', async (locale, rtl, word) => {
+    ui.language = locale;
+    ui.isRTL = rtl;
+    respond = () => ({ status: 200, body: { success: true, data: summary({ invites: [subscribed] }) } });
+    render(<InviteFriendsSection />);
+    const header = await screen.findByRole('button', { name: INVITE_FRIENDS_COPY[locale].sectionTitle });
+    await userEvent.setup().click(header);
+    const row = screen.getByTestId('invite-friends-row-s1');
+    expect(within(row).getByTestId('invite-friends-status')).toHaveTextContent(word);
+    expect(INVITE_FRIENDS_COPY[locale].status.subscribed).toBe(word);
+    expect(within(row).queryByRole('button', { name: INVITE_FRIENDS_COPY[locale].revoke })).not.toBeInTheDocument();
+    expect(row).not.toHaveTextContent(INVITE_FRIENDS_COPY[locale].slotReturned);
+    // Status only: the row shows no amount or payment date (P5-C9).
+    expect(row).not.toHaveTextContent(/\$|USD/);
+  });
+});

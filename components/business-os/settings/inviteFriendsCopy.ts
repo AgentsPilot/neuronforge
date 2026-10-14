@@ -27,8 +27,13 @@ export type InviteFriendsErrorCode =
  * `joined` = the friend created an account (`redeemed_at` set, F5b-7). Until
  * payment is live (Slice 5c) such a friend is held, so the words say "not
  * subscribed yet" rather than implying they are using the product.
+ *
+ * `subscribed` (plan payments P-5b, FR-31, SA C-1) = the friend paid their
+ * first invoice. The champion's "{email} has subscribed" email (N-2) reads
+ * this same word, so the email and the list can never disagree. The list
+ * starts showing it with P-5b.2.
  */
-export type InviteFriendsStatus = 'pending' | 'expired' | 'revoked' | 'joined';
+export type InviteFriendsStatus = 'pending' | 'expired' | 'revoked' | 'joined' | 'subscribed';
 
 export interface InviteFriendsCopy {
   sectionTitle: string;
@@ -85,7 +90,7 @@ export const INVITE_FRIENDS_COPY: Record<InviteFriendsLocale, InviteFriendsCopy>
     listHeading: 'Your invites',
     empty: "You haven't invited anyone yet.",
     sentOn: (date) => `Sent ${date}`,
-    status: { pending: 'Pending', expired: 'Expired', revoked: 'Revoked', joined: 'Signed up — not subscribed yet' },
+    status: { pending: 'Pending', expired: 'Expired', revoked: 'Revoked', joined: 'Signed up — not subscribed yet', subscribed: 'Subscribed' },
     slotReturned: 'Back in your invites',
     revoke: 'Revoke',
     revokeConfirm: (email) => `Revoke the invite to ${email}? The link will stop working.`,
@@ -124,7 +129,7 @@ export const INVITE_FRIENDS_COPY: Record<InviteFriendsLocale, InviteFriendsCopy>
     listHeading: 'ההזמנות שלך',
     empty: 'עדיין לא הזמנת אף אחד.',
     sentOn: (date) => `נשלחה ${date}`,
-    status: { pending: 'ממתינה', expired: 'פג תוקף', revoked: 'בוטלה', joined: 'נרשם — עדיין ללא מנוי' },
+    status: { pending: 'ממתינה', expired: 'פג תוקף', revoked: 'בוטלה', joined: 'נרשם — עדיין ללא מנוי', subscribed: 'נרשם למנוי' },
     slotReturned: 'חזרה להזמנות שלך',
     revoke: 'ביטול',
     // The address is isolated left-to-right inside the Hebrew sentence.
@@ -165,7 +170,7 @@ export const INVITE_FRIENDS_COPY: Record<InviteFriendsLocale, InviteFriendsCopy>
     listHeading: 'Tus invitaciones',
     empty: 'Todavía no has invitado a nadie.',
     sentOn: (date) => `Enviada el ${date}`,
-    status: { pending: 'Pendiente', expired: 'Caducada', revoked: 'Revocada', joined: 'Registrado — aún sin suscripción' },
+    status: { pending: 'Pendiente', expired: 'Caducada', revoked: 'Revocada', joined: 'Registrado — aún sin suscripción', subscribed: 'Suscrito' },
     slotReturned: 'De vuelta en tus invitaciones',
     revoke: 'Revocar',
     revokeConfirm: (email) => `¿Revocar la invitación a ${email}? El enlace dejará de funcionar.`,

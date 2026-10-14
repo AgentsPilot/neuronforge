@@ -273,7 +273,15 @@ describe('where the gate runs (SA R-1, R-2) and what it never reads', () => {
     expect(code(read(file))).toContain("export const dynamic = 'force-dynamic';");
   });
 
-  it.each(['lib/business-os/invites/paymentHold.ts', 'app/invite/awaiting-payment/page.tsx', 'app/invite/awaitingPaymentCopy.ts'])(
+  it.each([
+    'lib/business-os/invites/paymentHold.ts',
+    'app/invite/awaiting-payment/page.tsx',
+    'app/invite/awaitingPaymentCopy.ts',
+    // Plan payments P-5b.1 (SA C-8): the N-2 modules, so nothing the
+    // entitlements module may later import from invites/ can form a cycle.
+    'lib/business-os/invites/championSubscribedNotification.ts',
+    'lib/business-os/invites/inviterNotificationDeps.ts',
+  ])(
     '%s imports nothing from the entitlements module (mode-independent, F5b-4)',
     (file) => {
       expect(code(read(file))).not.toMatch(/business-os\/entitlements/);

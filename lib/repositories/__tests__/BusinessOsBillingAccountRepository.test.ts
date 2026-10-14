@@ -754,6 +754,8 @@ describe('source guards', () => {
       'lib/business-os/billing/__tests__/planCheckoutSessionEvents.test.ts',
       // P-5a.1: the first payment stamp test imports the same TYPE for its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
+      // P-5b.1: the N-2 apply test imports the same TYPE for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       'lib/business-os/billing/__tests__/planSubscriptionMirror.test.ts',
       // P-7b.1b (U-7): the captured-payload test imports the billing row TYPE to build its fakes.
