@@ -13,7 +13,8 @@
  *     time, and the charges by action id (declared on its importer guard);
  *   - the finance read repository: billing status and revenue head counts,
  *     the client payments and refunds (layer B, slice 2a), and the overdue
- *     invoices and instalments, and client plans (layer B, slice 2b): the
+ *     invoices and instalments, and client plans (layer B, slice 2b), and the
+ *     boost purchases paid in the window (layer A, slice 4a): the
  *     named all-accounts reads only when no business is picked, the
  *     account-scoped ones with exactly the picked id (the builder chooses);
  *   - slice 1b, the credit-position pass: `adminCreditPercentDeps()`, the
@@ -131,6 +132,10 @@ export function financeHealthDeps(): Omit<FinanceHealthDeps, 'findNames' | 'read
         businessOsFinanceReadRepository.listOverdueClientInstalmentsForAccount(accountId, todayUtc, opts),
       listClientPlansAllAccounts: (opts) => businessOsFinanceReadRepository.listClientPlansAllAccounts(opts),
       listClientPlansForAccount: (accountId, opts) => businessOsFinanceReadRepository.listClientPlansForAccount(accountId, opts),
+      listBoostPurchasesAllAccountsPaidInRange: (range, opts) =>
+        businessOsFinanceReadRepository.listBoostPurchasesAllAccountsPaidInRange(range, opts),
+      listBoostPurchasesForAccountPaidInRange: (accountId, range, opts) =>
+        businessOsFinanceReadRepository.listBoostPurchasesForAccountPaidInRange(accountId, range, opts),
     },
     // SA-WR-4: the classifier takes the config as a parameter; this is where it is read.
     config: getEntitlementConfig(),
