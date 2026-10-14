@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
-// `useRouter` left with the back button it existed for: the only other mention
-// of `router` in this file is a comment explaining why a hard navigation is used
-// instead of it.
-import { useSearchParams } from 'next/navigation';
+import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
+// The router is here for ONE thing: `replace`, to take `section` back off the
+// address when a link-opened drawer closes (settings drawer review C-3). It never
+// pushes: the back button that pushed went long ago, and a cleanup that added a
+// Back entry would let Back reopen the drawer just closed.
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { changePassword } from '@/lib/client/change-password';
 import {
@@ -40,6 +41,8 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { PlanSection } from '@/components/business-os/settings/PlanSection';
+import { SettingsDrawer } from '@/components/business-os/settings/SettingsDrawer';
+import { settingsUrlWithoutSection } from '@/components/business-os/settings/settingsSectionUrl';
 import { InviteFriendsSection } from '@/components/business-os/settings/InviteFriendsSection';
 import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
@@ -85,6 +88,8 @@ function scrollToSection(section: string): ReturnType<typeof setTimeout> {
 
 function BusinessOSSettingsContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const { user } = useAuth();
   const { t, isRTL, language, setLanguage, currencyCode, setCurrency, availableCurrencies } = useLanguage();
   const { openConfiguration } = useConfigurationDialog();
@@ -106,6 +111,13 @@ function BusinessOSSettingsContent() {
 
   // Expandable sections
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
+
+  // The plan drawer (settings drawer S-1). `planOpenedByLink` records that the
+  // address carries `?section=plan`, so closing must take it off again (C-3).
+  // A ref, because only the close handler reads it and it must not re-render.
+  const [planDrawerOpen, setPlanDrawerOpen] = useState(false);
+  const planOpenedByLink = useRef(false);
+  const planRowRef = useRef<HTMLButtonElement>(null);
 
   // Password form
   const [passwordForm, setPasswordForm] = useState({
@@ -178,15 +190,29 @@ function BusinessOSSettingsContent() {
      */
     /*
      * `plan` is main's, and kept: it is where the Founding Partner pill in the
-     * chrome points, so without it the pill lands somebody on settings with every
-     * section collapsed — a link that appears to do nothing.
+     * chrome points, and where the plan checkout returns (`?section=plan&checkout=…`),
+     * so without it the pill lands somebody on settings with nothing open — a
+     * link that appears to do nothing. Since settings drawer S-1 it opens the
+     * plan drawer rather than expanding a row.
+     *
+     * The link flag is set EVERY time, even when the drawer is already open (SA
+     * Q-2 / W-3): when `PlanPurchase` writes `?section=plan&checkout=…` into a
+     * drawer opened from the row, the address now carries `section`, and closing
+     * must take it off or a reload would reopen the drawer. `checkout` is left
+     * alone; only `PlanSection` reads it (C-11).
      *
      * `preferences` is NOT kept, though main accepted it. The section it expands
      * is the enquiry-notification one removed above, so accepting it would
      * collapse whatever the owner had open and scroll to an anchor that no longer
      * exists. Both sides of this merge said as much in their own comments.
      */
-    if (requested !== 'password' && requested !== 'plan') return;
+    if (requested === 'plan') {
+      planOpenedByLink.current = true;
+      setPlanDrawerOpen(true);
+      return;
+    }
+
+    if (requested !== 'password') return;
 
     setExpandedSection(requested);
 
@@ -195,6 +221,20 @@ function BusinessOSSettingsContent() {
     const timer = scrollToSection(requested);
     return () => clearTimeout(timer);
   }, [searchParams, loading, openConfiguration]);
+
+  /**
+   * The plan drawer's open and close (C-3, C-11). Opening from the row never
+   * writes the address. Closing a drawer the link opened takes only `section`
+   * off, with `replace` (no Back entry) and no scroll; `checkout`, `tab` and
+   * anything else stay. The effect then re-runs, finds no `section`, and does
+   * nothing.
+   */
+  const handlePlanDrawerChange = (next: boolean) => {
+    setPlanDrawerOpen(next);
+    if (next || !planOpenedByLink.current) return;
+    planOpenedByLink.current = false;
+    router.replace(settingsUrlWithoutSection(pathname, searchParams), { scroll: false });
+  };
 
   const loadData = async () => {
     if (!user) return;
@@ -998,25 +1038,40 @@ function BusinessOSSettingsContent() {
             offers Choose for exactly the plans the server would sell
             (`purchase.offer`), with the embedded checkout; where nothing is on
             sale it stays read-only and shows no button that does nothing.
+
+            Since settings drawer S-1 the row opens a drawer instead of expanding
+            in place. It shows the title only (C-8): the plan is fetched when the
+            drawer opens, by `PlanSection`, as it was when the row expanded.
           */}
+          {/* Id kept for old `#settings-section-plan` links; S-5 decides whether it stays (SA W-5). */}
           <div id="settings-section-plan">
             <button
-              onClick={() => setExpandedSection(expandedSection === 'plan' ? null : 'plan')}
+              ref={planRowRef}
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={planDrawerOpen}
+              onClick={() => setPlanDrawerOpen(true)}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
             >
               <div className="flex items-center gap-3">
                 <CreditCard className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 <span className="text-sm text-[var(--v2-text-primary)]">{t('plan.section_title')}</span>
               </div>
-              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'plan' ? 'rotate-90' : ''}`} />
+              <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />
             </button>
-            {expandedSection === 'plan' && (
-              <div className="px-4 pb-4">
-                {/* P-4.2: the checkout return marker (display only; the section
-                    pattern-checks it and only the server re-read shows a plan). */}
-                <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} />
-              </div>
-            )}
+            <SettingsDrawer
+              open={planDrawerOpen}
+              onOpenChange={handlePlanDrawerChange}
+              title={t('plan.section_title')}
+              isRTL={isRTL}
+              closeLabel={t('common.close')}
+              returnFocusRef={planRowRef}
+              testId="settings-plan-drawer"
+            >
+              {/* P-4.2: the checkout return marker (display only; the section
+                  pattern-checks it and only the server re-read shows a plan). */}
+              <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} />
+            </SettingsDrawer>
           </div>
 
           {/* Slice 5a: renders nothing unless the server says this account may invite friends. */}
