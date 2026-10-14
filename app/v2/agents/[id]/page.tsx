@@ -10,8 +10,6 @@ import { supabase } from '@/lib/supabaseClient'
 import {
   agentApi,
   systemConfigApi,
-  sharedAgentApi,
-  metricsApi,
 } from '@/lib/client/agent-api'
 import { requestDeduplicator } from '@/lib/utils/request-deduplication'
 import type { Agent, Execution } from '@/lib/repositories/types'
@@ -28,10 +26,7 @@ import {
   Activity,
   Clock,
   CheckCircle,
-  CheckCircle2,
-  AlertCircle,
   AlertTriangle,
-  Shield,
   Bot,
   Copy,
   Check,
@@ -39,15 +34,12 @@ import {
   TrendingUp,
   XCircle,
   X,
-  Zap,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   Download,
-  Share2,
   Gauge,
   Rocket,
-  Brain,
   PlayCircle,
   Settings,
   AlertOctagon
@@ -253,8 +245,6 @@ export default function V2AgentDetailPage() {
 
   // Modals
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [showShareConfirm, setShowShareConfirm] = useState(false)
-  const [showShareSuccess, setShowShareSuccess] = useState(false)
   const [showHourlyRateDialog, setShowHourlyRateDialog] = useState(false)
 
   // Execution Modal state (Run Now)
@@ -266,16 +256,6 @@ export default function V2AgentDetailPage() {
   const [userHourlyRate, setUserHourlyRate] = useState<number | null>(null) // null = not fetched yet
   const [pendingInsightsToggle, setPendingInsightsToggle] = useState(false) // True when waiting to enable insights after hourly rate dialog
   const [orgSettingsComplete, setOrgSettingsComplete] = useState<boolean | null>(null) // null = not checked yet
-
-  // Sharing data
-  const [shareCreditsAwarded, setShareCreditsAwarded] = useState(0)
-  const [shareQualityScore, setShareQualityScore] = useState(0)
-  const [sharingRewardAmount, setSharingRewardAmount] = useState(500)
-  const [sharingValidation, setSharingValidation] = useState<any>(null)
-  const [sharingStatus, setSharingStatus] = useState<any>(null)
-  const [sharingConfig, setSharingConfig] = useState<any>(null)
-  const [shareRewardActive, setShareRewardActive] = useState(true)
-  const [hasBeenShared, setHasBeenShared] = useState(false)
 
   // Other
   const [memoryCount, setMemoryCount] = useState(0)
@@ -353,14 +333,10 @@ export default function V2AgentDetailPage() {
       // Parallel fetch all data
       // PERFORMANCE: Skip token enrichment for faster load
       // Also pre-fetch form metadata and global schema metadata for input config drawer
-      const [agentResult, executionsResult, configResult, rewardStatus, insightsResult, formMetadataResult, globalSchemaResult, profileResult, intensityResult, baselineResult] = await Promise.all([
+      const [agentResult, executionsResult, configResult, insightsResult, formMetadataResult, globalSchemaResult, profileResult, intensityResult, baselineResult] = await Promise.all([
         agentApi.getById(agentId, user.id),
         agentApi.getExecutions(agentId, user.id, { includeTokens: false }),
-        systemConfigApi.getByKeys(['tokens_per_pilot_credit', 'agent_sharing_reward_amount']),
-        // Customer-facing projection, not `/api/admin/reward-config`: that
-        // admin route is gated and returns the full reward ruleset (amounts,
-        // thresholds, anti-abuse caps). This returns a single boolean.
-        fetch('/api/rewards/agent-sharing').then(r => r.json()).catch(() => ({ success: false })),
+        systemConfigApi.getByKeys(['tokens_per_pilot_credit']),
         fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] })),
         fetch(`/api/v2/agents/${agentId}/form-metadata`).then(r => r.json()).catch(() => ({ metadata: [] })),
         fetch('/api/plugins/schema-metadata').then(r => r.json()).catch(() => ({ data: { metadata: {} } })),
@@ -376,15 +352,15 @@ export default function V2AgentDetailPage() {
       setAgent(agentResult.data.agent as Agent)
 
       // Process executions
-      console.log('[AgentPage] Executions result:', executionsResult)
+      clientLogger.debug({ executionsResult }, 'Executions result')
       if (executionsResult.success && executionsResult.data) {
         const enrichedExecutions = executionsResult.data as Execution[]
-        console.log('[AgentPage] Setting executions:', enrichedExecutions.length, 'executions')
+        clientLogger.debug({ count: enrichedExecutions.length }, 'Setting executions')
         setAllExecutions(enrichedExecutions)
         setExecutions(enrichedExecutions)
         // Don't set selectedExecution here - let the useEffect handle it based on time filter
       } else {
-        console.log('[AgentPage] No executions found or error:', executionsResult.error)
+        clientLogger.debug({ error: executionsResult.error }, 'No executions found or error')
       }
 
       // Process config
@@ -393,23 +369,15 @@ export default function V2AgentDetailPage() {
         if (tokensValue > 0 && tokensValue <= 1000) {
           setTokensPerPilotCredit(tokensValue)
         }
-        const rewardValue = Number(configResult.data['agent_sharing_reward_amount'])
-        if (rewardValue) {
-          setSharingRewardAmount(rewardValue)
-        }
       }
 
-      // Process reward status. Same fallback as before: anything other than an
-      // explicit `true` hides the prompt.
-      setShareRewardActive(rewardStatus?.data?.isActive === true)
-
       // Process insights
-      console.log('[AgentPage] Insights result:', insightsResult)
+      clientLogger.debug({ insightsResult }, 'Insights result')
       if (insightsResult.success && insightsResult.data) {
-        console.log('[AgentPage] Setting insights:', insightsResult.data.length, 'insights')
+        clientLogger.debug({ count: insightsResult.data.length }, 'Setting insights')
         setInsights(insightsResult.data)
       } else {
-        console.log('[AgentPage] No insights found or error:', insightsResult.error)
+        clientLogger.debug({ error: insightsResult.error }, 'No insights found or error')
       }
 
       // Process pre-fetched form metadata and global schema metadata for input config drawer
@@ -420,7 +388,7 @@ export default function V2AgentDetailPage() {
       const globalMetadata = globalSchemaResult.data?.metadata || globalSchemaResult.metadata
       if (globalMetadata) {
         metadataMap = { ...globalMetadata }
-        console.log('[AgentPage] Pre-loaded global schema metadata:', Object.keys(metadataMap).length, 'parameters')
+        clientLogger.debug({ parameterCount: Object.keys(metadataMap).length }, 'Pre-loaded global schema metadata')
       }
 
       // Merge form field metadata (takes precedence)
@@ -437,7 +405,7 @@ export default function V2AgentDetailPage() {
             }]
           }
         }
-        console.log('[AgentPage] Pre-loaded form field metadata:', formMetadataResult.metadata.length, 'fields')
+        clientLogger.debug({ fieldCount: formMetadataResult.metadata.length }, 'Pre-loaded form field metadata')
       }
 
       if (Object.keys(metadataMap).length > 0) {
@@ -576,7 +544,7 @@ export default function V2AgentDetailPage() {
       // Check if returning from calibration on initial mount
       const calibrationFlag = localStorage.getItem(`calibration-completed-${agentId}`)
       if (calibrationFlag === 'true') {
-        console.log('[Agent Page] Detected calibration completion on mount, clearing flag')
+        clientLogger.debug('Detected calibration completion on mount, clearing flag')
         localStorage.removeItem(`calibration-completed-${agentId}`)
       }
 
@@ -587,16 +555,6 @@ export default function V2AgentDetailPage() {
       }
     }
   }, [user?.id, agentId])
-
-  // Pre-fetch sharing eligibility when agent data is loaded (NON-BLOCKING)
-  // PERFORMANCE: Defer this call to reduce initial load time - sharing info is not critical
-  useEffect(() => {
-    if (agentId && user && shareRewardActive && agent) {
-      // Delay by 1 second to let page render first
-      const timer = setTimeout(() => checkSharingEligibility(), 1000)
-      return () => clearTimeout(timer)
-    }
-  }, [agentId, user?.id, shareRewardActive, agent?.id])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -634,12 +592,12 @@ export default function V2AgentDetailPage() {
     // Always select the first (most recent) execution from filtered list
     if (filteredExecutions.length > 0 && filteredExecutions[0].id !== selectedExecution?.id) {
       const firstExec = filteredExecutions[0]
-      console.log('[Auto-select] Updating to first filtered execution:', {
+      clientLogger.debug({
         id: firstExec.id,
         started_at: firstExec.started_at,
         status: firstExec.status,
         isPilot: !!firstExec.logs?.pilot
-      })
+      }, 'Auto-selecting first filtered execution')
 
       setSelectedExecution(firstExec)
 
@@ -671,7 +629,7 @@ export default function V2AgentDetailPage() {
         // Check if returning from calibration (always refresh in this case)
         const calibrationFlag = localStorage.getItem(`calibration-completed-${agentId}`)
         if (calibrationFlag === 'true') {
-          console.log('[Agent Page] Detected calibration completion, refreshing data')
+          clientLogger.debug('Detected calibration completion, refreshing data')
           localStorage.removeItem(`calibration-completed-${agentId}`)
           requestDeduplicator.clear(`executions-${agentId}-false-50`)
           fetchAllData()
@@ -698,7 +656,7 @@ export default function V2AgentDetailPage() {
 
       const calibrationFlag = localStorage.getItem(`calibration-completed-${agentId}`)
       if (calibrationFlag === 'true') {
-        console.log('[Agent Page] Detected calibration completion on focus, refreshing data')
+        clientLogger.debug('Detected calibration completion on focus, refreshing data')
         localStorage.removeItem(`calibration-completed-${agentId}`)
         requestDeduplicator.clear(`executions-${agentId}-false-50`)
         fetchAllData()
@@ -732,12 +690,12 @@ export default function V2AgentDetailPage() {
         setTotalExecutionCount(count)
       }
     } catch (error) {
-      console.error('[fetchTotalExecutionCount] Error:', error)
+      clientLogger.error({ err: error }, 'fetchTotalExecutionCount failed')
     }
   }
 
   const fetchExecutionResults = async (executionId: string) => {
-    console.log('[fetchExecutionResults] Fetching results for execution:', executionId)
+    clientLogger.debug({ executionId }, 'Fetching execution results')
 
     try {
       // Fetch execution_results from workflow_executions table
@@ -747,27 +705,27 @@ export default function V2AgentDetailPage() {
         .eq('id', executionId)
         .single()
 
-      console.log('[fetchExecutionResults] Query response:', { data, error })
+      clientLogger.debug({ data, error }, 'Execution results query response')
 
       if (error) {
-        console.error('[fetchExecutionResults] Error fetching execution_results:', error)
+        clientLogger.error({ err: error }, 'Error fetching execution_results')
         setExecutionResults(null)
         return
       }
 
       if (data?.execution_results) {
-        console.log('[fetchExecutionResults] ✅ Found execution_results:', {
+        clientLogger.debug({
           summary: data.execution_results.summary,
           totalItems: data.execution_results.totalItems,
           totalSteps: data.execution_results.totalSteps
-        })
+        }, 'Found execution_results')
         setExecutionResults(data.execution_results)
       } else {
-        console.log('[fetchExecutionResults] ⚠️ No execution_results found for this execution')
+        clientLogger.debug('No execution_results found for this execution')
         setExecutionResults(null)
       }
     } catch (error) {
-      console.error('[fetchExecutionResults] ❌ Exception:', error)
+      clientLogger.error({ err: error }, 'fetchExecutionResults threw')
       setExecutionResults(null)
     }
   }
@@ -782,13 +740,13 @@ export default function V2AgentDetailPage() {
       const data = await response.json()
 
       if (data.success && data.data) {
-        console.log('[fetchExecutionDetails] ✅ Loaded execution details:', {
+        clientLogger.debug({
           hasMetrics: !!data.data.metrics,
           stepMetricsCount: data.data.metrics?.step_metrics?.length || 0,
           insightRunsCount: data.data.insightRuns?.length || 0,
           executionInsightsCount: data.data.executionInsights?.length || 0,
           hasRoi: !!data.data.roi,
-        })
+        }, 'Loaded execution details')
         setExecutionDetails({
           metrics: data.data.metrics,
           insightRuns: data.data.insightRuns || [],
@@ -797,11 +755,11 @@ export default function V2AgentDetailPage() {
           agent: data.data.agent,
         })
       } else {
-        console.log('[fetchExecutionDetails] ⚠️ No execution details found')
+        clientLogger.debug('No execution details found')
         setExecutionDetails(null)
       }
     } catch (error) {
-      console.error('[fetchExecutionDetails] ❌ Exception:', error)
+      clientLogger.error({ err: error }, 'fetchExecutionDetails threw')
       setExecutionDetails(null)
     } finally {
       setLoadingExecutionDetails(false)
@@ -954,7 +912,7 @@ export default function V2AgentDetailPage() {
 
       // If we're enabling insights via the toggle, complete that action
       if (pendingInsightsToggle) {
-        console.log('[saveHourlyRateAndContinue] Completing pending insights toggle')
+        clientLogger.debug('Completing pending insights toggle after saving hourly rate')
         setPendingInsightsToggle(false)
 
         // Enable insights on the agent (hourly_rate_usd already updated above)
@@ -967,42 +925,22 @@ export default function V2AgentDetailPage() {
         if (result.success && result.data) {
           setAgent({ ...result.data as Agent, hourly_rate_usd: rate })
           clientLogger.info('Insights enabled after hourly rate confirmation', { agentId: agent.id })
-          console.log('✅ Insights enabled successfully')
+          clientLogger.debug('Insights enabled successfully')
         } else {
           // Revert on failure
           setAgent({ ...agent, insights_enabled: false })
           clientLogger.error('Failed to enable insights', new Error(result.error || 'Unknown error'))
-          console.error('❌ Failed to enable insights:', result.error)
+          clientLogger.error({ err: result.error }, 'Failed to enable insights')
         }
       } else {
         // Normal flow: open the insights modal
         setShowInsightsModal(true)
       }
     } catch (error) {
-      console.error('Error saving hourly rate:', error)
+      clientLogger.error({ err: error }, 'Error saving hourly rate')
       alert('Failed to save hourly rate. Please try again.')
     } finally {
       setSavingHourlyRate(false)
-    }
-  }
-
-  const checkSharingEligibility = async () => {
-    if (!user?.id || !agent?.id) return
-
-    try {
-      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
-      const validator = new AgentSharingValidator(supabase)
-
-      const validation = await validator.validateSharing(user.id, agent.id)
-      setSharingValidation(validation)
-
-      const status = await validator.getSharingStatus(user.id)
-      setSharingStatus(status)
-
-      const config = validator.getConfig()
-      setSharingConfig(config)
-    } catch (error) {
-      clientLogger.error('Error checking sharing eligibility', error as Error)
     }
   }
 
@@ -1020,7 +958,7 @@ export default function V2AgentDetailPage() {
       if (configResponse.ok) {
         const result = await configResponse.json()
         if (result.inputValues && Object.keys(result.inputValues).length > 0) {
-          console.log('[AgentPage] Loaded saved input configuration:', result.inputValues)
+          clientLogger.debug({ inputValues: result.inputValues }, 'Loaded saved input configuration')
           setInputConfigValues(result.inputValues)
           setInputConfigLoading(false)
           return
@@ -1037,7 +975,7 @@ export default function V2AgentDetailPage() {
           }
         }
         if (Object.keys(defaultValues).length > 0) {
-          console.log('[AgentPage] Initialized from input_schema defaults:', defaultValues)
+          clientLogger.debug({ defaultValues }, 'Initialized input configuration from input_schema defaults')
           setInputConfigValues(defaultValues)
         }
       }
@@ -1083,7 +1021,7 @@ export default function V2AgentDetailPage() {
       }
 
       setInputConfigDirty(false)
-      console.log('[AgentPage] Input configuration saved successfully')
+      clientLogger.debug('Input configuration saved successfully')
     } catch (error) {
       clientLogger.error('Error saving input configuration', error as Error)
     } finally {
@@ -1100,17 +1038,17 @@ export default function V2AgentDetailPage() {
   // Get dynamic options for dropdown fields (for AgentInputFields component)
   // Uses same matching logic as CalibrationSetup for consistency
   const getInputConfigDynamicOptions = useCallback((fieldName: string): { plugin: string; action: string; parameter: string; depends_on?: string[]; paramToFieldMap?: Record<string, string>; queryComponents?: any } | null => {
-    console.log('[AgentPage] getInputConfigDynamicOptions called for:', fieldName)
-    console.log('[AgentPage] inputConfigMetadata available:', !!inputConfigMetadata, 'keys:', inputConfigMetadata ? Object.keys(inputConfigMetadata) : [])
+    clientLogger.debug({ fieldName }, 'getInputConfigDynamicOptions called')
+    clientLogger.debug({ hasMetadata: !!inputConfigMetadata, keys: inputConfigMetadata ? Object.keys(inputConfigMetadata) : [] }, 'inputConfigMetadata availability')
 
     if (!inputConfigMetadata) {
-      console.log('[AgentPage] No inputConfigMetadata, returning null')
+      clientLogger.debug('No inputConfigMetadata, returning null')
       return null
     }
 
     // Try exact match first
     let matchingParams = inputConfigMetadata[fieldName]
-    console.log('[AgentPage] Exact match for', fieldName, ':', matchingParams, '| All keys:', Object.keys(inputConfigMetadata))
+    clientLogger.debug({ fieldName, matchingParams, allKeys: Object.keys(inputConfigMetadata) }, 'Exact match lookup')
 
     // If no exact match, try stripping common prefixes (including step ID prefixes)
     if (!matchingParams || matchingParams.length === 0) {
@@ -1133,7 +1071,7 @@ export default function V2AgentDetailPage() {
         }
         matchingParams = inputConfigMetadata[baseFieldName]
         if (matchingParams && matchingParams.length > 0) {
-          console.log('[AgentPage] Matched prefixed field:', fieldName, '->', baseFieldName)
+          clientLogger.debug({ fieldName, baseFieldName }, 'Matched prefixed field')
           break
         }
       }
@@ -1167,19 +1105,19 @@ export default function V2AgentDetailPage() {
       }
 
       if (bestMatch && bestMatch.params.length > 0) {
-        console.log('[AgentPage] Fuzzy matched:', fieldName, '->', bestMatch.key, 'score:', bestMatch.score.toFixed(2))
+        clientLogger.debug({ fieldName, matchedKey: bestMatch.key, score: bestMatch.score.toFixed(2) }, 'Fuzzy matched field')
         matchingParams = bestMatch.params
       }
     }
 
     if (!matchingParams || matchingParams.length === 0) {
-      console.log('[AgentPage] No match found for', fieldName)
+      clientLogger.debug({ fieldName }, 'No match found for field')
       return null
     }
 
     const param = matchingParams[0]
     if (!param.plugin || !param.action || !param.parameter) {
-      console.log('[AgentPage] Missing plugin/action/parameter in match:', param)
+      clientLogger.debug({ param }, 'Missing plugin/action/parameter in match')
       return null
     }
 
@@ -1223,7 +1161,7 @@ export default function V2AgentDetailPage() {
 
         if (matchingField) {
           paramToFieldMap[depParam] = matchingField.name || matchingField.key
-          console.log('[AgentPage] Mapped dependency:', depParam, '→', matchingField.name || matchingField.key)
+          clientLogger.debug({ depParam, mappedTo: matchingField.name || matchingField.key }, 'Mapped dependency')
         } else {
           paramToFieldMap[depParam] = depParam
         }
@@ -1238,7 +1176,7 @@ export default function V2AgentDetailPage() {
       paramToFieldMap,
       queryComponents: param.queryComponents
     }
-    console.log('[AgentPage] Returning dynamic options for', fieldName, ':', result)
+    clientLogger.debug({ fieldName, result }, 'Returning dynamic options')
     return result
   }, [inputConfigMetadata, agent?.input_schema])
 
@@ -1338,17 +1276,17 @@ export default function V2AgentDetailPage() {
     const currentValue = agent.insights_enabled ?? false
     const newInsightsEnabled = !currentValue
 
-    console.log('🔄 Toggling insights:', {
+    clientLogger.debug({
       agentId: agent.id,
       currentValue,
       newValue: newInsightsEnabled,
       agentHasField: 'insights_enabled' in agent,
       fullAgent: agent
-    })
+    }, 'Toggling insights')
 
     // If enabling insights, show hourly rate dialog first
     if (newInsightsEnabled) {
-      console.log('[handleToggleInsights] Enabling insights - showing hourly rate dialog')
+      clientLogger.debug('Enabling insights - showing hourly rate dialog')
       // Store the pending toggle so we can complete it after dialog
       setPendingInsightsToggle(true)
 
@@ -1365,7 +1303,7 @@ export default function V2AgentDetailPage() {
             .eq('id', user.id)
             .single()
 
-          console.log('[handleToggleInsights] Profile response:', { data, error })
+          clientLogger.debug({ data, error }, 'Hourly rate profile response')
           rate = data?.hourly_rate_usd ?? 50
         }
 
@@ -1388,7 +1326,7 @@ export default function V2AgentDetailPage() {
         setHourlyRateInput(rate.toString())
         setShowHourlyRateDialog(true)
       } catch (error) {
-        console.error('[handleToggleInsights] Error fetching hourly rate:', error)
+        clientLogger.error({ err: error }, 'Error fetching hourly rate')
         setHourlyRateInput('50')
         setOrgSettingsComplete(false)
         setShowHourlyRateDialog(true)
@@ -1405,30 +1343,30 @@ export default function V2AgentDetailPage() {
         insights_enabled: newInsightsEnabled
       })
 
-      console.log('📥 API Response:', {
+      clientLogger.debug({
         success: result.success,
         hasData: !!result.data,
         returnedValue: result.data?.insights_enabled,
         fullData: result.data,
         error: result.error
-      })
+      }, 'Insights toggle API response')
 
       if (result.success && result.data) {
         // Confirm the update with server response
         setAgent(result.data as Agent)
         clientLogger.info('Insights toggled', { agentId: agent.id, newValue: result.data.insights_enabled })
-        console.log('✅ Toggle successful, final value:', result.data.insights_enabled)
+        clientLogger.debug({ insightsEnabled: result.data.insights_enabled }, 'Insights toggle successful')
       } else {
         // Revert optimistic update on failure
         setAgent({ ...agent, insights_enabled: currentValue })
         clientLogger.error('Failed to toggle insights', new Error(result.error || 'Unknown error'))
-        console.error('❌ Toggle failed, reverting. Error:', result.error)
+        clientLogger.error({ err: result.error }, 'Insights toggle failed, reverting')
       }
     } catch (error) {
       // Revert optimistic update on exception
       setAgent({ ...agent, insights_enabled: currentValue })
       clientLogger.error('Error toggling insights', error as Error)
-      console.error('❌ Exception, reverting:', error)
+      clientLogger.error({ err: error }, 'Insights toggle threw, reverting')
     }
   }
 
@@ -1830,115 +1768,6 @@ export default function V2AgentDetailPage() {
     }
   }
 
-  const handleShareAgentClick = () => {
-    if (!agent || !user || agent.status !== 'active') {
-      clientLogger.debug('Share validation failed', { hasAgent: !!agent, hasUser: !!user, status: agent?.status })
-      return
-    }
-
-    clientLogger.debug('Opening share modal', { agentId: agent.id })
-    setShowShareConfirm(true)
-  }
-
-  const handleShareAgent = async () => {
-    if (!agent || !user || agent.status !== 'active') {
-      return
-    }
-
-    setShowShareConfirm(false)
-    setActionLoading('share')
-    try {
-      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
-      const { RewardService } = await import('@/lib/credits/rewardService')
-      const { AgentScoreService } = await import('@/lib/services/AgentScoreService')
-
-      const validator = new AgentSharingValidator(supabase)
-      const rewardService = new RewardService(supabase)
-      const scoreService = new AgentScoreService(supabase)
-
-      const validation = await validator.validateSharing(user.id, agent.id)
-      if (!validation.valid) {
-        alert(validation.reason || 'This agent does not meet sharing requirements')
-        return
-      }
-
-      const existsResult = await sharedAgentApi.existsByOriginalAgent(agent.id, user.id)
-      if (existsResult.success && existsResult.data) {
-        alert('This agent has already been shared!')
-        return
-      }
-
-      const qualityScore = await scoreService.calculateQualityScore(agent.id)
-      const diversityPenalty = await scoreService.getExecutionDiversityPenalty(agent.id)
-
-      const finalScore = {
-        ...qualityScore,
-        overall_score: qualityScore.overall_score * diversityPenalty
-      }
-
-      const metricsResult = await metricsApi.getBasicMetrics(agent.id, user.id)
-      const metrics = metricsResult.data
-
-      const shareResult = await sharedAgentApi.share(agent.id, user.id, {
-        description: agent.description || undefined,
-        quality_score: finalScore.overall_score,
-        reliability_score: finalScore.reliability_score,
-        efficiency_score: finalScore.efficiency_score,
-        adoption_score: finalScore.adoption_score,
-        complexity_score: finalScore.complexity_score,
-        base_executions: metrics?.total_executions || 0,
-        base_success_rate: metrics?.successful_executions && metrics?.total_executions
-          ? (metrics.successful_executions / metrics.total_executions) * 100
-          : 0,
-      })
-
-      if (!shareResult.success) {
-        clientLogger.error('Error sharing agent', new Error(shareResult.error))
-        alert(`Failed to share agent: ${shareResult.error}`)
-        return
-      }
-
-      const rewardResult = await rewardService.awardAgentSharingReward(
-        user.id,
-        agent.id,
-        agent.agent_name
-      )
-
-      if (rewardResult.success) {
-        setShareCreditsAwarded(rewardResult.creditsAwarded || 0)
-        setShareQualityScore(Math.round(finalScore.overall_score))
-        setShowShareSuccess(true)
-        setHasBeenShared(true)
-        clientLogger.info('Agent shared successfully', { agentId: agent.id, qualityScore: finalScore.overall_score, creditsAwarded: rewardResult.creditsAwarded })
-
-        setTimeout(() => setShowShareSuccess(false), 5000)
-      } else {
-        // P0-FT-RLS (SA RC9-7): the reward upsert writes `user_subscriptions`
-        // from the browser, which the lock-down migration blocks
-        // (supabase/migrations/20261001_user_subscriptions_write_lockdown.sql).
-        // The share itself already succeeded, and RewardService returns before
-        // writing any `credit_transactions` / `user_rewards` row, so state stays
-        // clean and the reward can be back-filled. Never fall through silently:
-        // that left the Share button enabled and the next click claimed the
-        // agent was already shared.
-        setHasBeenShared(true)
-        clientLogger.error(
-          { err: new Error(rewardResult.error || rewardResult.message), agentId: agent.id },
-          'Agent shared but the sharing reward could not be applied'
-        )
-        alert('Agent shared. The credit reward could not be applied right now and will be credited later.')
-      }
-
-      await fetchAllData()
-    } catch (error) {
-      clientLogger.error('Error in handleShareAgent', error as Error)
-      alert('Failed to share agent. Please try again.')
-    } finally {
-      setActionLoading(null)
-      setShowShareConfirm(false)
-    }
-  }
-
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return date.toLocaleString('en-US', {
@@ -2000,9 +1829,9 @@ export default function V2AgentDetailPage() {
     i.category === 'technical_insight' || i.category === 'data_insight'
   )
 
-  console.log('[AgentPage] Total insights:', insights.length)
-  console.log('[AgentPage] Business insights:', allBusinessInsights.length)
-  console.log('[AgentPage] Technical insights:', allTechnicalInsights.length)
+  clientLogger.debug({ count: insights.length }, 'Total insights')
+  clientLogger.debug({ count: allBusinessInsights.length }, 'Business insights')
+  clientLogger.debug({ count: allTechnicalInsights.length }, 'Technical insights')
 
   // Get health bar color
   const getHealthColor = () => {
@@ -2723,18 +2552,6 @@ export default function V2AgentDetailPage() {
               </button>
 
               <button
-                onClick={handleShareAgentClick}
-                disabled={agent.status !== 'active' || actionLoading === 'share'}
-                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-border)] transition-all disabled:opacity-50"
-              >
-                {actionLoading === 'share' ? <Loader2 className="w-5 h-5 animate-spin text-[var(--v2-text-secondary)]" /> : <Share2 className="w-5 h-5 text-[var(--v2-text-secondary)]" />}
-                <div className="text-left flex-1">
-                  <h5 className="text-sm font-semibold text-[var(--v2-text-primary)]">Share to Templates</h5>
-                  <p className="text-xs text-[var(--v2-text-muted)]">Share with community and earn credits</p>
-                </div>
-              </button>
-
-              <button
                 onClick={handleExportConfiguration}
                 className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-border)] transition-all"
               >
@@ -2899,142 +2716,6 @@ export default function V2AgentDetailPage() {
         </div>
       )}
 
-      {/* Share Confirmation Modal - Keep existing implementation */}
-      {showShareConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-md w-full p-6 border border-[var(--v2-border)]">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-[var(--v2-primary)]/10 rounded-full flex items-center justify-center">
-                <Share2 className="w-6 h-6 text-[var(--v2-primary)]" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">Share Agent</h3>
-                <p className="text-sm text-[var(--v2-text-muted)]">Share with the community</p>
-              </div>
-            </div>
-
-            {!shareRewardActive ? (
-              <div className="bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-lg p-4 mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertCircle className="h-5 w-5 text-[var(--v2-text-secondary)]" />
-                  <span className="font-semibold text-[var(--v2-text-primary)]">Sharing Temporarily Unavailable</span>
-                </div>
-                <p className="text-[var(--v2-text-secondary)] text-sm">
-                  The agent sharing feature is currently disabled by the administrator.
-                </p>
-              </div>
-            ) : hasBeenShared || (sharingValidation?.details?.alreadyShared) ? (
-              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Shield className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-                  <span className="font-semibold text-amber-800 dark:text-amber-200">Already Shared</span>
-                </div>
-                <p className="text-amber-700 dark:text-amber-300 text-sm">
-                  This agent has already been shared with the community.
-                </p>
-              </div>
-            ) : sharingValidation && !sharingValidation.valid ? (
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
-                  <span className="font-semibold text-red-800 dark:text-red-200">Cannot Share Yet</span>
-                </div>
-                <p className="text-red-700 dark:text-red-300 text-sm mb-3">
-                  {sharingValidation.reason}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3 mb-4">
-                {sharingValidation && sharingValidation.valid && (
-                  <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                      <span className="font-semibold text-emerald-800 dark:text-emerald-200 text-sm">Quality Requirements Met ✓</span>
-                    </div>
-                  </div>
-                )}
-                <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-[var(--v2-primary)]/10 rounded-full flex items-center justify-center">
-                        <Zap className="w-5 h-5 text-[var(--v2-primary)]" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold text-[var(--v2-text-primary)]">Share Reward</div>
-                        <div className="text-xs text-[var(--v2-text-muted)]">Help the community grow</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-[var(--v2-primary)]">{sharingRewardAmount}</div>
-                      <div className="text-xs text-[var(--v2-text-muted)]">credits</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowShareConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors font-medium text-sm"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {(hasBeenShared || sharingValidation?.details?.alreadyShared) ? 'Close' : 'Cancel'}
-              </button>
-              {!hasBeenShared && !sharingValidation?.details?.alreadyShared && (sharingValidation && !sharingValidation.valid ? null : (
-                <button
-                  onClick={handleShareAgent}
-                  disabled={actionLoading === 'share' || (sharingValidation && !sharingValidation.valid) || !shareRewardActive}
-                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {actionLoading === 'share' ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> Sharing...</>
-                  ) : (
-                    'Share & Earn Credits'
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Share Success Notification */}
-      {showShareSuccess && (
-        <div className="fixed top-4 right-4 z-50 max-w-md animate-in slide-in-from-top-5">
-          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl p-6">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center flex-shrink-0">
-                <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
-              </div>
-              <div className="flex-1">
-                <h3 className="font-semibold text-[var(--v2-text-primary)] text-lg mb-1">Agent Shared Successfully!</h3>
-                <p className="text-sm text-[var(--v2-text-secondary)] mb-3">
-                  Your agent is now available in the community templates.
-                </p>
-                <div className="flex items-center gap-4 text-sm">
-                  <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-                    <Zap className="w-4 h-4" />
-                    <span className="font-semibold">{shareCreditsAwarded} credits earned</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[var(--v2-primary)]">
-                    <Brain className="w-4 h-4" />
-                    <span className="font-semibold">Score: {shareQualityScore}/100</span>
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowShareSuccess(false)}
-                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Hourly Rate Dialog */}
       {showHourlyRateDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -3122,13 +2803,13 @@ export default function V2AgentDetailPage() {
                           .eq('user_id', user.id)
                         setAgent({ ...agent, hourly_rate_usd: rate })
                       } catch (error) {
-                        console.error('[Use Current] Error saving hourly rate:', error)
+                        clientLogger.error({ err: error }, 'Error saving current hourly rate')
                       }
                     }
 
                     // If we're enabling insights via the toggle, complete that action
                     if (pendingInsightsToggle) {
-                      console.log('[Use Current] Completing pending insights toggle')
+                      clientLogger.debug('Completing pending insights toggle with current hourly rate')
                       setPendingInsightsToggle(false)
 
                       // Enable insights on the agent
@@ -3140,10 +2821,10 @@ export default function V2AgentDetailPage() {
 
                       if (result.success && result.data) {
                         setAgent({ ...result.data as Agent, hourly_rate_usd: rate })
-                        console.log('✅ Insights enabled successfully')
+                        clientLogger.debug('Insights enabled successfully')
                       } else {
                         setAgent((prev) => prev ? { ...prev, insights_enabled: false } : prev)
-                        console.error('❌ Failed to enable insights:', result.error)
+                        clientLogger.error({ err: result.error }, 'Failed to enable insights')
                       }
                     } else {
                       // Normal flow: open the insights modal
