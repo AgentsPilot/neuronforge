@@ -139,9 +139,10 @@ describe('LF-4b inside the money blocks (BD-14, BD-15)', () => {
     expect(codeOf(read(`${ROOT}/components/moneyBlockUi.ts`))).not.toContain('fetch(');
   });
 
-  it('BD-14: the drawer hands refreshList to the panel as onCreditsChanged, the onRemoved shape', () => {
+  // LF-F2 (LF4B-F1): the money path calls the read that keeps the rows on failure.
+  it('BD-14: the drawer hands refreshListAfterCredits to the panel as onCreditsChanged, the onRemoved shape', () => {
     const detail = flat(codeOf(read(`${ROOT}/components/BusinessDetail.tsx`)));
-    expect(detail).toContain('onCreditsChanged={() => { void refreshList(); }}');
+    expect(detail).toContain('onCreditsChanged={() => { void refreshListAfterCredits(); }}');
     const panel = codeOf(read(`${ROOT}/components/BusinessOsPanel.tsx`));
     expect(occurrences(panel, 'onCreditsChanged={onCreditsChanged}')).toBe(1);
   });
@@ -439,6 +440,9 @@ describe('the Delete… dialog: preview, then a typed confirmation only with a t
     expect(page.indexOf('</AdminDrawer>')).toBeGreaterThan(detail);
     expect(page.slice(drawer, detail)).toContain('open={isOpen && selected !== null}');
     expect(page.match(/refreshList=\{fetchUsers\}/g)).toHaveLength(1);
+    // LF-F2 (LF4B-F1): only the money path keeps the rows when its read fails.
+    expect(occurrences(page, 'refreshListAfterCredits={refreshAfterCredits}')).toBe(1);
+    expect(occurrences(page, 'keepRowsOnFail: true')).toBe(1);
     // L-2b SA M-4: outside every branch. From the loaded branch's opening to the
     // drawer, every brace and parenthesis is closed again, so the drawer is not
     // inside `{!error && hasLoaded && (` (jsdom cannot tell an unmount from a close).
@@ -464,9 +468,10 @@ describe('the Delete… dialog: preview, then a typed confirmation only with a t
     expect(read(DETAIL)).toMatch(
       /onDeleted=\{\(\) => \{\s*\/\/ FR-A9: after a deletion the row reads "No Business OS business"\.\s*void refreshList\(\);\s*\}\}/,
     );
-    // Only the three bodies call it: onDeleted, onRemoved, and onCreditsChanged
-    // (LF-4b, BD-14: once after a successful Give or Take back).
-    expect(occurrences(detail, 'refreshList(')).toBe(3);
+    // Only two bodies call it: onDeleted and onRemoved. onCreditsChanged (LF-4b,
+    // BD-14) calls the keep-rows read instead, once (LF-F2, LF4B-F1).
+    expect(occurrences(detail, 'refreshList(')).toBe(2);
+    expect(occurrences(detail, 'refreshListAfterCredits(')).toBe(1);
   });
 });
 
