@@ -218,6 +218,12 @@ export function CreateInviteForm({ options, draft, onDraftChange, onBusyChange, 
               </option>
             ))}
           </select>
+          {/* P-9.2: the server's note (the invitee pays at signup). Rendered, never decided here. */}
+          {selected.note && (
+            <p data-testid="invite-grant-note" className="mt-1 text-xs text-slate-500">
+              {selected.note}
+            </p>
+          )}
         </div>
       )}
 

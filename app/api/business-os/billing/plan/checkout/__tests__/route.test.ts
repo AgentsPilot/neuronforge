@@ -414,10 +414,11 @@ describe('POST /api/business-os/billing/plan/checkout — refusals map to status
       'held_tier_not_allowed',
     ],
     [
-      'held admin invitee',
+      // P-9.2: an admin invitee buys its invited tier; one whose tier has no price is still refused.
+      'held admin invitee whose tier has no price',
       () => {
         state.lineage = { invite_id: INVITE, source: 'admin_invite', first_paid_at: null };
-        state.invite = { grant_kind: 'tier', language: 'en' };
+        state.invite = { grant_kind: 'tier', grant_id: 'tier_without_a_price', language: 'en' };
       },
       BODY,
       409,

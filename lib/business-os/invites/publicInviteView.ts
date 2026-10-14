@@ -38,8 +38,8 @@ import 'server-only';
  * account-issued TIER invite with friend invites switched on gets `valid`,
  * with the signup form (the champion's name and note, the offer with its
  * price, and the masked address, which the champion typed anyway). The page
- * adds ONE payment statement for it, "payment opens soon", never "payment
- * required at signup" (SA CR-1, until 5c). Whether the address already has an account is decided only
+ * adds ONE payment statement for it, decided here (`payment`, below). Whether
+ * the address already has an account is decided only
  * after mailbox proof, by the signup routes (`inviteRedemption.ts`). With the
  * switch off, or any other grant, it is `unavailable` (T-18). The issuer's
  * cohort is re-checked at redemption (T-19), not here (5a Q-6). The 5a state
@@ -54,6 +54,17 @@ import 'server-only';
  * the server would then refuse. Otherwise it is treated as a champion's: the
  * existing-account check, then the form. While the switch is off in
  * production, every admin Paid link reads "no longer available".
+ *
+ * ── The payment statement (FR-22; plan payments P-9.2, SA C-6, A-1) ────────
+ * `valid` carries `payment`: `none` for a grant that is not a tier (a
+ * champion's free plan); for a tier invite, `required` exactly when the
+ * holding screen would offer Pay for the tier this invite makes its account
+ * hold for, and `opens_later` otherwise. Decided by `heldInviteOffer`, the
+ * same step behind the holding screen and the held checkout, with the same
+ * three switches, so the page never says "payment is required at signup"
+ * where the account would then read "payment coming soon". For a friend the
+ * tier is the friend tier; for an admin Paid invite it is the row's own
+ * `grant_id`. Switches are injectable for tests.
  *
  * ── Nothing sensitive is logged ─────────────────────────────────────────────
  * This module logs nothing itself except a failed first-view stamp, keyed by the
@@ -71,6 +82,21 @@ import { deriveInviteState } from './inviteState';
 import { hashInviteToken, isWellFormedInviteToken } from './inviteToken';
 import { adminPaidInviteRedemption, describeInviteOffer, isInviteGrantAvailable, type InviteOffer } from './inviteOffer';
 import { maskEmail } from './signupCode';
+// SA C-6: the page's payment statement and the holding screen's Pay share ONE
+// step. Invites → billing, as `inviteOffer.ts` (SA C-3): billing imports
+// `invites/paymentHold` as a TYPE only, so there is no runtime cycle.
+import {
+  heldInviteOffer,
+  readHeldPaymentSwitches,
+  type HeldInviteTier,
+  type HeldPaymentSwitches,
+} from '@/lib/business-os/billing/planCheckoutEligibility';
+
+/**
+ * FR-22: the one payment line under a `valid` offer. `required` only when the
+ * account this invite creates could pay at once (SA C-6).
+ */
+export type InvitePaymentStatement = 'none' | 'required' | 'opens_later';
 
 /** The states the page can show. `unavailable` is derived, never stored (D-8). */
 export type PublicInviteState =
@@ -100,6 +126,8 @@ export type PublicInviteResponse =
        * domain. The full email is returned only after a successful signup.
        */
       maskedEmail: string;
+      /** FR-22 (P-9.2, SA C-6): which payment line the page shows, if any. */
+      payment: InvitePaymentStatement;
     }
   | {
       state: NarrowState;
@@ -154,6 +182,8 @@ export async function viewInviteByToken(
     config: EntitlementConfig;
     now: Date;
     logger: PublicInviteLogger;
+    /** The three held-payment switches (SA C-6); production reads `readHeldPaymentSwitches`. */
+    paymentSwitches?: () => HeldPaymentSwitches;
   }
 ): Promise<ViewInviteOutcome> {
   // C-3: the format is checked before anything is hashed or looked up.
@@ -202,6 +232,7 @@ export async function viewInviteByToken(
         linkExpiresAt: row.link_expires_at,
         offer: friendOffer,
         maskedEmail: maskEmail(friend.data),
+        payment: paymentStatement({ source: 'account_invite' }, deps),
       },
     };
   }
@@ -245,8 +276,21 @@ export async function viewInviteByToken(
       linkExpiresAt: row.link_expires_at,
       offer,
       maskedEmail: maskEmail(invitee.data),
+      // A champion's cohort grant asks for no payment. A tier grant here is an
+      // admin Paid invite the predicate above has already said `ok` to.
+      payment: row.grant_kind === 'tier' ? paymentStatement({ source: 'admin_invite', grantId: row.grant_id }, deps) : 'none',
     },
   };
+}
+
+/**
+ * FR-22 (SA C-6): `required` exactly when `heldInviteOffer` (the holding
+ * screen's and the held checkout's step) would answer `pay` for the tier this
+ * invite makes its account hold for; otherwise `opens_later`. Never re-derived.
+ */
+function paymentStatement(invite: HeldInviteTier, deps: { paymentSwitches?: () => HeldPaymentSwitches }): InvitePaymentStatement {
+  const switches = (deps.paymentSwitches ?? readHeldPaymentSwitches)();
+  return heldInviteOffer(invite, switches).kind === 'pay' ? 'required' : 'opens_later';
 }
 
 /**

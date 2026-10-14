@@ -104,6 +104,8 @@ export interface InviteTypeOption {
   unavailableReason: string | null;
   requiresAccess: boolean;
   grants: Array<{ id: string; label: string; default: boolean }>;
+  /** P-9.2: a server-written line shown under the plan select (Paid only). */
+  note?: string | null;
 }
 
 export interface InviteFormOptions {

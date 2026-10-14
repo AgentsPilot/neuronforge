@@ -46,8 +46,9 @@ describe('planCheckoutEligibility', () => {
     expect(result.ok && result.held ? result.tiers : []).not.toContain(TIER_ORDER[TIER_ORDER.length - 1]);
   });
 
-  it('a held admin invitee (admin_invite) → refused until P-9 (fail closed)', () => {
-    expect(planCheckoutEligibility({ ok: true, held: true, inviteId: INVITE, source: 'admin_invite' }, ALL_ON)).toEqual({
+  // P-9.2: an admin invitee now buys its invited tier (heldPaymentOffer.admin.test.ts); one whose tier has no price is still refused.
+  it('a held admin invitee whose tier has no price → refused (fail closed)', () => {
+    expect(planCheckoutEligibility({ ok: true, held: true, inviteId: INVITE, source: 'admin_invite', grantId: 'tier_without_a_price' }, ALL_ON)).toEqual({
       ok: false,
       code: 'held_tier_unresolved',
     });
@@ -84,13 +85,14 @@ describe('planCheckoutEligibility', () => {
 
 describe('heldPaymentOffer (P-5a.2, S5-2)', () => {
   const friend = { ok: true, held: true, inviteId: INVITE, source: 'account_invite' } as const;
-  const admin = { ok: true, held: true, inviteId: INVITE, source: 'admin_invite' } as const;
+  // P-9.2: the admin variant carries its invited tier; this one has no price.
+  const admin = { ok: true, held: true, inviteId: INVITE, source: 'admin_invite', grantId: 'tier_without_a_price' } as const;
 
   it('all switches on, a held friend → pay, the friend tier from the invite policy', () => {
     expect(heldPaymentOffer(friend, ALL_ON)).toEqual({ kind: 'pay', tier: INVITE_ISSUANCE_POLICY.account.grantId });
   });
 
-  it('a held admin invitee → held_tier_unresolved (until P-9)', () => {
+  it('a held admin invitee whose tier has no price → held_tier_unresolved (P-9.2: fail closed)', () => {
     expect(heldPaymentOffer(admin, ALL_ON)).toEqual({ kind: 'unavailable', code: 'held_tier_unresolved' });
   });
 

@@ -430,13 +430,14 @@ describe('findInviteeEmailForPublicCheck (Slice 1a, D-12)', () => {
 });
 
 describe('findHoldFactsById (Slice 5b, the payment hold)', () => {
-  it('reads exactly grant_kind and language of the one row, by id: no email, issuer or hash', async () => {
-    const { client, calls } = recordingClient({ data: { grant_kind: 'tier', language: 'he' }, error: null });
+  // P-9.2 (SA C-5): `grant_id` joins the read, the tier an admin Paid invite sells.
+  it('reads exactly grant_kind, grant_id and language of the one row, by id: no email, issuer or hash', async () => {
+    const { client, calls } = recordingClient({ data: { grant_kind: 'tier', grant_id: 'invited_plan', language: 'he' }, error: null });
     const result = await new BusinessOsInviteRepository(client).findHoldFactsById(ID);
-    expect(result).toEqual({ data: { grant_kind: 'tier', language: 'he' }, error: null });
+    expect(result).toEqual({ data: { grant_kind: 'tier', grant_id: 'invited_plan', language: 'he' }, error: null });
     expect(calls).toEqual([
       { method: 'from', args: ['business_os_invites'] },
-      { method: 'select', args: ['grant_kind, language'] },
+      { method: 'select', args: ['grant_kind, grant_id, language'] },
       { method: 'eq', args: ['id', ID] },
       { method: 'maybeSingle', args: [] },
     ]);
@@ -455,13 +456,14 @@ describe('findHoldFactsById (Slice 5b, the payment hold)', () => {
 describe('findInviterNotificationFactsById (plan payments P-5b.1, N-2)', () => {
   const FACTS = { issuer_kind: 'account', issuer_account_id: ACCOUNT, email: 'dana@example.com', redeemed_account_id: ADMIN };
 
-  it('reads exactly the four N-2 columns of the one row, by id: no hash, reply-to or note', async () => {
+  // P-9.2 (T10): `issuer_admin_id` and `grant_kind` join the read (N-2 to the issuing admin).
+  it('reads exactly the six N-2 columns of the one row, by id: no hash, reply-to or note', async () => {
     const { client, calls } = recordingClient({ data: FACTS, error: null });
     const result = await new BusinessOsInviteRepository(client).findInviterNotificationFactsById(ID);
     expect(result).toEqual({ data: FACTS, error: null });
     expect(calls).toEqual([
       { method: 'from', args: ['business_os_invites'] },
-      { method: 'select', args: ['issuer_kind, issuer_account_id, email, redeemed_account_id'] },
+      { method: 'select', args: ['issuer_kind, issuer_account_id, issuer_admin_id, grant_kind, email, redeemed_account_id'] },
       { method: 'eq', args: ['id', ID] },
       { method: 'maybeSingle', args: [] },
     ]);

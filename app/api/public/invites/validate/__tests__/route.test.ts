@@ -196,7 +196,8 @@ describe('matched states', () => {
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
     const body = await response.json();
     expect(Object.keys(body.data).sort()).toEqual(
-      ['inviterDisplayName', 'language', 'linkExpiresAt', 'maskedEmail', 'offer', 'personalNote', 'state'].sort()
+      // P-9.2 (FR-22, SA C-6): `payment`, the page's one payment line.
+      ['inviterDisplayName', 'language', 'linkExpiresAt', 'maskedEmail', 'offer', 'payment', 'personalNote', 'state'].sort()
     );
     expect(body.data.state).toBe('valid');
     // Slice 1b (R-6, F-6): the address is masked; the full email never appears.
@@ -377,6 +378,7 @@ describe('Slices 5a/5b (F5a-10, F5b-3): a champion friend invite', () => {
       'linkExpiresAt',
       'maskedEmail',
       'offer',
+      'payment',
       'personalNote',
       'state',
     ]);
