@@ -420,7 +420,7 @@ Everything is **uncommitted** on `fix/stripe-connect-refund-webhook`. No DB writ
 | `app/api/payments/blocks/execute/route.ts` | — | — | whole diff (C-3) |
 
 **Rebuilding the three commits.** Slices 2 and 3 both rewrite the same lines of `RefundService.ts`, so `git add -p` cannot produce the slice-2 state on its own. Dev saved three incremental patches (each against the previous slice, built with a temporary index file; the real index was not touched). They reproduce the working tree byte for byte (checked blob by blob):
-`C:\Users\Barak\AppData\Local\Temp\claude\C--Users-Barak-My-Projects-AgentsPilot-neuronforge--claude-worktrees-distracted-sammet-74b018\cdcfe991-e7de-4860-b716-29b68d655b28\scratchpad\slice1.patch`, `slice2.patch`, `slice3.patch` (same folder). They do not include the three docs (RCA, requirement, workplan), which RM places as it sees fit. Each intermediate state was tested: slice 1 (refundService 41/41), slice 2 (23 suites, 782 tests, 107 snapshots, `tsc` no new errors).
+`slice1.patch`, `slice2.patch`, `slice3.patch` in the session scratchpad (a local temp folder, not in the repo). They do not include the three docs (RCA, requirement, workplan), which RM places as it sees fit. Each intermediate state was tested: slice 1 (refundService 41/41), slice 2 (23 suites, 782 tests, 107 snapshots, `tsc` no new errors).
 
 ### 12.2 SA conditions
 
