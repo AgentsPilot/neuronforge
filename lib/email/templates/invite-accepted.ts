@@ -130,7 +130,7 @@ const COPY: Record<Locale, Copy> = {
     actionChampion: 'להזמנות שלך',
     actionAdmin: 'לרשימת ההזמנות',
     footer: 'קיבלת את ההודעה הזו כי שלחת את ההזמנה הזו.',
-    // DRAFT, awaiting the user's approval (P-5b G-3). No verb agrees with the friend's gender.
+    // Approved by the user 2026-10-14 (P-5b G-3). No verb agrees with the friend's gender.
     subscribed: {
       subject: 'ההזמנה שלך הפכה למנוי',
       heading: 'יש מנוי חדש מההזמנה שלך',
@@ -148,7 +148,7 @@ const COPY: Record<Locale, Copy> = {
     actionChampion: 'Ver tus invitaciones',
     actionAdmin: 'Abrir invitaciones',
     footer: 'Recibes este correo porque enviaste esta invitación.',
-    // DRAFT, awaiting the user's approval (P-5b G-3).
+    // Approved by the user 2026-10-14 (P-5b G-3).
     subscribed: {
       subject: 'Tu invitación se convirtió en una suscripción',
       heading: 'Nueva suscripción desde tu invitación',
