@@ -669,6 +669,62 @@ export async function cancelBooking(
           { bookingId, stopped: stoppedQuotes?.length },
           'Marked the accepted quote stopped along with its booking'
         );
+
+        /*
+         * TELL THE CLIENT THE QUOTE IS OFF — a different email from the
+         * meeting's, and the only one they may get.
+         *
+         * ───────────────────────────────────────────────────────────────────
+         * The state was already right here: stages closed, invoices voided,
+         * the quote marked `stopped` with its reason. What never happened was
+         * the email. `sendQuoteStoppedEmail` existed and `cancelQuoteStages`
+         * was its only caller, so stopping a job FROM THE QUOTE told the
+         * client and cancelling the same job FROM THE BOOKING did not.
+         *
+         * The client was left holding a quote they had accepted and an invoice
+         * in their inbox that no longer stood, having been told only that a
+         * meeting was cancelled.
+         *
+         * And since the meeting email is correctly withheld once the meeting
+         * has passed — see `meetingStillAhead` — a job closed after the
+         * consultation happened sent the client NOTHING AT ALL without this.
+         *
+         * Best effort, and deliberately not allowed to fail the cancellation:
+         * the booking is already cancelled and the money already closed, so
+         * throwing here would report a failure for work that completed.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        if (params.notifyClient !== false) {
+          /* Imported once, outside the loop. Lazy for the reason
+             `cancelQuoteStages` gives: `ProposalSendService` drags in the email
+             transport, the branding resolver and the PDF stack, and a static
+             import would pull all of it into every Jest file touching money. */
+          const { sendQuoteStoppedEmail } = await import('@/lib/services/ProposalSendService');
+
+          for (const quote of stoppedQuotes ?? []) {
+            try {
+
+              await sendQuoteStoppedEmail(quote.id, userId, {
+                /* Cancelling refunds nothing by design, so what the client paid
+                   stays paid and what came back is nothing. The refund is its
+                   own decision, with its own email. */
+                paidAmount: 0,
+                refundedAmount: 0,
+                invoicesVoided: stagesClosed,
+                stagesClosed,
+                /* Withheld unless the owner chose to share it, exactly as the
+                   meeting's email treats the same note. */
+                note: params.shareNoteWithClient === false ? null : params.cancelNote ?? null,
+                reasonCode: params.cancelReason ?? null,
+              });
+            } catch (err) {
+              log.warn(
+                { err, bookingId, proposalId: quote.id },
+                'Quote-stopped email failed for a cancelled booking'
+              );
+            }
+          }
+        }
       }
     }
 

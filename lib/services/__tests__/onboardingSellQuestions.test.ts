@@ -33,13 +33,26 @@ import {
 import { onboardingConfigurationService, type ExtractedData } from '../OnboardingConfigurationService';
 import { moneyMoves, collectsOnline, takesAppointments, shapeFromProfile } from '@/lib/business-os/setup/setupGraph';
 
+/**
+ * Recording, not throwing.
+ *
+ * This mock threw on any call, asserting that the selling questions cost no
+ * model at all. That is still true of every CHIP: a button press is read by a
+ * deterministic reader, and the tests below assert the mock stays untouched.
+ *
+ * One call now legitimately belongs here. Once the count is known, the
+ * placeholder services are NAMED from what the owner already said, because a
+ * count on its own produced rows called "Service 1", "Service 2". So the guard
+ * becomes sharper rather than weaker: it is now "the chips make no call", which
+ * is the claim that was actually worth making.
+ */
+const complete = jest.fn(async () => ({ content: JSON.stringify({ services: [] }) }));
+
 jest.mock('@/lib/ai/providerFactory', () => ({
-  getProviderFactory: () => ({
-    complete: () => {
-      throw new Error('No model call belongs in the sell questions');
-    },
-  }),
+  getProviderFactory: () => ({ complete: (...args: unknown[]) => complete(...(args as [])) }),
 }));
+
+beforeEach(() => complete.mockClear());
 
 const OWNER = { userId: '2f734ed5-3681-4049-880d-3de7b096bea3', groupId: '33333333-3333-4333-8333-333333333333' };
 
@@ -61,11 +74,11 @@ function manager() {
 describe('the appointments question', () => {
   it.each([
     ['Clients book a time with me', true],
-    ['I sell without appointments — no calendar needed', false],
+    ['I sell without appointments: no calendar needed', false],
     ['הלקוחות קובעים איתי זמן', true],
-    ['אני מוכר בלי תורים — אין צורך בלוח זמנים', false],
+    ['אני מוכר בלי תורים: אין צורך בלוח זמנים', false],
     ['Los clientes reservan una hora conmigo', true],
-    ['Vendo sin turnos — no hace falta agenda', false],
+    ['Vendo sin turnos: no hace falta agenda', false],
   ])('reads the chip %j as %s', async (reply, expected) => {
     const result = await manager().processUserMessage(OWNER, reply, state('sell_scheduled'));
     expect(result.updatedState.collectedData.clientWorkflow?.sells_scheduled).toBe(expected);
@@ -95,8 +108,8 @@ describe('the appointments question', () => {
 
 describe('the money question', () => {
   it.each([
-    ['The client pays online by card — needs a payment gateway', 'card_online'],
-    ['I collect the money myself — invoice, transfer or cash', 'invoice'],
+    ['The client pays online by card: needs a payment gateway', 'card_online'],
+    ['I collect the money myself: invoice, transfer or cash', 'invoice'],
     ['Nothing I sell is paid for', 'none'],
     ['אני לא גובה כסף על מה שאני מוכר', 'none'],
     ['No cobro por nada de lo que ofrezco', 'none'],
@@ -131,11 +144,29 @@ describe('the count question', () => {
     ['just one', 1],
     ['שלוש', 3],
     ['tres', 3],
-  ])('reads %j as %s and moves on', async (reply, expected) => {
+  ])('reads %j as %s and asks about intake next', async (reply, expected) => {
+    /*
+     * `state()` leaves `sells_scheduled` unset, which reads as "books
+     * appointments" — the same direction `readScheduledAnswer` defaults in, and
+     * for the same reason. So the intake question follows.
+     */
     const result = await manager().processUserMessage(OWNER, reply, state('service_count'));
     expect(result.updatedState.collectedData.clientWorkflow?.service_count).toBe(expected);
+    expect(result.updatedState.currentStep).toBe('service_details');
+    expect(result.updatedState.pendingQuestion).toBe('intake');
+  });
+
+  it('skips intake for a business that sells without appointments', async () => {
+    // A form "before the appointment" has no meaning where there is none.
+    const result = await manager().processUserMessage(
+      OWNER,
+      '3',
+      state('service_count', { collectedData: { clientWorkflow: { sells_scheduled: false } } })
+    );
+
     expect(result.updatedState.currentStep).toBe('client_acquisition');
     expect(result.updatedState.pendingQuestion).toBeUndefined();
+    expect(result.updatedState.collectedData.clientWorkflow?.needs_intake).toBeUndefined();
   });
 
   it('prefers digits over words, so "3 or 4" is 3', async () => {
@@ -151,7 +182,13 @@ describe('the count question', () => {
   it('treats an explicit zero as an answer, not a parse failure', async () => {
     const result = await manager().processUserMessage(OWNER, '0', state('service_count'));
     expect(result.updatedState.collectedData.clientWorkflow?.service_count).toBe(0);
-    expect(result.updatedState.currentStep).toBe('client_acquisition');
+    expect(result.updatedState.pendingQuestion).toBe('intake');
+  });
+
+  it('names nothing when there is nothing to name', async () => {
+    // Zero services, so no naming call: the guard is that we do not spend one.
+    await manager().processUserMessage(OWNER, '0', state('service_count'));
+    expect(complete).not.toHaveBeenCalled();
   });
 
   /*

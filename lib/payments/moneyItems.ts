@@ -681,19 +681,43 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
        * 2,000 rendered as 1,400: the row said "3 payments" beside a figure that
        * accounted for two, and the un-invoiced phase appeared nowhere.
        *
-       * Plan periods are added for exactly the periods `unpaidPeriods` keeps —
-       * the ones with no entry representing them — so a phase is counted once,
-       * by whichever of the two knows about it. Adding every period instead
-       * would double the billed ones straight back up, which is the bug this
-       * file just fixed one function above.
+       * Plan periods are added for exactly the periods with no entry
+       * representing them, so a phase is counted once, by whichever of the two
+       * knows about it. Adding every period instead would double the billed
+       * ones straight back up, which is the bug this file just fixed one
+       * function above.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * A CANCELLED PERIOD IS STILL PART OF THE JOB.
+       *
+       * This reused `SETTLED_PERIOD_STATUSES`, which is `['paid', 'cancelled']`
+       * and is written for a different question — `unpaidPeriods` asks what the
+       * business is still WAITING FOR, and a period nobody will pay belongs in
+       * neither that figure nor the debt.
+       *
+       * Asked of the row's total it drops money that was genuinely agreed. A
+       * stopped two-period plan whose first period had an invoice raised and
+       * whose second never did rendered as:
+       *
+       *     ₪500.00   0/2 שולמו · בוטל
+       *       תשלום 1   ₪500.00   בוטל
+       *       תשלום 2   ₪500.00   בוטל
+       *
+       * — a header worth half the rows directly beneath it, on the one screen
+       * where the two are read together. The invoiced period survived as an
+       * entry; the uninvoiced one was dropped by its status and existed nowhere.
+       *
+       * `paid` stays excluded, and for the original reason rather than this one:
+       * money that arrived always left an entry behind it — an invoice, or the
+       * transaction a processor charge writes — so it is already in the sum
+       * above. `billedAsAnEntry` catches the invoice case; the status catches
+       * the transaction one, which carries no `invoice_id`.
+       * ───────────────────────────────────────────────────────────────────────
        */
       amount:
         bookingEntries.reduce((sum, e) => sum + e.amount, 0) +
         (plan?.periods ?? [])
-          .filter(
-            period =>
-              !SETTLED_PERIOD_STATUSES.includes(period.status) && !billedAsAnEntry(period)
-          )
+          .filter(period => period.status !== 'paid' && !billedAsAnEntry(period))
           .reduce((sum, period) => sum + period.amount, 0),
       refunded: bookingEntries.reduce((sum, e) => sum + e.refunded, 0),
       currency: bookingEntries[0].currency,

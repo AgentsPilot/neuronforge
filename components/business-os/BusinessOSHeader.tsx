@@ -22,6 +22,26 @@ import { LazySchedulingDialog } from '@/components/business-os/lazyDialogs';
  * problem with a decorative label, and a WRONG label would be a claim about what
  * somebody is paying for.
  */
+/**
+ * User decision 2026-10-14: the header's language picker is hidden for
+ * everyone. Button, dropdown, the click-outside ref and `setLanguage` all
+ * stay; un-hiding is this one line.
+ *
+ * Nothing is lost by hiding it. Settings calls the SAME `setLanguage` from the
+ * same context (`app/business-os/settings/page.tsx`), so the language is still
+ * switchable and still does all four things it did here: the UI, the
+ * `business-os-language` localStorage key, the sync to
+ * `user_preferences.language` AND `business_profiles.language` that emails and
+ * insights read, and `document.dir` for Hebrew.
+ *
+ * What hiding costs is reach. This sits on every screen; settings is one. The
+ * case worth remembering before removing it for good is an owner whose
+ * language is wrong — a mis-tapped chip in onboarding — who then has to find
+ * Settings in a script they may not read. The gear icon needs no reading, so
+ * it is recoverable, but it is the reason this is a hide and not a delete.
+ */
+const SHOW_HEADER_LANGUAGE_PICKER = false;
+
 export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgeProps | null }) {
   const router = useRouter();
   const { language, setLanguage, t } = useLanguage();
@@ -76,6 +96,11 @@ export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgePr
 
   // Close dropdown when clicking outside
   useEffect(() => {
+    /* Nothing to close while the picker is hidden, and this header is on every
+       Business OS screen — a document-wide `mousedown` listener that can never
+       fire is the kind of leftover a hide quietly leaves behind. */
+    if (!SHOW_HEADER_LANGUAGE_PICKER) return;
+
     function handleClickOutside(event: MouseEvent) {
       if (languageDropdownRef.current && !languageDropdownRef.current.contains(event.target as Node)) {
         setIsLanguageOpen(false);
@@ -154,7 +179,8 @@ export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgePr
             )}
           </button>
 
-          {/* Language Selector */}
+          {/* Language Selector — hidden, see SHOW_HEADER_LANGUAGE_PICKER */}
+          {SHOW_HEADER_LANGUAGE_PICKER && (
           <div className="relative" ref={languageDropdownRef}>
             <button
               onClick={() => setIsLanguageOpen(!isLanguageOpen)}
@@ -203,6 +229,7 @@ export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgePr
               </div>
             )}
           </div>
+          )}
 
           {/* Settings Icon - direct link */}
           <button

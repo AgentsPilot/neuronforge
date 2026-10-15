@@ -109,6 +109,32 @@ export interface AccountPlanRow {
   updated_at: string | null;
 }
 
+/** A plan id and its config name, as the server read it with `planLabel`. */
+export interface AccountPlanName {
+  id: string;
+  name: string;
+}
+
+/**
+ * The cohort the row records, as if no paid plan were on top of it. Mirrors
+ * `AdminAccountCohort` in `lib/business-os/entitlements/adminAccountPlans.ts`
+ * (server-only); the server answers every question here, the card words it.
+ */
+export interface AccountPlanCohort extends AccountPlanName {
+  endsAt: string | null;
+  liveNow: boolean;
+  /** Takes over if the dated paid plan is not renewed. `null`: no dated paid plan. */
+  outlivesTier: boolean | null;
+  base: AccountPlanName | null;
+}
+
+/** The plans the row records, named (admin plan card plain labels, 2026-10-15). */
+export interface AccountPlanPresentation {
+  tier: AccountPlanName | null;
+  cohort: AccountPlanCohort | null;
+  tierBelowCohortBase: boolean;
+}
+
 export interface AccountPayload {
   accountId: string;
   mode: string;
@@ -118,5 +144,10 @@ export interface AccountPayload {
   matrixVersion: number;
   capabilities: Record<string, AccountCapability>;
   plan: AccountPlanRow | null;
+  /**
+   * Optional on purpose: a body recorded before this field existed (or a
+   * test stub) still renders, with raw ids in place of the names.
+   */
+  planPresentation?: AccountPlanPresentation;
   effectiveWithinSeconds: number;
 }

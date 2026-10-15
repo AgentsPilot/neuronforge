@@ -60,6 +60,7 @@ import { getEntitlementService, CACHE_TTL_SECONDS } from '@/lib/business-os/enti
 import { recordPlanChange } from '@/lib/business-os/entitlements/recordPlanChange';
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { getEntitlementMode } from '@/lib/business-os/entitlements/mode';
+import { describeAccountPlans } from '@/lib/business-os/entitlements/adminAccountPlans';
 
 const logger = createLogger({ module: 'AdminBosEntitlementsAccountAPI' });
 
@@ -180,6 +181,12 @@ export async function GET(request: NextRequest, context: { params: { accountId: 
           createdAt: row.created_at,
         })),
         plan: inputs.data?.plan ?? null,
+        // Admin plan card, plain labels (2026-10-15): the plans the row
+        // records, by their config names, and the two lifecycle answers the
+        // card words ("takes over if not renewed", "paid plan gives less").
+        // The screen cannot read config names or re-derive a lifecycle rule,
+        // so the server sends both; `basis` above still says which one decides.
+        planPresentation: describeAccountPlans(config, inputs.data?.plan ?? null, new Date()),
         effectiveWithinSeconds: CACHE_TTL_SECONDS,
       },
     });

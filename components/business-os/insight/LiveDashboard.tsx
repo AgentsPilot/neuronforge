@@ -32,6 +32,9 @@ import { ClientReachJourney } from './ClientReachJourney';
 import type { OperationalItem } from './InsightAdvisorCard';
 import { briefingLines } from '@/lib/business-os/briefing/briefingLines';
 import { InsightAdvisorCard } from './InsightAdvisorCard';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'LiveDashboard' });
 
 // ===========================
 // Types
@@ -563,7 +566,7 @@ export function LiveDashboard({
       settings?: { hoursBefore: number; notifyClient: boolean; notifyOwner: boolean }
     ) => {
       try {
-        await fetch('/api/business-os/automations/operational', {
+        const response = await fetch('/api/business-os/automations/operational', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           /*
@@ -574,6 +577,28 @@ export function LiveDashboard({
            */
           body: JSON.stringify({ id, enabled: approve, ...(settings ?? {}) }),
         });
+
+        /*
+         * A REFUSAL MUST NOT LOOK LIKE NOTHING HAPPENING.
+         *
+         * The result was discarded, so a 400 and a success were the same
+         * gesture: the card advanced, the list refreshed, and the automation
+         * was exactly as it had been. Two automations were refused by the
+         * route for two months — their ids were missing from its schema — and
+         * pressing "yes, handle it" on either did nothing, silently, with
+         * nothing anywhere to say why.
+         *
+         * Logged rather than thrown: the card has already moved on and the
+         * refresh below will show the switch still off, which is the truth.
+         * What was missing was any record that the owner asked at all.
+         */
+        if (!response.ok) {
+          const detail = await response.json().catch(() => null);
+          logger.error(
+            { id, approve, status: response.status, error: detail?.error },
+            'The operational automation decision was refused'
+          );
+        }
       } finally {
         onGapsChanged?.();
       }

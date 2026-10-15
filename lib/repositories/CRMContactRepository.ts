@@ -84,6 +84,57 @@ export interface CRMContactListOptions {
   stage?: string;
   tags?: string[];
   search?: string; // Search in name, email, phone
+  /**
+   * THE SEARCH BOX'S FILTERS, APPLIED IN SQL.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The orders page parses its search into terms and then filters the rows IN
+   * MEMORY, which it can afford because it has them all. This list cannot: the
+   * board pages twenty contacts per stage column, so a filter applied after a
+   * page arrives would show three of twenty and silently hide every match
+   * sitting on page two. The filter has to narrow the query, not its result.
+   *
+   * So the route parses the string and hands the parts down. Each is a LIST
+   * because two chips of the same field read as "either" — nobody is in two
+   * stages at once — and every list is AND-ed against the others.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  stages?: string[];
+  sources?: string[];
+  /** ALL of these, unlike `tags`, which matches any. */
+  allTags?: string[];
+  /**
+   * Presence filters — `has:email`, `no:bookings`.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `email` and `phone` are columns, and "absent" means NULL or empty string: a
+   * lead captured through a form that submitted a blank field has `''` rather
+   * than null, and an owner looking for contacts with no email means both.
+   *
+   * `bookings` and `tasks` are the two tables this select already embeds, so
+   * neither costs another query — but they do change the JOIN, which is why the
+   * select is built rather than fixed. Verified against production in BOTH
+   * directions, because an embedded filter that behaves like an inner join
+   * silently drops the very contacts "never booked" is asking for.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  hasEmail?: boolean;
+  hasPhone?: boolean;
+  hasBookings?: boolean;
+  hasOpenTasks?: boolean;
+  /** At least this many days in the current stage, from `stage_entered_at`. */
+  inStageForDays?: number;
+  /**
+   * `created_at` bounds as INSTANTS, already resolved on the business's clock.
+   *
+   * Not days. A day is only a range of instants once you know the zone, and
+   * this repository does not: a contact added at 23:00 in New York on the last
+   * day of September is 03:00 UTC on the 1st of October, so bounding a UTC day
+   * would drop them out of the month they were added in. The caller holds the
+   * timezone and converts; this applies what it is given.
+   */
+  createdFromUtc?: string;
+  createdToUtc?: string;
   limit?: number;
   offset?: number;
   orderBy?: 'created_at' | 'updated_at' | 'first_name' | 'last_name';
@@ -299,15 +350,52 @@ export class CRMContactRepository {
         stage,
         tags,
         search,
+        stages,
+        sources,
+        allTags,
+        createdFromUtc,
+        createdToUtc,
+        hasEmail,
+        hasPhone,
+        hasBookings,
+        hasOpenTasks,
+        inStageForDays,
         limit = 50,
         offset = 0,
         orderBy = 'created_at',
         orderDirection = 'desc'
       } = options;
 
+      /*
+       * THE JOIN THAT FILTERS IS A SECOND, ALIASED EMBED — not the one that counts.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * `crm_tasks!inner(count)` DOES NOT FILTER. Measured: on an account with
+       * two contacts, one of which has an open task, it returned both, while
+       * `crm_tasks!inner(id)` returned the one. An embed that selects only an
+       * aggregate does not constrain the join, so `!inner` on it is silently
+       * inert — and a filter that silently matches everything is the worst
+       * shape available, because the screen looks like an unfiltered list and
+       * nothing says the filter did nothing.
+       *
+       * So the counting embeds stay exactly as they were, and a separate
+       * aliased embed selecting a real column does the narrowing. PostgREST
+       * allows the same relation twice under different names, and the count
+       * comes back untouched beside it.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const filterEmbeds: string[] = [];
+
+      if (hasBookings === true) filterEmbeds.push('purchases:scheduling_bookings!inner(id)');
+      if (hasBookings === false) filterEmbeds.push('no_bookings:scheduling_bookings!left(id)');
+      if (hasOpenTasks === true) filterEmbeds.push('open_tasks:crm_tasks!inner(id)');
+      if (hasOpenTasks === false) filterEmbeds.push('no_tasks:crm_tasks!left(id)');
+
       let query = this.supabase
         .from('crm_contacts')
-        .select('*, scheduling_bookings(count), crm_tasks(count)')
+        .select(
+          ['*', 'scheduling_bookings(count)', 'crm_tasks(count)', ...filterEmbeds].join(', ')
+        )
         .eq('user_id', userId)
         /*
          * Count PURCHASES, not meetings.
@@ -339,6 +427,101 @@ export class CRMContactRepository {
       // Filter by tags (contains any)
       if (tags && tags.length > 0) {
         query = query.overlaps('tags', tags);
+      }
+
+      /*
+       * The search box's own filters — see `CRMContactListOptions`.
+       *
+       * `.in()` for stage and source, because two chips of one field read as
+       * "either". `.contains()` for tags, which is ALL of them: asking for two
+       * tags means both, where `tags` above (the pre-existing option) means
+       * any. The two are deliberately separate rather than one option behaving
+       * differently depending on who called it.
+       */
+      /*
+       * Blank values dropped first, and that is not defensive tidying.
+       * Measured: `.contains('tags', [undefined])` returned EVERY contact —
+       * a filter that silently matches all is worse than one that errors,
+       * because the screen looks like an unfiltered list and nobody is told
+       * their filter did nothing.
+       */
+      const present = (values?: string[]) => (values ?? []).filter(value => value.trim().length > 0);
+
+      const wantedStages = present(stages);
+      const wantedSources = present(sources);
+      const wantedTags = present(allTags);
+
+      if (wantedStages.length > 0) {
+        query = query.in('stage', wantedStages);
+      }
+
+      if (wantedSources.length > 0) {
+        query = query.in('source', wantedSources);
+      }
+
+      if (wantedTags.length > 0) {
+        query = query.contains('tags', wantedTags);
+      }
+
+      /* Instants, resolved by the caller on the business's clock — see the
+         option's note. Inclusive at both ends, matching the period a chip
+         describes. */
+      if (createdFromUtc) {
+        query = query.gte('created_at', createdFromUtc);
+      }
+
+      if (createdToUtc) {
+        query = query.lte('created_at', createdToUtc);
+      }
+
+      /*
+       * Absent means NULL **or** empty string. A form that submitted a blank
+       * field wrote `''`, and an owner asking for contacts with no email means
+       * those too — a filter that returned only the nulls would quietly leave
+       * half the answer out.
+       */
+      if (hasEmail === true) {
+        query = query.not('email', 'is', null).neq('email', '');
+      } else if (hasEmail === false) {
+        query = query.or('email.is.null,email.eq.');
+      }
+
+      if (hasPhone === true) {
+        query = query.not('phone', 'is', null).neq('phone', '');
+      } else if (hasPhone === false) {
+        query = query.or('phone.is.null,phone.eq.');
+      }
+
+      /*
+       * The predicates that go with those aliases. `!left` narrows nothing by
+       * itself — `is null` on the alias is what turns it into "has none".
+       *
+       * "Has bookings" means has a PURCHASE, the same thing the count means: a
+       * package is one booking containing its sessions, so a client who bought
+       * one six-session block has one purchase and not six.
+       */
+      if (hasBookings === true) {
+        query = query.is('purchases.parent_booking_id', null);
+      } else if (hasBookings === false) {
+        query = query.is('no_bookings.parent_booking_id', null).is('no_bookings', null);
+      }
+
+      if (hasOpenTasks === true) {
+        query = query.neq('open_tasks.status', 'completed');
+      } else if (hasOpenTasks === false) {
+        query = query.is('no_tasks', null);
+      }
+
+      /*
+       * Still where they were N days ago. `stage_entered_at` is an instant, so
+       * this is "entered on or before the cutoff" — anyone who moved since has
+       * a later one and falls out, which is exactly "stuck".
+       */
+      if (inStageForDays && inStageForDays > 0) {
+        query = query.lte(
+          'stage_entered_at',
+          new Date(Date.now() - inStageForDays * 86_400_000).toISOString()
+        );
       }
 
       // Search by name, email, or phone

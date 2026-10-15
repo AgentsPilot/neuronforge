@@ -74,9 +74,19 @@ describe('the plan total belongs to the booking, not the service', () => {
     'utf8'
   );
 
-  /** The `SessionPaymentPlan` the drawer hands the card. */
+  /**
+   * The `SessionPaymentPlan` the drawer hands the card.
+   *
+   * Was an inline object inside the primary builder. It is now
+   * `buildSessionPlan` at module scope, because the file's SECOND card builder
+   * had no plan at all — it built `paymentData` with `amount: servicePrice` and
+   * no `plan` field, so a plan booking loaded through that path showed one
+   * synthetic stage worth the whole price, marked paid off `payment_status`.
+   * `planCardShowsEveryPeriod.test.ts` tests the extracted function's output
+   * directly; this still reads the source, for the fields it was written to pin.
+   */
   function plan(): string {
-    const start = drawer.indexOf('const sessionPlan: SessionPaymentPlan');
+    const start = drawer.indexOf('export function buildSessionPlan');
     expect(start).toBeGreaterThan(-1);
 
     const end = drawer.indexOf('stages: planPeriods.length', start);

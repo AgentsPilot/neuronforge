@@ -37,6 +37,8 @@ import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepos
 import { z } from 'zod';
 import { v4 as uuid } from 'uuid';
 
+import type { BusinessBrief } from '@/lib/business-os/onboarding/businessBrief';
+
 const logger = createLogger({ service: 'WebsiteGenerationService' });
 
 /**
@@ -283,7 +285,38 @@ export class WebsiteGenerationService {
       // Generating a site from every row put a deactivated or draft service in
       // the services block and the process copy, where a client could read
       // about something they can never book.
-      const servicesResult = await schedulingServiceRepository.listAll(userId, true);
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * DRAFT SERVICES COUNT WHEN THE PAGE IS ITSELF A DRAFT.
+       *
+       * `activeOnly: true` requires BOTH `is_active` and `status = 'active'`,
+       * and onboarding creates every service as a draft for the owner to price
+       * and publish. So this returned ZERO for every new account, and the
+       * services section was generated as a heading over nothing:
+       *
+       *     Our Services
+       *     Services Offered
+       *     (nothing)
+       *
+       * Measured on a real account: three rows, `status=draft`, each WITH the
+       * description the interview collected, and none of them reached the
+       * prompt. The copy then had no services to describe, so the process steps
+       * fell back to generic ones and the FAQ had nothing to answer.
+       *
+       * The restriction itself is right, and the reason above this line is
+       * right: a client must not read about something they can never book. But
+       * that is a risk of a LIVE page. A fresh generation writes
+       * `status: 'draft'` (see the create below), so the page and the services
+       * are published by the same owner at the same time, and a draft page
+       * describing draft services cannot mislead anybody.
+       *
+       * An UPDATE keeps whatever status the page already has, so it may be
+       * live: that path stays bookable-only, which needs no extra query and
+       * leaves the conservative behaviour exactly where the risk is.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const pageMayBeLive = !!options.pageId;
+      const servicesResult = await schedulingServiceRepository.listAll(userId, pageMayBeLive);
       if (servicesResult.error) {
         logger.warn({ err: servicesResult.error, userId }, 'Failed to fetch services (proceeding with empty array)');
       }
@@ -512,6 +545,10 @@ export class WebsiteGenerationService {
         { hero: heroImage, about: aboutImage },
         galleryImages,
         wantsStats,
+        /* The interview's answers, so the journey is built from what the
+           business sells rather than from whichever rows happen to be
+           publishable at this second. */
+        this.businessFacts(profile, services),
       );
 
       /*
@@ -670,8 +707,9 @@ export class WebsiteGenerationService {
     hasRealTestimonials = false,
     focus?: { title: string; description?: string }
   ): Promise<GeneratedContent> {
-    const sections = this.planSections(services, hasRealTestimonials);
-    const prompt = this.buildPrompt(profile, services, sections, focus);
+    const facts = this.businessFacts(profile, services);
+    const sections = this.planSections(services, hasRealTestimonials, facts);
+    const prompt = this.buildPrompt(profile, services, sections, focus, facts);
     const language = profile.language || 'en';
 
     const systemPrompts: Record<string, string> = {
@@ -730,7 +768,16 @@ export class WebsiteGenerationService {
       }
 
       logger.debug({ userId: profile.user_id, language }, 'LLM website content generated');
-      return { content: parsed.data as unknown as WebsiteContent, source: 'llm' };
+      return {
+        content: this.fillPlannedGaps(
+          parsed.data as unknown as WebsiteContent,
+          sections,
+          facts,
+          services,
+          language
+        ),
+        source: 'llm',
+      };
 
     } catch (error) {
       logger.error({ err: error, userId: profile.user_id }, 'LLM call failed');
@@ -757,7 +804,49 @@ export class WebsiteGenerationService {
    * paying for copy nobody would ever read and a client could meet a "Book
    * Your Session" heading over a catalogue of downloads.
    */
-  private planSections(services: any[], hasRealTestimonials = false): {
+  /**
+   * What the INTERVIEW established, as distinct from what the catalogue holds.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The plan used to take one input: the list of bookable services. Measured on
+   * a real account, that was empty at the moment of generation — three services
+   * had been created as drafts five seconds earlier and the first was not
+   * activated for another ninety-seven. So `services: false`, `process: false`,
+   * the prompt was never asked for service descriptions or process steps, and
+   * the page shipped with those sections empty.
+   *
+   * The onboarding answers were sitting on the profile the whole time:
+   * `service_count: 3`, `sells_scheduled: true`, `collection_method: 'invoice'`.
+   * A business that answered those sells something, whether or not a row
+   * happens to be publishable this second.
+   *
+   * So the facts come from the answers and the catalogue refines them, rather
+   * than the catalogue deciding alone.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private businessFacts(profile: any, services: any[]): {
+    sellsSomething: boolean;
+    isScheduled: boolean;
+    collects: string | null;
+    needsIntake: boolean;
+    brief?: BusinessBrief;
+  } {
+    const answers = profile?.extracted_data ?? {};
+
+    return {
+      sellsSomething: services.length > 0 || Number(answers.service_count ?? 0) > 0,
+      /* The rows win where there are any — a catalogue is a later, more
+         specific statement than the one-tap answer that preceded it. */
+      isScheduled: services.length
+        ? services.some((s: any) => s.is_scheduled !== false)
+        : answers.sells_scheduled === true,
+      collects: answers.collection_method ?? null,
+      needsIntake: answers.needs_intake === true,
+      brief: answers.business_brief,
+    };
+  }
+
+  private planSections(services: any[], hasRealTestimonials = false, facts?: ReturnType<WebsiteGenerationService['businessFacts']>): {
     services: boolean;
     process: boolean;
     booking: boolean;
@@ -766,13 +855,21 @@ export class WebsiteGenerationService {
     contact: boolean;
     cta: boolean;
   } {
-    const hasServices = services.length > 0;
+    /* The answers, where the caller read them; the catalogue alone otherwise,
+       which is what every existing caller got. */
+    const hasServices = facts?.sellsSomething ?? services.length > 0;
 
     return {
       services: hasServices,
-      // A process block describes how someone gets what they came for; with
-      // nothing to sell there is no process to describe.
-      process: hasServices,
+      /*
+       * A process block describes how someone gets what they came for; with
+       * nothing to sell there is no process to describe.
+       *
+       * Also planned where the owner walked us through how the work runs, even
+       * with no catalogue: that answer IS a process section, and refusing to
+       * plan one throws away the only part of the interview written to fill it.
+       */
+      process: hasServices || (facts?.brief?.delivery?.length ?? 0) > 0,
       /*
        * Not a default section.
        *
@@ -818,7 +915,8 @@ export class WebsiteGenerationService {
     profile: any,
     services: any[],
     sections: ReturnType<WebsiteGenerationService['planSections']>,
-    focus?: { title: string; description?: string }
+    focus?: { title: string; description?: string },
+    facts?: ReturnType<WebsiteGenerationService['businessFacts']>
   ): string {
     const vertical = profile.vertical || 'business';
     const subVertical = profile.sub_vertical || null;
@@ -835,8 +933,23 @@ export class WebsiteGenerationService {
 
     // Extract additional data from extracted_data if available
     const extractedData = profile.extracted_data || {};
-    const targetAudience = extractedData.target_audience || [];
-    const clientsPerWeek = profile.clients_per_week || extractedData.clients_per_week || null;
+
+    /*
+     * WHO IT IS FOR: the brief first, the old guess second.
+     * ─────────────────────────────────────────────────────────────────────────
+     * Two sources answered this and the weaker one won. `target_audience` was
+     * inferred by the story extraction from one sentence, under an instruction
+     * to "be GENEROUS in inference", and arrived as a word or two:
+     * ["parents", "families"]. `brief.audience` is the owner's reply to a
+     * question asked only about this, and arrives as what they actually said:
+     * "competitive gymnasts, ages 8 to 16, mostly brought by a parent".
+     *
+     * The prompt below uses this twice, including "use language that resonates
+     * with…", so the difference between the two is the difference between copy
+     * written for a demographic and copy written for a person.
+     */
+    const briefAudience = facts?.brief?.audience ?? [];
+    const targetAudience = briefAudience.length ? briefAudience : (extractedData.target_audience || []);
 
     // A product has no duration and a quoted service has no price, so neither
     // is stated as a fact the copy can lean on — "null minutes" in the prompt
@@ -850,7 +963,21 @@ export class WebsiteGenerationService {
             ? 'price agreed per client'
             : s.price > 0 ? `${s.price} ${s.currency}` : 'Free',
         ].filter(Boolean);
-        return `- ${s.service_name}: ${parts.join(', ')}`;
+        /*
+         * The owner's own sentence about the service, where there is one.
+         *
+         * Without it this line is a name and a price, and the model writes the
+         * service card from the name alone: "Personal Training" becomes
+         * "professional personal training tailored to your needs". The
+         * interview now asks what the service IS precisely so this line has
+         * something in it, and the description is put FIRST because it is the
+         * part worth writing from.
+         */
+        const own = typeof s.description === 'string' ? s.description.trim() : '';
+        const facts = parts.length ? ` (${parts.join(', ')})` : '';
+        return own
+          ? `- ${s.service_name}: ${own}${facts}`
+          : `- ${s.service_name}: ${parts.join(', ')}`;
       })
       .join('\n');
 
@@ -922,6 +1049,68 @@ Todos los valores deben estar en español.
       retain_clients: 'improve client retention',
     };
 
+    /*
+     * WHAT THE OWNER ACTUALLY SAID ABOUT THE BUSINESS.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The three blocks below — pain points, goals, audience — read from fields
+     * the onboarding extraction returns as empty arrays on a real account. They
+     * resolve to empty strings, and the model is left writing from a vertical
+     * and a one-line description. That is where "Transform Your Fitness
+     * Journey" comes from: there was nothing specific to say.
+     *
+     * The brief is the interview's answer to that — who the clients are, what
+     * they get, what makes this business the choice, what stands behind it, and
+     * what stops people buying. It goes FIRST, because it is the only part of
+     * this prompt that distinguishes one trainer from another.
+     *
+     * `voice` matters on its own: the generated About copy switched between
+     * "our mission", "I bring" and "We work" in a single paragraph because
+     * nothing recorded whether this business is an "I" or a "we".
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const brief = facts?.brief;
+    const briefText = brief
+      ? [
+          '',
+          '=== WHAT THE OWNER TOLD US ===',
+          'Use these. They are the specifics that make this page theirs rather than',
+          'generic copy for the trade. Do not contradict them and do not add claims',
+          'they do not contain.',
+          brief.audience?.length ? `Who it is for: ${brief.audience.join('; ')}` : '',
+          brief.outcome?.length ? `What the client gets: ${brief.outcome.join('; ')}` : '',
+          brief.differentiators?.length
+            ? `What makes them the choice: ${brief.differentiators.join('; ')}`
+            : '',
+          brief.credentials?.length ? `What stands behind it: ${brief.credentials.join('; ')}` : '',
+          brief.objections?.length
+            ? `What stops people buying (answer these in the FAQ and the reassurance): ${brief.objections.join('; ')}`
+            : '',
+          /*
+           * The one brief field that answers a SECTION rather than a sentence,
+           * so it is pointed at that section by name.
+           *
+           * Before it existed, `processSteps` was filled by `journeySteps()`,
+           * which reads the BOOKING journey: "pick a time, get a confirmation,
+           * turn up". True of every business here and interesting about none of
+           * them. This is the owner describing their actual work, which is what
+           * a visitor deciding whether to hire them wants to read.
+           */
+          brief.delivery?.length
+            ? `HOW THE WORK RUNS, in the owner's words. Write processSteps from THIS, in this ` +
+              `order, and keep it about the work rather than about booking or paying: ` +
+              `${brief.delivery.join('; ')}`
+            : '',
+          brief.voice === 'individual'
+            ? 'VOICE: one person. Write as "I", never "we" or "our team".'
+            : brief.voice === 'team'
+              ? 'VOICE: a team. Write as "we".'
+              : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : '';
+
     // Build pain points section if available
     const painPointsText = painPoints.length > 0
       ? `\nBusiness Challenges (problems they solve for clients):\n${painPoints.map((p: string) => `- ${painPointDescriptions[p] || p}`).join('\n')}`
@@ -937,10 +1126,20 @@ Todos los valores deben estar en español.
       ? `\nTarget Audience: ${targetAudience.join(', ')}`
       : '';
 
-    // Build volume context if available
-    const volumeText = clientsPerWeek
-      ? `\nBusiness Volume: Approximately ${clientsPerWeek} clients per week`
-      : '';
+    /*
+     * NO VOLUME LINE. It was a number nobody gave.
+     * ─────────────────────────────────────────────────────────────────────────
+     * `clients_per_week` has no question anywhere in onboarding. The story
+     * extraction was told to guess it from an adjective ("busy" = 15, "just
+     * starting" = 3, "small practice" = 5) and `computeConfiguration` then
+     * applied `|| 5`. So this line told the copywriter "Business Volume:
+     * Approximately 5 clients per week" about businesses that had never been
+     * asked, and a model given a number will use it.
+     *
+     * Kept as an empty string rather than removed from the template, so a
+     * future question that genuinely collects this has somewhere to land.
+     */
+    const volumeText = '';
 
     // Build payment context
     const paymentText = paymentMode !== 'none'
@@ -980,6 +1179,7 @@ ${volumeText}
 ${painPointsText}
 ${goalsText}
 ${paymentText}
+${briefText}
 
 === SERVICES OFFERED ===
 ${serviceList || '- Services to be added'}
@@ -1068,16 +1268,20 @@ ${sections.services ? `  "serviceDescriptions": {
 ${painPoints.length > 0 ? `- Subtly address these pain points in the messaging: ${painPoints.join(', ')}` : ''}
 ${goals.length > 0 ? `- Align content with these business goals: ${goals.join(', ')}` : ''}
 
-=== TESTIMONIALS GUIDELINES ===
-- Generate 2-3 realistic placeholder testimonials
-- Use generic but believable names (e.g., "Sarah M.", "David R.")
-- Roles should match the target audience (e.g., "New Client", "Regular Client", "Business Owner")
-- Quotes should highlight specific benefits and outcomes
-- Make testimonials feel authentic - avoid generic praise
+${sections.testimonials ? `=== TESTIMONIALS GUIDELINES ===
+- Use ONLY reviews this business has actually collected, supplied above.
+- Never invent a quote, a name or a role.
 
-=== FAQ GUIDELINES ===
+` : `=== TESTIMONIALS ===
+- Do NOT produce testimonials. This business has none to show, and an invented
+  endorsement is a claim its owner cannot stand behind, published under their
+  name. The section exists on the page for them to fill in themselves.
+
+`}=== FAQ GUIDELINES ===
 - Generate 3-4 common questions relevant to this ${subVertical || vertical} business
-- Questions should address: booking process, what to expect, pricing/payment, preparation
+${brief?.objections?.length
+  ? `- ANSWER THESE FIRST. They are what the owner says actually stops people buying:\n${brief.objections.map((o: string) => `    · ${o}`).join('\n')}`
+  : '- Questions should address: booking process, what to expect, pricing/payment, preparation'}
 - Answers should be concise, helpful, and reduce friction to booking
 
 Generate compelling, professional content that clearly communicates the value proposition and encourages visitors to ${services.length > 0 ? 'book a session' : 'get in touch'}.
@@ -1113,7 +1317,7 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
    *   null for any section means that section has no picture — which is what
    *   every block already handled, because until now it was the only case.
    */
-  private buildBlocks(pageId: string, content: WebsiteContent, services: any[], language: string = 'en', companyName: string = 'Your Business', needsIntake: boolean = false, sections?: ReturnType<WebsiteGenerationService['planSections']>, images: Partial<Record<'hero' | 'about', string | null>> = {}, gallery: string[] = [], wantsStats = false): any[] {
+  private buildBlocks(pageId: string, content: WebsiteContent, services: any[], language: string = 'en', companyName: string = 'Your Business', needsIntake: boolean = false, sections?: ReturnType<WebsiteGenerationService['planSections']>, images: Partial<Record<'hero' | 'about', string | null>> = {}, gallery: string[] = [], wantsStats = false, facts?: ReturnType<WebsiteGenerationService['businessFacts']>): any[] {
     const plan = sections ?? this.planSections(services);
     // Block title translations
     const blockTitles: Record<string, Record<string, string>> = {
@@ -1311,16 +1515,22 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
        * two of the five recipes have always named a section that could not
        * appear however many clients the business had.
        */
-      ...(wantsStats
-        ? [
-            {
-              page_id: pageId,
-              block_type: 'stats',
-              position: 2,
-              content: { title: t('stats'), stats: [] },
-            },
-          ]
-        : []),
+      /*
+       * Stats: not built, because nothing can fill it.
+       *
+       * There is no `stats` key anywhere in the prompt — the model is never
+       * asked — and this emitted `stats: []` regardless, so "Our Impact"
+       * rendered as a heading over nothing on every site that ordered it.
+       *
+       * The numbers a stats block wants are claims: how many clients, how many
+       * years, how many sessions. Inventing them is the testimonials problem
+       * with figures instead of names. When the platform can count something
+       * true — bookings taken, clients on the books — this can come back
+       * reading from that.
+       *
+       * `wantsStats` stays in the signature so the recipes that order one are
+       * not quietly rewritten; it simply no longer produces an empty section.
+       */
 
       /*
        * Gallery.
@@ -1429,27 +1639,61 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
           // The booking journey itself comes from the service now; what is left
           // here is what the page describes and whether an intake form is
           // collected, so both follow the same facts.
-          client_flow: services.length > 0
+          /*
+           * Built from what the business SELLS, which the interview answered
+           * even when the catalogue was still drafts.
+           *
+           * This read `services.length` alone. On a real account that was zero
+           * at the moment of generation — three services created five seconds
+           * earlier, none activated for another ninety-seven — so the whole
+           * journey collapsed to `['confirmation']` and the page described
+           * nothing. `sells_scheduled: true` and `collection_method: 'invoice'`
+           * were on the profile the entire time.
+           *
+           * Rows still refine it where there are any: a catalogue is a later
+           * and more specific statement than the one-tap answer.
+           */
+          client_flow: facts?.sellsSomething || services.length > 0
             ? [
-                ...(services.some(s => s.is_scheduled !== false) ? ['scheduling'] : []),
+                ...(services.length
+                  ? services.some(s => s.is_scheduled !== false) ? ['scheduling'] : []
+                  : facts?.isScheduled ? ['scheduling'] : []),
                 'client_info',
-                ...(services.some(s => s.collection === 'online' && (s.price || 0) > 0) ? ['payment'] : []),
-                ...(needsIntake ? ['intake'] : []),
+                ...(services.length
+                  ? services.some(s => s.collection === 'online' && (s.price || 0) > 0) ? ['payment'] : []
+                  : facts?.collects && facts.collects !== 'none' ? ['payment'] : []),
+                ...(needsIntake || facts?.needsIntake ? ['intake'] : []),
                 'confirmation',
               ]
             : ['confirmation'],
-          services_only: services.length === 0,
+          services_only: !(facts?.sellsSomething || services.length > 0),
         },
       },
 
-      // Testimonials block with AI-generated content
+      /*
+       * Testimonials: the SECTION is created, and it is left empty on purpose.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * Everything else on this page is written for the owner. This one cannot
+       * be: a named endorsement is a claim only a real client can make, and
+       * the previous fallback published "Amazing experience! Highly
+       * recommended." — Sarah M. onto the site of a business that had never had
+       * a client. Live testing showed the model still inventing three of them
+       * when the prompt left the door open, which is why the prompt now closes
+       * it explicitly.
+       *
+       * So the heading exists and the editor has somewhere to put real ones,
+       * and nothing is generated into it. `content.testimonials` is read only
+       * where the business supplied its own.
+       * ─────────────────────────────────────────────────────────────────────
+       */
       {
         page_id: pageId,
         block_type: 'testimonials',
         position: 5,
         content: {
           title: heading('testimonials', 'testimonials'),
-          testimonials: content.testimonials || [],
+          testimonials: plan.testimonials ? content.testimonials || [] : [],
         },
       },
 
@@ -1594,6 +1838,238 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
    * Get fallback content if LLM fails
    * Uses available profile data to generate meaningful fallback content
    */
+  /**
+   * Nothing the plan asked for may reach the page empty.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `getFallbackContent` covers the whole response failing. This covers the
+   * commoner case: a response that parsed, with one section missing from it.
+   * The schema defaults those to `[]` — which is the right call for a schema
+   * and the wrong thing to publish, because the block builder then writes a
+   * heading over nothing and the site looks broken rather than thin.
+   *
+   * Written from facts the platform already holds, never invented:
+   *
+   *   · process steps come from the journey the interview described, which is
+   *     the same sequence `client_flow` renders;
+   *   · a service's description comes from its own name, length and price.
+   *
+   * Testimonials are NOT filled, here or anywhere. An absent endorsement is the
+   * one gap that must stay a gap.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private fillPlannedGaps(
+    content: WebsiteContent,
+    plan: ReturnType<WebsiteGenerationService['planSections']>,
+    facts: ReturnType<WebsiteGenerationService['businessFacts']>,
+    services: any[],
+    language: string
+  ): WebsiteContent {
+    const filled: WebsiteContent = { ...content };
+
+    if (plan.process && !(content.processSteps?.length)) {
+      const steps = this.journeySteps(facts, services, language);
+      if (steps.length) {
+        logger.info({ steps: steps.length }, 'Process steps were missing; written from the journey');
+        filled.processSteps = steps as WebsiteContent['processSteps'];
+      }
+    }
+
+    /*
+     * A planned FAQ with nothing in it.
+     *
+     * Reported as "FAQ is missing content". The FAQ is written from
+     * `brief.objections` — what the owner says actually stops people buying —
+     * and on a measured account that field came back `[]`, so the model had no
+     * question to answer and returned none. The section was planned, so the
+     * heading shipped over empty space.
+     *
+     * Filled from the answers the owner DID give: whether clients book a time,
+     * how the money arrives, whether there is a form first. Those are facts,
+     * not invention, and they are the three things a first-time visitor
+     * actually asks. `journeySteps` fills the process block the same way and
+     * for the same reason.
+     */
+    if (plan.faq && !(content.faq?.length)) {
+      const asked = this.faqFromFacts(facts, services, language);
+      if (asked.length) filled.faq = asked as WebsiteContent['faq'];
+    }
+
+    if (plan.services && services.length && !Object.keys(content.serviceDescriptions ?? {}).length) {
+      const written: Record<string, { description: string; icon: string }> = {};
+      for (const service of services) {
+        written[service.service_name] = {
+          description: this.serviceSentence(service, language),
+          icon: this.getDefaultIconForService(service.service_name),
+        };
+      }
+      logger.info({ services: services.length }, 'Service descriptions were missing; written from the catalogue');
+      filled.serviceDescriptions = written as WebsiteContent['serviceDescriptions'];
+    }
+
+    return filled;
+  }
+
+  /**
+   * The journey in words — the same steps `client_flow` draws, as prose.
+   *
+   * Deliberately plain. This runs only when the model returned nothing, and a
+   * true, dull sentence about booking a time beats a heading over a void.
+   */
+  /**
+   * The questions a first-time visitor asks, answered from what we were told.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Only ever a FALLBACK: the FAQ the model writes from `brief.objections` is
+   * better, because it answers what this owner says actually stops people. This
+   * runs when that came back empty, which on a measured account it did.
+   *
+   * Every answer here is read off an answer the owner gave: do clients book a
+   * time, how does the money arrive, is there a form first. Nothing is claimed
+   * about price, speed, results or qualifications, because we do not know any
+   * of those and a published FAQ is exactly where an invented one would be
+   * believed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private faqFromFacts(
+    facts: ReturnType<WebsiteGenerationService['businessFacts']>,
+    services: any[],
+    language: string
+  ): Array<{ question: string; answer: string }> {
+    const copy = {
+      en: {
+        book: ['How do I book?', 'Pick a time that suits you on this page, and you will get a confirmation straight away.'],
+        enquire: ['How do I get started?', 'Send a message through this page and you will hear back with the next step.'],
+        payOnline: ['How do I pay?', 'You pay by card when you book, so nothing is left to sort out afterwards.'],
+        payInvoice: ['How do I pay?', 'An invoice follows, with everything agreed in writing.'],
+        free: ['Does it cost anything?', 'No. There is nothing to pay.'],
+        intake: ['Do I need to fill anything in first?', 'Yes, a short form before we meet, so the first session is ready for you.'],
+      },
+      he: {
+        book: ['איך קובעים?', 'בוחרים בדף הזה זמן שמתאים לכם, ומקבלים אישור מיד.'],
+        enquire: ['איך מתחילים?', 'שולחים הודעה מהדף הזה ומקבלים חזרה את הצעד הבא.'],
+        payOnline: ['איך משלמים?', 'משלמים בכרטיס בזמן ההזמנה, כך שלא נשאר מה להסדיר אחר כך.'],
+        payInvoice: ['איך משלמים?', 'נשלחת חשבונית, עם כל מה שסוכם בכתב.'],
+        free: ['האם זה עולה כסף?', 'לא. אין מה לשלם.'],
+        intake: ['צריך למלא משהו לפני?', 'כן, טופס קצר לפני המפגש, כדי שהמפגש הראשון יהיה מוכן בשבילכם.'],
+      },
+      es: {
+        book: ['¿Cómo reservo?', 'Elige en esta página la hora que te convenga y recibirás la confirmación al momento.'],
+        enquire: ['¿Cómo empiezo?', 'Envía un mensaje desde esta página y te responderemos con el siguiente paso.'],
+        payOnline: ['¿Cómo pago?', 'Pagas con tarjeta al reservar, así no queda nada pendiente.'],
+        payInvoice: ['¿Cómo pago?', 'Recibirás una factura con todo lo acordado por escrito.'],
+        free: ['¿Tiene algún costo?', 'No. No hay nada que pagar.'],
+        intake: ['¿Tengo que rellenar algo antes?', 'Sí, un formulario breve antes de vernos, para que la primera sesión esté lista.'],
+      },
+    }[language === 'he' ? 'he' : language === 'es' ? 'es' : 'en'];
+
+    const scheduled = services.length
+      ? services.some(s => s.is_scheduled !== false)
+      : facts?.isScheduled;
+    const collects = facts?.collects;
+
+    const asked: Array<{ question: string; answer: string }> = [];
+
+    asked.push(scheduled
+      ? { question: copy.book[0], answer: copy.book[1] }
+      : { question: copy.enquire[0], answer: copy.enquire[1] });
+
+    /*
+     * `facts.collects` is `collection_method`, whose values are
+     * `card_online | invoice | in_person | mixed | none`. Checking it for
+     * 'online' matches nothing — written that way once here and caught only
+     * because the field was read before it was trusted.
+     *
+     * `null` means they never said, and that is not a question to answer: a
+     * guess about how to pay is the one FAQ answer a visitor would act on.
+     */
+    if (collects === 'none') {
+      asked.push({ question: copy.free[0], answer: copy.free[1] });
+    } else if (collects === 'card_online' || collects === 'mixed') {
+      asked.push({ question: copy.payOnline[0], answer: copy.payOnline[1] });
+    } else if (collects === 'invoice' || collects === 'in_person') {
+      asked.push({ question: copy.payInvoice[0], answer: copy.payInvoice[1] });
+    }
+
+    if (facts?.needsIntake) asked.push({ question: copy.intake[0], answer: copy.intake[1] });
+
+    return asked;
+  }
+
+  private journeySteps(
+    facts: ReturnType<WebsiteGenerationService['businessFacts']>,
+    services: any[],
+    language: string
+  ): Array<{ title: string; description: string; icon: string }> {
+    const copy = {
+      en: {
+        book: ['Get in touch', 'Choose a time that suits you and tell us what you are after.'],
+        details: ['Tell us about yourself', 'A few details so the first session is ready for you.'],
+        pay: ['Settle up', 'An invoice follows, with everything agreed in writing.'],
+        done: ['You are booked', 'A confirmation arrives, and we see you then.'],
+      },
+      he: {
+        book: ['יוצרים קשר', 'בוחרים זמן שמתאים לכם ומספרים מה אתם מחפשים.'],
+        details: ['מספרים קצת על עצמכם', 'כמה פרטים כדי שהמפגש הראשון יהיה מוכן בשבילכם.'],
+        pay: ['מסדירים תשלום', 'נשלחת חשבונית, עם כל מה שסוכם בכתב.'],
+        done: ['נקבע!', 'מגיע אישור, ונתראה.'],
+      },
+      es: {
+        book: ['Ponte en contacto', 'Elige la hora que te convenga y cuéntanos qué buscas.'],
+        details: ['Cuéntanos sobre ti', 'Unos datos para que la primera sesión esté lista.'],
+        pay: ['Haz el pago', 'Recibirás una factura con todo lo acordado por escrito.'],
+        done: ['Reserva confirmada', 'Te llega la confirmación y nos vemos.'],
+      },
+    }[language === 'he' ? 'he' : language === 'es' ? 'es' : 'en'];
+
+    const scheduled = services.length
+      ? services.some(s => s.is_scheduled !== false)
+      : facts?.isScheduled;
+    const collects = facts?.collects && facts.collects !== 'none';
+
+    const steps: Array<{ title: string; description: string; icon: string }> = [];
+
+    if (scheduled) steps.push({ title: copy.book[0], description: copy.book[1], icon: 'calendar' });
+    steps.push({ title: copy.details[0], description: copy.details[1], icon: 'user' });
+    if (collects) steps.push({ title: copy.pay[0], description: copy.pay[1], icon: 'clipboard' });
+    steps.push({ title: copy.done[0], description: copy.done[1], icon: 'check' });
+
+    return steps;
+  }
+
+  /** One service, described from what it actually is. */
+  private serviceSentence(service: any, language: string): string {
+    const minutes = service.duration_minutes;
+    const price = service.price;
+
+    const parts = {
+      en: {
+        length: minutes ? `${minutes} minutes` : null,
+        quoted: 'Priced for each client',
+        free: 'Free',
+      },
+      he: {
+        length: minutes ? `${minutes} דקות` : null,
+        quoted: 'המחיר נקבע מול כל לקוח',
+        free: 'חינם',
+      },
+      es: {
+        length: minutes ? `${minutes} minutos` : null,
+        quoted: 'Precio acordado con cada cliente',
+        free: 'Gratis',
+      },
+    }[language === 'he' ? 'he' : language === 'es' ? 'es' : 'en'];
+
+    const money =
+      price === null || price === undefined
+        ? parts.quoted
+        : price > 0
+          ? `${service.currency ?? ''} ${price}`.trim()
+          : parts.free;
+
+    return [service.service_name, parts.length, money].filter(Boolean).join(' · ');
+  }
+
   private getFallbackContent(profile: any, services: any[]): WebsiteContent {
     const companyName = profile.company_name || 'Business';
     const vertical = profile.vertical || 'business';

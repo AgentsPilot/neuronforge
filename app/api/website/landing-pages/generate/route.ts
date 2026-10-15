@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
+import type { BusinessBrief } from '@/lib/business-os/onboarding/businessBrief';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
@@ -162,7 +163,11 @@ export async function POST(request: NextRequest) {
     const [{ data: profile }, { data: preferences }] = await Promise.all([
       supabaseServer
         .from('business_profiles')
-        .select('company_name, vertical, sub_vertical, target_audience, unique_value_proposition, language')
+        /* `extracted_data` carries the business brief the onboarding interview
+           collected — see `lib/business-os/onboarding/businessBrief`. Without it
+           this page is written from a vertical and a service name, which is the
+           same starvation the full-site generator had. */
+        .select('company_name, vertical, sub_vertical, target_audience, unique_value_proposition, language, extracted_data')
         .eq('user_id', user.id)
         .single(),
       supabaseServer
@@ -409,6 +414,7 @@ function buildGenerationPrompt(
     sub_vertical?: string;
     target_audience?: string;
     unique_value_proposition?: string;
+    extracted_data?: { business_brief?: BusinessBrief } | null;
   } | null,
   language: 'hebrew' | 'english' | 'spanish' | 'other'
 ): string {
@@ -432,6 +438,38 @@ function buildGenerationPrompt(
    */
   const uniqueValue = profile?.unique_value_proposition || '';
   const specialism = profile?.sub_vertical || '';
+
+  /*
+   * AND THE BRIEF — the same omission as the two above, one level up.
+   *
+   * `target_audience` and `unique_value_proposition` are single strings a
+   * business may never have filled in. The brief is what the onboarding
+   * interview actually asked for and got: who the clients are, what they leave
+   * with, what makes this the choice, what stands behind it, and what stops
+   * people buying.
+   *
+   * A landing page is the surface where those matter most — it exists to
+   * convert one visitor for one offer — and without them the differentiators
+   * are invented from a service name, which is how every page in a trade ends
+   * up reading the same.
+   */
+  const brief = profile?.extracted_data?.business_brief;
+  const briefText = brief
+    ? [
+        brief.audience?.length ? `Who it is for: ${brief.audience.join('; ')}` : '',
+        brief.outcome?.length ? `What the client gets: ${brief.outcome.join('; ')}` : '',
+        brief.differentiators?.length ? `What makes them the choice: ${brief.differentiators.join('; ')}` : '',
+        brief.credentials?.length ? `What stands behind it: ${brief.credentials.join('; ')}` : '',
+        brief.objections?.length ? `What stops people buying: ${brief.objections.join('; ')}` : '',
+        brief.voice === 'individual'
+          ? 'VOICE: one person. Write as "I", never "we".'
+          : brief.voice === 'team'
+            ? 'VOICE: a team. Write as "we".'
+            : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : '';
 
   // Format duration in a readable way
   let durationText = '';
@@ -503,6 +541,8 @@ ${vertical ? `INDUSTRY: ${vertical}` : ''}
 ${specialism ? `SPECIALISM: ${specialism}` : ''}
 ${targetAudience ? `TARGET AUDIENCE: ${targetAudience}` : ''}
 ${uniqueValue ? `WHAT SETS THIS BUSINESS APART (the business's own words — use this rather than inventing a differentiator): ${uniqueValue}` : ''}
+${briefText ? `WHAT THE OWNER TOLD US ABOUT THE BUSINESS (their own words — build the page on these, contradict none of them, and add no claim they do not contain):
+${briefText}` : ''}
 
 ═══════════════════════════════════════════════════════════════
 STEP 1: UNDERSTAND WHAT IS BEING SOLD

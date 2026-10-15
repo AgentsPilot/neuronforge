@@ -11,6 +11,10 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { z } from 'zod';
 import { blankAsAbsent } from '@/lib/validation/blankFields';
+import { supabaseServer } from '@/lib/supabaseServer';
+import { businessDayFor, resolveBusinessTimezone } from '@/lib/business-os/businessDay';
+import { fromBusinessLocalInput } from '@/lib/scheduling/businessTime';
+import { parseContactSearch, type ContactSearchTerm } from '@/lib/crm/contactSearchTerms';
 
 const logger = createLogger({ module: 'CRMContactsAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -55,6 +59,19 @@ const listContactsSchema = z.object({
   stage: z.string().optional(),
   tags: z.array(z.string()).optional(),
   search: z.string().optional(),
+  /* Derived from `search` by `parseContactSearch`, never read off the query
+     string — the client sends one box, and the parts are this route's reading
+     of it. Validated all the same, because they reach a query builder. */
+  stages: z.array(z.string().max(50)).optional(),
+  sources: z.array(z.string().max(50)).optional(),
+  allTags: z.array(z.string().max(100)).optional(),
+  createdFromUtc: z.string().optional(),
+  createdToUtc: z.string().optional(),
+  hasEmail: z.boolean().optional(),
+  hasPhone: z.boolean().optional(),
+  hasBookings: z.boolean().optional(),
+  hasOpenTasks: z.boolean().optional(),
+  inStageForDays: z.number().int().positive().max(3650).optional(),
   limit: z.number().min(1).max(100).optional(),
   offset: z.number().min(0).optional(),
   orderBy: z.enum(['created_at', 'updated_at', 'first_name', 'last_name']).optional(),
@@ -207,10 +224,91 @@ export async function GET(request: NextRequest) {
     const orderBy = searchParams.get('orderBy');
     const orderDirection = searchParams.get('orderDirection');
 
+    /*
+     * THE SEARCH BOX'S OWN FILTERS, read from the same string the field draws
+     * its chips from — `parseContactSearch` is the SAME call, so the chips on
+     * screen and the rows that come back cannot describe different questions.
+     *
+     * Translated into SQL rather than applied to the result, because the board
+     * pages twenty contacts per column: a filter applied after a page arrived
+     * would show three of twenty and hide every match on page two.
+     *
+     * A failed clock read is not fatal — `resolveBusinessTimezone` falls back
+     * to UTC, which can move a period boundary by hours but still answers.
+     * Failing the whole list because a preferences row would not load would be
+     * the wrong trade.
+     */
+    const rawSearch = searchParams.get('search') || undefined;
+
+    const preferences = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const { timezone } = resolveBusinessTimezone({
+      preferencesTimezone: preferences.data?.timezone,
+    });
+
+    const terms = parseContactSearch(rawSearch ?? '', businessDayFor(new Date(), timezone).date);
+
+    const of = <K extends ContactSearchTerm['kind']>(kind: K) =>
+      terms.filter(term => term.kind === kind);
+
+    const periods = of('period') as Array<Extract<ContactSearchTerm, { kind: 'period' }>>;
+
+    /* The narrowest window the chips describe. Two periods are an AND like
+       every other pair of chips, so the answer is their overlap. */
+    const createdFromUtc = periods.length
+      ? fromBusinessLocalInput(
+          `${periods.map(p => p.from).sort().slice(-1)[0]}T00:00`,
+          timezone
+        ).toISOString()
+      : undefined;
+
+    const createdToUtc = periods.length
+      ? fromBusinessLocalInput(
+          `${periods.map(p => p.to).sort()[0]}T23:59`,
+          timezone
+        ).toISOString()
+      : undefined;
+
+    /** The four presence filters, as the repository's own option names. */
+    const presence = () => {
+      const named: Record<string, boolean> = {};
+      for (const term of of('has') as Array<{ field: string; present: boolean }>) {
+        const option =
+          term.field === 'email' ? 'hasEmail'
+            : term.field === 'phone' ? 'hasPhone'
+              : term.field === 'bookings' ? 'hasBookings'
+                : 'hasOpenTasks';
+        named[option] = term.present;
+      }
+      return named;
+    };
+
     const queryParams = {
       stage: searchParams.get('stage') || undefined,
       tags: searchParams.get('tags')?.split(',') || undefined,
-      search: searchParams.get('search') || undefined,
+      /* Only the free text goes to the name/email/phone matcher. A chip's own
+         characters would never match a name, so leaving them in would make
+         every filtered search return nothing. */
+      search: of('text').map(term => term.raw).join(' ') || undefined,
+      stages: of('stage').map(term => (term as { value: string }).value),
+      sources: of('source').map(term => (term as { value: string }).value),
+      allTags: of('tag').map(term => (term as { value: string }).value),
+      createdFromUtc,
+      createdToUtc,
+      /*
+       * `has:` / `no:`. The LAST one wins where somebody typed both — the box
+       * is one string and "has:email no:email" is a contradiction, not an
+       * intersection, so answering with the most recent is the only reading
+       * that returns anything.
+       */
+      ...presence(),
+      inStageForDays: (of('in_stage') as Array<{ days: number }>)
+        .map(term => term.days)
+        .sort((a, b) => b - a)[0],
       limit: searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : undefined,
       offset: searchParams.get('offset') ? parseInt(searchParams.get('offset')!) : undefined,
       orderBy: orderBy ? orderBy as 'created_at' | 'updated_at' | 'first_name' | 'last_name' : undefined,

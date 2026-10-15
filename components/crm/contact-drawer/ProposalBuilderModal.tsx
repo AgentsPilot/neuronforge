@@ -42,6 +42,7 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { ATTACHABLE_DOCUMENT_TYPES, ATTACHABLE_ACCEPT } from '@/lib/crm/attachableDocumentTypes';
 import { windowsForDate, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
 import { closedDayVerdict } from '@/lib/scheduling/closedDay';
+import { DocumentPreviewBody } from './DocumentPreviewBody';
 import {
   recurringLocalInputs,
   cadenceOf,
@@ -153,6 +154,22 @@ interface ProposalBuilderModalProps {
      * to the business default because the price changed.
      */
     payment_terms_days?: number | null;
+    /**
+     * What this version said, for READING IT BACK.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The drawer passes a whole `DrawerProposal` here, and that object has
+     * carried `valid_until` all along — this type simply never declared it, so
+     * TypeScript discarded it at the boundary. Opening an accepted or declined
+     * quote therefore showed an empty expiry for a quote that certainly had one.
+     *
+     * Only read-only mode fills the field from it. A REVISION still opens with
+     * it blank, and that is deliberate: by the time anyone is revising, the old
+     * date is in the past, and inheriting it silently would send a quote that
+     * expired before it arrived.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    valid_until?: string | null;
     payment_shape: {
       kind: 'single' | 'installments' | 'milestones';
       count?: number;
@@ -437,8 +454,6 @@ export function ProposalBuilderModal({
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  const isPdf = file?.type === 'application/pdf';
-  const isImage = Boolean(file?.type?.startsWith('image/'));
 
   /*
    * What the form opens on.
@@ -458,6 +473,25 @@ export function ProposalBuilderModal({
       setTitle(basedOn.title);
       setDescription(basedOn.description ?? '');
       setTotal(String(basedOn.total));
+
+      /*
+       * THE EXPIRY, WHEN READING A QUOTE BACK — AND ONLY THEN.
+       *
+       * This dialog is both the builder and the viewer, and the two want
+       * opposite things from this field:
+       *
+       *   reading back   show what the quote SAID. Opening an accepted or
+       *                  declined version with an empty expiry claims it never
+       *                  had one, and that date is part of what the client
+       *                  agreed to.
+       *
+       *   revising       leave it blank. The old date is in the past by the
+       *                  time anyone is revising, and inheriting it silently
+       *                  sends a quote that expired before it arrived.
+       *
+       * The blank was written for the second case and applied to both.
+       */
+      setValidUntil(readOnly ? basedOn.valid_until?.slice(0, 10) ?? '' : '');
 
       /*
        * A REVISION OF A PACKAGE IS STILL A PACKAGE.
@@ -533,7 +567,22 @@ export function ProposalBuilderModal({
       setMinutesFromQuote(false);
     }
 
-    setValidUntil('');
+    /*
+     * NOT HERE. This ran after the if/else, so it overwrote whatever the
+     * `basedOn` branch had just set — including the expiry read back off an
+     * accepted quote, two lines earlier.
+     *
+     * The blank belongs to the cases that want a blank: a new quote, and a
+     * REVISION, whose old date is in the past by the time anyone is revising.
+     * Reading a quote back wants the date it was sent with, because that is
+     * part of what the client agreed to.
+     *
+     * Left unconditional, the two writes raced in source order and the later
+     * one always won, which is why the field was empty however the earlier
+     * branch was written.
+     */
+    if (!readOnly) setValidUntil('');
+
     setTermsDays(basedOn?.payment_terms_days ?? null);
     /*
      * A revision inherits the terms that were negotiated, so they count as
@@ -556,7 +605,17 @@ export function ProposalBuilderModal({
      * revised.
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, defaultTitle, contactId, supersedesId]);
+    /*
+     * `readOnly` IS A DEPENDENCY, and leaving it out would reintroduce the bug
+     * this effect was warned about.
+     *
+     * Pressing "revise" does not remount the dialog — the parent flips this one
+     * prop and nothing else. Without it here the effect never re-runs, so the
+     * expiry just read back off an accepted quote would stay in the field and
+     * be sent as the new one: a quote that expired before it arrived, which is
+     * exactly what the blank was protecting against.
+     */
+  }, [isOpen, defaultTitle, contactId, supersedesId, readOnly]);
 
   /*
    * The route accepts four currencies. A service carrying anything else — or a
@@ -2241,39 +2300,12 @@ export function ProposalBuilderModal({
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto p-3">
-              {isPdf ? (
-                /* An iframe, not <embed>: the object URL is same-origin and
-                   every browser this runs in renders a PDF inline from one. */
-                <iframe
-                  src={previewUrl}
-                  title={file.name}
-                  className="h-full w-full rounded-lg border"
-                  style={{ borderColor: 'var(--v2-border)', minHeight: '420px' }}
-                />
-              ) : isImage ? (
-                <img
-                  src={previewUrl}
-                  alt={file.name}
-                  className="mx-auto max-h-full rounded-lg object-contain"
-                />
-              ) : (
-                /* Word documents and the rest. No browser renders these inline,
-                   and a blank frame reads as a broken upload rather than an
-                   unpreviewable format — so it says which it is. */
-                <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-                  <FileText className="h-10 w-10 text-[var(--v2-text-muted)]" />
-                  <p className="text-sm text-[var(--v2-text-secondary)]">
-                    {t('proposal.preview_unavailable')}
-                  </p>
-                  <a
-                    href={previewUrl}
-                    download={file.name}
-                    className="text-sm font-medium text-[var(--v2-primary)] hover:underline"
-                  >
-                    {t('proposal.download_to_check')}
-                  </a>
-                </div>
-              )}
+              <DocumentPreviewBody
+                url={previewUrl}
+                name={file.name}
+                mimeType={file.type}
+                t={t}
+              />
             </div>
           </div>
         )}
