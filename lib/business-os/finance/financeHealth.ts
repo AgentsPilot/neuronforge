@@ -83,6 +83,16 @@
  * the wiring maps the result to `{ plan }` (SA-WR-1), and the dep's type has
  * no room for them.
  *
+ * ACCOUNT ECONOMICS (slice 6a, Money M-3, §11E). NO NEW READ and no change to
+ * the one `Promise.all`: the pure `buildAccountEconomics` groups the rows this
+ * file already holds (R-a through the Section 3 pass's non-wire `units` map,
+ * R-k, R-m, the plan walk and Section 4's rows before their cap). It runs ONLY
+ * with `accountsTab` and no business picked (SA-Q42); then ONE more names call,
+ * for the shown rows only (at most 200 ids, never a platform id). With a
+ * business picked, `buildAccountMargin` runs on R-a′ / R-k′ / R-m′ for the
+ * summary's margin line (M3-FR-8), with no names call. Without the tab and
+ * with no business picked, neither runs and the payload is unchanged (AC-145).
+ *
  * READ-ONLY: no write, no LLM call, no audit entry. Logs read failures only,
  * with the read's name: never a figure, a name or an account id.
  *
@@ -113,6 +123,8 @@ import { buildTakings } from './takings';
 import { buildBoostRevenue } from './boostRevenue';
 import { buildPlanRevenue } from './planRevenue';
 import { combineOurRevenue } from './ourRevenue';
+import { buildAccountEconomics, buildAccountMargin } from './accountEconomics';
+import type { AiCostUnits } from './aiCost';
 import {
   buildClientPlans,
   buildOverdue,
@@ -134,7 +146,10 @@ import {
 import { isEmptySpan, k1Spans, type FinanceSpan, type ResolvedFinanceWindow } from './financeWindow';
 import { classifyAccounts, tierLabelForGroup, type ClassifyInput } from './planGroups';
 import type {
+  FinanceAccountEconomicsSection,
+  FinanceAccountMargin,
   FinanceAccountsSection,
+  FinanceAccountsTabQuery,
   FinanceAiCostSection,
   FinanceCreditRow,
   FinanceCreditsSection,
@@ -170,6 +185,8 @@ export const FINANCE_LIMITS = {
   TAKINGS_ROWS_SHOWN: TABLE_ROWS_SHOWN,
   /** Plans by business (slice 5a, M2-FR-2, SA-W72): the takings table's limit; one names request. */
   PLAN_ACCOUNTS_SHOWN: TABLE_ROWS_SHOWN,
+  /** The Accounts tab (slice 6a, M3-FR-6): the takings table's limit; one names request. */
+  ACCOUNT_ROWS_SHOWN: TABLE_ROWS_SHOWN,
   /** One business's plan payments (M2-FR-3, SA-W72): a defensive cap (a monthly plan pays at most four times in 92 days). */
   PLAN_PAYMENTS_SHOWN: 50,
   /** Rows shown per overdue table (slice 2b): both tables share ONE names request (at most 100 ids, SA-W38). */
@@ -272,7 +289,15 @@ export interface FinanceHealthInput {
   accountId: string | null;
   /** The request's one clock. */
   now: Date;
+  /**
+   * Slice 6a (SA-Q42): the Accounts tab's validated sort and filters, or null
+   * for the Overview. The route refuses it with a business picked (SA-W84).
+   */
+  accountsTab: FinanceAccountsTabQuery | null;
 }
+
+/** How the route logs the group filter (SA-W83): its kind, never a tier id. */
+export type FinanceGroupFilterKind = 'all' | 'trial' | 'founding_partner' | 'comped' | 'tier' | 'unknown_held' | 'tier_set' | 'other';
 
 /** Counts only, for the route's one info line (SA-Q11). Never a figure or a name. */
 export interface FinanceHealthCounts {
@@ -359,6 +384,34 @@ export interface FinanceHealthCounts {
   };
   /** R-d (SA-Q35): read with all businesses, `not_called` with a business picked, `failed` when it failed. */
   revenueExistence: 'read' | 'failed' | 'not_called';
+  /**
+   * The Accounts tab (slice 6a, M3-FR-14): counts, booleans and enum words
+   * only, never an amount, a name, a currency or a tier id (`group` is its kind).
+   */
+  accountEconomics:
+    | { built: false }
+    | {
+        built: true;
+        status: FinanceAccountEconomicsSection['status'];
+        accounts: number;
+        matching: number;
+        shown: number;
+        deletedRow: boolean;
+        noPlanRow: number;
+        namesFound: number;
+        sort: FinanceAccountsTabQuery['sort'];
+        group: FinanceGroupFilterKind;
+        show: FinanceAccountsTabQuery['show'];
+      };
+}
+
+const GROUP_KINDS: ReadonlySet<string> = new Set(['trial', 'founding_partner', 'comped', 'unknown_held', 'tier_set']);
+
+/** SA-W83: the group filter as its kind; a tier key is logged as `tier`, never its id. */
+function groupFilterKind(group: string | null): FinanceGroupFilterKind {
+  if (group === null) return 'all';
+  if (group.startsWith('tier:')) return 'tier';
+  return GROUP_KINDS.has(group) ? (group as FinanceGroupFilterKind) : 'other';
 }
 
 export type FinanceHealthResult =
@@ -578,6 +631,8 @@ export async function buildFinanceHealth(
   let aiCost: FinanceAiCostSection;
   let topAccounts: FinanceTopAccount[] = [];
   let namesFound = 0;
+  // Slice 6a (SA-Q46): the same pass's non-wire per-account units; null when the ledger read failed.
+  let aiCostUnits: AiCostUnits | null = null;
   if (!windowResult.data) {
     aiCost = { status: 'unknown', coverage: clamp.coverage, figures: null };
   } else {
@@ -593,6 +648,7 @@ export async function buildFinanceHealth(
       tierLabelOf: (key: FinanceGroupKey) => tierLabelForGroup(deps.config, key),
       isPlatform: deps.isPlatformAccount,
     });
+    aiCostUnits = summary.units;
 
     // Names only for ids taken from the rows just read, and never for a
     // platform account (labelled as such, SA-WR-5).
@@ -789,6 +845,72 @@ export async function buildFinanceHealth(
     figures: builtCredits.figures ? { ...builtCredits.figures, rows: creditRows } : null,
     gifted: builtCredits.gifted,
   };
+
+  // ── 6a. The Accounts tab, or the picked business's margin (slice 6a, §11E) ──
+  // No new read: R-a (through `units`), R-k, R-m, the walk and Section 4's rows.
+  const economicsReads = {
+    coverage: clamp.coverage,
+    aiCost: aiCostUnits && windowResult.data ? { units: aiCostUnits, reachedCeiling: windowResult.data.reachedCeiling } : null,
+    boosts: boostPurchases.data,
+    plans: planPayments.data,
+  };
+  let accountEconomics: FinanceAccountEconomicsSection | null = null;
+  let accountEconomicsCounts: FinanceHealthCounts['accountEconomics'] = { built: false };
+  let accountMargin: FinanceAccountMargin | null = null;
+  if (accountId !== null) {
+    // M3-FR-8: the same functions over R-a′ / R-k′ / R-m′, which already carry exactly this id.
+    accountMargin = buildAccountMargin({ ...economicsReads, accountId });
+  } else if (input.accountsTab !== null) {
+    const groupByAccountForTab = classified?.groupByAccount ?? null;
+    const built = buildAccountEconomics({
+      ...economicsReads,
+      walk: plansResult.data
+        ? { accountIds: plansResult.data.rows.map((row) => row.user_id), capped: plansResult.data.capped }
+        : null,
+      groupOf: (id) => groupByAccountForTab?.get(id),
+      foundingPartner: (id) => classified?.foundingPartnerNote.has(id) ?? false,
+      tierLabelOf: (key: FinanceGroupKey) => tierLabelForGroup(deps.config, key),
+      credits: builtCredits.rowByAccount,
+      isPlatform: deps.isPlatformAccount,
+      query: input.accountsTab,
+      cap: FINANCE_LIMITS.ACCOUNT_ROWS_SHOWN,
+      groupOptions: (classified?.figures.groups ?? []).map((group) => ({ key: group.key, tierLabel: group.tierLabel })),
+      refundOrDispute: builtBoosts.notes?.refundOrDispute ?? false,
+    });
+    // ONE names call for the shown rows only (at most 200 ids, one chunk), ids taken from the
+    // rows just read; never a platform account (the builder leaves them out) or a NULL id.
+    const economicsNames =
+      built.shownIds.length > 0 ? await settle(() => deps.findNames(built.shownIds)) : { data: [], error: null };
+    if (economicsNames.error) failed('account_names', economicsNames.error);
+    const economicsNameOf = new Map((economicsNames.data ?? []).map((n) => [n.user_id, n.company_name]));
+    const economicsNamesFound = built.shownIds.filter((id) => economicsNameOf.get(id)).length;
+    accountEconomics = {
+      ...built.section,
+      rows: built.section.rows.map((row) => ({
+        ...row,
+        ...(row.kind === 'platform'
+          ? { name: null, nameStatus: 'platform' as const }
+          : !economicsNames.data
+            ? { name: null, nameStatus: 'unavailable' as const }
+            : economicsNameOf.get(row.accountId)
+              ? { name: economicsNameOf.get(row.accountId) as string, nameStatus: 'found' as const }
+              : { name: null, nameStatus: 'missing' as const }),
+      })),
+    };
+    accountEconomicsCounts = {
+      built: true,
+      status: built.section.status,
+      accounts: built.counts.accounts,
+      matching: built.counts.matching,
+      shown: built.counts.shown,
+      deletedRow: built.counts.deletedRow,
+      noPlanRow: built.counts.noPlanRow,
+      namesFound: economicsNamesFound,
+      sort: input.accountsTab.sort,
+      group: groupFilterKind(input.accountsTab.group),
+      show: input.accountsTab.show,
+    };
+  }
 
   // ── 6b. Section 2 block B, takings (slice 2a) ─────────────────────────────
   const builtTakings = buildTakings({
@@ -998,6 +1120,9 @@ export async function buildFinanceHealth(
     credits,
     takings,
     paymentProblems,
+    // Slice 6a (SA-W74): optional keys, ABSENT (not null) when not built, so the Overview payload is unchanged.
+    ...(accountEconomics ? { accountEconomics } : {}),
+    ...(accountMargin ? { accountMargin } : {}),
   };
 
   // Counts by kind for the route's one line: never a figure.
@@ -1082,6 +1207,7 @@ export async function buildFinanceHealth(
         namesFound: planNamesFound,
       },
       revenueExistence: revenueResult === null ? 'not_called' : revenueResult.data ? 'read' : 'failed',
+      accountEconomics: accountEconomicsCounts,
     },
   };
 }

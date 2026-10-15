@@ -37,6 +37,10 @@
  *     NOTHING here adds two currencies (BD-12). K-5 and "Paid us, total" are
  *     combined per currency in `ourRevenue.ts`, never here.
  *
+ * Slice 6a (Money M-3, SA-Q45, E-44): `readPlanMoney` is EXPORTED, unchanged,
+ * so the per-account economics builder reads an invoice's money through the
+ * one reader instead of naming its columns.
+ *
  * @module lib/business-os/finance/planRevenue
  */
 
@@ -111,8 +115,11 @@ function minorOf(raw: unknown): number | null {
   return typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0 ? raw : null;
 }
 
-/** SA-W64: one row's money in integer minor units, or null when any part is unreadable. */
-function readPlanMoney(row: PlanPaymentInput): { code: string; amount: number; tax: number } | null {
+/**
+ * SA-W64: one row's money in integer minor units, or null when any part is unreadable.
+ * Exported (slice 6a, SA-Q45): the account economics builder's one reader of plan money.
+ */
+export function readPlanMoney(row: PlanPaymentInput): { code: string; amount: number; tax: number } | null {
   const code = normaliseCurrencyCode(row.currency);
   // Only a normalised, non-null code reaches `minorUnitsPerMajor` (it trims its input).
   if (code === null || minorUnitsPerMajor(code) !== 100) return null;

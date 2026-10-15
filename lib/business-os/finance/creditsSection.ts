@@ -75,6 +75,12 @@ export type CreditsSectionRow = Omit<FinanceCreditRow, 'name' | 'nameStatus'>;
 export interface CreditsSectionResult {
   figures: (Omit<FinanceCreditsFigures, 'rows'> & { rows: CreditsSectionRow[] }) | null;
   gifted: FinanceGiftedFigures | null;
+  /**
+   * NON-WIRE (slice 6a, SA-W78): EVERY account's row, before the display cap,
+   * from the same computation as `figures.rows`, so Section 4 and the
+   * Accounts tab cannot differ. Null exactly when `figures` is null.
+   */
+  rowByAccount: ReadonlyMap<string, CreditsSectionRow> | null;
 }
 
 const MICRO = 1e6;
@@ -213,7 +219,7 @@ export function buildCreditsSection(input: CreditsSectionInput): CreditsSectionR
   const giftedResult = input.lots === null ? null : giftedFigures(input.lots, input);
 
   if (input.accountIds === null || input.positions === null) {
-    return { figures: null, gifted: giftedResult?.gifted ?? null };
+    return { figures: null, gifted: giftedResult?.gifted ?? null, rowByAccount: null };
   }
 
   const line = input.farOverAllowancePercent;
@@ -263,6 +269,7 @@ export function buildCreditsSection(input: CreditsSectionInput): CreditsSectionR
   }
 
   rows.sort(compareRows);
+  const rowByAccount = new Map(rows.map((row) => [row.accountId, row]));
   return {
     figures: {
       accounts: input.accountIds.length,
@@ -273,5 +280,6 @@ export function buildCreditsSection(input: CreditsSectionInput): CreditsSectionR
       rows: rows.slice(0, input.displayCap),
     },
     gifted: giftedResult?.gifted ?? null,
+    rowByAccount,
   };
 }
