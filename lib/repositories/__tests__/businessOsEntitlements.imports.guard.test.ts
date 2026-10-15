@@ -180,6 +180,9 @@ const ALLOWED = new Set(
     'app/api/admin/business-os/test/plan-test-clock/route.ts',
     'app/api/admin/business-os/test/plan-test-clock/__tests__/route.test.ts',
     'lib/business-os/billing/planTestClock.ts',
+    // The webhook router-placement guard names the repository's import path as a
+    // string in its billing allow-list for planTestClock.ts — a test, no call.
+    'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
     // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
     // READ ONLY, `findPeriodAnchorsBatch` and nothing else (SA SQ-43). The one
     // file that wires the plan repository for the admin Businesses list's
