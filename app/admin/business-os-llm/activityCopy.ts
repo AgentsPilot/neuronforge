@@ -9,7 +9,7 @@ import type { ActivityOutcome, ActivitySort, ActivityTrigger } from './activityT
 export const ACTIVITY_TAB_LABEL = 'Activity';
 
 export const ACTIVITY_INTRO =
-  'One row per Business OS AI action: what ran, for which business, whether it worked and what it cost. ' +
+  'One row per Business OS AI action: what ran, for which business, whether it worked and its charged AI cost. ' +
   'Read from the credit ledger; nothing here changes it.';
 
 export const TIMES_ARE_UTC = 'Times are UTC.';
@@ -43,7 +43,7 @@ export const MIN_COST_FORMAT_PROBLEM = 'Enter an amount like 0.25';
 
 export const KPI_ACTIONS = 'AI actions';
 export const KPI_FAILED = 'Failed';
-export const KPI_COST = 'Cost (USD, net)';
+export const KPI_COST = 'Charged AI cost (USD, net)';
 export const KPI_UNRESOLVED = 'Unresolved corrections';
 /** The count could not be read but the list is full: never a made-up number. */
 export const KPI_AT_LEAST = (shown: string) => `at least ${shown}`;
@@ -72,13 +72,13 @@ export const COUNT_LINE_UNKNOWN_CAPPED = (shown: string, sort: ActivitySort) =>
 
 export const CUTOVER_LINE =
   'Charging went live on 29 September 2026 at 16:50 UTC, so this list starts there. ' +
-  'For AI activity before then, see the audit trail’s AI action entries or Cost Analytics.';
+  'For AI activity before then, see the audit trail’s AI action entries or the recorded AI cost in AI cost & usage.';
 
 export const CUTOVER_ENTIRELY_BEFORE =
   'This window ends before charging went live, so there are no rows to show here.';
 
 export const CUTOVER_AUDIT_LINK = 'AI action entries in the audit trail';
-export const CUTOVER_ANALYTICS_LINK = 'Cost Analytics (Business OS)';
+export const CUTOVER_ANALYTICS_LINK = 'AI cost & usage (Business OS, recorded)';
 
 /**
  * Audit-trail `date_to` for "before the cut-over". The audit page's field is a
@@ -188,7 +188,7 @@ export const COLUMNS = {
   actionType: 'Action type',
   trigger: 'Trigger',
   outcome: 'Outcome',
-  cost: 'Cost (USD)',
+  cost: 'Charged AI cost (USD)',
   credits: 'Credits charged',
   calls: 'Calls / failed',
   tokens: 'Tokens',
@@ -225,7 +225,7 @@ export const DRILL_DOWN_FIELDS = {
   actionType: 'Action type',
   trigger: 'Trigger',
   outcome: 'Outcome',
-  cost: 'Cost (USD)',
+  cost: 'Charged AI cost (USD)',
   credits: 'Credits charged',
   state: 'Record state',
   calls: 'Calls',
@@ -242,7 +242,7 @@ export const CORRECTIONS_UNREAD = 'Corrections could not be read, so none are li
 export const CORRECTION_COLUMNS = {
   when: 'When (UTC)',
   reason: 'Reason',
-  cost: 'Cost (USD)',
+  cost: 'Charged AI cost (USD)',
   credits: 'Credits',
 } as const;
 export const CORRECTION_REASON_NONE = 'No reason recorded';

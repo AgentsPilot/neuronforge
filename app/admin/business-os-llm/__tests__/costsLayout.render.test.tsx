@@ -488,7 +488,7 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     openAt('?tab=costs');
     await within(costs()).findByTestId('costs-periods');
     expect(tile('costs-kpi-credits')).toHaveAttribute('aria-label', 'Credits charged, 7.25');
-    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', `Cost (USD), ${formatUsd(0.007)}`);
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', `Charged AI cost (USD), ${formatUsd(0.007)}`);
     expect(tile('costs-kpi-charges')).toHaveAttribute('aria-label', 'Charges, 1,234');
     expect(tile('costs-kpi-fallback')).toHaveAttribute('aria-label', 'Fallback-priced, 2');
     expect(tile('costs-kpi-fallback')).toHaveTextContent('1 reconciled');

@@ -285,3 +285,71 @@ describe('C-3 / C-11: closing a link-opened drawer (in the hook)', () => {
     expect('router.replace(settingsUrlWithoutSection(pathname, searchParams));').not.toMatch(REPLACE_NO_SCROLL);
   });
 });
+
+/**
+ * S-3: the marketing permission row opens a drawer. No link targets consent
+ * (checked across app/, components/, lib/ and the email templates), so there is
+ * no `consent` branch and no link hook: plain page state opens it.
+ */
+describe('S-3: the consent row opens the marketing permission drawer', () => {
+  /** Any code use of the old expand-in-place state. */
+  const EXPAND_STATE = /\b(setE|e)xpandedSection\b/;
+
+  it('the row keeps its anchor id (an old hash still lands on it)', () => {
+    expect(raw).toContain('id="settings-section-consent"');
+  });
+
+  it('the row is a dialog opener that opens the drawer and nothing else', () => {
+    const row = rowOf(code, 'consentRowRef');
+    expect(row).toContain('type="button"');
+    expect(row).toContain('aria-haspopup="dialog"');
+    expect(row).toContain('aria-expanded={consentDrawerOpen}');
+    expect(row).toContain('onClick={() => setConsentDrawerOpen(true)}');
+    // A static chevron, like the plan and password rows.
+    expect(row).not.toContain('rotate-90');
+  });
+
+  it('the row button sits inside the anchor wrapper, and the drawer right after it', () => {
+    const anchor = code.indexOf('id="settings-section-consent"');
+    const row = code.indexOf('ref={consentRowRef}');
+    const drawer = code.indexOf('<MarketingConsentDrawer');
+    expect(anchor).toBeGreaterThan(-1);
+    expect(row).toBeGreaterThan(anchor);
+    expect(drawer).toBeGreaterThan(row);
+  });
+
+  it('the drawer is wired to the page state and returns focus to the row', () => {
+    const drawer = blockFrom(code, '<MarketingConsentDrawer', '/>');
+    expect(drawer).toContain('open={consentDrawerOpen}');
+    expect(drawer).toContain('onOpenChange={setConsentDrawerOpen}');
+    expect(drawer).toContain('returnFocusRef={consentRowRef}');
+  });
+
+  it('the page no longer renders the panel itself', () => {
+    expect(code).not.toContain('<MarketingConsentPanel');
+    expect(code).not.toContain("from '@/components/business-os/settings/MarketingConsentPanel'");
+  });
+
+  it('the expand-in-place state is gone from the code (the frozen timezone comment may still name it)', () => {
+    expect(code).not.toMatch(EXPAND_STATE);
+    // C-2 freezes that comment byte for byte; it is a comment, so the strip removes it.
+    expect(raw).toContain("setExpandedSection('timezone')");
+  });
+
+  it('the deep-link effect has no consent branch', () => {
+    expect(branchOf(code, 'consent')).toBeNull();
+    expect(code).not.toMatch(/requested\s*===\s*'consent'/);
+  });
+
+  describe('negative controls: the matchers are not vacuous', () => {
+    it('the expand-state matcher catches the old row', () => {
+      const snippet = `onClick={() => setExpandedSection(expandedSection === 'consent' ? null : 'consent')}`;
+      expect(stripComments(snippet)).toMatch(EXPAND_STATE);
+      expect(stripComments(`setExpandedSection('consent');`)).toMatch(EXPAND_STATE);
+    });
+
+    it('the same text in a comment is stripped', () => {
+      expect(stripComments(`// setExpandedSection('consent')`)).not.toMatch(EXPAND_STATE);
+    });
+  });
+});

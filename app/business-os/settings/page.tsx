@@ -41,7 +41,7 @@ import { SettingsDrawer } from '@/components/business-os/settings/SettingsDrawer
 import { ChangePasswordDrawer } from '@/components/business-os/settings/ChangePasswordDrawer';
 import { useLinkOpenedDrawer } from '@/components/business-os/settings/useLinkOpenedDrawer';
 import { InviteFriendsSection } from '@/components/business-os/settings/InviteFriendsSection';
-import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
+import { MarketingConsentDrawer } from '@/components/business-os/settings/MarketingConsentDrawer';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
@@ -104,9 +104,6 @@ function BusinessOSSettingsContent() {
   // Edit states
   const [editingProfile, setEditingProfile] = useState(false);
 
-  // Expandable sections
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
-
   // The plan drawer (settings drawer S-1) and the password drawer (S-2). Each
   // remembers whether a `?section=` link opened it, so closing takes `section`
   // back off the address (C-3). The typed passwords are NOT here: they live in
@@ -117,6 +114,10 @@ function BusinessOSSettingsContent() {
   const { openFromLink: openPasswordFromLink } = passwordDrawer;
   const planRowRef = useRef<HTMLButtonElement>(null);
   const passwordRowRef = useRef<HTMLButtonElement>(null);
+  // The marketing permission drawer (S-3). Plain state, not the link hook: no
+  // link anywhere opens it. Its form lives inside the drawer and goes on close.
+  const [consentDrawerOpen, setConsentDrawerOpen] = useState(false);
+  const consentRowRef = useRef<HTMLButtonElement>(null);
 
   const [exporting, setExporting] = useState(false);
 
@@ -1031,23 +1032,29 @@ function BusinessOSSettingsContent() {
             expanded rather than on a row explaining where the switch went.
           */}
 
-          {/* Marketing consent */}
+          {/* Marketing consent. Since settings drawer S-3 the row opens a drawer
+              instead of expanding in place; the id stays so an old
+              `#settings-section-consent` still lands on the row. */}
           <div id="settings-section-consent">
             <button
-              onClick={() => setExpandedSection(expandedSection === 'consent' ? null : 'consent')}
+              ref={consentRowRef}
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={consentDrawerOpen}
+              onClick={() => setConsentDrawerOpen(true)}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
             >
               <div className="flex items-center gap-3">
                 <MailCheck className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 <span className="text-sm text-[var(--v2-text-primary)]">{t('consent.title')}</span>
               </div>
-              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'consent' ? 'rotate-90' : ''}`} />
+              <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />
             </button>
-            {expandedSection === 'consent' && (
-              <div className="px-4 pb-4">
-                <MarketingConsentPanel />
-              </div>
-            )}
+            <MarketingConsentDrawer
+              open={consentDrawerOpen}
+              onOpenChange={setConsentDrawerOpen}
+              returnFocusRef={consentRowRef}
+            />
           </div>
 
           {/*

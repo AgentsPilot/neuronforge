@@ -18,7 +18,7 @@
  */
 
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 interface CapturedContentProps {
   onEscapeKeyDown?: (event: { preventDefault: () => void }) => void;
@@ -127,5 +127,85 @@ describe('layer 4: the X is disabled, alone', () => {
   ])('busy=%s → disabled=%s', (isBusy, disabled) => {
     renderDrawer(isBusy);
     expect((screen.getByRole('button', { name: CLOSE }) as HTMLButtonElement).disabled).toBe(disabled);
+  });
+});
+
+/*
+ * S-3, C-5: the unsaved-changes guard, pinned on its own (SA S-1 finding 3), and
+ * its order against busy. The prompt is the real `components/ui/dialog`; only
+ * the sheet is a stand-in here.
+ */
+const COPY = { title: 'Discard your changes?', description: 'Unsaved.', keep: 'Keep editing', discard: 'Discard changes' };
+
+function renderGuarded({ isBusy, isDirty }: { isBusy: boolean; isDirty: boolean }) {
+  const onOpenChange = jest.fn();
+  render(
+    <SettingsDrawer
+      open
+      onOpenChange={onOpenChange}
+      title="Title"
+      isBusy={isBusy}
+      isDirty={isDirty}
+      discardCopy={COPY}
+      isRTL={false}
+      closeLabel={CLOSE}
+    >
+      <p>Body</p>
+    </SettingsDrawer>
+  );
+  return onOpenChange;
+}
+
+describe('layer 5 (S-3): the dirty gate, alone', () => {
+  it('a close request while dirty does not close, and opens the prompt', async () => {
+    const onOpenChange = renderGuarded({ isBusy: false, isDirty: true });
+    fireEvent.click(screen.getByRole('button', { name: 'root-close' }));
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog', { name: COPY.title })).toBeTruthy();
+  });
+
+  it('a close request while clean closes at once, with no prompt', () => {
+    const onOpenChange = renderGuarded({ isBusy: false, isDirty: false });
+    fireEvent.click(screen.getByRole('button', { name: 'root-close' }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(screen.queryByRole('dialog', { name: COPY.title })).toBeNull();
+  });
+
+  it('an open request is never blocked, even when dirty', () => {
+    const onOpenChange = renderGuarded({ isBusy: false, isDirty: true });
+    fireEvent.click(screen.getByRole('button', { name: 'root-open' }));
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole('dialog', { name: COPY.title })).toBeNull();
+  });
+});
+
+describe('layer 6 (S-3): busy beats dirty', () => {
+  it('a close request while busy and dirty neither closes nor prompts', async () => {
+    const onOpenChange = renderGuarded({ isBusy: true, isDirty: true });
+    fireEvent.click(screen.getByRole('button', { name: 'root-close' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: COPY.title })).toBeNull();
+  });
+});
+
+describe('layer 7 (S-3): Discard, alone', () => {
+  it('calls the parent onOpenChange(false) once, past the gate, and closes the prompt', async () => {
+    const onOpenChange = renderGuarded({ isBusy: false, isDirty: true });
+    fireEvent.click(screen.getByRole('button', { name: 'root-close' }));
+    const prompt = await screen.findByRole('dialog', { name: COPY.title });
+    fireEvent.click(within(prompt).getByRole('button', { name: COPY.discard }));
+    expect(onOpenChange).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: COPY.title })).toBeNull());
+  });
+
+  it('Keep editing closes the prompt and does not call onOpenChange', async () => {
+    const onOpenChange = renderGuarded({ isBusy: false, isDirty: true });
+    fireEvent.click(screen.getByRole('button', { name: 'root-close' }));
+    const prompt = await screen.findByRole('dialog', { name: COPY.title });
+    fireEvent.click(within(prompt).getByRole('button', { name: COPY.keep }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: COPY.title })).toBeNull());
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 });

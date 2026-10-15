@@ -343,11 +343,12 @@ function AdminCostAnalyticsContent() {
               <div data-testid="scope-notes" className="space-y-1 text-xs text-slate-400">
                 {scope === 'bos' ? (
                   <p>
-                    Business OS only: includes legacy-tagged Business OS rows. Costs are USD, estimated from the model
-                    pricing table.
+                    Recorded AI cost, Business OS only: every AI call in the usage log, charged or not, including calls
+                    before charging started on 29 Sep 2026 and legacy-tagged Business OS rows. USD, priced from the
+                    model price table. The charged cost is on Finance.
                   </p>
                 ) : (
-                  <p>Both products. Costs are USD, estimated from the model pricing table.</p>
+                  <p>Recorded AI cost, both products: every AI call in the usage log. USD, priced from the model price table.</p>
                 )}
                 <p>Totals may be incomplete above {UNPAGED_ROW_CAP.toLocaleString('en-US')} calls in the selected period.</p>
               </div>
