@@ -26,9 +26,18 @@
  *                   (or more than one item) → recorded WITHOUT the plan
  *                   (`assignsPlan` false), alerted and audited on a new row only
  *   10 apply        `business_os_apply_plan_payment`, then `recordPlanChange`
- *   failed only:
- *   8  record       one `invoice_payment_failed` history row (SA Q-2); no plan or
- *                   billing write (attempts, banner: P-6a)
+ *   failed / action required (P-6a.2, workplan §5.3, §5.4; SA C-1 to C-3, U-10):
+ *   8  record       one `invoice_payment_failed` / `payment_action_required`
+ *                   history row for EVERY plan invoice (SA Q-2, Q-8)
+ *   9  renewal only `billing_reason === 'subscription_cycle'` (a whitelist: an
+ *                   upgrade, or any future reason, never counts, U-10): on a NEW
+ *                   row, one `info` audit; then, whether the row is new or a
+ *                   replay (C-3, heals a crash), the billing record counts the
+ *                   attempt (`recordRenewalFailure` / `recordActionRequired`),
+ *                   decided by billing PERIODS, never by `event.created` (C-1)
+ *   paid, after the apply (`applied`, `recorded`, `already_applied`):
+ *   11 cure         `clearRenewalFailure`: the failure marker is cleared when the
+ *                   paid invoice is the newest. Never throws (logged)
  *
  * OUTCOMES. A refusal is final: it is recorded in the money history, logged at
  * `error` with `alert: true` (the v1 alert channel, AM-9) and audited when an
@@ -86,10 +95,11 @@ import type Stripe from 'stripe';
 import { AUDIT_FLUSH_TIMEOUT_MS } from '@/lib/audit/auditTimeouts';
 import type { Logger } from '@/lib/logger';
 import type { StripeService } from '@/lib/stripe/StripeService';
-import type {
-  BusinessOsBillingAccount,
-  BusinessOsBillingAccountRepository,
-  BusinessOsSubscriptionStatus,
+import {
+  isHostedInvoiceUrl,
+  type BusinessOsBillingAccount,
+  type BusinessOsBillingAccountRepository,
+  type BusinessOsSubscriptionStatus,
 } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import type {
   BusinessOsApplyPlanPaymentResult,
@@ -114,7 +124,10 @@ import {
 export type PlanPaymentStripeReads = Pick<StripeService, 'listInvoiceLinesAll' | 'retrieveBusinessOsSubscription'>;
 
 export interface PlanPaymentDeps {
-  billingAccounts: Pick<BusinessOsBillingAccountRepository, 'findByStripeSubscription' | 'findByStripeCustomer'>;
+  billingAccounts: Pick<
+    BusinessOsBillingAccountRepository,
+    'findByStripeSubscription' | 'findByStripeCustomer' | 'recordRenewalFailure' | 'recordActionRequired' | 'clearRenewalFailure'
+  >;
   billingEvents: Pick<BusinessOsBillingEventRepository, 'applyPlanPayment' | 'recordEvent'>;
   stripe: () => PlanPaymentStripeReads;
   catalog: PlanPriceCatalog;
@@ -135,6 +148,8 @@ export interface PlanPaymentDeps {
    * (C-5). Built only in `planBillingHandler.ts`.
    */
   firstPaymentNotifier?: FirstPaymentNotifier;
+  /** P-6a.2: the clock for `updated_at` on the billing record. Default: the wall clock. */
+  now?: () => Date;
 }
 
 /** How the stamp's lineage read went (P-5b.1, O-4). */
@@ -206,6 +221,18 @@ const SUBSCRIPTION_STATUSES: readonly BusinessOsSubscriptionStatus[] = [
   'unpaid',
   'paused',
 ];
+
+/**
+ * U-10 (P-6a.2, workplan §4): the billing reasons that count as a RENEWAL. A
+ * whitelist, so it fails closed: an upgrade (`subscription_update`), or any
+ * reason Stripe adds later, never sets the banner or the attempt count. A
+ * Founding Partner's first charge at `trial_end` (P-11) is `subscription_cycle`.
+ */
+export const RENEWAL_BILLING_REASONS: readonly string[] = ['subscription_cycle'];
+
+export function isRenewalInvoice(billingReason: string | null): boolean {
+  return billingReason !== null && RENEWAL_BILLING_REASONS.includes(billingReason);
+}
 
 /** A subscription in one of these has ended at Stripe, so a new one may replace it (C6-4). */
 const ENDED_STATUSES: readonly string[] = ['canceled', 'incomplete_expired'];
@@ -677,12 +704,21 @@ async function afterApply(
           'Business OS plan invoice post-commit chain settled'
         );
       }
+      // P-6a.2: after N-2's clock, so its budget is unchanged. Never throws.
+      await cureRenewalFailure(deps, ctx, accountId, facts);
       return;
     }
 
     case 'already_applied':
-    case 'already_recorded':
       // A replay: nothing written, nothing audited (as the admin replay branch).
+      log.info({ event: 'bos_billing_invoice_replayed', status: result.status, eventRowId: result.eventRowId, ...ids }, 'Business OS plan invoice already handled');
+      // P-6a.2: the cure is idempotent, so a crash between the commit and the
+      // cure heals on Stripe's retry.
+      await cureRenewalFailure(deps, ctx, accountId, facts);
+      return;
+
+    case 'already_recorded':
+      // A replayed refusal: its money was never applied, so nothing is cured.
       log.info({ event: 'bos_billing_invoice_replayed', status: result.status, eventRowId: result.eventRowId, ...ids }, 'Business OS plan invoice already handled');
       return;
 
@@ -839,18 +875,99 @@ async function afterCommit(
   if (lineage !== null) await notifyFirstPayment(deps, ctx, accountId, lineage, deadlineMs);
 }
 
-// ── invoice.payment_failed ──────────────────────────────────────────────────
+// ── P-6a.2: the cure after a paid invoice ───────────────────────────────────
 
-/** SA Q-2: one money-history row for a failed plan payment; no plan or billing write. */
+/**
+ * SA C-1 ruling, rule 5: clear the renewal-failure marker when the paid
+ * invoice is the newest (`P >= current_period_end`, decided by the
+ * repository). Runs after the money committed, so it NEVER throws: a failure
+ * is a `warn` with ids, and the next delivery of the paid event heals it.
+ */
+async function cureRenewalFailure(deps: PlanPaymentDeps, ctx: InvoiceContext, accountId: string, facts: PlanInvoiceFacts): Promise<void> {
+  const { event, livemode, log } = ctx;
+  const ids = { accountId, invoiceId: facts.invoiceId, subscriptionId: facts.subscriptionId, livemode, stripeEventId: event.id };
+  try {
+    const cured = await deps.billingAccounts.clearRenewalFailure({
+      userId: accountId,
+      livemode,
+      stripeSubscriptionId: facts.subscriptionId,
+      paidPeriodEndIso: facts.periodEnd,
+      nowIso: (deps.now ?? (() => new Date()))().toISOString(),
+    });
+    if (cured.error || !cured.data) {
+      log.warn(
+        { event: 'bos_billing_renewal_failure_clear_failed', errName: cured.error?.name ?? 'no_data', errMessage: cured.error?.message, ...ids },
+        'Renewal failure marker not cleared after a paid invoice; the next delivery retries it'
+      );
+      return;
+    }
+    if (cured.data.outcome === 'cleared') {
+      log.info({ event: 'bos_billing_renewal_failure_cleared', ...ids }, 'Renewal failure marker cleared by a paid invoice');
+    }
+  } catch (err) {
+    log.warn(
+      { event: 'bos_billing_renewal_failure_clear_failed', errName: err instanceof Error ? err.name : typeof err, ...ids },
+      'Renewal failure marker not cleared after a paid invoice; the next delivery retries it'
+    );
+  }
+}
+
+// ── invoice.payment_failed / invoice.payment_action_required ────────────────
+
+type UnpaidKind = 'failed' | 'action_required';
+
+const UNPAID = {
+  failed: {
+    historyKind: 'invoice_payment_failed',
+    audit: 'BOS_BILLING_PAYMENT_FAILED',
+    recordedEvent: 'bos_billing_payment_failed',
+    replayedEvent: 'bos_billing_payment_failed_replayed',
+    recordedMessage: 'Business OS plan payment failed and recorded',
+    replayedMessage: 'Business OS failed plan payment already recorded',
+  },
+  action_required: {
+    historyKind: 'payment_action_required',
+    audit: 'BOS_BILLING_PAYMENT_ACTION_REQUIRED',
+    recordedEvent: 'bos_billing_payment_action_required',
+    replayedEvent: 'bos_billing_payment_action_required_replayed',
+    recordedMessage: 'Business OS plan payment needs authentication and was recorded',
+    replayedMessage: 'Business OS plan payment authentication request already recorded',
+  },
+} as const;
+
+/** Stripe's `attempt_count`, or 0 when it is missing or unreadable (the decision floors it at 1). */
+function attemptCountOf(invoice: Stripe.Invoice): number {
+  const value = (invoice as unknown as { attempt_count?: unknown }).attempt_count;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+/** The invoice's hosted URL as Stripe sent it. A bearer link: never logged, never audited. */
+function hostedInvoiceUrlOf(invoice: Stripe.Invoice): string | null {
+  const value = (invoice as unknown as { hosted_invoice_url?: unknown }).hosted_invoice_url;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/** SA Q-2, P-6a.2: one money-history row for a failed plan payment; a renewal also counts on the billing record. */
 export async function recordFailedPlanInvoice(event: Stripe.Event, log: Logger, deps: PlanPaymentDeps): Promise<void> {
+  return recordUnpaidPlanInvoice(event, log, deps, 'failed');
+}
+
+/** P-6a.2 (§5.4): a plan invoice that needs 3-D Secure; a renewal also stores the hosted URL for the owner's banner. */
+export async function recordActionRequiredPlanInvoice(event: Stripe.Event, log: Logger, deps: PlanPaymentDeps): Promise<void> {
+  return recordUnpaidPlanInvoice(event, log, deps, 'action_required');
+}
+
+async function recordUnpaidPlanInvoice(event: Stripe.Event, log: Logger, deps: PlanPaymentDeps, kind: UnpaidKind): Promise<void> {
   const checked = await checkInvoice(deps, event, 'failed', log);
   if (!checked) return;
   const { ctx, accountId, facts } = checked;
+  const words = UNPAID[kind];
+  const invoice = event.data.object as Stripe.Invoice;
 
   const recorded = await deps.billingEvents.recordEvent({
     accountId,
     livemode: ctx.livemode,
-    kind: 'invoice_payment_failed',
+    kind: words.historyKind,
     stripeEventId: event.id,
     stripeInvoiceId: facts.invoiceId,
     stripeSubscriptionId: facts.subscriptionId,
@@ -866,12 +983,94 @@ export async function recordFailedPlanInvoice(event: Stripe.Event, log: Logger, 
   if (recorded.error || !recorded.data) throw recorded.error ?? new PlanPaymentRetryError('failure_not_recorded');
 
   const ids = { accountId, invoiceId: facts.invoiceId, subscriptionId: facts.subscriptionId, livemode: ctx.livemode, stripeEventId: event.id };
-  if (recorded.data.outcome === 'duplicate') {
-    log.info({ event: 'bos_billing_payment_failed_replayed', ...ids }, 'Business OS failed plan payment already recorded');
+  const eventRowId = recorded.data.outcome === 'recorded' ? recorded.data.eventRowId : null;
+  const isNew = eventRowId !== null;
+  if (isNew) {
+    log.warn({ event: words.recordedEvent, amountMinor: facts.amountMinor, billingReason: facts.billingReason, eventRowId, ...ids }, words.recordedMessage);
+  } else {
+    log.info({ event: words.replayedEvent, ...ids }, words.replayedMessage);
+  }
+
+  // U-10: only a renewal counts. An upgrade's failure (or 3-D Secure) is the
+  // owner's in-session answer, already audited as BOS_BILLING_UPGRADE_REQUESTED;
+  // its history row above is the record of what Stripe sent, nothing more.
+  if (!isRenewalInvoice(facts.billingReason)) {
+    log.info(
+      { event: 'bos_billing_payment_failure_not_renewal', billingReason: facts.billingReason, eventType: event.type, ...ids },
+      'Failed or unconfirmed plan payment is not a renewal: no billing record write, no audit (U-10)'
+    );
     return;
   }
-  log.warn(
-    { event: 'bos_billing_payment_failed', amountMinor: facts.amountMinor, eventRowId: recorded.data.eventRowId, ...ids },
-    'Business OS plan payment failed and recorded'
+
+  const attemptCount = attemptCountOf(invoice);
+  const hostedInvoiceUrl = hostedInvoiceUrlOf(invoice);
+  if (kind === 'action_required' && !isHostedInvoiceUrl(hostedInvoiceUrl)) {
+    // Never the value: it is a bearer link (or junk). The owner still sees
+    // "payment failed" from the attempt count and Stripe's status.
+    log.warn(
+      { event: 'bos_billing_action_required_url_unusable', hasUrl: hostedInvoiceUrl !== null, ...ids },
+      'Renewal needs authentication but its hosted invoice URL is not a Stripe page; not stored'
+    );
+  }
+
+  // Audited BEFORE the billing write, on a new row only: a write that throws
+  // releases the claim, and the retry finds a duplicate row, so writing the
+  // audit after it would lose it for good.
+  if (isNew) {
+    await deps.recordPlanChange({
+      accountId,
+      action: words.audit,
+      actor: { kind: 'system', source: 'stripe_webhook' },
+      entityType: 'business_os_account_plan',
+      entityId: accountId,
+      changes: {},
+      details: {
+        invoiceId: facts.invoiceId,
+        subscriptionId: facts.subscriptionId,
+        attemptCount,
+        billingReason: facts.billingReason,
+        livemode: ctx.livemode,
+        stripeEventId: event.id,
+        eventRowId,
+      },
+      severity: 'info',
+      invalidatesEntitlements: false,
+      log,
+    });
+  }
+
+  // C-3: whether the history row is new or a replay (idempotent, order-safe).
+  const input = {
+    userId: accountId,
+    livemode: ctx.livemode,
+    stripeSubscriptionId: facts.subscriptionId,
+    invoiceId: facts.invoiceId,
+    periodEndIso: facts.periodEnd,
+    attemptCount,
+    // Display only (C-1, rule 6): never compared with a Stripe timestamp.
+    failedAtIso: new Date(event.created * 1000).toISOString(),
+    hostedInvoiceUrl,
+    nowIso: (deps.now ?? (() => new Date()))().toISOString(),
+  };
+  const written =
+    kind === 'action_required'
+      ? await deps.billingAccounts.recordActionRequired(input)
+      : await deps.billingAccounts.recordRenewalFailure(input);
+  if (written.error || !written.data) {
+    if (written.error?.message === 'concurrent_change') throw new PlanPaymentRetryError('renewal_failure_concurrent_change');
+    throw written.error ?? new PlanPaymentRetryError('renewal_failure_not_recorded');
+  }
+  log.info(
+    {
+      event: 'bos_billing_renewal_failure_counted',
+      outcome: written.data.outcome,
+      ...(written.data.outcome === 'moot' ? { reason: written.data.reason } : {}),
+      ...(written.data.outcome === 'recorded'
+        ? { failedAttempts: written.data.failedAttempts, actionRequiredUrlStored: written.data.actionRequiredUrlStored }
+        : {}),
+      attemptCount,
+      ...ids,
+    },
+    'Business OS renewal failure counted on the billing record'
   );
 }

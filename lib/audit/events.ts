@@ -419,6 +419,31 @@ export const AUDIT_EVENTS = {
   // id, new and previous customer ids, record path, livemode false, correlation
   // id. Logged and flushed before the response (WC-7).
   BOS_BILLING_TEST_CLOCK_ATTACHED: 'BOS_BILLING_TEST_CLOCK_ATTACHED',
+  // Plan payments P-6a.2 (workplan §5.3, §5.11; SA C-10, U-10): a RENEWAL
+  // payment of a Business OS plan failed (invoice.payment_failed with
+  // billing_reason subscription_cycle). Written once per new money history
+  // row by planPaymentApply through recordPlanChange (bounded flush, PF-11);
+  // never for an upgrade (U-10), never for a replay. Platform actor and
+  // details.actor 'stripe_webhook'. Entity type 'business_os_account_plan',
+  // id = the account. Details: invoice and subscription ids, Stripe's attempt
+  // count, billing reason, livemode, event id, money history row id. Written
+  // BEFORE the billing record write (so a thrown write cannot lose it), so it
+  // does not say what that write did: the bos_billing_renewal_failure_counted
+  // log line does. Never the hosted invoice URL, an email or a card.
+  BOS_BILLING_PAYMENT_FAILED: 'BOS_BILLING_PAYMENT_FAILED',
+  // Plan payments P-6a.2 (§5.4): a RENEWAL payment needs the owner's bank
+  // authentication (3-D Secure, invoice.payment_action_required with
+  // billing_reason subscription_cycle). Same writer, actor, entity and rules as
+  // BOS_BILLING_PAYMENT_FAILED. The hosted invoice URL is NEVER in the details.
+  BOS_BILLING_PAYMENT_ACTION_REQUIRED: 'BOS_BILLING_PAYMENT_ACTION_REQUIRED',
+  // Plan payments P-6a.2 (§5.5; SA C-4): Stripe ended a Business OS plan
+  // subscription (customer.subscription.deleted, once per subscription).
+  // Written by planSubscriptionMirror through recordPlanChange, only when the
+  // subscription_ended money history row is new. Platform actor. Entity type
+  // 'business_os_account_plan', id = the account. Details: subscription id,
+  // Stripe's cancellation reason when given (payment_failed or
+  // cancellation_requested), livemode, event id, money history row id.
+  BOS_BILLING_SUBSCRIPTION_ENDED: 'BOS_BILLING_SUBSCRIPTION_ENDED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -1064,6 +1089,25 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: "An admin put a Business OS account's test-mode billing record on a fresh Stripe test clock (test mode only; the test-mode customer was replaced)",
+  },
+  // Plan payments P-6a.2. 'info' (SA C-10): a customer's card being declined,
+  // asked for authentication, or a subscription ending needs no operator
+  // action; 'warning' stays for "an operator looks" (BOS_BILLING_PAYMENT_REFUSED).
+  // SOC2, as every Business OS billing event.
+  [AUDIT_EVENTS.BOS_BILLING_PAYMENT_FAILED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS plan renewal payment failed (Stripe attempt count recorded; Stripe retries it)',
+  },
+  [AUDIT_EVENTS.BOS_BILLING_PAYMENT_ACTION_REQUIRED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: "A Business OS plan renewal payment needs the owner's bank authentication (3-D Secure)",
+  },
+  [AUDIT_EVENTS.BOS_BILLING_SUBSCRIPTION_ENDED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: "Stripe ended a Business OS plan subscription (Stripe's reason recorded when given)",
   },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',

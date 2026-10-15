@@ -20,7 +20,11 @@ import 'server-only';
  *              against the real checkout (SA F-C).
  *   billing    "Renews on" / "Ends on" (F-2), from OUR record only, exactly as
  *              SA W-5 words it. Never a Stripe call (SR-11): this module imports
- *              no Stripe client.
+ *              no Stripe client. P-6a.2 (workplan §5.7): while the price switch
+ *              is on, `planPaymentNotice` (the ONE predicate the owner banner
+ *              uses too) answers first: a failed renewal, a 3-D Secure request
+ *              or an ended subscription, from the same row and the snapshot's
+ *              lifecycle. `enforcing` is the server's effective mode (SA Q-5).
  *   endsFreeAccessOnPurchase
  *              the trial / free-access sentence beside the Choose list (W-7),
  *              decided structurally by `freeAccessEndedByPurchase`; `null`
@@ -53,6 +57,7 @@ import 'server-only';
 
 import { freeAccessEndedByPurchase, hasOpenEndedFreeAccess } from '@/lib/business-os/entitlements/freeAccess';
 import type { FreeAccessEndedByPurchase } from '@/lib/business-os/entitlements/freeAccess';
+import { getEntitlementMode } from '@/lib/business-os/entitlements/mode';
 import {
   businessOsBillingAccountRepository,
   type BusinessOsBillingAccount,
@@ -74,6 +79,11 @@ import type {
   PlanPurchaseWire,
 } from '@/lib/business-os/billing/planPurchaseTypes';
 import { currentStripeMode, isLiveMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
+import {
+  planPaymentNotice,
+  type PaymentNoticeLifecycleFacts,
+  type PlanPaymentNotice,
+} from '@/lib/business-os/billing/planPaymentNotice';
 
 const defaultLogger = createLogger({ module: 'BosPlanPurchaseView' });
 
@@ -91,8 +101,14 @@ export interface PlanPurchaseViewInput {
   userId: string;
   /** The session's account id, for the logs. */
   accountId: string;
-  /** The snapshot the route already read for the session account. */
-  snapshot: PlanSnapshotLike;
+  /**
+   * The snapshot the route already read for the session account. P-6a.2 also
+   * reads its `lifecycle.state` / `graceEndsAt` (the real resolution has them);
+   * absent reads as `unknown`.
+   */
+  snapshot: PlanSnapshotLike & {
+    resolution: (NonNullable<PlanSnapshotLike['resolution']> & { lifecycle: Partial<PaymentNoticeLifecycleFacts> }) | null;
+  };
 }
 
 export interface PlanPurchaseViewLogger {
@@ -107,6 +123,8 @@ export interface PlanPurchaseViewDeps {
   buyableTiers?: () => readonly string[];
   now?: () => Date;
   logger?: PlanPurchaseViewLogger;
+  /** P-6a.2: the EFFECTIVE entitlements mode is `enforce` (SA Q-5). Default: `getEntitlementMode()`. */
+  enforcing?: () => boolean;
 }
 
 /**
@@ -119,8 +137,25 @@ export interface PlanPurchaseViewDeps {
  */
 export function billingStateFromRecord(
   row: Pick<BusinessOsBillingAccount, 'subscriptionStatus' | 'cancelAtPeriodEnd' | 'currentPeriodEnd' | 'endedAt'>,
-  now: Date
+  now: Date,
+  /** P-6a.2: `planPaymentNotice`'s answer for this row, which wins when there is one. */
+  notice: PlanPaymentNotice | null = null
 ): PlanPurchaseBillingWire | null {
+  if (notice) {
+    switch (notice.kind) {
+      case 'payment_failed':
+      case 'paused':
+        return { state: 'payment_failed', date: notice.failedAt, attempts: notice.attempts };
+      case 'action_required':
+        return { state: 'action_required', date: notice.dueOn, confirmUrl: notice.confirmUrl };
+      case 'ended':
+        return { state: 'ended', date: notice.endedAt };
+      default: {
+        const unreachable: never = notice;
+        throw new Error(`unknown_notice:${String(unreachable)}`);
+      }
+    }
+  }
   if (row.subscriptionStatus !== 'active' || !row.currentPeriodEnd) return null;
   const periodEnd = Date.parse(row.currentPeriodEnd);
   if (!Number.isFinite(periodEnd)) return null;
@@ -136,11 +171,25 @@ export function billingStateFromRecord(
  * view said (an admin-assigned plan with no billing record says "while the plan
  * is paid for").
  */
-export function billingEndsWhen(billing: PlanPurchaseBillingWire | null): { key: string; date: string } | null {
+export function billingEndsWhen(billing: PlanPurchaseBillingWire | null): { key: string; date: string; count?: number } | null {
   if (!billing) return null;
-  return billing.state === 'renewing'
-    ? { key: 'plan.renews_on', date: billing.date }
-    : { key: 'plan.ends_on_paid', date: billing.date };
+  switch (billing.state) {
+    case 'renewing':
+      return { key: 'plan.renews_on', date: billing.date };
+    case 'ending':
+      return { key: 'plan.ends_on_paid', date: billing.date };
+    // P-6a.2: a sentence needs its date; without one the plan keeps its own.
+    case 'payment_failed':
+      return billing.date ? { key: 'plan.payment_failed_on', date: billing.date, count: billing.attempts } : null;
+    case 'action_required':
+      return billing.date ? { key: 'plan.payment_action_required_on', date: billing.date } : null;
+    case 'ended':
+      return { key: 'plan.ended_on', date: billing.date };
+    default: {
+      const unreachable: never = billing;
+      throw new Error(`unknown_billing_state:${String(unreachable)}`);
+    }
+  }
 }
 
 export async function readPlanPurchaseView(
@@ -217,9 +266,20 @@ export async function readPlanPurchaseView(
   const offerWire: PlanPurchaseOfferWire =
     offer.kind === 'choose' ? { kind: 'choose', tiers: [...offer.tiers] } : { kind: 'none', reason: offer.reason };
 
+  // P-6a.2: the one predicate, only while the price switch is on (the banner
+  // makes no read at all while it is off, and Settings says nothing more).
+  const lifecycle: PaymentNoticeLifecycleFacts = {
+    state: resolution.lifecycle.state ?? 'unknown',
+    graceEndsAt: resolution.lifecycle.graceEndsAt ?? null,
+  };
+  const notice =
+    row && switches.pricesEnabled
+      ? planPaymentNotice(row, lifecycle, { serverLivemode: livemode, enforcing: (deps.enforcing ?? (() => getEntitlementMode() === 'enforce'))() })
+      : null;
+
   return {
     offer: offerWire,
-    billing: row ? billingStateFromRecord(row, now) : null,
+    billing: row ? billingStateFromRecord(row, now, notice) : null,
     endsFreeAccessOnPurchase: endsFreeAccess === null ? null : ENDS_FREE_ACCESS[endsFreeAccess],
     upgrade: upgradeOffer.kind === 'upgrade' ? { tiers: [...upgradeOffer.tiers] } : null,
   };

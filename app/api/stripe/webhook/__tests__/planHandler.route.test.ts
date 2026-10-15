@@ -267,3 +267,109 @@ describe('P-3b.2 F-2: the registered plan handler through the webhook route, ret
     expect(mockLogLines.filter((l) => l.ctx.event === 'bos_billing_payment_refused')).toEqual([]);
   });
 });
+
+// ── P-6a.2: invoice.payment_action_required through the real route (§5.4, SR-10) ──
+
+const ACCOUNT_ID = '66666666-6666-4666-8666-666666666666';
+const HOSTED_URL = 'https://invoice.stripe.com/i/acct_route/test_route_hosted?s=ap';
+
+/** A RENEWAL that needs 3-D Secure, on a plan price, Stripe-shaped ids (X-5's shape: attempt_count 0). */
+function actionRequiredRenewal(): Record<string, unknown> {
+  const event = paidPlanInvoice() as { id: string; type: string; data: { object: Record<string, unknown> } };
+  event.id = 'evt_1RouteAR';
+  event.type = 'invoice.payment_action_required';
+  Object.assign(event.data.object, {
+    id: 'in_1RouteAR',
+    amount_paid: 0,
+    billing_reason: 'subscription_cycle',
+    attempt_count: 0,
+    hosted_invoice_url: HOSTED_URL,
+    status_transitions: { paid_at: null },
+  });
+  return event;
+}
+
+/** The account's billing row, as PostgREST returns it: it holds the subscription, paid through the first period. */
+const billingRowRaw = {
+  id: '77777777-7777-4777-8777-777777777777',
+  user_id: ACCOUNT_ID,
+  livemode: false,
+  stripe_customer_id: 'cus_RouteF2',
+  stripe_subscription_id: 'sub_RouteF2',
+  subscription_status: 'past_due',
+  bought_tier: null,
+  current_period_end: '2026-09-21T14:13:20+00:00',
+  cancel_at_period_end: false,
+  pending_tier: null,
+  open_checkout_session_id: null,
+  open_checkout_expires_at: null,
+  last_invoice_id: 'in_1RoutePaid',
+  last_paid_at: '2026-08-22T14:13:20+00:00',
+  last_payment_failed_at: null,
+  failed_attempts: 0,
+  action_required_invoice_url: null,
+  founder_discount_applied_at: null,
+  ended_at: null,
+  created_at: '2026-08-01T00:00:00+00:00',
+  updated_at: '2026-08-22T14:13:20+00:00',
+};
+
+describe('P-6a.2: invoice.payment_action_required through the webhook route', () => {
+  const saved = process.env.BUSINESS_OS_PLAN_PRICES_ENABLED;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.BUSINESS_OS_PLAN_PRICES_ENABLED;
+    else process.env.BUSINESS_OS_PLAN_PRICES_ENABLED = saved;
+  });
+
+  it('price switch OFF (production today): not Business OS, exactly as before; no Business OS table touched, 200', async () => {
+    delete process.env.BUSINESS_OS_PLAN_PRICES_ENABLED;
+    const r = await run(actionRequiredRenewal());
+    expect(r).toEqual({ status: 200, body: { received: true } });
+    expect(claimUpdates()).toEqual(['completed']);
+    expect(mockEffects.filter((e) => e.table.startsWith('business_os_'))).toEqual([]);
+    expect(mockLogLines.filter((l) => l.ctx.event === 'bos_billing_event_denied')).toEqual([]);
+  });
+
+  it('price switch ON: a renewal records the history row, stores the hosted URL by compare-and-set, and logs no URL', async () => {
+    process.env.BUSINESS_OS_PLAN_PRICES_ENABLED = 'true';
+    mockEffects.length = 0;
+    mockLogLines.length = 0;
+    mockEvent = actionRequiredRenewal();
+    let POST: (req: NextRequest) => Promise<Response> = async () => {
+      throw new Error('not loaded');
+    };
+    jest.isolateModules(() => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- fresh module per run
+      POST = require('../route').POST;
+    });
+    mockDb = {
+      'business_os_billing_accounts:select': { data: billingRowRaw, error: null },
+      'business_os_billing_events:insert': { data: { id: EVENT_ROW_ID }, error: null },
+      'business_os_billing_accounts:update': { data: null, error: null, count: 1 },
+    };
+    const res = await POST(
+      new NextRequest('http://localhost/api/stripe/webhook', { method: 'POST', body: '{}', headers: { 'stripe-signature': 't=1,v1=x' } })
+    );
+    await new Promise((r) => setImmediate(r));
+    expect(res.status).toBe(200);
+    expect(claimUpdates()).toEqual(['completed']);
+
+    const history = effectsOn('business_os_billing_events');
+    expect(history.map((e) => (e.chain[0][1] as { kind: string }).kind)).toEqual(['payment_action_required']);
+
+    const updates = effectsOn('business_os_billing_accounts').filter((e) => e.operation === 'update');
+    expect(updates).toHaveLength(1);
+    expect(updates[0].chain[0][1]).toMatchObject({ failed_attempts: 1, action_required_invoice_url: HOSTED_URL });
+    expect(updates[0].chain[0][2]).toEqual({ count: 'exact' });
+    expect(updates[0].chain.map((c) => c[0])).not.toEqual(expect.arrayContaining(['select', 'or']));
+    expect(updates[0].chain).toContainEqual(['eq', 'user_id', ACCOUNT_ID]);
+    expect(updates[0].chain).toContainEqual(['eq', 'current_period_end', '2026-09-21T14:13:20+00:00']);
+
+    // No plan write; the URL is in no log line.
+    expect(effectsOn('business_os_account_plans')).toEqual([]);
+    expect(JSON.stringify(mockLogLines)).not.toContain('invoice.stripe.com');
+    expect(mockLogLines.filter((l) => l.ctx.event === 'bos_billing_renewal_failure_counted')).toEqual([
+      expect.objectContaining({ ctx: expect.objectContaining({ outcome: 'recorded', failedAttempts: 1, actionRequiredUrlStored: true }) }),
+    ]);
+  });
+});

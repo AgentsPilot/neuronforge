@@ -9,10 +9,12 @@
  * | Event                                          | Use case                                   |
  * |------------------------------------------------|--------------------------------------------|
  * | `invoice.paid`                                 | `applyPaidPlanInvoice` (planPaymentApply)  |
- * | `invoice.payment_failed`                       | `recordFailedPlanInvoice` (SA Q-2)         |
+ * | `invoice.payment_failed`                       | `recordFailedPlanInvoice` (SA Q-2, P-6a.2) |
+ * | `invoice.payment_action_required` (P-6a.2)     | `recordActionRequiredPlanInvoice`          |
  * | `checkout.session.completed`                   | link the subscription, clear the lock      |
  * | `checkout.session.expired`                     | clear the lock                             |
- * | `customer.subscription.updated` / `.deleted`   | status-only mirror, read fresh (SA Q-1)    |
+ * | `customer.subscription.updated` / `.deleted`   | status mirror, read fresh (SA Q-1); on     |
+ * |                                                | `.deleted` the ended history + audit (P-6a.2) |
  *
  * PF-15 FIRST, for every event: the event's `livemode` must equal the mode of
  * this server's Stripe key. Test and live billing rows share one database, so
@@ -52,6 +54,7 @@ import { planPriceCatalog } from '@/lib/business-os/billing/planPriceCatalog';
 import { currentStripeMode, isLiveMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
 import {
   applyPaidPlanInvoice,
+  recordActionRequiredPlanInvoice,
   recordFailedPlanInvoice,
   type PlanPaymentDeps,
 } from '@/lib/business-os/billing/planPaymentApply';
@@ -91,6 +94,8 @@ export function createPlanBillingHandler(deps: PlanBillingHandlerDeps): Business
         return applyPaidPlanInvoice(event, log, deps);
       case 'invoice.payment_failed':
         return recordFailedPlanInvoice(event, log, deps);
+      case 'invoice.payment_action_required':
+        return recordActionRequiredPlanInvoice(event, log, deps);
       case 'checkout.session.completed':
         return onPlanCheckoutSessionCompleted(event, log, deps);
       case 'checkout.session.expired':

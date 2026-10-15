@@ -11,6 +11,7 @@
  * |-----------------------------------------------|-------------------------------------|-----------------------|-------------------------------------|
  * | `invoice.paid`, `invoice.payment_failed`      | `deny` (empty catalog)              | `flow: 'plan'`        | `deny` (SA Q-1: payment_failed too) |
  * | the same, with `lines.has_more`               | `deny lines_truncated`              | lines read in full (CF-2), then the row above               |
+ * | `invoice.payment_action_required` (P-6a.2)    | `not_business_os` (no catalog read) | `flow: 'plan'`        | `deny`, as `invoice.payment_failed` |
  * | `checkout.session.completed`, subscription    | `deny legacy_subscription_checkout` | `flow: 'plan'`        | `deny legacy_subscription_checkout` |
  * | `checkout.session.expired`, subscription      | `not_business_os`                   | `flow: 'plan'`        | `not_business_os`                   |
  * | `customer.subscription.updated` / `.deleted`  | `not_business_os`                   | `flow: 'plan'`        | `not_business_os`                   |
@@ -254,6 +255,14 @@ export function createPlanResolver(deps: PlanResolverDeps): BusinessOsResolver {
       switch (event.type) {
         case 'invoice.paid':
         case 'invoice.payment_failed':
+          return resolveInvoice(event, event.data.object as Stripe.Invoice);
+
+        // P-6a.2 (workplan §5.4; SA: required behind the switch). With the
+        // switch off this is exactly the outcome it had before (`not_business_os`),
+        // decided BEFORE any catalog read or Stripe call: `resolveInvoice` on
+        // an empty catalog would deny it loudly, a production behaviour change.
+        case 'invoice.payment_action_required':
+          if (!recognitionEnabled()) return NOT_OURS;
           return resolveInvoice(event, event.data.object as Stripe.Invoice);
 
         case 'checkout.session.completed':
