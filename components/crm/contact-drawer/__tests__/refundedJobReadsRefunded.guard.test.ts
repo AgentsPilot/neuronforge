@@ -70,7 +70,17 @@ describe('the header', () => {
 
   it('still says "Lost" on a cancelled booking', () => {
     // Two different outcomes, and the cancelled one is the more useful label.
-    expect(tab).toMatch(/moneyReturned =\s*\n?\s*booking\.status !== 'cancelled'/);
+    expect(tab).toMatch(/booking\.status !== 'cancelled'/);
+  });
+
+  it('and on one whose job was called off after the meeting was held', () => {
+    /*
+     * The status is not enough on its own any more: `cancel` preserves a
+     * recorded attendance, so a held-then-cancelled job keeps `completed` and
+     * would have fallen through to "Refunded" on a card that deliberately
+     * says "Lost".
+     */
+    expect(tab).toMatch(/const moneyReturned =\s*\n?\s*!jobCalledOff &&/);
   });
 
   it('reads the refund from either side', () => {

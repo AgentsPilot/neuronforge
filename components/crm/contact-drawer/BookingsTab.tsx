@@ -50,6 +50,72 @@ import { REFUND_CLASS, REFUND_HEX } from '@/components/payments/refundTone';
  * its charge. See `onPickSlot` on `SchedulingBookingModal`.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Is the JOB over, as opposed to the APPOINTMENT?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TWO QUESTIONS THAT ARE THE SAME ONE FOR MOST SERVICES, AND NOT FOR A QUOTE.
+ *
+ * For a direct service the appointment IS the job: it was held, so the job is
+ * done. For a `sale_mode: 'proposal'` booking the appointment is a
+ * consultation, and holding it does not end anything — it is where the work
+ * STARTS. The quote has not been sent, agreed, or paid.
+ *
+ * Marking that consultation held used to hide the action strip, Cancel
+ * included, because the strip tested the booking's own status. So an owner who
+ * recorded "the meeting happened" lost the ability to call off a job that had
+ * not been priced, while the client's proposal link stayed live and acceptable.
+ *
+ * Hoisted out of the step loop because the card-level state asked this question
+ * correctly and the action strip asked the other one. Derived in two places
+ * they drift, and the drift reads as a button that comes and goes for no reason.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function jobIsOver(input: {
+  /** `scheduling_bookings.status`. */
+  status?: string | null;
+  /** A `sale_mode: 'proposal'` booking that is not a package session. */
+  isQuoted: boolean;
+  /** The payment step reached `completed` or `refunded`: money did arrive. */
+  quotePaid: boolean;
+  /**
+   * The job was called off, whatever the appointment's status says.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THE STATUS IS NO LONGER ENOUGH TO ANSWER THIS
+   *
+   * This function used to read "called off" as `status === 'cancelled'`, which
+   * worked only because cancelling always wrote that status. It no longer
+   * does: `SchedulingBookingRepository.cancel` preserves a recorded attendance,
+   * so a consultation that was held and whose job was then cancelled keeps
+   * `completed` — there is no `completed_at` column, and overwriting it erased
+   * the fact that the meeting happened.
+   *
+   * The immediate symptom was Cancel coming BACK on an already-stopped job: no
+   * `cancelled` status, so `jobIsOver` read false, so the action strip
+   * reappeared offering to call off work that had been called off. Asking the
+   * status a question it has stopped answering is the whole bug.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  calledOff?: boolean;
+}): boolean {
+  /* `status === 'cancelled'` stays in the union rather than being replaced by
+     it: rows cancelled by older code paths carry no `cancel_reason`, and a
+     booking cancelled before it was ever held still writes the status. */
+  const cancelled = input.status === 'cancelled' || Boolean(input.calledOff);
+
+  /* A quoted job ends when it is called off or when it has been paid for.
+     Nothing the appointment does ends it. */
+  if (input.isQuoted) return cancelled || input.quotePaid;
+
+  return cancelled || input.status === 'completed' || input.status === 'no_show';
+}
+
+/** Has the appointment itself been dealt with? Attendance only. */
+function attendanceRecorded(status?: string | null): boolean {
+  return status === 'completed' || status === 'cancelled' || status === 'no_show';
+}
+
 function AddPackageMeeting({
   containerId,
   onOpen,
@@ -123,7 +189,20 @@ interface BookingsTabProps {
    * the dialog, and the row only says which money is meant.
    */
   onRefundStage?: (stage: {
-    invoiceId: string;
+    /**
+     * One of these two, never neither.
+     *
+     * A quoted MILESTONE raises an invoice and is refunded through it. An
+     * INSTALMENT period charged by the processor has no invoice at all — the
+     * money is a `payment_transactions` row — so `invoiceId` was typed
+     * `string` and cast from null at the only call site, which is how a paid
+     * instalment came to offer no refund.
+     *
+     * `/api/payments/refunds` accepts either key, so both are carried and the
+     * dialog sends whichever it was given.
+     */
+    invoiceId: string | null;
+    transactionId: string | null;
     amount: number;
     refunded: number;
     currency: string;
@@ -700,7 +779,13 @@ export function BookingsTab({
      * collapsing it into "not ahead" is exactly how the badge came to say
      * "needs a quote" about a meeting nobody had confirmed happened.
      */
-    meetingState: 'ahead' | 'unmarked' | 'settled'
+    meetingState: 'ahead' | 'unmarked' | 'settled',
+    /*
+     * The job was called off, which `bookingStatus` can no longer be relied on
+     * to say: a held consultation keeps `completed` when its job is cancelled.
+     * See `jobCalledOff` at the call site for the three signals behind it.
+     */
+    calledOff = false
   ) => {
     const amber = { color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-500/10' };
     const blue = { color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-500/10' };
@@ -730,6 +815,25 @@ export function BookingsTab({
      */
     if (quoteState === 'stopped') {
       return { text: t('crm.booking.quoted.stopped'), ...amber };
+    }
+    /*
+     * Called off with a quote still out, and the status no longer says so.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The `bookingStatus === 'cancelled'` test at the top of this function
+     * answers for every booking whose status was written. It does not answer
+     * for one whose consultation was marked held before the job was cancelled:
+     * that keeps `completed`, falls past the branch above, and lands on
+     * "quote sent" — a job the owner called off, with the badge telling them a
+     * price is still sitting with the client.
+     *
+     * Below `stopped` on purpose. An agreed job that was stopped part-way is
+     * not lost, and that distinction is the reason `stopped` has its own badge
+     * at all; reaching this branch means nothing was ever agreed.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (calledOff) {
+      return { text: t('crm.booking.quoted.lost'), ...red };
     }
     if (quoteState === 'sent' || quoteState === 'viewed') {
       return { text: t('crm.booking.quoted.sent'), ...blue };
@@ -1530,6 +1634,46 @@ export function BookingsTab({
               );
 
               /**
+               * Was this job called off? Asked of the job, not the appointment.
+               *
+               * ───────────────────────────────────────────────────────────────
+               * `booking.status === 'cancelled'` used to be the only answer
+               * available, and it is no longer reliable: a consultation marked
+               * held keeps `completed` when the job is cancelled, because the
+               * table has no `completed_at` and overwriting the status erased
+               * that the meeting ever happened.
+               *
+               * Four signals, any one of which means the work is off:
+               *
+               *   · `status === 'cancelled'` — still the answer for every
+               *     booking cancelled before it was held, and the ONLY answer
+               *     for rows cancelled by older code paths, which carry no
+               *     `cancel_reason` at all. Dropping it in favour of the
+               *     columns below would make those jobs look live again: the
+               *     same bug in the opposite direction.
+               *   · `cancel_reason` / `cancelled_by` — written by every
+               *     cancellation path, including the one that now leaves the
+               *     status alone. These are what make a held-then-cancelled
+               *     job answerable at all.
+               *   · a `stopped` quote — the job can also be stopped from
+               *     Manage Payment without the booking being cancelled.
+               *
+               * Complete on purpose, so a call site can ask this one question
+               * instead of assembling the union itself and getting a different
+               * subset of it each time.
+               *
+               * Deliberately NOT `cancellation_reason`: that column holds free
+               * prose including the `CLIENT_CANCELLED_PREFIX`, and a
+               * reschedule note left in it would read as a cancellation.
+               * ───────────────────────────────────────────────────────────────
+               */
+              const jobCalledOff =
+                booking.status === 'cancelled' ||
+                Boolean(booking.cancel_reason) ||
+                Boolean(booking.cancelled_by) ||
+                quoteState === 'stopped';
+
+              /**
                * The money came back, and that outranks "completed".
                *
                * ───────────────────────────────────────────────────────────────
@@ -1544,10 +1688,15 @@ export function BookingsTab({
                * `payment_status` there can lag what the invoices say.
                *
                * NOT on a cancelled booking: "Lost" already names that outcome,
-               * and it is the more useful of the two.
+               * and it is the more useful of the two. `jobCalledOff` rather
+               * than the status alone, for the same reason as everywhere else
+               * on this card — a held consultation keeps `completed` when its
+               * job is cancelled, and reading only the status would put
+               * "Refunded" on a job this test was written to label "Lost".
                * ───────────────────────────────────────────────────────────────
                */
               const moneyReturned =
+                !jobCalledOff &&
                 booking.status !== 'cancelled' &&
                 (booking.payment_status === 'refunded' ||
                   Boolean(
@@ -1571,7 +1720,8 @@ export function BookingsTab({
                       ? 'ahead'
                       : proposalStep?.metadata?.waitingOn === 'unmarked'
                         ? 'unmarked'
-                        : 'settled'
+                        : 'settled',
+                    jobCalledOff
                   )
                 : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid', booking.start_time);
               const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
@@ -1653,7 +1803,11 @@ export function BookingsTab({
                           cancelled before the code existed still say something,
                           and dropping it would erase what they say. The note is
                           left for the expanded view; this is a badge row. */}
-                      {booking.status === 'cancelled' &&
+                      {/* `jobCalledOff`, not the status: a held consultation keeps
+                          `completed` when its job is cancelled, and reading the
+                          status here would hide the owner's own reason for
+                          calling it off on exactly those bookings. */}
+                      {jobCalledOff &&
                         (booking.cancel_reason || booking.cancellation_reason) && (
                           <span
                             className="text-[11px] text-[var(--v2-text-muted)] truncate max-w-[170px]"
@@ -1707,11 +1861,30 @@ export function BookingsTab({
 
                       So only "did not attend" is conditional. The other two mean
                       the same thing either way. */}
+                  {/*
+                    THE STRIP LIVES AS LONG AS THE JOB DOES.
+
+                    It tested the booking's own status, so pressing "the meeting
+                    was held" on a quoted job wrote `completed` and took Cancel
+                    away with it — leaving an owner who had recorded a
+                    consultation with no way to call off work that had not been
+                    quoted, agreed or paid, while the client's proposal link
+                    stayed live.
+
+                    `jobIsOver` is the same question the card's own state asks.
+                    For a direct service it is unchanged: the appointment is the
+                    job. Within the strip, the two attendance buttons hide once
+                    attendance is recorded, because that part IS settled.
+                  */}
                   {onSetBookingStatus &&
-                    booking.status !== 'completed' &&
-                    booking.status !== 'cancelled' &&
-                    booking.status !== 'no_show' && (
+                    !jobIsOver({
+                      status: booking.status,
+                      isQuoted,
+                      quotePaid: Boolean(quotePaid),
+                      calledOff: jobCalledOff,
+                    }) && (
                       <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+                        {!attendanceRecorded(booking.status) && (
                         <button
                           type="button"
                           onClick={() => onSetBookingStatus(booking.id, 'completed')}
@@ -1730,9 +1903,12 @@ export function BookingsTab({
                             ? t('crm.booking.quoted.meeting_held')
                             : t('crm.booking.status.completed') || 'Completed'}
                         </button>
+                        )}
 
-                        {/* The one that needs a time to mean anything. */}
-                        {!isUnscheduled && (
+                        {/* The one that needs a time to mean anything, and the
+                            one that stops meaning anything once attendance has
+                            been recorded. */}
+                        {!isUnscheduled && !attendanceRecorded(booking.status) && (
                           <button
                             type="button"
                             onClick={() => onSetBookingStatus(booking.id, 'no_show')}
@@ -1957,6 +2133,46 @@ export function BookingsTab({
                                         ? t('crm.booking.step.booking_cancelled')
                                         : null;
 
+                                  /*
+                                   * WHY it was called off, under the title that says it was.
+                                   *
+                                   * ─────────────────────────────────────────────────────────
+                                   * The closing node read "הזמנה בוטלה" over an empty body.
+                                   * The reason is on the row and is already shown once, in
+                                   * the badge row at the top of the card — but that is the
+                                   * card's header, not the journey, and the journey is where
+                                   * someone reads what happened in order. The step that
+                                   * announces the cancellation was the one place not saying
+                                   * why.
+                                   *
+                                   * Computed HERE and not in `buildJourneySteps` because the
+                                   * code has to be translated: `cancel_reason` is a key from
+                                   * `cancellationReasons`, and the builder is a plain
+                                   * function with no `t` — it carries its own per-language
+                                   * word maps precisely because of that. Reason codes are
+                                   * already translated in this file, two places above.
+                                   *
+                                   * Same fallback ladder as the badge row, so the two cannot
+                                   * disagree: the code first, then the older free text, and
+                                   * finally a plain "no reason given" rather than nothing —
+                                   * an empty line reads as data still loading.
+                                   * ─────────────────────────────────────────────────────────
+                                   */
+                                  const cancelledOutcomeFact =
+                                    isFinalStep &&
+                                    (booking.status === 'cancelled' || booking.status === 'no_show')
+                                      ? booking.cancel_reason
+                                        ? t(cancelReasonKey(booking.cancel_reason))
+                                        : /* Older rows hold prose, and a client cancellation
+                                             holds it behind a stored English prefix — shown
+                                             raw it put "Cancelled by client" in front of a
+                                             Hebrew-speaking owner. */
+                                          splitClientCancellationReason(booking.cancellation_reason)
+                                            .note ||
+                                          t('crm.activity.desc.no_reason') ||
+                                          'No reason given'
+                                      : null;
+
                                   const stepTitle =
                                     step.label || outcomeTitle || t(`crm.booking.step.${step.key}`) || step.key;
                                   const isIntakeStep = step.key === 'intake';
@@ -2143,7 +2359,14 @@ export function BookingsTab({
                                     isPaymentStep &&
                                     paymentExpected &&
                                     !moneyMoved &&
-                                    (booking.status === 'cancelled' ||
+                                    /* `jobCalledOff` rather than the status: a
+                                       held consultation keeps `completed` when
+                                       its job is cancelled, and the stages that
+                                       never had an invoice raised have no
+                                       `invoiceStatus` to fall back on — so
+                                       reading the status alone put those stages
+                                       back to looking collectable. */
+                                    (jobCalledOff ||
                                       payment?.invoiceStatus === 'cancelled');
 
                                   /**
@@ -2428,10 +2651,7 @@ export function BookingsTab({
                                    * was held, whether it can still be moved,
                                    * whether a confirmation is worth resending.
                                    */
-                                  const meetingSettled =
-                                    booking.status === 'completed' ||
-                                    booking.status === 'cancelled' ||
-                                    booking.status === 'no_show';
+                                  const meetingSettled = attendanceRecorded(booking.status);
 
                                   /*
                                    * Is the JOB over?
@@ -2442,9 +2662,11 @@ export function BookingsTab({
                                    * and starts the work. Only the card-level
                                    * state reads this.
                                    */
-                                  const settledStatus = isQuoted
-                                    ? booking.status === 'cancelled' || Boolean(quotePaid)
-                                    : meetingSettled;
+                                  const settledStatus = jobIsOver({
+                                    status: booking.status,
+                                    isQuoted,
+                                    quotePaid: Boolean(quotePaid),
+                                  });
 
                                   /**
                                    * Its time has passed and nobody has said what happened.
@@ -2461,6 +2683,68 @@ export function BookingsTab({
                                       booking.start_time &&
                                       !meetingSettled &&
                                       new Date(booking.start_time) <= new Date()
+                                  );
+
+                                  /*
+                                   * HELD IS NOT THE SAME AS "HAS AN ANSWER".
+                                   *
+                                   * ─────────────────────────────────────────────────────────
+                                   * The dot beside this line was green whenever
+                                   * `meetingSettled` was true, and `attendanceRecorded`
+                                   * counts cancelled and no-show as settled — an answer
+                                   * exists, which is the question the ACTION STRIP asks,
+                                   * because a settled meeting has no attendance left to
+                                   * record either way.
+                                   *
+                                   * It is the wrong question for a colour. The result was a
+                                   * green dot, the platform's "this went well" mark, sitting
+                                   * directly beside the word בוטלה. The comment above the
+                                   * dot already said "green once it is marked held"; the
+                                   * condition under it said something else.
+                                   *
+                                   * Red rather than muted: the step's own node on the rail
+                                   * is already `failed`, and a muted dot next to a red node
+                                   * would read as two different opinions about one meeting.
+                                   * ─────────────────────────────────────────────────────────
+                                   */
+                                  const meetingHeld = booking.status === 'completed';
+                                  const meetingCalledOff =
+                                    booking.status === 'cancelled' || booking.status === 'no_show';
+
+                                  /*
+                                   * IS THERE STILL A MEETING TO PREPARE FOR?
+                                   *
+                                   * ─────────────────────────────────────────────────────────
+                                   * All three send-intake affordances — the node, its tooltip
+                                   * and the button — asked `status !== 'cancelled'`, which is
+                                   * the narrowest possible reading of "is this still live".
+                                   *
+                                   * Two states slip straight through it. A job STOPPED after
+                                   * its consultation was held keeps `completed`, because
+                                   * `cancel` no longer overwrites a recorded attendance; and
+                                   * a meeting that simply happened is `completed` too. Both
+                                   * were offered "שלח טופס לקוח" — an invitation to send the
+                                   * client a form preparing them for a meeting that is over,
+                                   * on a job the owner had already called off.
+                                   *
+                                   * Both halves are needed and neither implies the other:
+                                   *
+                                   *   · `meetingSettled` — the appointment has an outcome, so
+                                   *     there is nothing left to prepare for. Covers
+                                   *     cancelled and no-show as well, which is why the old
+                                   *     status test is not kept beside it.
+                                   *   · `jobCalledOff` — the WORK is off while the meeting is
+                                   *     still ahead. A quote stopped from Manage Payment
+                                   *     leaves `confirmed` untouched, so nothing above would
+                                   *     catch it.
+                                   *
+                                   * `outcomeRecorded` in `bookingStatus.ts` now refuses the
+                                   * same submissions server-side. This is the surface that
+                                   * stops OFFERING them.
+                                   * ─────────────────────────────────────────────────────────
+                                   */
+                                  const canSendIntake = Boolean(
+                                    isIntakeStep && !hasIntake && onSendIntake && !meetingSettled && !jobCalledOff
                                   );
 
                                   const scheduleDetail =
@@ -2502,7 +2786,7 @@ export function BookingsTab({
 
                                   // The node keeps its send/resend behaviour.
                                   const onNodeClick =
-                                    isIntakeStep && !hasIntake && onSendIntake && booking.status !== 'cancelled'
+                                    canSendIntake
                                       ? () => handleSendIntake(booking.id)
                                       : isPaymentStep && !hasStageDocuments && step.metadata?.canResend && onSendInvoice && booking.status !== 'cancelled'
                                         ? () => handleSendInvoice(step.metadata?.invoiceId as string, booking.id)
@@ -2538,6 +2822,11 @@ export function BookingsTab({
                                   const cardFact = isProposalStep
                                     ? step.details || ''
                                     : step.details ||
+                                      /* Above `scheduleFact`: on a cancelled meeting the
+                                         hours are still true and no longer the point, and
+                                         on a product there is no schedule line at all —
+                                         which is how the closing node came to be empty. */
+                                      cancelledOutcomeFact ||
                                       scheduleFact ||
                                       (isConfirmationStep && step.status === 'completed'
                                         ? t('crm.booking.email_sent')
@@ -2623,7 +2912,7 @@ export function BookingsTab({
                                           }}
                                           disabled={!onNodeClick || nodeLoading}
                                           title={
-                                            isIntakeStep && !hasIntake
+                                            canSendIntake
                                               ? t('crm.intake.send_form') || 'Send intake form'
                                               : isPaymentStep && step.metadata?.canResend
                                                 ? t('crm.invoice.resend') || 'Resend invoice'
@@ -3511,7 +3800,12 @@ export function BookingsTab({
                                                   */}
                                                   <StageRowActions
                                                     invoiceId={stage.invoiceId}
+                                                    /* An instalment period has no invoice; its
+                                                       money is a processor charge. Refund needs
+                                                       one key or the other. */
+                                                    transactionId={stage.transactionId}
                                                     paid={paid}
+                                                    stopped={stopped}
                                                     refunded={stageRefunded}
                                                     remaining={
                                                       stage.amount - Number(stage.refundedAmount || 0)
@@ -3539,7 +3833,8 @@ export function BookingsTab({
                                                       onRefundStage
                                                         ? () =>
                                                             onRefundStage({
-                                                              invoiceId: stage.invoiceId as string,
+                                                              invoiceId: stage.invoiceId,
+                                                              transactionId: stage.transactionId ?? null,
                                                               amount: stage.amount,
                                                               refunded: Number(stage.refundedAmount || 0),
                                                               currency: payment!.currency,
@@ -3979,21 +4274,21 @@ export function BookingsTab({
                                             className="flex items-center gap-2 text-[12.5px] leading-[1.5]"
                                             style={{
                                               gridColumn: 1,
-                                              color: meetingSettled
-                                                ? 'var(--v2-text-muted)'
-                                                : scheduleAwaiting
-                                                  ? '#B54708'
-                                                  : 'var(--v2-text-muted)',
+                                              color: scheduleAwaiting
+                                                ? '#B54708'
+                                                : 'var(--v2-text-muted)',
                                             }}
                                           >
                                             <span
                                               className="h-1.5 w-1.5 shrink-0 rounded-full"
                                               style={{
-                                                background: meetingSettled
+                                                background: meetingHeld
                                                   ? '#22C58B'
-                                                  : scheduleAwaiting
-                                                    ? '#B54708'
-                                                    : 'var(--v2-border)',
+                                                  : meetingCalledOff
+                                                    ? '#F04438'
+                                                    : scheduleAwaiting
+                                                      ? '#B54708'
+                                                      : 'var(--v2-border)',
                                               }}
                                               aria-hidden="true"
                                             />
@@ -4222,7 +4517,7 @@ export function BookingsTab({
                                             the places it already goes.
                                           */}
 
-                                          {isIntakeStep && !hasIntake && onSendIntake && booking.status !== 'cancelled' && (
+                                          {canSendIntake && (
                                             <button
                                               type="button"
                                               disabled={sendingIntakeBookingId === booking.id}
@@ -4516,7 +4811,15 @@ export function BookingsTab({
                                                       onRefundStage && pay?.invoiceId
                                                         ? () =>
                                                             onRefundStage({
-                                                              invoiceId: pay.invoiceId as string,
+                                                              invoiceId: pay.invoiceId ?? null,
+                                                              /* A package MEETING's money is
+                                                                 always invoiced — the branch
+                                                                 is gated on `pay.invoiceId`
+                                                                 above — so there is no
+                                                                 transaction key to offer
+                                                                 here. Instalment periods are
+                                                                 the ones with no invoice. */
+                                                              transactionId: null,
                                                               amount: pay.amount,
                                                               refunded: Number(pay.refundedAmount || 0),
                                                               currency: pay.currency,
@@ -4610,11 +4913,10 @@ export function BookingsTab({
                           record of what happened; editing its time afterwards
                           rewrites history and, for a completed one, contradicts the
                           outcome the owner just recorded. */}
-                      {onEditSession &&
-                        !isUnscheduled &&
-                        booking.status !== 'completed' &&
-                        booking.status !== 'cancelled' &&
-                        booking.status !== 'no_show' && (
+                      {/* Attendance, not the job: a held consultation still
+                          must not have its time rewritten, even though the quoted
+                          job it belongs to is very much still running. */}
+                      {onEditSession && !isUnscheduled && !attendanceRecorded(booking.status) && (
                         <div className="mt-4 pt-3 border-t border-[var(--v2-border)]">
                           <Button
                             type="button"

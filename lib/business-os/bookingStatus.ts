@@ -100,6 +100,39 @@ export function holdsSlot(status: unknown): boolean {
 }
 
 /**
+ * The statuses that mean the appointment's outcome is already on record.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The three ways a booking ends. Whichever one it is, there is nothing left for
+ * the CLIENT to do about that appointment — which is the question the public
+ * manage-link routes need answered, and the one they were not asking.
+ *
+ * All three intake routes tested `=== 'cancelled'` alone, so a client whose
+ * meeting had been marked `no_show` could still open the form, submit it and
+ * upload files to it. The answers landed on a booking nobody was going to look
+ * at again, and the owner's card had already stopped asking for them.
+ *
+ * Deliberately NOT the same question as `holdsSlot`. That one asks whether the
+ * calendar is blocked, and `completed` is in it precisely because a past
+ * meeting must not be double-booked retrospectively. This asks whether the
+ * story is over, and for a finished meeting it is.
+ *
+ * The same split the booking card draws between `attendanceRecorded` — has this
+ * appointment been dealt with — and `jobIsOver`, which is about the work. This
+ * is the first question, and it lives here because this file imports nothing
+ * and can therefore be reached from a public route with no service-role key.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const SETTLED_BOOKING_STATUSES = ['cancelled', 'completed', 'no_show'] as const;
+
+/** Has this appointment already ended, one way or another? */
+export function outcomeRecorded(status: unknown): boolean {
+  return (
+    typeof status === 'string' && (SETTLED_BOOKING_STATUSES as readonly string[]).includes(status)
+  );
+}
+
+/**
  * Did the DATABASE refuse this write because the slot was taken?
  *
  * ─────────────────────────────────────────────────────────────────────────────

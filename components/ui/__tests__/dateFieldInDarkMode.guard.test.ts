@@ -225,3 +225,66 @@ describe('and it fits the screen it is on', () => {
     expect(row.match(/<div className="min-w-0">/g) ?? []).toHaveLength(2);
   });
 });
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * AND NOWHERE RE-INVERTS IT LOCALLY.
+ *
+ * The task drawer's date icon was still black on dark long after the shared
+ * fix landed, because the fix was never in one place to begin with. The same
+ * `filter: invert(1) brightness(0.8)` sat in SIX files — `input.tsx`,
+ * `globals.css`, `globals-v2.css` twice, and a `<style jsx>` block copied into
+ * `CRMTaskModal` and `TasksSection`.
+ *
+ * The two component copies are the reason the global correction looked like it
+ * had done nothing: `.dark .date-input-fix::-webkit-calendar-picker-indicator`
+ * is two classes, and it out-specifies the stylesheet's
+ * `html.dark input[type="date"]::-webkit-calendar-picker-indicator`. A local
+ * copy does not merely duplicate the rule, it WINS over the corrected one.
+ *
+ * `color-scheme: dark` is set once, globally, and that is the whole mechanism.
+ * Nothing below it needs to say anything about this button's colour.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+describe('no file re-inverts the calendar button', () => {
+  const { readdirSync, statSync } = require('fs') as typeof import('fs');
+
+  /** Every source file that could carry a rule, comments stripped. */
+  const sources: Array<[string, string]> = [];
+
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) {
+        walk(full);
+      } else if (/\.(tsx|ts|css)$/.test(entry) && !/__tests__/.test(full)) {
+        sources.push([full, readFileSync(full, 'utf8')]);
+      }
+    }
+  };
+
+  walk(join(__dirname, '..', '..', '..', 'components'));
+  walk(join(__dirname, '..', '..', '..', 'app'));
+
+  /* Comments go first: these files necessarily record WHY the invert is gone,
+     and naming the thing they forbid must not count as doing it. */
+  const withoutComments = (source: string) =>
+    source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+  it('scanned a meaningful number of files', () => {
+    // A walk that silently found nothing would pass the assertion below while
+    // checking precisely zero rules.
+    expect(sources.length).toBeGreaterThan(200);
+  });
+
+  it('leaves the engine to colour it', () => {
+    const offenders = sources
+      .filter(([, source]) => /calendar-picker-indicator/.test(source))
+      .filter(([, source]) => /filter:\s*invert/.test(withoutComments(source)))
+      .map(([file]) => file.slice(file.indexOf('neuronforge/') + 'neuronforge/'.length));
+
+    expect(offenders).toEqual([]);
+  });
+});

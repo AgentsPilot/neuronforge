@@ -252,12 +252,20 @@ export const BOS_LLM_CALL_POLICY: BosLlmCallPolicyMap = {
     reply_recommendation: tokenCall('gpt-4o-mini', 0.2, { switchable: true }),
   },
   onboarding: {
-    // All four extractors send NO temperature today, so the provider default
+    // Every extractor sends NO temperature today, so the provider default
     // applies (F-7 / SA V-2). Seeding a number would change behaviour.
     business_story_extraction: tokenCall('gpt-4o', null, { switchable: false }),
     client_workflow_extraction: tokenCall('gpt-4o', null, { switchable: false }),
     client_tracking_extraction: tokenCall('gpt-4o', null, { switchable: false }),
     adjustment_intent_extraction: tokenCall('gpt-4o', null, { switchable: false }),
+    /* The follow-up interview. Not switchable, like its neighbours: onboarding
+       cannot be turned off (DEC-5), and a conversation half-way through with
+       the model changed under it is not a state worth supporting. */
+    business_deepening: tokenCall('gpt-4o', null, { switchable: false }),
+    /* Names the draft services. Not switchable, for the same reason as the
+       rest of onboarding: a conversation half-way through with the model
+       changed under it is not a state worth supporting. */
+    service_drafting: tokenCall('gpt-4o', null, { switchable: false }),
   },
   images: {
     image_generation: {

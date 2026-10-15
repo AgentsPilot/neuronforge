@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CRMPipelineView } from '@/components/crm/CRMPipelineView';
 import { ContactsPager } from '@/components/crm/ContactsPager';
@@ -13,6 +13,7 @@ import { CRMContactDrawerV2 } from '@/components/crm/contact-drawer';
 import { Plus, Search, Users, Download, LayoutGrid, List, CheckSquare, Mail } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { ContactSearchField } from '@/components/crm/ContactSearchField';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
@@ -42,7 +43,7 @@ function sectionFromUrl(value: string | null): DrawerSection | undefined {
 export default function CRMPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [viewMode, setViewMode] = useState<ViewMode>('pipeline');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedContact, setSelectedContact] = useState<CRMContact | null>(null);
@@ -245,6 +246,64 @@ export default function CRMPage() {
     setSearchQuery(value);
     setCurrentPage(1);
   };
+
+  /*
+   * WHAT THIS ACCOUNT CAN BE FILTERED BY — its own vocabulary, not a constant.
+   *
+   * Stages are configured per account. Sources and tags are whatever this
+   * business has actually recorded, read off the contacts on hand: offering
+   * `source:newsletter` to somebody who has never run one is a filter that can
+   * only return nothing, which is the product asserting a capability it does
+   * not have.
+   *
+   * Derived rather than fetched. The list is already here, and a second request
+   * for a vocabulary that only exists because of these rows would be a second
+   * answer to the same question.
+   */
+  const stageOptions = useMemo(
+    () => pipelineStages.map(stage => ({ value: stage.stage_key, label: stage.stage_label })),
+    [pipelineStages]
+  );
+
+  /*
+   * One reading of what a source is CALLED, used by the filter panel and by the
+   * export. Two would drift, and the export is where a drift shows up as
+   * `website_booking` in a column somebody sends to an accountant.
+   */
+  const sourceLabel = useMemo(
+    () => (source: string | null | undefined) => {
+      const key = source?.trim();
+      if (!key) return '';
+      /* `website_booking` reads as "website booking" where the product has no
+         label for it, which is most of them. */
+      return t(`crm.source.${key}`) !== `crm.source.${key}`
+        ? t(`crm.source.${key}`)
+        : key.replace(/_/g, ' ');
+    },
+    [t]
+  );
+
+  const sourceOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const contact of contacts) {
+      const source = contact.source?.trim();
+      if (!source) continue;
+      seen.set(source.toLowerCase(), sourceLabel(source));
+    }
+    return [...seen.entries()].map(([value, label]) => ({ value, label })).sort((a, b) =>
+      a.label.localeCompare(b.label)
+    );
+  }, [contacts, sourceLabel]);
+
+  const tagOptions = useMemo(() => {
+    const seen = new Set<string>();
+    for (const contact of contacts) for (const tag of contact.tags ?? []) seen.add(tag);
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [contacts]);
+
+  /* The business's own date. The route resolves the same one from
+     `user_preferences`, so a period means the same on both sides. */
+  const today = useMemo(() => new Date().toLocaleDateString('en-CA'), []);
 
   /**
    * The board loads each column separately.
@@ -506,14 +565,35 @@ export default function CRMPage() {
       t('crm.export.created_at')
     ];
 
+    /*
+     * A PHONE NUMBER IS TEXT, and a spreadsheet does not agree.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * CSV quoting is syntax, not type: Excel reads `"0543254785"` as the
+     * NUMBER 543254785 and the leading zero is gone — an Israeli mobile
+     * arriving in an export one digit short. `="..."` is the one form Excel,
+     * Google Sheets and Numbers all read back as text.
+     *
+     * The value itself is left exactly as stored. Six of the twelve phones on
+     * this platform carry no country code, and this account holds both +972
+     * and +1 numbers, so there is no country to apply that would not be a
+     * guess — and a wrong country code on an exported list is worse than a
+     * bare national number, because it looks dialable.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const asText = (value: string) => (value ? `="${value.replace(/"/g, '""')}"` : '');
+
     // Map contacts to CSV rows
     const rows = contacts.map(contact => [
       contact.first_name || '',
       contact.last_name || '',
       contact.email || '',
-      contact.phone || '',
-      contact.stage || '',
-      contact.source || '',
+      asText(contact.phone || ''),
+      /* The words the owner configured, not the key the column holds.
+         `family_enrolled` is an implementation detail of this product; the
+         person reading the export has never seen it. */
+      stageOptions.find(option => option.value === contact.stage)?.label ?? contact.stage ?? '',
+      sourceLabel(contact.source),
       (contact.tags || []).join('; '),
       contact.created_at ? new Date(contact.created_at).toLocaleDateString() : ''
     ]);
@@ -521,7 +601,16 @@ export default function CRMPage() {
     // Create CSV content
     const csvContent = [
       headers.join(','),
-      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      ...rows.map(row =>
+        row
+          .map(cell => {
+            const text = String(cell);
+            /* Already a formula-quoted cell — quoting it again would ship the
+               `="..."` to the reader as literal characters. */
+            return text.startsWith('="') ? text : `"${text.replace(/"/g, '""')}"`;
+          })
+          .join(',')
+      )
     ].join('\n');
 
     // Create and trigger download
@@ -553,22 +642,42 @@ export default function CRMPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0">
-            <div className="relative hidden md:block">
-              <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
-              <input
-                type="text"
-                placeholder={
-                  viewMode === 'tasks'
-                    ? (t('crm.tasks.search_placeholder') || 'Search tasks...')
-                    : t('crm.search_placeholder')
-                }
-                value={searchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                className="ps-10 pe-4 py-2 w-48 lg:w-64 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              />
-            </div>
+          {/*
+            `md:overflow-visible`, and that is the whole fix for the clipped box.
+            ───────────────────────────────────────────────────────────────────
+            The row scrolls sideways on a phone so the buttons stay reachable.
+            But `overflow-x-auto` cannot clip one axis alone — CSS promotes the
+            other from `visible` to `auto` — so the FOCUS RING, which Tailwind
+            draws outside the element's border box, was cut off top and bottom
+            the moment the search box was focused. It reads as a half-drawn
+            frame around the field you are typing in.
+
+            Only below `md`, because the field itself is `hidden md:block`: on
+            every screen where the box exists, nothing needs to scroll here.
+          */}
+          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-x-auto md:overflow-visible pb-2 sm:pb-0">
+            {/*
+              The orders search, for contacts. One box, chips in it, a ⊕ that
+              answers "what can I filter by?" — the same field an owner has
+              already learned once, rather than something like it.
+            */}
+            <ContactSearchField
+              value={searchQuery}
+              onChange={handleSearchChange}
+              today={today}
+              language={language as 'en' | 'es' | 'he'}
+              stages={stageOptions}
+              sources={sourceOptions}
+              tags={tagOptions}
+              placeholder={
+                viewMode === 'tasks'
+                  ? (t('crm.tasks.search_placeholder') || 'Search tasks...')
+                  : t('crm.search_placeholder')
+              }
+              t={t}
+              className="hidden w-64 md:block lg:w-80"
+            />
+
             {/* Export CSV Button */}
             <button
               onClick={handleExportCSV}
@@ -661,21 +770,22 @@ export default function CRMPage() {
         </div>
 
         {/* Mobile Search Bar - Only visible on mobile */}
-        <div className="md:hidden relative">
-          <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
-          <input
-            type="text"
-            placeholder={
-              viewMode === 'tasks'
-                ? (t('crm.tasks.search_placeholder') || 'Search tasks...')
-                : t('crm.search_placeholder')
-            }
-            value={searchQuery}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            className="ps-10 pe-4 py-2 w-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          />
-        </div>
+        <ContactSearchField
+          value={searchQuery}
+          onChange={handleSearchChange}
+          today={today}
+          language={language as 'en' | 'es' | 'he'}
+          stages={stageOptions}
+          sources={sourceOptions}
+          tags={tagOptions}
+          placeholder={
+            viewMode === 'tasks'
+              ? (t('crm.tasks.search_placeholder') || 'Search tasks...')
+              : t('crm.search_placeholder')
+          }
+          t={t}
+          className="md:hidden"
+        />
 
         {/* Content */}
         {loading ? (

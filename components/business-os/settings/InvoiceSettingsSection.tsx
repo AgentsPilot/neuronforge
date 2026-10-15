@@ -776,7 +776,6 @@ export function InvoiceSettingsSection({
                       // Typing an address of your own ends the claim that one of
                       // the saved ones is what is in these fields.
                       setReusedAddress(null);
-                      setAddressPicked(false);
                       setSettings(prev => ({
                         ...prev,
                         invoice_address: { ...prev.invoice_address, ...address },

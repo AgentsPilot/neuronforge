@@ -34,6 +34,7 @@ const COPY: Record<string, string> = {
   'scheduling.modal.collection.invoice.why': 'Billed afterwards. No processor needed.',
   'config.services.sale_mode.proposal.why': 'The client sends a request instead.',
   'config.services.collection.no_processor': 'Card payments need a connected processor.',
+  'config.services.shape.no_price_yet': 'No price set yet. You can still say how you will be paid, and fill in the figure when you know it. A price of 0 means this service is free.',
   'scheduling.modal.quote_note': 'No price here, on purpose: you name the amount in each quote.',
   'config.services.needs_time.yes': 'Yes',
   'config.services.needs_time.no': 'No',
@@ -311,10 +312,24 @@ describe('a free service', () => {
    * modal is a shipped surface and changing it was not asked for.
    */
   it('says nothing is collected, and stops asking how they pay', async () => {
+    /*
+     * A price of 0 is an ANSWER: nothing is charged. So there is no amount to
+     * collect and the question is not merely unavailable, it does not apply.
+     *
+     * This is the half of the rule that survived two corrections. The first
+     * attempt hid the shapes for a price of 0 AND for no price at all, which
+     * took the question away from every placeholder onboarding creates. The
+     * second disabled them in both cases, which left a free service arguing
+     * with itself: three greyed answers under the sentence "this service is
+     * free". The distinction is the fix, not the mechanism.
+     */
     await openEditor({ service: { ...SERVICE, price: 0 } as unknown as SchedulingService });
 
     says(/Nothing is collected. This service is free/);
-    expect(screen.queryByRole('button', { name: 'You invoice them' })).not.toBeInTheDocument();
+
+    for (const name of ['They pay by card', 'You invoice them', 'You quote first']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
   });
 });
 
@@ -387,6 +402,7 @@ describe('a service with no price', () => {
   };
 
   it('a saved free service does not ask how they pay', async () => {
+    // Zero is an answer. See the free-service case above for the full reasoning.
     await openEditor({ service: FREE });
     for (const name of ['They pay by card', 'You invoice them', 'You quote first']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
@@ -418,5 +434,125 @@ describe('a service with no price', () => {
     fireEvent.click(screen.getByRole('button', { name: 'You quote first' }));
     expect(screen.getByRole('button', { name: 'They pay by card' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'You invoice them' })).toBeInTheDocument();
+  });
+});
+
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * THE PLACEHOLDER ONBOARDING ACTUALLY CREATES.
+ *
+ * The two tests above use `price: 0`. Onboarding writes `price: NULL` — "not
+ * priced yet", which is a different value and reaches a different code path
+ * (`parseFloat('')` is NaN, not 0). Testing 0 and shipping null is how this
+ * class of bug has survived all day, so the real row is pinned here.
+ *
+ * Shaped exactly as `POST /api/onboarding/build` writes it: a name, the
+ * description the interview collected, no price, no duration, no collection,
+ * draft and inactive.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+const PLACEHOLDER = {
+  id: 'svc-draft-1',
+  service_name: 'School Assignment Tutoring',
+  description: 'One-to-one help with the assignments a student is behind on.',
+  duration_minutes: null,
+  buffer_minutes: null,
+  price: null,
+  currency: 'ILS',
+  status: 'draft',
+  is_active: false,
+  is_scheduled: true,
+  sale_mode: 'direct',
+  collection: null,
+  payment_type: 'full',
+  installment_count: 1,
+  installment_frequency: 'monthly',
+  first_payment_due: 'on_booking',
+  first_payment_days: 0,
+} as unknown as SchedulingService;
+
+describe('an unpriced placeholder from onboarding', () => {
+  /*
+   * NULL SHOWS THEM, ZERO HIDES THEM — the rule after two corrections.
+   *
+   * First attempt: hide the shapes whenever `moneyLine.key === 'free'`, which
+   * is computed from a number and so could not tell '' from '0'. That took the
+   * question away from every placeholder onboarding creates.
+   *
+   * Second: render all three and disable the two needing a figure. Better, but
+   * it left a deliberately free service arguing with itself — three greyed
+   * answers under the sentence "this service is free".
+   *
+   * Final: read the FIELD, where the difference survives. An empty price is a
+   * question still open, so all three are offered and usable. A typed 0 is an
+   * answer, so there is nothing to ask.
+   */
+  it('offers all three shapes, usable', async () => {
+    await openEditor({ service: PLACEHOLDER });
+
+    for (const name of ['They pay by card', 'You invoice them', 'You quote first']) {
+      const pill = screen.getByRole('button', { name });
+      expect(pill).toBeInTheDocument();
+      expect(pill).toBeEnabled();
+    }
+  });
+
+  it('explains which of the two nothings this is', async () => {
+    /*
+     * The field cannot say it: an empty box and a typed 0 look identical and
+     * mean opposite things. So the UI says it in words, including what a 0
+     * would mean, which is the only place an owner can learn the difference.
+     */
+    await openEditor({ service: PLACEHOLDER });
+    says(/No price set yet/);
+    says(/A price of 0 means this service is free/);
+  });
+
+  it('lets the owner actually choose "by quote", which was the blocked case', async () => {
+    // The report: "I can't choose the quote option as we do not have the chip".
+    await openEditor({ service: PLACEHOLDER });
+
+    const quote = screen.getByRole('button', { name: 'You quote first' });
+    expect(quote).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(quote);
+    await settle();
+
+    expect(screen.getByRole('button', { name: 'You quote first' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('lets the owner say how they are paid before knowing the figure', async () => {
+    /*
+     * The reason the pills are usable rather than greyed: an owner knows they
+     * will invoice long before they know what to charge. And the choice has to
+     * SURVIVE, which is what `collectionToPersist` now does for a null price —
+     * it used to write null and read back as "invoice" on the next open.
+     */
+    await openEditor({ service: PLACEHOLDER });
+
+    fireEvent.click(screen.getByRole('button', { name: 'They pay by card' }));
+    await settle();
+
+    expect(screen.getByRole('button', { name: 'They pay by card' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('stops asking once the owner types a 0, which is an answer', async () => {
+    await openEditor({ service: PLACEHOLDER });
+    expect(screen.getByRole('button', { name: 'You invoice them' })).toBeInTheDocument();
+
+    /*
+     * Several number inputs exist in this editor (length, buffer, price); the
+     * money field is the one beside the currency label.
+     */
+    const numbers = Array.from(document.querySelectorAll('input[type="number"]')) as HTMLInputElement[];
+    const price = numbers.find(input => input.parentElement?.textContent?.includes('ILS'));
+    expect(price).toBeTruthy();
+
+    fireEvent.change(price!, { target: { value: '0' } });
+    await settle();
+
+    for (const name of ['They pay by card', 'You invoice them', 'You quote first']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
   });
 });

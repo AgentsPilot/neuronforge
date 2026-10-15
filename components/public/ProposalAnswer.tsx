@@ -40,7 +40,7 @@ import { PublicPageSpinner } from '@/components/public/PublicSpinner';
 import { PortalShell } from '@/components/public/PortalShell';
 import { StatusCard } from '@/components/public/StatusCard';
 import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider';
-import { createPublicT } from '@/lib/i18n/public-pages';
+import { createPublicT, formatPublicDate } from '@/lib/i18n/public-pages';
 /*
  * The decline codes come from the shared namespace, not a local literal.
  *
@@ -76,7 +76,18 @@ interface QuoteDetail {
   validUntil: string | null;
   /** Days to pay once an invoice is raised. A term of the offer, not a setting. */
   termsDays: number | null;
-  stages: Array<{ label: string; amount: number }>;
+  stages: Array<{
+    label: string;
+    amount: number;
+    /**
+     * When this period falls due, once there IS a schedule.
+     *
+     * Null until the quote is accepted, because the first date is the
+     * acceptance plus the payment terms and nothing can know it before then.
+     * A milestone has none ever: it falls due when the work is done.
+     */
+    dueDate?: string | null;
+  }>;
   dueOnAccept: number;
   clientFirstName: string | null;
   /** The full proposal, when the business attached one. */
@@ -383,8 +394,33 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
               </p>
               <ul className="space-y-1.5">
                 {proposal.stages.map((stage, i) => (
-                  <li key={i} className="flex items-baseline justify-between text-sm">
-                    <span style={{ color: 'var(--ap-text)' }}>{stage.label}</span>
+                  <li key={i} className="flex items-baseline justify-between gap-3 text-sm">
+                    <span className="min-w-0" style={{ color: 'var(--ap-text)' }}>
+                      {stage.label}
+                      {/*
+                        THE DATE THE OWNER ALREADY SEES.
+                        ────────────────────────────────
+                        The drawer shows "לתשלום עד 29 בנוב׳ 2026" against each
+                        period because an accepted quote has real instalment
+                        rows. This page showed the same three amounts and no
+                        dates — the one surface where the schedule is being
+                        agreed to was the one that could not state it.
+
+                        Read on the BUSINESS's clock, as every other date on
+                        this page is: `due_date` is a bare SQL DATE, and read
+                        in the reader's own zone it slips a day west of UTC.
+                      */}
+                      {stage.dueDate && (
+                        <span className="ms-2 text-xs" style={{ color: 'var(--ap-text-muted)' }}>
+                          {formatPublicDate(
+                            new Date(`${stage.dueDate}T00:00:00Z`),
+                            locale,
+                            { day: 'numeric', month: 'short', year: 'numeric' },
+                            'UTC'
+                          )}
+                        </span>
+                      )}
+                    </span>
                     <span className="font-medium tabular-nums" style={{ color: 'var(--ap-text)' }}>
                       {money(stage.amount)}
                     </span>

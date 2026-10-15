@@ -30,6 +30,7 @@ import { createLogger } from '@/lib/logger';
    from the one-time token, not from this client. */
 import { supabase } from '@/lib/supabaseClient';
 import {
+  ATTACHABLE_ACCEPT,
   ATTACHABLE_DOCUMENT_TYPES,
   MAX_DOCUMENT_BYTES,
   MAX_DOCUMENT_MB,
@@ -95,7 +96,7 @@ import { planPhases } from '@/lib/payments/planSchedule';
 import { fromMinorUnits } from '@/lib/payments/refundMath';
 
 // Extended booking data that includes confirmation email info
-interface ExtendedBookingData {
+export interface ExtendedBookingData {
   booking: Appointment;
   payment: SessionPayment | null;
   confirmationEmail?: {
@@ -662,7 +663,7 @@ export function hasStoppableWork(payment: SessionPayment | null | undefined): bo
   return !SETTLED_PAYMENT.includes(String(payment?.status ?? ''));
 }
 
-function buildJourneySteps(
+export function buildJourneySteps(
   data: ExtendedBookingData,
   language: string = 'en',
   /**
@@ -1239,16 +1240,135 @@ function buildJourneySteps(
   // Note: We check for both null and undefined because the data might come as either
   const hasIntakeData = (booking.intake_responses != null) || (booking.intake_completed_at != null);
 
-  // Shown when there is a response OR when the business collects intake at all
-  // — the second is what makes an unsent form reachable.
-  if (hasIntakeData || collectsIntake) {
+  /*
+   * Shown when there is a response, OR when the business collects intake at all
+   * AND this sale has an occasion for one — the second is what makes an unsent
+   * form reachable.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PRODUCT HAS NO INTAKE.
+   *
+   * An intake form is what you ask someone BEFORE you see them. A purchase with
+   * no appointment has nothing to prepare for, so the step was drawing a card
+   * about a form that would never be sent and could not usefully be sent —
+   * complete, after this change, with a status line explaining it had not been.
+   *
+   * `resolveIntakeForSending` already draws this exact line on the client's own
+   * manage page: "Asked of the service as well as the business, because a quote
+   * request or a product has no occasion for one however the settings are
+   * configured." The journey was the surface that had not been told.
+   *
+   * `hasIntakeData` still wins. If a response exists the step appears whatever
+   * the service now says, because the record outlives the configuration — a
+   * service switched from scheduled to unscheduled must not erase the answers
+   * a client already gave.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (hasIntakeData || (collectsIntake && !isUnscheduled)) {
+    /*
+     * WHERE THE FORM ACTUALLY STANDS.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This step carried a status colour and nothing else, so the card drew a
+     * heading — טופס לקוח — over an empty box. Every state that is not
+     * "answered" looked identical: a form sent three days ago and chased once,
+     * a form that was never sent, and a form the client will never be asked for
+     * because the job was cancelled, all rendered as the same blank card.
+     *
+     * The timestamps were on the row the whole time. Only `intake_completed_at`
+     * was read, which is why the step could answer "is there a response" and no
+     * other question about it.
+     *
+     * `sent` is the fact that matters to an owner looking at a blank card: the
+     * question in their head is "did we ask them yet", and that is the one
+     * thing the card could not say.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const intakeText: Record<string, Record<string, string>> = {
+      en: {
+        answered: 'Completed',
+        reminded: 'Reminded',
+        awaiting: 'Sent, awaiting a reply',
+        unanswered: 'Sent, never completed',
+        unsent: 'Not sent yet',
+        never: 'Never sent',
+      },
+      es: {
+        answered: 'Completado',
+        reminded: 'Recordatorio enviado',
+        awaiting: 'Enviado, esperando respuesta',
+        unanswered: 'Enviado, sin completar',
+        unsent: 'Aún no enviado',
+        never: 'No se envió',
+      },
+      he: {
+        answered: 'מולא',
+        reminded: 'נשלחה תזכורת',
+        awaiting: 'נשלח, ממתין למילוי',
+        unanswered: 'נשלח, לא מולא',
+        unsent: 'טרם נשלח',
+        never: 'לא נשלח',
+      },
+    };
+
+    const words = intakeText[language] || intakeText.en;
+
+    /*
+     * The date beside the word, because "sent" without "when" does not tell an
+     * owner whether chasing is overdue. Formatted on the business's clock, like
+     * every other date this function prints.
+     */
+    const on = (at?: string | null) => (at ? ` · ${formatDateTime(new Date(at))}` : '');
+
+    /*
+     * NOBODY IS WAITING ON A BOOKING THAT IS OVER.
+     *
+     * "Sent, awaiting a reply" is a live state: it says the ball is with the
+     * client and the owner may want to chase. On a cancelled booking that is
+     * false — the meeting it was preparing for is not happening, and the form
+     * will never be filled in. The journey was still reporting the chase.
+     *
+     * The step's own status already reads `skipped` here; this is the sentence
+     * catching up with it.
+     */
+    const stillWaiting = !isCompleted && !isCancelled;
+
+    const intakeDetails = hasIntake
+      ? `${words.answered}${on(booking.intake_completed_at)}`
+      : booking.intake_sent_at
+        ? !stillWaiting
+          /* Sent, and the booking ended without it coming back. The date it
+             went out is kept: it is the record of having asked. */
+          ? `${words.unanswered}${on(booking.intake_sent_at)}`
+          : booking.intake_reminded_at
+          /* Both dates: when they were asked, and when they were chased. The
+             gap between the two is the thing worth seeing. */
+          ? `${words.awaiting}${on(booking.intake_sent_at)} · ${words.reminded}${on(booking.intake_reminded_at)}`
+          : `${words.awaiting}${on(booking.intake_sent_at)}`
+        /* Never sent. "Not sent YET" only while there is still a point — once
+           the booking is cancelled or done, yet is over and the card should
+           say so rather than imply an action the owner should still take. */
+        : isCompleted || isCancelled
+          ? words.never
+          : words.unsent;
+
     steps.push({
       id: `${booking.id}-intake`,
       key: 'intake',
       status: hasIntake ? 'completed' :
               isUpcoming ? 'active' :
               isCompleted || isCancelled ? 'skipped' : 'pending',
-      timestamp: booking.intake_completed_at
+      details: intakeDetails,
+      /*
+       * The form's own date, so the step files under the day it happened.
+       *
+       * It had only `intake_completed_at`, so an unanswered form was undated
+       * and fell into the journey's undated group — between two runs of the
+       * same day, which is what made the date header repeat on the card that
+       * reported this. Falls back through chased → sent → nothing.
+       */
+      timestamp:
+        booking.intake_completed_at || booking.intake_reminded_at || booking.intake_sent_at
     });
   }
 
@@ -1326,6 +1446,41 @@ function buildJourneySteps(
      */
     timestamp: booking.start_time || undefined
   });
+
+  /*
+   * THE CONFIRMATION COMES BEFORE THE MONEY.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `confirmation` is pushed after `payment` purely because it is built from
+   * the email record, which is read later — an order of CONSTRUCTION that was
+   * never an order of EVENTS.
+   *
+   * What the client lives through is: the booking is taken, they are told it is
+   * confirmed, then the money is collected — and for an instalment plan the
+   * money keeps arriving for weeks afterwards, so the payment node is the one
+   * thing on the journey that is still open when everything above it has
+   * settled. Drawn before the confirmation it claims the client paid before
+   * they were told the booking existed.
+   *
+   * It also stops the date headers repeating. The dated steps all carry the
+   * same timestamp; the undated ones (`intake`, and `fulfillment` on a product)
+   * were separating two runs of the same day, so the journey drew "14 באוק׳"
+   * twice with an undated card wedged between. Moving the confirmation up puts
+   * the dated steps in one run and the undated ones after it.
+   *
+   * Done here rather than by moving the push: the confirmation step is built
+   * from data gathered below the payment step, and reordering the pushes would
+   * mean moving that gathering too. This states the sequence as a fact about
+   * the journey, in one place, next to the other one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const confirmationAt = steps.findIndex(s => s.key === 'confirmation');
+  const paymentAt = steps.findIndex(s => s.key === 'payment');
+
+  if (confirmationAt > -1 && paymentAt > -1 && confirmationAt > paymentAt) {
+    const [confirmation] = steps.splice(confirmationAt, 1);
+    steps.splice(paymentAt, 0, confirmation);
+  }
 
   /*
    * A quoted job runs PAST the meeting, so its last two steps move to the end.
@@ -1567,7 +1722,18 @@ function DocumentUploadModal({ isOpen, onClose, onUpload, uploading, t }: Docume
               type="file"
               onChange={handleFileSelect}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif"
+              /*
+                THE SHARED LIST, not a fourth hand-written copy.
+                ─────────────────────────────────────────────────────────────
+                This was extensions, and it was MISSING the two formats the
+                bucket had just been widened to take: `.tiff` from a desk
+                scanner and `.heic` from an iPhone camera. So the allow-list
+                accepted a scan and the picker would not offer one — on iOS,
+                where every photo is HEIC, the file simply did not appear.
+                `ATTACHABLE_ACCEPT` is built from the same constant the bucket
+                and both routes validate against.
+              */
+              accept={ATTACHABLE_ACCEPT}
             />
             {file ? (
               <div className="space-y-2">
@@ -1592,7 +1758,11 @@ function DocumentUploadModal({ isOpen, onClose, onUpload, uploading, t }: Docume
                   {t('crm.document.drag_drop') || 'Drag and drop a file, or click to browse'}
                 </p>
                 <p className="text-xs text-[var(--v2-text-muted)]">
-                  {t('crm.document.max_size') || 'Max 10MB'} • {t('crm.document.supported_formats') || 'PDF, DOC, XLS, Images'}
+                  {/* The real number, from the same constant the picker
+                      enforces. It read "Max 10MB" while the limit was 50. */}
+                  {(t('crm.document.max_size') || 'Max {max}MB').replace('{max}', String(MAX_DOCUMENT_MB))}
+                  {' • '}
+                  {t('crm.document.supported_formats') || 'PDF, DOC, XLS, Images'}
                 </p>
               </div>
             )}
@@ -1694,7 +1864,24 @@ type BookingWithService = SchedulingBooking & {
     currency?: string;
     is_scheduled?: boolean | null;
     sale_mode?: 'direct' | 'proposal' | null;
+    /*
+     * The plan fields, which `findAll` has always selected and this type never
+     * declared.
+     *
+     * Not cosmetic: `buildSessionPlan` tests `payment_type === 'installments'`,
+     * so without them the helper cannot recognise a plan at all — and because
+     * every field of its `service` parameter is optional, TypeScript's weak-type
+     * rule was the only thing that noticed, by refusing an object with none of
+     * them in common.
+     */
+    payment_type?: string | null;
+    installment_count?: number | null;
+    installment_frequency?: string | null;
   } | null;
+  /* On the row and selected by `*`; declared here so `toAppointment` can carry
+     them. The intake step reads these to say where the form stands. */
+  intake_sent_at?: string | null;
+  intake_reminded_at?: string | null;
 };
 
 /**
@@ -1718,7 +1905,7 @@ type BookingWithService = SchedulingBooking & {
  * `[first, last].filter(Boolean)`, where the two behave identically.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-function toAppointment(booking: BookingWithService): Appointment {
+export function toAppointment(booking: BookingWithService): Appointment {
   return {
     id: booking.id,
     service_id: booking.service_id,
@@ -1749,6 +1936,8 @@ function toAppointment(booking: BookingWithService): Appointment {
     cancellation_reason: booking.cancellation_reason ?? null,
     intake_responses: booking.intake_responses ?? undefined,
     intake_completed_at: booking.intake_completed_at ?? undefined,
+    intake_sent_at: booking.intake_sent_at ?? undefined,
+    intake_reminded_at: booking.intake_reminded_at ?? undefined,
     created_at: booking.created_at ?? undefined,
     service: booking.service
       ? {
@@ -1757,6 +1946,164 @@ function toAppointment(booking: BookingWithService): Appointment {
           sale_mode: booking.service.sale_mode,
           currency: booking.service.currency,
         }
+      : undefined,
+  };
+}
+
+/** One `payment_plan_installments` row, as both card builders select it. */
+type PlanPeriodRow = {
+  id: string;
+  installment_number: number;
+  amount: number | string;
+  currency?: string | null;
+  status: string;
+  trigger?: 'date' | 'manual' | null;
+  due_date: string | null;
+  paid_at?: string | null;
+  invoice_id?: string | null;
+  /* The processor charge this period arrived as. An instalment has no invoice,
+     so this is the only key its refund can be issued against. */
+  transaction_id?: string | null;
+  label?: string | null;
+};
+
+/**
+ * This booking's payment plan, as the card renders it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS SHARED AND NOT INLINE
+ *
+ * There are TWO card builders in this file. One assembled this object; the
+ * other built its `paymentData` with `amount: servicePrice` and no `plan` at
+ * all. So a booking rendered by the second one lost its whole schedule, and the
+ * card's "schedule not written yet" fallback then synthesised a SINGLE stage of
+ * the full price and marked it paid from `booking.payment_status` — which flips
+ * to `paid` on the FIRST instalment.
+ *
+ * A ₪800 plan with ₪400 collected reported:
+ *
+ *     Total ₪800 · Collected ₪800 · Outstanding ₪0
+ *
+ * every figure wrong except the first, and the ₪400 still to come invisible.
+ * The owner could neither see the two periods nor refund the one that was paid.
+ *
+ * `PaymentPlanTotals` already carries a comment about this exact failure mode —
+ * "Two renderers for one strip is how the card and the dialog came to print
+ * different totals for one job". This is the same lesson one layer up: two
+ * builders for one plan is how one of them came to print no plan.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function buildSessionPlan(input: {
+  /** THIS booking's periods. The billing truth; see `totalAmount` below. */
+  planPeriods: PlanPeriodRow[];
+  service:
+    | {
+        payment_type?: string | null;
+        installment_count?: number | null;
+        installment_frequency?: string | null;
+      }
+    | undefined;
+  servicePrice: number;
+  serviceCurrency: string;
+  /** What has actually arrived, from the transactions or a paid invoice. */
+  collected: number;
+}): SessionPaymentPlan | undefined {
+  const { planPeriods, service, servicePrice, serviceCurrency, collected } = input;
+
+  /*
+   * Billed in full, whatever the service was configured to do. A path that
+   * ignored the plan and charged the whole price leaves exactly this trace,
+   * and the card must follow it rather than the configuration.
+   *
+   * ONLY where no periods exist to contradict it. This is a heuristic read of
+   * a single number, and the installment rows are direct evidence: a booking
+   * with two ₪400 periods was demonstrably not billed ₪800 in one go, however
+   * much has since been collected against it. Without that guard a plan whose
+   * last period is paid — collected == price — stops being a plan on the very
+   * screen that reports it, and the owner loses the schedule and the refund
+   * buttons at the moment the history matters most.
+   */
+  const billedInFull = planPeriods.length === 0 && collected > 0 && collected >= servicePrice;
+
+  const isPlan =
+    service?.payment_type === 'installments' &&
+    (service.installment_count ?? 1) > 1 &&
+    servicePrice > 0 &&
+    !billedInFull;
+
+  if (!isPlan) return undefined;
+
+  const paidPeriods = planPeriods.filter(p => p.status === 'paid');
+
+  /*
+   * The next period the client owes, which is what the owner is asked about.
+   * Falls back to the last period so a finished plan still names one.
+   */
+  const nextPeriod = planPeriods.find(p => p.status !== 'paid' && p.status !== 'cancelled');
+
+  return {
+    installmentCount: planPeriods.length || service!.installment_count!,
+    /*
+     * The period the plan is ON. Taken from the real rows where they exist —
+     * the first period's projected amount is only right until one has been
+     * paid — and from the projection before the schedule has been written,
+     * which is the window between booking and the processor confirming.
+     */
+    installmentAmount: planPeriods.length
+      ? Number((nextPeriod ?? planPeriods[planPeriods.length - 1]).amount)
+      : fromMinorUnits(
+          planPhases(servicePrice, serviceCurrency, service!.installment_count!)[0].amountMinor,
+          serviceCurrency
+        ),
+    /*
+     * THIS BOOKING'S OWN PERIODS — not the service's price, and not the plan
+     * row's total either.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * Both of those are SERVICE-level and both move when the owner edits the
+     * service. `syncServicePaymentPlan` rewrites `payment_plans.total_amount`
+     * and `installment_count` from the service every time it is saved, and
+     * `scheduling_services.price` is the live figure itself. Neither is a
+     * record of what any particular client agreed to — and `payment_plans` has
+     * no `booking_id` at all: one row serves every booking of that service.
+     *
+     * The installments ARE. They are written once, at checkout, from the
+     * `plan_total` and `plan_count` frozen into the Stripe session metadata —
+     * so they record the deal that client actually accepted and nothing can
+     * move them afterwards.
+     *
+     * The two diverge the moment a service is repriced after a sale. A client
+     * who bought at ₪200 in two payments, on a service since raised to ₪800,
+     * had their card report ₪800 total, ₪100 collected and ₪700 outstanding —
+     * ₪600 of it money nobody had ever agreed to pay. Arithmetically
+     * consistent, factually wrong, and nothing about it looks off.
+     *
+     * Falls back to the price only before any schedule exists, where it is the
+     * sole estimate available and no period contradicts it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    totalAmount: planPeriods.length
+      ? planPeriods.reduce((sum, period) => sum + Number(period.amount || 0), 0)
+      : servicePrice,
+    frequency: (service!.installment_frequency || 'monthly') as SessionPaymentPlan['frequency'],
+    periodsPaid: planPeriods.length ? paidPeriods.length : undefined,
+    /*
+     * The dated list, exactly as a quoted job shows its stages — same shape,
+     * same renderer. Omitted entirely when no schedule has been written yet, so
+     * the card falls back to its summary rather than showing an empty list.
+     */
+    stages: planPeriods.length
+      ? planPeriods.map(p => ({
+          id: p.id,
+          label: p.label ?? null,
+          amount: Number(p.amount),
+          status: p.status,
+          trigger: p.trigger ?? 'date',
+          invoiceId: p.invoice_id ?? null,
+          transactionId: p.transaction_id ?? null,
+          dueDate: p.due_date,
+          paidAt: p.paid_at ?? null,
+        }))
       : undefined,
   };
 }
@@ -1863,25 +2210,30 @@ export function CRMContactDrawerV2({
    * Drives whether a booking shows an intake step at all. Without it the step
    * appeared only once a RESPONSE existed, so "Send intake form" — which is for
    * a booking with no response — could never be reached.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A REF, AND FETCHED BY THE LOAD THAT NEEDS IT.
+   *
+   * This was `useState` with its own effect, and the journey never saw a true
+   * value. `loadAllContactData` is a plain async function called from an effect
+   * keyed on `[contact.id, isOpen]`, so it CAPTURED the state from the render
+   * where the drawer opened — `false`, always, because no answer existed yet.
+   * `setCollectsIntake(true)` a moment later re-rendered the component but
+   * could not reach into a closure already running, and nothing rebuilt the
+   * cards.
+   *
+   * The symptom was exact: the intake step was missing ON OPEN and appeared
+   * after any action that called `fetchSessions`, which is recreated each
+   * render. That is the same shape as the warning on `processBookingsData` —
+   * a refund that showed only after a refresh.
+   *
+   * So the answer is now awaited inside the load that needs it and handed to
+   * the builder as an argument, which removes the ordering question rather
+   * than winning it. The ref is what lets the other caller, `fetchSessions`,
+   * read today's value from its own closure.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  const [collectsIntake, setCollectsIntake] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    let cancelled = false;
-
-    fetch('/api/intake/settings')
-      .then(response => (response.ok ? response.json() : null))
-      .then(data => {
-        if (!cancelled) setCollectsIntake(businessCollectsIntake(data?.settings));
-      })
-      .catch(() => {
-        // Left false: a booking then shows no intake step, which is the safer
-        // of the two mistakes.
-      });
-
-    return () => { cancelled = true; };
-  }, [isOpen]);
+  const collectsIntakeRef = useRef(false);
 
   // Loading states
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -2068,7 +2420,10 @@ export function CRMContactDrawerV2({
    * what makes "return the deposit and nothing else" expressible.
    */
   const [refundStage, setRefundStage] = useState<{
-    invoiceId: string;
+    /* Either key — a milestone has an invoice, an instalment has a charge.
+       `RefundModal` and `/api/payments/refunds` both accept either. */
+    invoiceId: string | null;
+    transactionId: string | null;
     amount: number;
     refunded: number;
     currency: string;
@@ -2168,7 +2523,21 @@ export function CRMContactDrawerV2({
   // `BookingWithService`: these rows come from queries that join the service,
   // which `SchedulingBooking` does not declare. Typed here rather than cast at
   // each of the five places that read `booking.service`.
-  const processBookingsData = (bookingsData: { bookings: BookingWithService[] }, emailsData: { emails?: EmailRecord[] }, proposalsList: DrawerProposal[] = []) => {
+  const processBookingsData = (
+    bookingsData: { bookings: BookingWithService[] },
+    emailsData: { emails?: EmailRecord[] },
+    proposalsList: DrawerProposal[] = [],
+    /*
+     * Passed in, not read from state.
+     *
+     * This runs inside a closure created when the drawer opened, so the state
+     * it could see was always the initial `false`. The caller awaits the real
+     * answer and hands it over. Defaulted to the ref rather than to `false` so
+     * the other caller, `fetchSessions`, needs no change and still gets today's
+     * value.
+     */
+    collects: boolean = collectsIntakeRef.current
+  ) => {
     const emails: EmailRecord[] = emailsData.emails || [];
 
     // Helper to find confirmation email for a booking
@@ -2291,102 +2660,15 @@ export function CRMContactDrawerV2({
           .reduce((sum, pay) => sum + Number(pay.amount ?? 0), 0) ||
         (money.invoice?.paid_at ? Number(money.invoice.amount ?? 0) : 0);
 
-      /*
-       * Billed in full, whatever the service was configured to do. A path that
-       * ignored the plan and charged the whole price leaves exactly this trace,
-       * and the card must follow it rather than the configuration.
-       */
-      const billedInFull = collected > 0 && collected >= servicePrice;
-
-      const isPlan =
-        service?.payment_type === 'installments' &&
-        (service.installment_count ?? 1) > 1 &&
-        servicePrice > 0 &&
-        !billedInFull;
-
-      const paidPeriods = planPeriods.filter(p => p.status === 'paid');
-
-      /*
-       * The next period the client owes, which is what the owner is asked about.
-       * Falls back to the last period so a finished plan still names one.
-       */
-      const nextPeriod = planPeriods.find(p => p.status !== 'paid' && p.status !== 'cancelled');
-
-      const sessionPlan: SessionPaymentPlan | undefined = isPlan
-        ? {
-            installmentCount: planPeriods.length || service!.installment_count!,
-            /*
-             * The period the plan is ON. Taken from the real rows where they
-             * exist — the first period's projected amount is only right until
-             * one has been paid — and from the projection before the schedule
-             * has been written, which is the window between booking and the
-             * processor confirming.
-             */
-            installmentAmount: planPeriods.length
-              ? Number((nextPeriod ?? planPeriods[planPeriods.length - 1]).amount)
-              : fromMinorUnits(
-                  planPhases(servicePrice, serviceCurrency, service!.installment_count!)[0].amountMinor,
-                  serviceCurrency
-                ),
-            /*
-             * THIS BOOKING'S OWN PERIODS — not the service's price, and not the
-             * plan row's total either.
-             *
-             * ─────────────────────────────────────────────────────────────────
-             * Both of those are SERVICE-level and both move when the owner edits
-             * the service. `syncServicePaymentPlan` rewrites
-             * `payment_plans.total_amount` and `installment_count` from the
-             * service every time it is saved, and `scheduling_services.price` is
-             * the live figure itself. Neither is a record of what any particular
-             * client agreed to.
-             *
-             * The installments ARE. They are written once, at checkout, from the
-             * `plan_total` and `plan_count` frozen into the Stripe session
-             * metadata — so they record the deal that client actually accepted
-             * and nothing can move them afterwards.
-             *
-             * The two diverge the moment a service is repriced after a sale. A
-             * client who bought at ₪200 in two payments, on a service since
-             * raised to ₪800, had their card report ₪800 total, ₪100 collected
-             * and ₪700 outstanding — ₪600 of it money nobody had ever agreed to
-             * pay. Arithmetically consistent, factually wrong, and nothing about
-             * it looks off.
-             *
-             * `bindPlanSubscription` writes every installment in one insert, so a
-             * booking's rows are its whole schedule and summing them cannot
-             * understate it. The comment a dozen lines above already calls these
-             * rows the billing truth, "not a projection of the service's
-             * configuration" — this line was the projection.
-             *
-             * Falls back to the price only before any schedule exists, where it
-             * is the sole estimate available and no period contradicts it.
-             * ─────────────────────────────────────────────────────────────────
-             */
-            totalAmount: planPeriods.length
-              ? planPeriods.reduce((sum, period) => sum + Number(period.amount || 0), 0)
-              : servicePrice,
-            frequency: (service!.installment_frequency || 'monthly') as SessionPaymentPlan['frequency'],
-            periodsPaid: planPeriods.length ? paidPeriods.length : undefined,
-            /*
-             * The dated list, exactly as a quoted job shows its stages — same
-             * shape, same renderer. Omitted entirely when no schedule has been
-             * written yet, so the card falls back to its summary rather than
-             * showing an empty list.
-             */
-            stages: planPeriods.length
-              ? planPeriods.map(p => ({
-                  id: p.id,
-                  label: p.label ?? null,
-                  amount: Number(p.amount),
-                  status: p.status,
-                  trigger: p.trigger ?? 'date',
-                  invoiceId: p.invoice_id ?? null,
-                  dueDate: p.due_date,
-                  paidAt: p.paid_at ?? null,
-                }))
-              : undefined,
-          }
-        : undefined;
+      /* The plan this booking is on, built by the shared helper above so the
+         other card builder cannot drift from it again. */
+      const sessionPlan = buildSessionPlan({
+        planPeriods,
+        service: bookingWithService.service,
+        servicePrice,
+        serviceCurrency,
+        collected,
+      });
 
       /*
        * ⚠ THIS IS THE PRIMARY LOAD PATH.
@@ -2517,7 +2799,7 @@ export function CRMContactDrawerV2({
               : undefined
           },
           language,
-          collectsIntake,
+          collects,
           timezone
         )
       };
@@ -2611,15 +2893,47 @@ export function CRMContactDrawerV2({
             return data;
           });
 
-        const [bookingsData, emailsData, proposalsList] = await Promise.all([
+        /*
+         * THE INTAKE SETTING IS AWAITED HERE, not read from state.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * `collectsIntake` decides whether a booking shows an intake step at
+         * all, and it arrives from its own fetch in its own effect. Read off
+         * state, this load saw `false` every time: the closure was created when
+         * the drawer opened, before any answer existed, and nothing rebuilds
+         * the cards afterwards — the effect's deps are `[contact.id, isOpen]`.
+         *
+         * So the step was missing ON OPEN and appeared after any action that
+         * called `fetchSessions`, which is recreated each render. That is the
+         * same shape as the note on `processBookingsData` above, where a
+         * refund showed only after a refresh.
+         *
+         * Awaiting it alongside the rest removes the ordering question
+         * instead of winning it: there is no arrangement of these four
+         * responses that can build the journey without the answer.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const intakeSettingsPromise = fetch('/api/intake/settings')
+          .then(response => (response.ok ? response.json() : null))
+          .then(data => businessCollectsIntake(data?.settings))
+          /* A failed read leaves it false: a booking then shows no intake step,
+             which is the safer of the two mistakes. */
+          .catch(() => false);
+
+        const [bookingsData, emailsData, proposalsList, collects] = await Promise.all([
           bookingsPromise,
           emailsPromise,
           proposalsPromise,
+          intakeSettingsPromise,
         ]);
+
+        /* Kept in step with the separate effect's own write, so whichever
+           settles last, both readers agree. */
+        collectsIntakeRef.current = collects;
 
         // Sessions need both: the cards carry the confirmation email.
         if (bookingsData.success && bookingsData.bookings) {
-          processBookingsData(bookingsData, emailsData, proposalsList);
+          processBookingsData(bookingsData, emailsData, proposalsList, collects);
         }
         setLoadingSessions(false);
       } catch (error) {
@@ -2897,14 +3211,32 @@ export function CRMContactDrawerV2({
               refunded_amount?: number | string | null;
               refunded_at?: string | null;
             };
-            payments?: Array<{ id: string; status: string; paid_at?: string | null }>;
+            payments?: Array<{
+              id: string;
+              status: string;
+              paid_at?: string | null;
+              /* Needed to sum what has actually arrived. The query has always
+                 selected it; only this local type left it out. */
+              amount?: number | string | null;
+            }>;
             /* Embedded by the booking query, and the record of what each
-               meeting of a package was sold for. */
+               meeting of a package was sold for.
+               Declared to match `findAll`'s select rather than the two fields
+               `packageSessionPayment` happened to need: the narrower shape is
+               why this builder could not assemble a plan from rows it already
+               had. */
             planPeriods?: Array<{
+              id: string;
+              installment_number: number;
               amount: number | string;
               currency?: string | null;
               status: string;
+              trigger?: 'date' | 'manual' | null;
+              due_date: string | null;
+              paid_at?: string | null;
               invoice_id?: string | null;
+              transaction_id?: string | null;
+              label?: string | null;
             }>;
           };
           const invoiceData = bookingMoney.invoice;
@@ -2938,15 +3270,57 @@ export function CRMContactDrawerV2({
             paidAt: paidAtFromRecords,
           });
 
+          /*
+           * THIS BOOKING'S PLAN, which this builder used to omit entirely.
+           *
+           * ───────────────────────────────────────────────────────────────────
+           * The rows were already selected and already in scope — they are
+           * handed to `packageSessionPayment` immediately above — and the
+           * `paymentData` below simply did not carry them. So a plan booking
+           * loaded through this path reached the card with no schedule, and the
+           * card's no-schedule fallback invented a single stage worth the whole
+           * price, marked paid off `payment_status`. ₪400 of ₪800 collected
+           * displayed as ₪800 collected, ₪0 outstanding, with neither period
+           * listed and no way to refund the one that had been paid.
+           *
+           * Same helper as the primary path, so the two cannot disagree again.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          const planPeriods = [...(bookingMoney.planPeriods ?? [])].sort(
+            (a, b) => a.installment_number - b.installment_number
+          );
+
+          /* What has actually arrived. The transactions first — a plan's
+             periods are charges, not invoices — then a paid invoice for the
+             single-payment case. Identical to the primary path. */
+          const collected =
+            (bookingMoney.payments ?? [])
+              .filter(pay => transactionMoneyArrived(pay.status))
+              .reduce((sum, pay) => sum + Number(pay.amount ?? 0), 0) ||
+            (invoiceData?.paid_at ? Number(invoiceData.amount ?? 0) : 0);
+
+          const sessionPlan = buildSessionPlan({
+            planPeriods,
+            /* `?? undefined`: the join yields `null` for a booking whose service
+               was deleted, and the helper's parameter is optional, not nullable. */
+            service: booking.service ?? undefined,
+            servicePrice,
+            serviceCurrency,
+            collected,
+          });
+
           const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : sessionMoney ? sessionMoney : isFreeService ? {
             amount: 0,
             currency: serviceCurrency,
             status: 'free' as const
           } : servicePrice > 0 ? {
             id: booking.payment_id || undefined,  // Payment ID for refunds
-            amount: servicePrice,
+            // One period for a plan, the whole price otherwise — what this
+            // payment is, never what the agreement totals.
+            amount: sessionPlan ? sessionPlan.installmentAmount : servicePrice,
             currency: serviceCurrency,
             status: mapPaymentStatus(booking.payment_status),
+            plan: sessionPlan,
             paidAt: paidAtFromRecords,
             /*
              * What has gone back, across BOTH ways money attaches to a booking.
@@ -2998,7 +3372,7 @@ export function CRMContactDrawerV2({
                   : undefined
               },
               language,
-              collectsIntake,
+              collectsIntakeRef.current,
               timezone
             )
           };
@@ -3988,6 +4362,26 @@ export function CRMContactDrawerV2({
                     window.open(doc.download_url, '_blank');
                   }
                 }}
+                /*
+                 * A URL this document can be VIEWED from.
+                 *
+                 * The LIST does not carry one — only the per-document route
+                 * signs a URL, and it expires in an hour, so signing one for
+                 * every row on every render would mint links for files nobody
+                 * opens. Asked for at the moment the card is clicked instead.
+                 */
+                onPreviewDocument={async (docId) => {
+                  try {
+                    const response = await fetch(
+                      `/api/crm/contacts/${contact.id}/documents/${docId}`
+                    );
+                    const data = await response.json();
+                    return data?.success ? data.document?.download_url ?? null : null;
+                  } catch (err) {
+                    logger.error({ err, docId }, 'Could not get a preview URL');
+                    return null;
+                  }
+                }}
                 onDeleteDocument={async (docId) => {
                   try {
                     const response = await fetch(`/api/crm/contacts/${contact.id}/documents/${docId}`, {
@@ -4753,7 +5147,11 @@ export function CRMContactDrawerV2({
         <RefundModal
           isOpen
           onClose={() => setRefundStage(null)}
-          invoiceId={refundStage.invoiceId}
+          invoiceId={refundStage.invoiceId ?? undefined}
+          /* An instalment period's money is a processor charge, not an invoice.
+             The dialog asks the server what is refundable by whichever key it
+             is given. */
+          transactionId={refundStage.transactionId ?? undefined}
           originalAmount={refundStage.amount}
           alreadyRefunded={refundStage.refunded}
           currency={refundStage.currency}

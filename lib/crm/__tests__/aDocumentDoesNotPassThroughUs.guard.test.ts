@@ -144,3 +144,89 @@ describe('the picker says why, before anything is sent', () => {
     );
   });
 });
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * AND THE PICKER OFFERS WHAT THE BUCKET ACCEPTS.
+ *
+ * The allow-list was widened to take a scan and an iPhone photo, and the file
+ * input went on listing extensions by hand — without `.tiff` or `.heic`. So
+ * the bucket accepted a scan and the picker would not offer one. On iOS, where
+ * every photo is HEIC by default, the file did not appear in the chooser at
+ * all: the feature was shipped and invisible.
+ *
+ * The hint beside it said "Max 10MB" while the limit was 50.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+describe('the picker offers what the bucket accepts', () => {
+  const drawerSource = read('components/crm/contact-drawer/CRMContactDrawerV2.tsx');
+
+  it('lists types from the shared constant, not by hand', () => {
+    expect(drawerSource).toMatch(/accept=\{ATTACHABLE_ACCEPT\}/);
+    expect(drawerSource).not.toMatch(/accept="\.pdf/);
+  });
+
+  it('states the real limit, from the constant that enforces it', () => {
+    // Two numbers that must agree: what the hint claims and what the check does.
+    expect(drawerSource).toMatch(/String\(MAX_DOCUMENT_MB\)/);
+    /* Comments stripped: the fix is documented beside itself, and the note
+       necessarily quotes the wrong number it replaced. */
+    const code = drawerSource
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(code).not.toMatch(/Max 10MB/);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * AND A FILE CAN BE LOOKED AT WITHOUT LEAVING THE DRAWER.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+describe('the file card opens a preview', () => {
+  const filesTab = read('components/crm/contact-drawer/FilesTab.tsx');
+  const drawerSource = read('components/crm/contact-drawer/CRMContactDrawerV2.tsx');
+  const body = read('components/crm/contact-drawer/DocumentPreviewBody.tsx');
+
+  it('the card itself is the control', () => {
+    // It used to do nothing: the only ways to see a file were download and
+    // open-in-a-tab, both of which leave the drawer.
+    expect(filesTab).toMatch(/onClick=\{onPreviewDocument \? \(\) => openPreview\(doc\) : undefined\}/);
+    expect(filesTab).toMatch(/role=\{onPreviewDocument \? 'button' : undefined\}/);
+    expect(filesTab).toMatch(/tabIndex=\{onPreviewDocument \? 0 : undefined\}/);
+  });
+
+  it('the row actions do not also open it', () => {
+    // Without this, deleting a file would open it on the way out.
+    expect(filesTab).toMatch(/onClick=\{event => event\.stopPropagation\(\)\}/);
+  });
+
+  it('renders through the quote builder\'s preview, not a second copy', () => {
+    /*
+     * The rules for what a PDF, an image and a Word document look like exist
+     * ONCE. Two copies is how this codebase got a file-type list that refused
+     * a scan from one of three places.
+     */
+    expect(filesTab).toMatch(/<DocumentPreviewBody/);
+    expect(read('components/crm/contact-drawer/ProposalBuilderModal.tsx')).toMatch(
+      /<DocumentPreviewBody/
+    );
+    expect(body).toMatch(/isPdf/);
+    expect(body).toMatch(/isImage/);
+    expect(body).toMatch(/proposal\.preview_unavailable/);
+  });
+
+  it('signs a URL when the card is clicked, not for every row', () => {
+    // The list endpoint does not sign URLs, and they expire in an hour.
+    expect(drawerSource).toMatch(/onPreviewDocument=\{async \(docId\) => \{/);
+    expect(drawerSource).toMatch(/documents\/\$\{docId\}/);
+  });
+
+  it('ignores an answer for a file nobody is looking at any more', () => {
+    // The owner can close it, or click another file, while the fetch is out.
+    expect(filesTab).toMatch(/if \(current\?\.id !== doc\.id\) return current;/);
+  });
+
+  it('says so when the file cannot be reached', () => {
+    // An empty frame reads as a broken file rather than one we could not open.
+    expect(filesTab).toMatch(/crm\.files\.preview_failed/);
+  });
+});

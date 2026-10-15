@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for AgentPilot
 
-> **Last Updated**: 2026-09-27
+> **Last Updated**: 2026-10-15
 > This file is the project's root context document and is exempt from the standard docs ToC and Change History requirements — its history is `git log -- CLAUDE.md`.
 
 ## Overview
@@ -123,6 +123,18 @@ When a bug appears in pipeline output, trace it to the responsible phase and fix
 | Never | Commit `.env`, secrets, or credentials |
 
 Commits are managed by the Release Manager agent — see RM agent definition.
+
+### Ship drill
+
+The order to run when work is ready to go out. Each step gates the next — do not
+start one until the previous has passed.
+
+| # | Step | Done when |
+|---|---|---|
+| 1 | **Full build and typecheck** | `npm run build` succeeds and the typecheck is clean **for the files you touched**. The repo carries pre-existing errors that `next.config.js` ignores, so filter to your own files rather than reading the total — and check the command did not die (an OOM crash prints a V8 stack trace and no diagnostics, which reads as "clean" to a grep). |
+| 2 | **Commit and push to our branch** | Branch off `main` first; never commit to it. Conventional Commits, one logical change per commit. |
+| 3 | **Create the PR, check conflicts, prepare to sync from `main`** | The PR is open, conflicts with `main` are resolved or named, and the branch is up to date with `main`. |
+| 4 | **Merge the PR to `main`** | Required checks green. |
 
 ---
 

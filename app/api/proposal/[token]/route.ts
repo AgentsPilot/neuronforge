@@ -147,18 +147,65 @@ async function present(proposal: Proposal) {
     .eq('user_id', proposal.user_id)
     .maybeSingle();
 
+  /*
+   * THE DATES THE OWNER ALREADY SEES.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The drawer shows "לתשלום עד 29 בנוב׳ 2026" against each period, because an
+   * ACCEPTED quote has real `payment_plan_installments` rows and it reads them.
+   * The client's own page and the email they were sent showed the same three
+   * amounts with no dates at all — the one surface where the schedule is being
+   * agreed to was the one that could not state it.
+   *
+   * Read rather than recomputed. The rows are what will actually be billed, and
+   * a second derivation here would eventually disagree with them: the anchor is
+   * the acceptance plus the payment terms, which is knowable only after the
+   * client has pressed accept.
+   *
+   * Empty before acceptance, which is correct — there is no schedule yet. The
+   * first date is the acceptance plus the payment terms (here, 15 October plus
+   * 45 days, which is the 29 November the drawer shows), and nothing can know
+   * that until the client has pressed accept. The rows render without a date
+   * until then rather than carrying a guess into an email the client keeps.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const dueByPeriod = new Map<number, string>();
+
+  if (proposal.booking_id) {
+    const { data: periods } = await supabaseServer
+      .from('payment_plan_installments')
+      .select('installment_number, due_date')
+      .eq('user_id', proposal.user_id)
+      .eq('booking_id', proposal.booking_id);
+
+    for (const row of periods ?? []) {
+      if (row.due_date) dueByPeriod.set(Number(row.installment_number), String(row.due_date));
+    }
+  }
+
   const shape = proposal.payment_shape;
-  let stages: Array<{ label: string; amount: number }> = [];
+  let stages: Array<{ label: string; amount: number; dueDate?: string | null }> = [];
 
   if (shape.kind === 'milestones') {
     const amounts = splitTotal(proposal.total, shape.stages.map(s => s.percent));
+    /*
+     * No date, ever, and that is not an omission. A milestone falls due when
+     * the work is done, so it HAS no date until the owner marks it — which is
+     * why `payment_plan_installments.due_date` is null for these and why the
+     * trigger is 'manual' rather than 'date'.
+     */
     stages = shape.stages.map((s, i) => ({ label: s.label, amount: amounts[i] }));
   } else if (shape.kind === 'installments') {
     const amounts = splitTotal(
       proposal.total,
       Array.from({ length: shape.count }, () => 100 / shape.count)
     );
-    stages = amounts.map((amount, i) => ({ label: `${i + 1}/${shape.count}`, amount }));
+    stages = amounts.map((amount, i) => ({
+      label: `${i + 1}/${shape.count}`,
+      amount,
+      /* `i + 1` because the rows are numbered from one, as the labels are. */
+      dueDate: dueByPeriod.get(i + 1) ?? null,
+    }));
   }
 
   return {

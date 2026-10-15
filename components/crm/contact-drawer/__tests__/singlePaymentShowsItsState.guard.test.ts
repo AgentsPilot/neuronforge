@@ -371,7 +371,18 @@ describe('a milestone can be refunded on its own', () => {
      * with no idea where, an owner does not find it.
      */
     expect(tab).toMatch(/onRefundStage\(\{/);
-    expect(tab).toMatch(/invoiceId: stage\.invoiceId as string/);
+    /*
+     * The `as string` cast is gone, and its removal is the point. It papered
+     * over a null: an INSTALMENT period has no invoice — its money is a
+     * processor charge — so the cast was the one place the compiler would have
+     * said so, and a paid instalment offered no refund at all.
+     *
+     * Both keys travel now, and the dialog sends whichever it was given.
+     * `instalmentRefundNeedsNoInvoice.guard.test.ts` pins the whole chain.
+     */
+    expect(tab).toMatch(/invoiceId: stage\.invoiceId,/);
+    expect(tab).toMatch(/transactionId: stage\.transactionId \?\? null,/);
+    expect(tab).not.toMatch(/invoiceId: stage\.invoiceId as string/);
   });
 
   it('offers it only while something is left to return', () => {
@@ -390,7 +401,9 @@ describe('a milestone can be refunded on its own', () => {
     );
 
     expect(tab).toMatch(/remaining=\{\s*stage\.amount - Number\(stage\.refundedAmount \|\| 0\)/);
-    expect(actions).toMatch(/paid && invoiceId && onRefund && remaining > 0/);
+    expect(actions).toMatch(
+      /paid && \(invoiceId \|\| transactionId\) && onRefund && remaining > 0/
+    );
   });
 
   it('addresses the dialog by INVOICE, which is what makes partial possible', () => {
@@ -401,8 +414,15 @@ describe('a milestone can be refunded on its own', () => {
      * control comes back — because now there is a single charge for the amount
      * to come off.
      */
-    expect(drawer).toMatch(/invoiceId=\{refundStage\.invoiceId\}/);
-    expect(drawer).not.toMatch(/bookingId=\{refundStage/);
+    /*
+     * Still never by BOOKING, which is the assertion that matters here — that
+     * is what turns the dialog into a group refund and takes the partial
+     * control away. By invoice where there is one, and otherwise by the single
+     * transaction, which resolves to exactly one charge for the same reason.
+     */
+    expect(drawer).toMatch(/invoiceId=\{refundStage\.invoiceId \?\? undefined\}/);
+    expect(drawer).toMatch(/transactionId=\{refundStage\.transactionId \?\? undefined\}/);
+    expect(drawer).not.toMatch(/bookingId=\{refundStage\.(invoiceId|transactionId|amount)/);
   });
 
   it('opens with this stage’s own remaining, not the whole job’s', () => {
