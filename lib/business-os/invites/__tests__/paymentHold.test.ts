@@ -263,29 +263,32 @@ describe('where the gate runs (SA R-1, R-2) and what it never reads', () => {
     return body
       .slice(body.indexOf('{', body.indexOf(')')) + 1)
       .split(';')
-      .slice(0, 2)
+      .slice(0, 3)
       .map((s) => s.trim());
   };
 
   /*
    * BR-1a (SA ruling on RC-6b): the three layouts that mount the language
    * provider START the language read before the gate, so its round trip
-   * overlaps the hold's. That un-awaited start is the ONLY statement allowed
-   * ahead of the gate, and the gate must come right after it.
+   * overlaps the hold's. TH-1 (SA §2.7.4, G-7) does the same for the
+   * platform-wide custom design tokens. Those two un-awaited starts, in this
+   * order, are the ONLY statements allowed ahead of the gate, and the gate must
+   * come right after them. Neither awaits anything, so no render or read of the
+   * account's data happens before the gate decides.
    */
   const LANGUAGE_START = 'const initialLanguagePending = readInitialLanguage()';
+  const TOKENS_START = 'const customTokensPending = readV2CustomTokens()';
 
   it.each([
     'app/onboarding-chat/layout.tsx',
     'app/onboarding-build/layout.tsx',
     'app/business-os/layout.tsx',
   ])('%s awaits the gate as its first awaited statement; only the language start may precede it', (file) => {
-    const [first, second] = leadingStatements(file);
-    if (first === LANGUAGE_START) {
-      expect(second).toBe('await redirectIfAwaitingPayment()');
-    } else {
-      expect(first).toBe('await redirectIfAwaitingPayment()');
-    }
+    const statements = leadingStatements(file);
+    const allowedStarts = [LANGUAGE_START, TOKENS_START];
+    let i = 0;
+    while (i < allowedStarts.length && statements[i] === allowedStarts[i]) i++;
+    expect(statements[i]).toBe('await redirectIfAwaitingPayment()');
   });
 
   it('app/test-business-os/layout.tsx awaits the gate as the first statement of its default export', () => {

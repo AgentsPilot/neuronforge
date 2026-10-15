@@ -27,7 +27,7 @@ export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgePr
   const { language, setLanguage, t } = useLanguage();
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
   const languageDropdownRef = useRef<HTMLDivElement>(null);
-  const { mode, toggleMode } = useV2Theme();
+  const { toggleMode } = useV2Theme();
 
   // Scheduling state
   const [hasScheduling, setHasScheduling] = useState(false);
@@ -147,11 +147,15 @@ export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgePr
             style={{ borderRadius: 'var(--v2-radius-button)' }}
             aria-label="Toggle dark mode"
           >
-            {mode === 'dark' ? (
-              <Sun className="w-4 h-4 text-[var(--v2-text-secondary)]" />
-            ) : (
-              <Moon className="w-4 h-4 text-[var(--v2-text-secondary)]" />
-            )}
+            {/*
+              Both icons, switched by the `.dark` class rather than by `mode`
+              (TH-1, SA Q-3): the server HTML is painted before hydration, and
+              `mode` is 'light' until mount, so a mode-driven icon would show a
+              Moon to a dark-mode owner for the whole pre-hydration window.
+              V2ThemeScript sets `.dark` before this is parsed.
+            */}
+            <Moon className="w-4 h-4 text-[var(--v2-text-secondary)] dark:hidden" />
+            <Sun className="w-4 h-4 text-[var(--v2-text-secondary)] hidden dark:block" />
           </button>
 
           {/* Language Selector */}

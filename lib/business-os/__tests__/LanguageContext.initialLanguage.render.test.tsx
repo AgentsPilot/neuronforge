@@ -14,9 +14,11 @@
  *     until the preferences row arrives;
  *   - the `dir`/`lang` wrapper is right on the first commit and follows a switch.
  *
- * In production the provider is mounted inside `V2ThemeProvider`, which renders
- * nothing on the server, so the provider's first render is a CLIENT render.
- * That is what these tests do. P-8 is the one defensive server-render test.
+ * Until TH-1 the provider was mounted inside a `V2ThemeProvider` that rendered
+ * nothing on the server, so its first render was a CLIENT render, which is
+ * what most of these tests do. Since TH-1 it is server-rendered and hydrated,
+ * so P-8 below is now the production path, and the client-render tests cover
+ * client-side entries.
  */
 
 import React, { useLayoutEffect } from 'react';
@@ -274,8 +276,8 @@ describe('StrictMode (R-2)', () => {
 });
 
 describe('defensive only: server render + hydration (P-8)', () => {
-  // Production never hydrates this provider today: V2ThemeProvider renders
-  // nothing on the server. This guards the day it starts to.
+  // Written as defensive, now the production path: since TH-1 V2ThemeProvider
+  // renders its children on the server, so this provider is hydrated.
   it('hydrates with no mismatch warning', async () => {
     // jsdom has no TextEncoder, which the browser build of react-dom/server needs.
     const { TextEncoder } = await import('util');

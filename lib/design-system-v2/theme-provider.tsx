@@ -3,23 +3,32 @@
 
 'use client'
 
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, startTransition, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { v2Tokens } from './tokens'
-import { supabase } from '@/lib/supabaseClient'
+import { V2_THEME_STORAGE_KEY } from './themeMode'
+import { sanitizeV2CustomTokens, type V2CustomTokens } from './customTokens'
+import { clientLogger } from '@/lib/logger/client'
 
 type ThemeMode = 'light' | 'dark'
 
-interface CustomTokens {
-  colors?: Record<string, string>
-  borderRadius?: Record<string, string>
-  shadows?: Record<string, string>
-  typography?: Record<string, string>
-  spacing?: Record<string, string>
-}
+/*
+ * SA RC-1 (TH-1): both effects run as layout effects in the browser, so a
+ * client-side entry into an owner segment (sign-in redirect, an in-app link)
+ * sets `.dark` and every variable before the first paint. On the server React
+ * does not run effects at all; `useEffect` there only avoids the SSR warning.
+ */
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
+
+const NO_CUSTOM_TOKENS: V2CustomTokens = Object.freeze({})
+
+/** The one route the provider may call, and only to correct an unknown render (SA RC-16). */
+export const V2_CUSTOM_TOKENS_CORRECTION_PATH = '/api/design-system/v2-custom-tokens'
+
+const logger = clientLogger.child({ module: 'V2ThemeProvider' })
 
 interface ThemeContextValue {
   tokens: typeof v2Tokens
-  customTokens: CustomTokens
+  customTokens: V2CustomTokens
   mode: ThemeMode
   setMode: (mode: ThemeMode) => void
   toggleMode: () => void
@@ -48,49 +57,44 @@ const darkModeColors = {
   errorIcon: '#EF4444',
 }
 
-export function V2ThemeProvider({ children }: { children: React.ReactNode }) {
+/**
+ * `customTokens` are the platform's custom design tokens, read and validated on
+ * the server by the mounting layout (`readV2CustomTokens`), which also inlines
+ * them as CSS (`V2CustomTokensStyle`). The provider no longer reads the
+ * database from the browser (TH-1, TH-2 folded in). Because they arrive as a
+ * prop, the first effect run already writes the custom values, so the inlined
+ * CSS is never overwritten by defaults.
+ *
+ * `customTokensKnown` is false only when the server rendered without knowing
+ * the tokens (a cold instance whose first read missed its deadline). Then, and
+ * only then, the provider asks `V2_CUSTOM_TOKENS_CORRECTION_PATH` once and
+ * applies the answer: the same "defaults, then the right colours a moment
+ * later" as before TH-1, on that rare path only (SA RC-16). It defaults to
+ * `true`, so a layout that forgot it can never cause a fetch per page.
+ */
+export function V2ThemeProvider({
+  children,
+  customTokens: serverCustomTokens = NO_CUSTOM_TOKENS,
+  customTokensKnown = true,
+}: {
+  children: React.ReactNode
+  customTokens?: V2CustomTokens
+  customTokensKnown?: boolean
+}) {
   const [mounted, setMounted] = useState(false)
   const [mode, setMode] = useState<ThemeMode>('light')
-  const [customTokens, setCustomTokens] = useState<CustomTokens>({})
+  // Set only by the RC-16 correction; otherwise the server value is used.
+  const [correctedTokens, setCorrectedTokens] = useState<V2CustomTokens | null>(null)
+  const customTokens = correctedTokens ?? serverCustomTokens
 
-  useEffect(() => {
-    setMounted(true)
-
-    // Load custom tokens from database
-    const loadCustomTokens = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('system_settings_config')
-          .select('value')
-          .eq('key', 'v2_custom_tokens')
-          .single()
-
-        if (!error && data?.value) {
-          setCustomTokens(data.value as CustomTokens)
-        }
-      } catch (err) {
-        console.error('Error loading custom tokens:', err)
-      }
-    }
-
-    loadCustomTokens()
-
-    // Check localStorage for saved preference
-    const savedMode = localStorage.getItem('v2-theme-mode') as ThemeMode
-    if (savedMode) {
-      setMode(savedMode)
-    } else {
-      // Check system preference
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-      setMode(prefersDark ? 'dark' : 'light')
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!mounted) return
-
+  /*
+   * Writes the theme onto <html>: the dark class, the saved choice, and every
+   * `--v2-*` variable (custom tokens first, defaults otherwise). Called from the
+   * mount effect and from the mode effect below.
+   */
+  const applyTheme = (themeMode: ThemeMode) => {
     const root = document.documentElement
-    const isDark = mode === 'dark'
+    const isDark = themeMode === 'dark'
 
     // Toggle dark class on html element
     if (isDark) {
@@ -100,7 +104,7 @@ export function V2ThemeProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Save preference
-    localStorage.setItem('v2-theme-mode', mode)
+    localStorage.setItem(V2_THEME_STORAGE_KEY, themeMode)
 
     // Inject CSS variables into root, using custom tokens where available
     const colors = isDark ? {
@@ -251,19 +255,101 @@ export function V2ThemeProvider({ children }: { children: React.ReactNode }) {
     root.style.setProperty('--v2-font-size-base', customTokens.typography?.fontSizeBase || v2Tokens.typography.fontSize.base)
     root.style.setProperty('--v2-font-size-lg', customTokens.typography?.fontSizeLg || v2Tokens.typography.fontSize.lg)
     root.style.setProperty('--v2-font-size-xl', customTokens.typography?.fontSizeXl || v2Tokens.typography.fontSize.xl)
+  }
+
+  useIsomorphicLayoutEffect(() => {
+    // Check localStorage for saved preference, otherwise the system preference.
+    // V2ThemeScript makes the same decision before paint (parity test T-S2).
+    const savedMode = localStorage.getItem(V2_THEME_STORAGE_KEY) as ThemeMode
+    const initialMode: ThemeMode = savedMode
+      ? savedMode
+      : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+
+    // Written to the DOM here, in the layout phase, so a client-side entry into
+    // an owner segment has the right theme before its first paint (SA RC-1).
+    applyTheme(initialMode)
+
+    // The context state follows as a transition. A synchronous update here, on
+    // the hydration commit, would reach the children's Suspense boundary while
+    // it is still dehydrated and force React to discard the server HTML and
+    // client-render the whole page (found by T-P2). A transition lets React
+    // hydrate the boundary first. Nothing visible depends on it: the DOM above
+    // is already right.
+    startTransition(() => {
+      setMode(initialMode)
+      setMounted(true)
+    })
+    // Deps: mount only; customTokens changes are handled by the effect below
+  }, [])
+
+  useIsomorphicLayoutEffect(() => {
+    // Kept (TH-1): before `mounted`, `mode` is still the initial 'light', and
+    // running would strip the `.dark` that V2ThemeScript and the mount effect
+    // set, and persist 'light'.
+    if (!mounted) return
+    applyTheme(mode)
+    // Deps: applyTheme reads only mode and customTokens
   }, [mode, mounted, customTokens])
+
+  /*
+   * RC-16: the browser correction, for an UNKNOWN server render only. One
+   * request, no-store; the answer is sanitized again here (defence in depth)
+   * and applied through the mode effect above (applyTheme). Any failure keeps
+   * the defaults silently, which is today's outcome for a failed read. Nothing
+   * is written after unmount. A plain effect: nothing is painted from it.
+   */
+  useEffect(() => {
+    if (customTokensKnown) return
+    const controller = new AbortController()
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch(V2_CUSTOM_TOKENS_CORRECTION_PATH, { cache: 'no-store', signal: controller.signal })
+        if (!res.ok) {
+          if (!cancelled) logger.warn({ status: res.status }, 'Custom tokens correction unavailable; keeping the defaults')
+          return
+        }
+        const body: unknown = await res.json()
+        if (cancelled) return
+        const data = (body as { success?: unknown; data?: unknown } | null)
+        if (!data || data.success !== true) return
+        setCorrectedTokens(sanitizeV2CustomTokens(data.data))
+      } catch (err) {
+        if (!cancelled) logger.warn({ err }, 'Custom tokens correction failed; keeping the defaults')
+      }
+    })()
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [customTokensKnown])
 
   const toggleMode = () => {
     setMode(prev => prev === 'light' ? 'dark' : 'light')
   }
 
-  if (!mounted) {
-    return null // Prevent SSR flash
-  }
+  // Stable unless something a consumer can see changed, so `mounted` flipping
+  // does not re-render every consumer.
+  const value = useMemo(
+    () => ({ tokens: v2Tokens, customTokens, mode, setMode, toggleMode }),
+    // Deps: toggleMode only calls the stable setMode
+    [customTokens, mode]
+  )
 
+  /*
+   * The children render on the server now (TH-1): the theme reaches the first
+   * frame through V2ThemeScript and the stylesheets, not through this provider.
+   *
+   * The Suspense boundary is a fail-soft net (SA Q-2 / RC-5, workplan §5 Q5):
+   * page code under these layouts never ran on the server before, so if it
+   * throws during server render the boundary falls back to a client render of
+   * that subtree, which is exactly the old behaviour, instead of a 500. It is
+   * NOT a pass condition: any such fallback is a defect to fix. Do not widen the
+   * fallback beyond `null` without SA.
+   */
   return (
-    <ThemeContext.Provider value={{ tokens: v2Tokens, customTokens, mode, setMode, toggleMode }}>
-      {children}
+    <ThemeContext.Provider value={value}>
+      <Suspense fallback={null}>{children}</Suspense>
     </ThemeContext.Provider>
   )
 }
