@@ -12,7 +12,7 @@
  * that is not JSON, shows `GENERIC_ERROR_COPY`, never the raw code.
  */
 
-import type { CreditAllowanceLayerView } from './types';
+import type { CreditAllowanceLayerView, CreditLotView } from './types';
 
 export const GENERIC_ERROR_COPY = 'Something failed on the server. The correlation id is in the logs.';
 
@@ -124,4 +124,48 @@ export function formatUtc(iso: string): string {
 /** The first 8 characters of an admin id; the full id goes in a `title` (SA OP-30 cut). */
 export function shortId(id: string): string {
   return id.slice(0, 8);
+}
+
+/**
+ * Recent-grant warning (2026-10-15, the double-give guard): how far back an
+ * admin grant counts as "just given". Shown only, never blocking.
+ */
+export const RECENT_GRANT_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * The newest admin grant created within the window before `nowMs`, or null.
+ * Any amount counts; a top-up purchase never does. A `createdAt` up to the
+ * window AHEAD of `nowMs` also counts: the admin's clock can run behind the
+ * server's, and a grant just made must not be missed for that.
+ */
+export function mostRecentAdminGrant(lots: readonly CreditLotView[], nowMs: number): CreditLotView | null {
+  let newest: CreditLotView | null = null;
+  let newestMs = Number.NEGATIVE_INFINITY;
+  for (const lot of lots) {
+    if (lot.source !== 'admin_grant') continue;
+    const createdMs = Date.parse(lot.createdAt);
+    if (Number.isNaN(createdMs)) continue;
+    if (Math.abs(nowMs - createdMs) >= RECENT_GRANT_WINDOW_MS) continue;
+    if (createdMs > newestMs) {
+      newest = lot;
+      newestMs = createdMs;
+    }
+  }
+  return newest;
+}
+
+/** "just now" under a minute (or a slightly future time), else "1 minute ago" / "N minutes ago". */
+export function minutesAgo(createdAt: string, nowMs: number): string {
+  const minutes = Math.floor((nowMs - Date.parse(createdAt)) / 60000);
+  if (!(minutes >= 1)) return 'just now';
+  return minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`;
+}
+
+/**
+ * The one amber line on the Give confirm step. Names no admin: the current
+ * admin's id is not known on this screen, and adding a request for it was ruled
+ * out (2026-10-15 brief).
+ */
+export function recentGrantWarning(lot: CreditLotView, nowMs: number): string {
+  return `This business was already given ${formatCredits(lot.credits)} credits ${minutesAgo(lot.createdAt, nowMs)}. Confirm only if you mean to give more.`;
 }
