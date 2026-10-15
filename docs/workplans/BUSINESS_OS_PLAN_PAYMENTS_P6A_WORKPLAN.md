@@ -1249,7 +1249,13 @@ Production, service-role, probe UUID e6f1a86c-d5e1-4414-98bf-466d78bd8e2b, livem
 
 ## Commit Info
 
-*RM will populate this section.*
+| Item | Value |
+|---|---|
+| Branch | `feature/bos-plan-payments-p6a2` (from `origin/main` `50d26e78`) |
+| Commit | `24efa45a` feat(billing): failed-payment records, banner and Settings states (P-6a.2) |
+| Merge of `origin/main` | `f3e2e9a6` (clean, tests re-run green) |
+| PR | [#416](https://github.com/AgentsPilot/neuronforge/pull/416), open; auto-merge NOT enabled |
+| Merge gate owed | G-6 live demo (incl. C-16b) |
 
 ---
 
@@ -1266,4 +1272,4 @@ Production, service-role, probe UUID e6f1a86c-d5e1-4414-98bf-466d78bd8e2b, livem
 | 2026-10-15 | P-6a.2 implemented (Dev) | T6 to T11 on `feature/bos-plan-payments-p6a2` (from `origin/main` `50d26e78`), uncommitted, awaiting SA code review. §5.3, §5.4, §5.5, §5.6 amended to the C-1 ruling and C-4 before T6. Repository: pure `decideRenewalFailure` / `decideRenewalCure`, read-decide-CAS writes (`.eq` / `.is`, `{ count: 'exact' }`, no `.select()`, no `.or()`), cured by periods, `max(attempt_count, 1)`. Webhook: `subscription_cycle` whitelist (U-10), audit before the billing write on a new row, heal on replay (C-3), cure after paid (never on `already_recorded`), action-required routed only with the price switch on, ended row + audit on `.deleted` only (C-4); three `info` audit keys (C-10). One predicate `planPaymentNotice` for the banner (layout, inert while the price switch is off) and Settings; en/he/es (he/es drafts, G-5). Captured-fixture test over X-1 to X-5 and the E-1b/E-2/E-4 U-10 negatives. Connect harness: 2 entries added, 107 existing byte-identical (per-entry hash vs `origin/main`). Suites 10499/10499; `test:bos-entitlements` 8122/8122; `typecheck:bos-llm` 0 new; `lint:hooks` clean. 10 deviations for SA (rule 4 needs a column; no migration added) |
 | 2026-10-16 | SA code review, P-6a.2 (SA) | **APPROVED WITH FIXES**, Code Approved for QA. Verified the C-1 rewrite of §5.3 to §5.6 and the code (periods, `max(attempt_count, 1)`, cure only when newest, `current_period_end` source guards), U-10, C-2 to C-4, C-10, C-12, C-13, Q-5, Q-6, tenant isolation, registrations, i18n. Connect harness re-verified per entry (107 identical, 2 added). Affected suites 5610/5610; `test:bos-entitlements` 8122/8122; 12 mutations one at a time, all killed, md5-restored. Deviation 1 accepted as display-only (status branch keeps the failure visible; follow-up F-4 if the Stripe retry setting ever allows two open periods). Deviation 9: new merge gate **C-16** (no-match shape probe through the real repository against production + count-1 proof in demo steps 4 to 7). SA fix: `events.ts` comment on `BOS_BILLING_PAYMENT_FAILED` details |
 | 2026-10-16 | QA, P-6a.2 (QA) | Focus items 2 to 7 PASS in Jest / in-memory, no bug. Affected suites 167 / 6763, `test:bos-entitlements` 271 / 8122. QA scratch checks (deleted): real `getEntitlementMode()` shadow / off / enforce for the paused wording; repository log capture incl. a PostgREST error carrying the URL. All 12 new keys once each in en / es / he, placeholders equal. C-16a probe written and dry-run PASS, **live run not done by QA** (go-ahead only relayed via the coordinator); C-16a live, C-16b, G-5, G-6 owed |
-| 2026-10-16 | G-5 approved; committed, PR opened (user; RM) | User approved the he / es wording (G-5) 2026-10-16: "wording approved on P-6a.2"; i18n comments updated. P-6a.2 SA APPROVED WITH FIXES (fix applied), QA PASS (no bug), C-16a production probe PASS. Committed on `feature/bos-plan-payments-p6a2` and PR #TBD opened to `main` (see Commit Info). No migration. Merge gate still owed: **G-6 live demo (incl. C-16b)**; auto-merge NOT enabled |
+| 2026-10-16 | G-5 approved; committed, PR opened (user; RM) | User approved the he / es wording (G-5) 2026-10-16: "wording approved on P-6a.2"; i18n comments updated. P-6a.2 SA APPROVED WITH FIXES (fix applied), QA PASS (no bug), C-16a production probe PASS. Committed on `feature/bos-plan-payments-p6a2` and PR #416 opened to `main` (see Commit Info). No migration. Merge gate still owed: **G-6 live demo (incl. C-16b)**; auto-merge NOT enabled |
