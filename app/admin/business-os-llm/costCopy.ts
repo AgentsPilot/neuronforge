@@ -7,8 +7,9 @@ export const COSTS_TAB_LABEL = 'Costs & credits';
 export const SETTINGS_TAB_LABEL = 'Settings';
 
 export const COSTS_INTRO =
-  'What Business OS actions cost us (USD, the provider’s measured cost) and what we charged ' +
-  '(credits), per account and billing period. Read from the credit ledger; nothing here changes it.';
+  'Charged AI cost: what Business OS actions cost us (USD, priced from the model price table) and what we charged ' +
+  '(credits), per account and billing period. Read from the credit ledger; nothing here changes it. ' +
+  'Monthly totals are on Finance.';
 
 export const COSTS_EMPTY = 'No charges recorded in this window';
 
@@ -34,7 +35,7 @@ export const SPREAD_NOTE = (fewBelow: number) =>
   `fallback-priced charges are left out. Below ${fewBelow} examples the figures are marked “few examples”.`;
 
 export const FALLBACK_NOTE =
-  'Charged from a fallback price because the measured price was missing — a deliberate ' +
+  'Charged from a fallback price because the model had no price in the price table: a deliberate ' +
   'over-estimate. Reconciling them is a later part of this work.';
 
 export const SECTION_FAILED = 'This section could not be read. The other sections are unaffected.';
@@ -80,7 +81,7 @@ export const COSTS_PLATFORM_ACCOUNT =
 
 // The KPI strip (§2.5, K-1 to K-10).
 export const KPI_CREDITS = 'Credits charged';
-export const KPI_COST_USD = 'Cost (USD)';
+export const KPI_COST_USD = 'Charged AI cost (USD)';
 export const KPI_CHARGES = 'Charges';
 export const KPI_FALLBACK = 'Fallback-priced';
 export const KPI_PERIODS = 'Periods not matching';

@@ -277,7 +277,7 @@ describe('errors (§5.10, F-43, F-55; SA Q-10)', () => {
   it('QA B-1: after success, a failure, then Try again with a pending read, shows placeholders and "Reading…", never zeros', async () => {
     render(<AdminCostAnalytics />);
     await settled();
-    expect(screen.getByRole('link', { name: 'Total spend, $1.50' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Recorded AI cost, $1.50' })).toBeTruthy();
 
     answer = { kind: 'json', status: 500, body: { success: false, error: 'Internal server error' } };
     fireEvent.click(refreshButton());
@@ -340,10 +340,10 @@ describe('errors (§5.10, F-43, F-55; SA Q-10)', () => {
 });
 
 describe('the KPI strip (§7.5, R-13, K-5)', () => {
-  it('Business OS: Total spend, Calls, Tokens, Avg cost per call, with their names and targets', async () => {
+  it('Business OS: Recorded AI cost, Calls, Tokens, Avg cost per call, with their names and targets', async () => {
     render(<AdminCostAnalytics />);
     await settled();
-    const spend = screen.getByRole('link', { name: 'Total spend, $1.50' });
+    const spend = screen.getByRole('link', { name: 'Recorded AI cost, $1.50' });
     expect(spend.getAttribute('href')).toBe(PATH);
     const calls = screen.getByRole('link', { name: 'Calls, 3' });
     expect(calls.getAttribute('href')).toBe(`${PATH}?group_by=activity`);
@@ -355,17 +355,17 @@ describe('the KPI strip (§7.5, R-13, K-5)', () => {
     for (const c of ['creation', 'execution', 'memory', 'system']) expect(screen.queryByTestId(`category-card-${c}`)).toBeNull();
   });
 
-  it('All: Total spend keeps the total tokens first in its sub-line (SA M-2), and four neutral category tiles', async () => {
+  it('All: Recorded AI cost keeps the total tokens first in its sub-line (SA M-2), and four neutral category tiles', async () => {
     arrive('scope=all');
     render(<AdminCostAnalytics />);
     await settled();
-    const spend = screen.getByRole('link', { name: 'Total spend, $1.50' });
+    const spend = screen.getByRole('link', { name: 'Recorded AI cost, $1.50' });
     expect(spend.getAttribute('href')).toBe(`${PATH}?scope=all`);
     expect(document.getElementById(spend.getAttribute('aria-describedby')!)?.textContent).toBe('100 tokens');
     const memory = screen.getByRole('link', { name: 'Memory, $0.50' });
     expect(memory.getAttribute('href')).toBe(`${PATH}?scope=all&category=memory`);
     expect(document.getElementById(memory.getAttribute('aria-describedby')!)?.textContent).toBe(
-      '33% of spend · 10 tokens · Embeddings, summarization',
+      '33% of recorded cost · 10 tokens · Embeddings, summarization',
     );
     for (const c of ['creation', 'execution', 'memory', 'system']) {
       const tile = screen.getByTestId(`category-card-${c}`);
@@ -375,7 +375,7 @@ describe('the KPI strip (§7.5, R-13, K-5)', () => {
     expect(screen.queryByTestId('kpi-calls')).toBeNull();
   });
 
-  it('the change vs the previous period is plain text, and incomplete totals turn Total spend amber', async () => {
+  it('the change vs the previous period is plain text, and incomplete totals turn Recorded AI cost amber', async () => {
     answer = {
       kind: 'ok',
       extra: {
@@ -388,7 +388,7 @@ describe('the KPI strip (§7.5, R-13, K-5)', () => {
     };
     render(<AdminCostAnalytics />);
     await settled();
-    const spend = screen.getByRole('link', { name: 'Total spend, $1.50, needs a look' });
+    const spend = screen.getByRole('link', { name: 'Recorded AI cost, $1.50, needs a look' });
     expect(spend.getAttribute('data-status')).toBe('amber');
     const sub = document.getElementById(spend.getAttribute('aria-describedby')!)!;
     expect(sub.textContent).toBe('+4.2% vs previous period · may be incomplete');
