@@ -1,6 +1,15 @@
 // /lib/intelligence/execution/PluginCoordinator.ts
 import { SmartIntentAnalysis, AdaptiveStrategy, ExecutionContext, PluginResult } from '../core/types'
 import { pluginRegistry } from '../../plugins/pluginRegistry'
+import { pluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository'
+import { createLogger } from '@/lib/logger'
+
+// Legacy AgentKit run path (runAgentWithContext). Connection reads and the
+// token-refresh write go through pluginConnectionRepository (service role,
+// scoped to context.userId), not the caller's cookie client: DE-0b revokes the
+// token columns from `authenticated`, so `select('*')` and the token UPDATE
+// would fail there (BUSINESS_OS_DATA_EXPORT_REQUIREMENT.md §0.1.2 S1).
+const logger = createLogger({ module: 'PluginCoordinator' })
 
 export class PluginCoordinator {
   async executeSmartCoordination(
@@ -13,14 +22,14 @@ export class PluginCoordinator {
     const pluginContext: Record<string, PluginResult> = {}
     
     // Get user plugin credentials
-    const userPlugins = await this.getUserPluginCredentials(context.userId, context.supabase)
+    const userPlugins = await this.getUserPluginCredentials(context.userId)
     
     // Prioritize plugins based on intent and strategy
     const prioritizedPlugins = this.prioritizePluginsForIntent(requiredPlugins, intentAnalysis)
     
     for (const pluginKey of prioritizedPlugins) {
       const stepStart = Date.now()
-      console.log(`🔧 Executing smart plugin: ${pluginKey}`)
+      logger.debug({ pluginKey, executionId }, 'Executing smart plugin')
       
       const pluginStrategy = pluginRegistry[pluginKey]
       let creds = userPlugins[pluginKey]
@@ -63,7 +72,8 @@ export class PluginCoordinator {
             ...context.input_variables,
             userPrompt: context.agentPrompt
           }
-          console.log(`📝 Agent prompt passed to ChatGPT: ${context.agentPrompt.substring(0, 100)}...`)
+          // Length only: the prompt is user content.
+          logger.debug({ pluginKey, promptLength: context.agentPrompt.length }, 'Agent prompt passed to ChatGPT')
         }
 
         // Execute with advanced retry logic
@@ -82,10 +92,10 @@ export class PluginCoordinator {
           stepStart
         )
 
-        console.log(`✅ Smart plugin ${pluginKey} completed`)
+        logger.info({ pluginKey, executionId, durationMs: Date.now() - stepStart }, 'Smart plugin completed')
 
       } catch (err: any) {
-        console.error(`❌ Smart plugin ${pluginKey} failed:`, err.message)
+        logger.error({ err, pluginKey, executionId }, 'Smart plugin failed')
         
         // Advanced fallback handling
         const fallbackResult = await this.attemptAdvancedPluginFallback(
@@ -108,12 +118,9 @@ export class PluginCoordinator {
     return pluginContext
   }
 
-  private async getUserPluginCredentials(userId: string, supabase: any): Promise<Record<string, any>> {
+  private async getUserPluginCredentials(userId: string): Promise<Record<string, any>> {
     try {
-      const { data: pluginConnections, error: pluginError } = await supabase
-        .from('plugin_connections')
-        .select('*')
-        .eq('user_id', userId)
+      const { data: pluginConnections, error: pluginError } = await pluginConnectionRepository.findAllByUser(userId)
 
       if (pluginError) throw pluginError
 
@@ -129,7 +136,7 @@ export class PluginCoordinator {
 
       return plugins
     } catch (error) {
-      console.warn('Failed to load plugin credentials:', error)
+      logger.warn({ err: error, userId }, 'Failed to load plugin credentials')
       return {}
     }
   }
@@ -322,24 +329,27 @@ export class PluginCoordinator {
     const isExpired = expires && expires.getTime() < now.getTime()
 
     if (isExpired && strategy.refreshToken) {
-      console.log(`Auto-refreshing token for ${pluginKey}`)
+      logger.info({ pluginKey, userId: context.userId }, 'Auto-refreshing token')
       try {
         const refreshed = await strategy.refreshToken(creds)
         creds.access_token = refreshed.access_token
         creds.expires_at = refreshed.expires_at
 
-        await context.supabase
-          .from('plugin_connections')
-          .update({
-            access_token: refreshed.access_token,
-            expires_at: refreshed.expires_at
-          })
-          .eq('user_id', context.userId)
-          .eq('plugin_key', pluginKey)
-          
-        console.log(`Token refreshed successfully for ${pluginKey}`)
+        // The refreshed token is already in memory for this run, so a failed
+        // save is logged, not thrown (the write's result was never checked
+        // before; it is now at least visible).
+        const { error: saveError } = await pluginConnectionRepository.updateRefreshedToken(
+          context.userId,
+          pluginKey,
+          { accessToken: refreshed.access_token, expiresAt: refreshed.expires_at ?? null }
+        )
+        if (saveError) {
+          logger.warn({ err: saveError, pluginKey, userId: context.userId }, 'Refreshed token was not saved')
+        } else {
+          logger.info({ pluginKey, userId: context.userId }, 'Token refreshed successfully')
+        }
       } catch (refreshError) {
-        console.error(`Token refresh failed for ${pluginKey}:`, refreshError)
+        logger.error({ err: refreshError, pluginKey, userId: context.userId }, 'Token refresh failed')
         throw new Error(`Authentication failed for ${pluginKey}: ${refreshError.message}`)
       }
     }
@@ -356,7 +366,7 @@ export class PluginCoordinator {
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`🔧 Smart execution ${pluginKey} - attempt ${attempt}/${maxRetries}`)
+        logger.debug({ pluginKey, attempt, maxRetries }, 'Smart execution attempt')
         
         // Add timeout based on attempt
         const timeoutMs = Math.min(30000, 10000 * attempt)
@@ -370,13 +380,13 @@ export class PluginCoordinator {
         const result = await executeWithTimeout
         
         if (attempt > 1) {
-          console.log(`✅ Smart retry succeeded for ${pluginKey} on attempt ${attempt}`)
+          logger.info({ pluginKey, attempt }, 'Smart retry succeeded')
         }
         
         return result
       } catch (error: any) {
         lastError = error
-        console.log(`❌ Smart attempt ${attempt} failed for ${pluginKey}:`, error.message)
+        logger.warn({ err: error, pluginKey, attempt, maxRetries }, 'Smart attempt failed')
         
         if (attempt < maxRetries) {
           const baseDelay = 1000
@@ -384,7 +394,7 @@ export class PluginCoordinator {
           const jitterDelay = backoffDelay + (Math.random() * 1000)
           const finalDelay = Math.min(jitterDelay, 15000)
           
-          console.log(`⏳ Smart retry for ${pluginKey} in ${finalDelay}ms...`)
+          logger.debug({ pluginKey, attempt, delayMs: finalDelay }, 'Smart retry scheduled')
           await new Promise(resolve => setTimeout(resolve, finalDelay))
         }
       }
@@ -399,7 +409,7 @@ export class PluginCoordinator {
     context: ExecutionContext,
     intent: SmartIntentAnalysis
   ): Promise<PluginResult | null> {
-    console.log(`🔄 Advanced fallback for ${pluginKey}`)
+    logger.info({ pluginKey }, 'Advanced fallback')
     
     // Intent-based fallback selection
     const fallbackMap = {
@@ -414,11 +424,11 @@ export class PluginCoordinator {
     for (const fallbackPlugin of potentialFallbacks) {
       if (fallbackPlugin !== pluginKey) {
         try {
-          const fallbackCreds = await this.getPluginCredentials(fallbackPlugin, context.supabase, context.userId)
+          const fallbackCreds = await this.getPluginCredentials(fallbackPlugin, context.userId)
           if (fallbackCreds) {
             const fallbackStrategy = pluginRegistry[fallbackPlugin]
             if (fallbackStrategy?.run) {
-              console.log(`Attempting fallback to ${fallbackPlugin}`)
+              logger.info({ pluginKey, fallbackPlugin }, 'Attempting fallback')
               
               const fallbackResult = await fallbackStrategy.run({
                 connection: fallbackCreds,
@@ -439,7 +449,7 @@ export class PluginCoordinator {
             }
           }
         } catch (fallbackError) {
-          console.log(`Fallback to ${fallbackPlugin} also failed:`, fallbackError.message)
+          logger.warn({ err: fallbackError, pluginKey, fallbackPlugin }, 'Fallback also failed')
           continue
         }
       }
@@ -448,13 +458,9 @@ export class PluginCoordinator {
     return null
   }
 
-  private async getPluginCredentials(pluginKey: string, supabase: any, userId: string): Promise<any> {
-    const { data: connection } = await supabase
-      .from('plugin_connections')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('plugin_key', pluginKey)
-      .single()
+  private async getPluginCredentials(pluginKey: string, userId: string): Promise<any> {
+    // Any status, as before; a miss (PGRST116) comes back as data null.
+    const { data: connection } = await pluginConnectionRepository.findByUserAndPlugin(userId, pluginKey)
 
     return connection ? {
       access_token: connection.access_token,

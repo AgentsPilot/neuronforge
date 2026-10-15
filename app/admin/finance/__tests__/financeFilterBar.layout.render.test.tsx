@@ -10,30 +10,41 @@
  * help line stays inside the picker column.
  *
  * jsdom does not lay out, so these are class and structure pins. The picker is
- * replaced by a stand-in with the real one's shape (label, input, help line).
+ * replaced by a stand-in with the real one's shape (label, input).
  * Class tokens are checked with toHaveClass, so no regex is needed.
+ *
+ * Money M-1 (SA-W70): Finance now uses the SHARED `AdminBusinessPicker`, which
+ * renders no note of its own. The help line is page-owned, under the whole
+ * row, and the picker's input names it through `aria-describedby`. The mock
+ * keeps the real `businessFilterChip`.
  */
 
 import '@testing-library/jest-dom';
 import { render, screen } from '@testing-library/react';
 
-jest.mock('@/app/admin/audit-trail/BusinessAccountPicker', () => ({
-  BusinessAccountPicker: () => (
+jest.mock('@/app/admin/components/layout/AdminBusinessPicker', () => ({
+  ...jest.requireActual('@/app/admin/components/layout/AdminBusinessPicker'),
+  AdminBusinessPicker: ({ describedBy }: { describedBy?: string }) => (
     <div data-testid="picker-stand-in">
-      <label htmlFor="stand-in-input">Account</label>
-      <input id="stand-in-input" />
-      <p data-testid="business-picker-hint">Only accounts with a business profile can be found by name.</p>
+      <label htmlFor="stand-in-input">Business</label>
+      <input id="stand-in-input" aria-describedby={describedBy} />
     </div>
   ),
 }));
 
 import { FinanceFilterBar } from '../components/FinanceFilterBar';
 import { DEFAULT_FINANCE_QUERY } from '../financeUrl';
-import { FILTER_APPLY, FILTER_FROM, FILTER_TO } from '../financeCopy';
+import { FILTER_APPLY, FILTER_BUSINESS_HELP, FILTER_FROM, FILTER_TO } from '../financeCopy';
 
 function renderBar() {
   render(
-    <FinanceFilterBar query={DEFAULT_FINANCE_QUERY} resolved={{ from: '2026-10-01', to: '2026-10-14' }} onChange={jest.fn()} />
+    <FinanceFilterBar
+      query={DEFAULT_FINANCE_QUERY}
+      resolved={{ from: '2026-10-01', to: '2026-10-14' }}
+      onChange={jest.fn()}
+      onPick={jest.fn()}
+      chipName={null}
+    />
   );
   return { row: screen.getByTestId('finance-filters').firstElementChild as HTMLElement };
 }
@@ -90,15 +101,24 @@ describe('LF-6: the finance filter bar lines up', () => {
     for (const preset of presets) expect(preset).toHaveClass('py-1.5', 'text-xs');
   });
 
-  it('the help line stays inside the picker column, under its input, and is not an item of the row', () => {
+  it('Money M-1 (SA-W70): the help line is page-owned, under the row, not in it; the picker input names it', () => {
     const { row } = renderBar();
-    const hint = screen.getByTestId('business-picker-hint');
+    const help = screen.getByTestId('finance-business-help');
+    expect(help).toHaveTextContent(FILTER_BUSINESS_HELP);
     const pickerColumn = screen.getByTestId('picker-stand-in').parentElement as HTMLElement;
     expect(pickerColumn.parentElement).toBe(row);
-    expect(pickerColumn).toContainElement(hint);
-    expect(Array.from(row.children)).not.toContain(hint);
+    // Not inside the picker column, not an item of the row: a full-width line under it.
+    expect(pickerColumn).not.toContainElement(help);
+    expect(row).not.toContainElement(help);
+    expect(help.parentElement).toBe(row.parentElement);
+    expect(row.compareDocumentPosition(help) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Five items, in order: Window, From, To, Apply, the picker.
     expect(row.children).toHaveLength(5);
     expect(row.lastElementChild).toBe(pickerColumn);
+    // The picker's input is described by the help line (describedBy, L-4a SA Q-5).
+    const helpId = help.getAttribute('id');
+    expect(helpId).toBeTruthy();
+    expect(screen.getByLabelText('Business')).toHaveAttribute('aria-describedby', helpId);
+    expect(help).toHaveClass('text-slate-400');
   });
 });

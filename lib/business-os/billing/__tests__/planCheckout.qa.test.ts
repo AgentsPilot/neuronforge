@@ -176,7 +176,8 @@ function harness(options: Options = {}) {
       invites: {
         findHoldFactsById: jest.fn(async () => {
           log.push('db:invite');
-          return options.inviteError ? { data: null, error: new Error('down') } : { data: { grant_kind: 'tier', language: 'en' }, error: null };
+          // P-9.2: an admin Paid invite naming a tier nobody sells (SA C-5).
+          return options.inviteError ? { data: null, error: new Error('down') } : { data: { grant_kind: 'tier', grant_id: 'tier_without_a_price', language: 'en' }, error: null };
         }),
       },
     } as unknown as PlanCheckoutDeps['holdReaders'],
@@ -241,7 +242,7 @@ describe('QA — the hold fails CLOSED', () => {
     expect(stripeCalls()).toEqual([]);
   });
 
-  it.each(TIER_ORDER.map((tier) => [tier]))('a held admin invitee is refused for %s too (until P-9)', async (tier) => {
+  it.each(TIER_ORDER.map((tier) => [tier]))('a held admin invitee whose tier has no price is refused for %s too (P-9.2: fail closed)', async (tier) => {
     const { deps, stripeCalls } = harness({ lineage: { invite_id: INVITE, source: 'admin_invite', first_paid_at: null } });
     expectRefused(await startPlanCheckout({ ...INPUT, tier: tier as TierId }, deps), 'held_tier_unresolved');
     expect(stripeCalls()).toEqual([]);

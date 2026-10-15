@@ -8,7 +8,8 @@
  *   - only the function's own stamp flag, on applied / recorded, reaches the
  *     notifier; replays, refusals, conflicts and a false flag never do, so the
  *     email goes once (also with a replay arriving MID-SEND);
- *   - admin_invite / organic first payments send and audit nothing;
+ *   - organic first payments send and audit nothing; admin_invite ones reach
+ *     the notifier (P-9.2, T10), which tells the issuing admin of a PAID invite;
  *   - an unread lineage still reaches the notifier, which audits "not notified";
  *   - the notifier runs AFTER the stamp and invoice-paid entries were flushed;
  *   - one 4 s clock covers the lineage read and the notification; the stamp
@@ -252,7 +253,14 @@ function setup(opts: SetupOptions = {}) {
 /** The real N-2 notifier over fake N-1 lookups and a controllable invite read and send. */
 function realNotifier(options: { invite?: 'ok' | 'hang'; send?: 'ok' | 'hang' | (() => Promise<SendEmailResult>) } = {}) {
   const sent: SendEmailParams[] = [];
-  const invite: BusinessOsInviteNotificationFacts = { issuer_kind: 'account', issuer_account_id: CHAMPION, email: INVITEE, redeemed_account_id: ACCOUNT };
+  const invite: BusinessOsInviteNotificationFacts = {
+    issuer_kind: 'account',
+    issuer_account_id: CHAMPION,
+    issuer_admin_id: null, // P-9.2 (T10): read too; a friend invite has none.
+    grant_kind: 'tier',
+    email: INVITEE,
+    redeemed_account_id: ACCOUNT,
+  };
   const deps: ChampionSubscribedNotifierDeps = {
     invites: {
       findInviterNotificationFactsById: (async () =>
@@ -360,7 +368,8 @@ describe('exactly once: only a stamped first payment, on applied / recorded, rea
     expect(h.fakeNotifier.notifyChampion).not.toHaveBeenCalled();
   });
 
-  it.each(['admin_invite', 'organic'] as const)('a %s first payment: not called, no N-2 audit, an info line', async (source) => {
+  // P-9.2 (T10, BQ-P11): `admin_invite` now reaches the notifier (see the T10 block below); organic still never does.
+  it.each(['organic'] as const)('a %s first payment: not called, no N-2 audit, an info line', async (source) => {
     const h = setup({ lineage: { findHoldFactsForAccount: async () => ({ data: facts(source, source === 'organic' ? null : INVITE), error: null }) } });
     await applyPaidPlanInvoice(paidEvent(), h.log, h.deps);
     expect(h.fakeNotifier.notifyChampion).not.toHaveBeenCalled();
@@ -656,5 +665,180 @@ describe('postCommitMs on the post-commit line (SA F-1)', () => {
     expect(line[0].ctx).toMatchObject({ status: 'applied', accountId: ACCOUNT, invoiceId: 'in_N1', subscriptionId: SUB_1, livemode: false, stripeEventId: event.id });
     expect(typeof line[0].ctx.postCommitMs).toBe('number');
     expect(h.logged('bos_billing_invoice_applied')[0].ctx).not.toHaveProperty('postCommitMs');
+  });
+});
+
+// ── P-9.2 T10 (BQ-P11, SA Q-10): N-2 to the ISSUING ADMIN of an admin Paid invite ──
+
+const ADMIN = '77777777-7777-4777-8777-777777777777';
+const ADMIN_EMAIL = 'admin@example.org';
+
+/** The real N-2 notifier, over an ADMIN Paid invite redeemed by the payer, and an active admin. */
+function realAdminNotifier(options: { grantKind?: 'tier' | 'cohort'; send?: () => Promise<SendEmailResult> } = {}) {
+  const sent: SendEmailParams[] = [];
+  const identityLookups: string[] = [];
+  const invite: BusinessOsInviteNotificationFacts = {
+    issuer_kind: 'admin',
+    issuer_account_id: null,
+    issuer_admin_id: ADMIN,
+    grant_kind: options.grantKind ?? 'tier',
+    email: INVITEE,
+    redeemed_account_id: ACCOUNT,
+  };
+  const real = createFirstPaymentNotifier({
+    invites: {
+      findInviterNotificationFactsById: (async () => ({ data: invite, error: null })) as unknown as ChampionSubscribedNotifierDeps['invites']['findInviterNotificationFactsById'],
+    },
+    inviterDeps: ({ logger, audit }): InviterNotificationDeps => ({
+      findUserIdentity: async (id) => {
+        identityLookups.push(id);
+        return { data: { email: id === ADMIN ? ADMIN_EMAIL : null }, error: null };
+      },
+      isActiveAdmin: async (id) => id === ADMIN,
+      findProfileLanguage: async () => ({ data: 'en', error: null }),
+      findPreferredLanguage: async () => ({ data: null, error: null }),
+      senderAddress: () => 'notifications@agentspilot.ai',
+      sendEmail: async (params: SendEmailParams): Promise<SendEmailResult> => {
+        sent.push(params);
+        if (options.send) return options.send();
+        return { sent: true, provider: 'resend', providerMessageId: 'msg_admin' };
+      },
+      platformUrl: (p) => `https://app.example.test${p}`,
+      audit,
+      logger,
+    }),
+    writeAudit: writeChampionNotificationAudit,
+  });
+  const notifyChampion = jest.fn((input: FirstPaymentNotifyInput) => real.notifyChampion(input));
+  const notifier: FirstPaymentNotifier = { deadlineMs: real.deadlineMs, notifyChampion };
+  return { notifier, notifyChampion, sent, identityLookups };
+}
+
+const adminLineage = (): LineagePort => ({ findHoldFactsForAccount: async (): Promise<LineageRead> => ({ data: facts('admin_invite'), error: null }) });
+
+describe('P-9.2 T10: an admin Paid invitee\'s first payment tells the issuing admin, exactly once', () => {
+  it('a stamped admin_invite first payment reaches the notifier with the lineage source and invite id (never Stripe metadata)', async () => {
+    const h = setup({ lineage: adminLineage() });
+    const event = paidEvent();
+    await applyPaidPlanInvoice(event, h.log, h.deps);
+    expect(h.fakeNotifier.notifyChampion).toHaveBeenCalledTimes(1);
+    expect(h.notified[0]).toMatchObject({ accountId: ACCOUNT, inviteId: INVITE, lineageSource: 'admin_invite', lineageRead: 'ok', stripeEventId: event.id });
+    expect(h.logged('bos_invite_subscribed_not_applicable')).toEqual([]);
+  });
+
+  it('a friend payment carries lineageSource account_invite (P-5b.1 unchanged)', async () => {
+    const h = setup();
+    await applyPaidPlanInvoice(paidEvent(), h.log, h.deps);
+    expect(h.notified[0]).toMatchObject({ lineageSource: 'account_invite' });
+  });
+
+  it.each([
+    ['applied, flag false', [applied({ firstPaymentStamped: false })]],
+    ['already_applied', [{ status: 'already_applied', eventRowId: ROW_ID }]],
+  ] as Array<[string, BusinessOsApplyPlanPaymentResult[]]>)('%s: an admin invitee\'s payment never reaches the notifier', async (_name, answers) => {
+    const h = setup({ answers, lineage: adminLineage() });
+    await applyPaidPlanInvoice(paidEvent(), h.log, h.deps);
+    expect(h.fakeNotifier.notifyChampion).not.toHaveBeenCalled();
+  });
+
+  it('with the real notifier: ONE email to the admin, N-2\'s audit shape with recipientKind admin, flushed after the stamp entries', async () => {
+    const real = realAdminNotifier();
+    const h = setup({ lineage: adminLineage(), notifier: real.notifier });
+    await applyPaidPlanInvoice(paidEvent(), h.log, h.deps);
+    expect(real.sent).toHaveLength(1);
+    expect(real.sent[0].to).toEqual([ADMIN_EMAIL]);
+    expect(real.identityLookups).toEqual([ADMIN]);
+    expect(auditCalls).toEqual(['log:BOS_BILLING_INVOICE_PAID', 'log:BOS_BILLING_FIRST_PAYMENT_STAMPED', 'flush', 'log:BOS_INVITE_INVITER_NOTIFIED', 'flush']);
+    expect(n2Entries()).toEqual([
+      expect.objectContaining({
+        entityType: 'business_os_invite',
+        entityId: INVITE,
+        userId: null,
+        actorId: null,
+        details: expect.objectContaining({ event: 'subscribed', status: 'subscribed', recipientKind: 'admin', recipientAccountId: ADMIN, accountId: ACCOUNT }),
+      }),
+    ]);
+    expect(JSON.stringify(n2Entries())).not.toContain('@');
+    expect(JSON.stringify(h.logLines)).not.toContain('@');
+  });
+
+  it('a champion\'s own first payment (admin COHORT invite): no email, no N-2 audit', async () => {
+    const real = realAdminNotifier({ grantKind: 'cohort' });
+    const h = setup({ lineage: adminLineage(), notifier: real.notifier });
+    await applyPaidPlanInvoice(paidEvent(), h.log, h.deps);
+    expect(real.notifyChampion).toHaveBeenCalledTimes(1);
+    expect(real.sent).toEqual([]);
+    expect(n2Entries()).toEqual([]);
+  });
+
+  it('through the real handler, the same invoice twice: one admin email', async () => {
+    const real = realAdminNotifier();
+    const paidInvoices = new Map<string, string>();
+    let stamped = false;
+    const h = setup({
+      lineage: adminLineage(),
+      notifier: real.notifier,
+      apply: (input) => {
+        const known = paidInvoices.get(input.stripeInvoiceId);
+        if (known) return { status: 'already_applied', eventRowId: known };
+        paidInvoices.set(input.stripeInvoiceId, ROW_ID);
+        const stampsNow = input.amountMinor > 0 && !stamped;
+        stamped = stamped || stampsNow;
+        return applied({ firstPaymentStamped: stampsNow });
+      },
+    });
+    const handler = createPlanBillingHandler({ ...h.deps, stripeMode: () => 'test', now: () => new Date() } as unknown as PlanBillingHandlerDeps);
+    await handler(paidEvent('in_ADMIN_TWICE'), h.log);
+    await handler(paidEvent('in_ADMIN_TWICE'), h.log);
+    expect(real.notifyChampion).toHaveBeenCalledTimes(1);
+    expect(real.sent).toHaveLength(1);
+    expect(n2Entries().map((entry) => entry.action)).toEqual(['BOS_INVITE_INVITER_NOTIFIED']);
+  });
+
+  it('a replay arriving WHILE the admin email is still sending gets already_applied and sends nothing (one email in total)', async () => {
+    let releaseSend: (result: SendEmailResult) => void = () => undefined;
+    const sendGate = new Promise<SendEmailResult>((resolve) => {
+      releaseSend = resolve;
+    });
+    const real = realAdminNotifier({ send: () => sendGate });
+    const paidInvoices = new Map<string, string>();
+    const h = setup({
+      lineage: adminLineage(),
+      notifier: real.notifier,
+      apply: (input) => {
+        const known = paidInvoices.get(input.stripeInvoiceId);
+        if (known) return { status: 'already_applied', eventRowId: known };
+        paidInvoices.set(input.stripeInvoiceId, ROW_ID);
+        return applied({ firstPaymentStamped: true });
+      },
+    });
+    const handler = createPlanBillingHandler({ ...h.deps, stripeMode: () => 'test', now: () => new Date() } as unknown as PlanBillingHandlerDeps);
+
+    const first = handler(paidEvent('in_ADMIN_MID'), h.log);
+    for (let i = 0; i < 200 && real.sent.length === 0; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    expect(real.sent).toHaveLength(1);
+
+    await handler(paidEvent('in_ADMIN_MID'), h.log);
+    expect(h.logged('bos_billing_invoice_replayed').map((line) => line.ctx.status)).toEqual(['already_applied']);
+    expect(real.notifyChampion).toHaveBeenCalledTimes(1);
+
+    releaseSend({ sent: true, provider: 'resend', providerMessageId: 'msg_admin' });
+    await first;
+    expect(real.sent).toHaveLength(1);
+    expect(n2Entries().map((entry) => entry.action)).toEqual(['BOS_INVITE_INVITER_NOTIFIED']);
+  });
+
+  it('one 4 s clock: a 1.5 s lineage read leaves 2.5 s for the admin notification', async () => {
+    jest.useFakeTimers();
+    const h = setup({
+      lineage: {
+        findHoldFactsForAccount: () =>
+          new Promise<LineageRead>((resolve) => {
+            setTimeout(() => resolve({ data: facts('admin_invite'), error: null }), 1_500);
+          }),
+      },
+    });
+    await runFake(applyPaidPlanInvoice(paidEvent(), h.log, h.deps));
+    expect(h.notified[0]).toMatchObject({ lineageSource: 'admin_invite', remainingMs: 2_500 });
   });
 });

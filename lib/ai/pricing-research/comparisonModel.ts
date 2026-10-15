@@ -99,6 +99,12 @@ export interface ComparisonRow {
   /** Null for an image model known only from a price key (image prices are keyed by model). */
   provider: string | null;
   modelName: string;
+  /**
+   * The stored `ai_model_pricing` row behind `current` (slice 4, SA N-1): the
+   * admin table joins its Edit control to this id. Null unless the basis is
+   * `table`; always null for image rows. Read model only, no charge reads it.
+   */
+  currentRowId: string | null;
   areas: AreaTag[];
   usedByBusinessOs: boolean;
   usageLabel: string;
@@ -405,6 +411,7 @@ function tokenRows(snapshot: PricingSnapshot): ComparisonRow[] {
         kind: 'token',
         provider,
         modelName: model,
+        currentRowId: current.basis === 'table' ? current.rowId ?? null : null,
         areas,
         usedByBusinessOs: used,
         usageLabel: label,
@@ -475,6 +482,7 @@ function imageRows(snapshot: PricingSnapshot): ComparisonRow[] {
         kind: 'image',
         provider,
         modelName: model,
+        currentRowId: null,
         areas,
         usedByBusinessOs: used,
         usageLabel: label,

@@ -26,8 +26,13 @@ export const PRESET_LABELS: Record<FinanceWindowChoice, string> = {
 export const FILTER_FROM = 'From (UTC)';
 export const FILTER_TO = 'To (UTC)';
 export const FILTER_APPLY = 'Apply';
-export const SHOW_ALL_BUSINESSES = 'All businesses';
-export const BUSINESS_CHIP = 'Business:';
+/**
+ * Money M-1 (SA-W70 b): the picker's standing note, now a page-owned help line
+ * under the bar, wired to the shared picker through `describedBy`. The sentence
+ * the deleted original picker carried, unchanged.
+ */
+export const FILTER_BUSINESS_HELP =
+  'Only accounts with a business profile can be found by name. Paste a full account id to filter by any other account.';
 export const REFRESH = 'Refresh';
 export const LOADING = 'Loading…';
 export const PAGE_LOAD_FAILED = 'The finance page could not be loaded.';
@@ -42,7 +47,7 @@ export const TILE_LABELS = {
   k4Sub: 'Credits, now',
   k5: 'Our revenue',
   /** K-5's caption (S4-FR-7); the window is appended. */
-  k5Sub: 'Credit boosts; plans in a later update',
+  k5Sub: 'Credit boosts and plans',
 } as const;
 /** K-2's subtitle: the line comes from the payload (data, SA-W10), never typed here. */
 export function k2Subtitle(percent: number | null): string {
@@ -55,27 +60,59 @@ export const SECTION_COULD_NOT_LOAD = 'Could not load this section';
 export const SECTION_PARTIAL = 'At least';
 export const SECTION_OK = 'Loaded';
 
-// ── Our revenue (slice 4a, S4-FR-1 to S4-FR-13) ──
-// Our own money: credit boosts paid in the window, per currency, never a total
-// across currencies. Plan revenue amounts come later (slice 5). No mode wording.
+// ── Our revenue (slice 4a, S4-FR-1 to S4-FR-13; slice 5a, M2-FR-1 to M2-FR-13) ──
+// Our own money: plan payments received and credit boosts paid in the window,
+// per currency, never a total across currencies. No mode wording.
 export const REVENUE_TITLE = 'Our revenue';
-export const REVENUE_SUBTITLE_ALL = (windowLabel: string) => `Credit boosts paid, all businesses · ${windowLabel}`;
-export const REVENUE_SUBTITLE_ONE = (windowLabel: string) => `Credit boosts paid, this business · ${windowLabel}`;
+export const REVENUE_SUBTITLE_ALL = (windowLabel: string) => `Plan payments and credit boosts received, all businesses · ${windowLabel}`;
+export const REVENUE_SUBTITLE_ONE = (windowLabel: string) => `Plan payments and credit boosts received, this business · ${windowLabel}`;
 /** K-5's caption with the window (SA-Q25: K-5 follows the filter window). */
 export const k5Caption = (windowLabel: string) => `${TILE_LABELS.k5Sub} · ${windowLabel}`;
 /** S4-FR-7: K-5 with several currencies, never a sum. */
 export const k5SeveralCurrencies = (count: number) => `${count} currencies, see Our revenue`;
 export const K5_UNKNOWN = 'Unknown';
 
-/** S4-FR-4: the plans line, from the platform-wide existence check. No plan amount is read. */
-export const REVENUE_PLANS_RECORDED = 'Plan payments: amounts are shown in a later update';
-export const REVENUE_PLANS_NONE = 'No plan payment recorded';
-export const REVENUE_PLANS_UNKNOWN = 'Plan payments: could not check';
-/** SA-WR-33 / E-32: with a business picked the plans line still covers all businesses (R-d reads no account). */
-export const REVENUE_PLANS_ALL_PREFIX = 'Plan payments, all businesses:';
-export const REVENUE_PLANS_ALL_RECORDED = `${REVENUE_PLANS_ALL_PREFIX} amounts are shown in a later update`;
-export const REVENUE_PLANS_ALL_NONE = `${REVENUE_PLANS_ALL_PREFIX} none recorded`;
-export const REVENUE_PLANS_ALL_UNKNOWN = `${REVENUE_PLANS_ALL_PREFIX} could not check`;
+// ── Plans received (slice 5a, M2-FR-1 to M2-FR-4, M2-FR-8). Received is what
+// Stripe recorded as paid: tax included, Stripe fees not deducted, before any
+// refund (plan refunds are not recorded yet). Never a "0.00" for an empty window.
+export const REVENUE_PLANS_HEADING = 'Plans';
+export const REVENUE_BOOSTS_HEADING = 'Credit boosts';
+export const REVENUE_PLANS_FAILED = 'Could not load';
+export const REVENUE_PLANS_EMPTY = 'No plan payments received in this window';
+/** M2-W-6: always shown with the plans part. */
+export const REVENUE_PLANS_REFUNDS_NOTE = 'Plan refunds and disputes are not recorded yet';
+/** M2-W-5, SA-Q39: zero-amount invoices are not payments; said in a note. */
+export const REVENUE_PLANS_ZERO_NOTE = (count: number) =>
+  `${count} paid ${count === 1 ? 'invoice' : 'invoices'} had nothing to charge`;
+export const REVENUE_PLANS_PER_CURRENCY = 'Plan payments per currency';
+export const REVENUE_PLANS_PAYMENTS = 'Payments';
+/** M2-W-3: what received is, and what it is not. */
+export const REVENUE_PLANS_RECEIVED = 'Received (Stripe fees not deducted; includes any tax; before any refund)';
+export const REVENUE_PLANS_RECEIVED_SHORT = 'Received';
+export const REVENUE_PLANS_BUSINESSES = 'Businesses that paid';
+export const REVENUE_PLANS_BY_BUSINESS = 'Plan payments by business';
+export const REVENUE_PLANS_BUSINESS = 'Business';
+export const REVENUE_PLANS_NOT_LISTED = (count: number) =>
+  `${count} more ${count === 1 ? 'business' : 'businesses'} not listed`;
+export const REVENUE_PLANS_DELETED_NONE = 'No plan payments from deleted accounts';
+export const revenuePlansDeletedLine = (payments: number, received: string) =>
+  `Deleted accounts: ${payments} ${payments === 1 ? 'payment' : 'payments'}, received ${received}`;
+export const REVENUE_PLANS_LIST = 'Plan payments of this business';
+export const REVENUE_PLANS_PAID_AT = 'Paid at';
+export const REVENUE_PLANS_PLAN = 'Plan';
+export const REVENUE_PLANS_PERIOD = 'Period';
+export const REVENUE_PLANS_UNKNOWN_PLAN = 'Unknown plan';
+/** SA-W64: a period that was not stored says so, never a dash. */
+export const REVENUE_PLANS_PERIOD_NOT_RECORDED = 'Not recorded';
+export const revenuePlansPeriod = (from: string, to: string) => `${from} to ${to}`;
+export const REVENUE_PLANS_PAYMENTS_NOT_LISTED = (count: number) =>
+  `${count} more ${count === 1 ? 'payment' : 'payments'} not listed`;
+export const REVENUE_PLANS_NOTICE_CUT =
+  'The plan payments were read only up to their limit: payments, received and tax are "at least".';
+export const REVENUE_PLANS_NOTICE_UNREADABLE = (count: number) =>
+  `${count} paid ${count === 1 ? 'invoice has an amount' : 'invoices have amounts'} that could not be read: left out of the sums, that line is "at least".`;
+export const REVENUE_PLANS_OTHER_KIND = (count: number) =>
+  `${count} ${count === 1 ? 'row' : 'rows'} of another kind not counted`;
 
 export const REVENUE_BOOSTS = 'Credit boosts per currency';
 export const REVENUE_BY_PACKAGE = 'Credit boosts by package';
@@ -117,10 +154,12 @@ export const REVENUE_NOTICE_UNREADABLE_CREDITS = (count: number) =>
 export const REVENUE_REFUND_TIMING_NOTE =
   'Refunds and disputes are counted in the month of the purchase, as recorded today, so a past month can still change.';
 export const REVENUE_CANNOT_TITLE = 'Not shown here';
+/** M2-FR-13: what this section cannot produce yet. */
 export const REVENUE_CANNOT: readonly string[] = [
+  'MRR and active subscriptions (a later update)',
+  'Plan refunds and disputes (not recorded yet)',
   'Real Stripe fees (none are recorded for our payments yet)',
   'The date of a refund or dispute',
-  'Plan revenue (a later update)',
   'One total across currencies',
 ];
 
@@ -176,7 +215,6 @@ export const AI_COST = 'Cost (USD)';
 export const AI_DELETED = 'Deleted accounts';
 export const AI_NO_ROWS = 'No AI actions charged in this window';
 export const AI_LINK = 'AI cost & usage';
-export const AI_LINK_HREF = '/admin/analytics';
 export const AI_LINK_NOTE = 'For the provider-side token measure, see';
 export const AI_UNRESOLVED = 'corrections whose charge could not be found';
 export const AI_UNREADABLE = 'amounts could not be read and count as 0';
@@ -426,3 +464,35 @@ export const REMINDERS_NOT_NARROWED = 'Reminder health is platform-wide and is n
 export const REMINDERS_LINK = 'Open Jobs & queues';
 export const REMINDERS_LINK_LABEL = 'Open Jobs & queues, the Queues section, for the payment reminder queue';
 export const JOBS_QUEUES_HREF = '/admin/jobs-queues#queues';
+
+// ── One account, one screen (Money M-1, finance health §11D.3) ─────────────
+// Shown only with a business picked (M1-FR-10). Every figure is selected from
+// the payload and formatted; nothing here adds, subtracts or converts money.
+export const ACCOUNT_HEADER_LABEL = 'Business';
+export const ACCOUNT_SCOPE_NOTE = 'Every section below is for this business only.';
+export const ACCOUNT_PLAN_GROUP = 'Plan group';
+export const ACCOUNT_PAYING_LABEL = 'Paying state';
+/** E-35: the paying state in words, never a colour (no green: the slice does not judge it). */
+export const ACCOUNT_PAYING_TEXT = { paying: 'Paying', not_paying: 'Not paying', unknown: 'Unknown' } as const;
+export const ACCOUNT_UNKNOWN = 'Unknown';
+
+export const ACCOUNT_SUMMARY_TITLE = 'Account summary';
+/** BD-18: the AI cost we charged (the credit ledger), USD. */
+export const ACCOUNT_AI_COST = 'AI cost, charged';
+export const ACCOUNT_CUTOVER_NOTE = 'The window starts before AI charging went live: see AI cost in the window below.';
+export const ACCOUNT_CUTOVER_ENTIRELY = 'The whole window is before AI charging went live: nothing was charged in it.';
+export const ACCOUNT_PAID_BOOSTS = 'Paid us: credit boosts';
+export const ACCOUNT_PAID_PLAN = 'Paid us: plan';
+export const ACCOUNT_PAID_TOTAL = 'Paid us, total';
+export const ACCOUNT_NONE_IN_WINDOW = 'None in this window';
+export const ACCOUNT_CREDITS = 'Credits';
+export const accountCreditsLine = (allowance: string, used: string, percent: string, gifted: string) =>
+  `Allowance ${allowance} · used ${used} (${percent}) · gifted outstanding ${gifted}`;
+export const accountCreditsNoAllowance = (gifted: string) => `No allowance · gifted outstanding ${gifted}`;
+
+/** M1-FR-7 / SA-W56: every link carries this business and the window. Only the account id travels. */
+export const ACCOUNT_LINKS_TITLE = 'Open this business in';
+export const ACCOUNT_LINK_ACTIVITY = 'Business OS AI Activity';
+export const ACCOUNT_LINK_COSTS = 'Business OS AI Costs & credits';
+export const ACCOUNT_LINK_ANALYTICS = 'AI cost & usage';
+export const ACCOUNT_LINK_BUSINESSES = 'Businesses';

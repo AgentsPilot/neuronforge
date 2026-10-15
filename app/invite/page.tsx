@@ -43,6 +43,11 @@
  * account can be created now, and payment opens later (workplan D-11). After
  * signup the server sends the friend to the payment hold (FR-35). The 5a
  * `signup_opens_soon` state is gone (SA Q-8).
+ *
+ * ── Plan payments P-9.2 (FR-22, SA C-6, C-7) ────────────────────────────────
+ * The paid offer's ONE line is chosen by the server's `payment` flag: "Payment
+ * is required at signup." (`copy.paymentRequired`) when the account could pay
+ * at once, "payment opens soon" otherwise. Admin Paid and friend invites alike.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -111,6 +116,12 @@ type InviteResponse =
       offer: InviteOffer;
       /** Slice 1b (R-6): the invited address, masked. The full email arrives only after signup. */
       maskedEmail: string;
+      /**
+       * FR-22 (plan payments P-9.2, SA C-6): the payment line, decided by the
+       * server from the same step as the holding screen's Pay. Optional only
+       * so a response without it (a deploy in flight) reads the SAFE line.
+       */
+      payment?: 'none' | 'required' | 'opens_later';
     }
   | {
       state: 'existing_account' | 'expired' | 'revoked' | 'used' | 'unavailable';
@@ -119,6 +130,16 @@ type InviteResponse =
     };
 
 type View = { kind: 'loading' } | { kind: 'error' } | { kind: 'result'; data: InviteResponse };
+
+/**
+ * FR-22: the server's payment line (P-9.2, SA C-6). A free offer has none; a
+ * paid offer without the flag reads "payment opens soon", the line that can
+ * never promise a payment the holding screen would not offer.
+ */
+function paymentStatementOf(data: Extract<InviteResponse, { state: 'valid' }>): 'none' | 'required' | 'opens_later' {
+  if (data.offer.free) return 'none';
+  return data.payment === 'required' ? 'required' : 'opens_later';
+}
 
 /** The token from a fragment such as `#t=abc`, or null. */
 function tokenFromHash(hash: string): string | null {
@@ -178,11 +199,10 @@ function InviteOfferDetails({ data, copy, locale }: { data: OfferState; copy: In
             </span>
           </div>
           {/*
-            SA CR-1 (Slice 5b): no "Payment is required at signup" here. While
-            payment is not live, the only paid offer that reaches `valid` is a
-            champion's friend invite (admin Paid invites are refused until 5c),
-            and it gets ONE payment statement, `paymentOpensLater`, under the
-            offer. 5c brings `copy.paymentRequired` back when checkout exists.
+            SA CR-1, as revised by plan payments P-9.2 (SA C-6, C-7): no
+            payment line here. A paid offer gets ONE statement, under the
+            offer, chosen by the server's `payment` flag (see
+            `paymentStatementOf` below), never decided on this page.
           */}
         </div>
 
@@ -371,8 +391,15 @@ export default function InvitePage() {
         <section data-testid="invite-state-valid" className="space-y-6">
           <InviteOfferDetails data={data} copy={copy} locale={locale} />
 
+          {/* FR-22 (P-9.2, SA C-6, C-7): payment is open, so it is required at signup. */}
+          {paymentStatementOf(data) === 'required' && (
+            <p data-testid="invite-payment-required" className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
+              {copy.paymentRequired}
+            </p>
+          )}
+
           {/* Slice 5b (D-11): a paid offer, while payment is not live. */}
-          {!data.offer.free && (
+          {paymentStatementOf(data) === 'opens_later' && (
             <p data-testid="invite-payment-opens-later" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               {copy.paymentOpensLater}
             </p>

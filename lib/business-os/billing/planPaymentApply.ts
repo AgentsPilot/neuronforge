@@ -61,8 +61,14 @@
  *     is left of the clock. It finds the champion from OUR records only (the
  *     lineage `invite_id`, then the invite's issuer) and audits every outcome;
  *     an unread source is audited "not notified" with no email (C-6);
- *   - `admin_invite` and `organic` first payments send nothing and audit
- *     nothing (nothing was owed);
+ *   - an ADMIN invitee's first payment (`source = 'admin_invite'`) is handed
+ *     over too (plan payments P-9.2, T10, BQ-P11, SA Q-10): the notifier tells
+ *     the ONE admin who issued it when it was a Paid (tier) invite, found
+ *     from the invite named by the payer's OWN lineage row, never from
+ *     webhook metadata; a champion's own (cohort) first payment owes nobody
+ *     and audits nothing;
+ *   - `organic` first payments send nothing and audit nothing (nothing was
+ *     owed);
  *   - the call sits behind a backstop and never throws. A replay never gets
  *     here (`already_applied`), so the email goes once; a send lost to a crash
  *     is not retried (D5-6).
@@ -140,6 +146,12 @@ export interface FirstPaymentNotifyInput {
   accountId: string;
   /** The `invite_id` of that account's lineage row; null when it was not read or is absent. */
   inviteId: string | null;
+  /**
+   * P-9.2 (T10): the lineage row's `source`, as read; null when it was not
+   * read. The notifier checks the invite against it. Absent is read as a
+   * friend's (`account_invite`), P-5b.1's only case.
+   */
+  lineageSource?: 'account_invite' | 'admin_invite' | null;
   lineageRead: StampLineageRead;
   /** What is left of `deadlineMs` after the lineage read (the stamp flush is not counted). */
   remainingMs: number;
@@ -573,10 +585,12 @@ async function notifyFirstPayment(deps: PlanPaymentDeps, ctx: InvoiceContext, ac
   const { log, livemode, event } = ctx;
   const ids = { accountId, livemode, stripeEventId: event.id };
 
-  // A champion's own first payment, or an organic one: nobody invited them as
-  // a friend, so nothing was owed and nothing is audited.
-  if (lineage.source !== null && lineage.source !== 'account_invite') {
-    log.info({ event: 'bos_invite_subscribed_not_applicable', source: lineage.source, ...ids }, 'First payment is not from a friend invite; no N-2 email');
+  // An organic first payment: nobody invited them, so nothing was owed and
+  // nothing is audited. An `admin_invite` one goes on (P-9.2, T10): only the
+  // notifier, reading the invite, can tell an admin Paid invitee (the issuing
+  // admin is told) from a champion paying for themself (nobody is).
+  if (lineage.source !== null && lineage.source !== 'account_invite' && lineage.source !== 'admin_invite') {
+    log.info({ event: 'bos_invite_subscribed_not_applicable', source: lineage.source, ...ids }, 'First payment is not from an invite; no N-2 email');
     return;
   }
 
@@ -584,7 +598,7 @@ async function notifyFirstPayment(deps: PlanPaymentDeps, ctx: InvoiceContext, ac
   if (!notifier) {
     log.error(
       { event: 'bos_invite_subscribed_notifier_unwired', source: lineage.source, lineageRead: lineage.outcome, ...ids, alert: true },
-      'A first payment that may be a friend invite found no N-2 notifier wired; nobody was emailed'
+      'A first payment that may be owed an N-2 email found no notifier wired; nobody was emailed'
     );
     return;
   }
@@ -592,6 +606,7 @@ async function notifyFirstPayment(deps: PlanPaymentDeps, ctx: InvoiceContext, ac
   const input: FirstPaymentNotifyInput = {
     accountId,
     inviteId: lineage.inviteId,
+    lineageSource: lineage.source === 'account_invite' || lineage.source === 'admin_invite' ? lineage.source : null,
     lineageRead: lineage.outcome,
     remainingMs: Math.max(0, deadlineMs - lineage.elapsedMs),
     livemode,
