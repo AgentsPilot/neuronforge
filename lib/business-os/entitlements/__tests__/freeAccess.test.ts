@@ -33,6 +33,7 @@ const INPUTS: LifecycleInputs = {
   cohorts: COHORTS,
   tierOrder: TIER_ORDER,
   subscriptionGraceHistory: LIFECYCLE_CONFIG.subscriptionGraceHistory,
+  renewalSettlementMarginHistory: LIFECYCLE_CONFIG.renewalSettlementMarginHistory,
 };
 
 const resolve = (overrides: Parameters<typeof account>[0], inputs: LifecycleInputs = INPUTS) =>

@@ -385,6 +385,12 @@ export interface SendDefinition {
 export interface LifecycleConfigShape {
   /** Grace after a paid tier ends (a cohort carries its own). */
   subscriptionGraceHistory: readonly HistoryEntry[];
+  /**
+   * PF-10 (plan payments P-6a.1): how long past its paid-through date a dated
+   * tier stays in force while Stripe settles the renewal. A tier's end only,
+   * never a cohort's.
+   */
+  renewalSettlementMarginHistory: readonly HistoryEntry[];
   /** What each state allows on each surface kind. */
   overlay: Record<LifecycleState, Record<SurfaceKind, OverlayOutcome>>;
   /** The seeded part of the Slice 2 send registry. */

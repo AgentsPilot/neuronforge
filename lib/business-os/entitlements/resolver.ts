@@ -198,6 +198,7 @@ export function resolveEntitlements(input: ResolveInput): EntitlementResolution 
     cohorts: config.cohorts,
     tierOrder: config.tierOrder,
     subscriptionGraceHistory: config.lifecycle.subscriptionGraceHistory,
+    renewalSettlementMarginHistory: config.lifecycle.renewalSettlementMarginHistory,
   }, now);
 
   const values: Record<string, ResolvedCapability> = {};

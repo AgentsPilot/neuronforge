@@ -24,8 +24,39 @@ import type { LifecycleConfigShape, HistoryEntry, SendDefinition, LifecycleState
 
 const SHIPPED = '2026-09-22T00:00:00.000Z';
 
-/** Grace after a paid tier ends. Cohorts carry their own (see cohorts.ts). */
-const subscriptionGraceHistory: readonly HistoryEntry[] = [{ effectiveFrom: SHIPPED, days: 7 }];
+/**
+ * Plan payments P-6a.1 (PF-1, PF-10, C-10): the moment the two entries below
+ * take effect. APPENDED, never edited (S-7).
+ *
+ * A fixed literal, never `new Date()`, and never earlier than the moment P-6a.1
+ * merges (SA C-8): a grace entry dated before the merge would retroactively give
+ * 5 days to a tier that lapsed in between, while its 7-day grace is already
+ * running, which is a shortened promise the drift check cannot see. If the merge
+ * slips past this date, bump it and regenerate the snapshot before merging.
+ */
+const P6A_EFFECTIVE = '2026-10-20T00:00:00.000Z';
+
+/**
+ * Grace after a paid tier ends. Cohorts carry their own (see cohorts.ts).
+ *
+ * Looked up at the tier's access end: a tier that ends before P6A_EFFECTIVE
+ * keeps the 7 days it was promised; one that ends after gets 5 (PF-1).
+ */
+const subscriptionGraceHistory: readonly HistoryEntry[] = [
+  { effectiveFrom: SHIPPED, days: 7 },
+  { effectiveFrom: P6A_EFFECTIVE, days: 5 },
+];
+
+/**
+ * PF-10: the renewal settlement margin, `days: 1` = 24 hours (SA Q-2).
+ *
+ * Stripe charges a renewal about an hour AFTER the paid-through date, so a
+ * dated tier stays in force for this long past `tier_expires_at` (FC-1). Applies
+ * to a tier's access end only, never to a cohort. Through `historyAt`'s
+ * earliest-entry rule it also covers access ends before P6A_EFFECTIVE: accepted
+ * by SA (Q-2) because it only ever lengthens access.
+ */
+const renewalSettlementMarginHistory: readonly HistoryEntry[] = [{ effectiveFrom: P6A_EFFECTIVE, days: 1 }];
 
 /**
  * A live account: everything its entitlements allow.
@@ -46,6 +77,7 @@ const LIVE: Record<SurfaceKind, OverlayOutcome> = {
 
 export const LIFECYCLE_CONFIG = {
   subscriptionGraceHistory,
+  renewalSettlementMarginHistory,
 
   overlay: {
     trial: LIVE,

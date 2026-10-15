@@ -170,6 +170,16 @@ const ALLOWED = new Set(
     // An admin route, gated by `requireAdmin`. Its test replaces the repository with a fake.
     'app/api/admin/business-os/test/take-credits/route.ts',
     'app/api/admin/business-os/test/take-credits/__tests__/route.test.ts',
+    // ── Plan payments P-6a.1, 2026-10-15 — TEST MODE ONLY, the plan test clock ──
+    // The route passes the plan repository to the tenant check, exactly as the
+    // take-credits route does: READ ONLY through `isBusinessOsTenant`. An admin
+    // route, gated by `requireAdmin`. The use case reads the target's plan row
+    // (`findEntitlementInputs`) for the `status` action's lifecycle at the
+    // clock's time, and nothing else; listed in NO_STATE_WRITE_REFERRERS below.
+    // The route test replaces the repository with a fake.
+    'app/api/admin/business-os/test/plan-test-clock/route.ts',
+    'app/api/admin/business-os/test/plan-test-clock/__tests__/route.test.ts',
+    'lib/business-os/billing/planTestClock.ts',
     // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
     // READ ONLY, `findPeriodAnchorsBatch` and nothing else (SA SQ-43). The one
     // file that wires the plan repository for the admin Businesses list's
@@ -276,6 +286,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/finance/financeHealth.ts',
   // Finance 1a: the classifier — the plan row TYPE only, pure.
   'lib/business-os/finance/planGroups.ts',
+  // Plan payments P-6a.1: the TEST MODE ONLY test clock — READ ONLY, `findEntitlementInputs` and nothing else.
+  'lib/business-os/billing/planTestClock.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -36,6 +36,8 @@ const snapshot: EntitlementSnapshot = {
     },
     subscription: {
       grace: [...LIFECYCLE_CONFIG.subscriptionGraceHistory],
+      // PF-10 (P-6a.1, SA C-9): frozen like every other lifecycle duration.
+      margin: [...LIFECYCLE_CONFIG.renewalSettlementMarginHistory],
     },
   },
 };

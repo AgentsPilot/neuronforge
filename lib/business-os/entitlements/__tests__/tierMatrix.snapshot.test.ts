@@ -38,7 +38,10 @@ function currentConfig() {
     histories: {
       trial: { duration: COHORTS.trial.durationHistory ?? [], grace: COHORTS.trial.graceHistory },
       champion: { grace: COHORTS.champion.graceHistory },
-      subscription: { grace: LIFECYCLE_CONFIG.subscriptionGraceHistory },
+      subscription: {
+        grace: LIFECYCLE_CONFIG.subscriptionGraceHistory,
+        margin: LIFECYCLE_CONFIG.renewalSettlementMarginHistory,
+      },
     },
     catalog: CAPABILITIES,
   };
@@ -61,6 +64,10 @@ describe('the shipped configuration has not drifted', () => {
     // the test above is comparing nothing with nothing on the half that matters.
     expect(snapshot.histories.trial.duration.length).toBeGreaterThan(0);
     expect(snapshot.histories.champion.grace.length).toBeGreaterThan(0);
+    // P-6a.1 (SA C-9): without these, an edit of the subscription grace or the
+    // renewal margin would compare against nothing and never be caught.
+    expect(snapshot.histories.subscription.grace.length).toBeGreaterThan(0);
+    expect(snapshot.histories.subscription.margin?.length ?? 0).toBeGreaterThan(0);
 
     expect(Object.keys(snapshot.tiers).sort()).toEqual(Object.keys(TIER_MATRIX.tiers).sort());
     for (const row of Object.values(snapshot.tiers)) {
@@ -212,13 +219,72 @@ describe('S-7 — a history entry is a promise already made', () => {
           grace: COHORTS.trial.graceHistory,
         },
         champion: { grace: COHORTS.champion.graceHistory },
-        subscription: { grace: LIFECYCLE_CONFIG.subscriptionGraceHistory },
+        subscription: {
+          grace: LIFECYCLE_CONFIG.subscriptionGraceHistory,
+          margin: LIFECYCLE_CONFIG.renewalSettlementMarginHistory,
+        },
       },
     };
 
     const findings = findDrift(snapshot, edited);
 
     expect(findings[0]).toMatchObject({ kind: 'history_edited', where: 'trial.duration[0]' });
+  });
+
+  // P-6a.1 (PF-1, PF-10, SA C-9): the two lifecycle histories P-6a.1 touches.
+  it('catches the shipped 7-day subscription grace edited in place, instead of appended', () => {
+    const current = currentConfig();
+    const [first, ...rest] = LIFECYCLE_CONFIG.subscriptionGraceHistory;
+    const findings = findDrift(snapshot, {
+      ...current,
+      histories: {
+        ...current.histories,
+        subscription: { ...current.histories.subscription, grace: [{ ...first, days: 5 }, ...rest] },
+      },
+    });
+
+    expect(findings[0]).toMatchObject({ kind: 'history_edited', where: 'subscription.grace[0]' });
+  });
+
+  it('catches the renewal settlement margin edited in place', () => {
+    const current = currentConfig();
+    const [first] = LIFECYCLE_CONFIG.renewalSettlementMarginHistory;
+    const findings = findDrift(snapshot, {
+      ...current,
+      histories: {
+        ...current.histories,
+        subscription: { ...current.histories.subscription, margin: [{ ...first, days: 2 }] },
+      },
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'history_edited', where: 'subscription.margin[0]' });
+  });
+
+  it('catches the renewal settlement margin dropped', () => {
+    const current = currentConfig();
+    const findings = findDrift(snapshot, {
+      ...current,
+      histories: { ...current.histories, subscription: { grace: LIFECYCLE_CONFIG.subscriptionGraceHistory } },
+    });
+
+    expect(findings.map((finding) => finding.where)).toEqual(['subscription.margin[0]']);
+  });
+
+  it('is quiet when a later margin entry is APPENDED', () => {
+    const current = currentConfig();
+    const findings = findDrift(snapshot, {
+      ...current,
+      histories: {
+        ...current.histories,
+        subscription: {
+          ...current.histories.subscription,
+          margin: [...LIFECYCLE_CONFIG.renewalSettlementMarginHistory, { effectiveFrom: '2027-06-01T00:00:00.000Z', days: 2 }],
+        },
+      },
+    });
+
+    expect(findings).toEqual([]);
   });
 
   it('is quiet when a new entry is APPENDED instead', () => {
