@@ -6,7 +6,7 @@
 **Requirement:** [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md): §8a flow and UF-5 (one table), UF-6 (B-2); UF-2 colours; MP-FR-2, -3, -4, -12 as amended; MP-NFR-8; RR-3; RR-4; R-9 row 4; user decision "not used yet"; BQ-3; slice 2 QA follow-up (retired rows)
 **Branch:** `feature/ai-model-price-review-slice4` (worktree `neuronforge-model-pricing-s3`, off origin/main `392a9b53`)
 **Date:** 2026-10-14
-**Status:** Code Complete, uncommitted; awaiting SA code review. One-table revision SA-approved 2026-10-14 with NR-1..NR-5 (folded in below); N-1..N-5 approved as proposed (N-3 corrects RC-3: line 203 changes). Implementation notes and deviations in 10.1.
+**Status:** ✅ COMPLETE: MERGED 2026-10-14 (PR #385, commit 579d54e1, merge 86dd3266); no migration; user browser checklist U-1..U-12 owed after deploy. (Earlier: Code Complete, awaiting SA code review.) One-table revision SA-approved 2026-10-14 with NR-1..NR-5 (folded in below); N-1..N-5 approved as proposed (N-3 corrects RC-3: line 203 changes). Implementation notes and deviations in 10.1.
 
 ## Overview
 
@@ -679,7 +679,13 @@ No bug is open, at any severity. One Low test gap is recommended for the same pa
 
 ## Commit Info
 
-_To be completed by RM._
+| Item | Value |
+|---|---|
+| PR | #385 |
+| Commit | `579d54e1` feat(pricing): one-table price comparison and manual price entry on Model pricing (price review slice 4) |
+| Merge | `86dd3266` (2026-10-14) |
+| Migration | None |
+| Owed | User browser checklist U-1..U-12 after deploy |
 
 ## Change History
 
@@ -693,3 +699,4 @@ _To be completed by RM._
 | 2026-10-14 | SA F-1..F-5 and QA bugs fixed; merged origin/main | F-1 "In effect since <date>" under the model of a charged stored row (T-1). F-2 browser refusals also listed in the `role="alert"` box ("Check the fields marked below.", one line per issue; M-1, M-1b); the `role="status"` region is always mounted, empty when idle (QA edge case 2). F-3 "Most undercharged first" orders red rows first, then gap, then name (new case with a red not-priced row; T-12 now expects it third). F-4 `aria-busy="true"` on `pricing-table-wrap` during the save re-read, gone after (T-15). F-5 `provider` dropped from the form text values. QA Bug 1: T-12 reads rows with `querySelectorAll` and sorts with `fireEvent.change` (498 ms in the full run). QA Bug 2: the clock cases pin the browser clock with fake timers on both sides of the server date (`priceTableRows`), and T-11 pins it to 2099 (Date only), so a browser-clock version fails at any real date. `git merge origin/main` fast-forwarded to `858f037d`; the requirement edits were re-applied on top of main's Q10 and gpt-image-1 rows. Suites: system-config 7 / 109, pricing-research + model-pricing 9 / 140. Uncommitted |
 | 2026-10-14 | Test speed: root cause found and fixed | **Root cause:** the cost was not a wait; nothing waited out a timeout and no fetch was left unresolved (a step-by-step probe showed every `findBy` settling in 25 to 120 ms). It was `userEvent.click`: each click took 250 to 400 ms in jsdom on this page, because it checks `pointer-events` through the computed style of every ancestor and fires the full pointer and mouse sequence, and each event re-renders the whole table. With up to six clicks per case, then multiplied about threefold by seven parallel Jest workers on an 8-core machine already at 100% CPU, E-1 reached 3.5 to 5.3 s. Run alone or in band, the same cases took 0.7 to 1.3 s. **Fix:** `userEvent.click` became `fireEvent.click` in `pages.edge.qa`, `pages.render`, `priceTable.render` and `manualPriceEntry.render`. Each edited case in the existing suites carries a one-line comment; intent and every assertion are unchanged, and no timeout was raised. **Result:** three full `app/admin/system-config` runs, 7 / 109 each. The slowest test was 1012, 1048 and 1046 ms; every E case was under 1.05 s (E-1 "a 500" went from 4031 to 945 ms). `source.guard.test.ts` and `chargingUntouched.guard.test.ts` are unedited |
 | 2026-10-14 | QA re-pass gap closed (mutation 5b) | QA's re-pass after the F-1..F-5 pass and the test-speed fix found one surviving mutant: a fallback join on provider and model name when `currentRowId` is null or unmatched (57/57 passed with it). New `priceTableRows.test.ts` case, run for both a null and an unmatched id: an older, same-provider, same-model, non-retired stored row is never joined by name, so the compared row has `stored: null` (no Edit) and the stored row comes out `superseded`. The mutant was applied to a copy and killed (2 failed), then the file was restored. `app/admin/system-config`: 7 suites / 111 tests pass. Uncommitted |
+| 2026-10-14 | Merged; COMPLETE | PR #385 merged (commit `579d54e1`, merge `86dd3266`). No migration. Owed: the user browser checklist U-1..U-12 after deploy |

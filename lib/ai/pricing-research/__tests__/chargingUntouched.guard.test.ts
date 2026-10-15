@@ -25,6 +25,7 @@ const SLICE_FILES = [
   join('lib', 'repositories', 'AiPriceProposalRepository.ts'),
   join('app', 'api', 'admin', 'model-pricing', 'manual-entries', 'route.ts'),
   join('app', 'api', 'admin', 'model-pricing', 'comparison', 'route.ts'),
+  join('app', 'api', 'admin', 'model-pricing', 'fetch-runs', 'route.ts'),
 ];
 
 /** Every named import from a module, per file. */

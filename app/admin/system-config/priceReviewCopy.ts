@@ -7,7 +7,7 @@
  */
 
 export const PRICE_REVIEW_NOTE =
-  'Nothing in the provider column is charged yet. Applying a new price, checking provider prices automatically, and each model’s price history come in later releases. Until then, Sync and Edit still change live prices directly.';
+  'Nothing in the provider column is charged yet. Check provider prices reads OpenAI’s official pricing page; Anthropic, Google and Kimi prices are entered by hand for now. Applying a new price and each model’s price history come in later releases. Until then, Sync and Edit still change live prices directly.';
 
 export const NO_PENDING_NOTICE =
   'No provider prices entered yet, so every row reads No new price. Use Enter provider price to add one.';
@@ -108,4 +108,64 @@ export const FIELD_WORDS: Readonly<Record<string, string>> = {
   source_url: 'Official source URL',
   checked_on: 'Checked on',
   kind: 'Price for',
+};
+
+/** Slice 5: the "Check provider prices" button and its status lines. */
+export const PRICE_CHECK_WORDS = {
+  button: 'Check provider prices',
+  busy: 'Checking provider prices…',
+  heading: 'Provider price check',
+  statusUnavailable: 'The last check could not be loaded.',
+  notChecked: 'not checked yet.',
+  pricesRead: 'prices read',
+  needManual: 'need manual entry',
+  notOnPage: 'not on the page',
+  refused: 'refused by the safety limits',
+  enterByHand: 'Enter prices by hand.',
+  lastSuccess: 'Last successful check:',
+  lastFailure: 'Last failure:',
+  at: 'at',
+  crossCheckName: 'Second price list (LiteLLM):',
+  agree: 'agree',
+  differ: 'differ',
+  notListed: 'not listed',
+  crossCheckUnavailable: 'unavailable; prices still loaded',
+  manualForNow: 'manual entry for now.',
+  images: 'Image prices: manual entry (OpenAI publishes them only in a calculator).',
+  stored: 'Saved as pending prices. Nothing is charged until a price is applied.',
+  needsManualList: 'Needs manual entry',
+  notFoundList: 'Not on the provider page',
+} as const;
+
+export const PROVIDER_NAMES: Readonly<Record<string, string>> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google',
+  kimi: 'Kimi',
+};
+
+/** A failed source's outcome, in words. `http_<status>` is read by prefix, never parsed. */
+export function sourceOutcomeWords(outcome: string): string {
+  switch (outcome) {
+    case 'timeout':
+      return 'the page did not answer within 10 seconds';
+    case 'network_error':
+      return 'the page could not be reached';
+    case 'blocked':
+      return 'the provider blocked the check';
+    case 'layout_changed':
+      return 'the pricing page layout changed; no prices were read';
+    case 'too_large':
+      return 'the page was larger than expected';
+    default:
+      return outcome.startsWith('http_') ? `the page answered with status ${outcome.slice('http_'.length)}` : 'the stored result could not be read';
+  }
+}
+
+export const NEEDS_MANUAL_WORDS: Readonly<Record<string, string>> = {
+  cell_not_single_price: 'the price cell is not exactly one price',
+  missing_price: 'a price is missing',
+  listed_twice: 'listed more than once',
+  wrong_cell_count: 'the row has an unexpected number of cells',
+  ambiguous_match: 'the name matches more than one model',
 };

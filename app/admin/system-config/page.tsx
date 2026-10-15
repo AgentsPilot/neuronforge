@@ -63,6 +63,7 @@ import {
   StatusCell,
   UsedByCell,
 } from '@/app/admin/system-config/components/PriceRowCells';
+import ProviderPriceCheck from '@/app/admin/system-config/components/ProviderPriceCheck';
 import { readPriceComparison } from '@/app/admin/system-config/priceComparisonRead';
 import {
   EDIT_UNIT_WORDS,
@@ -459,6 +460,13 @@ export default function ModelPricingPage() {
                 </div>
               </div>
             </div>
+
+          {/* Slice 5: "Check provider prices"; a stored check re-reads the table (silent, as after a manual entry). */}
+          <ProviderPriceCheck
+            onFinished={() => {
+              void fetchData(true);
+            }}
+          />
 
           {/* Slice 4: the bar, note, notice and form sit above the table, so a failed read never hides them. */}
           <div className="flex flex-wrap items-end justify-between gap-3">
