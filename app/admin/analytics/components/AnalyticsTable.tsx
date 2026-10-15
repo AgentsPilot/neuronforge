@@ -25,8 +25,10 @@ import {
   ADMIN_TBODY,
   ADMIN_TD,
   ADMIN_TD_NUM,
+  ADMIN_TD_OPEN,
   ADMIN_TH,
   ADMIN_TH_NUM,
+  ADMIN_TH_OPEN,
   ADMIN_THEAD,
 } from '@/app/admin/components/layout/adminTable';
 
@@ -197,7 +199,6 @@ function CallTable({ items, totals, onOpenCall }: AnalyticsTableProps) {
     <table className={ADMIN_TABLE} aria-label="AI calls in this run" data-testid="analytics-table">
       <thead className={ADMIN_THEAD}>
         <tr>
-          <th scope="col" className={ADMIN_TH}>Details</th>
           <th scope="col" className={ADMIN_TH}>Call</th>
           <th scope="col" className={ADMIN_TH_NUM}>Cost (USD)</th>
           <th scope="col" className={ADMIN_TH_NUM}>Input tokens</th>
@@ -205,6 +206,10 @@ function CallTable({ items, totals, onOpenCall }: AnalyticsTableProps) {
           <th scope="col" className={ADMIN_TH_NUM}>Total tokens</th>
           <th scope="col" className={ADMIN_TH_NUM}>Latency</th>
           <th scope="col" className={ADMIN_TH}>Status</th>
+          {/* LF-8: the Open button's narrow last column; its name is for screen readers only. */}
+          <th scope="col" className={ADMIN_TH_OPEN}>
+            <span className="sr-only">Details</span>
+          </th>
         </tr>
       </thead>
       <tbody className={ADMIN_TBODY}>
@@ -213,14 +218,6 @@ function CallTable({ items, totals, onOpenCall }: AnalyticsTableProps) {
           const status = callStatus(meta.success);
           return (
             <tr key={item.id}>
-              <td className={ADMIN_TD}>
-                {/* The row number keeps the name unique when labels repeat ("gpt-4o call"). */}
-                <OpenRowButton
-                  testId={`open-call-${item.id}`}
-                  label={`Open details for call ${index + 1}, ${item.label}`}
-                  onOpen={(opener) => onOpenCall(item, opener)}
-                />
-              </td>
               <td className={`${ADMIN_TD} font-medium text-white`}>{item.label}</td>
               <td className={`${ADMIN_TD_NUM} text-slate-200`}>{formatCost(item.cost)}</td>
               <td className={ADMIN_TD_NUM}>{formatNumber(item.inputTokens)}</td>
@@ -232,22 +229,29 @@ function CallTable({ items, totals, onOpenCall }: AnalyticsTableProps) {
                   {status.word}
                 </StatusChip>
               </td>
+              <td className={ADMIN_TD_OPEN}>
+                {/* The row number keeps the name unique when labels repeat ("gpt-4o call"). */}
+                <OpenRowButton
+                  testId={`open-call-${item.id}`}
+                  label={`Open details for call ${index + 1}, ${item.label}`}
+                  onOpen={(opener) => onOpenCall(item, opener)}
+                />
+              </td>
             </tr>
           );
         })}
       </tbody>
       <tfoot className="border-t border-slate-700">
         <tr className="font-medium text-slate-200" data-testid="analytics-footer">
-          <td className={ADMIN_TD} colSpan={2}>
-            Total
-          </td>
+          <td className={ADMIN_TD}>Total</td>
           <td className={ADMIN_TD_NUM}>{formatCost(totals.cost)}</td>
           <td className={ADMIN_TD_NUM}>{formatNumber(totals.inputTokens)}</td>
           <td className={ADMIN_TD_NUM}>{formatNumber(totals.outputTokens)}</td>
           <td className={ADMIN_TD_NUM}>{formatNumber(totals.tokens)}</td>
-          {/* Latency and Status have no total: empty data cells keep the footer aligned. */}
+          {/* Latency, Status and the Open column have no total: empty data cells keep the footer aligned. */}
           <td className={ADMIN_TD} />
           <td className={ADMIN_TD} />
+          <td className={ADMIN_TD_OPEN} />
         </tr>
       </tfoot>
     </table>

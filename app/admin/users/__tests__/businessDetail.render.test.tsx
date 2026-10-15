@@ -284,18 +284,21 @@ describe('D-1 / D-2 / D-17 the closed page', () => {
     expect(screen.queryByTestId('bos-panel')).toBeNull();
   });
 
-  it('D-2: each first cell holds one Open button; the row has no tabindex and no role; six headers', async () => {
+  // LF-8 (user request 2026-10-15): the Open button, now an icon, left the first
+  // cell for its own narrow last column, so seven headers (was: first cell, six).
+  it('D-2: each last cell holds one Open button; the row has no tabindex and no role; seven headers', async () => {
     await renderPage();
     const button = screen.getByRole('button', { name: 'Open details for Dana Cohen' });
-    expect(button.textContent).toBe('Open');
-    const firstCell = button.closest('td') as HTMLTableCellElement;
-    expect(firstCell.cellIndex).toBe(0);
-    expect(within(firstCell).getAllByRole('button')).toHaveLength(1);
+    expect(button.textContent).toBe('');
+    const openCell = button.closest('td') as HTMLTableCellElement;
+    const row = openCell.closest('tr') as HTMLTableRowElement;
+    expect(openCell.cellIndex).toBe(row.cells.length - 1);
+    expect(within(openCell).getAllByRole('button')).toHaveLength(1);
     for (const tr of screen.getAllByTestId('row-business').map((p) => p.closest('tr') as HTMLTableRowElement)) {
       expect(tr.hasAttribute('tabindex')).toBe(false);
       expect(tr.hasAttribute('role')).toBe(false);
     }
-    expect(screen.getAllByRole('columnheader')).toHaveLength(6);
+    expect(screen.getAllByRole('columnheader')).toHaveLength(7);
     expect(screen.queryByRole('columnheader', { name: 'Actions' })).toBeNull();
   });
 
