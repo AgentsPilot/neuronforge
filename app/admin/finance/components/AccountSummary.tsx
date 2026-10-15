@@ -27,6 +27,11 @@
  * total", SELECTED from `accountMargin` (built on the server by the same
  * functions as an Accounts tab row, AC-142) and printed by the tab's own
  * `marginText`, so the two cannot differ. Still no arithmetic here.
+ *
+ * Money M-4 (OV-5, M4-FR-2): "Recorded above charged" directly under "Charged
+ * AI cost", rendered by Section 3's own `RecordedAboveValue` from the SAME
+ * `aiCost.recorded` (one payload field, rendered twice: AC-158). The recorded
+ * figure itself is not repeated here. Absent when the payload has none.
  */
 
 import type { ReactNode } from 'react';
@@ -49,6 +54,7 @@ import {
   ACCOUNT_PAID_PLAN,
   ACCOUNT_PAID_TOTAL,
   ACCOUNT_PLAN_GROUP,
+  ACCOUNT_RECORDED_ABOVE,
   ACCOUNT_SUMMARY_TITLE,
   ACCOUNT_UNKNOWN,
   accountCreditsLine,
@@ -61,6 +67,7 @@ import { atLeast, formatCredits, formatMoney, formatUsd } from '../financeFormat
 import { AccountPlanGroup } from './AccountHeader';
 import { usedPercent } from './CreditsSection';
 import { MarginValue } from './AccountEconomicsTable';
+import { RecordedAboveValue } from './RecordedCostLines';
 
 const NOTE = 'text-[11px] text-slate-400';
 const LINK = 'text-xs text-purple-300 underline hover:text-purple-200';
@@ -194,6 +201,11 @@ export function AccountSummary({
         <Line label={ACCOUNT_AI_COST} testId="account-summary-ai-cost">
           <AiCostValue aiCost={aiCost} />
         </Line>
+        {aiCost.recorded && (
+          <Line label={ACCOUNT_RECORDED_ABOVE} testId="account-summary-recorded-above">
+            <RecordedAboveValue recorded={aiCost.recorded} testId="account-summary-recorded-above-value" />
+          </Line>
+        )}
         <Line label={ACCOUNT_PAID_BOOSTS} testId="account-summary-boosts">
           <BoostsValue boosts={revenue.boosts} />
         </Line>

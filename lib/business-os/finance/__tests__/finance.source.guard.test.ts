@@ -140,10 +140,39 @@ describe('finance slice 1a source guards', () => {
     expect(WRITE_VERB.test(codeOf(file))).toBe(false);
   });
 
-  it.each(FILES)('%s: no aggregate select and no token_usage', (file) => {
+  // Money M-4 (SA-RR-M4, SA-W103, §11F.8): NARROWED by SA ruling. The table and view names stay
+  // forbidden in EVERY file, the route included (AGG-4: no file reads `token_usage` itself); the
+  // usage-log READER name moved to the rule below, which spares the route only.
+  it.each(FILES)('%s: no aggregate select and no token_usage table or usage-log view', (file) => {
     const code = codeOf(file);
     expect(code).not.toMatch(/select\(\s*['"`][^'"`]*\b(sum|avg|min|max)\s*\(/i);
-    expect(code).not.toMatch(/token_usage|TokenUsageRepository|monthly_token_usage|business_os_usage_summary/);
+    expect(code).not.toMatch(/token_usage|monthly_token_usage|business_os_usage_summary/);
+  });
+
+  // Money M-4 (SA-W103): WIDENED to `/tokenusage/i` over code (comments stripped), so the analytics
+  // reader and both instance names are caught too, not only `TokenUsageRepository` (today's gap).
+  // Only the route may name a usage-log reader; it is pinned positively in the M-4 describe.
+  const USAGE_LOG_READER = /tokenusage/i;
+  const NOT_THE_ROUTE = FILES.filter((file) => file !== 'app/api/admin/business-os/finance/route.ts');
+
+  it.each(NOT_THE_ROUTE)('%s: names no usage-log reader in code (only the route may, M4-FR-6)', (file) => {
+    expect(codeOf(file)).not.toMatch(USAGE_LOG_READER);
+  });
+
+  it('the widened reader rule bites on every reader and instance name (planted); the narrowing spares the route only', () => {
+    for (const planted of [
+      "import { tokenUsageRepository } from '@/lib/repositories/TokenUsageRepository';",
+      "import type { AdminCostPointRow } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';",
+      'adminTokenUsageAnalyticsRepository.listCostPointsAllAccountsInWindow(ctx, w, f, o)',
+      'const r = new TokenUsageRepository();',
+    ]) {
+      expect({ planted, caught: USAGE_LOG_READER.test(planted) }).toEqual({ planted, caught: true });
+    }
+    // The old case-sensitive pattern missed the analytics reader: the gap this closes.
+    expect(/TokenUsageRepository/.test('AdminTokenUsageAnalyticsRepository')).toBe(false);
+    expect(FILES.length - NOT_THE_ROUTE.length).toBe(1);
+    // AGG-4 still bites on the route's own code.
+    expect(`${codeOf('app/api/admin/business-os/finance/route.ts')}\nq.from('token_usage');\n`).toMatch(/token_usage/);
   });
 
   // Slice 2a (S2-F1): the finance read repository is the one file allowed to
@@ -1188,5 +1217,219 @@ describe('finance slice 6a source guards (account economics, the AI margin)', ()
     const definers = FILES.filter((file) => /founding_partner\|comped\|unknown_held\|tier_set\|tier:/.test(codeOf(file)));
     expect(definers).toEqual([URL_MODULE]);
     expect(codeOf('app/api/admin/business-os/finance/route.ts')).toMatch(/\bFINANCE_GROUP_SHAPE\b/);
+  });
+});
+
+// ── Money M-4 (OV-5, §11F.8, SA-RR-M4, SA-W103, SA-WR-48): the recorded AI cost ──
+// Every rule has a planted negative control.
+describe('Money M-4 source guards (the recorded AI cost, T6-B)', () => {
+  const ROUTE = 'app/api/admin/business-os/finance/route.ts';
+  const BUILDER = 'lib/business-os/finance/recordedCost.ts';
+  const ORCHESTRATOR = 'lib/business-os/finance/financeHealth.ts';
+  const TYPES = 'lib/business-os/finance/financeTypes.ts';
+  const WIRING = 'lib/business-os/finance/financeHealthDeps.ts';
+  const LINES = 'app/admin/finance/components/RecordedCostLines.tsx';
+  const SECTION3 = 'app/admin/finance/components/AiCostSection.tsx';
+  const SUMMARY = 'app/admin/finance/components/AccountSummary.tsx';
+  const READER = /tokenusage/i;
+
+  // (a) Non-vacuity.
+  it('scans the M-4 files (non-vacuity)', () => {
+    expect(FILES).toEqual(expect.arrayContaining([BUILDER, LINES]));
+    expect(LAYER_B_FREE).toEqual(expect.arrayContaining([BUILDER]));
+    expect(codeOf(BUILDER).length).toBeGreaterThan(1500);
+  });
+
+  // (b) The route is the ONE finance file that names a usage-log reader, by code, and it calls exactly two methods.
+  const namersOf = (code: (file: string) => string) => FILES.filter((file) => READER.test(code(file)));
+  const READER_CALL = /\b(?:adminTokenUsageAnalyticsRepository|tokenUsageRepository)\s*\.\s*(\w+)\s*\(/g;
+  const methodsOf = (code: string) => [...new Set([...code.matchAll(READER_CALL)].map((m) => m[1]))].sort();
+
+  it('only the route names a usage-log reader in code (a positive pin; comments are not code, SA-W103)', () => {
+    expect(namersOf(codeOf)).toEqual([ROUTE]);
+    // The finance read repository names one in a comment only: read raw it matches, as code it does not.
+    expect(read(REPOSITORY)).toMatch(/TokenUsageRepository/);
+    expect(codeOf(REPOSITORY)).not.toMatch(READER);
+  });
+
+  it('the namers pin bites (planted): a builder naming the analytics reader joins the list', () => {
+    const planted = (file: string) =>
+      file === ORCHESTRATOR
+        ? `${codeOf(file)}\nimport type { AdminCostPointRow } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';\n`
+        : codeOf(file);
+    expect(namersOf(planted).sort()).toEqual([ORCHESTRATOR, ROUTE].sort());
+    // …while the same name in a comment does not (W103).
+    const inComment = (file: string) =>
+      file === ORCHESTRATOR ? stripComments(`${read(file)}\n// see AdminTokenUsageAnalyticsRepository\n`) : codeOf(file);
+    expect(namersOf(inComment)).toEqual([ROUTE]);
+  });
+
+  it('the route calls exactly listCostPointsAllAccountsInWindow and listCallsInWindow on the two readers', () => {
+    expect(methodsOf(codeOf(ROUTE))).toEqual(['listCallsInWindow', 'listCostPointsAllAccountsInWindow']);
+  });
+
+  it('the method pin bites (planted): a third method on either reader is caught', () => {
+    const planted = `${codeOf(ROUTE)}\nvoid tokenUsageRepository.countInWindow([id], w, m);\n`;
+    expect(methodsOf(planted)).toEqual(['countInWindow', 'listCallsInWindow', 'listCostPointsAllAccountsInWindow']);
+  });
+
+  // SA-WR-48: both bindings pass the Business OS row filter; without it the all-accounts read counts agent-platform calls.
+  const bindingsOf = (code: string) => {
+    const all = code.indexOf('readRecordedAllAccounts:');
+    const one = code.indexOf('readRecordedForAccount:');
+    const end = code.indexOf('});', one);
+    return { all: code.slice(all, one), one: code.slice(one, end) };
+  };
+  const filterCount = (text: string) => (text.match(/\bbosRowFilter\(\)/g) ?? []).length;
+
+  it('SA-WR-48: each recorded binding in the route passes bosRowFilter() exactly once', () => {
+    const { all, one } = bindingsOf(codeOf(ROUTE));
+    expect(all).toMatch(/listCostPointsAllAccountsInWindow\(/);
+    expect(one).toMatch(/listCallsInWindow\(/);
+    expect(filterCount(all)).toBe(1);
+    expect(all).toMatch(/\{\s*featureFilter:\s*bosRowFilter\(\)\s*\}/);
+    expect(filterCount(one)).toBe(1);
+  });
+
+  it('SA-WR-48 (planted): a binding with its filter removed is caught', () => {
+    const plantedAll = bindingsOf(codeOf(ROUTE).replace('{ featureFilter: bosRowFilter() }', '{}'));
+    expect(filterCount(plantedAll.all)).toBe(0);
+    const route = codeOf(ROUTE);
+    const oneStart = route.indexOf('readRecordedForAccount:');
+    const plantedOne = bindingsOf(route.slice(0, oneStart) + route.slice(oneStart).replace('bosRowFilter(),', '{ featurePrefix: "", features: [] },'));
+    expect(filterCount(plantedOne.one)).toBe(0);
+  });
+
+  it('SA-Q52: both bindings pass the window end less 1 ms through the one helper', () => {
+    const route = codeOf(ROUTE);
+    expect(route).toMatch(/const inclusiveEnd = \(to: Date\) => new Date\(to\.getTime\(\) - 1\);/);
+    const { all, one } = bindingsOf(route);
+    expect(all).toMatch(/end: inclusiveEnd\(span\.to\)\.toISOString\(\)/);
+    expect(one).toMatch(/end: inclusiveEnd\(span\.to\)/);
+    expect(one).not.toMatch(/signal/);
+  });
+
+  // (c) Pure and structural.
+  const IMPURE = /@\/lib\/repositories|supabase|business-os\/entitlements\/|['"]server-only['"]/i;
+  const LEDGER_OR_LOG = /CreditLedgerRow|BusinessOsCreditLedger|business_os_|token_usage|tokenusage/i;
+  it('recordedCost.ts imports no repository, Supabase, entitlements path or server-only; names no ledger row, table or usage-log reader; reads no clock', () => {
+    expect(read(BUILDER)).not.toMatch(IMPURE);
+    expect(codeOf(BUILDER)).not.toMatch(LEDGER_OR_LOG);
+    expect(codeOf(BUILDER)).not.toMatch(/new Date\(|Date\.now\(/);
+    const imports = [...codeOf(BUILDER).matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
+    expect(imports.sort()).toEqual(['./financeTypes', '@/lib/business-os/credits/creditReport']);
+  });
+
+  it('the M-4 purity rules bite (planted)', () => {
+    expect(IMPURE.test("import { adminTokenUsageAnalyticsRepository } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';")).toBe(true);
+    expect(LEDGER_OR_LOG.test('(rows: readonly CreditLedgerRow[])')).toBe(true);
+    expect(LEDGER_OR_LOG.test("from('token_usage')")).toBe(true);
+    expect(LEDGER_OR_LOG.test('RecordedRowInput')).toBe(false);
+    expect(/new Date\(|Date\.now\(/.test(`${codeOf(BUILDER)}\nconst t = Date.now();\n`)).toBe(true);
+  });
+
+  // (d) Scale: one division, integers, a safe-integer check.
+  it('recordedCost.ts: exactly one / COST_SCALE, no toHundredths, no × 100, and a safe-integer check', () => {
+    const code = codeOf(BUILDER);
+    expect(code.match(/\/ COST_SCALE/g)).toHaveLength(1);
+    expect(code).not.toMatch(/\btoHundredths\b/);
+    expect(code).not.toMatch(/\*\s*100\b/);
+    expect(code).toMatch(/Number\.isSafeInteger\(recordedUnits\)/);
+    expect(code).toMatch(/Number\.isSafeInteger\(differenceUnits\)/);
+  });
+
+  it('the scale pin bites (planted): a second division is caught', () => {
+    expect(`${codeOf(BUILDER)}\nconst again = n / COST_SCALE;\n`.match(/\/ COST_SCALE/g)).toHaveLength(2);
+  });
+
+  // (e) Exports exactly.
+  const EXPORTS = ['RecordedCostInput', 'RecordedReadInput', 'RecordedRowInput', 'buildRecordedAiCost'];
+  const exportsOf = (code: string) =>
+    [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
+  it('recordedCost.ts exports exactly RecordedRowInput, RecordedReadInput, RecordedCostInput and buildRecordedAiCost', () => {
+    const code = codeOf(BUILDER);
+    expect(exportsOf(code)).toEqual(EXPORTS);
+    expect(code).not.toMatch(/export\s*\{|export\s+default/);
+  });
+
+  it('the export pin bites (planted): a fifth export, a sum of the two measures, breaks it', () => {
+    const planted = `${codeOf(BUILDER)}\nexport function recordedPlusCharged(a: number, b: number) { return a + b; }\n`;
+    expect(exportsOf(planted)).toHaveLength(5);
+    expect(exportsOf(planted)).not.toEqual(EXPORTS);
+  });
+
+  // (f) Never added (R4-11, BD-18).
+  const ADDED = /recorded\w*\s*\+\s*\w*charged|charged\w*\s*\+\s*\w*recorded/i;
+  it('no M-4 file adds a recorded figure to a charged one', () => {
+    for (const file of [BUILDER, ORCHESTRATOR, ROUTE, LINES, SECTION3, SUMMARY]) {
+      expect({ file, added: ADDED.test(codeOf(file)) }).toEqual({ file, added: false });
+    }
+  });
+
+  it('the never-added rule bites (planted)', () => {
+    expect(ADDED.test('const total = recordedUnits + chargedUnits;')).toBe(true);
+    expect(ADDED.test('const t = chargedUnits + recordedUsd;')).toBe(true);
+    expect(ADDED.test('const diff = recordedUnits - chargedUnits;')).toBe(false);
+    expect(ADDED.test('recordedUnits += units;')).toBe(false);
+  });
+
+  const recordedKeysOf = (code: string) => {
+    const start = code.indexOf('export interface FinanceRecordedAiCost {');
+    const end = code.indexOf('\n}', start);
+    return [...code.slice(start, end).matchAll(/^ {2}(\w+)\??:/gm)].map((m) => m[1]).sort();
+  };
+  it('SA-Q54: FinanceRecordedAiCost has exactly its five keys, none a sum', () => {
+    expect(recordedKeysOf(codeOf(TYPES))).toEqual(['aboveCharged', 'chargedAboveUsd', 'recordedExact', 'recordedUsd', 'status']);
+    expect(codeOf(TYPES)).toMatch(/recorded\?: FinanceRecordedAiCost;/);
+  });
+
+  it('the five-key pin bites (planted): a total key is caught', () => {
+    const planted = codeOf(TYPES).replace('export interface FinanceRecordedAiCost {', 'export interface FinanceRecordedAiCost {\n  totalUsd: number;');
+    expect(recordedKeysOf(planted)).toHaveLength(6);
+  });
+
+  // (g) E-53: exactness decided in one place.
+  const FLAG = /\bcompleted\b|\breachedCeiling\b/;
+  const regionsOf = (raw: string) => {
+    const region = (startMark: string, endMark: string) => {
+      const start = raw.indexOf(startMark);
+      const end = raw.indexOf(endMark, start);
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      return stripComments(raw.slice(start, end));
+    };
+    return [
+      region('// ── M-4 recorded read (wiring): start ──', '// ── M-4 recorded read (wiring): end ──'),
+      region('// ── 4b. M-4 recorded section: start ──', '// ── 4b. M-4 recorded section: end ──'),
+    ];
+  };
+
+  it('E-53: recordedCost.ts reads each flag once, under its kind; financeHealth.ts’s recorded wiring names neither', () => {
+    const code = codeOf(BUILDER);
+    expect(code.match(/\.completed\b/g)).toHaveLength(1);
+    expect(code.match(/\.reachedCeiling\b/g)).toHaveLength(1);
+    expect(code).toMatch(/read\.kind === 'all_accounts' \? read\.completed : null/);
+    expect(code).toMatch(/read\.kind === 'account' \? read\.reachedCeiling : null/);
+    for (const region of regionsOf(read(ORCHESTRATOR))) {
+      expect(region.length).toBeGreaterThan(200);
+      expect(region).not.toMatch(FLAG);
+    }
+  });
+
+  it('E-53 (planted): the wiring deciding exactness itself is caught', () => {
+    const raw = read(ORCHESTRATOR).replace(
+      "{ data: { kind: 'all_accounts', ...result.data }, error: null }",
+      "{ data: { kind: 'all_accounts', rows: result.data.rows, completed: result.data.rows.length < 10 }, error: null }"
+    );
+    expect(regionsOf(raw).some((region) => FLAG.test(region))).toBe(true);
+  });
+
+  // W104: the wiring's Omit grows by exactly the two route-injected reads; its entitlements import is unchanged.
+  it('SA-W104: financeHealthDeps() omits exactly the four route-injected reads', () => {
+    const match = codeOf(WIRING).match(/financeHealthDeps\(\): Omit<\s*FinanceHealthDeps,\s*([^>]*)>/);
+    expect(match).not.toBeNull();
+    const keys = [...(match as RegExpMatchArray)[1].matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+    expect(keys).toEqual(['findNames', 'readRecordedAllAccounts', 'readRecordedForAccount', 'readReminderFigures']);
+    expect(codeOf(WIRING)).not.toMatch(READER);
   });
 });

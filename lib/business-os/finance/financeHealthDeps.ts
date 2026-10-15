@@ -37,7 +37,10 @@
  * here: it may be called only from `app/api/admin/**`, so the route injects it.
  * Nor is the reminder queue read (slice 2b, R-j): the jobs & queues admin read
  * may be named only under `app/api/admin/**`, so the route binds it to the
- * request's admin context and injects it too.
+ * request's admin context and injects it too. Nor are the two usage-log reads
+ * of Money M-4 (the recorded AI cost): the all-accounts one may be named only
+ * under `app/api/admin/**`, and only the route may name either (the finance
+ * source guard), so the route binds both and injects them.
  *
  * Server-only: the repositories hold the service-role client. The one caller is
  * the admin route, which runs `requireAdmin` first.
@@ -97,8 +100,14 @@ export async function findPlanWithoutOverrides(
   return { data: { plan: result.data.plan }, error: null };
 }
 
-/** Everything but the two admin-route reads (names and reminder figures), which the route supplies. */
-export function financeHealthDeps(): Omit<FinanceHealthDeps, 'findNames' | 'readReminderFigures'> {
+/**
+ * Everything but the four admin-route reads (names, reminder figures, and since
+ * M-4 the two recorded AI cost reads), which the route supplies.
+ */
+export function financeHealthDeps(): Omit<
+  FinanceHealthDeps,
+  'findNames' | 'readReminderFigures' | 'readRecordedAllAccounts' | 'readRecordedForAccount'
+> {
   return {
     plans: {
       pagePlans: (options) => businessOsAccountPlanRepository.pagePlans(options),

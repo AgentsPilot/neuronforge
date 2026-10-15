@@ -1688,3 +1688,61 @@ describe('Money M-4 Part A: Section 3 names its measure and puts the window firs
     expect(subtitle.textContent).not.toContain('., ');
   });
 });
+
+// ── Money M-4 Part B (OV-5, T9-B / T11-B on one render): the recorded block ──
+// A separate import, so the lists above stay unedited.
+import type { FinanceRecordedAiCost } from '@/lib/business-os/finance/financeTypes';
+import { ACCOUNT_RECORDED_ABOVE, RECORDED_LABEL } from '../financeCopy';
+import { cleanup } from '@testing-library/react';
+
+describe('Money M-4 Part B: the recorded AI cost on the page', () => {
+  const RECORDED: FinanceRecordedAiCost = {
+    status: 'ok', recordedUsd: 4.25, recordedExact: true, aboveCharged: { state: 'figure', usd: 0.75 }, chargedAboveUsd: null,
+  };
+  const withRecorded = (recorded: FinanceRecordedAiCost | undefined, extra: Partial<FinancePayload> = {}) => {
+    const p = payload(extra);
+    p.aiCost = { ...p.aiCost, recorded };
+    return p;
+  };
+
+  it('the Overview: the block inside Section 3, beside the unchanged charged total; no element shows their sum', async () => {
+    serve({ success: true, data: withRecorded(RECORDED) });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-ai-cost');
+    const block = within(section).getByTestId('ai-recorded');
+    expect(within(block).getByText(RECORDED_LABEL)).toBeInTheDocument();
+    expect(within(block).getByTestId('ai-recorded-total')).toHaveTextContent('USD 4.25');
+    expect(within(block).getByTestId('ai-recorded-above')).toHaveTextContent('USD 0.75');
+    expect(within(section).getByTestId('ai-total')).toHaveTextContent('USD 3.50');
+    expect(document.body.textContent).not.toContain('7.75');
+  });
+
+  it('AC-158: with a business picked, the summary line and Section 3 show the same text from the one field; the recorded figure is not repeated', async () => {
+    for (const recorded of [
+      RECORDED,
+      { ...RECORDED, aboveCharged: { state: 'none' as const, usd: null }, chargedAboveUsd: 0.4 },
+      { ...RECORDED, status: 'unknown' as const, recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown' as const, usd: null } },
+    ]) {
+      cleanup();
+      mockSearch = `preset=this_month&accountId=${A}`;
+      serve({ success: true, data: withRecorded(recorded, { accountId: A }) });
+      render(<FinanceView />);
+      const summary = await screen.findByTestId('account-summary');
+      const line = within(summary).getByTestId('account-summary-recorded-above');
+      // The label sits in the line's <dt>, beside the value's <dd>.
+      expect(line.parentElement?.querySelector('dt')).toHaveTextContent(ACCOUNT_RECORDED_ABOVE);
+      expect(within(summary).getByTestId('account-summary-recorded-above-value').textContent).toBe(screen.getByTestId('ai-recorded-above').textContent);
+      expect(within(summary).queryByText(RECORDED_LABEL)).toBeNull();
+      expect(within(summary).queryByTestId('ai-recorded-total')).toBeNull();
+    }
+  });
+
+  it('AC-167 (render half): a payload with no recorded key → no block and no summary line', async () => {
+    mockSearch = `preset=this_month&accountId=${A}`;
+    serve({ success: true, data: withRecorded(undefined, { accountId: A }) });
+    render(<FinanceView />);
+    await screen.findByTestId('account-summary');
+    expect(screen.queryByTestId('ai-recorded')).toBeNull();
+    expect(screen.queryByTestId('account-summary-recorded-above')).toBeNull();
+  });
+});
