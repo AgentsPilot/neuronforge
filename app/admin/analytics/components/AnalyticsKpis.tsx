@@ -3,12 +3,12 @@
 /**
  * AI cost & usage's KPI strip (Admin Layout Standard §7.5, SA re-check R-13).
  *
- * Business OS scope: Total spend, Calls, Tokens, Avg cost per call. All scope:
- * Total spend and the four AgentsPilot categories. Every linked tile is the
+ * Business OS scope: Recorded AI cost, Calls, Tokens, Avg cost per call. All scope:
+ * Recorded AI cost and the four AgentsPilot categories. Every linked tile is the
  * shared same-page filter tile (Q-14, R-7): a real link to the filtered view
  * whose plain click applies the same patch through the page's filter hook.
  *
- * Colour (K-5, T-6, T-7): the only status is Total spend's amber "Needs a look"
+ * Colour (K-5, T-6, T-7): the only status is Recorded AI cost's amber "Needs a look"
  * while the 1,000-call cap was hit, a condition the page already flags with its
  * amber notice. The "vs previous period" change is plain text (no red-up /
  * green-down, a page-invented signal); the categories are neutral, and the
@@ -69,7 +69,7 @@ export function AnalyticsKpis({
   if (firstLoad) return <KpiStrip loading placeholderCount={scope === 'bos' ? 4 : 5} />;
 
   // In the All scope there is no Tokens tile, so the total token figure stays
-  // on Total spend (SA M-2: no figure leaves the page).
+  // on Recorded AI cost (SA M-2: no figure leaves the page).
   const totalSub = [
     scope === 'all' ? `${formatNumber(totals.tokens)} tokens` : null,
     changeText(comparison),
@@ -81,7 +81,7 @@ export function AnalyticsKpis({
   const totalSpend = (
     <KpiTile
       testId="category-card-total"
-      label="Total spend"
+      label="Recorded AI cost"
       value={formatCost(totals.cost)}
       sub={totalSub || null}
       status={possiblyIncomplete ? 'amber' : null}
@@ -128,7 +128,7 @@ export function AnalyticsKpis({
             testId={`category-card-${key}`}
             label={label}
             value={formatCost(figures.cost)}
-            sub={`${pctOf(figures.cost)}% of spend · ${formatNumber(figures.tokens)} tokens · ${description}`}
+            sub={`${pctOf(figures.cost)}% of recorded cost · ${formatNumber(figures.tokens)} tokens · ${description}`}
             // A toggle: a click on the applied category goes back to all.
             filter={{ ...tile({ category: isApplied ? 'all' : key }), current: isApplied }}
           />

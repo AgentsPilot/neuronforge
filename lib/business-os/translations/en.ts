@@ -3943,6 +3943,14 @@ export const en = {
     'consent.label_ad': 'Label marketing as advertising',
     'consent.label_ad_desc': 'Required for email sent to people in Israel. Adds a clear marking to the top of every marketing message.',
     'consent.saved': 'Saved',
+    'consent.save_failed': 'Not saved. Your changes are still here. Please try again.',
+    'consent.load_failed': 'Could not load your marketing permission settings.',
+    // The settings drawer's unsaved-changes prompt (settings drawer S-3, C-5). Generic, so any
+    // settings drawer with a form can reuse it.
+    'settings.drawer.discard_title': 'Discard your changes?',
+    'settings.drawer.discard_desc': 'You have changes here that are not saved. If you close now, they will be lost.',
+    'settings.drawer.keep_editing': 'Keep editing',
+    'settings.drawer.discard': 'Discard changes',
 
     // Security Tab
     'settings.security.title': 'Password & Security',

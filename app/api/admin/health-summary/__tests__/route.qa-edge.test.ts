@@ -189,8 +189,8 @@ describe('QA: boundary rows land in exactly one window', () => {
     ]);
     const b = await body(await GET(req()));
     const spend = tile(b, 'bos_ai_spend');
-    const f24 = spend.figures.find((f) => f.label === 'AI spend, last 24 h (USD)')!;
-    const f7 = spend.figures.find((f) => f.label === 'AI spend, last 7 days (USD)')!;
+    const f24 = spend.figures.find((f) => f.label === 'Recorded AI cost, last 24 h (USD)')!;
+    const f7 = spend.figures.find((f) => f.label === 'Recorded AI cost, last 7 days (USD)')!;
     expect(f24.value).toContain('$3.00 (previous 24 h: $12.00)');
     expect(f24.value).toContain('2 calls');
     expect(f7.value).toContain('$63.00 (previous 7 days: $192.00)');
